@@ -2423,6 +2423,315 @@ describe("built-in deep-review-workflow", () => {
     });
   }, 10_000);
 
+  test("short-circuits when review lanes report no candidate issues", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-no-issues-short-circuit");
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_deep_review_no_issues_short_circuit",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "PR #123", files: ["src/service.ts"], maxCandidates: 1 },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: createNoIssueDeepReviewTaskAdapter(taskCalls),
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_no_issues_short_circuit");
+    const run = await runStore.getRun("wfr_deep_review_no_issues_short_circuit");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-review-surface",
+      "review-correctness",
+      "review-tests",
+      "review-architecture",
+    ]);
+    expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
+      ["scope", "lane-review"]
+    );
+    expect(result).toEqual({
+      reportMarkdown: "# Deep Review\n\nNo verified issues.",
+      structuredOutput: {
+        target: "PR #123",
+        scope: {
+          summary: "Review target is scoped.",
+          files: [],
+          riskAreas: [],
+          lanes: ["correctness"],
+        },
+        laneIssues: [],
+        triagedIssues: [],
+        verification: [],
+        final: {
+          verifiedIssueCount: 0,
+          verifiedIssueIds: [],
+          risk: "low",
+          validationPlan: [],
+          discardedIssueCount: 0,
+        },
+      },
+    });
+  }, 10_000);
+
+  test("short-circuits when triage drops all candidate issues", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-empty-triage-short-circuit");
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_deep_review_empty_triage_short_circuit",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "PR #123", files: ["src/service.ts"], maxCandidates: 1 },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const issue = {
+      id: "speculative-candidate",
+      severity: "P3",
+      category: "tests",
+      title: "Speculative candidate",
+      rationale: "The lane was unsure.",
+      evidence: "No concrete path evidence.",
+      filePaths: ["src/service.ts"],
+      suggestedFix: "No concrete fix.",
+      validation: "No validation.",
+      confidence: "low",
+    };
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped review target.",
+                structuredOutput: {
+                  summary: "Review target is scoped.",
+                  files: [],
+                  riskAreas: [],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+              return {
+                taskId: "task_review_correctness",
+                reportMarkdown: "One speculative candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "No findings.",
+                structuredOutput: { issues: [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "Dropped speculative candidate.",
+                structuredOutput: { issues: [] },
+              };
+            default:
+              throw new Error(`Unexpected empty-triage deep-review step: ${spec.id}`);
+          }
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_empty_triage_short_circuit");
+    const run = await runStore.getRun("wfr_deep_review_empty_triage_short_circuit");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-review-surface",
+      "review-correctness",
+      "review-tests",
+      "review-architecture",
+      "triage-candidate-issues",
+    ]);
+    expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
+      ["scope", "lane-review", "triage-dedupe"]
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        laneIssues: [issue],
+        triagedIssues: [],
+        verification: [],
+        final: {
+          verifiedIssueCount: 0,
+          verifiedIssueIds: [],
+          discardedIssueCount: 1,
+        },
+      },
+    });
+  }, 10_000);
+
+  test("short-circuits final synthesis when verification rejects every candidate", async () => {
+    if (!deepReviewWorkflow) {
+      throw new Error("Expected built-in deep-review-workflow workflow");
+    }
+    using tmp = new DisposableTempDir("deep-review-workflow-rejected-verification-short-circuit");
+    const runStore = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: BUILT_IN_WORKFLOW_TEST_STALE_LEASE_MS,
+    });
+    await runStore.createRun({
+      id: "wfr_deep_review_rejected_verification_short_circuit",
+      workspaceId: "workspace-1",
+      definition: {
+        name: deepReviewWorkflow.name,
+        description: deepReviewWorkflow.description,
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: deepReviewWorkflow.source,
+      args: { input: "PR #123", files: ["src/service.ts"], maxCandidates: 1 },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const issue = {
+      id: "rejected-candidate",
+      severity: "P2",
+      category: "correctness",
+      title: "Rejected candidate",
+      rationale: "The lane suspected a bug.",
+      evidence: "Verifier will reject this evidence.",
+      filePaths: ["src/service.ts"],
+      suggestedFix: "No concrete fix.",
+      validation: "No validation.",
+      confidence: "medium",
+    };
+    const rejection = {
+      issueId: "rejected-candidate",
+      verdict: "not-repro",
+      confidence: "high",
+      rationale: "The suspected path is unreachable.",
+      evidence: "Tests cover the path.",
+      suggestedSeverity: "P4",
+    };
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const runner = new WorkflowRunner({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent(spec) {
+          taskCalls.push(spec);
+          switch (spec.id) {
+            case "scope-review-surface":
+              return {
+                taskId: "task_scope",
+                reportMarkdown: "Scoped review target.",
+                structuredOutput: {
+                  summary: "Review target is scoped.",
+                  files: [],
+                  riskAreas: [],
+                  lanes: ["correctness"],
+                },
+              };
+            case "review-correctness":
+              return {
+                taskId: "task_review_correctness",
+                reportMarkdown: "One candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "review-tests":
+            case "review-architecture":
+              return {
+                taskId: `task_${spec.id}`,
+                reportMarkdown: "No findings.",
+                structuredOutput: { issues: [] },
+              };
+            case "triage-candidate-issues":
+              return {
+                taskId: "task_triage",
+                reportMarkdown: "Kept one candidate.",
+                structuredOutput: { issues: [issue] },
+              };
+            case "verify-issue-0":
+              return {
+                taskId: "task_verify",
+                reportMarkdown: "Rejected candidate.",
+                structuredOutput: rejection,
+              };
+            default:
+              throw new Error(`Unexpected rejected-verification deep-review step: ${spec.id}`);
+          }
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await runner.run("wfr_deep_review_rejected_verification_short_circuit");
+    const run = await runStore.getRun("wfr_deep_review_rejected_verification_short_circuit");
+
+    expect(taskCalls.map((call) => call.id)).toEqual([
+      "scope-review-surface",
+      "review-correctness",
+      "review-tests",
+      "review-architecture",
+      "triage-candidate-issues",
+      "verify-issue-0",
+    ]);
+    expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
+      ["scope", "lane-review", "triage-dedupe", "adversarial-verification"]
+    );
+    expect(result).toMatchObject({
+      structuredOutput: {
+        triagedIssues: [issue],
+        verification: [rejection],
+        final: {
+          verifiedIssueCount: 0,
+          verifiedIssueIds: [],
+          discardedIssueCount: 1,
+        },
+      },
+    });
+  }, 10_000);
+
   test("ranks triaged issues by severity before applying the candidate budget", async () => {
     if (!deepReviewWorkflow) {
       throw new Error("Expected built-in deep-review-workflow workflow");
@@ -3273,8 +3582,6 @@ describe("built-in deep-review-workflow", () => {
       "review-correctness-loop-2",
       "review-tests-loop-2",
       "review-architecture-loop-2",
-      "triage-candidate-issues-loop-2",
-      "synthesize-review-loop-2",
     ]);
     expect(applyCalls).toEqual([
       expect.objectContaining({
@@ -3296,9 +3603,6 @@ describe("built-in deep-review-workflow", () => {
         "loop-iteration",
         "scope",
         "lane-review",
-        "triage-dedupe",
-        "adversarial-verification",
-        "final-synthesis",
       ]
     );
     const completedActionStepIds = run.events.flatMap((event) =>
@@ -5095,7 +5399,7 @@ describe("built-in deep-review-workflow", () => {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec);
-          if (spec.id === "synthesize-review") {
+          if (spec.id === "review-correctness") {
             await runGit(repoRoot, ["checkout", "-b", "feature"]);
           }
           return createNoIssueDeepReviewTaskAdapter([]).runAgent(spec);
@@ -6239,7 +6543,7 @@ describe("built-in deep-review-workflow", () => {
 
     expect(taskCalls.map((call) => call.id)).not.toContain("fix-issue-0");
     expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
-      ["scope", "lane-review", "triage-dedupe", "adversarial-verification", "final-synthesis"]
+      ["scope", "lane-review"]
     );
     const structuredOutput = result.structuredOutput;
     if (
@@ -6296,11 +6600,9 @@ describe("built-in deep-review-workflow", () => {
       "review-correctness",
       "review-tests",
       "review-architecture",
-      "triage-candidate-issues",
-      "synthesize-review",
     ]);
     expect(run.events.filter((event) => event.type === "phase").map((event) => event.name)).toEqual(
-      ["scope", "lane-review", "triage-dedupe", "adversarial-verification", "final-synthesis"]
+      ["scope", "lane-review"]
     );
     expect(result).toEqual({
       reportMarkdown: "# Deep Review\n\nNo verified issues.",

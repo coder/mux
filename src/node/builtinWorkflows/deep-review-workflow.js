@@ -169,6 +169,33 @@ function runDeepReviewPass(context) {
     withLoopIteration({ count: laneIssues.length }, context.iteration)
   );
 
+  if (laneIssues.length === 0) {
+    context.log(
+      "No candidate issues from review lanes; skipping triage, verification, and final synthesis",
+      withLoopIteration(
+        { skippedPhases: ["triage-dedupe", "adversarial-verification", "final-synthesis"] },
+        context.iteration
+      )
+    );
+    const reviewResult = buildNoVerifiedIssuesReviewResult({
+      input: input,
+      scope: scope.structuredOutput,
+      laneIssues: laneIssues,
+      triagedIssues: [],
+      verifications: [],
+      discardedIssueCount: 0,
+    });
+    return finishDeepReviewPass({
+      context: context,
+      input: input,
+      reviewResult: reviewResult,
+      gitContext: gitContext,
+      candidates: [],
+      verifications: [],
+      final: reviewResult.structuredOutput.final,
+    });
+  }
+
   context.phase(
     "triage-dedupe",
     withLoopIteration({ candidateCount: laneIssues.length }, context.iteration)
@@ -206,6 +233,33 @@ function runDeepReviewPass(context) {
     )
   );
 
+  if (candidates.length === 0) {
+    context.log(
+      "No candidate issues after triage; skipping verification and final synthesis",
+      withLoopIteration(
+        { skippedPhases: ["adversarial-verification", "final-synthesis"] },
+        context.iteration
+      )
+    );
+    const reviewResult = buildNoVerifiedIssuesReviewResult({
+      input: input,
+      scope: scope.structuredOutput,
+      laneIssues: laneIssues,
+      triagedIssues: [],
+      verifications: [],
+      discardedIssueCount: laneIssues.length,
+    });
+    return finishDeepReviewPass({
+      context: context,
+      input: input,
+      reviewResult: reviewResult,
+      gitContext: gitContext,
+      candidates: [],
+      verifications: [],
+      final: reviewResult.structuredOutput.final,
+    });
+  }
+
   context.phase(
     "adversarial-verification",
     withLoopIteration({ candidateCount: candidates.length }, context.iteration)
@@ -238,6 +292,30 @@ function runDeepReviewPass(context) {
     "Verified candidate issues",
     withLoopIteration({ count: verifications.length }, context.iteration)
   );
+
+  if (!hasValidVerification(verifications)) {
+    context.log(
+      "No verifier upheld a candidate issue; skipping final synthesis",
+      withLoopIteration({ skippedPhases: ["final-synthesis"] }, context.iteration)
+    );
+    const reviewResult = buildNoVerifiedIssuesReviewResult({
+      input: input,
+      scope: scope.structuredOutput,
+      laneIssues: laneIssues,
+      triagedIssues: candidates,
+      verifications: verifications,
+      discardedIssueCount: candidates.length,
+    });
+    return finishDeepReviewPass({
+      context: context,
+      input: input,
+      reviewResult: reviewResult,
+      gitContext: gitContext,
+      candidates: candidates,
+      verifications: verifications,
+      final: reviewResult.structuredOutput.final,
+    });
+  }
 
   context.phase(
     "final-synthesis",
@@ -276,30 +354,71 @@ function runDeepReviewPass(context) {
       final: final.structuredOutput,
     },
   };
-  if (!input.fix) return { reviewResult: reviewResult, gitContext: gitContext };
-  if (context.skipFixWhenNoVerifiedIssues && !hasVerifiedIssues(final.structuredOutput)) {
-    return { reviewResult: reviewResult, gitContext: gitContext };
+  return finishDeepReviewPass({
+    context: context,
+    input: input,
+    reviewResult: reviewResult,
+    gitContext: gitContext,
+    candidates: candidates,
+    verifications: verifications,
+    final: final.structuredOutput,
+  });
+}
+
+function buildNoVerifiedIssuesReviewResult(options) {
+  return {
+    reportMarkdown: "# Deep Review\n\nNo verified issues.",
+    structuredOutput: {
+      target: options.input.target,
+      scope: options.scope,
+      laneIssues: options.laneIssues,
+      triagedIssues: options.triagedIssues,
+      verification: options.verifications,
+      final: {
+        verifiedIssueCount: 0,
+        verifiedIssueIds: [],
+        risk: "low",
+        validationPlan: [],
+        discardedIssueCount: options.discardedIssueCount,
+      },
+    },
+  };
+}
+
+function hasValidVerification(verifications) {
+  for (const verification of verifications) {
+    if (verification && verification.verdict === "valid") return true;
+  }
+  return false;
+}
+
+function finishDeepReviewPass(options) {
+  const context = options.context;
+  const reviewResult = options.reviewResult;
+  if (!options.input.fix) return { reviewResult: reviewResult, gitContext: options.gitContext };
+  if (context.skipFixWhenNoVerifiedIssues && !hasVerifiedIssues(options.final)) {
+    return { reviewResult: reviewResult, gitContext: options.gitContext };
   }
 
   context.phase("fix-preflight", withLoopIteration({ requested: true }, context.iteration));
   const fixResult = runDeepReviewFix({
-    input: input,
+    input: options.input,
     action: context.action,
     log: context.log,
     agent: context.agent,
     parallelAgents: context.parallelAgents,
     applyPatch: context.applyPatch,
-    candidates: candidates,
-    verifications: verifications,
-    final: final.structuredOutput,
-    gitContext: gitContext,
+    candidates: options.candidates,
+    verifications: options.verifications,
+    final: options.final,
+    gitContext: options.gitContext,
     exploreAgentId: context.exploreAgentId,
     reasoningAgentId: context.reasoningAgentId,
     stepSuffix: context.stepSuffix,
   });
   reviewResult.structuredOutput.fix = fixResult;
-  reviewResult.reportMarkdown = final.reportMarkdown + renderFixMarkdown(fixResult);
-  return { reviewResult: reviewResult, gitContext: gitContext };
+  reviewResult.reportMarkdown = reviewResult.reportMarkdown + renderFixMarkdown(fixResult);
+  return { reviewResult: reviewResult, gitContext: options.gitContext };
 }
 
 function cloneDeepReviewInput(input) {
