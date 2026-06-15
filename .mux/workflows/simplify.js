@@ -171,6 +171,19 @@ export default function simplifyWorkflow({
     diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
+  if (hasUntrackedChanges(gitContext)) {
+    const reason = untrackedChangesSkipReason();
+    return {
+      reportMarkdown: "## Simplify workflow result\n\n" + reason,
+      structuredOutput: {
+        mode: "untracked-changes-skip-review",
+        gitContext: contexts.outputGitContext,
+        reviews: [],
+        synthesis: { ...EMPTY_SYNTHESIS, summary: reason },
+      },
+    };
+  }
+
   if (!hasReviewableContext(input, gitContext)) {
     return {
       reportMarkdown: "## Simplify workflow result\n\n" + NO_REVIEWABLE_CHANGES_SUMMARY,
@@ -390,6 +403,10 @@ function nonCurrentHeadSkipReason() {
   return "Auto-fix was skipped because the requested `--head` is not the current checkout. Check out that branch/ref or pass the current commit SHA before applying fixes.";
 }
 
+function untrackedChangesSkipReason() {
+  return "Review was skipped because untracked file contents are not available to workflow child workspaces. Add them with `git add -N` or commit them, then rerun `/workflow simplify`.";
+}
+
 function uncommittedChangesSkipReason() {
   return "Auto-fix was skipped because uncommitted changes are present. Commit or stash them, then rerun `/workflow simplify --fix`.";
 }
@@ -510,6 +527,13 @@ function isRequestedHeadCurrent(status, input) {
 
 function isGitCommitSha(value) {
   return /^[0-9a-f]{7,40}$/i.test(value);
+}
+
+function hasUntrackedChanges(gitContext) {
+  return (
+    hasArrayItems(gitContext.status && gitContext.status.untracked) ||
+    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.untracked)
+  );
 }
 
 function hasUncommittedChanges(gitContext) {
