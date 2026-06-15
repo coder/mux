@@ -7,7 +7,7 @@ import type {
   CompletedReportEntry,
   CompletedReportsIndexAttachment,
 } from "@/common/types/attachment";
-import type { WorkflowRunEvent } from "@/common/types/workflow";
+import { isNestedWorkflowRun, type WorkflowRunEvent } from "@/common/types/workflow";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import type { FileEditDiff } from "@/common/utils/messages/extractEditedFiles";
 import assert from "@/common/utils/assert";
@@ -190,7 +190,11 @@ export class AttachmentService {
     const runStore = new WorkflowRunStore({ sessionDir: params.sessionDir });
     const runs = await runStore.listRuns();
     for (const run of runs) {
-      if (run.workspaceId !== params.workspaceId || run.status !== "completed") {
+      if (
+        run.workspaceId !== params.workspaceId ||
+        run.status !== "completed" ||
+        isNestedWorkflowRun(run)
+      ) {
         continue;
       }
       const resultEvent = run.events.findLast(

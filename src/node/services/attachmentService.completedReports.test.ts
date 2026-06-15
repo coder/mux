@@ -44,6 +44,12 @@ async function writeWorkflowRun(
     workspaceId?: string;
     completedAt?: string;
     failed?: boolean;
+    parentWorkflow?: {
+      runId: string;
+      stepId: string;
+      inputHash: string;
+      depth: number;
+    };
     reportMarkdown?: string;
   }
 ): Promise<void> {
@@ -57,6 +63,7 @@ async function writeWorkflowRun(
       scope: "built-in" as const,
       executable: true,
     },
+    ...(params.parentWorkflow !== undefined ? { parentWorkflow: params.parentWorkflow } : {}),
     definitionSource: "export default async function workflow() { return 'ok'; }\n",
     args: {},
     now: "2026-06-01T00:00:00.000Z",
@@ -169,6 +176,17 @@ describe("AttachmentService.generateCompletedReportsAttachment", () => {
       runId: "wfr_other_ws",
       workspaceId: "other-workspace",
       completedAt: "2026-06-01T12:00:00.000Z",
+    });
+
+    await writeWorkflowRun(tmp.path, {
+      runId: "wfr_child_done",
+      completedAt: "2026-06-01T12:00:00.000Z",
+      parentWorkflow: {
+        runId: "wfr_parent_done",
+        stepId: "child",
+        inputHash: "hash:child",
+        depth: 0,
+      },
     });
 
     const attachment = await AttachmentService.generateCompletedReportsAttachment({

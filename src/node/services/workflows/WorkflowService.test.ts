@@ -369,6 +369,56 @@ export default function workflow({ args, agent }) {
     ).toHaveLength(1);
   });
 
+  test("preserves explicit null args for nested child workflows", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-null-args");
+    const workspaceRoot = path.join(tmp.path, "project");
+    const projectRoot = path.join(workspaceRoot, ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const actionProjectRoot = path.join(workspaceRoot, ".mux", "actions");
+    const actionGlobalRoot = path.join(tmp.path, "mux-home", "actions");
+    await writeWorkflow(
+      globalRoot,
+      "child-null-args",
+      "// description: Child null args\nexport default function workflow({ args }) { return { reportMarkdown: String(args === null) }; }\n"
+    );
+    await writeWorkflow(
+      globalRoot,
+      "parent-null-args",
+      `// description: Parent null args
+export default function workflow({ action }) {
+  return action.workflows.start({
+    id: "child-null-args",
+    input: { name: "child-null-args", args: null },
+  });
+}\n`
+    );
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      actionRegistry: new WorkflowActionRegistry({
+        projectRoot: actionProjectRoot,
+        globalRoot: actionGlobalRoot,
+      }),
+      runStore: new WorkflowRunStore({ sessionDir: tmp.path }),
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      generateRunId: () => "wfr_parent_null_args",
+      runnerId: "runner-a",
+    });
+
+    const result = await service.startNamedWorkflow({
+      name: "parent-null-args",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    expect(result.result).toMatchObject({ reportMarkdown: "true" });
+  });
+
   test("records terminal parent step state when a nested child workflow fails", async () => {
     using tmp = new DisposableTempDir("workflow-service-nested-failure");
     const workspaceRoot = path.join(tmp.path, "project");

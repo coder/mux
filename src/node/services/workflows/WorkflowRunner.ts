@@ -2179,7 +2179,10 @@ function parseWorkflowStartInput(rawInput: unknown): WorkflowStartInput {
     input.wait !== false && input.runInBackground !== true && input.run_in_background !== true,
     "workflows.start currently waits for the child workflow to reach a terminal result"
   );
-  return { name: input.name, args: input.args ?? {} };
+  return {
+    name: input.name,
+    args: Object.prototype.hasOwnProperty.call(input, "args") ? input.args : {},
+  };
 }
 
 function buildWorkflowStartReplayInput(input: WorkflowStartInput): unknown {
