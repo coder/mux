@@ -171,7 +171,7 @@ export default function simplifyWorkflow({
     diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
-  if (!input.target && hasOnlyUntrackedChanges(gitContext)) {
+  if (hasOnlyUntrackedChanges(gitContext) && targetNeedsUntrackedContent(input, gitContext)) {
     const reason = untrackedChangesSkipReason();
     return {
       reportMarkdown: "## Simplify workflow result\n\n" + reason,
@@ -527,6 +527,33 @@ function isRequestedHeadCurrent(status, input) {
 
 function isGitCommitSha(value) {
   return /^[0-9a-f]{7,40}$/i.test(value);
+}
+
+function targetNeedsUntrackedContent(input, gitContext) {
+  if (!input.target) return true;
+  const target = normalizedPath(input.target);
+  if (!target) return false;
+  return untrackedPaths(gitContext).some(function (path) {
+    const untracked = normalizedPath(path);
+    return untracked === target || untracked.startsWith(target + "/");
+  });
+}
+
+function untrackedPaths(gitContext) {
+  return asArray(gitContext.status && gitContext.status.untracked)
+    .concat(asArray(gitContext.changedFiles && gitContext.changedFiles.untracked))
+    .map(filePath)
+    .filter(Boolean);
+}
+
+function filePath(value) {
+  if (typeof value === "string") return value;
+  return value && typeof value.path === "string" ? value.path : "";
+}
+
+function normalizedPath(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
 function hasOnlyUntrackedChanges(gitContext) {
