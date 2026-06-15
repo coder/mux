@@ -294,16 +294,18 @@ export class IdleCompactionService {
    * Record the terminal outcome of an idle compaction attempt so the loop can
    * stop re-attempting a persistently failing workspace.
    *
-   * - Success resets the consecutive failure count.
+   * - Success resets the failure count AND lifts any suppression — a compaction that
+   *   actually persisted means the workspace is healthy again (self-healing). This also
+   *   covers an in-flight retry that succeeds after suppression was set.
    * - A `model_not_found` failure is non-recoverable, so the loop stops immediately.
    * - Any other failure stops the loop once it happens twice in a row.
    *
-   * Suppression is in-memory and sticky for the service lifetime; restarting the
-   * app (e.g. after fixing the configured compaction model) clears it.
+   * Suppression is in-memory (also cleared on restart, e.g. after fixing the model config).
    */
   recordOutcome(workspaceId: string, outcome: IdleCompactionOutcome): void {
     if (outcome.success) {
       this.consecutiveFailures.delete(workspaceId);
+      this.suppressedWorkspaceIds.delete(workspaceId);
       return;
     }
 

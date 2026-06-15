@@ -423,6 +423,21 @@ describe("IdleCompactionService", () => {
       expect(result.eligible).toBe(true);
     });
 
+    test("a later success lifts suppression (self-healing)", async () => {
+      // Two failures suppress the workspace.
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: false });
+      service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: false });
+      expect((await service.checkEligibility(testWorkspaceId, threshold24h, now)).eligible).toBe(
+        false
+      );
+
+      // An in-flight retry that actually persists a compaction clears suppression.
+      service.recordOutcome(testWorkspaceId, { success: true });
+
+      const result = await service.checkEligibility(testWorkspaceId, threshold24h, now);
+      expect(result.eligible).toBe(true);
+    });
+
     test("checkAllWorkspaces no longer queues a suppressed workspace", async () => {
       // A non-recoverable failure suppresses the workspace immediately.
       service.recordOutcome(testWorkspaceId, { success: false, modelNotFound: true });
