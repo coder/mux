@@ -149,6 +149,11 @@ function renderInbox(args: {
   return `${lines.join("\n").trim()}\n`;
 }
 
+function harvestInboxPath(metadata: CompactionCompletionMetadata): string {
+  const safeBoundaryKey = metadata.summaryMessageId.replace(/[^A-Za-z0-9._-]/g, "_");
+  return `${HARVEST_INBOX_DIR}/${safeBoundaryKey}.md`;
+}
+
 async function writeInbox(args: {
   memoryService: MemoryService;
   ctx: MemoryScopeContext;
@@ -264,7 +269,7 @@ export async function runMemoryHarvest(args: {
     }
   }
 
-  const inboxPath = `${HARVEST_INBOX_DIR}/compaction-${args.completionMetadata.compactionEpoch}.md`;
+  const inboxPath = harvestInboxPath(args.completionMetadata);
   if (streamErrors.length === 0 && accepted.length === 0) {
     await deleteInboxIfPresent({
       memoryService: args.memoryService,

@@ -505,7 +505,7 @@ describe("MemoryConsolidationService", () => {
     expect(fixture.modelCalls).toHaveLength(2);
     const file = await fixture.memoryService.readFileWithSha(
       { runtime: null, checkoutCwd: "", workspaceId: "ws-dream", projectPath: "/projects/demo" },
-      "/memories/workspace/harvest/compaction-1.md"
+      "/memories/workspace/harvest/summary-1.md"
     );
     expect(file.success).toBe(true);
     if (file.success) expect(file.data.content).toContain("concise tests");

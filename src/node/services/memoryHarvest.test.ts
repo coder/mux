@@ -11,7 +11,7 @@ import { MemoryService, type MemoryScopeContext } from "./memoryService";
 import { TestTempDir } from "./tools/testHelpers";
 import { runMemoryHarvest } from "./memoryHarvest";
 
-const INBOX_PATH = "/memories/workspace/harvest/compaction-1.md";
+const INBOX_PATH = "/memories/workspace/harvest/summary-1.md";
 
 function finishChunk(outputTokens = 0): LanguageModelV3StreamPart {
   return {
@@ -343,6 +343,38 @@ describe("runMemoryHarvest", () => {
 
     expect(result.streamError).toBeUndefined();
     expect(streamCalls).toBeGreaterThan(1);
+  });
+
+  it("keys inbox cleanup by compaction boundary id instead of epoch", async () => {
+    using fixture = createFixture();
+    const oldBoundaryInbox = "/memories/workspace/harvest/old-summary.md";
+    const saved = await fixture.memoryService.saveFile(
+      fixture.ctx,
+      oldBoundaryInbox,
+      "older boundary candidate\n",
+      null,
+      "agent"
+    );
+    expect(saved.success).toBe(true);
+    fixture.metadata = {
+      ...fixture.metadata,
+      summaryMessageId: "new-summary",
+      compactionEpoch: 1,
+    };
+
+    const result = await runHarvest(fixture, modelFromChunks([finishChunk()]));
+
+    expect(result.inboxPath).toBe("/memories/workspace/harvest/new-summary.md");
+    expect(
+      await fixture.memoryService.readFileWithSha(fixture.ctx, oldBoundaryInbox)
+    ).toMatchObject({
+      success: true,
+    });
+    expect(
+      await fixture.memoryService.readFileWithSha(fixture.ctx, result.inboxPath)
+    ).toMatchObject({
+      success: false,
+    });
   });
 
   it("removes a stale inbox when a clean retry accepts no candidates", async () => {
