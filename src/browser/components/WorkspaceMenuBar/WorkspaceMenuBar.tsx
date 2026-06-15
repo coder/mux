@@ -60,7 +60,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
-import { getExistingWorkspaceProjectWorkflowSchedule } from "@/browser/utils/projectWorkflowSchedules";
+import { getExistingWorkspaceProjectWorkflowScheduleMatch } from "@/browser/utils/projectWorkflowSchedules";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
@@ -121,10 +121,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const automationProjectPath =
     subProjectPath && userProjects.has(subProjectPath) ? subProjectPath : projectPath;
   const projectConfig = getProjectConfig(automationProjectPath);
-  const projectWorkflowSchedule = getExistingWorkspaceProjectWorkflowSchedule({
+  const projectWorkflowScheduleMatch = getExistingWorkspaceProjectWorkflowScheduleMatch({
+    projectPath: automationProjectPath,
     projectConfig,
+    userProjects,
     workspaceId,
   });
+  const projectWorkflowSchedule = projectWorkflowScheduleMatch?.schedule;
+  const automationScheduleProjectPath =
+    projectWorkflowScheduleMatch?.projectPath ?? automationProjectPath;
   const projectLabel =
     subProjectPath && userProjects.has(subProjectPath)
       ? formatProjectHierarchyLabel(subProjectPath, userProjects)
@@ -824,7 +829,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
       </div>
       {dynamicWorkflowsEnabled && automationModalOpen && (
         <AutomationModal
-          projectPath={automationProjectPath}
+          projectPath={automationScheduleProjectPath}
           workspaceId={workspaceId}
           workspaceName={workspaceTitle ?? workspaceName}
           workspaceWorkflowSchedule={workspaceEntry?.workflowSchedule}

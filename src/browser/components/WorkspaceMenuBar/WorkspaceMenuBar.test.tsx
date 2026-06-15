@@ -443,6 +443,49 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     });
   });
 
+  it("passes sibling sub-project automation targeting this workspace into automation settings", async () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    const subProjectPath = "/projects/demo/packages/api";
+    const projectWorkflowSchedule = {
+      id: "sub-project-automation",
+      enabled: true,
+      workflowName: "triage-api",
+      intervalMs: 15 * 60_000,
+      target: { type: "existing-workspace" as const, workspaceId },
+    };
+    const parentConfig = { workspaces: [{ id: workspaceId, path: "/tmp/workspace" }] };
+    const subProjectConfig = {
+      parentProjectPath: defaultProps.projectPath,
+      workspaces: [],
+      workflowSchedules: [projectWorkflowSchedule],
+    };
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+      () =>
+        ({
+          getProjectConfig: (path: string) =>
+            path === subProjectPath ? subProjectConfig : parentConfig,
+          userProjects: new Map([
+            [defaultProps.projectPath, parentConfig],
+            [subProjectPath, subProjectConfig],
+          ]),
+        }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
+    );
+    render(<WorkspaceMenuBar {...defaultProps} />);
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(latestAutomationModalProps?.projectPath).toBe(subProjectPath);
+      expect(latestAutomationModalProps?.projectWorkflowSchedule).toEqual(projectWorkflowSchedule);
+    });
+  });
+
   it("passes a legacy workspace automation into automation settings", async () => {
     spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
       (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS

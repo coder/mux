@@ -77,7 +77,7 @@ import { AutomationModal } from "../AutomationModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { getExistingWorkspaceProjectWorkflowSchedule } from "@/browser/utils/projectWorkflowSchedules";
+import { getExistingWorkspaceProjectWorkflowScheduleMatch } from "@/browser/utils/projectWorkflowSchedules";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -489,7 +489,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       ? `${groupLabel} · ${workspaceTitle}`
       : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
-  const { getProjectConfig } = useProjectContext();
+  const { getProjectConfig, userProjects } = useProjectContext();
   const metadataSubProjectConfig =
     metadata.subProjectPath != null ? getProjectConfig(metadata.subProjectPath) : undefined;
   const sectionProjectConfig = sectionId != null ? getProjectConfig(sectionId) : undefined;
@@ -499,10 +499,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       : sectionId != null && sectionProjectConfig?.parentProjectPath != null
         ? sectionId
         : projectPath;
-  const projectWorkflowSchedule = getExistingWorkspaceProjectWorkflowSchedule({
-    projectConfig: getProjectConfig(automationProjectPath),
+  const projectConfig = getProjectConfig(automationProjectPath);
+  const projectWorkflowScheduleMatch = getExistingWorkspaceProjectWorkflowScheduleMatch({
+    projectPath: automationProjectPath,
+    projectConfig,
+    userProjects,
     workspaceId,
   });
+  const projectWorkflowSchedule = projectWorkflowScheduleMatch?.schedule;
+  const automationScheduleProjectPath =
+    projectWorkflowScheduleMatch?.projectPath ?? automationProjectPath;
 
   const linkSharingEnabled = useLinkSharingEnabled();
   const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
@@ -1020,7 +1026,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               </Popover>
               {dynamicWorkflowsEnabled && automationModalOpen && (
                 <AutomationModal
-                  projectPath={automationProjectPath}
+                  projectPath={automationScheduleProjectPath}
                   workspaceId={workspaceId}
                   workspaceName={displayTitle}
                   workspaceWorkflowSchedule={metadata.workflowSchedule}
