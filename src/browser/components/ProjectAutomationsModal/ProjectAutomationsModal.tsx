@@ -129,16 +129,6 @@ function getTargetLabel(
   return `Existing workspace: ${getWorkspaceLabel(workspacesById.get(target.workspaceId))}`;
 }
 
-function getNewWorkspaceAutomationUnavailableReason(input: {
-  projectPath: string;
-  workspaces: Workspace[];
-}): string | null {
-  return getSupportedWorkflowScheduleNewWorkspaceTemplate({
-    sourceProjectPath: input.projectPath,
-    workspaces: input.workspaces,
-  }).unavailableReason;
-}
-
 function getWorkflowUnavailableReason(input: {
   workflowName: string;
   workflowDefinitions: WorkflowDefinitionDescriptor[];
@@ -257,10 +247,15 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
   const argsParseResult = parseWorkflowArgs(draftArgs);
   const intervalValidationError = getWorkflowScheduleIntervalValidationError(draftIntervalMinutes);
   const editingScheduleId = getProjectScheduleId(editingSchedule);
-  const newWorkspaceUnavailableReason = getNewWorkspaceAutomationUnavailableReason({
-    projectPath: props.projectPath,
+  const newWorkspaceSupport = getSupportedWorkflowScheduleNewWorkspaceTemplate({
+    sourceProjectPath: props.projectPath,
     workspaces: ownerWorkspaces,
   });
+  const newWorkspaceUnavailableReason = newWorkspaceSupport.unavailableReason;
+  const definitionDiscoveryWorkspaceId =
+    draftTargetType === "existing-workspace" && draftExistingWorkspaceId.trim().length > 0
+      ? draftExistingWorkspaceId.trim()
+      : (newWorkspaceSupport.workspace?.id ?? activeWorkspaces[0]?.id);
   const existingWorkspaceConflict =
     draftTargetType === "existing-workspace" &&
     hasExistingWorkspaceAutomationConflict({
@@ -380,9 +375,11 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
 
     void (async () => {
       try {
-        const definitions = await api?.workflows.listDefinitions({
-          projectPath: props.projectPath,
-        });
+        const definitions = await api?.workflows.listDefinitions(
+          definitionDiscoveryWorkspaceId != null
+            ? { workspaceId: definitionDiscoveryWorkspaceId, projectPath: props.projectPath }
+            : { projectPath: props.projectPath }
+        );
         if (ignore) return;
         setWorkflowDefinitions(Array.isArray(definitions) ? definitions : []);
         setDefinitionsLoaded(true);
@@ -414,7 +411,7 @@ export function ProjectAutomationsModal(props: ProjectAutomationsModalProps) {
     return () => {
       ignore = true;
     };
-  }, [api, props.open, props.projectPath]);
+  }, [api, definitionDiscoveryWorkspaceId, props.open, props.projectPath]);
 
   const editInitializationKey =
     mode === "edit"

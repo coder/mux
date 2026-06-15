@@ -10,7 +10,7 @@ import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import type { ORPCContext } from "./context";
-import { resolveWorkflowContext, router } from "./router";
+import { router } from "./router";
 
 describe("router workspace goal validation", () => {
   test("goal routes do not touch goal files for unknown workspaces", async () => {
@@ -205,12 +205,14 @@ describe("router workflow routes", () => {
       });
       return current;
     });
-    const context = createContext({ enabled: true, workspacePath });
+    const client = createRouterClient(router(), {
+      context: createContext({ enabled: true, workspacePath }),
+    });
 
-    const { service, projectTrusted } = await resolveWorkflowContext(context, "workspace-1", {
+    const definitions = await client.workflows.listDefinitions({
+      workspaceId: "workspace-1",
       projectPath: subProjectPath,
     });
-    const definitions = await service.listDefinitions({ projectTrusted });
 
     expect(definitions).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: "sub-scan", scope: "project" })])
@@ -248,14 +250,12 @@ describe("router workflow routes", () => {
     );
   });
 
-  test("rejects ambiguous workflow definition discovery inputs", async () => {
+  test("rejects missing workflow definition discovery inputs", async () => {
     const client = createRouterClient(router(), {
       context: createContext({ enabled: true }),
     });
 
-    await expect(
-      client.workflows.listDefinitions({ projectPath, workspaceId: "workspace-1" } as never)
-    ).rejects.toThrow();
+    await expect(client.workflows.listDefinitions({} as never)).rejects.toThrow();
   });
 
   test("validates sub-project new-workspace schedules against owner workspace templates", async () => {

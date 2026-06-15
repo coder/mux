@@ -230,7 +230,10 @@ describe("AutomationModal", () => {
     renderAutomationModal({ projectPath: "/repo/packages/api" });
 
     await waitFor(() => {
-      expect(listDefinitionsMock).toHaveBeenCalledWith({ projectPath: "/repo/packages/api" });
+      expect(listDefinitionsMock).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        projectPath: "/repo/packages/api",
+      });
     });
   });
 

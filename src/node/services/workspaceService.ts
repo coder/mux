@@ -3998,6 +3998,24 @@ export class WorkspaceService extends EventEmitter {
           if (schedule == null) {
             delete workspaceEntry.workflowSchedule;
           } else {
+            const conflictingProjectSchedule = Array.from(config.projects.entries()).find(
+              ([candidateProjectPath, candidateProject]) => {
+                const candidateOwnerPath =
+                  candidateProject.parentProjectPath ?? candidateProjectPath;
+                if (candidateOwnerPath !== sourceProjectPath) {
+                  return false;
+                }
+                return (candidateProject.workflowSchedules ?? []).some(
+                  (projectSchedule) =>
+                    projectSchedule.target.type === "existing-workspace" &&
+                    projectSchedule.target.workspaceId === normalizedWorkspaceId
+                );
+              }
+            );
+            assert(
+              conflictingProjectSchedule == null,
+              "Workspace already has a project automation"
+            );
             workspaceEntry.workflowSchedule = this.normalizeWorkflowScheduleForPersist(schedule, {
               sourceProjectPath,
               sourceWorkspace: workspaceEntry,

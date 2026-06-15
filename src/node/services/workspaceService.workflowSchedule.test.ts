@@ -1,3 +1,4 @@
+import path from "path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { EventEmitter } from "events";
 import type { ProjectConfig, ProjectsConfig, Workspace } from "@/common/types/project";
@@ -195,6 +196,33 @@ describe("WorkspaceService.setWorkflowSchedule", () => {
     });
     expect(storedSchedule()?.lastRunStartedAt).toBeUndefined();
     expect(storedSchedule()?.intervalMs).toBe(120_000);
+  });
+
+  test("rejects legacy schedules when a project automation already targets the workspace", async () => {
+    currentProjectsConfig.projects.set(path.join(TEST_PROJECT_PATH, "packages", "api"), {
+      parentProjectPath: TEST_PROJECT_PATH,
+      workspaces: [],
+      workflowSchedules: [
+        {
+          id: "sub-project-automation",
+          enabled: true,
+          workflowName: "reconcile",
+          intervalMs: 60_000,
+          target: { type: "existing-workspace", workspaceId: TEST_WORKSPACE_ID },
+        },
+      ],
+    });
+
+    const result = await service.setWorkflowSchedule(TEST_WORKSPACE_ID, {
+      enabled: true,
+      workflowName: "legacy-reconcile",
+      intervalMs: 60_000,
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("expected project automation conflict to be rejected");
+    expect(result.error).toContain("already has a project automation");
+    expect(storedSchedule()).toBeUndefined();
   });
 
   test("compact context preparation waits for a new durable boundary", async () => {

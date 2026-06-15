@@ -1859,7 +1859,7 @@ const WorkflowDefinitionDiscoveryInputSchema = z.union([
   z
     .object({
       workspaceId: z.string().min(1),
-      projectPath: z.never().optional(),
+      projectPath: z.string().min(1).optional(),
     })
     .strict(),
 ]);

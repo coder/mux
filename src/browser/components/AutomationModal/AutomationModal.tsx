@@ -228,7 +228,7 @@ export function AutomationModal(props: AutomationModalProps) {
       try {
         const definitions = await api.workflows.listDefinitions(
           shouldLoadDefinitionsByProject
-            ? { projectPath: props.projectPath }
+            ? { workspaceId: props.workspaceId, projectPath: props.projectPath }
             : { workspaceId: props.workspaceId }
         );
         if (ignore) {

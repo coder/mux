@@ -28,7 +28,10 @@ type ConnectedUseAPIResult = Extract<UseAPIResult, { status: "connected" }>;
 
 interface ProjectAutomationsTestAPI {
   workflows: {
-    listDefinitions: (input: { projectPath: string }) => Promise<WorkflowDefinitionDescriptor[]>;
+    listDefinitions: (input: {
+      projectPath: string;
+      workspaceId?: string;
+    }) => Promise<WorkflowDefinitionDescriptor[]>;
   };
   projects: {
     listBranches: (input: {
@@ -298,6 +301,40 @@ describe("ProjectAutomationsModal", () => {
           contextMode: "reset",
           target: { type: "existing-workspace", workspaceId: "ws-1" },
         },
+      });
+    });
+  });
+
+  test("loads workflow definitions through an owner workspace for sub-project automations", async () => {
+    const subProjectPath = "/repo/packages/api";
+    const parentConfig = createProjectConfig();
+    const subProjectConfig = createProjectConfig({ parentProjectPath: "/repo", workspaces: [] });
+    spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+      () =>
+        ({
+          getProjectConfig: (path: string) => (path === "/repo" ? parentConfig : undefined),
+          refreshProjects: refreshProjectsMock,
+          userProjects: new Map([
+            ["/repo", parentConfig],
+            [subProjectPath, subProjectConfig],
+          ]),
+        }) as unknown as ReturnType<typeof ProjectContextModule.useProjectContext>
+    );
+
+    render(
+      <ProjectAutomationsModal
+        open={true}
+        projectPath={subProjectPath}
+        projectName="API"
+        projectConfig={subProjectConfig}
+        onOpenChange={() => undefined}
+      />
+    );
+
+    await waitFor(() => {
+      expect(listDefinitionsMock).toHaveBeenCalledWith({
+        projectPath: subProjectPath,
+        workspaceId: "ws-1",
       });
     });
   });

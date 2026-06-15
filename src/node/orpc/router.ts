@@ -1964,7 +1964,8 @@ export const router = (authToken?: string) => {
           if (input.workspaceId != null) {
             const { service, projectTrusted } = await resolveWorkflowContext(
               context,
-              input.workspaceId
+              input.workspaceId,
+              input.projectPath != null ? { projectPath: input.projectPath } : {}
             );
             return service.listDefinitions({ projectTrusted });
           }
