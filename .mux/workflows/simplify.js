@@ -239,7 +239,7 @@ export default function simplifyWorkflow({
       reportMarkdown:
         synthesis.reportMarkdown +
         "\n\n---\n\n## Simplify workflow result\n\n" +
-        "Auto-fix was skipped because staged changes are present. Unstage or commit staged changes, then rerun `/workflow simplify --fix`.",
+        stagedChangesSkipReason(),
       structuredOutput: {
         mode: "staged-changes-skip-fix",
         gitContext: contexts.outputGitContext,
@@ -276,11 +276,31 @@ export default function simplifyWorkflow({
   }
 
   phase("apply-fixes", { madeChanges: true });
+  const applyPreflight = collectApplyPreflight(action, log, gitContext);
+  if (applyPreflight.skippedReason) {
+    return {
+      reportMarkdown:
+        synthesis.reportMarkdown +
+        "\n\n---\n\n## Fix pass\n\n" +
+        fixer.reportMarkdown +
+        "\n\n### Patch application\n\n" +
+        applyPreflight.skippedReason,
+      structuredOutput: {
+        mode: "apply-preflight-skip",
+        gitContext: contexts.outputGitContext,
+        reviews: reviewOutputs,
+        synthesis: synthesized,
+        fix: { fixer: fixerOutput, applied: applyPreflight },
+      },
+    };
+  }
+
   const applied = applyPatch({
     id: "apply-simplify-fixes",
     source: fixer,
     target: "parent",
     threeWay: true,
+    expectedHeadSha: applyPreflight.expectedHeadSha,
     // simplify fixes the dirty changes it just reviewed, so patch onto that worktree.
     force: true,
     onConflict: "return",
@@ -296,6 +316,51 @@ export default function simplifyWorkflow({
       fix: { fixer: fixerOutput, applied: applied },
     },
   };
+}
+
+function collectApplyPreflight(action, log, gitContext) {
+  let status = null;
+  try {
+    status = action.git.status({
+      id: "apply-git-status",
+      input: { includeIgnored: false },
+      builtInOnly: true,
+      cache: false,
+    }).output;
+  } catch (error) {
+    const message = formatError(error);
+    log("Git status unavailable for simplify auto-fix preflight", { error: message });
+    return failedApplyPreflight("Auto-fix was skipped because fresh Git status was unavailable.");
+  }
+
+  if (!status || typeof status !== "object") {
+    return failedApplyPreflight("Auto-fix was skipped because fresh Git status was unavailable.");
+  }
+  if (hasArrayItems(status.staged)) {
+    return failedApplyPreflight(stagedChangesSkipReason());
+  }
+
+  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
+  if (typeof reviewedHeadSha !== "string" || !reviewedHeadSha) {
+    return failedApplyPreflight(
+      "Auto-fix was skipped because the reviewed HEAD snapshot is unavailable."
+    );
+  }
+  if (status.headSha !== reviewedHeadSha) {
+    return failedApplyPreflight(
+      "Auto-fix was skipped because HEAD changed since review. Rerun `/workflow simplify --fix`."
+    );
+  }
+
+  return { success: true, status: "ready", expectedHeadSha: reviewedHeadSha };
+}
+
+function failedApplyPreflight(reason) {
+  return { success: false, status: "failed", skippedReason: reason, error: reason };
+}
+
+function stagedChangesSkipReason() {
+  return "Auto-fix was skipped because staged changes are present. Unstage or commit staged changes, then rerun `/workflow simplify --fix`.";
 }
 
 function collectGitContext(action, input, log) {
