@@ -12,6 +12,7 @@ import { Switch } from "@/browser/components/Switch/Switch";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import type { ProjectWorkflowSchedule } from "@/common/types/project";
+import type { WorkspaceWorkflowSchedule } from "@/common/types/workspace";
 import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
@@ -39,6 +40,7 @@ interface AutomationModalProps {
   workspaceId: string;
   workspaceName: string;
   projectWorkflowSchedule?: ProjectWorkflowSchedule;
+  workspaceWorkflowSchedule?: WorkspaceWorkflowSchedule;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -60,20 +62,28 @@ function formatLastRunStartedAt(value: string | undefined): string | null {
   return date.toLocaleString();
 }
 
-type AutomationDraft = Pick<
-  ProjectWorkflowSchedule,
-  "enabled" | "workflowName" | "intervalMs" | "args" | "contextMode" | "lastRunStartedAt"
->;
+interface AutomationDraft {
+  enabled: boolean;
+  workflowName: string;
+  intervalMs: number;
+  args?: ProjectWorkflowSchedule["args"];
+  contextMode?: WorkflowScheduleContextMode;
+  lastRunStartedAt?: string;
+}
 
 export function AutomationModal(props: AutomationModalProps) {
   const { api } = useAPI();
   const { getProjectConfig, refreshProjects } = useProjectContext();
-  const workflowSchedule: AutomationDraft | undefined = props.projectWorkflowSchedule;
+  const workflowSchedule: AutomationDraft | undefined =
+    props.projectWorkflowSchedule ?? props.workspaceWorkflowSchedule;
+  const isLegacyWorkspaceSchedule =
+    props.projectWorkflowSchedule == null && props.workspaceWorkflowSchedule != null;
   const projectConfig = getProjectConfig(props.projectPath);
   const shouldLoadDefinitionsByProject = projectConfig?.parentProjectPath != null;
   const initializationKey = JSON.stringify({
     projectPath: props.projectPath,
     workspaceId: props.workspaceId,
+    scheduleKind: isLegacyWorkspaceSchedule ? "workspace" : "project",
     projectScheduleId: props.projectWorkflowSchedule?.id ?? "",
     enabled: workflowSchedule?.enabled ?? false,
     workflowName: workflowSchedule?.workflowName ?? "",
@@ -285,23 +295,41 @@ export function AutomationModal(props: AutomationModalProps) {
     }
 
     try {
-      const result = await api.projects.workflowSchedules.set({
-        projectPath: props.projectPath,
-        schedule: {
-          ...(props.projectWorkflowSchedule != null
-            ? {
-                id: props.projectWorkflowSchedule.id,
-                ...(props.projectWorkflowSchedule.title != null
-                  ? { title: props.projectWorkflowSchedule.title }
-                  : {}),
-              }
-            : {}),
-          ...nextSchedule,
-        },
-      });
-      if (!result.success) {
-        setSaveError(result.error ?? "Failed to save automation.");
-        return false;
+      if (isLegacyWorkspaceSchedule) {
+        const workspaceSchedule: Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt"> = {
+          enabled: nextSchedule.enabled,
+          workflowName: nextSchedule.workflowName,
+          ...(nextSchedule.args != null ? { args: nextSchedule.args } : {}),
+          intervalMs: nextSchedule.intervalMs,
+          ...(nextSchedule.contextMode != null ? { contextMode: nextSchedule.contextMode } : {}),
+        };
+        const result = await api.workspace.setWorkflowSchedule({
+          workspaceId: props.workspaceId,
+          schedule: workspaceSchedule,
+        });
+        if (!result.success) {
+          setSaveError(result.error ?? "Failed to save automation.");
+          return false;
+        }
+      } else {
+        const result = await api.projects.workflowSchedules.set({
+          projectPath: props.projectPath,
+          schedule: {
+            ...(props.projectWorkflowSchedule != null
+              ? {
+                  id: props.projectWorkflowSchedule.id,
+                  ...(props.projectWorkflowSchedule.title != null
+                    ? { title: props.projectWorkflowSchedule.title }
+                    : {}),
+                }
+              : {}),
+            ...nextSchedule,
+          },
+        });
+        if (!result.success) {
+          setSaveError(result.error ?? "Failed to save automation.");
+          return false;
+        }
       }
 
       await refreshProjects();
@@ -358,6 +386,14 @@ export function AutomationModal(props: AutomationModalProps) {
         const result = await api.projects.workflowSchedules.remove({
           projectPath: props.projectPath,
           scheduleId: props.projectWorkflowSchedule.id,
+        });
+        if (!result.success) {
+          throw new Error(result.error ?? "Failed to remove automation.");
+        }
+      } else if (isLegacyWorkspaceSchedule) {
+        const result = await api.workspace.setWorkflowSchedule({
+          workspaceId: props.workspaceId,
+          schedule: null,
         });
         if (!result.success) {
           throw new Error(result.error ?? "Failed to remove automation.");

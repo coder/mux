@@ -443,6 +443,49 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     });
   });
 
+  it("passes a legacy workspace automation into automation settings", async () => {
+    spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
+      (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS
+    );
+    const workspaceWorkflowSchedule = {
+      enabled: true,
+      workflowName: "legacy-triage",
+      intervalMs: 15 * 60_000,
+    };
+    spyOn(WorkspaceContextModule, "useWorkspaceContext").mockImplementation(
+      () =>
+        ({
+          workspaceMetadata: new Map([
+            [
+              workspaceId,
+              {
+                id: workspaceId,
+                name: "feature-branch",
+                projectName: "demo",
+                projectPath: defaultProps.projectPath,
+                namedWorkspacePath: defaultProps.namedWorkspacePath,
+                runtimeConfig: defaultProps.runtimeConfig,
+                workflowSchedule: workspaceWorkflowSchedule,
+              },
+            ],
+          ]),
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceContext>
+    );
+    render(<WorkspaceMenuBar {...defaultProps} />);
+
+    fireEvent.keyDown(window, {
+      key: KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW.key,
+      ctrlKey: true,
+      shiftKey: true,
+    });
+
+    await waitFor(() => {
+      expect(latestAutomationModalProps?.workspaceWorkflowSchedule).toEqual(
+        workspaceWorkflowSchedule
+      );
+    });
+  });
+
   it("does not open automation settings while a modal dialog is open", () => {
     spyOn(ExperimentsModule, "useExperimentValue").mockImplementation(
       (experimentId) => experimentId === EXPERIMENT_IDS.DYNAMIC_WORKFLOWS

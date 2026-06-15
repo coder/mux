@@ -124,6 +124,46 @@ describe("ProjectContext", () => {
     expect(ctx().userProjects.has("/alpha")).toBe(false);
   });
 
+  test("refreshes projects when config changes", async () => {
+    let projects: Array<[string, ProjectConfig]> = [["/alpha", { workspaces: [] }]];
+    const projectsApi = createMockAPI({
+      list: () => Promise.resolve(projects),
+    });
+    let triggerConfigChange: (() => void) | null = null;
+    const onConfigChanged = mock(() =>
+      Promise.resolve(
+        (async function* () {
+          await new Promise<void>((resolve) => {
+            triggerConfigChange = resolve;
+          });
+          yield undefined;
+        })()
+      )
+    );
+    currentClientMock = {
+      ...currentClientMock,
+      config: {
+        onConfigChanged: onConfigChanged as unknown as APIClient["config"]["onConfigChanged"],
+      },
+    };
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().userProjects.size).toBe(1));
+    await waitFor(() => expect(triggerConfigChange).not.toBeNull());
+    projects = [
+      ["/alpha", { workspaces: [] }],
+      ["/beta", { workspaces: [] }],
+    ];
+
+    act(() => {
+      triggerConfigChange?.();
+    });
+
+    await waitFor(() => expect(ctx().userProjects.size).toBe(2));
+    expect(projectsApi.list.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   test("exposes project list load failures without marking projects as loaded", async () => {
     createMockAPI({
       list: () => Promise.reject(new Error("projects unavailable")),

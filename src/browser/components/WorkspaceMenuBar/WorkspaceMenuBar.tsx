@@ -827,6 +827,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           projectPath={automationProjectPath}
           workspaceId={workspaceId}
           workspaceName={workspaceTitle ?? workspaceName}
+          workspaceWorkflowSchedule={workspaceEntry?.workflowSchedule}
           projectWorkflowSchedule={projectWorkflowSchedule}
           open={automationModalOpen}
           onOpenChange={setAutomationModalOpen}

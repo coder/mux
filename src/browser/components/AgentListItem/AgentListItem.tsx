@@ -1023,6 +1023,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   projectPath={automationProjectPath}
                   workspaceId={workspaceId}
                   workspaceName={displayTitle}
+                  workspaceWorkflowSchedule={metadata.workflowSchedule}
                   projectWorkflowSchedule={projectWorkflowSchedule}
                   open={automationModalOpen}
                   onOpenChange={setAutomationModalOpen}

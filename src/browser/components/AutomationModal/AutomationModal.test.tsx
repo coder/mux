@@ -8,6 +8,7 @@ import * as APIModule from "@/browser/contexts/API";
 import type { APIClient, UseAPIResult } from "@/browser/contexts/API";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import type { ProjectWorkflowSchedule } from "@/common/types/project";
+import type { WorkspaceWorkflowSchedule } from "@/common/types/workspace";
 import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({
@@ -34,6 +35,12 @@ interface AutomationTestAPI {
       projectPath?: string;
     }) => Promise<WorkflowDefinitionDescriptor[]>;
   };
+  workspace: {
+    setWorkflowSchedule: (input: {
+      workspaceId: string;
+      schedule: Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt"> | null;
+    }) => Promise<{ success: true; data: void } | { success: false; error: string }>;
+  };
   projects: {
     workflowSchedules: {
       set: (input: {
@@ -54,6 +61,7 @@ let cleanupDom: (() => void) | null = null;
 let listDefinitionsMock: ReturnType<typeof mock>;
 let setProjectWorkflowScheduleMock: ReturnType<typeof mock>;
 let removeProjectWorkflowScheduleMock: ReturnType<typeof mock>;
+let setWorkspaceWorkflowScheduleMock: ReturnType<typeof mock>;
 let refreshProjectsMock: ReturnType<typeof mock>;
 
 function createConnectedUseAPIResult(api: AutomationTestAPI): ConnectedUseAPIResult {
@@ -129,6 +137,17 @@ function createProjectWorkflowSchedule(
   };
 }
 
+function createWorkspaceWorkflowSchedule(
+  overrides: Partial<WorkspaceWorkflowSchedule> = {}
+): WorkspaceWorkflowSchedule {
+  return {
+    enabled: true,
+    workflowName: "triage-issues",
+    intervalMs: 15 * 60_000,
+    ...overrides,
+  };
+}
+
 function renderAutomationModal(
   overrides: Partial<React.ComponentProps<typeof AutomationModal>> = {}
 ) {
@@ -154,10 +173,17 @@ describe("AutomationModal", () => {
     removeProjectWorkflowScheduleMock = mock(() =>
       Promise.resolve({ success: true as const, data: undefined })
     );
+    setWorkspaceWorkflowScheduleMock = mock(() =>
+      Promise.resolve({ success: true as const, data: undefined })
+    );
     refreshProjectsMock = mock(() => Promise.resolve());
     const api: AutomationTestAPI = {
       workflows: {
         listDefinitions: listDefinitionsMock as AutomationTestAPI["workflows"]["listDefinitions"],
+      },
+      workspace: {
+        setWorkflowSchedule:
+          setWorkspaceWorkflowScheduleMock as AutomationTestAPI["workspace"]["setWorkflowSchedule"],
       },
       projects: {
         workflowSchedules: {
@@ -346,6 +372,63 @@ describe("AutomationModal", () => {
         },
       });
     });
+  });
+
+  test("loads and updates a legacy workspace automation", async () => {
+    const view = renderAutomationModal({
+      workspaceWorkflowSchedule: createWorkspaceWorkflowSchedule({
+        enabled: true,
+        intervalMs: 45 * 60_000,
+        args: { label: "legacy" },
+      }),
+    });
+
+    await waitFor(() => {
+      expect((view.getByLabelText("Automation workflow") as HTMLSelectElement).value).toBe(
+        "triage-issues"
+      );
+    });
+    expect((view.getByLabelText("Automation interval in minutes") as HTMLInputElement).value).toBe(
+      "45"
+    );
+    expect((view.getByLabelText("Automation args") as HTMLTextAreaElement).value).toBe(
+      JSON.stringify({ label: "legacy" }, null, 2)
+    );
+
+    fireEvent.change(view.getByLabelText("Automation context mode"), {
+      target: { value: "compact" },
+    });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(setWorkspaceWorkflowScheduleMock).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        schedule: {
+          enabled: true,
+          workflowName: "triage-issues",
+          args: { label: "legacy" },
+          intervalMs: 45 * 60_000,
+          contextMode: "compact",
+        },
+      });
+    });
+    expect(setProjectWorkflowScheduleMock).not.toHaveBeenCalled();
+  });
+
+  test("removes a legacy workspace automation", async () => {
+    const view = renderAutomationModal({
+      workspaceWorkflowSchedule: createWorkspaceWorkflowSchedule(),
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Remove automation" }));
+
+    await waitFor(() => {
+      expect(setWorkspaceWorkflowScheduleMock).toHaveBeenCalledWith({
+        workspaceId: "ws-1",
+        schedule: null,
+      });
+    });
+    expect(removeProjectWorkflowScheduleMock).not.toHaveBeenCalled();
   });
 
   test("shows persisted non-executable workflow selections", async () => {

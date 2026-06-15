@@ -222,6 +222,42 @@ export function ProjectProvider(props: { children: ReactNode }) {
     };
   }, [refreshProjects]);
 
+  useEffect(() => {
+    const onConfigChanged = api?.config?.onConfigChanged;
+    if (onConfigChanged == null) {
+      return;
+    }
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+    let iterator: AsyncIterator<unknown> | null = null;
+
+    void (async () => {
+      try {
+        const subscribedIterator = await onConfigChanged(undefined, { signal });
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+        for await (const _ of subscribedIterator) {
+          if (signal.aborted) {
+            break;
+          }
+          void refreshProjects();
+        }
+      } catch {
+        // Subscription cancellation is expected during unmount/API reconnects.
+      }
+    })();
+
+    return () => {
+      abortController.abort();
+      void iterator?.return?.();
+    };
+  }, [api, refreshProjects]);
+
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
     setAllProjectsInternal((prev) => {
       const next = new Map(prev);
