@@ -1,10 +1,13 @@
 // description: Review current changes for reuse, quality, and efficiency, then fix actionable issues.
 
+// Workflow files execute as self-contained JavaScript; keep small helpers inline instead of importing repo utilities.
 const DEFAULT_MAX_FINDINGS = 20;
 // Review agents get bounded diff text; synthesis/fix phases get metadata only.
 const REVIEW_DIFF_CHAR_BUDGET = 60000;
 const METADATA_ARRAY_ITEM_BUDGET = 200;
 const DIFF_STAT_CHAR_BUDGET = 20000;
+const REVIEW_EVIDENCE_ITEM_BUDGET = 3;
+const REVIEW_EVIDENCE_CHAR_BUDGET = 500;
 const NO_REVIEWABLE_CHANGES_SUMMARY = "No reviewable changes found.";
 const READ_ONLY_PROMPT =
   "This is a read-only review step. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.";
@@ -14,6 +17,9 @@ const VALUE_FLAGS = [
   { name: "--head", key: "headRef" },
   { name: "--max-findings", key: "maxFindings" },
 ];
+const STATUS_ARRAY_FIELDS = ["staged", "unstaged", "untracked", "ignored"];
+const CHANGED_FILE_ARRAY_FIELDS = ["branch", "staged", "unstaged", "untracked"];
+const DIFF_FIELDS = ["branch", "staged", "unstaged"];
 const REVIEW_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
 const REVIEW_LANES = [
@@ -157,7 +163,7 @@ export default function simplifyWorkflow({
   if (input.help) return usageResult();
 
   phase("capture-context", { target: input.target || "current git changes", fix: input.fix });
-  const gitContext = collectGitContext(action, input);
+  const gitContext = collectGitContext(action, input, log);
   const contexts = promptContexts(input, gitContext);
   log("Captured simplify context", {
     target: input.target || "current git changes",
@@ -274,17 +280,17 @@ export default function simplifyWorkflow({
   };
 }
 
-function collectGitContext(action, input) {
+function collectGitContext(action, input, log) {
   const requestedRefs = gitRefs(input);
   const failures = [];
-  const status = gitSlice(failures, "status", function () {
+  const status = gitSlice(log, failures, "status", function () {
     return action.git.status({
       id: "git-status",
       input: { includeIgnored: false },
       builtInOnly: true,
     }).output;
   });
-  const changedFiles = gitSlice(failures, "changedFiles", function () {
+  const changedFiles = gitSlice(log, failures, "changedFiles", function () {
     return action.git.changedFiles({
       id: "git-changed-files",
       input: requestedRefs,
@@ -299,20 +305,24 @@ function collectGitContext(action, input) {
     failures: failures,
     status: status,
     changedFiles: changedFiles,
-    diffStat: gitSlice(failures, "diffStat", function () {
+    diffStat: gitSlice(log, failures, "diffStat", function () {
       return action.git.diffStat({ id: "git-diff-stat", input: refs, builtInOnly: true }).output;
     }),
-    diff: gitSlice(failures, "diff", function () {
+    diff: gitSlice(log, failures, "diff", function () {
       return action.git.diff({ id: "git-diff", input: refs, builtInOnly: true }).output;
     }),
   };
 }
 
-function gitSlice(failures, name, read) {
+function gitSlice(log, failures, name, read) {
   try {
     return read();
   } catch (error) {
-    failures.push({ name: name, error: String(error) });
+    const failure = { name: name, error: formatError(error) };
+    failures.push(failure);
+    if (typeof log === "function") {
+      log("Git workflow action failed; continuing with partial simplify context", failure);
+    }
     return null;
   }
 }
@@ -386,35 +396,29 @@ function compactMetadata(gitContext) {
 }
 
 function compactStatus(status) {
-  if (!status || typeof status !== "object") return status;
-  return {
-    ...status,
-    staged: compactArray(status.staged, METADATA_ARRAY_ITEM_BUDGET),
-    unstaged: compactArray(status.unstaged, METADATA_ARRAY_ITEM_BUDGET),
-    untracked: compactArray(status.untracked, METADATA_ARRAY_ITEM_BUDGET),
-    ignored: compactArray(status.ignored, METADATA_ARRAY_ITEM_BUDGET),
-  };
+  return compactFields(status, STATUS_ARRAY_FIELDS, compactArray, METADATA_ARRAY_ITEM_BUDGET);
 }
 
 function compactChangedFiles(changedFiles) {
-  if (!changedFiles || typeof changedFiles !== "object") return changedFiles;
-  return {
-    ...changedFiles,
-    branch: compactArray(changedFiles.branch, METADATA_ARRAY_ITEM_BUDGET),
-    staged: compactArray(changedFiles.staged, METADATA_ARRAY_ITEM_BUDGET),
-    unstaged: compactArray(changedFiles.unstaged, METADATA_ARRAY_ITEM_BUDGET),
-    untracked: compactArray(changedFiles.untracked, METADATA_ARRAY_ITEM_BUDGET),
-  };
+  return compactFields(
+    changedFiles,
+    CHANGED_FILE_ARRAY_FIELDS,
+    compactArray,
+    METADATA_ARRAY_ITEM_BUDGET
+  );
 }
 
 function compactDiffStat(diffStat) {
-  if (!diffStat || typeof diffStat !== "object") return diffStat;
-  return {
-    ...diffStat,
-    branch: compactText(diffStat.branch, DIFF_STAT_CHAR_BUDGET),
-    staged: compactText(diffStat.staged, DIFF_STAT_CHAR_BUDGET),
-    unstaged: compactText(diffStat.unstaged, DIFF_STAT_CHAR_BUDGET),
-  };
+  return compactFields(diffStat, DIFF_FIELDS, compactText, DIFF_STAT_CHAR_BUDGET);
+}
+
+function compactFields(value, fields, compactor, limit) {
+  if (!value || typeof value !== "object") return value;
+  const compacted = { ...value };
+  fields.forEach(function (field) {
+    compacted[field] = compactor(value[field], limit);
+  });
+  return compacted;
 }
 
 function compactArray(value, limit) {
@@ -449,7 +453,7 @@ function compactDiff(diff, budget) {
   };
   let remaining = budget;
 
-  ["branch", "staged", "unstaged"].forEach(function (field) {
+  DIFF_FIELDS.forEach(function (field) {
     const value = diff[field];
     if (typeof value !== "string") {
       compacted[field] = value;
@@ -481,12 +485,16 @@ function diffSummary(diff, compactedDiff) {
     truncated: diff.truncated,
     workflowBudgetChars: compactedDiff && compactedDiff.workflowBudgetChars,
     workflowCompactions: compactedDiff ? asArray(compactedDiff.workflowCompactions) : [],
-    chars: {
-      branch: stringLength(diff.branch),
-      staged: stringLength(diff.staged),
-      unstaged: stringLength(diff.unstaged),
-    },
+    chars: diffFieldLengths(diff),
   };
+}
+
+function diffFieldLengths(diff) {
+  const lengths = {};
+  DIFF_FIELDS.forEach(function (field) {
+    lengths[field] = stringLength(diff[field]);
+  });
+  return lengths;
 }
 
 function diffOmittedMessage(field) {
@@ -518,22 +526,58 @@ function synthesisPrompt(input, compactContext, reviewOutputs) {
     "Deduplicate and triage these simplify review findings. Keep actionableFindings to the " +
       input.maxFindings +
       " highest-value issues.",
-    "Fix actionable issues directly when fix mode is enabled. If a finding is false positive or not worth addressing, put it in skippedFindings without debating it.",
+    "Do not edit files in this step. Produce triage and fix plans for the later fixer step. If a finding is false positive or not worth addressing, put it in skippedFindings without debating it.",
     "Allowed severity values are: high, medium, low. Prefer minimal cleanup over broad refactors.",
     "\nCompact review context without raw diff text:\n" + compactContext,
-    "\nLane outputs:\n" + fencedJson(reviewOutputs),
+    "\nCompacted lane outputs:\n" + fencedJson(compactReviewOutputs(reviewOutputs)),
   ].join("\n\n");
 }
 
 function fixPrompt(compactContext, synthesized) {
   return [
-    "Fix the actionable simplify findings with minimal, correct, reviewable changes. Do not push, commit, or open a PR.",
+    "Fix the actionable simplify findings with minimal, correct, reviewable changes. Do not push or open a PR.",
+    "If you change files, create one local commit containing only those changes so the workflow can export a patch artifact.",
     "Use the compact context for file lists and diff metadata; inspect files directly instead of relying on raw diff text being embedded in this prompt.",
     "Preserve existing style and functionality. Run targeted validation for touched code when feasible and report exact commands/results.",
     "If a finding is false positive or not worth addressing, skip it and note why. Set madeChanges true only when files changed.",
     "\nCompact review context:\n" + compactContext,
-    "\nSynthesized findings:\n" + fencedJson(synthesized),
+    "\nActionable findings:\n" + fencedJson(fixerPayload(synthesized)),
   ].join("\n\n");
+}
+
+function compactReviewOutputs(reviewOutputs) {
+  return asArray(reviewOutputs).map(function (output) {
+    return {
+      summary: output && output.summary,
+      findings: asArray(output && output.findings).map(compactReviewFinding),
+    };
+  });
+}
+
+function compactReviewFinding(finding) {
+  return {
+    id: finding && finding.id,
+    title: finding && finding.title,
+    severity: finding && finding.severity,
+    filePaths: asArray(finding && finding.filePaths),
+    rationale: finding && finding.rationale,
+    recommendation: finding && finding.recommendation,
+    evidenceCount: asArray(finding && finding.evidence).length,
+    evidenceSamples: asArray(finding && finding.evidence)
+      .slice(0, REVIEW_EVIDENCE_ITEM_BUDGET)
+      .map(function (evidence) {
+        return compactText(evidence, REVIEW_EVIDENCE_CHAR_BUDGET);
+      }),
+  };
+}
+
+function fixerPayload(synthesized) {
+  return {
+    summary: synthesized && synthesized.summary,
+    shouldFix: Boolean(synthesized && synthesized.shouldFix),
+    actionableFindings: asArray(synthesized && synthesized.actionableFindings),
+    validationPlan: asArray(synthesized && synthesized.validationPlan),
+  };
 }
 
 function parseArgs(args) {
@@ -701,6 +745,10 @@ function stringLength(value) {
 function positiveInt(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 1 ? Math.floor(number) : fallback;
+}
+
+function formatError(error) {
+  return error && typeof error.message === "string" ? error.message : String(error);
 }
 
 function assert(condition, message) {
