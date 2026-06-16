@@ -70,8 +70,6 @@ const DialogContent = React.forwardRef<
       style,
       onEscapeKeyDown,
       onClick,
-      onMouseDown,
-      onMouseUp,
       onTouchStart,
       onTouchMove,
       onTouchEnd,
@@ -86,10 +84,8 @@ const DialogContent = React.forwardRef<
         // Radix uses capture phase for Escape, so stop it via onEscapeKeyDown (not onKeyDown).
         onEscapeKeyDown={stopPropagationBefore(onEscapeKeyDown)}
         onClick={stopPropagationBefore(onClick)}
-        onMouseDown={stopPropagationBefore(onMouseDown)}
-        onMouseUp={stopPropagationBefore(onMouseUp)}
-        // Do not stop pointer events here: Radix DismissableLayer uses pointerdown bubbling
-        // to reset its inside/outside tracking, which keeps outside-click dismissal one-click.
+        // Do not stop pointer/mouse events here: Radix DismissableLayer and popovers rely
+        // on pointerdown/mousedown bubbling to keep outside-interaction state current.
         onTouchStart={stopPropagationBefore(onTouchStart)}
         onTouchMove={stopPropagationBefore(onTouchMove)}
         onTouchEnd={stopPropagationBefore(onTouchEnd)}
