@@ -222,6 +222,28 @@ function isWorkflowReadSuccessResult(
   return value != null && !isToolErrorResult(value);
 }
 
+const AUTO_COLLAPSE_WORKFLOW_LOOKUP_STATUSES = new Set<ToolStatus>(["completed"]);
+
+export function useAutoCollapsingWorkflowLookup(status: ToolStatus) {
+  const { expanded, setExpanded, toggleExpanded } = useToolExpansion(true);
+  const userToggledExpansionRef = React.useRef(false);
+
+  const toggleAutoCollapsingExpanded = () => {
+    userToggledExpansionRef.current = true;
+    toggleExpanded();
+  };
+
+  React.useLayoutEffect(() => {
+    // Completed workflow lookup/action payloads can be bulky; collapse them once
+    // the result arrives for transcript scanability, but keep explicit user intent.
+    if (AUTO_COLLAPSE_WORKFLOW_LOOKUP_STATUSES.has(status) && !userToggledExpansionRef.current) {
+      setExpanded(false);
+    }
+  }, [status, setExpanded]);
+
+  return { expanded, toggleExpanded: toggleAutoCollapsingExpanded };
+}
+
 export function WorkflowLoadingState() {
   return (
     <div className="text-muted text-[11px] italic">
@@ -235,7 +257,7 @@ export const WorkflowListToolCall: React.FC<WorkflowListToolCallProps> = ({
   result,
   status = "pending",
 }) => {
-  const { expanded, toggleExpanded } = useToolExpansion(true);
+  const { expanded, toggleExpanded } = useAutoCollapsingWorkflowLookup(status);
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = isWorkflowListSuccessResult(result) ? result : null;
   const workflows = successResult?.workflows ?? [];
@@ -276,7 +298,7 @@ export const WorkflowReadToolCall: React.FC<WorkflowReadToolCallProps> = ({
   result,
   status = "pending",
 }) => {
-  const { expanded, toggleExpanded } = useToolExpansion(true);
+  const { expanded, toggleExpanded } = useAutoCollapsingWorkflowLookup(status);
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = isWorkflowReadSuccessResult(result) ? result : null;
 

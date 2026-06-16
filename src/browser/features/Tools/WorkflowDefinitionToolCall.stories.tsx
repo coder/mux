@@ -28,6 +28,13 @@ function NarrowContainerDecorator(Story: ComponentType) {
   );
 }
 
+function expandToolCard(canvasElement: HTMLElement, summaryText: string) {
+  const canvas = within(canvasElement);
+  const header = canvas.getByText(summaryText).closest('[data-scroll-intent="ignore"]');
+  if (header == null) throw new Error(`Could not find tool header for "${summaryText}"`);
+  (header as HTMLElement).click();
+}
+
 /**
  * Assert the narrow list layout engaged: the description must wrap onto its own
  * grid row below the name instead of sharing the single-line wide layout.
@@ -165,6 +172,7 @@ export const WorkflowActionListNarrow: Story = {
     chromatic: { modes: { "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true } } },
   },
   play: async ({ canvasElement }) => {
+    expandToolCard(canvasElement, "4 actions");
     await expectDescriptionBelowName(
       canvasElement,
       "git.changedFiles",
@@ -218,6 +226,7 @@ export const WorkflowListNarrow: Story = {
     chromatic: { modes: { "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true } } },
   },
   play: async ({ canvasElement }) => {
+    expandToolCard(canvasElement, "3 definitions");
     await expectDescriptionBelowName(canvasElement, "deep-research", /Coordinate staged research/);
   },
 };

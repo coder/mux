@@ -18,18 +18,14 @@ import {
   ToolIcon,
   ToolName,
 } from "./Shared/ToolPrimitives";
-import {
-  getStatusDisplay,
-  isToolErrorResult,
-  type ToolStatus,
-  useToolExpansion,
-} from "./Shared/toolUtils";
+import { getStatusDisplay, isToolErrorResult, type ToolStatus } from "./Shared/toolUtils";
 import {
   WorkflowBadge,
   WorkflowJsonBlock,
   WorkflowKindBadge,
   WorkflowLoadingState,
   WorkflowSection,
+  useAutoCollapsingWorkflowLookup,
 } from "./WorkflowDefinitionToolCall";
 
 interface WorkflowActionListToolCallProps {
@@ -167,7 +163,7 @@ export const WorkflowActionListToolCall: React.FC<WorkflowActionListToolCallProp
   result,
   status = "pending",
 }) => {
-  const { expanded, toggleExpanded } = useToolExpansion(true);
+  const { expanded, toggleExpanded } = useAutoCollapsingWorkflowLookup(status);
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = isWorkflowActionListSuccessResult(result) ? result : null;
   const actions = successResult?.actions ?? [];

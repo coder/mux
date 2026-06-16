@@ -16,6 +16,12 @@ function renderWithTooltip(ui: React.ReactElement) {
   );
 }
 
+function clickToolHeader(view: ReturnType<typeof render>, label: string) {
+  const header = view.getByText(label).closest('[data-scroll-intent="ignore"]');
+  expect(header).toBeTruthy();
+  fireEvent.click(header as HTMLElement);
+}
+
 describe("WorkflowActionListToolCall", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
@@ -37,7 +43,7 @@ describe("WorkflowActionListToolCall", () => {
     globalThis.localStorage = originalLocalStorage;
   });
 
-  test("renders action rows with effect and blocked badges", () => {
+  test("renders action rows with effect and blocked badges after manual expansion", () => {
     const view = renderWithTooltip(
       <WorkflowActionListToolCall
         args={{}}
@@ -69,6 +75,11 @@ describe("WorkflowActionListToolCall", () => {
     );
 
     expect(view.getByText("2 actions")).toBeTruthy();
+    expect(view.queryByText("git.changedFiles")).toBeNull();
+    expect(view.queryByText("Project is not trusted")).toBeNull();
+
+    clickToolHeader(view, "2 actions");
+
     expect(view.getByText("git.changedFiles")).toBeTruthy();
     expect(view.getByText("read")).toBeTruthy();
     expect(view.getByText("blocked")).toBeTruthy();
@@ -104,6 +115,7 @@ describe("WorkflowActionListToolCall", () => {
 
     expect(view.queryByText("Input schema")).toBeNull();
 
+    clickToolHeader(view, "1 action");
     fireEvent.click(view.getByRole("button", { expanded: false }));
 
     expect(view.getByText("/__mux_builtin_workflow_actions__/git/changedFiles.js")).toBeTruthy();

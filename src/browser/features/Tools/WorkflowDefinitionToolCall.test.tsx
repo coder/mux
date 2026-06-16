@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 
 import type React from "react";
 
@@ -25,6 +25,12 @@ function expectWorkflowHeaderBadge(view: ReturnType<typeof render>, label: strin
   const workflowBadge = view.getByText("Workflow");
   const headerText = workflowBadge.closest('[data-scroll-intent="ignore"]')?.textContent ?? "";
   expect(headerText.indexOf("Workflow")).toBeLessThan(headerText.indexOf(label));
+}
+
+function clickToolHeader(view: ReturnType<typeof render>, label: string) {
+  const header = view.getByText(label).closest('[data-scroll-intent="ignore"]');
+  expect(header).toBeTruthy();
+  fireEvent.click(header as HTMLElement);
 }
 
 describe("WorkflowDefinitionToolCall", () => {
@@ -66,11 +72,16 @@ describe("WorkflowDefinitionToolCall", () => {
     );
 
     expectWorkflowHeaderBadge(view, "deep-research");
+    expect(view.queryByText("Deep research")).toBeNull();
+    expect(view.container.textContent).not.toContain("return agent");
+
+    clickToolHeader(view, "deep-research");
+
     expect(view.getByText("Deep research")).toBeTruthy();
     expect(view.container.textContent).toContain("return agent");
   });
 
-  test("renders workflow_list as definition cards", () => {
+  test("renders workflow_list as definition cards after manual expansion", () => {
     const view = renderWithTooltip(
       <WorkflowListToolCall
         args={{}}
@@ -97,6 +108,11 @@ describe("WorkflowDefinitionToolCall", () => {
 
     expectWorkflowHeaderBadge(view, "list");
     expect(view.getByText("2 definitions")).toBeTruthy();
+    expect(view.queryByText("blocked")).toBeNull();
+    expect(view.queryByText("Project is not trusted")).toBeNull();
+
+    clickToolHeader(view, "2 definitions");
+
     expect(view.queryByText("executable")).toBeNull();
     expect(view.getByText("blocked")).toBeTruthy();
     expect(view.getByText("Project is not trusted")).toBeTruthy();
