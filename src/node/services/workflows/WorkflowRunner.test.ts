@@ -2250,6 +2250,95 @@ describe("WorkflowRunner", () => {
     );
   });
 
+  test("aborts sibling parallelWorkflows waits when foreground wait backgrounds", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-workflows-backgrounded");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_workflows_backgrounded",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelWorkflows }) {
+        parallelWorkflows([
+          { id: "child-a", name: "child-simple" },
+          { id: "child-b", name: "child-simple" },
+        ]);
+        return { reportMarkdown: "unreachable" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const bothStarted = createDeferred();
+    const childCalls: string[] = [];
+    let childBAbortObserved = false;
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      childRunAdapter: {
+        async runChildWorkflowToTerminal(input) {
+          childCalls.push(input.stepId);
+          if (childCalls.length === 2) {
+            bothStarted.resolve();
+          }
+          if (input.stepId === "child-a") {
+            await bothStarted.promise;
+            return { runId: input.childRunId, status: "backgrounded", result: null };
+          }
+          assert(
+            input.abortSignal != null,
+            "parallelWorkflows child waits require an abort signal"
+          );
+          if (input.abortSignal.aborted) {
+            childBAbortObserved = true;
+          } else {
+            await new Promise<void>((resolve) => {
+              input.abortSignal?.addEventListener(
+                "abort",
+                () => {
+                  childBAbortObserved = true;
+                  resolve();
+                },
+                { once: true }
+              );
+            });
+          }
+          return { runId: input.childRunId, status: "interrupted", result: null };
+        },
+      },
+      projectTrusted: true,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(
+      Promise.race([
+        runner.run("wfr_parallel_workflows_backgrounded"),
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error("parallelWorkflows did not abort sibling wait")), 500);
+        }),
+      ])
+    ).rejects.toBeInstanceOf(WorkflowRunBackgroundedError);
+
+    await expect(store.getRun("wfr_parallel_workflows_backgrounded")).resolves.toMatchObject({
+      status: "backgrounded",
+    });
+    expect(childCalls.sort()).toEqual(["child-a", "child-b"]);
+    expect(childBAbortObserved).toBe(true);
+  });
+
   test("reports parallelWorkflows for invalid maxParallel options", async () => {
     using tmp = new DisposableTempDir("workflow-runner-parallel-workflows-invalid-options");
     const store = new WorkflowRunStore({

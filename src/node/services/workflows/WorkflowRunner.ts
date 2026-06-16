@@ -936,6 +936,9 @@ export class WorkflowRunner {
         batchStopped = true;
         if (isForegroundWaitBackgroundedError(error)) {
           foregroundBackgrounded = true;
+          // A foreground handoff should release the UI promptly; abort sibling waits so
+          // abort-aware actions/child workflows settle before the foreground run returns.
+          abortBatch();
         }
         return { index, error };
       } finally {
