@@ -264,6 +264,13 @@ function QuickArchiveButton(props: {
   );
 }
 
+function isEventFromDialogPortal(target: EventTarget | null): boolean {
+  // Dialogs rendered through React portals still bubble through this row's React tree.
+  // Ignore those events here instead of stopping propagation inside DialogContent, where
+  // native document listeners such as Radix/popover outside-click handlers still need them.
+  return target instanceof Element && target.closest('[role="dialog"]') != null;
+}
+
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
 function ActionButtonWrapper(props: { children: React.ReactNode; className?: string }) {
   return (
@@ -755,13 +762,14 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           isSelected && !isDisabled && "bg-surface-secondary"
         )}
         style={{ paddingLeft }}
-        onClick={() => {
+        onClick={(event) => {
           if (isDisabled) return;
+          if (isEventFromDialogPortal(event.target)) return;
           if (ctxMenu.suppressClickIfLongPress()) return;
           onSelectWorkspace(workspaceSelection);
         }}
         onDoubleClick={(event) => {
-          if (isDisabled || isEditing) {
+          if (isDisabled || isEditing || isEventFromDialogPortal(event.target)) {
             return;
           }
           const doubleClickTarget =
@@ -776,7 +784,18 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           startEditing();
           event.stopPropagation();
         }}
-        {...ctxMenu.touchHandlers}
+        onTouchStart={(event) => {
+          if (isEventFromDialogPortal(event.target)) return;
+          ctxMenu.touchHandlers.onTouchStart(event);
+        }}
+        onTouchMove={(event) => {
+          if (isEventFromDialogPortal(event.target)) return;
+          ctxMenu.touchHandlers.onTouchMove(event);
+        }}
+        onTouchEnd={(event) => {
+          if (isEventFromDialogPortal(event.target)) return;
+          ctxMenu.touchHandlers.onTouchEnd();
+        }}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
           // Only treat these shortcuts as row-level controls when the row itself is

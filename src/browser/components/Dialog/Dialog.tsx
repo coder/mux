@@ -34,21 +34,6 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
-interface PropagationStoppedEvent {
-  stopPropagation: () => void;
-}
-
-const stopPropagationBefore = <Event extends PropagationStoppedEvent>(
-  handler: ((event: Event) => void) | undefined
-) => {
-  return (event: Event) => {
-    // React portals still bubble synthetic events through their component tree. Dialogs are
-    // sometimes rendered from clickable workspace rows, so keep modal interactions local.
-    event.stopPropagation();
-    handler?.(event);
-  };
-};
-
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
@@ -69,10 +54,6 @@ const DialogContent = React.forwardRef<
       maxHeight,
       style,
       onEscapeKeyDown,
-      onClick,
-      onTouchStart,
-      onTouchMove,
-      onTouchEnd,
       ...props
     },
     ref
@@ -81,14 +62,12 @@ const DialogContent = React.forwardRef<
       <DialogOverlay />
       <DialogPrimitive.Content
         ref={ref}
-        // Radix uses capture phase for Escape, so stop it via onEscapeKeyDown (not onKeyDown).
-        onEscapeKeyDown={stopPropagationBefore(onEscapeKeyDown)}
-        onClick={stopPropagationBefore(onClick)}
-        // Do not stop pointer/mouse events here: Radix DismissableLayer and popovers rely
-        // on pointerdown/mousedown bubbling to keep outside-interaction state current.
-        onTouchStart={stopPropagationBefore(onTouchStart)}
-        onTouchMove={stopPropagationBefore(onTouchMove)}
-        onTouchEnd={stopPropagationBefore(onTouchEnd)}
+        onEscapeKeyDown={(e) => {
+          // Prevent Escape from propagating to global handlers (e.g., stream interrupt).
+          // Radix uses capture phase for Escape, so we must use onEscapeKeyDown (not onKeyDown).
+          e.stopPropagation();
+          onEscapeKeyDown?.(e);
+        }}
         className={cn(
           "bg-dark border-border fixed top-[50%] left-[50%] z-[1500] grid w-[90%] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
           !maxWidth && "max-w-lg",
