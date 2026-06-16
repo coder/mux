@@ -1,11 +1,4 @@
-import React, {
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import React, { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
 import {
@@ -50,7 +43,7 @@ import {
   getStatusDisplay,
   isToolErrorResult,
   type ToolStatus,
-  useToolExpansion,
+  useAutoCollapsingToolExpansion,
 } from "./Shared/toolUtils";
 import { HighlightedCode } from "./Shared/HighlightedCode";
 import {
@@ -1039,9 +1032,6 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
 }) => {
   const apiState = useContext(APIContext);
   const commandRegistry = useOptionalCommandRegistry();
-  const { expanded, setExpanded, toggleExpanded } = useToolExpansion(true);
-  const userToggledExpansionRef = useRef(false);
-  const autoCollapseRunIdRef = useRef<string | undefined>(undefined);
   const registerCommandSource = commandRegistry?.registerSource;
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = isWorkflowRunSuccessResult(result) ? result : null;
@@ -1075,22 +1065,21 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const displayRows = getWorkflowDisplayRows(events);
   const headerStatus = toToolStatus(displayStatus);
   const workspaceStore = useWorkspaceStoreRaw();
+  const {
+    expanded,
+    setLocalExpanded,
+    toggleExpanded,
+    markInteracted: markExpansionInteracted,
+  } = useAutoCollapsingToolExpansion(true, {
+    // Completed workflow runs can contain large reports and event logs. Collapse them for
+    // scanability without persisting that automatic presentation choice as user intent.
+    autoCollapsed: AUTO_COLLAPSE_WORKFLOW_STATUSES.has(displayStatus),
+    resetKey: runId,
+  });
 
   const toggleWorkflowExpanded = () => {
-    userToggledExpansionRef.current = true;
     toggleExpanded();
   };
-  useLayoutEffect(() => {
-    if (autoCollapseRunIdRef.current !== runId) {
-      autoCollapseRunIdRef.current = runId;
-      userToggledExpansionRef.current = false;
-    }
-    // Completed workflow runs can contain large reports and event logs. Collapse them once for
-    // scanability, but never override an explicit user expansion/collapse choice.
-    if (AUTO_COLLAPSE_WORKFLOW_STATUSES.has(displayStatus) && !userToggledExpansionRef.current) {
-      setExpanded(false);
-    }
-  }, [displayStatus, runId, setExpanded]);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [promotedDefinition, setPromotedDefinition] = useState<WorkflowDefinitionDescriptor | null>(
@@ -1291,8 +1280,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
             section: "Workflows",
             keywords: ["workflow", "save", "project", "scratch", displayName, runId],
             run: () => {
-              userToggledExpansionRef.current = true;
-              setExpanded(true);
+              setLocalExpanded(true);
               saveScratchWorkflowRef.current("project");
             },
           },
@@ -1303,8 +1291,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
             section: "Workflows",
             keywords: ["workflow", "save", "global", "scratch", displayName, runId],
             run: () => {
-              userToggledExpansionRef.current = true;
-              setExpanded(true);
+              setLocalExpanded(true);
               saveScratchWorkflowRef.current("global");
             },
           }
@@ -1325,7 +1312,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     registerCommandSource,
     run?.workspaceId,
     runId,
-    setExpanded,
+    setLocalExpanded,
   ]);
 
   useEffect(() => {
@@ -1578,10 +1565,10 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                           steps={run?.steps ?? []}
                           onNavigate={(taskId) => workspaceStore.navigateToWorkspace(taskId)}
                           onOpenReport={() => {
-                            userToggledExpansionRef.current = true;
+                            markExpansionInteracted();
                           }}
                           onInspectStructuredOutput={() => {
-                            userToggledExpansionRef.current = true;
+                            markExpansionInteracted();
                           }}
                         />
                       );

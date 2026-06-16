@@ -23,6 +23,9 @@ import {
 } from "@/browser/contexts/CommandRegistryContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
+import { ToolNameProvider } from "@/browser/features/Messages/ToolNameContext";
+import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 function createWorkflowTaskWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata {
   return {
@@ -117,6 +120,77 @@ function APIHarness(props: { client: unknown; children: ReactNode }) {
   );
 }
 
+const TEST_WORKSPACE_ID = "workflow-run-tool-test";
+
+function withStickyToolProviders(ui: ReactElement, toolName = "workflow_run") {
+  return (
+    <ThemeProvider forcedTheme="dark">
+      <MessageListProvider value={{ workspaceId: TEST_WORKSPACE_ID, latestMessageId: null }}>
+        <ToolNameProvider toolName={toolName}>
+          <TooltipProvider>{ui}</TooltipProvider>
+        </ToolNameProvider>
+      </MessageListProvider>
+    </ThemeProvider>
+  );
+}
+
+function renderWithStickyToolProviders(ui: ReactElement, toolName = "workflow_run") {
+  return render(withStickyToolProviders(ui, toolName));
+}
+
+function getStoredPrefs(): string | null {
+  return globalThis.localStorage.getItem(getAutoExpandPrefsKey(TEST_WORKSPACE_ID));
+}
+
+function createWorkflowRunForExpansionTest(input: {
+  id: string;
+  status: "running" | "completed";
+  reportMarkdown?: string;
+}) {
+  return {
+    id: input.id,
+    workspaceId: TEST_WORKSPACE_ID,
+    definition: {
+      name: "deep-research",
+      description: "Deep research",
+      scope: "built-in" as const,
+      executable: true,
+    },
+    definitionSource: "export default function workflow() { return null; }",
+    definitionHash: "sha256:test",
+    args: { topic: "workflow cards" },
+    status: input.status,
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt:
+      input.status === "completed" ? "2026-05-29T00:00:02.000Z" : "2026-05-29T00:00:01.000Z",
+    events:
+      input.status === "completed"
+        ? [
+            {
+              sequence: 1,
+              type: "result" as const,
+              at: "2026-05-29T00:00:02.000Z",
+              result: { reportMarkdown: input.reportMarkdown ?? `${input.id} result` },
+            },
+            {
+              sequence: 2,
+              type: "status" as const,
+              at: "2026-05-29T00:00:02.000Z",
+              status: "completed" as const,
+            },
+          ]
+        : [
+            {
+              sequence: 1,
+              type: "status" as const,
+              at: "2026-05-29T00:00:01.000Z",
+              status: "running" as const,
+            },
+          ],
+    steps: [],
+  };
+}
+
 function CommandActionCapture(props: { onActions: (actions: CommandAction[]) => void }) {
   const registry = useCommandRegistry();
   useEffect(() => {
@@ -155,6 +229,96 @@ describe("WorkflowRunToolCall", () => {
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.localStorage = originalLocalStorage;
+  });
+
+  test("auto-collapses completed workflow runs without mutating sticky preferences", () => {
+    const completedRun = createWorkflowRunForExpansionTest({
+      id: "wfr_auto_collapse",
+      status: "completed",
+      reportMarkdown: "auto result",
+    });
+    const completedView = renderWithStickyToolProviders(
+      <WorkflowRunToolCall
+        args={{
+          name: "deep-research",
+          args: { topic: "workflow cards" },
+          run_in_background: false,
+        }}
+        status="completed"
+        result={{
+          status: "completed",
+          runId: completedRun.id,
+          result: { reportMarkdown: "auto result" },
+          run: completedRun,
+        }}
+      />
+    );
+
+    expect(completedView.queryByText("wfr_auto_collapse")).toBeNull();
+    expect(completedView.queryByText("auto result")).toBeNull();
+    expect(getStoredPrefs()).toBeNull();
+    completedView.unmount();
+
+    const runningRun = createWorkflowRunForExpansionTest({ id: "wfr_running", status: "running" });
+    const executingView = renderWithStickyToolProviders(
+      <WorkflowRunToolCall
+        args={{ name: "deep-research", args: { topic: "workflow cards" }, run_in_background: true }}
+        status="executing"
+        result={{ status: "running", runId: runningRun.id, result: null, run: runningRun }}
+      />
+    );
+
+    expect(executingView.getByText("wfr_running")).toBeTruthy();
+    expect(getStoredPrefs()).toBeNull();
+  });
+
+  test("resets completed workflow auto-collapse interaction for a new run id", () => {
+    const firstRun = createWorkflowRunForExpansionTest({ id: "wfr_first", status: "completed" });
+    const secondRun = createWorkflowRunForExpansionTest({ id: "wfr_second", status: "completed" });
+    const view = renderWithStickyToolProviders(
+      <WorkflowRunToolCall
+        args={{
+          name: "deep-research",
+          args: { topic: "workflow cards" },
+          run_in_background: false,
+        }}
+        status="completed"
+        result={{
+          status: "completed",
+          runId: firstRun.id,
+          result: { reportMarkdown: "first result" },
+          run: firstRun,
+        }}
+      />
+    );
+
+    expect(view.queryByText("wfr_first")).toBeNull();
+    fireEvent.click(getWorkflowHeader(view));
+    expect(view.getByText("wfr_first")).toBeTruthy();
+    expect(JSON.parse(getStoredPrefs() ?? "{}")).toEqual({ tools: { workflow_run: true } });
+
+    view.rerender(
+      withStickyToolProviders(
+        <WorkflowRunToolCall
+          args={{
+            name: "deep-research",
+            args: { topic: "workflow cards" },
+            run_in_background: false,
+          }}
+          status="completed"
+          result={{
+            status: "completed",
+            runId: secondRun.id,
+            result: { reportMarkdown: "second result" },
+            run: secondRun,
+          }}
+        />
+      )
+    );
+
+    expect(view.queryByText("wfr_second")).toBeNull();
+    expect(view.queryByText("second result")).toBeNull();
+    expect(JSON.parse(getStoredPrefs() ?? "{}")).toEqual({ tools: { workflow_run: true } });
   });
 
   test("renders workflow run phases, linked task ids, and final report", async () => {

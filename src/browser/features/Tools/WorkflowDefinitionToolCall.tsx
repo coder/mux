@@ -27,7 +27,7 @@ import {
   getStatusDisplay,
   isToolErrorResult,
   type ToolStatus,
-  useToolExpansion,
+  useAutoCollapsingToolExpansion,
 } from "./Shared/toolUtils";
 import { HighlightedCode, JsonHighlight } from "./Shared/HighlightedCode";
 
@@ -225,23 +225,13 @@ function isWorkflowReadSuccessResult(
 const AUTO_COLLAPSE_WORKFLOW_LOOKUP_STATUSES = new Set<ToolStatus>(["completed"]);
 
 export function useAutoCollapsingWorkflowLookup(status: ToolStatus) {
-  const { expanded, setExpanded, toggleExpanded } = useToolExpansion(true);
-  const userToggledExpansionRef = React.useRef(false);
-
-  const toggleAutoCollapsingExpanded = () => {
-    userToggledExpansionRef.current = true;
-    toggleExpanded();
-  };
-
-  React.useLayoutEffect(() => {
-    // Completed workflow lookup/action payloads can be bulky; collapse them once
-    // the result arrives for transcript scanability, but keep explicit user intent.
-    if (AUTO_COLLAPSE_WORKFLOW_LOOKUP_STATUSES.has(status) && !userToggledExpansionRef.current) {
-      setExpanded(false);
-    }
-  }, [status, setExpanded]);
-
-  return { expanded, toggleExpanded: toggleAutoCollapsingExpanded };
+  // Completed workflow lookup/action payloads can be bulky, so collapse them for
+  // transcript scanability without writing that automatic presentation choice to
+  // the user's sticky expansion preference. Header clicks still persist intent.
+  return useAutoCollapsingToolExpansion(true, {
+    autoCollapsed: AUTO_COLLAPSE_WORKFLOW_LOOKUP_STATUSES.has(status),
+    resetKey: undefined,
+  });
 }
 
 export function WorkflowLoadingState() {

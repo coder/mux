@@ -32,6 +32,71 @@ export function useToolExpansion(initialExpanded = false, options?: UseStickyExp
   return useStickyExpand("tools", initialExpanded, options);
 }
 
+interface AutoCollapsingToolExpansionOptions {
+  autoCollapsed: boolean;
+  resetKey: string | undefined;
+}
+
+/**
+ * Tool expansion with a non-persisted presentation-only auto-collapse layer.
+ * Header toggles still go through useToolExpansion and are the only path that
+ * updates the sticky per-tool preference.
+ */
+export function useAutoCollapsingToolExpansion(
+  initialExpanded: boolean,
+  options: AutoCollapsingToolExpansionOptions
+) {
+  const { expanded: stickyExpanded, setExpanded: setStickyExpanded } =
+    useToolExpansion(initialExpanded);
+  const [userInteraction, setUserInteraction] = React.useState<{
+    key: string | undefined;
+    interacted: boolean;
+  }>(() => ({ key: options.resetKey, interacted: false }));
+  const [localExpanded, setLocalExpandedState] = React.useState<{
+    key: string | undefined;
+    expanded: boolean;
+  } | null>(null);
+  const localExpandedValue =
+    localExpanded != null && localExpanded.key === options.resetKey ? localExpanded.expanded : null;
+  const userInteracted =
+    localExpandedValue != null ||
+    (userInteraction.interacted && userInteraction.key === options.resetKey);
+  const expanded =
+    options.autoCollapsed && !userInteracted ? false : (localExpandedValue ?? stickyExpanded);
+
+  const expandedRef = React.useRef(expanded);
+  expandedRef.current = expanded;
+  const resetKeyRef = React.useRef(options.resetKey);
+  resetKeyRef.current = options.resetKey;
+
+  // These callbacks intentionally keep stable identities: WorkflowRunToolCall registers
+  // command-palette actions from an effect and relies on the expansion setter not changing
+  // unless the underlying sticky setter changes.
+  const markInteracted = React.useCallback((): void => {
+    setUserInteraction({ key: resetKeyRef.current, interacted: true });
+  }, []);
+  const setExpanded = React.useCallback(
+    (next: boolean): void => {
+      markInteracted();
+      setLocalExpandedState(null);
+      setStickyExpanded(next);
+    },
+    [markInteracted, setStickyExpanded]
+  );
+  const setLocalExpanded = React.useCallback(
+    (next: boolean): void => {
+      markInteracted();
+      setLocalExpandedState({ key: resetKeyRef.current, expanded: next });
+    },
+    [markInteracted]
+  );
+  const toggleExpanded = React.useCallback(() => {
+    setExpanded(!expandedRef.current);
+  }, [setExpanded]);
+
+  return { expanded, setExpanded, setLocalExpanded, toggleExpanded, markInteracted };
+}
+
 /**
  * Get display element for tool status
  */

@@ -6,6 +6,9 @@ import type React from "react";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
+import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
+import { ToolNameProvider } from "@/browser/features/Messages/ToolNameContext";
+import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { WorkflowListToolCall, WorkflowReadToolCall } from "./WorkflowDefinitionToolCall";
 
 const source = `export default function workflow({ args, agent }) {
@@ -13,12 +16,30 @@ const source = `export default function workflow({ args, agent }) {
   return agent({ id: "review", prompt: "Review " + topic });
 }`;
 
+const TEST_WORKSPACE_ID = "workflow-definition-tool-test";
+
 function renderWithTooltip(ui: React.ReactElement) {
   return render(
     <ThemeProvider forcedTheme="dark">
       <TooltipProvider>{ui}</TooltipProvider>
     </ThemeProvider>
   );
+}
+
+function renderWithStickyToolProviders(ui: React.ReactElement, toolName: string) {
+  return render(
+    <ThemeProvider forcedTheme="dark">
+      <MessageListProvider value={{ workspaceId: TEST_WORKSPACE_ID, latestMessageId: null }}>
+        <ToolNameProvider toolName={toolName}>
+          <TooltipProvider>{ui}</TooltipProvider>
+        </ToolNameProvider>
+      </MessageListProvider>
+    </ThemeProvider>
+  );
+}
+
+function getStoredPrefs(): string | null {
+  return globalThis.localStorage.getItem(getAutoExpandPrefsKey(TEST_WORKSPACE_ID));
 }
 
 function expectWorkflowHeaderBadge(view: ReturnType<typeof render>, label: string) {
@@ -52,6 +73,38 @@ describe("WorkflowDefinitionToolCall", () => {
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.localStorage = originalLocalStorage;
+  });
+
+  test("auto-collapses completed workflow_read without mutating sticky preferences", () => {
+    const completedView = renderWithStickyToolProviders(
+      <WorkflowReadToolCall
+        args={{ name: "deep-research" }}
+        status="completed"
+        result={{
+          descriptor: {
+            name: "deep-research",
+            description: "Deep research",
+            scope: "built-in",
+            executable: true,
+          },
+          source,
+        }}
+      />,
+      "workflow_read"
+    );
+
+    expect(completedView.queryByText("Deep research")).toBeNull();
+    expect(completedView.container.textContent).not.toContain("return agent");
+    expect(getStoredPrefs()).toBeNull();
+    completedView.unmount();
+
+    const executingView = renderWithStickyToolProviders(
+      <WorkflowReadToolCall args={{ name: "deep-research" }} status="executing" />,
+      "workflow_read"
+    );
+
+    expect(executingView.container.textContent).toContain("Waiting for workflow result");
+    expect(getStoredPrefs()).toBeNull();
   });
 
   test("renders workflow_read metadata and highlighted source", () => {
