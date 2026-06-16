@@ -107,6 +107,27 @@ describe("WorkflowDefinitionStore", () => {
     );
   });
 
+  test("discovers workflows with legacy description headers", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions-legacy-description");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(projectRoot, "legacy.js"),
+      "// description: Legacy project workflow\nexport default function workflow() { return { reportMarkdown: 'ok' }; }\n",
+      "utf-8"
+    );
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    const definitions = await store.listDefinitions({ projectTrusted: true });
+    const definition = await store.readDefinition("legacy", { projectTrusted: true });
+
+    expect(definitions.find((item) => item.name === "legacy")?.description).toBe(
+      "Legacy project workflow"
+    );
+    expect(definition.descriptor.description).toBe("Legacy project workflow");
+  });
+
   test("omits project-local workflows when the project is not trusted", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

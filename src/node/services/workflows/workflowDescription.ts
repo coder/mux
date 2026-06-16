@@ -18,17 +18,36 @@ export function parseWorkflowDescription(source: string): string | null {
   try {
     rawMetadata = parseStaticWorkflowMetadataLiteral(source);
   } catch {
-    return null;
+    return parseLegacyWorkflowDescription(source);
   }
-  if (rawMetadata == null || typeof rawMetadata !== "object" || Array.isArray(rawMetadata)) {
-    return null;
+  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
+    const description = normalizeDescription(
+      (rawMetadata as { description?: unknown }).description
+    );
+    if (description != null) return description;
   }
-  const description = (rawMetadata as { description?: unknown }).description;
-  if (typeof description !== "string") return null;
-  const trimmed = description.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return parseLegacyWorkflowDescription(source);
 }
 
 export function replaceWorkflowDescription(source: string, description: string): string | null {
-  return replaceStaticMetadataStringProperty(source, "description", description);
+  return (
+    replaceStaticMetadataStringProperty(source, "description", description) ??
+    replaceLegacyWorkflowDescription(source, description)
+  );
+}
+
+function parseLegacyWorkflowDescription(source: string): string | null {
+  const match = /^\s*\/\/\s*description:\s*(.*)$/mu.exec(source);
+  return normalizeDescription(match?.[1]);
+}
+
+function replaceLegacyWorkflowDescription(source: string, description: string): string | null {
+  if (!/^\s*\/\/\s*description:/mu.test(source)) return null;
+  return source.replace(/^\s*\/\/\s*description:.*$/mu, `// description: ${description}`);
+}
+
+function normalizeDescription(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
