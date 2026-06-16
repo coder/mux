@@ -2,16 +2,10 @@ import { tool } from "ai";
 import assert from "@/common/utils/assert";
 import type { ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals";
+import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import { resolveModelGoalSetIntent } from "@/common/utils/goals/resolveGoalSetIntent";
-import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
+import type { GoalRecordV1 } from "@/common/types/goal";
 import { formatGoalSetError } from "./goalErrors";
-
-const REPLACE_GUARDED_STATUSES: ReadonlySet<GoalStatus> = new Set([
-  "active",
-  "budget_limited",
-  "paused",
-]);
 
 function assertResolvedModelGoalBounds(goal: Pick<GoalRecordV1, "budgetCents" | "turnCap">): void {
   assert(
@@ -24,28 +18,6 @@ function assertResolvedModelGoalBounds(goal: Pick<GoalRecordV1, "budgetCents" | 
   );
 }
 
-function assertReplacementAllowed(input: {
-  current: GoalRecordV1 | null;
-  replaceExistingGoal?: boolean | null;
-  expectedGoalId?: string | null;
-}): void {
-  if (!input.current || !REPLACE_GUARDED_STATUSES.has(input.current.status)) {
-    return;
-  }
-
-  if (input.replaceExistingGoal !== true) {
-    throw new Error(
-      "set_goal would replace the current active goal. Continue or complete the existing goal, or ask the user before replacing it. If the user explicitly asked to replace it, call get_goal and retry with replaceExistingGoal=true and expectedGoalId."
-    );
-  }
-
-  if (input.expectedGoalId !== input.current.goalId) {
-    throw new Error(
-      `set_goal replacement requires expectedGoalId to match the current goalId from get_goal (${input.current.goalId}).`
-    );
-  }
-}
-
 export const createSetGoalTool: ToolFactory = (config) => {
   return tool({
     description: TOOL_DEFINITIONS.set_goal.description,
@@ -56,7 +28,7 @@ export const createSetGoalTool: ToolFactory = (config) => {
 
       const trimmedObjective = objective.trim();
       assert(trimmedObjective.length > 0, "set_goal requires a non-empty objective");
-      const defaults = normalizeGoalDefaults(config.goalDefaults ?? DEFAULT_GOAL_DEFAULTS);
+      const defaults = config.goalDefaults ?? DEFAULT_GOAL_DEFAULTS;
       const resolved = resolveModelGoalSetIntent(
         {
           objective: trimmedObjective,
@@ -74,9 +46,6 @@ export const createSetGoalTool: ToolFactory = (config) => {
         );
       }
 
-      const current = await config.goalService.getGoal(config.workspaceId);
-      assertReplacementAllowed({ current, replaceExistingGoal, expectedGoalId });
-
       const result = await config.goalService.setGoal({
         workspaceId: config.workspaceId,
         objective: resolved.objective,
@@ -84,6 +53,10 @@ export const createSetGoalTool: ToolFactory = (config) => {
         budgetCents: resolved.budgetCents,
         turnCap: resolved.turnCap,
         initiator: "model",
+        replacementGuard: {
+          replaceExistingGoal: replaceExistingGoal ?? null,
+          expectedGoalId: expectedGoalId ?? null,
+        },
         ...(expectedGoalId != null ? { expectedGoalId } : {}),
       });
       if (!result.success) {

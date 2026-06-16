@@ -246,6 +246,55 @@ describe("goal tools", () => {
     expect(error.message).toContain(existing.goalId);
   });
 
+  test("set_goal blocks replacing an active goal without expectedGoalId", async () => {
+    await setGoalOk(goalService, { workspaceId, objective: "Existing" });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const error = await expectToolError(() =>
+      Promise.resolve(
+        tool.execute!({ objective: "Replacement", replaceExistingGoal: true }, mockToolCallOptions)
+      )
+    );
+
+    expect(error.message).toContain("replacement requires expectedGoalId");
+  });
+
+  test("set_goal checks replacement intent against the lock-bound current goal", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Existing" });
+    interface GetGoalOverride {
+      getGoal: WorkspaceGoalService["getGoal"];
+    }
+    const serviceAccess = goalService as GetGoalOverride;
+    const originalGetGoal = serviceAccess.getGoal;
+    const staleGetGoal = mock(() => Promise.resolve(null));
+    serviceAccess.getGoal = staleGetGoal;
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    try {
+      const error = await expectToolError(() =>
+        Promise.resolve(tool.execute!({ objective: "Replacement" }, mockToolCallOptions))
+      );
+      expect(error.message).toContain("would replace the current active goal");
+    } finally {
+      serviceAccess.getGoal = originalGetGoal;
+    }
+
+    expect(staleGetGoal).not.toHaveBeenCalled();
+    expect((await goalService.getGoal(workspaceId))?.goalId).toBe(existing.goalId);
+  });
+
   test("set_goal replaces an active goal with matching expectedGoalId", async () => {
     const existing = await setGoalOk(goalService, { workspaceId, objective: "Existing" });
     const tool = createSetGoalTool({
