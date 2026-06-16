@@ -27,6 +27,7 @@ import {
   type WorkflowRunnerRunOptions,
   type WorkflowTaskAdapter,
 } from "./WorkflowRunner";
+import { normalizeWorkflowArgsForSource } from "./workflowArgs";
 import { MAX_NESTED_WORKFLOW_DEPTH } from "./nestedWorkflowRuns";
 
 export interface WorkflowBackgroundRunTerminalEvent {
@@ -702,12 +703,13 @@ export class WorkflowService {
       "WorkflowService.createNamedWorkflowRun: generated run id is required"
     );
 
+    const normalized = normalizeWorkflowArgsForSource(definition.source, input.args);
     return await this.runStore.createRun({
       id: runId,
       workspaceId: input.workspaceId,
       definition: definition.descriptor,
       definitionSource: definition.source,
-      args: input.args,
+      args: normalized.args,
       ...(this.defaultActionCwd != null ? { defaultActionCwd: this.defaultActionCwd } : {}),
       now: this.clock?.nowIso() ?? new Date().toISOString(),
     });
@@ -1069,12 +1071,13 @@ export class WorkflowService {
     const definition = await this.definitionStore.readDefinition(input.name, {
       projectTrusted: input.projectTrusted,
     });
+    const normalized = normalizeWorkflowArgsForSource(definition.source, input.args);
     await this.runStore.createRunIfAbsent({
       id: input.childRunId,
       workspaceId: parent.workspaceId,
       definition: definition.descriptor,
       definitionSource: definition.source,
-      args: input.args,
+      args: normalized.args,
       ...(parent.defaultActionCwd != null || this.defaultActionCwd != null
         ? { defaultActionCwd: parent.defaultActionCwd ?? this.defaultActionCwd }
         : {}),

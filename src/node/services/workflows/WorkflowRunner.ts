@@ -2752,6 +2752,74 @@ function normalizeWorkflowResultForEvent(result: unknown): WorkflowResult {
   return WorkflowResultSchema.parse({ reportMarkdown });
 }
 
+const WORKFLOW_RUNTIME_STDLIB_SOURCE = String.raw`
+function __muxSchemaString() { return { type: "string" }; }
+function __muxSchemaNumber() { return { type: "number" }; }
+function __muxSchemaInteger() { return { type: "integer" }; }
+function __muxSchemaBoolean() { return { type: "boolean" }; }
+function __muxSchemaArray(items) { return { type: "array", items: items }; }
+function __muxSchemaEnum(values) { return { type: "string", enum: __muxUtilsAsArray(values) }; }
+function __muxSchemaObject(properties, options) {
+  var keys = Object.keys(properties || {});
+  var schema = { type: "object", required: keys, properties: properties || {} };
+  if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
+    schema.additionalProperties = options.additionalProperties;
+  }
+  return schema;
+}
+function __muxUtilsAsArray(value) { return Array.isArray(value) ? value : []; }
+function __muxUtilsOptionalString(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+function __muxUtilsBoundedInt(value, fallback, min, max) {
+  var number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isInteger(number)) return fallback;
+  var lower = Number.isInteger(min) ? min : number;
+  var upper = Number.isInteger(max) ? max : number;
+  return Math.max(lower, Math.min(number, upper));
+}
+function __muxUtilsStringList(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(function (item) {
+    return typeof item === "string" && item.trim().length > 0;
+  }).map(function (item) {
+    return item.trim();
+  });
+}
+function __muxUtilsFencedJson(value) { return "\x60\x60\x60json\n" + JSON.stringify(value, null, 2) + "\n\x60\x60\x60"; }
+function __muxUtilsCompactText(value, limit) {
+  if (typeof value !== "string") return value;
+  if (!Number.isInteger(limit) || limit < 0 || value.length <= limit) return value;
+  return value.slice(0, limit) + "\n[truncated by mux.utils.compactText after " + limit + " characters]";
+}
+function __muxUtilsMustObject(value, message) {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(message || "Expected object");
+  }
+  return value;
+}
+globalThis.mux = Object.freeze({
+  schema: Object.freeze({
+    string: __muxSchemaString,
+    number: __muxSchemaNumber,
+    integer: __muxSchemaInteger,
+    boolean: __muxSchemaBoolean,
+    array: __muxSchemaArray,
+    object: __muxSchemaObject,
+    enum: __muxSchemaEnum,
+  }),
+  utils: Object.freeze({
+    asArray: __muxUtilsAsArray,
+    optionalString: __muxUtilsOptionalString,
+    boundedInt: __muxUtilsBoundedInt,
+    stringList: __muxUtilsStringList,
+    fencedJson: __muxUtilsFencedJson,
+    compactText: __muxUtilsCompactText,
+    mustObject: __muxUtilsMustObject,
+  }),
+});
+`;
+
 function compileWorkflowSource(source: string): string {
   // Workflow definitions are evaluated as a script (not a module), so export
   // syntax must be rewritten away. Top-level named export declarations are
@@ -2813,6 +2881,7 @@ function __muxParallelWorkflows(specs, options) {
     };
   }), options, "parallelWorkflows");
 }
+${WORKFLOW_RUNTIME_STDLIB_SOURCE}
 ${compiled}
 return (async () => await __muxWorkflow({
   args: __workflowArgs(),

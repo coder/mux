@@ -308,6 +308,58 @@ describe("WorkflowActionRunner", () => {
     );
   });
 
+  test("built-in git reviewContext and preflight summarize dirty worktrees", async () => {
+    using tmp = new DisposableTempDir("workflow-action-git-review-context");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repoRoot });
+    await execFileAsync("git", ["config", "user.email", "mux@example.com"], { cwd: repoRoot });
+    await execFileAsync("git", ["config", "user.name", "Mux"], { cwd: repoRoot });
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "initial\n", "utf-8");
+    await execFileAsync("git", ["add", "tracked.txt"], { cwd: repoRoot });
+    await execFileAsync("git", ["commit", "-m", "initial"], { cwd: repoRoot });
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "changed\n", "utf-8");
+    await fs.writeFile(path.join(repoRoot, "untracked.txt"), "new\n", "utf-8");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const runner = new WorkflowActionRunner();
+    const reviewContextAction = await registry.resolveAction("git.reviewContext", {
+      projectTrusted: false,
+    });
+
+    const reviewContext = await runner.execute(reviewContextAction, {
+      input: { includeCommits: true, diffCharBudget: 10_000 },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-review"),
+    });
+    const output = expectObjectRecord(reviewContext.output);
+    const flags = expectObjectRecord(output.flags);
+    const changedFiles = expectObjectRecord(output.changedFiles);
+    const rendered = expectObjectRecord(output.rendered);
+
+    expect(flags.hasUncommittedChanges).toBe(true);
+    expect(flags.hasUntrackedChanges).toBe(true);
+    expect(changedFiles.all).toEqual(expect.arrayContaining(["tracked.txt", "untracked.txt"]));
+    expect(rendered.snapshotMarkdown).toContain("Repository status");
+
+    const preflightAction = await registry.resolveAction("git.preflight", {
+      projectTrusted: false,
+    });
+    const preflight = await runner.execute(preflightAction, {
+      input: { requireClean: true },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-preflight"),
+    });
+    const preflightOutput = expectObjectRecord(preflight.output);
+
+    expect(preflightOutput.ok).toBe(false);
+    expect(preflightOutput.reason).toContain("dirty");
+  });
+
   test("reports unsupported module syntax clearly", async () => {
     using tmp = new DisposableTempDir("workflow-action-import");
     const sourcePath = path.join(tmp.path, "import.js");

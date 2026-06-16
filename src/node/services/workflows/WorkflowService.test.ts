@@ -270,6 +270,130 @@ export default function workflow({ args, agent }) {
     expect(run.definition.scope).toBe("global");
   });
 
+  test("normalizes workflow args from static metadata and exposes mux helpers", async () => {
+    using tmp = new DisposableTempDir("workflow-service-args-schema");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const source = `// description: Args schema workflow
+export const metadata = {
+  argsSchema: {
+    type: "object",
+    required: ["target"],
+    properties: {
+      target: { type: "string", positional: true },
+      fix: { type: "boolean", default: true, negatedAliases: ["--review-only"] },
+      maxFindings: { type: "integer", default: 20, minimum: 1, maximum: 50, aliases: ["--max-findings"] },
+      mode: { type: "string", enum: ["quick", "smart"], default: "smart" },
+    },
+  },
+};
+export default function workflow({ args }) {
+  const schema = mux.schema.object({ summary: mux.schema.string() });
+  return {
+    reportMarkdown: mux.utils.fencedJson(args),
+    structuredOutput: {
+      args,
+      schema,
+      list: mux.utils.stringList([" a ", "", 2, "b"]),
+      bounded: mux.utils.boundedInt("9", 0, 1, 5),
+      compacted: mux.utils.compactText("abcdef", 3),
+    },
+  };
+}
+`;
+    await writeWorkflow(globalRoot, "args-demo", source);
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      generateRunId: () => "wfr_args_demo",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startNamedWorkflow({
+      name: "args-demo",
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: { input: '"src folder" --review-only --max-findings=3 --mode quick' },
+    });
+    const run = await runStore.getRun("wfr_args_demo");
+
+    expect(run.args).toEqual({ target: "src folder", fix: false, maxFindings: 3, mode: "quick" });
+    expect(result).toEqual({
+      runId: "wfr_args_demo",
+      status: "completed",
+      result: {
+        reportMarkdown:
+          '```json\n{\n  "target": "src folder",\n  "fix": false,\n  "maxFindings": 3,\n  "mode": "quick"\n}\n```',
+        structuredOutput: {
+          args: { target: "src folder", fix: false, maxFindings: 3, mode: "quick" },
+          schema: {
+            type: "object",
+            required: ["summary"],
+            properties: { summary: { type: "string" } },
+          },
+          list: ["a", "b"],
+          bounded: 5,
+          compacted: "abc\n[truncated by mux.utils.compactText after 3 characters]",
+        },
+      },
+    });
+  });
+
+  test("rejects invalid workflow args before creating a run", async () => {
+    using tmp = new DisposableTempDir("workflow-service-args-schema-invalid");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await writeWorkflow(
+      globalRoot,
+      "args-invalid",
+      `// description: Args schema workflow
+export const metadata = {
+  argsSchema: {
+    type: "object",
+    properties: { maxFindings: { type: "integer", minimum: 1, aliases: ["--max-findings"] } },
+  },
+};
+export default function workflow() { return { reportMarkdown: "should not run" }; }
+`
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      generateRunId: () => "wfr_args_invalid",
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.startNamedWorkflow({
+        name: "args-invalid",
+        workspaceId: "workspace-1",
+        projectTrusted: true,
+        args: { input: "--max-findings 0" },
+      })
+    ).rejects.toThrow("Workflow argument maxFindings must be >= 1");
+    await expect(runStore.getRun("wfr_args_invalid")).rejects.toThrow(
+      /ENOENT|Workflow run not found/
+    );
+  });
+
   test("runs a nested workflow through action.workflows.start and reuses the child on replay", async () => {
     using tmp = new DisposableTempDir("workflow-service-nested");
     const workspaceRoot = path.join(tmp.path, "project");

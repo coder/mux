@@ -1106,9 +1106,13 @@ function isTopLevelStaticMatch(maskedSource: string, matchIndex: number): boolea
 const STATIC_METADATA_ERROR =
   "Workflow action metadata must be a static object literal using JSON-compatible values";
 
-function parseStaticWorkflowActionMetadata(source: string): unknown {
+export function parseStaticWorkflowMetadataLiteral(source: string): unknown {
   const literal = extractStaticMetadataLiteral(source);
-  return normalizeStaticWorkflowActionMetadata(new StaticActionLiteralParser(literal).parseValue());
+  return new StaticActionLiteralParser(literal).parseValue();
+}
+
+function parseStaticWorkflowActionMetadata(source: string): unknown {
+  return normalizeStaticWorkflowActionMetadata(parseStaticWorkflowMetadataLiteral(source));
 }
 
 function extractStaticMetadataLiteral(source: string): string {

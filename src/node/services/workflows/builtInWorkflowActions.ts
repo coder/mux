@@ -315,6 +315,368 @@ module.exports.execute = async function (rawInput, ctx) {
 };
 `;
 
+const GIT_REVIEW_CONTEXT_SOURCE = String.raw`
+module.exports.metadata = {
+  version: 1,
+  description: "Return a compact review-ready Git context snapshot",
+  effect: "read",
+  inputSchema: { type: "object" },
+  outputSchema: { type: "object" },
+  permissions: [{ kind: "command", command: "git status" }, { kind: "command", command: "git diff" }, { kind: "command", command: "git log" }, { kind: "command", command: "git ls-files" }],
+  timeoutMs: 10000,
+};
+
+${GIT_SHARED_HELPERS}
+
+const DEFAULT_DIFF_CHAR_BUDGET = 60000;
+const DEFAULT_METADATA_CHAR_BUDGET = 20000;
+const DIFF_FIELDS = ["branch", "staged", "unstaged"];
+
+function boundedInt(value, fallback, min, max) {
+  if (!Number.isInteger(value)) return fallback;
+  return Math.max(min, Math.min(value, max));
+}
+
+function parseBranchHeader(line) {
+  let branchText = line.slice(3);
+  let ahead = 0;
+  let behind = 0;
+  const trackingMatch = branchText.match(/ \[(.+)\]$/);
+  if (trackingMatch != null) {
+    branchText = branchText.slice(0, -trackingMatch[0].length);
+    for (const part of trackingMatch[1].split(", ")) {
+      const aheadMatch = part.match(/^ahead (\d+)$/);
+      const behindMatch = part.match(/^behind (\d+)$/);
+      if (aheadMatch != null) ahead = Number(aheadMatch[1]);
+      if (behindMatch != null) behind = Number(behindMatch[1]);
+    }
+  }
+  const [rawBranch, upstream] = branchText.split("...");
+  const branch = rawBranch.replace(/^No commits yet on /, "");
+  return { branch, upstream: upstream || null, ahead, behind };
+}
+
+function parseStatusLine(line) {
+  const index = line[0] || " ";
+  const worktree = line[1] || " ";
+  const rawPath = line.slice(3);
+  const renameParts = rawPath.split(" -> ");
+  return {
+    status: (index + worktree).trim(),
+    index,
+    worktree,
+    path: renameParts[renameParts.length - 1],
+    oldPath: renameParts.length > 1 ? renameParts[0] : undefined,
+  };
+}
+
+async function readStatus(ctx, input) {
+  const includeIgnored = input.includeIgnored === true;
+  const requestedHead = optionalString(input.head) ?? "HEAD";
+  const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
+  const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
+  const requestedHeadRef = await tryGit(ctx, ["rev-parse", "--symbolic-full-name", "--verify", requestedHead]);
+  const stdout = await runGit(ctx, [
+    "status",
+    "--porcelain=v1",
+    "-b",
+    "-uall",
+    includeIgnored ? "--ignored=traditional" : "--ignored=no",
+    "--ahead-behind",
+  ]);
+  const lines = stdout.split(/\r?\n/).filter(Boolean);
+  const header = lines[0]?.startsWith("## ") ? parseBranchHeader(lines[0]) : { branch: null, upstream: null, ahead: 0, behind: 0 };
+  const staged = [];
+  const unstaged = [];
+  const untracked = [];
+  const ignored = [];
+  for (const line of lines.slice(header.branch == null && lines[0]?.startsWith("## ") !== true ? 0 : 1)) {
+    const file = parseStatusLine(line);
+    if (file.index === "?" && file.worktree === "?") {
+      untracked.push(file.path);
+      continue;
+    }
+    if (file.index === "!" && file.worktree === "!") {
+      ignored.push(file.path);
+      continue;
+    }
+    if (file.index !== " " && file.index !== "?") staged.push(file);
+    if (file.worktree !== " " && file.worktree !== "?") unstaged.push(file);
+  }
+  return {
+    ...header,
+    headSha,
+    requestedHead,
+    requestedHeadSha,
+    requestedHeadRef,
+    clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+    staged,
+    unstaged,
+    untracked,
+    ignored,
+  };
+}
+
+async function readGitReviewContext(ctx, input) {
+  const head = optionalString(input.head) ?? "HEAD";
+  const base = await tryResolveBase(ctx, input);
+  const mergeBase = base == null ? null : await resolveMergeBase(ctx, base, head);
+  const stagedFiles = parseNameStatus(await runGit(ctx, ["diff", "--name-status", "--staged"]));
+  const unstagedFiles = parseNameStatus(await runGit(ctx, ["diff", "--name-status"]));
+  const untrackedOutput = await runGit(ctx, ["ls-files", "--others", "--exclude-standard"]);
+  const untracked = untrackedOutput.length === 0 ? [] : untrackedOutput.split(/\r?\n/).filter(Boolean);
+  const branchFiles = mergeBase == null ? [] : parseNameStatus(await runGit(ctx, ["diff", "--name-status", mergeBase + ".." + head]));
+  const stagedDiff = await captureGit(ctx, ["diff", "--staged"], [0]);
+  const unstagedDiff = await captureGit(ctx, ["diff"], [0]);
+  const branchDiff = mergeBase == null ? { text: "", truncated: false } : await captureGit(ctx, ["diff", mergeBase + ".." + head], [0]);
+  const stagedStat = await runGit(ctx, ["diff", "--stat", "--staged"]);
+  const unstagedStat = await runGit(ctx, ["diff", "--stat"]);
+  const branchStat = mergeBase == null ? "" : await runGit(ctx, ["diff", "--stat", mergeBase + ".." + head]);
+  const commits = input.includeCommits === true && mergeBase != null
+    ? await readCommits(ctx, mergeBase, head, boundedInt(input.commitLimit ?? input.commitsLimit, 20, 1, 100))
+    : [];
+  return {
+    base,
+    head,
+    mergeBase,
+    changedFiles: { base, head, mergeBase, branch: branchFiles, staged: stagedFiles, unstaged: unstagedFiles, untracked },
+    diffStat: { base, head, mergeBase, branch: branchStat, staged: stagedStat, unstaged: unstagedStat },
+    diff: {
+      base,
+      head,
+      mergeBase,
+      branch: branchDiff.text,
+      staged: stagedDiff.text,
+      unstaged: unstagedDiff.text,
+      truncated: { branch: branchDiff.truncated, staged: stagedDiff.truncated, unstaged: unstagedDiff.truncated },
+    },
+    commits: { base, head, mergeBase, commits, count: commits.length },
+  };
+}
+
+async function readCommits(ctx, mergeBase, head, limit) {
+  const stdout = await runGit(ctx, ["log", "--max-count=" + String(limit), "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e", mergeBase + ".." + head]);
+  return stdout.split("\x1e").map((record) => record.trim()).filter((record) => record.length > 0).map((record) => {
+    const [hash, shortHash, authorName, authorEmail, authoredAt, subject] = record.split("\x1f");
+    return { hash, shortHash, authorName, authorEmail, authoredAt, subject };
+  });
+}
+
+function allChangedFiles(changedFiles, status) {
+  const files = [];
+  addFileEntries(files, changedFiles.branch);
+  addFileEntries(files, changedFiles.staged);
+  addFileEntries(files, changedFiles.unstaged);
+  addFilePaths(files, changedFiles.untracked);
+  addFileEntries(files, status && status.staged);
+  addFileEntries(files, status && status.unstaged);
+  addFilePaths(files, status && status.untracked);
+  return files;
+}
+
+function addFileEntries(files, entries) {
+  if (!Array.isArray(entries)) return;
+  for (const entry of entries) {
+    if (entry && typeof entry === "object") {
+      addFilePath(files, entry.path);
+      addFilePath(files, entry.oldPath);
+    }
+  }
+}
+
+function addFilePaths(files, paths) {
+  if (!Array.isArray(paths)) return;
+  for (const path of paths) addFilePath(files, path);
+}
+
+function addFilePath(files, path) {
+  if (typeof path !== "string") return;
+  const trimmed = path.trim();
+  if (trimmed.length === 0 || files.includes(trimmed)) return;
+  files.push(trimmed);
+}
+
+function compactDiff(diff, budget) {
+  const compacted = { base: diff.base, head: diff.head, mergeBase: diff.mergeBase, truncated: diff.truncated, workflowBudgetChars: budget, workflowCompactions: [] };
+  let remaining = budget;
+  for (const field of DIFF_FIELDS) {
+    const value = diff[field];
+    if (typeof value !== "string") {
+      compacted[field] = value;
+      continue;
+    }
+    const included = Math.max(0, Math.min(value.length, remaining));
+    compacted[field] = included === value.length ? value : value.slice(0, included) + "\n\n[Workflow prompt budget omitted the rest of the " + field + " diff.]";
+    remaining -= included;
+    if (included < value.length) compacted.workflowCompactions.push({ field, originalChars: value.length, includedChars: included });
+  }
+  return compacted;
+}
+
+function compactText(value, limit) {
+  if (typeof value !== "string" || value.length <= limit) return value;
+  return value.slice(0, limit) + "\n\n[Workflow metadata budget omitted " + (value.length - limit) + " chars.]";
+}
+
+function renderSnapshot(context, files, failures) {
+  const sections = [];
+  const status = context.status || {};
+  sections.push("Repository status: branch " + (status.branch || "unknown") + (status.upstream ? " tracking " + status.upstream : "") + "; staged " + arrayLength(status.staged) + "; unstaged " + arrayLength(status.unstaged) + "; untracked " + arrayLength(status.untracked));
+  if (files.length > 0) sections.push("Changed files: " + files.join(", "));
+  if (context.commits && Array.isArray(context.commits.commits) && context.commits.commits.length > 0) {
+    sections.push("Commits since " + (context.commits.base || "unknown") + ":\n" + context.commits.commits.map((commit) => "- " + (commit.shortHash || "unknown") + " " + (commit.subject || "")).join("\n"));
+  }
+  const statSections = [];
+  if (hasText(context.diffStat && context.diffStat.branch)) statSections.push("Branch diff stat:\n" + context.diffStat.branch);
+  if (hasText(context.diffStat && context.diffStat.staged)) statSections.push("Staged diff stat:\n" + context.diffStat.staged);
+  if (hasText(context.diffStat && context.diffStat.unstaged)) statSections.push("Unstaged diff stat:\n" + context.diffStat.unstaged);
+  if (statSections.length > 0) sections.push(statSections.join("\n\n"));
+  if (arrayLength(status.untracked) > 0) sections.push("Untracked file contents are not included in the automatic diff snapshot; only their paths are visible.");
+  if (failures.length > 0) sections.push("Git context warnings:\n" + failures.map((failure) => "- " + failure.action + ": " + failure.error).join("\n"));
+  return sections.join("\n\n");
+}
+
+function renderDiff(diff) {
+  const parts = [];
+  if (hasText(diff.branch)) parts.push("Branch diff (" + (diff.base || "unknown") + ".." + (diff.head || "unknown") + ")\n" + diff.branch);
+  if (hasText(diff.staged)) parts.push("Staged diff\n" + diff.staged);
+  if (hasText(diff.unstaged)) parts.push("Unstaged diff\n" + diff.unstaged);
+  return parts.join("\n\n");
+}
+
+function hasText(value) { return typeof value === "string" && value.trim().length > 0; }
+function arrayLength(value) { return Array.isArray(value) ? value.length : 0; }
+
+module.exports.execute = async function (rawInput, ctx) {
+  const input = inputObject(rawInput);
+  const failures = [];
+  let status = null;
+  let context = null;
+  try {
+    status = await readStatus(ctx, input);
+  } catch (error) {
+    failures.push({ action: "git.status", error: String((error && error.message) || error) });
+  }
+  try {
+    context = await readGitReviewContext(ctx, input);
+  } catch (error) {
+    failures.push({ action: "git.reviewContext", error: String((error && error.message) || error) });
+    context = { base: null, head: optionalString(input.head) ?? "HEAD", mergeBase: null, changedFiles: { branch: [], staged: [], unstaged: [], untracked: [] }, diffStat: { branch: "", staged: "", unstaged: "" }, diff: { branch: "", staged: "", unstaged: "", truncated: { branch: false, staged: false, unstaged: false } }, commits: { commits: [], count: 0 } };
+  }
+  const files = allChangedFiles(context.changedFiles, status);
+  context.changedFiles.all = files;
+  context.status = status;
+  context.failures = failures;
+  const compactedDiff = compactDiff(context.diff, boundedInt(input.diffCharBudget, DEFAULT_DIFF_CHAR_BUDGET, 0, 500000));
+  const flags = {
+    hasChanges: files.length > 0 || hasText(context.diff.branch) || hasText(context.diff.staged) || hasText(context.diff.unstaged),
+    hasUncommittedChanges: arrayLength(status && status.staged) > 0 || arrayLength(status && status.unstaged) > 0 || arrayLength(status && status.untracked) > 0,
+    hasUntrackedChanges: arrayLength(status && status.untracked) > 0 || arrayLength(context.changedFiles.untracked) > 0,
+    hasOnlyUntrackedChanges: files.length > 0 && arrayLength(context.changedFiles.branch) === 0 && arrayLength(context.changedFiles.staged) === 0 && arrayLength(context.changedFiles.unstaged) === 0 && !hasText(context.diff.branch) && !hasText(context.diff.staged) && !hasText(context.diff.unstaged),
+    clean: Boolean(status && status.clean),
+  };
+  const snapshotMarkdown = compactText(renderSnapshot(context, files, failures), boundedInt(input.metadataCharBudget, DEFAULT_METADATA_CHAR_BUDGET, 0, 500000));
+  return Object.assign({}, context, {
+    diff: compactedDiff,
+    flags,
+    rendered: {
+      snapshotMarkdown,
+      diffMarkdown: renderDiff(compactedDiff),
+      compactJson: JSON.stringify({ status, changedFiles: context.changedFiles, diffStat: context.diffStat, failures, flags }, null, 2),
+    },
+    compactions: compactedDiff.workflowCompactions,
+  });
+};
+`;
+
+const GIT_PREFLIGHT_SOURCE = String.raw`
+module.exports.metadata = {
+  version: 1,
+  description: "Validate that the current Git checkout is safe for workflow patch application",
+  effect: "read",
+  inputSchema: { type: "object" },
+  outputSchema: { type: "object" },
+  permissions: [{ kind: "command", command: "git status" }, { kind: "command", command: "git rev-parse" }],
+  timeoutMs: 10000,
+};
+
+${GIT_SHARED_HELPERS}
+
+function parseBranchHeader(line) {
+  let branchText = line.slice(3);
+  let ahead = 0;
+  let behind = 0;
+  const trackingMatch = branchText.match(/ \[(.+)\]$/);
+  if (trackingMatch != null) {
+    branchText = branchText.slice(0, -trackingMatch[0].length);
+    for (const part of trackingMatch[1].split(", ")) {
+      const aheadMatch = part.match(/^ahead (\d+)$/);
+      const behindMatch = part.match(/^behind (\d+)$/);
+      if (aheadMatch != null) ahead = Number(aheadMatch[1]);
+      if (behindMatch != null) behind = Number(behindMatch[1]);
+    }
+  }
+  const [rawBranch, upstream] = branchText.split("...");
+  const branch = rawBranch.replace(/^No commits yet on /, "");
+  return { branch, upstream: upstream || null, ahead, behind };
+}
+
+function parseStatusLine(line) {
+  const index = line[0] || " ";
+  const worktree = line[1] || " ";
+  const rawPath = line.slice(3);
+  const renameParts = rawPath.split(" -> ");
+  return { status: (index + worktree).trim(), index, worktree, path: renameParts[renameParts.length - 1], oldPath: renameParts.length > 1 ? renameParts[0] : undefined };
+}
+
+async function readStatus(ctx, input) {
+  const requestedHead = optionalString(input.head) ?? "HEAD";
+  const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
+  const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
+  const requestedHeadRef = await tryGit(ctx, ["rev-parse", "--symbolic-full-name", "--verify", requestedHead]);
+  const stdout = await runGit(ctx, ["status", "--porcelain=v1", "-b", "-uall", "--ignored=no", "--ahead-behind"]);
+  const lines = stdout.split(/\r?\n/).filter(Boolean);
+  const header = lines[0]?.startsWith("## ") ? parseBranchHeader(lines[0]) : { branch: null, upstream: null, ahead: 0, behind: 0 };
+  const staged = [];
+  const unstaged = [];
+  const untracked = [];
+  for (const line of lines.slice(header.branch == null && lines[0]?.startsWith("## ") !== true ? 0 : 1)) {
+    const file = parseStatusLine(line);
+    if (file.index === "?" && file.worktree === "?") {
+      untracked.push(file.path);
+      continue;
+    }
+    if (file.index !== " " && file.index !== "?") staged.push(file);
+    if (file.worktree !== " " && file.worktree !== "?") unstaged.push(file);
+  }
+  return { ...header, headSha, requestedHead, requestedHeadSha, requestedHeadRef, clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0, staged, unstaged, untracked };
+}
+
+function normalizedBranch(branch) {
+  if (typeof branch !== "string") return "";
+  const trimmed = branch.trim();
+  return trimmed && trimmed !== "HEAD (no branch)" ? trimmed : "";
+}
+
+module.exports.execute = async function (rawInput, ctx) {
+  const input = inputObject(rawInput);
+  const status = await readStatus(ctx, input);
+  const expectedBranch = optionalString(input.expectedBranch);
+  const expectedHeadSha = optionalString(input.expectedHeadSha);
+  const requireClean = input.requireClean !== false && input.allowDirty !== true;
+  if (expectedBranch && normalizedBranch(status.branch) !== expectedBranch) {
+    return { ok: false, reason: "Current branch " + (status.branch || "unknown") + " does not match expected branch " + expectedBranch, status, expectedBranch, expectedHeadSha };
+  }
+  if (expectedHeadSha && status.headSha !== expectedHeadSha) {
+    return { ok: false, reason: "Current HEAD " + (status.headSha || "unknown") + " does not match expected HEAD " + expectedHeadSha, status, expectedBranch, expectedHeadSha };
+  }
+  if (requireClean && !status.clean) {
+    return { ok: false, reason: "Current worktree is dirty; commit or stash changes before applying workflow patches", status, expectedBranch, expectedHeadSha };
+  }
+  return { ok: true, reason: "", status, expectedBranch, expectedHeadSha };
+};
+`;
+
 const SECURITY_SHARED_HELPERS = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -910,6 +1272,8 @@ const STATIC_BUILT_IN_WORKFLOW_ACTION_SOURCES: Record<string, string> = {
   "git.diff": GIT_DIFF_SOURCE,
   "git.diffStat": GIT_DIFF_STAT_SOURCE,
   "git.changedFiles": GIT_CHANGED_FILES_SOURCE,
+  "git.reviewContext": GIT_REVIEW_CONTEXT_SOURCE,
+  "git.preflight": GIT_PREFLIGHT_SOURCE,
   "security.loadState": SECURITY_LOAD_STATE_SOURCE,
   "security.hashFiles": SECURITY_HASH_FILES_SOURCE,
   "security.matchFindings": SECURITY_MATCH_FINDINGS_SOURCE,
