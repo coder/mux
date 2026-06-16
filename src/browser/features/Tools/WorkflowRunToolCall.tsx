@@ -1097,10 +1097,6 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     resetKey: runId,
   });
 
-  const toggleWorkflowExpanded = () => {
-    toggleExpanded();
-  };
-
   const [actionError, setActionError] = useState<string | null>(null);
   const [promotedDefinition, setPromotedDefinition] = useState<WorkflowDefinitionDescriptor | null>(
     null
@@ -1461,7 +1457,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
 
   return (
     <ToolContainer expanded={expanded}>
-      <ToolHeader onClick={toggleWorkflowExpanded}>
+      <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName={toolName} />
         <WorkflowKindBadge />
