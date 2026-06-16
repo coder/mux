@@ -191,6 +191,9 @@ jobs:
           fi
 
           isolated_unit_tests=(
+            # QuickJS-heavy workflow fixtures are isolated from coverage: Bun's coverage
+            # process can OOM or stall the asyncified QuickJS runtime in this file.
+            src/node/services/workflows/builtInWorkflowDefinitions.test.ts
             src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx
             src/browser/features/Messages/InlineSkillMarkdown.test.tsx
             src/browser/utils/commands/sources.test.ts
@@ -199,6 +202,7 @@ jobs:
 
           mapfile -d '' unit_files < <(
             find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) \
+              ! -path 'src/node/services/workflows/builtInWorkflowDefinitions.test.ts' \
               ! -path 'src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx' \
               ! -path 'src/browser/features/Messages/InlineSkillMarkdown.test.tsx' \
               ! -path 'src/browser/utils/commands/sources.test.ts' \

@@ -57,7 +57,8 @@ module.exports.metadata = {
     { kind: "command", command: "git status" },
     { kind: "command", command: "git rev-parse" },
   ],
-  timeoutMs: 10000,
+  // CI coverage can delay child startup; keep status available for auto-fix preflights.
+  timeoutMs: 30000,
 };
 
 module.exports.execute = async function (rawInput, ctx) {

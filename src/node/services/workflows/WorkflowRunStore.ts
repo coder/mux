@@ -618,7 +618,9 @@ export class WorkflowRunStore {
   }
 
   private leaseMutationWaitTimeoutMs(): number {
-    return Math.max(4_000, this.leaseMutationLockStaleMs() * 4);
+    // Journal and lease mutations are short, but CI coverage and busy filesystems can stall
+    // waiters for longer than test-sized stale leases; stale age still controls reclaim safety.
+    return Math.max(30_000, this.leaseMutationLockStaleMs() * 4);
   }
 
   async renewLease(runId: string, ownerId: string, nowMs = Date.now()): Promise<boolean> {

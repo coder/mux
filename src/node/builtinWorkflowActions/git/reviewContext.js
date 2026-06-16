@@ -99,21 +99,12 @@ function boundedInt(value, fallback, min, max) {
 
 async function readGitReviewContext(ctx, input, diffBudget) {
   const head = optionalString(input.head) ?? "HEAD";
-  const stagedFilesPromise = runGit(ctx, ["diff", "--name-status", "--staged"]).then(
-    parseNameStatus
-  );
-  const unstagedFilesPromise = runGit(ctx, ["diff", "--name-status"]).then(parseNameStatus);
-  const untrackedOutputPromise = captureGit(
-    ctx,
-    ["ls-files", "--others", "--exclude-standard"],
-    [0]
-  );
   const base = await tryResolveBase(ctx, input);
   const mergeBase = base == null ? null : await resolveMergeBase(ctx, base, head);
   const [stagedFiles, unstagedFiles, untrackedOutput] = await Promise.all([
-    stagedFilesPromise,
-    unstagedFilesPromise,
-    untrackedOutputPromise,
+    runGit(ctx, ["diff", "--name-status", "--staged"]).then(parseNameStatus),
+    runGit(ctx, ["diff", "--name-status"]).then(parseNameStatus),
+    captureGit(ctx, ["ls-files", "--others", "--exclude-standard"], [0]),
   ]);
   const untracked =
     untrackedOutput.text.length === 0 ? [] : untrackedOutput.text.split(/\r?\n/).filter(Boolean);

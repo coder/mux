@@ -484,7 +484,34 @@ module.exports.execute = async function () { return {}; };
 
     expect(preflightOutput.ok).toBe(false);
     expect(preflightOutput.reason).toContain("dirty");
-  });
+  }, 10_000);
+
+  test("built-in git.reviewContext reports failures outside a git repository", async () => {
+    using tmp = new DisposableTempDir("workflow-action-git-review-context-no-repo");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const action = await registry.resolveAction("git.reviewContext", { projectTrusted: false });
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(action, {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    const output = expectObjectRecord(result.output);
+    const failures = output.failures;
+    expect(Array.isArray(failures)).toBe(true);
+    const failureActions = (failures as unknown[]).map(
+      (failure) => expectObjectRecord(failure).action
+    );
+    expect(failureActions).toContain("git.status");
+    expect(failureActions).toContain("git.reviewContext");
+    expect(expectObjectRecord(output.rendered).snapshotMarkdown).toContain("Git context warnings");
+  }, 10_000);
 
   test("built-in git.status skips ignored files unless requested", async () => {
     using tmp = new DisposableTempDir("workflow-action-git-status-ignored");
@@ -517,7 +544,7 @@ module.exports.execute = async function () { return {}; };
     expect(expectObjectRecord(defaultStatus.output).ignored).toEqual([]);
     expect(expectObjectRecord(defaultStatus.output).untracked).toContain("untracked.txt");
     expect(expectObjectRecord(statusWithIgnored.output).ignored).toContain("ignored/generated.txt");
-  });
+  }, 10_000);
 
   test("reports unsupported module syntax clearly", async () => {
     using tmp = new DisposableTempDir("workflow-action-import");
