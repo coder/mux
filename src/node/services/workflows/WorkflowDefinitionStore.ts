@@ -16,7 +16,7 @@ import {
   BUILT_IN_WORKFLOW_DEFINITIONS,
   type BuiltInWorkflowDefinition,
 } from "./builtInWorkflowDefinitions";
-import { parseWorkflowDescription } from "./workflowDescription";
+import { parseWorkflowDescription, replaceWorkflowDescription } from "./workflowDescription";
 
 export interface WorkflowDefinitionStoreOptions {
   projectRoot: string;
@@ -781,13 +781,8 @@ function normalizePromotionDescription(description: string): string {
 function withDescriptionMetadata(source: string, description: string): string {
   const normalizedSource = source.replace(/^\uFEFF/u, "");
   const metadata = `export const metadata = { description: ${JSON.stringify(description)} };`;
-  if (parseWorkflowDescription(normalizedSource) != null) {
-    return normalizedSource.replace(
-      /(^|[;\n])\s*export\s+(?:const|let|var)\s+metadata\s*=\s*\{[\s\S]*?\bdescription\s*:\s*(["'])(.*?)\2/su,
-      metadata
-    );
-  }
-  return `${metadata}\n${normalizedSource}`;
+  const updatedSource = replaceWorkflowDescription(normalizedSource, description);
+  return updatedSource ?? `${metadata}\n${normalizedSource}`;
 }
 
 export class WorkflowDefinitionStore {

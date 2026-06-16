@@ -15,7 +15,11 @@ export async function execute(rawInput, ctx) {
   const number = requiredIssueNumber(input.number);
   const marker = requiredString(input.marker, "marker");
   const body = requiredString(input.body, "body");
-  const existing = (await listComments(ctx, parts.owner, parts.repo, number)).find(
+  const existing = await findComment(
+    ctx,
+    parts.owner,
+    parts.repo,
+    number,
     (comment) => typeof comment.body === "string" && comment.body.includes(marker)
   );
   const payload = await ctx.writeTempJson({ body });

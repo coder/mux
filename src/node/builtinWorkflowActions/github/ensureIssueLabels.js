@@ -4,7 +4,10 @@ export const metadata = {
   effect: "external",
   inputSchema: { type: "object" },
   outputSchema: { type: "object" },
-  permissions: [{ kind: "command", command: "gh issue edit" }, { kind: "command", command: "gh issue view" }],
+  permissions: [
+    { kind: "command", command: "gh issue edit" },
+    { kind: "command", command: "gh issue view" },
+  ],
   timeoutMs: 60000,
 };
 
@@ -24,16 +27,17 @@ export async function execute(rawInput, ctx) {
   const before = await getLabelNames(ctx, repository, number);
   const missingAddLabels = addLabels.filter((label) => !before.includes(label));
   const presentRemoveLabels = removeLabels.filter((label) => before.includes(label));
-  if (missingAddLabels.length > 0 || presentRemoveLabels.length > 0) {
-    const args = ["issue", "edit", String(number)];
-    if (repository) args.push("--repo", repository);
-    for (const label of missingAddLabels) args.push("--add-label", label);
-    for (const label of presentRemoveLabels) args.push("--remove-label", label);
-    await ctx.execChecked("gh", args);
+  if (missingAddLabels.length === 0 && presentRemoveLabels.length === 0) {
+    return { changed: false, before, after: before, added: [], removed: [] };
   }
+  const args = ["issue", "edit", String(number)];
+  if (repository) args.push("--repo", repository);
+  for (const label of missingAddLabels) args.push("--add-label", label);
+  for (const label of presentRemoveLabels) args.push("--remove-label", label);
+  await ctx.execChecked("gh", args);
   const after = await getLabelNames(ctx, repository, number);
   return {
-    changed: missingAddLabels.length > 0 || presentRemoveLabels.length > 0,
+    changed: true,
     before,
     after,
     added: missingAddLabels,

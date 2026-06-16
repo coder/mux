@@ -128,6 +128,7 @@ docs/theme/pagetoc.css
 
 # Build-time generated files
 *.generated.ts
+!src/node/services/workflows/builtInWorkflowActionContent.generated.ts
 docs/theme/pagetoc.js
 mobile/.expo/
 .mux/mcp.jsonc

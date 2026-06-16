@@ -381,6 +381,20 @@ describe("WorkflowActionRunner", () => {
     expect(changedFiles.all).toEqual(expect.arrayContaining(["tracked.txt", "untracked.txt"]));
     expect(rendered.snapshotMarkdown).toContain("Repository status");
 
+    const metadataOnlyReviewContext = await runner.execute(reviewContextAction, {
+      input: { diffCharBudget: 0 },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-review-metadata-only"),
+    });
+    const metadataOnlyOutput = expectObjectRecord(metadataOnlyReviewContext.output);
+    const metadataOnlyDiff = expectObjectRecord(metadataOnlyOutput.diff);
+    expect(metadataOnlyDiff.unstaged).toBe("");
+    expect(expectObjectRecord(metadataOnlyDiff.truncated).unstaged).toBe(true);
+    expect(expectObjectRecord(metadataOnlyOutput.changedFiles).all).toEqual(
+      expect.arrayContaining(["tracked.txt", "untracked.txt"])
+    );
+
     const preflightAction = await registry.resolveAction("git.preflight", {
       projectTrusted: false,
     });

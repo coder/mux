@@ -53,6 +53,17 @@ function boundedLimit(value, fallback) {
   return Math.max(1, Math.min(value, 1000));
 }
 
+function boundedCharBudget(value, fallback) {
+  if (!Number.isInteger(value)) return fallback;
+  return Math.max(0, Math.min(value, 100000));
+}
+
+function truncateText(value, budget) {
+  const text = typeof value === "string" ? value : "";
+  if (text.length <= budget) return text;
+  return text.slice(0, budget) + "\n\n[truncated " + (text.length - budget) + " chars]";
+}
+
 function normalizeIssue(issue) {
   const labelNames = Array.isArray(issue.labels)
     ? issue.labels
@@ -78,7 +89,9 @@ function markerCommentNeedle(marker, markerKey, promptVersion) {
 }
 
 function isMatchingMarker(body, marker, markerKey, promptVersion) {
-  return typeof body === "string" && body.includes(markerCommentNeedle(marker, markerKey, promptVersion));
+  return (
+    typeof body === "string" && body.includes(markerCommentNeedle(marker, markerKey, promptVersion))
+  );
 }
 
 function markerStatus(body) {
@@ -86,15 +99,32 @@ function markerStatus(body) {
   return match ? match[1] : "";
 }
 
-async function listComments(ctx, owner, repo, number) {
+async function listComments(ctx, owner, repo, number, options) {
   const comments = [];
+  const limit = boundedLimit(options && options.limit, 1000);
+  for (let page = 1; page <= Math.ceil(limit / 100); page += 1) {
+    const pageComments = await ctx.execJson("gh", [
+      "api",
+      "repos/" + owner + "/" + repo + "/issues/" + number + "/comments?per_page=100&page=" + page,
+    ]);
+    for (const comment of pageComments) {
+      comments.push(comment);
+      if (comments.length >= limit) return comments;
+    }
+    if (pageComments.length < 100) break;
+  }
+  return comments;
+}
+
+async function findComment(ctx, owner, repo, number, predicate) {
   for (let page = 1; page <= 10; page += 1) {
     const pageComments = await ctx.execJson("gh", [
       "api",
       "repos/" + owner + "/" + repo + "/issues/" + number + "/comments?per_page=100&page=" + page,
     ]);
-    comments.push(...pageComments);
+    const match = pageComments.find(predicate);
+    if (match) return match;
     if (pageComments.length < 100) break;
   }
-  return comments;
+  return undefined;
 }

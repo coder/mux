@@ -80,19 +80,6 @@ function parseNameStatus(stdout) {
     return { status, path: parts[1] || "" };
   });
 }
-`;
-
-const GIT_STATUS_SOURCE = String.raw`
-module.exports.metadata = {
-  version: 1,
-  description: "Return branch, upstream, and working tree status for the current Git repository",
-  effect: "read",
-  outputSchema: { type: "object" },
-  permissions: [{ kind: "command", command: "git status" }, { kind: "command", command: "git rev-parse" }],
-  timeoutMs: 10000,
-};
-
-${GIT_SHARED_HELPERS}
 
 function parseBranchHeader(line) {
   let branchText = line.slice(3);
@@ -127,18 +114,12 @@ function parseStatusLine(line) {
   };
 }
 
-module.exports.execute = async function (rawInput, ctx) {
-  const input = inputObject(rawInput);
-  const includeIgnored = input.includeIgnored !== false;
+async function readStatus(ctx, input, options) {
+  const includeIgnored = Boolean(options && options.includeIgnored);
   const requestedHead = optionalString(input.head) ?? "HEAD";
   const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
   const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
-  const requestedHeadRef = await tryGit(ctx, [
-    "rev-parse",
-    "--symbolic-full-name",
-    "--verify",
-    requestedHead,
-  ]);
+  const requestedHeadRef = await tryGit(ctx, ["rev-parse", "--symbolic-full-name", "--verify", requestedHead]);
   const stdout = await runGit(ctx, [
     "status",
     "--porcelain=v1",
@@ -178,6 +159,24 @@ module.exports.execute = async function (rawInput, ctx) {
     untracked,
     ignored,
   };
+}
+`;
+
+const GIT_STATUS_SOURCE = String.raw`
+module.exports.metadata = {
+  version: 1,
+  description: "Return branch, upstream, and working tree status for the current Git repository",
+  effect: "read",
+  outputSchema: { type: "object" },
+  permissions: [{ kind: "command", command: "git status" }, { kind: "command", command: "git rev-parse" }],
+  timeoutMs: 10000,
+};
+
+${GIT_SHARED_HELPERS}
+
+module.exports.execute = async function (rawInput, ctx) {
+  const input = inputObject(rawInput);
+  return await readStatus(ctx, input, { includeIgnored: input.includeIgnored !== false });
 };
 `;
 
@@ -338,87 +337,7 @@ function boundedInt(value, fallback, min, max) {
   return Math.max(min, Math.min(value, max));
 }
 
-function parseBranchHeader(line) {
-  let branchText = line.slice(3);
-  let ahead = 0;
-  let behind = 0;
-  const trackingMatch = branchText.match(/ \[(.+)\]$/);
-  if (trackingMatch != null) {
-    branchText = branchText.slice(0, -trackingMatch[0].length);
-    for (const part of trackingMatch[1].split(", ")) {
-      const aheadMatch = part.match(/^ahead (\d+)$/);
-      const behindMatch = part.match(/^behind (\d+)$/);
-      if (aheadMatch != null) ahead = Number(aheadMatch[1]);
-      if (behindMatch != null) behind = Number(behindMatch[1]);
-    }
-  }
-  const [rawBranch, upstream] = branchText.split("...");
-  const branch = rawBranch.replace(/^No commits yet on /, "");
-  return { branch, upstream: upstream || null, ahead, behind };
-}
-
-function parseStatusLine(line) {
-  const index = line[0] || " ";
-  const worktree = line[1] || " ";
-  const rawPath = line.slice(3);
-  const renameParts = rawPath.split(" -> ");
-  return {
-    status: (index + worktree).trim(),
-    index,
-    worktree,
-    path: renameParts[renameParts.length - 1],
-    oldPath: renameParts.length > 1 ? renameParts[0] : undefined,
-  };
-}
-
-async function readStatus(ctx, input) {
-  const includeIgnored = input.includeIgnored === true;
-  const requestedHead = optionalString(input.head) ?? "HEAD";
-  const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
-  const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
-  const requestedHeadRef = await tryGit(ctx, ["rev-parse", "--symbolic-full-name", "--verify", requestedHead]);
-  const stdout = await runGit(ctx, [
-    "status",
-    "--porcelain=v1",
-    "-b",
-    "-uall",
-    includeIgnored ? "--ignored=traditional" : "--ignored=no",
-    "--ahead-behind",
-  ]);
-  const lines = stdout.split(/\r?\n/).filter(Boolean);
-  const header = lines[0]?.startsWith("## ") ? parseBranchHeader(lines[0]) : { branch: null, upstream: null, ahead: 0, behind: 0 };
-  const staged = [];
-  const unstaged = [];
-  const untracked = [];
-  const ignored = [];
-  for (const line of lines.slice(header.branch == null && lines[0]?.startsWith("## ") !== true ? 0 : 1)) {
-    const file = parseStatusLine(line);
-    if (file.index === "?" && file.worktree === "?") {
-      untracked.push(file.path);
-      continue;
-    }
-    if (file.index === "!" && file.worktree === "!") {
-      ignored.push(file.path);
-      continue;
-    }
-    if (file.index !== " " && file.index !== "?") staged.push(file);
-    if (file.worktree !== " " && file.worktree !== "?") unstaged.push(file);
-  }
-  return {
-    ...header,
-    headSha,
-    requestedHead,
-    requestedHeadSha,
-    requestedHeadRef,
-    clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
-    staged,
-    unstaged,
-    untracked,
-    ignored,
-  };
-}
-
-async function readGitReviewContext(ctx, input) {
+async function readGitReviewContext(ctx, input, diffBudget) {
   const head = optionalString(input.head) ?? "HEAD";
   const base = await tryResolveBase(ctx, input);
   const mergeBase = base == null ? null : await resolveMergeBase(ctx, base, head);
@@ -427,9 +346,10 @@ async function readGitReviewContext(ctx, input) {
   const untrackedOutput = await runGit(ctx, ["ls-files", "--others", "--exclude-standard"]);
   const untracked = untrackedOutput.length === 0 ? [] : untrackedOutput.split(/\r?\n/).filter(Boolean);
   const branchFiles = mergeBase == null ? [] : parseNameStatus(await runGit(ctx, ["diff", "--name-status", mergeBase + ".." + head]));
-  const stagedDiff = await captureGit(ctx, ["diff", "--staged"], [0]);
-  const unstagedDiff = await captureGit(ctx, ["diff"], [0]);
-  const branchDiff = mergeBase == null ? { text: "", truncated: false } : await captureGit(ctx, ["diff", mergeBase + ".." + head], [0]);
+  const shouldReadDiff = diffBudget > 0;
+  const stagedDiff = shouldReadDiff ? await captureGit(ctx, ["diff", "--staged"], [0]) : { text: "", truncated: stagedFiles.length > 0 };
+  const unstagedDiff = shouldReadDiff ? await captureGit(ctx, ["diff"], [0]) : { text: "", truncated: unstagedFiles.length > 0 };
+  const branchDiff = mergeBase == null || !shouldReadDiff ? { text: "", truncated: branchFiles.length > 0 && !shouldReadDiff } : await captureGit(ctx, ["diff", mergeBase + ".." + head], [0]);
   const stagedStat = await runGit(ctx, ["diff", "--stat", "--staged"]);
   const unstagedStat = await runGit(ctx, ["diff", "--stat"]);
   const branchStat = mergeBase == null ? "" : await runGit(ctx, ["diff", "--stat", mergeBase + ".." + head]);
@@ -553,13 +473,14 @@ module.exports.execute = async function (rawInput, ctx) {
   const failures = [];
   let status = null;
   let context = null;
+  const diffBudget = boundedInt(input.diffCharBudget, DEFAULT_DIFF_CHAR_BUDGET, 0, 500000);
   try {
-    status = await readStatus(ctx, input);
+    status = await readStatus(ctx, input, { includeIgnored: input.includeIgnored === true });
   } catch (error) {
     failures.push({ action: "git.status", error: String((error && error.message) || error) });
   }
   try {
-    context = await readGitReviewContext(ctx, input);
+    context = await readGitReviewContext(ctx, input, diffBudget);
   } catch (error) {
     failures.push({ action: "git.reviewContext", error: String((error && error.message) || error) });
     context = { base: null, head: optionalString(input.head) ?? "HEAD", mergeBase: null, changedFiles: { branch: [], staged: [], unstaged: [], untracked: [] }, diffStat: { branch: "", staged: "", unstaged: "" }, diff: { branch: "", staged: "", unstaged: "", truncated: { branch: false, staged: false, unstaged: false } }, commits: { commits: [], count: 0 } };
@@ -568,7 +489,7 @@ module.exports.execute = async function (rawInput, ctx) {
   context.changedFiles.all = files;
   context.status = status;
   context.failures = failures;
-  const compactedDiff = compactDiff(context.diff, boundedInt(input.diffCharBudget, DEFAULT_DIFF_CHAR_BUDGET, 0, 500000));
+  const compactedDiff = compactDiff(context.diff, diffBudget);
   const flags = {
     hasChanges: files.length > 0 || hasText(context.diff.branch) || hasText(context.diff.staged) || hasText(context.diff.unstaged),
     hasUncommittedChanges: arrayLength(status && status.staged) > 0 || arrayLength(status && status.unstaged) > 0 || arrayLength(status && status.untracked) > 0,
@@ -602,56 +523,6 @@ module.exports.metadata = {
 };
 
 ${GIT_SHARED_HELPERS}
-
-function parseBranchHeader(line) {
-  let branchText = line.slice(3);
-  let ahead = 0;
-  let behind = 0;
-  const trackingMatch = branchText.match(/ \[(.+)\]$/);
-  if (trackingMatch != null) {
-    branchText = branchText.slice(0, -trackingMatch[0].length);
-    for (const part of trackingMatch[1].split(", ")) {
-      const aheadMatch = part.match(/^ahead (\d+)$/);
-      const behindMatch = part.match(/^behind (\d+)$/);
-      if (aheadMatch != null) ahead = Number(aheadMatch[1]);
-      if (behindMatch != null) behind = Number(behindMatch[1]);
-    }
-  }
-  const [rawBranch, upstream] = branchText.split("...");
-  const branch = rawBranch.replace(/^No commits yet on /, "");
-  return { branch, upstream: upstream || null, ahead, behind };
-}
-
-function parseStatusLine(line) {
-  const index = line[0] || " ";
-  const worktree = line[1] || " ";
-  const rawPath = line.slice(3);
-  const renameParts = rawPath.split(" -> ");
-  return { status: (index + worktree).trim(), index, worktree, path: renameParts[renameParts.length - 1], oldPath: renameParts.length > 1 ? renameParts[0] : undefined };
-}
-
-async function readStatus(ctx, input) {
-  const requestedHead = optionalString(input.head) ?? "HEAD";
-  const headSha = await tryGit(ctx, ["rev-parse", "--verify", "HEAD"]);
-  const requestedHeadSha = await tryGit(ctx, ["rev-parse", "--verify", requestedHead]);
-  const requestedHeadRef = await tryGit(ctx, ["rev-parse", "--symbolic-full-name", "--verify", requestedHead]);
-  const stdout = await runGit(ctx, ["status", "--porcelain=v1", "-b", "-uall", "--ignored=no", "--ahead-behind"]);
-  const lines = stdout.split(/\r?\n/).filter(Boolean);
-  const header = lines[0]?.startsWith("## ") ? parseBranchHeader(lines[0]) : { branch: null, upstream: null, ahead: 0, behind: 0 };
-  const staged = [];
-  const unstaged = [];
-  const untracked = [];
-  for (const line of lines.slice(header.branch == null && lines[0]?.startsWith("## ") !== true ? 0 : 1)) {
-    const file = parseStatusLine(line);
-    if (file.index === "?" && file.worktree === "?") {
-      untracked.push(file.path);
-      continue;
-    }
-    if (file.index !== " " && file.index !== "?") staged.push(file);
-    if (file.worktree !== " " && file.worktree !== "?") unstaged.push(file);
-  }
-  return { ...header, headSha, requestedHead, requestedHeadSha, requestedHeadRef, clean: staged.length === 0 && unstaged.length === 0 && untracked.length === 0, staged, unstaged, untracked };
-}
 
 function normalizedBranch(branch) {
   if (typeof branch !== "string") return "";
