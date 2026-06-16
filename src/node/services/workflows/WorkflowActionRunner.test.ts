@@ -761,6 +761,28 @@ export const reconcile = execute;
     }
   });
 
+  test("executes exported actions after control-header regex literals", async () => {
+    using tmp = new DisposableTempDir("workflow-action-control-regex");
+    const sourcePath = path.join(tmp.path, "control-regex.js");
+    const source = `
+      const flag = true;
+      if (flag) /\\{/.test("{");
+      export const metadata = { version: 1, description: "Control regex", effect: "read" };
+      export async function execute() { return { ok: true }; }
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    expect(result.output).toEqual({ ok: true });
+  });
+
   test("does not rewrite export syntax inside action strings", async () => {
     using tmp = new DisposableTempDir("workflow-action-export-template");
     const sourcePath = path.join(tmp.path, "template.js");

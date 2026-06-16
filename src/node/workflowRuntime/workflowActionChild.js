@@ -349,7 +349,23 @@ function findRegExpLiteralEnd(source, openIndex) {
   return -1;
 }
 
-const REGEX_CONTEXT_KEYWORDS = new Set([
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
+const OBJECT_PRECEDING_KEYWORDS = new Set([
   "return",
   "throw",
   "typeof",
@@ -363,18 +379,107 @@ const REGEX_CONTEXT_KEYWORDS = new Set([
   "yield",
   "await",
 ]);
+const PAREN_STATEMENT_KEYWORDS = new Set(["if", "while", "for", "switch", "with"]);
+const IDENTIFIER_CHARACTER = /[A-Za-z0-9_$]/;
 
 function isRegExpLiteralStart(maskedPrefix) {
   let index = maskedPrefix.length - 1;
-  while (index >= 0 && /\s/.test(maskedPrefix[index])) index -= 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
   if (index < 0) return true;
   const character = maskedPrefix[index];
-  if (/[A-Za-z0-9_$]/.test(character)) {
+  if (IDENTIFIER_CHARACTER.test(character)) {
     let start = index;
-    while (start >= 0 && /[A-Za-z0-9_$]/.test(maskedPrefix[start])) start -= 1;
-    return REGEX_CONTEXT_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+    while (start >= 0 && IDENTIFIER_CHARACTER.test(maskedPrefix[start])) start -= 1;
+    return REGEX_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
   }
-  return ![")", "]", "}", '"', "'", "`"].includes(character);
+  if (character === "+" || character === "-") {
+    return !(maskedPrefix[index - 1] === character && maskedPrefix[index - 2] !== character);
+  }
+  if (character === "}") return !isObjectLiteralEnd(maskedPrefix, index);
+  if (character === ")") return isControlHeaderEnd(maskedPrefix, index);
+  if (character === "/") {
+    let before = index - 1;
+    while (before >= 0 && (maskedPrefix[before] === " " || maskedPrefix[before] === "\n")) {
+      before -= 1;
+    }
+    return !(before >= 0 && maskedPrefix[before] === "/");
+  }
+  return character !== "]" && character !== '"' && character !== "'" && character !== "`";
+}
+
+function isControlHeaderEnd(maskedPrefix, closeParenIndex) {
+  let depth = 0;
+  let openParenIndex = -1;
+  for (let index = closeParenIndex; index >= 0; index -= 1) {
+    const character = maskedPrefix[index];
+    if (character === ")") depth += 1;
+    else if (character === "(") {
+      depth -= 1;
+      if (depth === 0) {
+        openParenIndex = index;
+        break;
+      }
+    }
+  }
+  if (openParenIndex <= 0) return false;
+  let index = openParenIndex - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0 || !IDENTIFIER_CHARACTER.test(maskedPrefix[index])) return false;
+  let start = index;
+  while (start >= 0 && IDENTIFIER_CHARACTER.test(maskedPrefix[start])) start -= 1;
+  return PAREN_STATEMENT_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+}
+
+function isObjectLiteralEnd(maskedPrefix, closeBraceIndex) {
+  let depth = 0;
+  let openBraceIndex = -1;
+  for (let index = closeBraceIndex; index >= 0; index -= 1) {
+    const character = maskedPrefix[index];
+    if (character === "}") depth += 1;
+    else if (character === "{") {
+      depth -= 1;
+      if (depth === 0) {
+        openBraceIndex = index;
+        break;
+      }
+    }
+  }
+  if (openBraceIndex <= 0) return false;
+  let index = openBraceIndex - 1;
+  while (index >= 0) {
+    const character = maskedPrefix[index];
+    if (character === " " || character === "\n" || character === "\t" || character === "\r") {
+      index -= 1;
+      continue;
+    }
+    break;
+  }
+  if (index < 0) return false;
+  const character = maskedPrefix[index];
+  if (IDENTIFIER_CHARACTER.test(character)) {
+    let start = index;
+    while (start >= 0 && IDENTIFIER_CHARACTER.test(maskedPrefix[start])) start -= 1;
+    return OBJECT_PRECEDING_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  if (character === ")" || character === ";" || character === "{" || character === "}") {
+    return false;
+  }
+  if (character === ">" && maskedPrefix[index - 1] === "=") return false;
+  return true;
 }
 
 function assertSupportedActionSyntax(source) {
