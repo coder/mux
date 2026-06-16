@@ -6202,9 +6202,10 @@ describe("built-in deep-review-workflow", () => {
     expect(firstFailure).toContain("Execution interrupted");
     expect(await readGit(repoRoot, ["rev-parse", "HEAD"])).not.toBe(baseHead);
 
-    // Advance the deterministic clock before retrying so an in-flight lease renewal from
-    // the interrupted run cannot leave a non-stale lease behind on slower CI machines.
-    nowMs = 2_000;
+    // Let any floating renewal callback from the interrupted run settle, then advance the
+    // deterministic clock so a stale renewal cannot make the retry look concurrently active.
+    await new Promise((resolve) => setTimeout(resolve, runStore.getLeaseRenewalIntervalMs() * 2));
+    nowMs = 10_000;
 
     const retryResult = await runner.run("wfr_deep_review_fix_replay_head_advance", {
       allowRetryFromFailedCheckpoint: true,
