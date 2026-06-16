@@ -8,6 +8,8 @@ export const metadata = {
 // launching hundreds of concurrent agents in one wave. Matches deep-research's
 // smart-mode verifier cap.
 const MAX_PARALLEL_AGENTS = 12;
+const SCHEMA = workflowSchema();
+const WORKFLOW_UTILS = workflowUtils();
 export default function securityScanWorkflow({
   args,
   phase,
@@ -47,7 +49,7 @@ export default function securityScanWorkflow({
 
   const fileHashes = collectSecurityFileHashes(action, scope.structuredOutput, log);
 
-  phase("threat-model", { fileCount: asArray(scope.structuredOutput.files).length });
+  phase("threat-model", { fileCount: WORKFLOW_UTILS.asArray(scope.structuredOutput.files).length });
   const threatModelMarkdown = renderThreatModel(scope.structuredOutput, gitContext, state);
   action.security.writeThreatModel({
     id: "security-write-threat-model",
@@ -61,27 +63,34 @@ export default function securityScanWorkflow({
 
   const lanes = selectSecurityLanes(scope.structuredOutput.lanes);
   phase("lane-discovery", { lanes: lanes });
-  const laneReviews = parallelAgents(
-    lanes.map(function (lane) {
-      return {
-        id: "discover-" + lane,
-        title: "Security discovery lane: " + lane,
-        agentId: "exec",
-        prompt:
+  const laneReviews = workflowParallelMap(
+    {
+      items: lanes,
+      stepId: function (lane) {
+        return "discover-" + lane;
+      },
+      title: function (lane) {
+        return "Security discovery lane: " + lane;
+      },
+      agentId: "exec",
+      prompt: function (lane) {
+        return (
           readOnlyPrompt +
           laneSecurityPrompt(lane) +
           "\n\nReturn only concrete, actionable security findings with rule IDs, severity, CWE/OWASP tags when known, locations, source/sink summary, proof hypothesis, and candidate fingerprints. Prefer an empty findings array over speculation.\n\n" +
           renderSecurityInput(input, gitContext, state) +
           "\n\nSecurity scope:\n" +
-          JSON.stringify(scope.structuredOutput, null, 2),
-        outputSchema: securityFindingListSchema(),
-      };
-    })
+          JSON.stringify(scope.structuredOutput, null, 2)
+        );
+      },
+      outputSchema: securityFindingListSchema(),
+    },
+    parallelAgents
   );
 
   const laneFindings = flatten(
     laneReviews.map(function (review) {
-      return asArray(review.structuredOutput.findings);
+      return WORKFLOW_UTILS.asArray(review.structuredOutput.findings);
     })
   );
   log("Security discovery produced candidate findings", { count: laneFindings.length });
@@ -122,7 +131,10 @@ export default function securityScanWorkflow({
       JSON.stringify(grill.structuredOutput, null, 2),
     outputSchema: securityFindingListSchema(),
   });
-  const rawCandidates = asArray(triage.structuredOutput.findings).slice(0, input.maxFindings);
+  const rawCandidates = WORKFLOW_UTILS.asArray(triage.structuredOutput.findings).slice(
+    0,
+    input.maxFindings
+  );
   const normalizedCandidates = normalizeSecurityFindings(rawCandidates);
   const postTriageMatched = action.security.matchFindings({
     id: "security-match-triaged-findings",
@@ -133,35 +145,41 @@ export default function securityScanWorkflow({
 
   phase("verification", { candidateCount: candidates.length });
   const verificationPlan = buildVerificationPlan(candidates, postTriageMatched, input, state.cache);
-  const verificationTasks = verificationPlan
-    .filter(function (item) {
-      return item.shouldVerify;
-    })
-    .map(function (item) {
-      return {
-        id: "verify-security-finding-" + item.index,
-        title: "Verify security finding " + (item.index + 1),
-        agentId: "exec",
-        prompt:
+  const verificationItems = verificationPlan.filter(function (item) {
+    return item.shouldVerify;
+  });
+  const verificationResults = workflowParallelMap(
+    {
+      items: verificationItems,
+      stepId: function (item) {
+        return "verify-security-finding-" + item.index;
+      },
+      title: function (item) {
+        return "Verify security finding " + (item.index + 1);
+      },
+      agentId: "exec",
+      prompt: function (item) {
+        return (
           readOnlyPrompt +
           "Adversarially verify this security finding. Try to disprove it first. Report whether evidence is verified, static_evidence, unverified, inconclusive, or needs_human_review. Do not execute risky PoCs unless safe sandbox constraints are satisfied.\n\nFinding:\n" +
           JSON.stringify(item.finding, null, 2) +
           "\n\nScan context:\n" +
-          renderSecurityInput(input, gitContext, state),
-        outputSchema: securityVerificationSchema(),
-      };
-    });
-  const verificationResults =
-    verificationTasks.length > 0
-      ? parallelAgents(verificationTasks, { maxParallel: MAX_PARALLEL_AGENTS })
-      : [];
+          renderSecurityInput(input, gitContext, state)
+        );
+      },
+      outputSchema: securityVerificationSchema(),
+      maxParallel: MAX_PARALLEL_AGENTS,
+    },
+    parallelAgents
+  );
   const verifications = mergeVerificationResults(verificationPlan, verificationResults);
   const evidenceBundles = verifications.map(function (verification, index) {
     if (verification && verification.skipEvidenceBundle === true) {
       return inputObject(verification.evidenceBundle);
     }
     const finding = inputObject(candidates[index]);
-    const findingId = optionalString(finding.id) || "security-finding-" + String(index + 1);
+    const findingId =
+      WORKFLOW_UTILS.optionalString(finding.id) || "security-finding-" + String(index + 1);
     const verificationOutput = inputObject(verification.structuredOutput);
     return action.security.writeEvidenceBundle({
       id: "security-write-evidence-" + index,
@@ -254,19 +272,24 @@ export default function securityScanWorkflow({
 function normalizeSecurityScanArgs(args) {
   const raw = typeof args === "string" ? {} : inputObject(args);
   const text =
-    typeof args === "string" ? args : optionalString(raw.input) || optionalString(raw.target) || "";
+    typeof args === "string"
+      ? args
+      : WORKFLOW_UTILS.optionalString(raw.input) || WORKFLOW_UTILS.optionalString(raw.target) || "";
   const parsed = Object.assign({}, raw, parseSecurityScanString(text));
   return {
-    target: optionalString(parsed.input) || optionalString(parsed.target) || "current workspace",
+    target:
+      WORKFLOW_UTILS.optionalString(parsed.input) ||
+      WORKFLOW_UTILS.optionalString(parsed.target) ||
+      "current workspace",
     changedOnly: Boolean(parsed.changedOnly),
     full: Boolean(parsed.full),
     verify: parsed.verify !== false,
     fix: Boolean(parsed.fix),
     loop: Boolean(parsed.loop),
-    maxFindings: boundedInt(parsed.maxFindings, 20),
-    maxFixes: boundedInt(parsed.maxFixes, 3),
-    fixFindingIds: stringList(parsed.fixFindingIds),
-    runDirId: optionalString(parsed.runDirId),
+    maxFindings: WORKFLOW_UTILS.boundedInt(parsed.maxFindings, 20, 1, 1000),
+    maxFixes: WORKFLOW_UTILS.boundedInt(parsed.maxFixes, 3, 1, 1000),
+    fixFindingIds: WORKFLOW_UTILS.stringList(parsed.fixFindingIds),
+    runDirId: WORKFLOW_UTILS.optionalString(parsed.runDirId),
   };
 }
 
@@ -325,46 +348,27 @@ function parsePositiveIntFlag(value, flag) {
 }
 
 function collectSecurityGitContext(action, input, log) {
-  const failures = [];
-  const builtInOnly = true;
-  function run(name, callback) {
-    try {
-      return callback();
-    } catch (error) {
-      failures.push({ action: name, message: String((error && error.message) || error) });
-      log("Security git context action failed", failures[failures.length - 1]);
-      return null;
-    }
+  try {
+    const context = action.git.reviewContext({
+      id: "security-git-review-context",
+      input: {
+        includeCommits: true,
+        commitLimit: 20,
+        diffCharBudget: 0,
+        metadataCharBudget: 20000,
+      },
+      builtInOnly: true,
+    }).output;
+    return Object.assign({}, inputObject(context), { changedOnly: input.changedOnly });
+  } catch (error) {
+    const failure = { action: "git.reviewContext", message: formatError(error) };
+    log("Security git context action failed", failure);
+    return { failures: [failure], changedOnly: input.changedOnly };
   }
-  return {
-    status: run("git.status", function () {
-      return action.git.status({
-        id: "security-git-status",
-        input: { includeIgnored: false },
-        builtInOnly: builtInOnly,
-      }).output;
-    }),
-    changedFiles: run("git.changedFiles", function () {
-      return action.git.changedFiles({
-        id: "security-git-changed-files",
-        input: {},
-        builtInOnly: builtInOnly,
-      }).output;
-    }),
-    diffStat: run("git.diffStat", function () {
-      return action.git.diffStat({
-        id: "security-git-diff-stat",
-        input: {},
-        builtInOnly: builtInOnly,
-      }).output;
-    }),
-    failures: failures,
-    changedOnly: input.changedOnly,
-  };
 }
 
 function collectSecurityFileHashes(action, scope, log) {
-  const files = stringList(scope && scope.files).slice(0, 100);
+  const files = WORKFLOW_UTILS.stringList(scope && scope.files).slice(0, 100);
   if (files.length === 0) return { schemaVersion: 1, files: [], diagnostics: [] };
   try {
     return action.security.hashFiles({
@@ -408,7 +412,7 @@ function renderThreatModel(scope, gitContext, state) {
   return (
     "# Security Threat Model\n\n" +
     "## Summary\n\n" +
-    (optionalString(scope.summary) || "Security surface scoped by /security-scan.") +
+    (WORKFLOW_UTILS.optionalString(scope.summary) || "Security surface scoped by /security-scan.") +
     "\n\n" +
     "## Assets\n\n" +
     renderList(scope.assets) +
@@ -424,7 +428,7 @@ function renderThreatModel(scope, gitContext, state) {
     "\n\n" +
     "## Cache Diagnostics\n\n" +
     renderList(
-      asArray(state.diagnostics).map(function (item) {
+      WORKFLOW_UTILS.asArray(state.diagnostics).map(function (item) {
         return item.path + ": " + item.message;
       })
     ) +
@@ -442,26 +446,29 @@ function renderThreatModel(scope, gitContext, state) {
 function buildThreatModelIndex(scope, gitContext, fileHashes) {
   return {
     sections: [
-      { id: "summary", files: asArray(scope.files), status: "generated" },
-      { id: "entrypoints", files: asArray(scope.entrypoints), status: "generated" },
-      { id: "trust-boundaries", files: asArray(scope.files), status: "generated" },
+      { id: "summary", files: WORKFLOW_UTILS.asArray(scope.files), status: "generated" },
+      { id: "entrypoints", files: WORKFLOW_UTILS.asArray(scope.entrypoints), status: "generated" },
+      { id: "trust-boundaries", files: WORKFLOW_UTILS.asArray(scope.files), status: "generated" },
     ],
-    fileHashes: asArray(fileHashes && fileHashes.files),
-    diagnostics: asArray(gitContext.failures).concat(asArray(fileHashes && fileHashes.diagnostics)),
+    fileHashes: WORKFLOW_UTILS.asArray(fileHashes && fileHashes.files),
+    diagnostics: WORKFLOW_UTILS.asArray(gitContext.failures).concat(
+      WORKFLOW_UTILS.asArray(fileHashes && fileHashes.diagnostics)
+    ),
   };
 }
 
 function normalizeSecurityFindings(findings) {
   const used = {};
-  return asArray(findings).map(function (finding, index) {
+  return WORKFLOW_UTILS.asArray(findings).map(function (finding, index) {
     const normalized = Object.assign({}, inputObject(finding));
     const rawId =
-      optionalString(normalized.id) ||
-      optionalString(normalized.title) ||
+      WORKFLOW_UTILS.optionalString(normalized.id) ||
+      WORKFLOW_UTILS.optionalString(normalized.title) ||
       "security-finding-" + String(index + 1);
     const baseId = slugifySecurityId(rawId) || "security-finding-" + String(index + 1);
     const id = dedupeSecurityId(baseId, used);
-    if (normalized.id !== id) normalized.originalId = optionalString(normalized.id) || rawId;
+    if (normalized.id !== id)
+      normalized.originalId = WORKFLOW_UTILS.optionalString(normalized.id) || rawId;
     normalized.id = id;
     return normalized;
   });
@@ -493,11 +500,11 @@ function canonicalizeMatchedFindings(findings, matched) {
   return findings.map(function (finding, index) {
     const normalized = Object.assign({}, inputObject(finding));
     const decision = decisions[index];
-    const matchedId = decision && optionalString(decision.findingId);
+    const matchedId = decision && WORKFLOW_UTILS.optionalString(decision.findingId);
     const baseId = matchedId ? slugifySecurityId(matchedId) || normalized.id : normalized.id;
     const id = dedupeSecurityId(baseId, used);
     if (normalized.id !== id) {
-      normalized.aliases = stringList(normalized.aliases).concat([normalized.id]);
+      normalized.aliases = WORKFLOW_UTILS.stringList(normalized.aliases).concat([normalized.id]);
       normalized.id = id;
     }
     return normalized;
@@ -506,7 +513,7 @@ function canonicalizeMatchedFindings(findings, matched) {
 
 function decisionsByIndex(matched) {
   const byIndex = {};
-  asArray(matched && matched.decisions).forEach(function (decision) {
+  WORKFLOW_UTILS.asArray(matched && matched.decisions).forEach(function (decision) {
     const normalized = inputObject(decision);
     if (Number.isInteger(normalized.index)) byIndex[normalized.index] = normalized;
   });
@@ -515,15 +522,16 @@ function decisionsByIndex(matched) {
 
 function buildVerificationPlan(candidates, matched, input, cache) {
   const verify = {};
-  stringList(matched && matched.verify).forEach(function (id) {
+  WORKFLOW_UTILS.stringList(matched && matched.verify).forEach(function (id) {
     verify[id] = true;
   });
   const decisions = decisionsByIndex(matched);
   return candidates.map(function (finding, index) {
     const normalized = inputObject(finding);
-    const findingId = optionalString(normalized.id) || "security-finding-" + String(index + 1);
+    const findingId =
+      WORKFLOW_UTILS.optionalString(normalized.id) || "security-finding-" + String(index + 1);
     const decision = decisions[index] || {};
-    const decisionFindingId = optionalString(decision.findingId);
+    const decisionFindingId = WORKFLOW_UTILS.optionalString(decision.findingId);
     const shouldVerify =
       input.verify !== false &&
       (verify[findingId] === true ||
@@ -553,10 +561,10 @@ const CACHE_SKIP_STATUS = {
 
 function cachedVerificationState(record) {
   const normalized = inputObject(record);
-  const status = optionalString(normalized.status) || "";
+  const status = WORKFLOW_UTILS.optionalString(normalized.status) || "";
   if (status === "fixed" || CACHE_SKIP_STATUS[status] === true) return status;
   const proof = inputObject(normalized.proof);
-  return optionalString(proof.state) || status;
+  return WORKFLOW_UTILS.optionalString(proof.state) || status;
 }
 
 function mergeVerificationResults(plan, verificationResults) {
@@ -570,15 +578,15 @@ function mergeVerificationResults(plan, verificationResults) {
     const cachedProof = inputObject(item.cachedRecord.proof);
     const cachedState = cachedVerificationState(item.cachedRecord);
     const override = inputObject(item.decision && item.decision.override);
-    const overrideStatus = optionalString(override.status);
+    const overrideStatus = WORKFLOW_UTILS.optionalString(override.status);
     const verdict = overrideStatus || cachedState || "unverified";
     return {
       taskId: "cache-" + item.findingId,
       reportMarkdown: "Skipped verification for " + item.findingId + ".",
       skipEvidenceBundle: true,
       evidenceBundle: {
-        evidenceDigest: optionalString(cachedProof.evidenceDigest) || null,
-        evidencePath: optionalString(cachedProof.evidencePath) || null,
+        evidenceDigest: WORKFLOW_UTILS.optionalString(cachedProof.evidenceDigest) || null,
+        evidencePath: WORKFLOW_UTILS.optionalString(cachedProof.evidencePath) || null,
       },
       structuredOutput: {
         findingId: item.findingId,
@@ -588,7 +596,7 @@ function mergeVerificationResults(plan, verificationResults) {
           ? ""
           : "Verification skipped by cache, override, or --no-verify.",
         rationale:
-          optionalString(item.decision && item.decision.reason) ||
+          WORKFLOW_UTILS.optionalString(item.decision && item.decision.reason) ||
           "No verification requested for this finding.",
       },
     };
@@ -613,47 +621,50 @@ function buildCache(
   const aliasUpdates = aliasUpdatesByFindingId(matched);
   findings.forEach(function (finding, index) {
     const normalized = inputObject(finding);
-    const id = optionalString(normalized.id) || "security-finding-" + String(index + 1);
+    const id =
+      WORKFLOW_UTILS.optionalString(normalized.id) || "security-finding-" + String(index + 1);
     const existing = inputObject(records[id]);
     const evidence = inputObject(evidenceBundles[index]);
     const proofState = proofStateFor(verifications[index]);
     const decision = inputObject(decisions[index]);
     const override = inputObject(decision.override || existing.override);
-    const overrideStatus = optionalString(override.status);
+    const overrideStatus = WORKFLOW_UTILS.optionalString(override.status);
     const status = overrideStatus || (fixedFindingIds[id] === true ? "fixed" : proofState);
     const aliases = uniqueStrings(
-      asArray(existing.aliases)
-        .concat(asArray(normalized.aliases))
-        .concat(asArray(aliasUpdates[id]))
+      WORKFLOW_UTILS.asArray(existing.aliases)
+        .concat(WORKFLOW_UTILS.asArray(normalized.aliases))
+        .concat(WORKFLOW_UTILS.asArray(aliasUpdates[id]))
     );
     records[id] = Object.assign({}, existing, {
       status: status,
       ruleId:
-        optionalString(normalized.ruleId) ||
-        optionalString(existing.ruleId) ||
+        WORKFLOW_UTILS.optionalString(normalized.ruleId) ||
+        WORKFLOW_UTILS.optionalString(existing.ruleId) ||
         "manual/security-review",
       severity:
-        optionalString(normalized.severity) || optionalString(existing.severity) || "unknown",
+        WORKFLOW_UTILS.optionalString(normalized.severity) ||
+        WORKFLOW_UTILS.optionalString(existing.severity) ||
+        "unknown",
       fingerprints: Object.assign(
         {},
         inputObject(existing.fingerprints),
         inputObject(normalized.fingerprints)
       ),
       aliases: aliases,
-      latestLocations: stringList(normalized.locations),
+      latestLocations: WORKFLOW_UTILS.stringList(normalized.locations),
       proof: {
         state: proofState,
         evidenceDigest:
-          optionalString(evidence.evidenceDigest) ||
-          optionalString(inputObject(existing.proof).evidenceDigest) ||
+          WORKFLOW_UTILS.optionalString(evidence.evidenceDigest) ||
+          WORKFLOW_UTILS.optionalString(inputObject(existing.proof).evidenceDigest) ||
           null,
         evidencePath:
-          optionalString(evidence.evidencePath) ||
-          optionalString(inputObject(existing.proof).evidencePath) ||
+          WORKFLOW_UTILS.optionalString(evidence.evidencePath) ||
+          WORKFLOW_UTILS.optionalString(inputObject(existing.proof).evidencePath) ||
           null,
       },
       override: overrideStatus ? override : existing.override || null,
-      history: asArray(existing.history),
+      history: WORKFLOW_UTILS.asArray(existing.history),
     });
   });
   return {
@@ -663,18 +674,18 @@ function buildCache(
     findings: records,
     coverage: {
       risk: final.risk || "unknown",
-      lanes: asArray(scope.lanes),
-      fileHashes: asArray(fileHashes && fileHashes.files),
+      lanes: WORKFLOW_UTILS.asArray(scope.lanes),
+      fileHashes: WORKFLOW_UTILS.asArray(fileHashes && fileHashes.files),
     },
   };
 }
 
 function aliasUpdatesByFindingId(matched) {
   const result = {};
-  asArray(matched && matched.aliasUpdates).forEach(function (item) {
+  WORKFLOW_UTILS.asArray(matched && matched.aliasUpdates).forEach(function (item) {
     const update = inputObject(item);
-    const findingId = optionalString(update.findingId);
-    const alias = optionalString(update.addAlias);
+    const findingId = WORKFLOW_UTILS.optionalString(update.findingId);
+    const alias = WORKFLOW_UTILS.optionalString(update.addAlias);
     if (!findingId || !alias) return;
     if (!Array.isArray(result[findingId])) result[findingId] = [];
     result[findingId].push(alias);
@@ -685,7 +696,7 @@ function aliasUpdatesByFindingId(matched) {
 function uniqueStrings(values) {
   const seen = {};
   const result = [];
-  asArray(values).forEach(function (value) {
+  WORKFLOW_UTILS.asArray(values).forEach(function (value) {
     if (typeof value !== "string" || value.length === 0 || seen[value] === true) return;
     seen[value] = true;
     result.push(value);
@@ -720,9 +731,9 @@ function collectSecurityFixPreflight(action, log, input, gitContext) {
     };
   }
   if (
-    asArray(status.staged).length > 0 ||
-    asArray(status.unstaged).length > 0 ||
-    asArray(status.untracked).length > 0
+    WORKFLOW_UTILS.asArray(status.staged).length > 0 ||
+    WORKFLOW_UTILS.asArray(status.unstaged).length > 0 ||
+    WORKFLOW_UTILS.asArray(status.untracked).length > 0
   ) {
     return { skippedReason: "auto-fix requires a clean committed local worktree" };
   }
@@ -737,7 +748,7 @@ function looksNonLocalTarget(target) {
 function getReviewedGitSnapshot(gitContext) {
   const status = inputObject(gitContext && gitContext.status);
   const branch = normalizedGitBranch(status.branch);
-  const headSha = optionalString(status.headSha);
+  const headSha = WORKFLOW_UTILS.optionalString(status.headSha);
   if (!branch || !headSha) return null;
   return { branch: branch, headSha: headSha };
 }
@@ -780,17 +791,23 @@ function runSecurityFix(context) {
   });
   if (selected.length === 0) return baseFix;
 
-  const fixerResults = context.parallelAgents(
-    selected.map(function (item, index) {
-      return {
-        id: "fix-security-finding-" + index,
-        title: "Fix verified security finding " + (index + 1),
-        agentId: "exec",
-        prompt: buildSecurityFixPrompt(context.input, item),
-        outputSchema: securityFixAttemptSchema(),
-      };
-    }),
-    { maxParallel: MAX_PARALLEL_AGENTS }
+  const fixerResults = workflowParallelMap(
+    {
+      items: selected,
+      stepId: function (_item, index) {
+        return "fix-security-finding-" + index;
+      },
+      title: function (_item, index) {
+        return "Fix verified security finding " + (index + 1);
+      },
+      agentId: "exec",
+      prompt: function (item) {
+        return buildSecurityFixPrompt(context.input, item);
+      },
+      outputSchema: securityFixAttemptSchema(),
+      maxParallel: MAX_PARALLEL_AGENTS,
+    },
+    context.parallelAgents
   );
 
   const integratedFindingIds = [];
@@ -814,7 +831,7 @@ function runSecurityFix(context) {
     if (attemptOutput.status !== "fixed" || attemptOutput.commitCreated !== true) {
       baseFix.unresolved.push({
         findingId: item.findingId,
-        reason: optionalString(attemptOutput.status) || "not-fixed",
+        reason: WORKFLOW_UTILS.optionalString(attemptOutput.status) || "not-fixed",
       });
       continue;
     }
@@ -835,7 +852,7 @@ function runSecurityFix(context) {
     if (application.status !== "conflict") {
       baseFix.unresolved.push({
         findingId: item.findingId,
-        reason: optionalString(application.error) || application.status,
+        reason: WORKFLOW_UTILS.optionalString(application.error) || application.status,
       });
       continue;
     }
@@ -877,13 +894,14 @@ function runSecurityFix(context) {
       } else {
         baseFix.unresolved.push({
           findingId: item.findingId,
-          reason: optionalString(resolvedApplication.error) || resolvedApplication.status,
+          reason:
+            WORKFLOW_UTILS.optionalString(resolvedApplication.error) || resolvedApplication.status,
         });
       }
     } else {
       baseFix.unresolved.push({
         findingId: item.findingId,
-        reason: optionalString(resolutionOutput.status) || "unresolved-conflict",
+        reason: WORKFLOW_UTILS.optionalString(resolutionOutput.status) || "unresolved-conflict",
       });
     }
   }
@@ -907,18 +925,19 @@ function runSecurityFix(context) {
 
 function selectFixFindings(candidates, verifications, input, final) {
   const finalVerified = {};
-  stringList(final && final.verifiedFindingIds).forEach(function (id) {
+  WORKFLOW_UTILS.stringList(final && final.verifiedFindingIds).forEach(function (id) {
     finalVerified[id] = true;
   });
   const requested = {};
-  stringList(input.fixFindingIds).forEach(function (id) {
+  WORKFLOW_UTILS.stringList(input.fixFindingIds).forEach(function (id) {
     requested[id] = true;
   });
   const hasRequested = Object.keys(requested).length > 0;
   const selected = [];
   candidates.forEach(function (finding, index) {
     const normalized = inputObject(finding);
-    const findingId = optionalString(normalized.id) || "security-finding-" + String(index + 1);
+    const findingId =
+      WORKFLOW_UTILS.optionalString(normalized.id) || "security-finding-" + String(index + 1);
     if (hasRequested && requested[findingId] !== true) return;
     if (finalVerified[findingId] !== true) return;
     if (proofStateFor(verifications[index]) !== "verified") return;
@@ -931,9 +950,9 @@ function summarizeFixFinding(findingId, finding) {
   const normalized = inputObject(finding);
   return {
     findingId: findingId,
-    severity: optionalString(normalized.severity) || "unknown",
-    title: optionalString(normalized.title) || "",
-    locations: asArray(normalized.locations),
+    severity: WORKFLOW_UTILS.optionalString(normalized.severity) || "unknown",
+    title: WORKFLOW_UTILS.optionalString(normalized.title) || "",
+    locations: WORKFLOW_UTILS.asArray(normalized.locations),
   };
 }
 
@@ -942,9 +961,9 @@ function summarizeSecurityFixAttempt(findingId, result) {
   return {
     findingId: findingId,
     taskId: result ? result.taskId : undefined,
-    status: optionalString(output.status) || "unknown",
-    summary: optionalString(output.summary) || "",
-    validation: asArray(output.validation),
+    status: WORKFLOW_UTILS.optionalString(output.status) || "unknown",
+    summary: WORKFLOW_UTILS.optionalString(output.summary) || "",
+    validation: WORKFLOW_UTILS.asArray(output.validation),
   };
 }
 
@@ -953,8 +972,8 @@ function summarizeSecurityResolution(findingId, result) {
   return {
     findingId: findingId,
     resolverTaskId: result ? result.taskId : undefined,
-    status: optionalString(output.status) || "unknown",
-    summary: optionalString(output.summary) || "",
+    status: WORKFLOW_UTILS.optionalString(output.status) || "unknown",
+    summary: WORKFLOW_UTILS.optionalString(output.summary) || "",
   };
 }
 
@@ -963,7 +982,7 @@ function matchesReportedFindingId(output, expectedFindingId) {
 }
 
 function findingIdMismatchReason(source, expectedFindingId, output) {
-  const reported = optionalString(output && output.findingId) || "<missing>";
+  const reported = WORKFLOW_UTILS.optionalString(output && output.findingId) || "<missing>";
   return source + " reported findingId " + reported + " for " + expectedFindingId;
 }
 
@@ -979,7 +998,7 @@ function safeApplySecurityPatch(applyPatch, id, source, expectedHeadSha) {
     const spec = { id: id, source: source, target: "parent", onConflict: "return" };
     if (expectedHeadSha) spec.expectedHeadSha = expectedHeadSha;
     const result = applyPatch(spec);
-    return normalizeSecurityPatchApplication(source, result);
+    return normalizeSecurityPatchApplication(source, workflowPatchNormalize(result));
   } catch (error) {
     return {
       sourceTaskId: source ? source.taskId : undefined,
@@ -1016,7 +1035,7 @@ function getAppliedHeadCommitSha(application) {
   ) {
     return application.headCommitSha;
   }
-  const projectResults = asArray(application && application.projectResults);
+  const projectResults = WORKFLOW_UTILS.asArray(application && application.projectResults);
   for (let index = projectResults.length - 1; index >= 0; index -= 1) {
     const result = inputObject(projectResults[index]);
     if (typeof result.headCommitSha === "string" && result.headCommitSha.length > 0) {
@@ -1074,17 +1093,17 @@ function renderSecurityFixMarkdown(fix) {
   markdown += "- Not fixed: " + fix.unresolved.length + "\n";
   markdown += "- Validation: " + (fix.validation ? fix.validation.status : "not-run") + "\n";
   if (fix.skippedReason) markdown += "- Skipped: " + fix.skippedReason + "\n";
-  if (asArray(fix.appliedButUnvalidated).length > 0) {
+  if (WORKFLOW_UTILS.asArray(fix.appliedButUnvalidated).length > 0) {
     markdown +=
       "- Applied but not marked fixed until validation passes: " +
-      asArray(fix.appliedButUnvalidated).join(", ") +
+      WORKFLOW_UTILS.asArray(fix.appliedButUnvalidated).join(", ") +
       "\n";
   }
   return markdown;
 }
 
 function integratedFixFindingIds(fix) {
-  return uniqueStrings(asArray(fix && fix.integratedFindingIds));
+  return uniqueStrings(WORKFLOW_UTILS.asArray(fix && fix.integratedFindingIds));
 }
 
 function fixedFindingIds(fix) {
@@ -1102,7 +1121,7 @@ function fixedFindingIdSet(fix) {
 
 function proofStateFor(verification) {
   const output = inputObject(verification && verification.structuredOutput);
-  return optionalString(output.verdict) || "unverified";
+  return WORKFLOW_UTILS.optionalString(output.verdict) || "unverified";
 }
 
 function countVerified(verifications) {
@@ -1124,7 +1143,7 @@ function selectSecurityLanes(rawLanes) {
     "llm-tool-execution",
   ];
   const lanes = [];
-  asArray(rawLanes).forEach(function (lane) {
+  WORKFLOW_UTILS.asArray(rawLanes).forEach(function (lane) {
     const normalized = String(lane).toLowerCase().replace(/_/g, "-").replace(/\s+/g, "-");
     if (allowed.indexOf(normalized) !== -1 && lanes.indexOf(normalized) === -1)
       lanes.push(normalized);
@@ -1155,134 +1174,252 @@ function laneSecurityPrompt(lane) {
 }
 
 function securityScopeSchema() {
-  return objectSchema({
-    summary: stringSchema(),
-    assets: stringArraySchema(),
-    entrypoints: stringArraySchema(),
-    trustBoundaries: stringArraySchema(),
-    lanes: stringArraySchema(),
-    files: stringArraySchema(),
+  return SCHEMA.object({
+    summary: SCHEMA.string(),
+    assets: SCHEMA.array(SCHEMA.string()),
+    entrypoints: SCHEMA.array(SCHEMA.string()),
+    trustBoundaries: SCHEMA.array(SCHEMA.string()),
+    lanes: SCHEMA.array(SCHEMA.string()),
+    files: SCHEMA.array(SCHEMA.string()),
   });
 }
 
 function securityFindingListSchema() {
-  return objectSchema({
-    findings: {
-      type: "array",
-      items: objectSchema({
-        id: stringSchema(),
-        ruleId: stringSchema(),
-        title: stringSchema(),
-        severity: stringSchema(),
-        cwe: stringArraySchema(),
-        locations: stringArraySchema(),
-        evidence: stringSchema(),
-        proofHypothesis: stringSchema(),
-        fingerprints: { type: "object" },
-      }),
-    },
+  return SCHEMA.object({
+    findings: SCHEMA.array(
+      SCHEMA.object({
+        id: SCHEMA.string(),
+        ruleId: SCHEMA.string(),
+        title: SCHEMA.string(),
+        severity: SCHEMA.string(),
+        cwe: SCHEMA.array(SCHEMA.string()),
+        locations: SCHEMA.array(SCHEMA.string()),
+        evidence: SCHEMA.string(),
+        proofHypothesis: SCHEMA.string(),
+        fingerprints: SCHEMA.object({}, { required: false }),
+      })
+    ),
   });
 }
 
 function securityGrillSchema() {
-  return objectSchema({ gaps: stringArraySchema(), followUps: stringArraySchema() });
+  return SCHEMA.object({
+    gaps: SCHEMA.array(SCHEMA.string()),
+    followUps: SCHEMA.array(SCHEMA.string()),
+  });
 }
 
 function securityVerificationSchema() {
-  return objectSchema({
-    findingId: stringSchema(),
-    verdict: enumSchema([
+  return SCHEMA.object({
+    findingId: SCHEMA.string(),
+    verdict: SCHEMA.enum([
       "verified",
       "static_evidence",
       "unverified",
       "inconclusive",
       "needs_human_review",
     ]),
-    confidence: stringSchema(),
-    evidence: stringSchema(),
-    rationale: stringSchema(),
+    confidence: SCHEMA.string(),
+    evidence: SCHEMA.string(),
+    rationale: SCHEMA.string(),
   });
 }
 
 function securityFixAttemptSchema() {
-  return objectSchema({
-    findingId: stringSchema(),
-    status: enumSchema(["fixed", "already-fixed", "not-fixable", "needs-info"]),
-    summary: stringSchema(),
-    validation: stringArraySchema(),
-    commitCreated: { type: "boolean" },
+  return SCHEMA.object({
+    findingId: SCHEMA.string(),
+    status: SCHEMA.enum(["fixed", "already-fixed", "not-fixable", "needs-info"]),
+    summary: SCHEMA.string(),
+    validation: SCHEMA.array(SCHEMA.string()),
+    commitCreated: SCHEMA.boolean(),
   });
 }
 
 function securityFixResolverSchema() {
-  return objectSchema({
-    findingId: stringSchema(),
-    status: enumSchema(["resolved", "already-resolved", "unresolved"]),
-    summary: stringSchema(),
-    validation: stringArraySchema(),
-    commitCreated: { type: "boolean" },
+  return SCHEMA.object({
+    findingId: SCHEMA.string(),
+    status: SCHEMA.enum(["resolved", "already-resolved", "unresolved"]),
+    summary: SCHEMA.string(),
+    validation: SCHEMA.array(SCHEMA.string()),
+    commitCreated: SCHEMA.boolean(),
   });
 }
 
 function securityFixValidationSchema() {
-  return objectSchema({
-    status: enumSchema(["passed", "failed", "not-run"]),
-    commands: stringArraySchema(),
-    summary: stringSchema(),
-    failures: stringArraySchema(),
+  return SCHEMA.object({
+    status: SCHEMA.enum(["passed", "failed", "not-run"]),
+    commands: SCHEMA.array(SCHEMA.string()),
+    summary: SCHEMA.string(),
+    failures: SCHEMA.array(SCHEMA.string()),
   });
 }
 
 function securitySynthesisSchema() {
-  return objectSchema({
-    findingCount: { type: "number" },
-    verifiedFindingIds: stringArraySchema(),
-    risk: stringSchema(),
-    validationPlan: stringArraySchema(),
-    skippedCacheHits: { type: "number" },
+  return SCHEMA.object({
+    findingCount: SCHEMA.number(),
+    verifiedFindingIds: SCHEMA.array(SCHEMA.string()),
+    risk: SCHEMA.string(),
+    validationPlan: SCHEMA.array(SCHEMA.string()),
+    skippedCacheHits: SCHEMA.number(),
   });
 }
 
-function objectSchema(properties) {
-  return { type: "object", required: Object.keys(properties), properties: properties };
+function workflowSchema() {
+  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
+  function withOptions(schema, options) {
+    return options && typeof options === "object" && !Array.isArray(options)
+      ? Object.assign(schema, options)
+      : schema;
+  }
+  function optional(schema) {
+    const clone = Object.assign({}, schema || {});
+    Object.defineProperty(clone, "__muxOptional", { value: true });
+    return clone;
+  }
+  function isOptional(schema) {
+    return Boolean(schema && schema.__muxOptional === true);
+  }
+  function nullable(schema) {
+    const clone = Object.assign({}, schema || {});
+    if (typeof clone.type === "string")
+      clone.type = clone.type === "null" ? ["null"] : [clone.type, "null"];
+    else if (Array.isArray(clone.type))
+      clone.type = clone.type.includes("null") ? clone.type : clone.type.concat(["null"]);
+    else clone.type = ["null"];
+    return clone;
+  }
+  return {
+    string: function (options) {
+      return withOptions({ type: "string" }, options);
+    },
+    number: function (options) {
+      return withOptions({ type: "number" }, options);
+    },
+    integer: function (options) {
+      return withOptions({ type: "integer" }, options);
+    },
+    boolean: function (options) {
+      return withOptions({ type: "boolean" }, options);
+    },
+    array: function (items, options) {
+      return withOptions({ type: "array", items: items }, options);
+    },
+    enum: function (values, options) {
+      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
+    },
+    union: function (schemas) {
+      const types = [];
+      for (const schema of Array.isArray(schemas) ? schemas : []) {
+        const schemaTypes = Array.isArray(schema && schema.type)
+          ? schema.type
+          : [schema && schema.type];
+        for (const type of schemaTypes) {
+          if (typeof type === "string" && !types.includes(type)) types.push(type);
+        }
+      }
+      return { type: types };
+    },
+    optional: optional,
+    nullable: nullable,
+    object: function (properties, options) {
+      const sourceProperties = properties || {};
+      const keys = Object.keys(sourceProperties);
+      const cleanProperties = {};
+      const inferredRequired = [];
+      for (const key of keys) {
+        const propertySchema = sourceProperties[key];
+        cleanProperties[key] = isOptional(propertySchema)
+          ? Object.assign({}, propertySchema)
+          : propertySchema;
+        if (!isOptional(propertySchema)) inferredRequired.push(key);
+      }
+      const required = Array.isArray(options && options.required)
+        ? options.required.filter(function (key) {
+            return keys.includes(key);
+          })
+        : options && options.required === false
+          ? []
+          : inferredRequired;
+      const schema = { type: "object", required: required, properties: cleanProperties };
+      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
+        schema.additionalProperties = options.additionalProperties;
+      }
+      return schema;
+    },
+  };
 }
 
-function stringSchema() {
-  return { type: "string" };
+function workflowUtils() {
+  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
+  return {
+    asArray: function (value) {
+      return Array.isArray(value) ? value : [];
+    },
+    optionalString: function (value) {
+      return typeof value === "string" && value.length > 0 ? value : undefined;
+    },
+    stringList: function (value) {
+      if (!Array.isArray(value)) return [];
+      return value.filter(function (item) {
+        return typeof item === "string" && item.length > 0;
+      });
+    },
+    boundedInt: function (value, fallback, min, max) {
+      if (!Number.isInteger(value)) return fallback;
+      const lower = Number.isInteger(min) ? min : value;
+      const upper = Number.isInteger(max) ? max : value;
+      return Math.max(lower, Math.min(value, upper));
+    },
+  };
 }
-function stringArraySchema() {
-  return { type: "array", items: { type: "string" } };
+
+function workflowParallelMap(options, parallelAgents) {
+  if (globalThis.mux && typeof globalThis.mux.parallelMap === "function") {
+    return globalThis.mux.parallelMap(options);
+  }
+  const items = WORKFLOW_UTILS.asArray(options.items);
+  if (items.length === 0) return [];
+  return parallelAgents(
+    items.map(function (item, index) {
+      return {
+        id:
+          typeof options.stepId === "function"
+            ? options.stepId(item, index)
+            : options.id + "-" + index,
+        title: typeof options.title === "function" ? options.title(item, index) : options.title,
+        agentId:
+          typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
+        prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
+        outputSchema:
+          typeof options.outputSchema === "function"
+            ? options.outputSchema(item, index)
+            : options.outputSchema,
+      };
+    }),
+    { maxParallel: options.maxParallel || items.length }
+  );
 }
-function enumSchema(values) {
-  return { type: "string", enum: values };
+
+function workflowPatchNormalize(result) {
+  if (globalThis.mux && globalThis.mux.patch && globalThis.mux.patch.normalize) {
+    return globalThis.mux.patch.normalize(result);
+  }
+  return result;
 }
 
 function inputObject(value) {
   return value != null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function asArray(value) {
-  return Array.isArray(value) ? value : [];
-}
 function formatError(error) {
   return String((error && error.message) || error);
 }
-function optionalString(value) {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-function stringList(value) {
-  return asArray(value).filter(function (item) {
-    return typeof item === "string" && item.length > 0;
-  });
-}
-function boundedInt(value, fallback) {
-  return Number.isInteger(value) ? Math.max(1, Math.min(value, 1000)) : fallback;
-}
+
 function flatten(arrays) {
   return [].concat.apply([], arrays);
 }
 function renderList(values) {
-  const items = asArray(values).filter(function (value) {
+  const items = WORKFLOW_UTILS.asArray(values).filter(function (value) {
     return typeof value === "string" && value.length > 0;
   });
   return items.length > 0

@@ -274,21 +274,23 @@ export default function workflow({ args, agent }) {
     using tmp = new DisposableTempDir("workflow-service-args-schema");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
     const globalRoot = path.join(tmp.path, "mux-home", "workflows");
-    const source = `export const metadata = {
+    const source = `const s = mux.schema;
+export const metadata = {
   description: "Args schema workflow",
-  argsSchema: {
-    type: "object",
-    required: ["target"],
-    properties: {
-      target: { type: "string", positional: true },
-      fix: { type: "boolean", default: true, negatedAliases: ["--review-only"] },
-      maxFindings: { type: "integer", default: 20, minimum: 1, maximum: 50, aliases: ["--max-findings"] },
-      mode: { type: "string", enum: ["quick", "smart"], default: "smart" },
-    },
-  },
+  argsSchema: s.object({
+    target: s.string({ positional: true }),
+    fix: s.optional(s.boolean({ default: true, negatedAliases: ["--review-only"] })),
+    maxFindings: s.optional(
+      s.integer({ default: 20, minimum: 1, maximum: 50, aliases: ["--max-findings"] })
+    ),
+    mode: s.optional(s.enum(["quick", "smart"], { default: "smart" })),
+  }),
 };
 export default function workflow({ args }) {
-  const schema = mux.schema.object({ summary: mux.schema.string() });
+  const schema = s.object(
+    { summary: s.string(), optionalNote: s.optional(s.string()) },
+    { additionalProperties: false }
+  );
   return {
     reportMarkdown: mux.utils.fencedJson(args),
     structuredOutput: {
@@ -341,7 +343,8 @@ export default function workflow({ args }) {
           schema: {
             type: "object",
             required: ["summary"],
-            properties: { summary: { type: "string" } },
+            properties: { summary: { type: "string" }, optionalNote: { type: "string" } },
+            additionalProperties: false,
           },
           list: ["a", "b"],
           bounded: 5,

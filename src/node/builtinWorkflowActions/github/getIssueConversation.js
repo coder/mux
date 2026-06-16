@@ -1,9 +1,54 @@
+const s = mux.schema;
+
 export const metadata = {
   version: 1,
   description: "Read a GitHub issue body and comments as markdown",
   effect: "external",
-  inputSchema: { type: "object" },
-  outputSchema: { type: "object" },
+  inputSchema: s.object(
+    {
+      repository: s.optional(s.string()),
+      owner: s.optional(s.string()),
+      repo: s.optional(s.string()),
+      number: s.integer(),
+      maxComments: s.optional(s.integer()),
+      issueBodyCharBudget: s.optional(s.integer()),
+      bodyCharBudget: s.optional(s.integer()),
+      commentBodyCharBudget: s.optional(s.integer()),
+    },
+    { additionalProperties: false }
+  ),
+  outputSchema: s.object(
+    {
+      repository: s.nullable(s.string()),
+      number: s.integer(),
+      issue: s.object(
+        {
+          number: s.integer(),
+          safeId: s.string(),
+          title: s.string(),
+          url: s.string(),
+          state: s.string(),
+          body: s.string(),
+          author: s.nullable(s.string()),
+          createdAt: s.nullable(s.string()),
+          updatedAt: s.nullable(s.string()),
+          labelNames: s.array(s.string()),
+        },
+        { additionalProperties: false }
+      ),
+      conversationMarkdown: s.string(),
+      limits: s.object(
+        {
+          maxComments: s.integer(),
+          issueBodyBudget: s.integer(),
+          commentBodyBudget: s.integer(),
+          hasOmittedComments: s.boolean(),
+        },
+        { additionalProperties: false }
+      ),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [
     { kind: "command", command: "gh issue view" },
     { kind: "command", command: "gh api" },

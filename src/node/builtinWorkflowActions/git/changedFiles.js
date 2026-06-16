@@ -1,8 +1,58 @@
+const s = mux.schema;
+
 module.exports.metadata = {
   version: 1,
   description: "Return changed file lists for branch, staged, unstaged, and untracked Git state",
   effect: "read",
-  outputSchema: { type: "object" },
+  inputSchema: s.nullable(
+    s.object(
+      {
+        base: s.optional(s.string()),
+        trunk: s.optional(s.string()),
+        head: s.optional(s.string()),
+      },
+      { additionalProperties: false }
+    )
+  ),
+  outputSchema: s.object(
+    {
+      base: s.nullable(s.string()),
+      head: s.string(),
+      mergeBase: s.nullable(s.string()),
+      branch: s.array(
+        s.object(
+          {
+            status: s.string(),
+            path: s.string(),
+            oldPath: s.optional(s.string()),
+          },
+          { additionalProperties: false }
+        )
+      ),
+      staged: s.array(
+        s.object(
+          {
+            status: s.string(),
+            path: s.string(),
+            oldPath: s.optional(s.string()),
+          },
+          { additionalProperties: false }
+        )
+      ),
+      unstaged: s.array(
+        s.object(
+          {
+            status: s.string(),
+            path: s.string(),
+            oldPath: s.optional(s.string()),
+          },
+          { additionalProperties: false }
+        )
+      ),
+      untracked: s.array(s.string()),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [
     { kind: "command", command: "git diff" },
     { kind: "command", command: "git ls-files" },

@@ -1,9 +1,41 @@
+const s = mux.schema;
+
 export const metadata = {
   version: 1,
   description: "Read GitHub issue automation marker comments and done labels",
   effect: "external",
-  inputSchema: { type: "object" },
-  outputSchema: { type: "object" },
+  inputSchema: s.object(
+    {
+      repository: s.optional(s.string()),
+      owner: s.optional(s.string()),
+      repo: s.optional(s.string()),
+      number: s.integer(),
+      doneLabels: s.optional(s.array(s.string())),
+      marker: s.string(),
+      markerKey: s.string(),
+      promptVersion: s.optional(s.string()),
+    },
+    { additionalProperties: false }
+  ),
+  outputSchema: s.object(
+    {
+      done: s.boolean(),
+      promptStarted: s.boolean(),
+      reportPosted: s.boolean(),
+      labelNames: s.array(s.string()),
+      markerComments: s.array(
+        s.object(
+          {
+            id: s.integer(),
+            url: s.nullable(s.string()),
+            status: s.string(),
+          },
+          { additionalProperties: false }
+        )
+      ),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [
     { kind: "command", command: "gh api" },
     { kind: "command", command: "gh issue view" },

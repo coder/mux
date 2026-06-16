@@ -1,5 +1,5 @@
 import { isPlainObject } from "@/common/utils/isPlainObject";
-import { parseStaticWorkflowMetadataLiteral } from "./WorkflowActionRunner";
+import { parseStaticWorkflowMetadataLiteral } from "./staticWorkflowMetadata";
 
 export interface WorkflowArgsNormalizationResult {
   args: unknown;

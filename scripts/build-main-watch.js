@@ -16,15 +16,20 @@ const buildCompleteStampPath = path.join(rootDir, "dist/.main-build-complete");
 try {
   console.log("Building main process...");
 
-  // Re-embed built-in workflow sources first so edits to
-  // src/node/builtinWorkflows/*.js hot-reload: tsgo compiles the regenerated
-  // builtInWorkflowContent.generated.ts into dist (the .js sources themselves
-  // are excluded from the main-process program). No-op when already in sync.
-  execSync("bun scripts/gen_builtin_workflows.ts", {
-    cwd: rootDir,
-    stdio: "inherit",
-    env: { ...process.env, NODE_ENV: "development" },
-  });
+  // Re-embed JavaScript-authored workflow sources first so edits hot-reload:
+  // tsgo compiles the regenerated .generated.ts files into dist (the .js sources
+  // themselves are excluded from the main-process program). No-op when in sync.
+  for (const command of [
+    "bun scripts/gen_builtin_workflows.ts",
+    "bun scripts/gen_builtin_workflow_actions.ts",
+    "bun scripts/gen_workflow_runtime_sources.ts",
+  ]) {
+    execSync(command, {
+      cwd: rootDir,
+      stdio: "inherit",
+      env: { ...process.env, NODE_ENV: "development" },
+    });
+  }
 
   // Run tsgo
   execSync(`node "${tsgoPath}" -p tsconfig.main.json`, {

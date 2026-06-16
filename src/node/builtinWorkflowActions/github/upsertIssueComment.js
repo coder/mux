@@ -1,9 +1,28 @@
+const s = mux.schema;
+
 export const metadata = {
   version: 1,
   description: "Create or update a GitHub issue comment selected by marker",
   effect: "external",
-  inputSchema: { type: "object" },
-  outputSchema: { type: "object" },
+  inputSchema: s.object(
+    {
+      repository: s.optional(s.string()),
+      owner: s.optional(s.string()),
+      repo: s.optional(s.string()),
+      number: s.integer(),
+      marker: s.string(),
+      body: s.string(),
+    },
+    { additionalProperties: false }
+  ),
+  outputSchema: s.object(
+    {
+      action: s.enum(["created", "updated"]),
+      commentId: s.nullable(s.integer()),
+      url: s.nullable(s.string()),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [{ kind: "command", command: "gh api" }],
   timeoutMs: 60000,
 };

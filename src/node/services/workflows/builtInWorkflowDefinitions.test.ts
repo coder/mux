@@ -3126,13 +3126,9 @@ describe("built-in deep-review-workflow", () => {
     expect(
       run.events.some(
         (event) =>
-          event.type === "action" && event.name === "git.status" && event.status === "completed"
-      )
-    ).toBe(true);
-    expect(
-      run.events.some(
-        (event) =>
-          event.type === "action" && event.name === "git.diff" && event.status === "completed"
+          event.type === "action" &&
+          event.name === "git.reviewContext" &&
+          event.status === "completed"
       )
     ).toBe(true);
   }, 10_000);
@@ -3746,9 +3742,15 @@ describe("built-in deep-review-workflow", () => {
     const completedActionStepIds = run.events.flatMap((event) =>
       event.type === "action" && event.status === "completed" ? [event.stepId] : []
     );
-    expect(completedActionStepIds).toContain("git-status-loop-1");
+    expect(
+      completedActionStepIds.includes("git-review-context-loop-1") ||
+        completedActionStepIds.includes("git-status-loop-1")
+    ).toBe(true);
     expect(completedActionStepIds).toContain("fix-git-status-loop-1");
-    expect(completedActionStepIds).toContain("git-status-loop-2");
+    expect(
+      completedActionStepIds.includes("git-review-context-loop-2") ||
+        completedActionStepIds.includes("git-status-loop-2")
+    ).toBe(true);
     const loopTwoScopePrompt = taskCalls.find(
       (call) => call.id === "scope-review-surface-loop-2"
     )?.prompt;

@@ -55,15 +55,15 @@ function validateValue(
     errors.push({ path, message: `Expected one of: ${schema.enum.map(String).join(", ")}` });
   }
 
-  if (typeof schema.type === "string") {
+  if (typeof schema.type === "string" || Array.isArray(schema.type)) {
     validateType(schema.type, value, path, errors);
   }
 
-  if (schema.type === "object" && isPlainRecord(value)) {
+  if (schemaAllowsType(schema, "object") && isPlainRecord(value)) {
     validateObject(schema, value, path, errors);
   }
 
-  if (schema.type === "array" && Array.isArray(value)) {
+  if (schemaAllowsType(schema, "array") && Array.isArray(value)) {
     validateArray(schema, value, path, errors);
   }
 }
@@ -119,50 +119,66 @@ function validateArray(
 }
 
 function validateType(
-  type: string,
+  type: string | unknown[],
   value: unknown,
   path: string,
   errors: JsonSchemaValidationError[]
 ): void {
+  const types = Array.isArray(type) ? type : [type];
+  const unsupported = types.filter((candidate) => !isSupportedJsonSchemaType(candidate));
+  if (unsupported.length > 0) {
+    errors.push({
+      path,
+      message: `Unsupported JSON Schema type: ${unsupported.map(String).join(", ")}`,
+    });
+    return;
+  }
+  const supportedTypes = types.filter(isSupportedJsonSchemaType);
+  if (supportedTypes.some((candidate) => valueMatchesType(candidate, value))) {
+    return;
+  }
+  errors.push({
+    path,
+    message: `Expected ${supportedTypes.join(" or ")}, got ${getJsonType(value)}`,
+  });
+}
+
+function valueMatchesType(type: string, value: unknown): boolean {
   switch (type) {
     case "object":
-      if (!isPlainRecord(value)) {
-        errors.push({ path, message: `Expected object, got ${getJsonType(value)}` });
-      }
-      return;
+      return isPlainRecord(value);
     case "array":
-      if (!Array.isArray(value)) {
-        errors.push({ path, message: `Expected array, got ${getJsonType(value)}` });
-      }
-      return;
+      return Array.isArray(value);
     case "string":
-      if (typeof value !== "string") {
-        errors.push({ path, message: `Expected string, got ${getJsonType(value)}` });
-      }
-      return;
+      return typeof value === "string";
     case "number":
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        errors.push({ path, message: `Expected number, got ${getJsonType(value)}` });
-      }
-      return;
+      return typeof value === "number" && Number.isFinite(value);
     case "integer":
-      if (typeof value !== "number" || !Number.isInteger(value)) {
-        errors.push({ path, message: `Expected integer, got ${getJsonType(value)}` });
-      }
-      return;
+      return typeof value === "number" && Number.isInteger(value);
     case "boolean":
-      if (typeof value !== "boolean") {
-        errors.push({ path, message: `Expected boolean, got ${getJsonType(value)}` });
-      }
-      return;
+      return typeof value === "boolean";
     case "null":
-      if (value !== null) {
-        errors.push({ path, message: `Expected null, got ${getJsonType(value)}` });
-      }
-      return;
+      return value === null;
     default:
-      errors.push({ path, message: `Unsupported JSON Schema type: ${type}` });
+      return false;
   }
+}
+
+function isSupportedJsonSchemaType(value: unknown): value is string {
+  return (
+    value === "object" ||
+    value === "array" ||
+    value === "string" ||
+    value === "number" ||
+    value === "integer" ||
+    value === "boolean" ||
+    value === "null"
+  );
+}
+
+function schemaAllowsType(schema: Record<string, unknown>, type: string): boolean {
+  const schemaType = schema.type;
+  return schemaType === type || (Array.isArray(schemaType) && schemaType.includes(type));
 }
 
 function collectUnsupportedKeywordErrors(
@@ -181,7 +197,18 @@ function collectUnsupportedKeywordErrors(
   }
 
   if (Array.isArray(schema.type)) {
-    errors.push({ path, message: "Unsupported JSON Schema type union" });
+    const invalidTypes = schema.type.filter((type) => !isSupportedJsonSchemaType(type));
+    if (invalidTypes.length > 0) {
+      errors.push({
+        path: `${path}.type`,
+        message: `Unsupported JSON Schema type: ${invalidTypes.map(String).join(", ")}`,
+      });
+    }
+  } else if (schema.type !== undefined && !isSupportedJsonSchemaType(schema.type)) {
+    errors.push({
+      path: `${path}.type`,
+      message: `Unsupported JSON Schema type: ${getJsonType(schema.type)}`,
+    });
   }
 
   if (

@@ -1,5 +1,16 @@
+const mux = globalThis.mux || { schema: workflowSchema() };
+
+const s = mux.schema;
+
 export const metadata = {
   description: "Coordinate delegated agents to research, verify, and synthesize a topic.",
+  argsSchema: s.object({
+    topic: s.optional(s.string({ positional: true })),
+    input: s.optional(s.string()),
+    query: s.optional(s.string()),
+    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+    mode: s.optional(s.enum(["quick", "smart", "fast"], { aliases: ["--mode"] })),
+  }),
 };
 
 // Deep-research conductor: scope the topic into questions and discovery angles,
@@ -68,100 +79,84 @@ const REPORT_CONFIDENCE_LEVELS = ["low", "medium", "high"];
 
 // === Structured output schemas ===
 
-const SCOPE_SCHEMA = {
-  type: "object",
-  required: ["refinedTopic", "strategy", "questions", "angles"],
-  additionalProperties: false,
-  properties: {
-    refinedTopic: { type: "string" },
-    strategy: { type: "string" },
-    questions: { type: "array", items: { type: "string" } },
-    angles: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["label", "query", "rationale"],
-        additionalProperties: false,
-        properties: {
-          label: { type: "string" },
-          query: { type: "string" },
-          rationale: { type: "string" },
+const SCHEMA = s;
+const WORKFLOW_UTILS = workflowUtils();
+
+const SCOPE_SCHEMA = SCHEMA.object(
+  {
+    refinedTopic: SCHEMA.string(),
+    strategy: SCHEMA.string(),
+    questions: SCHEMA.array(SCHEMA.string()),
+    angles: SCHEMA.array(
+      SCHEMA.object(
+        {
+          label: SCHEMA.string(),
+          query: SCHEMA.string(),
+          rationale: SCHEMA.string(),
         },
-      },
-    },
+        { additionalProperties: false }
+      )
+    ),
   },
-};
+  { additionalProperties: false }
+);
 
-const SOURCE_DISCOVERY_SCHEMA = {
-  type: "object",
-  required: ["sources"],
-  additionalProperties: false,
-  properties: {
-    sources: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["title", "url", "relevance", "sourceType"],
-        additionalProperties: false,
-        properties: {
-          title: { type: "string" },
-          url: { type: "string" },
-          relevance: { type: "string", enum: RELEVANCE_LEVELS },
-          sourceType: { type: "string", enum: SOURCE_QUALITY_LEVELS },
+const SOURCE_DISCOVERY_SCHEMA = SCHEMA.object(
+  {
+    sources: SCHEMA.array(
+      SCHEMA.object(
+        {
+          title: SCHEMA.string(),
+          url: SCHEMA.string(),
+          relevance: SCHEMA.enum(RELEVANCE_LEVELS),
+          sourceType: SCHEMA.enum(SOURCE_QUALITY_LEVELS),
         },
-      },
-    },
+        { additionalProperties: false }
+      )
+    ),
   },
-};
+  { additionalProperties: false }
+);
 
-const SOURCE_EXTRACTION_SCHEMA = {
-  type: "object",
-  required: ["source", "sourceQuality", "publishDate", "summary", "claims"],
-  additionalProperties: false,
-  properties: {
-    source: { type: "string" },
-    sourceQuality: { type: "string", enum: SOURCE_QUALITY_LEVELS },
-    publishDate: { type: "string" },
-    summary: { type: "string" },
-    claims: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["claim", "quote", "importance"],
-        additionalProperties: false,
-        properties: {
-          claim: { type: "string" },
-          quote: { type: "string" },
-          importance: { type: "string", enum: CLAIM_IMPORTANCE_LEVELS },
+const SOURCE_EXTRACTION_SCHEMA = SCHEMA.object(
+  {
+    source: SCHEMA.string(),
+    sourceQuality: SCHEMA.enum(SOURCE_QUALITY_LEVELS),
+    publishDate: SCHEMA.string(),
+    summary: SCHEMA.string(),
+    claims: SCHEMA.array(
+      SCHEMA.object(
+        {
+          claim: SCHEMA.string(),
+          quote: SCHEMA.string(),
+          importance: SCHEMA.enum(CLAIM_IMPORTANCE_LEVELS),
         },
-      },
-    },
+        { additionalProperties: false }
+      )
+    ),
   },
-};
+  { additionalProperties: false }
+);
 
-const VERIFICATION_SCHEMA = {
-  type: "object",
-  required: ["claim", "refuted", "confidence", "evidence", "counterSource"],
-  additionalProperties: false,
-  properties: {
-    claim: { type: "string" },
-    refuted: { type: "boolean" },
-    confidence: { type: "string", enum: CONFIDENCE_LEVELS },
-    evidence: { type: "string" },
-    counterSource: { type: "string" },
+const VERIFICATION_SCHEMA = SCHEMA.object(
+  {
+    claim: SCHEMA.string(),
+    refuted: SCHEMA.boolean(),
+    confidence: SCHEMA.enum(CONFIDENCE_LEVELS),
+    evidence: SCHEMA.string(),
+    counterSource: SCHEMA.string(),
   },
-};
+  { additionalProperties: false }
+);
 
-const FINAL_SYNTHESIS_SCHEMA = {
-  type: "object",
-  required: ["confidence", "gaps", "findings"],
-  additionalProperties: false,
-  properties: {
-    confidence: { type: "string", enum: REPORT_CONFIDENCE_LEVELS },
-    gaps: { type: "array", items: { type: "string" } },
-    findings: { type: "array", items: { type: "string" } },
+const FINAL_SYNTHESIS_SCHEMA = SCHEMA.object(
+  {
+    confidence: SCHEMA.enum(REPORT_CONFIDENCE_LEVELS),
+    gaps: SCHEMA.array(SCHEMA.string()),
+    findings: SCHEMA.array(SCHEMA.string()),
   },
-};
+  { additionalProperties: false }
+);
 
 // === Pipeline ===
 
@@ -268,7 +263,7 @@ export default function deepResearch({ args, phase, log, agent, parallelAgents }
       refutedClaims: verification.refutedClaims,
       confidence: final.structuredOutput.confidence,
       gaps: final.structuredOutput.gaps,
-      findings: asArray(final.structuredOutput.findings),
+      findings: WORKFLOW_UTILS.asArray(final.structuredOutput.findings),
       stats: researchStats({ config, scoped, discovery, extraction, verification }),
     }),
   };
@@ -285,8 +280,14 @@ function scopeTopic({ agent, topic, config }) {
     outputSchema: SCOPE_SCHEMA,
   });
   const refinedTopic = nonEmptyString(scope.structuredOutput.refinedTopic) || topic;
-  const questions = asArray(scope.structuredOutput.questions).slice(0, config.maxAngles);
-  const scopedAngles = asArray(scope.structuredOutput.angles).slice(0, config.maxAngles);
+  const questions = WORKFLOW_UTILS.asArray(scope.structuredOutput.questions).slice(
+    0,
+    config.maxAngles
+  );
+  const scopedAngles = WORKFLOW_UTILS.asArray(scope.structuredOutput.angles).slice(
+    0,
+    config.maxAngles
+  );
   const angles = scopedAngles.length > 0 ? scopedAngles : fallbackAngles(refinedTopic, questions);
   return { refinedTopic, questions, angles };
 }
@@ -321,14 +322,22 @@ function fallbackAngles(refinedTopic, questions) {
 // === Phase: source discovery ===
 
 function discoverSources({ parallelAgents, scoped, config }) {
-  const discoveryResults = parallelAgents(
-    scoped.angles.map((angle, index) => ({
-      id: `discover-sources-${index}`,
-      title: `Discover sources for ${angle.label}`,
+  const discoveryResults = workflowParallelMap(
+    {
+      items: scoped.angles,
+      stepId: function (_angle, index) {
+        return `discover-sources-${index}`;
+      },
+      title: function (angle) {
+        return `Discover sources for ${angle.label}`;
+      },
       agentId: FAST_AGENT_ID,
-      prompt: buildDiscoveryPrompt(scoped, angle),
+      prompt: function (angle) {
+        return buildDiscoveryPrompt(scoped, angle);
+      },
       outputSchema: SOURCE_DISCOVERY_SCHEMA,
-    }))
+    },
+    parallelAgents
   );
   const candidates = discoveryResultsToSources(discoveryResults, scoped.angles);
   const selection = selectNovelSources(candidates, scoped.angles.length, config.maxSources);
@@ -351,7 +360,7 @@ function discoveryResultsToSources(discoveryResults, angles) {
   const sources = [];
   discoveryResults.forEach((result, angleIndex) => {
     const angle = angles[angleIndex] || { label: `angle-${angleIndex}` };
-    asArray(result.structuredOutput.sources).forEach((source, sourceIndex) => {
+    WORKFLOW_UTILS.asArray(result.structuredOutput.sources).forEach((source, sourceIndex) => {
       sources.push({
         title: nonEmptyString(source.title) || "Untitled source",
         url:
@@ -473,18 +482,23 @@ function trimTrailingSlashes(value) {
 // === Phase: claim extraction ===
 
 function extractClaims({ parallelAgents, scoped, sources, config }) {
-  const extractionResults =
-    sources.length > 0
-      ? parallelAgents(
-          sources.map((source, index) => ({
-            id: `extract-source-${index}`,
-            title: `Extract claims from source ${index + 1}`,
-            agentId: FAST_AGENT_ID,
-            prompt: buildExtractionPrompt(scoped, source),
-            outputSchema: SOURCE_EXTRACTION_SCHEMA,
-          }))
-        )
-      : [];
+  const extractionResults = workflowParallelMap(
+    {
+      items: sources,
+      stepId: function (_source, index) {
+        return `extract-source-${index}`;
+      },
+      title: function (_source, index) {
+        return `Extract claims from source ${index + 1}`;
+      },
+      agentId: FAST_AGENT_ID,
+      prompt: function (source) {
+        return buildExtractionPrompt(scoped, source);
+      },
+      outputSchema: SOURCE_EXTRACTION_SCHEMA,
+    },
+    parallelAgents
+  );
   const extracts = sourceExtractionResultsToExtracts(extractionResults, sources, config);
   const allClaims = extractsToClaims(extracts);
   const rankedClaims = rankClaims(allClaims).slice(0, config.maxVerifyClaims);
@@ -507,7 +521,7 @@ function sourceExtractionResultsToExtracts(results, selectedSources, config) {
   return results.map((result, index) => {
     const source = selectedSources[index] || {};
     const output = result.structuredOutput;
-    const claims = asArray(output.claims)
+    const claims = WORKFLOW_UTILS.asArray(output.claims)
       .map((claim) => ({
         claim: nonEmptyString(claim.claim),
         quote: nonEmptyString(claim.quote),
@@ -599,36 +613,47 @@ function compareClaimsForRanking(left, right) {
 // === Phase: adversarial verification ===
 
 function verifyClaims({ parallelAgents, refinedTopic, claims, config }) {
-  const voteSpecs = buildVerificationSpecs({ claims, config, refinedTopic });
+  const voteItems = buildVerificationItems({ claims, config });
   // Verification fans out claims x votes; maxParallel caps live verifier
   // agents with a sliding window so the queue keeps draining while slow
   // verifiers finish, instead of stalling whole fixed-size batches.
-  const voteResults = parallelAgents(voteSpecs, { maxParallel: config.maxParallelVerifiers });
+  const voteResults = workflowParallelMap(
+    {
+      items: voteItems,
+      stepId: function (item) {
+        return `verify-claim-${item.claimIndex}-vote-${item.vote}`;
+      },
+      title: function (item) {
+        return `Verify claim ${item.claimIndex + 1} vote ${item.vote + 1}`;
+      },
+      agentId: SMART_AGENT_ID,
+      prompt: function (item) {
+        return buildVerificationPrompt({
+          refinedTopic,
+          claim: item.claim,
+          vote: item.vote,
+          votesPerClaim: config.votesPerClaim,
+        });
+      },
+      outputSchema: VERIFICATION_SCHEMA,
+      maxParallel: config.maxParallelVerifiers,
+    },
+    parallelAgents
+  );
   const votedClaims = aggregateVotes(claims, voteResults, config);
   const confirmedClaims = votedClaims.filter((claim) => claim.survives);
   const refutedClaims = votedClaims.filter((claim) => !claim.survives);
   return { votedClaims, confirmedClaims, refutedClaims };
 }
 
-function buildVerificationSpecs({ claims, config, refinedTopic }) {
-  const specs = [];
+function buildVerificationItems({ claims, config }) {
+  const items = [];
   claims.forEach((claim, claimIndex) => {
     for (let vote = 0; vote < config.votesPerClaim; vote++) {
-      specs.push({
-        id: `verify-claim-${claimIndex}-vote-${vote}`,
-        title: `Verify claim ${claimIndex + 1} vote ${vote + 1}`,
-        agentId: SMART_AGENT_ID,
-        prompt: buildVerificationPrompt({
-          refinedTopic,
-          claim,
-          vote,
-          votesPerClaim: config.votesPerClaim,
-        }),
-        outputSchema: VERIFICATION_SCHEMA,
-      });
+      items.push({ claim, claimIndex, vote });
     }
   });
-  return specs;
+  return items;
 }
 
 function buildVerificationPrompt({ refinedTopic, claim, vote, votesPerClaim }) {
@@ -820,8 +845,125 @@ function nonEmptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
-function asArray(value) {
-  return Array.isArray(value) ? value : [];
+function workflowSchema() {
+  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
+  function withOptions(schema, options) {
+    return options && typeof options === "object" && !Array.isArray(options)
+      ? Object.assign(schema, options)
+      : schema;
+  }
+  function optional(schema) {
+    const clone = Object.assign({}, schema || {});
+    Object.defineProperty(clone, "__muxOptional", { value: true });
+    return clone;
+  }
+  function isOptional(schema) {
+    return Boolean(schema && schema.__muxOptional === true);
+  }
+  function nullable(schema) {
+    const clone = Object.assign({}, schema || {});
+    if (typeof clone.type === "string")
+      clone.type = clone.type === "null" ? ["null"] : [clone.type, "null"];
+    else if (Array.isArray(clone.type))
+      clone.type = clone.type.includes("null") ? clone.type : clone.type.concat(["null"]);
+    else clone.type = ["null"];
+    return clone;
+  }
+  return {
+    string: function (options) {
+      return withOptions({ type: "string" }, options);
+    },
+    number: function (options) {
+      return withOptions({ type: "number" }, options);
+    },
+    integer: function (options) {
+      return withOptions({ type: "integer" }, options);
+    },
+    boolean: function (options) {
+      return withOptions({ type: "boolean" }, options);
+    },
+    array: function (items, options) {
+      return withOptions({ type: "array", items: items }, options);
+    },
+    enum: function (values, options) {
+      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
+    },
+    union: function (schemas) {
+      const types = [];
+      for (const schema of Array.isArray(schemas) ? schemas : []) {
+        const schemaTypes = Array.isArray(schema && schema.type)
+          ? schema.type
+          : [schema && schema.type];
+        for (const type of schemaTypes) {
+          if (typeof type === "string" && !types.includes(type)) types.push(type);
+        }
+      }
+      return { type: types };
+    },
+    optional: optional,
+    nullable: nullable,
+    object: function (properties, options) {
+      const sourceProperties = properties || {};
+      const keys = Object.keys(sourceProperties);
+      const cleanProperties = {};
+      const inferredRequired = [];
+      for (const key of keys) {
+        const propertySchema = sourceProperties[key];
+        cleanProperties[key] = isOptional(propertySchema)
+          ? Object.assign({}, propertySchema)
+          : propertySchema;
+        if (!isOptional(propertySchema)) inferredRequired.push(key);
+      }
+      const required = Array.isArray(options && options.required)
+        ? options.required.filter(function (key) {
+            return keys.includes(key);
+          })
+        : options && options.required === false
+          ? []
+          : inferredRequired;
+      const schema = { type: "object", required: required, properties: cleanProperties };
+      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
+        schema.additionalProperties = options.additionalProperties;
+      }
+      return schema;
+    },
+  };
+}
+
+function workflowUtils() {
+  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
+  return {
+    asArray: function (value) {
+      return Array.isArray(value) ? value : [];
+    },
+  };
+}
+
+function workflowParallelMap(options, parallelAgents) {
+  if (globalThis.mux && typeof globalThis.mux.parallelMap === "function") {
+    return globalThis.mux.parallelMap(options);
+  }
+  const items = WORKFLOW_UTILS.asArray(options.items);
+  if (items.length === 0) return [];
+  return parallelAgents(
+    items.map(function (item, index) {
+      return {
+        id:
+          typeof options.stepId === "function"
+            ? options.stepId(item, index)
+            : options.id + "-" + index,
+        title: typeof options.title === "function" ? options.title(item, index) : options.title,
+        agentId:
+          typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
+        prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
+        outputSchema:
+          typeof options.outputSchema === "function"
+            ? options.outputSchema(item, index)
+            : options.outputSchema,
+      };
+    }),
+    { maxParallel: options.maxParallel || items.length }
+  );
 }
 
 function normalizeEnum(value, allowed, fallback) {

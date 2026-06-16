@@ -10,6 +10,8 @@ export const metadata = {
 // cap live agents so raising those budgets queues work instead of launching one
 // wave of 20 concurrent agents. Matches deep-research's smart-mode verifier cap.
 const MAX_PARALLEL_AGENTS = 12;
+const SCHEMA = workflowSchema();
+const WORKFLOW_UTILS = workflowUtils();
 export default function deepReviewWorkflow({
   args,
   phase,
@@ -144,23 +146,30 @@ function runDeepReviewPass(context) {
   context.log("Selected deep review lanes", withLoopIteration({ lanes: lanes }, context.iteration));
 
   context.phase("lane-review", withLoopIteration({ lanes: lanes }, context.iteration));
-  const laneReviews = context.parallelAgents(
-    lanes.map(function (lane) {
-      return {
-        id: workflowStepId("review-" + lane, context.stepSuffix),
-        title: "Review lane: " + lane,
-        agentId: context.reasoningAgentId,
-        prompt:
+  const laneReviews = workflowParallelMap(
+    {
+      items: lanes,
+      stepId: function (lane) {
+        return workflowStepId("review-" + lane, context.stepSuffix);
+      },
+      title: function (lane) {
+        return "Review lane: " + lane;
+      },
+      agentId: context.reasoningAgentId,
+      prompt: function (lane) {
+        return (
           context.readOnlyReviewPrompt +
           lanePrompt(lane) +
           "\n\nReview target:\n" +
           renderReviewInput(input) +
           "\n\nScoped review surface:\n" +
           JSON.stringify(scope.structuredOutput, null, 2) +
-          "\n\nReturn only concrete, actionable findings with file paths and evidence. Prefer an empty issues array over speculative feedback.",
-        outputSchema: issueListSchema(),
-      };
-    })
+          "\n\nReturn only concrete, actionable findings with file paths and evidence. Prefer an empty issues array over speculative feedback."
+        );
+      },
+      outputSchema: issueListSchema(),
+    },
+    context.parallelAgents
   );
   const laneIssues = flatten(
     laneReviews.map(function (review) {
@@ -267,27 +276,31 @@ function runDeepReviewPass(context) {
     "adversarial-verification",
     withLoopIteration({ candidateCount: candidates.length }, context.iteration)
   );
-  const verificationResults =
-    candidates.length > 0
-      ? context.parallelAgents(
-          candidates.map(function (issue, index) {
-            return {
-              id: workflowStepId("verify-issue-" + index, context.stepSuffix),
-              title: "Verify review finding " + (index + 1),
-              agentId: context.reasoningAgentId,
-              prompt:
-                context.readOnlyReviewPrompt +
-                "Adversarially verify this code review finding. Try to disprove it. Inspect relevant code paths and tests. Decide whether it is valid, duplicate, overstated, not reproducible, or needs more information.\n\n" +
-                "Review target:\n" +
-                renderReviewInput(input) +
-                "\n\nFinding:\n" +
-                JSON.stringify(issue, null, 2),
-              outputSchema: verificationSchema(),
-            };
-          }),
-          { maxParallel: MAX_PARALLEL_AGENTS }
-        )
-      : [];
+  const verificationResults = workflowParallelMap(
+    {
+      items: candidates,
+      stepId: function (_issue, index) {
+        return workflowStepId("verify-issue-" + index, context.stepSuffix);
+      },
+      title: function (_issue, index) {
+        return "Verify review finding " + (index + 1);
+      },
+      agentId: context.reasoningAgentId,
+      prompt: function (issue) {
+        return (
+          context.readOnlyReviewPrompt +
+          "Adversarially verify this code review finding. Try to disprove it. Inspect relevant code paths and tests. Decide whether it is valid, duplicate, overstated, not reproducible, or needs more information.\n\n" +
+          "Review target:\n" +
+          renderReviewInput(input) +
+          "\n\nFinding:\n" +
+          JSON.stringify(issue, null, 2)
+        );
+      },
+      outputSchema: verificationSchema(),
+      maxParallel: MAX_PARALLEL_AGENTS,
+    },
+    context.parallelAgents
+  );
   const verifications = verificationResults.map(function (verification) {
     return verification.structuredOutput;
   });
@@ -591,17 +604,23 @@ function runDeepReviewFix(context) {
   });
   if (selected.length === 0) return baseFix;
 
-  const fixerResults = context.parallelAgents(
-    selected.map(function (item, index) {
-      return {
-        id: workflowStepId("fix-issue-" + index, context.stepSuffix),
-        title: "Fix verified review finding " + (index + 1),
-        agentId: context.reasoningAgentId,
-        prompt: buildFixPrompt(input, item),
-        outputSchema: fixAttemptSchema(),
-      };
-    }),
-    { maxParallel: MAX_PARALLEL_AGENTS }
+  const fixerResults = workflowParallelMap(
+    {
+      items: selected,
+      stepId: function (_item, index) {
+        return workflowStepId("fix-issue-" + index, context.stepSuffix);
+      },
+      title: function (_item, index) {
+        return "Fix verified review finding " + (index + 1);
+      },
+      agentId: context.reasoningAgentId,
+      prompt: function (item) {
+        return buildFixPrompt(input, item);
+      },
+      outputSchema: fixAttemptSchema(),
+      maxParallel: MAX_PARALLEL_AGENTS,
+    },
+    context.parallelAgents
   );
 
   const integratedIssues = [];
@@ -909,7 +928,7 @@ function safeApplyPatch(applyPatch, id, source, expectedHeadSha) {
     const spec = { id: id, source: source, target: "parent", onConflict: "return" };
     if (expectedHeadSha) spec.expectedHeadSha = expectedHeadSha;
     const result = applyPatch(spec);
-    return normalizePatchApplication(source, result);
+    return normalizePatchApplication(source, workflowPatchNormalize(result));
   } catch (error) {
     return {
       sourceTaskId: source ? source.taskId : undefined,
@@ -1106,47 +1125,41 @@ function countStatus(items, status) {
 }
 
 function fixAttemptSchema() {
-  return {
-    type: "object",
-    required: ["issueId", "status", "summary", "validation", "commitCreated"],
-    additionalProperties: false,
-    properties: {
-      issueId: { type: "string" },
-      status: { type: "string", enum: ["fixed", "already-fixed", "not-fixable", "needs-info"] },
-      summary: { type: "string" },
-      validation: { type: "array", items: { type: "string" } },
-      commitCreated: { type: "boolean" },
+  return SCHEMA.object(
+    {
+      issueId: SCHEMA.string(),
+      status: SCHEMA.enum(["fixed", "already-fixed", "not-fixable", "needs-info"]),
+      summary: SCHEMA.string(),
+      validation: SCHEMA.array(SCHEMA.string()),
+      commitCreated: SCHEMA.boolean(),
     },
-  };
+    { additionalProperties: false }
+  );
 }
 
 function fixResolverSchema() {
-  return {
-    type: "object",
-    required: ["issueId", "status", "summary", "validation", "commitCreated"],
-    additionalProperties: false,
-    properties: {
-      issueId: { type: "string" },
-      status: { type: "string", enum: ["resolved", "already-resolved", "unresolved"] },
-      summary: { type: "string" },
-      validation: { type: "array", items: { type: "string" } },
-      commitCreated: { type: "boolean" },
+  return SCHEMA.object(
+    {
+      issueId: SCHEMA.string(),
+      status: SCHEMA.enum(["resolved", "already-resolved", "unresolved"]),
+      summary: SCHEMA.string(),
+      validation: SCHEMA.array(SCHEMA.string()),
+      commitCreated: SCHEMA.boolean(),
     },
-  };
+    { additionalProperties: false }
+  );
 }
 
 function fixValidationSchema() {
-  return {
-    type: "object",
-    required: ["status", "commands", "summary", "failures"],
-    additionalProperties: false,
-    properties: {
-      status: { type: "string", enum: ["passed", "failed", "not-run"] },
-      commands: { type: "array", items: { type: "string" } },
-      summary: { type: "string" },
-      failures: { type: "array", items: { type: "string" } },
+  return SCHEMA.object(
+    {
+      status: SCHEMA.enum(["passed", "failed", "not-run"]),
+      commands: SCHEMA.array(SCHEMA.string()),
+      summary: SCHEMA.string(),
+      failures: SCHEMA.array(SCHEMA.string()),
     },
-  };
+    { additionalProperties: false }
+  );
 }
 
 function normalizeDeepReviewArgs(args) {
@@ -1266,10 +1279,8 @@ function parseTrailingFixFlags(text) {
 
 function sanitizeStringArray(values) {
   const result = [];
-  for (const value of values) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (trimmed && result.indexOf(trimmed) === -1) result.push(trimmed);
+  for (const value of WORKFLOW_UTILS.stringList(values)) {
+    if (result.indexOf(value) === -1) result.push(value);
   }
   return result;
 }
@@ -1279,44 +1290,76 @@ function shouldCollectGitReviewContext(input) {
 }
 
 function collectGitReviewContext(action, input, log, stepSuffix) {
+  try {
+    const context = action.git.reviewContext({
+      id: workflowStepId("git-review-context", stepSuffix),
+      input: {
+        ...buildGitActionInput(input),
+        includeCommits: true,
+        commitLimit: 20,
+        diffCharBudget: 60000,
+        metadataCharBudget: 20000,
+      },
+      builtInOnly: true,
+    }).output;
+    if (!isObject(context)) return null;
+    context.explicitRefs = Boolean(input.baseRef || input.headRef);
+    const files = collectGitFiles(context);
+    log("Captured Git review context", {
+      branch: context.status ? context.status.branch : "unknown",
+      fileCount: files.length,
+      hasDiff:
+        context.diff != null &&
+        (hasText(context.diff.branch) ||
+          hasText(context.diff.staged) ||
+          hasText(context.diff.unstaged)),
+      failureCount: arrayLength(context.failures),
+    });
+    return context;
+  } catch (error) {
+    const failure = { action: "git.reviewContext", error: formatError(error) };
+    log("Git review context action failed; falling back to fine-grained Git actions", failure);
+    return collectLegacyGitReviewContext(action, input, log, stepSuffix, failure);
+  }
+}
+
+function collectLegacyGitReviewContext(action, input, log, stepSuffix, initialFailure) {
+  const failures = initialFailure ? [initialFailure] : [];
   const gitInput = buildGitActionInput(input);
-  const failures = [];
   const builtInOnly = true;
   const status = tryGitAction(log, failures, "git.status", function () {
     return action.git.status({
       id: workflowStepId("git-status", stepSuffix),
       input: { includeIgnored: false },
-      builtInOnly,
+      builtInOnly: builtInOnly,
     }).output;
   });
   const changedFiles = tryGitAction(log, failures, "git.changedFiles", function () {
     return action.git.changedFiles({
       id: workflowStepId("git-changed-files", stepSuffix),
       input: gitInput,
-      builtInOnly,
+      builtInOnly: builtInOnly,
     }).output;
   });
   const diffStat = tryGitAction(log, failures, "git.diffStat", function () {
     return action.git.diffStat({
       id: workflowStepId("git-diff-stat", stepSuffix),
       input: gitInput,
-      builtInOnly,
+      builtInOnly: builtInOnly,
     }).output;
   });
   const diff = tryGitAction(log, failures, "git.diff", function () {
     return action.git.diff({
       id: workflowStepId("git-diff", stepSuffix),
       input: gitInput,
-      builtInOnly,
+      builtInOnly: builtInOnly,
     }).output;
   });
   const commits = tryGitAction(log, failures, "git.commitsBetween", function () {
-    const commitsInput = copyGitActionInput(gitInput);
-    commitsInput.limit = 20;
     return action.git.commitsBetween({
       id: workflowStepId("git-commits-between", stepSuffix),
-      input: commitsInput,
-      builtInOnly,
+      input: { ...gitInput, limit: 20 },
+      builtInOnly: builtInOnly,
     }).output;
   });
   const context = {
@@ -1334,17 +1377,6 @@ function collectGitReviewContext(action, input, log, stepSuffix) {
     });
     return null;
   }
-  const files = collectGitFiles(context);
-  log("Captured Git review context", {
-    branch: context.status ? context.status.branch : "unknown",
-    fileCount: files.length,
-    hasDiff:
-      context.diff != null &&
-      (hasText(context.diff.branch) ||
-        hasText(context.diff.staged) ||
-        hasText(context.diff.unstaged)),
-    failureCount: failures.length,
-  });
   return context;
 }
 
@@ -1391,13 +1423,6 @@ function buildGitActionInput(input) {
   if (input.baseRef) gitInput.base = input.baseRef;
   if (input.headRef) gitInput.head = input.headRef;
   return gitInput;
-}
-
-function copyGitActionInput(input) {
-  const copy = {};
-  if (input.base) copy.base = input.base;
-  if (input.head) copy.head = input.head;
-  return copy;
 }
 
 function applyGitContextToReviewInput(input, gitContext) {
@@ -1643,107 +1668,231 @@ function lanePrompt(lane) {
 }
 
 function issueListSchema() {
-  return {
-    type: "object",
-    required: ["issues"],
-    additionalProperties: false,
-    properties: {
-      issues: {
-        type: "array",
-        items: issueSchema(),
-      },
+  return SCHEMA.object(
+    {
+      issues: SCHEMA.array(issueSchema()),
     },
-  };
+    { additionalProperties: false }
+  );
 }
 
 function issueSchema() {
-  return {
-    type: "object",
-    required: [
-      "id",
-      "severity",
-      "category",
-      "title",
-      "rationale",
-      "evidence",
-      "filePaths",
-      "confidence",
-    ],
-    additionalProperties: false,
-    properties: {
-      id: { type: "string" },
-      severity: { type: "string", enum: ["P0", "P1", "P2", "P3", "P4"] },
-      category: { type: "string" },
-      title: { type: "string" },
-      rationale: { type: "string" },
-      evidence: { type: "string" },
-      filePaths: { type: "array", items: { type: "string" } },
-      suggestedFix: { type: "string" },
-      validation: { type: "string" },
-      confidence: { type: "string", enum: ["low", "medium", "high"] },
+  return SCHEMA.object(
+    {
+      id: SCHEMA.string(),
+      severity: SCHEMA.enum(["P0", "P1", "P2", "P3", "P4"]),
+      category: SCHEMA.string(),
+      title: SCHEMA.string(),
+      rationale: SCHEMA.string(),
+      evidence: SCHEMA.string(),
+      filePaths: SCHEMA.array(SCHEMA.string()),
+      suggestedFix: SCHEMA.string(),
+      validation: SCHEMA.string(),
+      confidence: SCHEMA.enum(["low", "medium", "high"]),
     },
-  };
+    {
+      required: [
+        "id",
+        "severity",
+        "category",
+        "title",
+        "rationale",
+        "evidence",
+        "filePaths",
+        "confidence",
+      ],
+      additionalProperties: false,
+    }
+  );
 }
 
 function scopeSchema() {
-  return {
-    type: "object",
-    required: ["summary", "files", "riskAreas", "lanes"],
-    additionalProperties: false,
-    properties: {
-      summary: { type: "string" },
-      files: { type: "array", items: { type: "string" } },
-      riskAreas: { type: "array", items: { type: "string" } },
-      lanes: {
-        type: "array",
-        items: {
-          type: "string",
-          enum: [
-            "correctness",
-            "tests",
-            "architecture",
-            "security-reliability",
-            "ux-a11y",
-            "docs-dx",
-          ],
-        },
-      },
+  return SCHEMA.object(
+    {
+      summary: SCHEMA.string(),
+      files: SCHEMA.array(SCHEMA.string()),
+      riskAreas: SCHEMA.array(SCHEMA.string()),
+      lanes: SCHEMA.array(
+        SCHEMA.enum([
+          "correctness",
+          "tests",
+          "architecture",
+          "security-reliability",
+          "ux-a11y",
+          "docs-dx",
+        ])
+      ),
     },
-  };
+    { additionalProperties: false }
+  );
 }
 
 function verificationSchema() {
+  return SCHEMA.object(
+    {
+      issueId: SCHEMA.string(),
+      verdict: SCHEMA.enum(["valid", "duplicate", "overstated", "not-repro", "needs-info"]),
+      confidence: SCHEMA.enum(["low", "medium", "high"]),
+      rationale: SCHEMA.string(),
+      evidence: SCHEMA.string(),
+      suggestedSeverity: SCHEMA.enum(["P0", "P1", "P2", "P3", "P4"]),
+    },
+    {
+      required: ["issueId", "verdict", "confidence", "rationale"],
+      additionalProperties: false,
+    }
+  );
+}
+
+function finalSynthesisSchema() {
+  return SCHEMA.object(
+    {
+      verifiedIssueCount: SCHEMA.number(),
+      risk: SCHEMA.enum(["low", "medium", "high"]),
+      validationPlan: SCHEMA.array(SCHEMA.string()),
+      verifiedIssueIds: SCHEMA.array(SCHEMA.string()),
+      discardedIssueCount: SCHEMA.number(),
+    },
+    {
+      required: ["verifiedIssueCount", "verifiedIssueIds", "risk", "validationPlan"],
+      additionalProperties: false,
+    }
+  );
+}
+
+function workflowSchema() {
+  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
+  function withOptions(schema, options) {
+    return options && typeof options === "object" && !Array.isArray(options)
+      ? Object.assign(schema, options)
+      : schema;
+  }
+  function optional(schema) {
+    const clone = Object.assign({}, schema || {});
+    Object.defineProperty(clone, "__muxOptional", { value: true });
+    return clone;
+  }
+  function isOptional(schema) {
+    return Boolean(schema && schema.__muxOptional === true);
+  }
+  function nullable(schema) {
+    const clone = Object.assign({}, schema || {});
+    if (typeof clone.type === "string")
+      clone.type = clone.type === "null" ? ["null"] : [clone.type, "null"];
+    else if (Array.isArray(clone.type))
+      clone.type = clone.type.includes("null") ? clone.type : clone.type.concat(["null"]);
+    else clone.type = ["null"];
+    return clone;
+  }
   return {
-    type: "object",
-    required: ["issueId", "verdict", "confidence", "rationale"],
-    additionalProperties: false,
-    properties: {
-      issueId: { type: "string" },
-      verdict: {
-        type: "string",
-        enum: ["valid", "duplicate", "overstated", "not-repro", "needs-info"],
-      },
-      confidence: { type: "string", enum: ["low", "medium", "high"] },
-      rationale: { type: "string" },
-      evidence: { type: "string" },
-      suggestedSeverity: { type: "string", enum: ["P0", "P1", "P2", "P3", "P4"] },
+    string: function (options) {
+      return withOptions({ type: "string" }, options);
+    },
+    number: function (options) {
+      return withOptions({ type: "number" }, options);
+    },
+    integer: function (options) {
+      return withOptions({ type: "integer" }, options);
+    },
+    boolean: function (options) {
+      return withOptions({ type: "boolean" }, options);
+    },
+    array: function (items, options) {
+      return withOptions({ type: "array", items: items }, options);
+    },
+    enum: function (values, options) {
+      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
+    },
+    union: function (schemas) {
+      const types = [];
+      for (const schema of Array.isArray(schemas) ? schemas : []) {
+        const schemaTypes = Array.isArray(schema && schema.type)
+          ? schema.type
+          : [schema && schema.type];
+        for (const type of schemaTypes) {
+          if (typeof type === "string" && !types.includes(type)) types.push(type);
+        }
+      }
+      return { type: types };
+    },
+    optional: optional,
+    nullable: nullable,
+    object: function (properties, options) {
+      const sourceProperties = properties || {};
+      const keys = Object.keys(sourceProperties);
+      const cleanProperties = {};
+      const inferredRequired = [];
+      for (const key of keys) {
+        const propertySchema = sourceProperties[key];
+        cleanProperties[key] = isOptional(propertySchema)
+          ? Object.assign({}, propertySchema)
+          : propertySchema;
+        if (!isOptional(propertySchema)) inferredRequired.push(key);
+      }
+      const required = Array.isArray(options && options.required)
+        ? options.required.filter(function (key) {
+            return keys.includes(key);
+          })
+        : options && options.required === false
+          ? []
+          : inferredRequired;
+      const schema = { type: "object", required: required, properties: cleanProperties };
+      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
+        schema.additionalProperties = options.additionalProperties;
+      }
+      return schema;
     },
   };
 }
 
-function finalSynthesisSchema() {
+function workflowUtils() {
+  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
   return {
-    type: "object",
-    required: ["verifiedIssueCount", "verifiedIssueIds", "risk", "validationPlan"],
-    additionalProperties: false,
-    properties: {
-      verifiedIssueCount: { type: "number" },
-      risk: { type: "string", enum: ["low", "medium", "high"] },
-      validationPlan: { type: "array", items: { type: "string" } },
-      verifiedIssueIds: { type: "array", items: { type: "string" } },
-      discardedIssueCount: { type: "number" },
+    stringList: function (value) {
+      if (!Array.isArray(value)) return [];
+      return value
+        .filter(function (item) {
+          return typeof item === "string" && item.trim().length > 0;
+        })
+        .map(function (item) {
+          return item.trim();
+        });
     },
   };
+}
+
+function workflowParallelMap(options, parallelAgents) {
+  if (globalThis.mux && typeof globalThis.mux.parallelMap === "function") {
+    return globalThis.mux.parallelMap(options);
+  }
+  const items = Array.isArray(options.items) ? options.items : [];
+  if (items.length === 0) return [];
+  return parallelAgents(
+    items.map(function (item, index) {
+      return {
+        id:
+          typeof options.stepId === "function"
+            ? options.stepId(item, index)
+            : options.id + "-" + index,
+        title: typeof options.title === "function" ? options.title(item, index) : options.title,
+        agentId:
+          typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
+        prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
+        outputSchema:
+          typeof options.outputSchema === "function"
+            ? options.outputSchema(item, index)
+            : options.outputSchema,
+      };
+    }),
+    { maxParallel: options.maxParallel || items.length }
+  );
+}
+
+function workflowPatchNormalize(result) {
+  if (globalThis.mux && globalThis.mux.patch && globalThis.mux.patch.normalize) {
+    return globalThis.mux.patch.normalize(result);
+  }
+  return result;
 }
 
 function flatten(arrays) {

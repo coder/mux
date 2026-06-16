@@ -1,5 +1,29 @@
+const s = mux.schema;
+
 export const metadata = {
-  description: "Review current changes for reuse, quality, and efficiency, then fix actionable issues.",
+  description:
+    "Review current changes for reuse, quality, and efficiency, then fix actionable issues.",
+  argsSchema: s.object({
+    target: s.optional(s.string({ positional: true })),
+    fix: s.optional(
+      s.boolean({
+        default: true,
+        aliases: ["--fix"],
+        negatedAliases: ["--no-fix", "--review-only"],
+      })
+    ),
+    reviewOnly: s.optional(s.boolean({ default: false })),
+    baseRef: s.optional(s.string({ aliases: ["--base"] })),
+    base: s.optional(s.string()),
+    trunkRef: s.optional(s.string({ aliases: ["--trunk"] })),
+    trunk: s.optional(s.string()),
+    headRef: s.optional(s.string({ aliases: ["--head"] })),
+    head: s.optional(s.string()),
+    maxFindings: s.optional(
+      s.integer({ default: 20, minimum: 1, aliases: ["--max-findings"] })
+    ),
+    help: s.optional(s.boolean({ default: false, aliases: ["--help"] })),
+  }),
 };
 
 // Workflow files execute as self-contained JavaScript; keep small helpers inline instead of importing repo utilities.
@@ -57,90 +81,57 @@ const REVIEW_LANES = [
   },
 ];
 
-const SEVERITY_SCHEMA = { type: "string", enum: ["high", "medium", "low"] };
+const SCHEMA = s;
+const SEVERITY_SCHEMA = SCHEMA.enum(["high", "medium", "low"]);
 const FINDING_CORE_PROPERTIES = {
-  id: { type: "string" },
-  title: { type: "string" },
+  id: SCHEMA.string(),
+  title: SCHEMA.string(),
   severity: SEVERITY_SCHEMA,
-  filePaths: { type: "array", items: { type: "string" } },
-  rationale: { type: "string" },
+  filePaths: SCHEMA.array(SCHEMA.string()),
+  rationale: SCHEMA.string(),
 };
-const FINDING_SCHEMA = {
-  type: "object",
-  required: ["id", "title", "severity", "filePaths", "rationale", "recommendation", "evidence"],
-  properties: {
-    ...FINDING_CORE_PROPERTIES,
-    recommendation: { type: "string" },
-    evidence: { type: "array", items: { type: "string" } },
-  },
-};
-const REVIEW_SCHEMA = {
-  type: "object",
-  required: ["summary", "findings"],
-  properties: {
-    summary: { type: "string" },
-    findings: { type: "array", items: FINDING_SCHEMA },
-  },
-};
-const SYNTHESIS_FINDING_SCHEMA = {
-  type: "object",
-  required: ["id", "title", "severity", "filePaths", "rationale", "fixPlan"],
-  properties: {
-    ...FINDING_CORE_PROPERTIES,
-    fixPlan: { type: "string" },
-  },
-};
-const SKIPPED_FINDING_SCHEMA = {
-  type: "object",
-  required: ["id", "title", "reason"],
-  properties: {
-    id: { type: "string" },
-    title: { type: "string" },
-    reason: { type: "string" },
-  },
-};
-const SYNTHESIS_SCHEMA = {
-  type: "object",
-  required: ["summary", "shouldFix", "actionableFindings", "skippedFindings", "validationPlan"],
-  properties: {
-    summary: { type: "string" },
-    shouldFix: { type: "boolean" },
-    actionableFindings: { type: "array", items: SYNTHESIS_FINDING_SCHEMA },
-    skippedFindings: { type: "array", items: SKIPPED_FINDING_SCHEMA },
-    validationPlan: { type: "array", items: { type: "string" } },
-  },
-};
-const FIXER_SCHEMA = {
-  type: "object",
-  required: ["madeChanges", "fixedFindingIds", "skippedFindings", "validation"],
-  properties: {
-    madeChanges: { type: "boolean" },
-    fixedFindingIds: { type: "array", items: { type: "string" } },
-    skippedFindings: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["id", "reason"],
-        properties: {
-          id: { type: "string" },
-          reason: { type: "string" },
-        },
-      },
-    },
-    validation: {
-      type: "array",
-      items: {
-        type: "object",
-        required: ["command", "status", "summary"],
-        properties: {
-          command: { type: "string" },
-          status: { type: "string" },
-          summary: { type: "string" },
-        },
-      },
-    },
-  },
-};
+const FINDING_SCHEMA = SCHEMA.object({
+  ...FINDING_CORE_PROPERTIES,
+  recommendation: SCHEMA.string(),
+  evidence: SCHEMA.array(SCHEMA.string()),
+});
+const REVIEW_SCHEMA = SCHEMA.object({
+  summary: SCHEMA.string(),
+  findings: SCHEMA.array(FINDING_SCHEMA),
+});
+const SYNTHESIS_FINDING_SCHEMA = SCHEMA.object({
+  ...FINDING_CORE_PROPERTIES,
+  fixPlan: SCHEMA.string(),
+});
+const SKIPPED_FINDING_SCHEMA = SCHEMA.object({
+  id: SCHEMA.string(),
+  title: SCHEMA.string(),
+  reason: SCHEMA.string(),
+});
+const SYNTHESIS_SCHEMA = SCHEMA.object({
+  summary: SCHEMA.string(),
+  shouldFix: SCHEMA.boolean(),
+  actionableFindings: SCHEMA.array(SYNTHESIS_FINDING_SCHEMA),
+  skippedFindings: SCHEMA.array(SKIPPED_FINDING_SCHEMA),
+  validationPlan: SCHEMA.array(SCHEMA.string()),
+});
+const FIXER_SCHEMA = SCHEMA.object({
+  madeChanges: SCHEMA.boolean(),
+  fixedFindingIds: SCHEMA.array(SCHEMA.string()),
+  skippedFindings: SCHEMA.array(
+    SCHEMA.object({
+      id: SCHEMA.string(),
+      reason: SCHEMA.string(),
+    })
+  ),
+  validation: SCHEMA.array(
+    SCHEMA.object({
+      command: SCHEMA.string(),
+      status: SCHEMA.string(),
+      summary: SCHEMA.string(),
+    })
+  ),
+});
 
 const EMPTY_SYNTHESIS = {
   summary: NO_REVIEWABLE_CHANGES_SUMMARY,
@@ -150,16 +141,8 @@ const EMPTY_SYNTHESIS = {
   validationPlan: [],
 };
 
-export default function simplifyWorkflow({
-  args,
-  phase,
-  log,
-  action,
-  parallelAgents,
-  agent,
-  applyPatch,
-}) {
-  assert(action && parallelAgents && agent && applyPatch, "workflow runtime APIs are required");
+export default async function simplifyWorkflow({ args, phase, log, action, agent }) {
+  assert(action && agent, "workflow runtime APIs are required");
 
   const parsed = parseArgs(args);
   if (parsed.error) return usageResult(parsed.error);
@@ -173,7 +156,7 @@ export default function simplifyWorkflow({
   log("Captured simplify context", {
     target: input.target || "current git changes",
     gitFailures: gitContext.failures.length,
-    diffCompactions: asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
+    diffCompactions: mux.utils.asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
   });
 
   if (shouldSkipForUntrackedContent(input, gitContext)) {
@@ -206,20 +189,25 @@ export default function simplifyWorkflow({
       return lane.id;
     }),
   });
-  const reviewOutputs = parallelAgents(
-    REVIEW_LANES.map(function (lane) {
-      return {
-        id: lane.id + "-review",
-        title: lane.title,
-        agentId: REVIEW_AGENT_ID,
-        prompt: reviewPrompt(lane, input, contexts.review),
-        outputSchema: REVIEW_SCHEMA,
-      };
-    }),
-    { maxParallel: REVIEW_LANES.length }
-  ).map(function (review) {
-    return mustObject(review.structuredOutput, "review structured output is required");
-  });
+  const reviewOutputs = mux
+    .parallelMap({
+      items: REVIEW_LANES,
+      stepId: function (lane) {
+        return lane.id + "-review";
+      },
+      title: function (lane) {
+        return lane.title;
+      },
+      agentId: REVIEW_AGENT_ID,
+      prompt: function (lane) {
+        return reviewPrompt(lane, input, contexts.review);
+      },
+      outputSchema: REVIEW_SCHEMA,
+      maxParallel: REVIEW_LANES.length,
+    })
+    .map(function (review) {
+      return mux.utils.mustObject(review.structuredOutput, "review structured output is required");
+    });
 
   const rawFindingCount = reviewOutputs.reduce(function (count, output) {
     return count + output.findings.length;
@@ -233,7 +221,7 @@ export default function simplifyWorkflow({
     prompt: synthesisPrompt(input, contexts.compact, reviewOutputs),
     outputSchema: SYNTHESIS_SCHEMA,
   });
-  const synthesized = mustObject(
+  const synthesized = mux.utils.mustObject(
     synthesis.structuredOutput,
     "synthesis structured output is required"
   );
@@ -281,7 +269,10 @@ export default function simplifyWorkflow({
     prompt: fixPrompt(contexts.compact, synthesized),
     outputSchema: FIXER_SCHEMA,
   });
-  const fixerOutput = mustObject(fixer.structuredOutput, "fixer structured output is required");
+  const fixerOutput = mux.utils.mustObject(
+    fixer.structuredOutput,
+    "fixer structured output is required"
+  );
 
   if (!fixerOutput.madeChanges) {
     return {
@@ -319,13 +310,10 @@ export default function simplifyWorkflow({
     };
   }
 
-  const applied = applyPatch({
+  const applied = await mux.patch.applySafely({
     id: "apply-simplify-fixes",
     source: fixer,
-    target: "parent",
-    threeWay: true,
     expectedHeadSha: applyPreflight.expectedHeadSha,
-    onConflict: "return",
   });
 
   return {
@@ -360,50 +348,46 @@ function skipFixResult(
 }
 
 function collectApplyPreflight(action, log, input, gitContext) {
-  let status = null;
-  try {
-    status = action.git.status({
-      id: "apply-git-status",
-      input: gitStatusInput(input),
-      builtInOnly: true,
-      cache: false,
-    }).output;
-  } catch (error) {
-    const message = formatError(error);
-    log("Git status unavailable for simplify auto-fix preflight", { error: message });
-    return failedApplyPreflight("Auto-fix was skipped because fresh Git status was unavailable.");
-  }
-
-  if (!status || typeof status !== "object") {
-    return failedApplyPreflight("Auto-fix was skipped because fresh Git status was unavailable.");
-  }
-  if (hasUncommittedStatus(status)) {
-    return failedApplyPreflight(uncommittedChangesSkipReason());
-  }
-
-  if (!isRequestedHeadCurrent(status, input)) {
-    return failedApplyPreflight(nonCurrentHeadSkipReason());
-  }
-
-  if (!isReviewedBranchCurrent(gitContext.status, status, input)) {
-    return failedApplyPreflight(
-      "Auto-fix was skipped because the current branch changed since review. Rerun `/workflow simplify --fix`."
-    );
-  }
-
   const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
   if (typeof reviewedHeadSha !== "string" || !reviewedHeadSha) {
     return failedApplyPreflight(
       "Auto-fix was skipped because the reviewed HEAD snapshot is unavailable."
     );
   }
-  if (status.headSha !== reviewedHeadSha) {
+
+  try {
+    const preflight = action.git.preflight({
+      id: "apply-git-preflight",
+      input: {
+        head: input.headRef || "HEAD",
+        expectedBranch: reviewedBranchForPreflight(gitContext.status, input),
+        expectedHeadSha: reviewedHeadSha,
+        requireClean: true,
+      },
+      builtInOnly: true,
+      cache: false,
+    }).output;
+    if (preflight && preflight.ok === true) {
+      return { success: true, status: "ready", expectedHeadSha: reviewedHeadSha };
+    }
     return failedApplyPreflight(
-      "Auto-fix was skipped because HEAD changed since review. Rerun `/workflow simplify --fix`."
+      (preflight && preflight.reason) ||
+        "Auto-fix was skipped because fresh Git preflight did not pass."
+    );
+  } catch (error) {
+    const message = formatError(error);
+    log("Git preflight unavailable for simplify auto-fix", { error: message });
+    return failedApplyPreflight(
+      "Auto-fix was skipped because fresh Git preflight was unavailable."
     );
   }
+}
 
-  return { success: true, status: "ready", expectedHeadSha: reviewedHeadSha };
+function reviewedBranchForPreflight(reviewedStatus, input) {
+  if (input.headRef && isGitCommitSha(input.headRef)) return undefined;
+  return reviewedStatus && typeof reviewedStatus.branch === "string"
+    ? reviewedStatus.branch
+    : undefined;
 }
 
 function failedApplyPreflight(reason) {
@@ -424,61 +408,44 @@ function uncommittedChangesSkipReason() {
 
 function collectGitContext(action, input, log) {
   const requestedRefs = gitRefs(input);
-  const failures = [];
-  const status = gitSlice(log, failures, "status", function () {
-    return action.git.status({
-      id: "git-status",
-      input: gitStatusInput(input),
+  try {
+    const context = action.git.reviewContext({
+      id: "git-review-context",
+      input: {
+        ...requestedRefs,
+        diffCharBudget: REVIEW_DIFF_CHAR_BUDGET,
+        metadataCharBudget: DIFF_STAT_CHAR_BUDGET,
+      },
       builtInOnly: true,
     }).output;
-  });
-  const changedFiles = gitSlice(log, failures, "changedFiles", function () {
-    return action.git.changedFiles({
-      id: "git-changed-files",
-      input: requestedRefs,
-      builtInOnly: true,
-    }).output;
-  });
-  const refs = refsWithResolvedBase(requestedRefs, changedFiles);
-  const readDiffs = shouldReadDiffs(changedFiles);
+    if (!context || typeof context !== "object") {
+      return emptyGitContext(input, requestedRefs, [
+        { name: "reviewContext", error: "git.reviewContext returned no context" },
+      ]);
+    }
+    return {
+      ...context,
+      target: input.target,
+      refs: refsWithResolvedBase(requestedRefs, context.changedFiles),
+      failures: mux.utils.asArray(context.failures),
+    };
+  } catch (error) {
+    const failure = { name: "reviewContext", error: formatError(error) };
+    log("Git review context action failed; continuing with empty simplify context", failure);
+    return emptyGitContext(input, requestedRefs, [failure]);
+  }
+}
 
+function emptyGitContext(input, refs, failures) {
   return {
     target: input.target,
     refs: refs,
     failures: failures,
-    status: status,
-    changedFiles: changedFiles,
-    diffStat: readDiffs
-      ? gitSlice(log, failures, "diffStat", function () {
-          return action.git.diffStat({ id: "git-diff-stat", input: refs, builtInOnly: true })
-            .output;
-        })
-      : null,
-    diff: readDiffs
-      ? gitSlice(log, failures, "diff", function () {
-          return action.git.diff({ id: "git-diff", input: refs, builtInOnly: true }).output;
-        })
-      : null,
+    status: null,
+    changedFiles: null,
+    diffStat: null,
+    diff: null,
   };
-}
-
-function gitSlice(log, failures, name, read) {
-  try {
-    return read();
-  } catch (error) {
-    const failure = { name: name, error: formatError(error) };
-    failures.push(failure);
-    if (typeof log === "function") {
-      log("Git workflow action failed; continuing with partial simplify context", failure);
-    }
-    return null;
-  }
-}
-
-function gitStatusInput(input) {
-  const statusInput = { includeIgnored: false };
-  if (input.headRef) statusInput.head = input.headRef;
-  return statusInput;
 }
 
 function gitRefs(input) {
@@ -500,25 +467,6 @@ function refsWithResolvedBase(refs, changedFiles) {
 
 // The diff actions only return branch/staged/unstaged hunks; untracked-only contexts
 // are captured by changedFiles.
-function shouldReadDiffs(changedFiles) {
-  if (!changedFiles || typeof changedFiles !== "object" || Array.isArray(changedFiles)) {
-    return true;
-  }
-  return (
-    hasArrayItems(changedFiles.branch) ||
-    hasArrayItems(changedFiles.staged) ||
-    hasArrayItems(changedFiles.unstaged)
-  );
-}
-
-function isReviewedBranchCurrent(reviewedStatus, currentStatus, input) {
-  if (input.headRef && isGitCommitSha(input.headRef)) return true;
-  const reviewedBranch =
-    reviewedStatus && typeof reviewedStatus.branch === "string" ? reviewedStatus.branch : "";
-  const currentBranch =
-    currentStatus && typeof currentStatus.branch === "string" ? currentStatus.branch : "";
-  return Boolean(reviewedBranch && currentBranch && reviewedBranch === currentBranch);
-}
 
 function isRequestedHeadCurrent(status, input) {
   if (!status || typeof status !== "object") return false;
@@ -568,8 +516,9 @@ function targetNeedsUntrackedContent(input, gitContext) {
 }
 
 function untrackedPaths(gitContext) {
-  const paths = asArray(gitContext.status && gitContext.status.untracked)
-    .concat(asArray(gitContext.changedFiles && gitContext.changedFiles.untracked))
+  const paths = mux.utils
+    .asArray(gitContext.status && gitContext.status.untracked)
+    .concat(mux.utils.asArray(gitContext.changedFiles && gitContext.changedFiles.untracked))
     .map(filePath)
     .filter(Boolean);
   return Array.from(new Set(paths));
@@ -625,7 +574,7 @@ function hasUncommittedStatus(status) {
 
 function hasReviewableContext(input, gitContext) {
   if (input.target) return true;
-  if (asArray(gitContext.failures).length > 0) return true;
+  if (mux.utils.asArray(gitContext.failures).length > 0) return true;
   if (!gitContext.status || gitContext.status.clean !== true) return true;
   return (
     hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.branch) ||
@@ -654,7 +603,7 @@ function promptContexts(input, gitContext) {
 }
 
 function renderContext(input, gitContext) {
-  return fencedJson({
+  return mux.utils.fencedJson({
     input: { target: input.target, fix: input.fix, maxFindings: input.maxFindings },
     gitContextSource: GIT_CONTEXT_SOURCE,
     gitContext: gitContext,
@@ -684,7 +633,7 @@ function compactChangedFiles(changedFiles) {
 }
 
 function compactDiffStat(diffStat) {
-  return compactFields(diffStat, DIFF_FIELDS, compactText, DIFF_STAT_CHAR_BUDGET);
+  return compactFields(diffStat, DIFF_FIELDS, mux.utils.compactText, DIFF_STAT_CHAR_BUDGET);
 }
 
 function compactFields(value, fields, compactor, limit) {
@@ -703,16 +652,6 @@ function compactArray(value, limit) {
     shown: value.slice(0, limit),
     omitted: value.length - limit,
   };
-}
-
-function compactText(value, limit) {
-  if (typeof value !== "string" || value.length <= limit) return value;
-  return (
-    value.slice(0, limit) +
-    "\n\n[Workflow metadata budget omitted " +
-    (value.length - limit) +
-    " chars.]"
-  );
 }
 
 function compactDiff(diff, budget) {
@@ -759,7 +698,7 @@ function diffSummary(diff, compactedDiff) {
     mergeBase: diff.mergeBase,
     truncated: diff.truncated,
     workflowBudgetChars: compactedDiff && compactedDiff.workflowBudgetChars,
-    workflowCompactions: compactedDiff ? asArray(compactedDiff.workflowCompactions) : [],
+    workflowCompactions: compactedDiff ? mux.utils.asArray(compactedDiff.workflowCompactions) : [],
     chars: diffFieldLengths(diff),
   };
 }
@@ -807,7 +746,7 @@ function synthesisPrompt(input, compactContext, reviewOutputs) {
     "Allowed severity values are: high, medium, low. Prefer minimal cleanup over broad refactors.",
     GIT_CONTEXT_PROVENANCE_NOTE,
     "Compact review context without raw diff text:\n" + compactContext,
-    "Compacted lane outputs:\n" + fencedJson(compactReviewOutputs(reviewOutputs)),
+    "Compacted lane outputs:\n" + mux.utils.fencedJson(compactReviewOutputs(reviewOutputs)),
   ].join("\n\n");
 }
 
@@ -820,7 +759,7 @@ function fixPrompt(compactContext, synthesized) {
     "If a finding is false positive or not worth addressing, skip it and note why. Set madeChanges true only when files changed.",
     GIT_CONTEXT_PROVENANCE_NOTE,
     "Compact review context:\n" + compactContext,
-    "Actionable findings:\n" + fencedJson(fixerPayload(synthesized)),
+    "Actionable findings:\n" + mux.utils.fencedJson(fixerPayload(synthesized)),
   ].join("\n\n");
 }
 
@@ -844,7 +783,7 @@ function compactReviewFinding(finding) {
     recommendation: finding.recommendation,
     evidenceCount: evidence.length,
     evidenceSamples: evidence.slice(0, REVIEW_EVIDENCE_ITEM_BUDGET).map(function (evidenceItem) {
-      return compactText(evidenceItem, REVIEW_EVIDENCE_CHAR_BUDGET);
+      return mux.utils.compactText(evidenceItem, REVIEW_EVIDENCE_CHAR_BUDGET);
     }),
   };
 }
@@ -867,7 +806,12 @@ function parseArgs(args) {
     baseRef: text(raw.baseRef || raw.base),
     trunkRef: text(raw.trunkRef || raw.trunk),
     headRef: text(raw.headRef || raw.head),
-    maxFindings: positiveInt(raw.maxFindings, DEFAULT_MAX_FINDINGS),
+    maxFindings: mux.utils.boundedInt(
+      raw.maxFindings,
+      DEFAULT_MAX_FINDINGS,
+      1,
+      Number.MAX_SAFE_INTEGER
+    ),
   };
   const tokenized = tokenize(String(raw.input || ""));
   if (tokenized.error) return { input: input, error: tokenized.error };
@@ -884,7 +828,7 @@ function parseArgs(args) {
     else if (valueFlag) {
       input[valueFlag.key] =
         valueFlag.key === "maxFindings"
-          ? positiveInt(valueFlag.value, DEFAULT_MAX_FINDINGS)
+          ? mux.utils.boundedInt(valueFlag.value, DEFAULT_MAX_FINDINGS, 1, Number.MAX_SAFE_INTEGER)
           : valueFlag.value;
       index = valueFlag.nextIndex;
       continue;
@@ -998,19 +942,6 @@ function usageResult(error) {
   };
 }
 
-function fencedJson(value) {
-  return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
-}
-
-function asArray(value) {
-  return Array.isArray(value) ? value : [];
-}
-
-function mustObject(value, message) {
-  assert(value && typeof value === "object", message);
-  return value;
-}
-
 function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -1025,11 +956,6 @@ function hasText(value) {
 
 function stringLength(value) {
   return typeof value === "string" ? value.length : 0;
-}
-
-function positiveInt(value, fallback) {
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 1 ? Math.floor(number) : fallback;
 }
 
 function formatError(error) {

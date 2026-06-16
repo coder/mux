@@ -66,12 +66,19 @@ describe("WorkflowActionRunner", () => {
     using tmp = new DisposableTempDir("workflow-action-runner");
     const sourcePath = path.join(tmp.path, "action.js");
     const source = `
+      const s = mux.schema;
       export const metadata = {
         version: 1,
         description: "Echo input",
         effect: "read",
-        inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } } },
-        outputSchema: { type: "object", required: ["greeting"], properties: { greeting: { type: "string" } } },
+        inputSchema: s.object(
+          { name: s.string(), title: s.optional(s.string()) },
+          { additionalProperties: false }
+        ),
+        outputSchema: s.object(
+          { greeting: s.string(), nickname: s.optional(s.nullable(s.string())) },
+          { additionalProperties: false }
+        ),
       };
       export async function execute(input, ctx) {
         console.log("running " + input.name);
@@ -87,6 +94,18 @@ describe("WorkflowActionRunner", () => {
     expect(description.metadata.description).toBe("Echo input");
     expect(description.metadata.effect).toBe("read");
     expect(description.hasReconcile).toBe(false);
+    expect(description.metadata.inputSchema).toEqual({
+      type: "object",
+      required: ["name"],
+      properties: { name: { type: "string" }, title: { type: "string" } },
+      additionalProperties: false,
+    });
+    expect(description.metadata.outputSchema).toEqual({
+      type: "object",
+      required: ["greeting"],
+      properties: { greeting: { type: "string" }, nickname: { type: ["string", "null"] } },
+      additionalProperties: false,
+    });
     const result = await runner.execute(action, {
       input: { name: "Ada" },
       cwd: tmp.path,
@@ -551,6 +570,12 @@ describe("WorkflowActionRunner", () => {
       const resolved = await registry.resolveAction(action.name, { projectTrusted: false });
       const description = await runner.describe(resolved);
       expect(description.metadata.description).toBeTruthy();
+      if (action.name.startsWith("git.") || action.name.startsWith("github.")) {
+        const outputSchema = expectObjectRecord(description.metadata.outputSchema);
+        expect(Object.keys(expectObjectRecord(outputSchema.properties)).length).toBeGreaterThan(0);
+        const inputSchema = expectObjectRecord(description.metadata.inputSchema);
+        expect(Object.keys(expectObjectRecord(inputSchema.properties)).length).toBeGreaterThan(0);
+      }
     }
   });
 

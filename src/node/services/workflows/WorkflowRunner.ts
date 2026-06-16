@@ -14,6 +14,7 @@ import type {
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubset } from "@/common/utils/jsonSchemaSubset";
+import { WORKFLOW_RUNTIME_STDLIB_SOURCE } from "./workflowRuntimeSources.generated";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
@@ -2751,116 +2752,6 @@ function normalizeWorkflowResultForEvent(result: unknown): WorkflowResult {
   );
   return WorkflowResultSchema.parse({ reportMarkdown });
 }
-
-const WORKFLOW_RUNTIME_STDLIB_SOURCE = String.raw`
-function __muxSchemaString() { return { type: "string" }; }
-function __muxSchemaNumber() { return { type: "number" }; }
-function __muxSchemaInteger() { return { type: "integer" }; }
-function __muxSchemaBoolean() { return { type: "boolean" }; }
-function __muxSchemaArray(items) { return { type: "array", items: items }; }
-function __muxSchemaEnum(values) { return { type: "string", enum: __muxUtilsAsArray(values) }; }
-function __muxSchemaObject(properties, options) {
-  var keys = Object.keys(properties || {});
-  var schema = { type: "object", required: keys, properties: properties || {} };
-  if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
-    schema.additionalProperties = options.additionalProperties;
-  }
-  return schema;
-}
-function __muxUtilsAsArray(value) { return Array.isArray(value) ? value : []; }
-function __muxUtilsOptionalString(value) {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
-function __muxUtilsBoundedInt(value, fallback, min, max) {
-  var number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isInteger(number)) return fallback;
-  var lower = Number.isInteger(min) ? min : number;
-  var upper = Number.isInteger(max) ? max : number;
-  return Math.max(lower, Math.min(number, upper));
-}
-function __muxUtilsStringList(value) {
-  if (!Array.isArray(value)) return [];
-  return value.filter(function (item) {
-    return typeof item === "string" && item.trim().length > 0;
-  }).map(function (item) {
-    return item.trim();
-  });
-}
-function __muxUtilsFencedJson(value) { return "\x60\x60\x60json\n" + JSON.stringify(value, null, 2) + "\n\x60\x60\x60"; }
-function __muxUtilsCompactText(value, limit) {
-  if (typeof value !== "string") return value;
-  if (!Number.isInteger(limit) || limit < 0 || value.length <= limit) return value;
-  return value.slice(0, limit) + "\n[truncated by mux.utils.compactText after " + limit + " characters]";
-}
-function __muxUtilsMustObject(value, message) {
-  if (value == null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(message || "Expected object");
-  }
-  return value;
-}
-function __muxPatchNormalize(result) {
-  var status = result && result.status ? result.status : result && result.success === true ? "applied" : "failed";
-  return {
-    success: Boolean(result && result.success),
-    status: status,
-    taskId: result ? result.taskId : undefined,
-    appliedCommits: result ? result.appliedCommits : undefined,
-    headCommitSha: result ? result.headCommitSha : undefined,
-    conflictPaths: result ? result.conflictPaths : undefined,
-    failedPatchSubject: result ? result.failedPatchSubject : undefined,
-    error: result ? result.error : undefined,
-    projectResults: result ? result.projectResults : undefined,
-  };
-}
-async function __muxPatchApplySafely(spec) {
-  try {
-    var normalizedSpec = Object.assign({ target: "parent", onConflict: "return", threeWay: true }, spec || {});
-    return __muxPatchNormalize(await __workflowApplyPatch(normalizedSpec));
-  } catch (error) {
-    return { success: false, status: "failed", error: error && error.message ? error.message : String(error) };
-  }
-}
-function __muxParallelMap(options) {
-  options = options || {};
-  var items = __muxUtilsAsArray(options.items);
-  if (items.length === 0) return [];
-  var specs = items.map(function (item, index) {
-    return {
-      id: typeof options.stepId === "function" ? options.stepId(item, index) : String(options.id || "parallel-map") + "-" + String(index),
-      title: typeof options.title === "function" ? options.title(item, index) : options.title,
-      agentId: typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
-      prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
-      outputSchema: typeof options.outputSchema === "function" ? options.outputSchema(item, index) : options.outputSchema,
-    };
-  });
-  return __workflowParallelAgents(specs, { maxParallel: options.maxParallel || items.length });
-}
-globalThis.mux = Object.freeze({
-  schema: Object.freeze({
-    string: __muxSchemaString,
-    number: __muxSchemaNumber,
-    integer: __muxSchemaInteger,
-    boolean: __muxSchemaBoolean,
-    array: __muxSchemaArray,
-    object: __muxSchemaObject,
-    enum: __muxSchemaEnum,
-  }),
-  patch: Object.freeze({
-    normalize: __muxPatchNormalize,
-    applySafely: __muxPatchApplySafely,
-  }),
-  parallelMap: __muxParallelMap,
-  utils: Object.freeze({
-    asArray: __muxUtilsAsArray,
-    optionalString: __muxUtilsOptionalString,
-    boundedInt: __muxUtilsBoundedInt,
-    stringList: __muxUtilsStringList,
-    fencedJson: __muxUtilsFencedJson,
-    compactText: __muxUtilsCompactText,
-    mustObject: __muxUtilsMustObject,
-  }),
-});
-`;
 
 function compileWorkflowSource(source: string): string {
   // Workflow definitions are evaluated as a script (not a module), so export

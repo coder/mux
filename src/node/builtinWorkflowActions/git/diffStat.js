@@ -1,8 +1,30 @@
+const s = mux.schema;
+
 module.exports.metadata = {
   version: 1,
   description: "Return git diff --stat output for branch, staged, and unstaged changes",
   effect: "read",
-  outputSchema: { type: "object" },
+  inputSchema: s.nullable(
+    s.object(
+      {
+        base: s.optional(s.string()),
+        trunk: s.optional(s.string()),
+        head: s.optional(s.string()),
+      },
+      { additionalProperties: false }
+    )
+  ),
+  outputSchema: s.object(
+    {
+      base: s.nullable(s.string()),
+      head: s.string(),
+      mergeBase: s.nullable(s.string()),
+      branch: s.nullable(s.string()),
+      staged: s.string(),
+      unstaged: s.string(),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [{ kind: "command", command: "git diff" }],
   timeoutMs: 10000,
 };

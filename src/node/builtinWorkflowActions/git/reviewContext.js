@@ -1,9 +1,84 @@
+const s = mux.schema;
+
 module.exports.metadata = {
   version: 1,
   description: "Return a compact review-ready Git context snapshot",
   effect: "read",
-  inputSchema: { type: "object" },
-  outputSchema: { type: "object" },
+  inputSchema: s.nullable(
+    s.object(
+      {
+        base: s.optional(s.string()),
+        trunk: s.optional(s.string()),
+        head: s.optional(s.string()),
+        includeIgnored: s.optional(s.boolean()),
+        includeCommits: s.optional(s.boolean()),
+        commitLimit: s.optional(s.integer()),
+        commitsLimit: s.optional(s.integer()),
+        diffCharBudget: s.optional(s.integer()),
+        metadataCharBudget: s.optional(s.integer()),
+      },
+      { additionalProperties: false }
+    )
+  ),
+  outputSchema: s.object(
+    {
+      base: s.nullable(s.string()),
+      head: s.string(),
+      mergeBase: s.nullable(s.string()),
+      status: s.nullable(
+        s.object({
+          branch: s.nullable(s.string()),
+          clean: s.boolean(),
+          staged: s.array(s.object({ path: s.string() })),
+          unstaged: s.array(s.object({ path: s.string() })),
+          untracked: s.array(s.string()),
+        })
+      ),
+      changedFiles: s.object({
+        branch: s.array(s.object({ path: s.string() })),
+        staged: s.array(s.object({ path: s.string() })),
+        unstaged: s.array(s.object({ path: s.string() })),
+        untracked: s.array(s.string()),
+        all: s.array(s.string()),
+      }),
+      diffStat: s.object({
+        branch: s.string(),
+        staged: s.string(),
+        unstaged: s.string(),
+      }),
+      diff: s.object({
+        branch: s.string(),
+        staged: s.string(),
+        unstaged: s.string(),
+        truncated: s.object({
+          branch: s.boolean(),
+          staged: s.boolean(),
+          unstaged: s.boolean(),
+        }),
+        workflowBudgetChars: s.integer(),
+        workflowCompactions: s.array(s.object({ field: s.string() })),
+      }),
+      commits: s.object({
+        commits: s.array(s.object({ hash: s.string(), subject: s.string() })),
+        count: s.integer(),
+      }),
+      failures: s.array(s.object({ action: s.string(), error: s.string() })),
+      flags: s.object({
+        hasChanges: s.boolean(),
+        hasUncommittedChanges: s.boolean(),
+        hasUntrackedChanges: s.boolean(),
+        hasOnlyUntrackedChanges: s.boolean(),
+        clean: s.boolean(),
+      }),
+      rendered: s.object({
+        snapshotMarkdown: s.string(),
+        diffMarkdown: s.string(),
+        compactJson: s.string(),
+      }),
+      compactions: s.array(s.object({ field: s.string() })),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [
     { kind: "command", command: "git status" },
     { kind: "command", command: "git diff" },
@@ -28,7 +103,11 @@ async function readGitReviewContext(ctx, input, diffBudget) {
     parseNameStatus
   );
   const unstagedFilesPromise = runGit(ctx, ["diff", "--name-status"]).then(parseNameStatus);
-  const untrackedOutputPromise = runGit(ctx, ["ls-files", "--others", "--exclude-standard"]);
+  const untrackedOutputPromise = captureGit(
+    ctx,
+    ["ls-files", "--others", "--exclude-standard"],
+    [0]
+  );
   const base = await tryResolveBase(ctx, input);
   const mergeBase = base == null ? null : await resolveMergeBase(ctx, base, head);
   const [stagedFiles, unstagedFiles, untrackedOutput] = await Promise.all([
@@ -37,7 +116,7 @@ async function readGitReviewContext(ctx, input, diffBudget) {
     untrackedOutputPromise,
   ]);
   const untracked =
-    untrackedOutput.length === 0 ? [] : untrackedOutput.split(/\r?\n/).filter(Boolean);
+    untrackedOutput.text.length === 0 ? [] : untrackedOutput.text.split(/\r?\n/).filter(Boolean);
   const shouldReadDiff = diffBudget > 0;
   const branchFilesPromise =
     mergeBase == null

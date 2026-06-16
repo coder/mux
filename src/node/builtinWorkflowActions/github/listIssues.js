@@ -1,9 +1,59 @@
+const s = mux.schema;
+
 export const metadata = {
   version: 1,
   description: "List GitHub issues with reusable label/state filters",
   effect: "external",
-  inputSchema: { type: "object" },
-  outputSchema: { type: "object" },
+  inputSchema: s.nullable(
+    s.object(
+      {
+        repository: s.optional(s.string()),
+        owner: s.optional(s.string()),
+        repo: s.optional(s.string()),
+        state: s.optional(s.string()),
+        includeLabels: s.optional(s.array(s.string())),
+        excludeLabels: s.optional(s.array(s.string())),
+        limit: s.optional(s.integer()),
+        includeBody: s.optional(s.boolean()),
+        bodyCharBudget: s.optional(s.integer()),
+      },
+      { additionalProperties: false }
+    )
+  ),
+  outputSchema: s.object(
+    {
+      repository: s.nullable(s.string()),
+      filters: s.object(
+        {
+          state: s.string(),
+          includeLabels: s.array(s.string()),
+          excludeLabels: s.array(s.string()),
+          limit: s.integer(),
+          includeBody: s.boolean(),
+          bodyCharBudget: s.integer(),
+        },
+        { additionalProperties: false }
+      ),
+      issues: s.array(
+        s.object(
+          {
+            number: s.integer(),
+            safeId: s.string(),
+            title: s.string(),
+            url: s.string(),
+            state: s.string(),
+            body: s.string(),
+            author: s.nullable(s.string()),
+            createdAt: s.nullable(s.string()),
+            updatedAt: s.nullable(s.string()),
+            labelNames: s.array(s.string()),
+          },
+          { additionalProperties: false }
+        )
+      ),
+    },
+    { additionalProperties: false }
+  ),
   permissions: [{ kind: "command", command: "gh issue list" }],
   timeoutMs: 60000,
 };
