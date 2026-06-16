@@ -218,7 +218,7 @@ function createForegroundWaitBackgroundedError(): Error {
 // ones finish (sliding window) instead of all launching up front.
 function parseWorkflowParallelOptions(
   raw: unknown,
-  primitiveName: "parallelAgents" | "parallelActions"
+  primitiveName: "parallelAgents" | "parallelActions" | "parallelWorkflows"
 ): { maxParallel?: number } {
   if (raw == null) {
     return {};
@@ -242,8 +242,11 @@ function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
   return parseWorkflowParallelOptions(raw, "parallelAgents");
 }
 
-function parseParallelActionsOptions(raw: unknown): { maxParallel?: number } {
-  return parseWorkflowParallelOptions(raw, "parallelActions");
+function parseParallelActionsOptions(
+  raw: unknown,
+  primitiveName: "parallelActions" | "parallelWorkflows" = "parallelActions"
+): { maxParallel?: number } {
+  return parseWorkflowParallelOptions(raw, primitiveName);
 }
 
 function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
@@ -541,21 +544,27 @@ export class WorkflowRunner {
             throw error;
           }
         });
-        setupRuntime.registerFunction("__workflowParallelActions", async (rawSpecs, rawOptions) => {
-          try {
-            return await this.runActionStepsInParallel(runId, sequence, rawSpecs, {
-              abortSignal: setupRuntime.getAbortSignal(),
-              backgroundOnMessageQueued: options?.backgroundOnMessageQueued ?? true,
-              leaseGuard,
-              rawOptions,
-            });
-          } catch (error) {
-            if (isForegroundWaitBackgroundedError(error)) {
-              await markBackgrounded();
+        setupRuntime.registerFunction(
+          "__workflowParallelActions",
+          async (rawSpecs, rawOptions, rawPrimitiveName) => {
+            try {
+              const primitiveName =
+                rawPrimitiveName === "parallelWorkflows" ? "parallelWorkflows" : "parallelActions";
+              return await this.runActionStepsInParallel(runId, sequence, rawSpecs, {
+                abortSignal: setupRuntime.getAbortSignal(),
+                backgroundOnMessageQueued: options?.backgroundOnMessageQueued ?? true,
+                leaseGuard,
+                rawOptions,
+                primitiveName,
+              });
+            } catch (error) {
+              if (isForegroundWaitBackgroundedError(error)) {
+                await markBackgrounded();
+              }
+              throw error;
             }
-            throw error;
           }
-        });
+        );
         setupRuntime.registerFunction("__workflowParallelAgents", async (rawSpecs, rawOptions) => {
           try {
             return await this.runAgentStepsInParallel(runId, sequence, rawSpecs, {
@@ -863,21 +872,23 @@ export class WorkflowRunner {
       abortSignal?: AbortSignal;
       backgroundOnMessageQueued?: boolean;
       leaseGuard: WorkflowRunnerLeaseGuard;
+      primitiveName?: "parallelActions" | "parallelWorkflows";
       rawOptions?: unknown;
     }
   ): Promise<Array<WorkflowActionResult | WorkflowNestedResult>> {
-    assert(Array.isArray(rawInvocations), "parallelActions requires an array of action specs");
+    const primitiveName = options.primitiveName ?? "parallelActions";
+    assert(Array.isArray(rawInvocations), `${primitiveName} requires an array of action specs`);
     if (rawInvocations.length === 0) {
       return [];
     }
-    const { maxParallel } = parseParallelActionsOptions(options.rawOptions);
+    const { maxParallel } = parseParallelActionsOptions(options.rawOptions, primitiveName);
     const invocations = rawInvocations.map(parseWorkflowActionInvocationSpec);
     const seenStepIds = new Set<string>();
     for (const invocation of invocations) {
-      assertWorkflowStepId(invocation.spec.id, "parallelActions");
+      assertWorkflowStepId(invocation.spec.id, primitiveName);
       assert(
         !seenStepIds.has(invocation.spec.id),
-        `parallelActions requires unique step ids; duplicate id: ${invocation.spec.id}`
+        `${primitiveName} requires unique step ids; duplicate id: ${invocation.spec.id}`
       );
       seenStepIds.add(invocation.spec.id);
     }
@@ -911,7 +922,7 @@ export class WorkflowRunner {
       try {
         if (batchStopped || batchAbortController.signal.aborted) {
           throw new Error(
-            `parallelActions step ${invocation.spec.id} canceled before it started: a sibling action failed or the batch was aborted`
+            `${primitiveName} step ${invocation.spec.id} canceled before it started: a sibling step failed or the batch was aborted`
           );
         }
         const result = await this.runActionStep(runId, sequence, invocation.name, invocation.spec, {
@@ -932,11 +943,9 @@ export class WorkflowRunner {
       }
     });
 
-    const unsettledRuns = new Map(guardedRuns.map((run, index) => [index, run]));
     try {
-      while (unsettledRuns.size > 0) {
-        const settled = await Promise.race(unsettledRuns.values());
-        unsettledRuns.delete(settled.index);
+      const settledRuns = await Promise.all(guardedRuns);
+      for (const settled of settledRuns) {
         if (!("error" in settled)) {
           results[settled.index] = settled.result;
         }
@@ -2799,7 +2808,7 @@ function __muxParallelWorkflows(specs, options) {
       },
       builtInOnly: true,
     };
-  }), options);
+  }), options, "parallelWorkflows");
 }
 ${compiled}
 return (async () => await __muxWorkflow({

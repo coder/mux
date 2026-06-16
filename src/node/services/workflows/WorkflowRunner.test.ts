@@ -2250,6 +2250,65 @@ describe("WorkflowRunner", () => {
     );
   });
 
+  test("reports parallelWorkflows for invalid maxParallel options", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-workflows-invalid-options");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_workflows_invalid_options",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelWorkflows }) {
+        parallelWorkflows([{ id: "child-a", name: "child-simple" }], { maxParallel: 0 });
+        return { reportMarkdown: "unreachable" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent should not run for invalid workflow options");
+      },
+    });
+
+    await expect(runner.run("wfr_parallel_workflows_invalid_options")).rejects.toThrow(
+      "parallelWorkflows options.maxParallel must be a positive integer"
+    );
+  });
+
+  test("reports parallelWorkflows for duplicate workflow ids", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-workflows-duplicate-ids");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_workflows_duplicate_ids",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelWorkflows }) {
+        parallelWorkflows([
+          { id: "child-a", name: "child-simple" },
+          { id: "child-a", name: "child-other" },
+        ]);
+        return { reportMarkdown: "unreachable" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("agent should not run for duplicate workflow ids");
+      },
+    });
+
+    await expect(runner.run("wfr_parallel_workflows_duplicate_ids")).rejects.toThrow(
+      "parallelWorkflows requires unique step ids; duplicate id: child-a"
+    );
+  });
+
   test("runs user-defined workflow actions and persists action events", async () => {
     using tmp = new DisposableTempDir("workflow-runner-action");
     const projectRoot = path.join(tmp.path, "project", ".mux", "actions");
