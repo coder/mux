@@ -774,6 +774,57 @@ export const reconcile = execute;
     }
   });
 
+  test("built-in github.getIssueConversation reads REST comment users", async () => {
+    using tmp = new DisposableTempDir("workflow-action-github-conversation-user");
+    const binDir = path.join(tmp.path, "bin");
+    await fs.mkdir(binDir, { recursive: true });
+    const ghPath = path.join(binDir, "gh");
+    await fs.writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1 $2" == "issue view" ]]; then
+  cat <<'JSON'
+{"number":7,"title":"Issue title","url":"https://github.com/coder/mux/issues/7","state":"OPEN","body":"Issue body","author":{"login":"issue-author"},"labels":[]}
+JSON
+elif [[ "$1" == "api" ]]; then
+  cat <<'JSON'
+[{"body":"REST comment body","user":{"login":"rest-commenter"}}]
+JSON
+else
+  echo "unexpected gh args: $*" >&2
+  exit 1
+fi
+`,
+      "utf-8"
+    );
+    await fs.chmod(ghPath, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = binDir + path.delimiter + (previousPath ?? "");
+    try {
+      const registry = new WorkflowActionRegistry({
+        projectRoot: path.join(tmp.path, "project-actions"),
+        globalRoot: path.join(tmp.path, "global-actions"),
+      });
+      const action = await registry.resolveAction("github.getIssueConversation", {
+        projectTrusted: false,
+      });
+
+      const result = await new WorkflowActionRunner().execute(action, {
+        input: { repository: "coder/mux", number: 7 },
+        cwd: tmp.path,
+        timeoutMs: 30_000,
+        artifactDir: path.join(tmp.path, "artifacts"),
+      });
+      const output = expectObjectRecord(result.output);
+
+      expect(output.conversationMarkdown).toContain("Comment by rest-commenter");
+      expect(output.conversationMarkdown).not.toContain("Comment by unknown");
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
   test("describes every built-in workflow action", async () => {
     // Built-in sources must always pass static describe validation; a failure here
     // surfaces in the UI as a "blocked" action (e.g. security.hashFiles, whose regex

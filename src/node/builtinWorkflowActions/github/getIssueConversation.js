@@ -73,7 +73,9 @@ function formatConversation(comments, commentBodyBudget, hasOmittedComments) {
     .map(
       (comment) =>
         "### Comment by " +
-        ((comment.author && comment.author.login) || "unknown") +
+        ((comment.user && comment.user.login) ||
+          (comment.author && comment.author.login) ||
+          "unknown") +
         "\n\n" +
         truncateText(comment.body || "", commentBodyBudget)
     )
