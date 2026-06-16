@@ -10,7 +10,6 @@ let cleanupDom: (() => void) | null = null;
 
 function DialogInsideClickableContainer(props: {
   onContainerClick: () => void;
-  onContainerPointerDown: () => void;
   onContainerTouchStart: () => void;
 }) {
   const [open, setOpen] = useState(true);
@@ -21,7 +20,6 @@ function DialogInsideClickableContainer(props: {
         props.onContainerClick();
         setOpen(false);
       }}
-      onPointerDown={props.onContainerPointerDown}
       onTouchStart={props.onContainerTouchStart}
     >
       <Dialog open={open} onOpenChange={setOpen}>
@@ -50,22 +48,18 @@ describe("Dialog", () => {
 
   test("keeps content interactions from bubbling to clickable React ancestors", () => {
     const onContainerClick = mock(() => undefined);
-    const onContainerPointerDown = mock(() => undefined);
     const onContainerTouchStart = mock(() => undefined);
     const view = render(
       <DialogInsideClickableContainer
         onContainerClick={onContainerClick}
-        onContainerPointerDown={onContainerPointerDown}
         onContainerTouchStart={onContainerTouchStart}
       />
     );
     const button = view.getByRole("button", { name: "Inside action" });
 
-    fireEvent.pointerDown(button);
     fireEvent.touchStart(button);
     fireEvent.click(button);
 
-    expect(onContainerPointerDown).not.toHaveBeenCalled();
     expect(onContainerTouchStart).not.toHaveBeenCalled();
     expect(onContainerClick).not.toHaveBeenCalled();
     expect(view.getByText("Portal dialog")).toBeTruthy();

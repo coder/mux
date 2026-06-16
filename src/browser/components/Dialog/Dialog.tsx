@@ -72,9 +72,6 @@ const DialogContent = React.forwardRef<
       onClick,
       onMouseDown,
       onMouseUp,
-      onPointerDown,
-      onPointerMove,
-      onPointerUp,
       onTouchStart,
       onTouchMove,
       onTouchEnd,
@@ -91,9 +88,8 @@ const DialogContent = React.forwardRef<
         onClick={stopPropagationBefore(onClick)}
         onMouseDown={stopPropagationBefore(onMouseDown)}
         onMouseUp={stopPropagationBefore(onMouseUp)}
-        onPointerDown={stopPropagationBefore(onPointerDown)}
-        onPointerMove={stopPropagationBefore(onPointerMove)}
-        onPointerUp={stopPropagationBefore(onPointerUp)}
+        // Do not stop pointer events here: Radix DismissableLayer uses pointerdown bubbling
+        // to reset its inside/outside tracking, which keeps outside-click dismissal one-click.
         onTouchStart={stopPropagationBefore(onTouchStart)}
         onTouchMove={stopPropagationBefore(onTouchMove)}
         onTouchEnd={stopPropagationBefore(onTouchEnd)}
