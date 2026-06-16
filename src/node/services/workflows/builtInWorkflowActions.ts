@@ -1,5 +1,6 @@
 import assert from "@/common/utils/assert";
 import { buildWorkspaceHostActionStubSources } from "./workspaceHostActions";
+import { BUILTIN_WORKFLOW_ACTION_CONTENT } from "./builtInWorkflowActionContent.generated";
 
 const GIT_SHARED_HELPERS = String.raw`
 function inputObject(input) {
@@ -1266,6 +1267,7 @@ module.exports.execute = async function () {
 `;
 
 const STATIC_BUILT_IN_WORKFLOW_ACTION_SOURCES: Record<string, string> = {
+  ...BUILTIN_WORKFLOW_ACTION_CONTENT,
   "workflows.start": WORKFLOWS_START_SOURCE,
   "git.status": GIT_STATUS_SOURCE,
   "git.commitsBetween": GIT_COMMITS_BETWEEN_SOURCE,

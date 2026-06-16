@@ -2798,6 +2798,43 @@ function __muxUtilsMustObject(value, message) {
   }
   return value;
 }
+function __muxPatchNormalize(result) {
+  var status = result && result.status ? result.status : result && result.success === true ? "applied" : "failed";
+  return {
+    success: Boolean(result && result.success),
+    status: status,
+    taskId: result ? result.taskId : undefined,
+    appliedCommits: result ? result.appliedCommits : undefined,
+    headCommitSha: result ? result.headCommitSha : undefined,
+    conflictPaths: result ? result.conflictPaths : undefined,
+    failedPatchSubject: result ? result.failedPatchSubject : undefined,
+    error: result ? result.error : undefined,
+    projectResults: result ? result.projectResults : undefined,
+  };
+}
+async function __muxPatchApplySafely(spec) {
+  try {
+    var normalizedSpec = Object.assign({ target: "parent", onConflict: "return", threeWay: true }, spec || {});
+    return __muxPatchNormalize(await __workflowApplyPatch(normalizedSpec));
+  } catch (error) {
+    return { success: false, status: "failed", error: error && error.message ? error.message : String(error) };
+  }
+}
+function __muxParallelMap(options) {
+  options = options || {};
+  var items = __muxUtilsAsArray(options.items);
+  if (items.length === 0) return [];
+  var specs = items.map(function (item, index) {
+    return {
+      id: typeof options.stepId === "function" ? options.stepId(item, index) : String(options.id || "parallel-map") + "-" + String(index),
+      title: typeof options.title === "function" ? options.title(item, index) : options.title,
+      agentId: typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
+      prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
+      outputSchema: typeof options.outputSchema === "function" ? options.outputSchema(item, index) : options.outputSchema,
+    };
+  });
+  return __workflowParallelAgents(specs, { maxParallel: options.maxParallel || items.length });
+}
 globalThis.mux = Object.freeze({
   schema: Object.freeze({
     string: __muxSchemaString,
@@ -2808,6 +2845,11 @@ globalThis.mux = Object.freeze({
     object: __muxSchemaObject,
     enum: __muxSchemaEnum,
   }),
+  patch: Object.freeze({
+    normalize: __muxPatchNormalize,
+    applySafely: __muxPatchApplySafely,
+  }),
+  parallelMap: __muxParallelMap,
   utils: Object.freeze({
     asArray: __muxUtilsAsArray,
     optionalString: __muxUtilsOptionalString,
@@ -2830,7 +2872,11 @@ function compileWorkflowSource(source: string): string {
   // also be rewritten. scripts/gen_builtin_workflows.ts guards built-in
   // sources against that corruption at generation time; scratch/project
   // authors must keep flush-left `export ` lines out of template literals.
-  const withoutNamedExports = source.replace(
+  const withoutWorkflowMetadata = source.replace(
+    /^export\s+(?:const|let|var)\s+metadata\s*=\s*\{[\s\S]*?\};\s*/gmu,
+    ""
+  );
+  const withoutNamedExports = withoutWorkflowMetadata.replace(
     /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu,
     ""
   );

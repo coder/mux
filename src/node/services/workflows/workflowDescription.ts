@@ -1,5 +1,5 @@
 /**
- * Shared parser for the `// description:` workflow header convention.
+ * Shared parser for workflow `export const metadata = { description: "..." }` declarations.
  *
  * Both the runtime workflow scanner (WorkflowDefinitionStore) and the built-in
  * workflow codegen (scripts/gen_builtin_workflows.ts) consume this so the
@@ -9,18 +9,15 @@
  * import workflow definitions.
  */
 
-export const WORKFLOW_DESCRIPTION_PREFIX = "// description:";
-
 export function parseWorkflowDescription(source: string): string | null {
-  const firstMeaningfulLine = source
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
+  const match =
+    /(^|[;\n])\s*export\s+(?:const|let|var)\s+metadata\s*=\s*\{[\s\S]*?\bdescription\s*:\s*(["'])(.*?)\2/su.exec(
+      source
+    );
+  const description = match?.[3]?.trim();
+  return description ? unescapeDescription(description) : null;
+}
 
-  if (!firstMeaningfulLine?.startsWith(WORKFLOW_DESCRIPTION_PREFIX)) {
-    return null;
-  }
-
-  const description = firstMeaningfulLine.slice(WORKFLOW_DESCRIPTION_PREFIX.length).trim();
-  return description.length > 0 ? description : null;
+function unescapeDescription(value: string): string {
+  return value.replace(/\\([\\"'])/gu, "$1");
 }

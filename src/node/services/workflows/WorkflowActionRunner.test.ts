@@ -278,6 +278,42 @@ describe("WorkflowActionRunner", () => {
     expect(result.stderr).toBe("");
   });
 
+  test("provides action SDK helpers for checked exec, JSON exec, and temporary JSON", async () => {
+    using tmp = new DisposableTempDir("workflow-action-sdk-helpers");
+    const sourcePath = path.join(tmp.path, "sdk.js");
+    const source = `
+      export const metadata = { version: 1, description: "SDK helpers", effect: "read" };
+      export async function execute(_input, ctx) {
+        const checked = await ctx.execChecked(process.execPath, ["-e", "process.stdout.write('ok')"]);
+        const parsed = await ctx.execJson(process.execPath, ["-e", "process.stdout.write(JSON.stringify({ value: 42 }))"]);
+        const temp = await ctx.writeTempJson({ hello: "world" });
+        const tempContent = JSON.parse(await require("node:fs/promises").readFile(temp.path, "utf-8"));
+        return { checked: checked.stdout, parsed, tempContent, tempPath: temp.path };
+      }
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+
+    const result = await runner.execute(createAction(sourcePath, source), {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+    const output = expectObjectRecord(result.output);
+
+    expect(output.checked).toBe("ok");
+    expect(output.parsed).toEqual({ value: 42 });
+    expect(output.tempContent).toEqual({ hello: "world" });
+    let tempStatError: unknown = null;
+    try {
+      await fs.stat(String(output.tempPath));
+    } catch (error) {
+      tempStatError = error;
+    }
+    expect(tempStatError).toBeInstanceOf(Error);
+  });
+
   test("built-in git actions reject truncated command output", async () => {
     using tmp = new DisposableTempDir("workflow-action-git-truncated");
     const repoRoot = path.join(tmp.path, "repo");

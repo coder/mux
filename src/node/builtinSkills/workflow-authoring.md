@@ -35,10 +35,13 @@ Do **not** create a workflow for a small one-off edit or a single simple investi
 5. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) to author the JavaScript.
 6. Run it by name with `workflow_run`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
 
-Scratch workflows must include a description header and a default exported function:
+Scratch workflows must include workflow metadata with a description and a default exported function:
 
 ```js
-// description: Short workflow description
+export const metadata = {
+  description: "Short workflow description",
+};
+
 export default function workflow({
   args,
   phase,
@@ -447,7 +450,10 @@ function issueListSchema() {
 ## Minimal pattern
 
 ```js
-// description: Review a change with parallel lanes and verification
+export const metadata = {
+  description: "Review a change with parallel lanes and verification",
+};
+
 export default function workflow({ args, phase, log, agent, parallelAgents }) {
   const target = normalizeTarget(args);
 

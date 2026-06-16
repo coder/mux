@@ -19,7 +19,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as prettier from "prettier";
 import { WorkflowNameSchema } from "../src/common/orpc/schemas/workflow";
-// Shared with the runtime workflow scanner so the `// description:` convention
+// Shared with the runtime workflow scanner so workflow description metadata
 // cannot drift between codegen and WorkflowDefinitionStore. workflowDescription
 // is dependency-free, so importing it here cannot recurse into the generated
 // module this script produces.
@@ -89,7 +89,7 @@ function readWorkflowEntry(filename: string): BuiltInWorkflowEntry {
   const description = parseWorkflowDescription(source);
   assert(
     description,
-    `Built-in workflow ${filename} must start with a '// description: ...' header line`
+    `Built-in workflow ${filename} must define export const metadata = { description: ... }`
   );
 
   // Sanity check only; WorkflowRunner's compileWorkflowSource performs the

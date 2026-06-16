@@ -60,7 +60,7 @@ describe("UserMessageContent inline skill rendering", () => {
   });
 
   test("renders workflow command preview content from the run definition snapshot", () => {
-    const workflowSource = `// description: Review deeply\nexport default function workflow() {\n  return { reportMarkdown: "done" };\n}`;
+    const workflowSource = `export const metadata = { description: "Review deeply" };\nexport default function workflow() {\n  return { reportMarkdown: "done" };\n}`;
     const view = render(
       <WorkflowDefinitionPreviewCard
         preview={{

@@ -1,4 +1,7 @@
-// description: Audit a repository for security risk, persist threat-model state, and synthesize findings.
+export const metadata = {
+  description:
+    "Audit a repository for security risk, persist threat-model state, and synthesize findings.",
+};
 
 // Verification/fixer fan-out scales with maxFindings/maxFixes (clamped only at
 // 1000 via boundedInt); cap live agents so large budgets queue work instead of

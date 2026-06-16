@@ -1,5 +1,8 @@
-// description: Coordinate adversarial review agents to find, verify, and synthesize code review findings.
-//
+export const metadata = {
+  description:
+    "Coordinate adversarial review agents to find, verify, and synthesize code review findings.",
+};
+
 // Keep the lightweight /deep-review skill; this workflow is the heavier structured path with
 // adversarial verification for review findings.
 

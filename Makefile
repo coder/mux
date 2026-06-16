@@ -220,6 +220,8 @@ build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build 
 BUILTIN_AGENTS_GENERATED := src/node/services/agentDefinitions/builtInAgentContent.generated.ts
 BUILTIN_SKILLS_GENERATED := src/node/services/agentSkills/builtInSkillContent.generated.ts
 BUILTIN_WORKFLOWS_GENERATED := src/node/services/workflows/builtInWorkflowContent.generated.ts
+BUILTIN_WORKFLOW_ACTIONS_GENERATED := src/node/services/workflows/builtInWorkflowActionContent.generated.ts
+BUILTIN_WORKFLOW_ACTION_SOURCES := $(shell find src/node/builtinWorkflowActions -type f -name '*.js' 2>/dev/null)
 
 $(BUILTIN_AGENTS_GENERATED): src/node/builtinAgents/*.md scripts/generate-builtin-agents.sh
 	@./scripts/generate-builtin-agents.sh
@@ -227,10 +229,13 @@ $(BUILTIN_AGENTS_GENERATED): src/node/builtinAgents/*.md scripts/generate-builti
 $(BUILTIN_SKILLS_GENERATED): $(BUILTIN_SKILL_SOURCES) $(DOCS_SOURCES) scripts/generate-builtin-skills.sh scripts/gen_builtin_skills.ts
 	@./scripts/generate-builtin-skills.sh
 
+$(BUILTIN_WORKFLOW_ACTIONS_GENERATED): $(BUILTIN_WORKFLOW_ACTION_SOURCES) scripts/generate-builtin-workflow-actions.sh scripts/gen_builtin_workflow_actions.ts
+	@./scripts/generate-builtin-workflow-actions.sh
+
 $(BUILTIN_WORKFLOWS_GENERATED): src/node/builtinWorkflows/*.js scripts/generate-builtin-workflows.sh scripts/gen_builtin_workflows.ts
 	@./scripts/generate-builtin-workflows.sh
 
-dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES) $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED)
+dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES) $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(BUILTIN_WORKFLOW_ACTIONS_GENERATED)
 	@echo "Building main process..."
 	@NODE_ENV=production $(TSGO) -p tsconfig.main.json
 	@NODE_ENV=production bun x tsc-alias -p tsconfig.main.json
@@ -343,13 +348,13 @@ static-check: lint typecheck fmt-check check-eager-imports check-code-docs-links
 
 static-check-full: static-check check-bench-agent check-docs-links ## Run the full CI static check suite
 
-check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) ## Verify terminal-bench agent configuration and imports
+check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(BUILTIN_WORKFLOW_ACTIONS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
 
-lint: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) ## Run ESLint (typecheck runs in separate target)
+lint: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(BUILTIN_WORKFLOW_ACTIONS_GENERATED) ## Run ESLint (typecheck runs in separate target)
 	@./scripts/lint.sh
 
-lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) ## Run linter with --fix
+lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(BUILTIN_WORKFLOW_ACTIONS_GENERATED) ## Run linter with --fix
 	@./scripts/lint.sh --fix
 
 lint-actions: lint-actionlint lint-zizmor ## Lint GitHub Actions workflows
@@ -378,13 +383,13 @@ pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
 	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml
 
 ifeq ($(OS),Windows_NT)
-typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)
+typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(BUILTIN_WORKFLOW_ACTIONS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)
 	@# On Windows, use npm run because bun x doesn't correctly pass arguments
 	@npm x concurrently -g \
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"
 else
-typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED)
+typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(BUILTIN_WORKFLOW_ACTIONS_GENERATED)
 	@bun x concurrently -g \
 		"$(TSGO) --noEmit" \
 		"$(TSGO) --noEmit -p tsconfig.main.json"

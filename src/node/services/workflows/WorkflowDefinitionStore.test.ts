@@ -21,7 +21,7 @@ async function writeWorkflow(
   await fs.mkdir(root, { recursive: true });
   await fs.writeFile(
     path.join(root, `${name}.js`),
-    `// description: ${description}\nexport default async function workflow({ args }) { ${body} }\n`,
+    `export const metadata = { description: "${description}" };\nexport default async function workflow({ args }) { ${body} }\n`,
     "utf-8"
   );
 }
@@ -328,7 +328,7 @@ describe("WorkflowDefinitionStore", () => {
       },
     ]);
     expect(definition.descriptor.scope).toBe("scratch");
-    expect(definition.source).toContain("// description: Workspace scratch demo");
+    expect(definition.source).toContain('description: "Workspace scratch demo"');
     expect(definition.source).toContain("reportMarkdown: 'scratch'");
     expect(await pathExists(path.join(scratchRoot, ".gitignore"))).toBe(false);
     expect(gitExclude).toContain("# mux: local scratch workflow drafts");
@@ -733,7 +733,7 @@ describe("WorkflowDefinitionStore", () => {
       path.join(localWorkflowRoot, "promoted-demo.js"),
       "utf-8"
     );
-    expect(promotedSource).toContain("// description: Promoted over runtime");
+    expect(promotedSource).toContain('description: "Promoted over runtime"');
 
     let duplicateError: unknown;
     try {
@@ -759,7 +759,11 @@ describe("WorkflowDefinitionStore", () => {
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
     const globalRoot = path.join(tmp.path, "mux-home", "workflows");
     await writeWorkflow(projectRoot, "valid-name", "Valid workflow");
-    await fs.writeFile(path.join(projectRoot, "BadName.js"), "// description: bad\n", "utf-8");
+    await fs.writeFile(
+      path.join(projectRoot, "BadName.js"),
+      'export const metadata = { description: "bad" };\n',
+      "utf-8"
+    );
     await fs.writeFile(
       path.join(projectRoot, "missing-description.js"),
       "export default () => null;",

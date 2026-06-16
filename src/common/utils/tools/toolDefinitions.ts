@@ -1834,7 +1834,7 @@ export const TOOL_DEFINITIONS = {
       "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
       "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +
       "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs. " +
-      "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with a // description: header and default exported function, then run it by name.",
+      "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with an export const metadata description and default exported function, then run it by name.",
     schema: WorkflowRunToolArgsSchema,
   },
   workflow_resume: {

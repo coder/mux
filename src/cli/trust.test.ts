@@ -30,7 +30,7 @@ describe("mux trust CLI", () => {
     await fs.mkdir(muxRoot, { recursive: true });
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `// description: Echo review input
+      `export const metadata = { description: "Echo review input" };
 export default function workflow() { return { reportMarkdown: "trusted via cli" }; }
 `,
       "utf-8"

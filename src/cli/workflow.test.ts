@@ -100,7 +100,7 @@ describe("mux workflow CLI helpers", () => {
     await fs.mkdir(muxRoot, { recursive: true });
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `// description: Echo review input
+      `export const metadata = { description: "Echo review input" };
 export default function workflow() { return { reportMarkdown: "untrusted" }; }
 `,
       "utf-8"
@@ -125,7 +125,7 @@ export default function workflow() { return { reportMarkdown: "untrusted" }; }
     await fs.mkdir(muxRoot, { recursive: true });
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `// description: Echo review input
+      `export const metadata = { description: "Echo review input" };
 export default function workflow() { return { reportMarkdown: "should not run" }; }
 `,
       "utf-8"
@@ -151,7 +151,7 @@ export default function workflow() { return { reportMarkdown: "should not run" }
     await fs.mkdir(muxRoot, { recursive: true });
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `// description: Echo review input
+      `export const metadata = { description: "Echo review input" };
 export default function workflow() { return { reportMarkdown: "untrusted" }; }
 `,
       "utf-8"
@@ -181,7 +181,7 @@ export default function workflow() { return { reportMarkdown: "untrusted" }; }
     await fs.mkdir(muxRoot, { recursive: true });
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `// description: Echo review input
+      `export const metadata = { description: "Echo review input" };
 export default function workflow() { return { reportMarkdown: "from worktree" }; }
 `,
       "utf-8"
@@ -224,7 +224,7 @@ export default function workflow() { return { reportMarkdown: "from worktree" };
     await Bun.$`git commit -m init`.cwd(repo).quiet();
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `// description: Echo review input
+      `export const metadata = { description: "Echo review input" };
 export default function workflow({ args }) {
   return { reportMarkdown: "Echo: " + JSON.stringify(args), structuredOutput: { ok: true, args } };
 }
@@ -233,7 +233,7 @@ export default function workflow({ args }) {
     );
     await fs.writeFile(
       path.join(repo, ".mux", "workflows", "explode.js"),
-      `// description: Throw from workflow
+      `export const metadata = { description: "Throw from workflow" };
 export default function workflow() { throw new Error("boom"); }
 `,
       "utf-8"

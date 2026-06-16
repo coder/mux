@@ -1779,13 +1779,51 @@ function assertSafeArtifactName(name) {
   }
 }
 
-async function execCommand(command, args = [], options = {}) {
+function assertExecArgs(command, args) {
   if (typeof command !== "string" || command.length === 0) {
     throw new Error("ctx.exec command must be a non-empty string");
   }
   if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
     throw new Error("ctx.exec args must be an array of strings");
   }
+}
+
+async function execCheckedCommand(command, args = [], options = {}) {
+  const result = await execCommand(command, args, options);
+  if (result.stdoutTruncated || result.stderrTruncated) {
+    throw new Error("ctx.execChecked command output exceeded workflow action capture limit");
+  }
+  if (result.exitCode !== 0 || result.signal !== null || result.timedOut === true) {
+    throw new Error((result.stderr || result.stdout || "ctx.execChecked command failed").trim());
+  }
+  return result;
+}
+
+async function execJsonCommand(command, args = [], options = {}) {
+  const result = await execCheckedCommand(command, args, options);
+  try {
+    return JSON.parse(result.stdout || "null");
+  } catch (error) {
+    throw new Error("ctx.execJson failed to parse stdout as JSON: " + (error instanceof Error ? error.message : String(error)));
+  }
+}
+
+async function writeTempJson(value, payload, tempDirs) {
+  const dir = await fs.mkdtemp(path.join(payload.artifactDir, ".tmp-json-"));
+  tempDirs.push(dir);
+  const filePath = path.join(dir, "payload.json");
+  await fs.writeFile(filePath, JSON.stringify(value), "utf-8");
+  return { path: filePath, dir };
+}
+
+async function cleanupTempDirs(tempDirs) {
+  for (const dir of tempDirs) {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function execCommand(command, args = [], options = {}) {
+  assertExecArgs(command, args);
   const child = spawn(command, args, {
     cwd: options.cwd,
     detached: process.platform !== "win32",
@@ -1851,6 +1889,7 @@ async function execCommand(command, args = [], options = {}) {
 async function main() {
   const payload = JSON.parse(await readStdin());
   const artifacts = [];
+  const tempDirs = [];
   const writeResult = async (result) => {
     await fs.mkdir(path.dirname(payload.resultPath), { recursive: true });
     const content = JSON.stringify({ attemptId: payload.attemptId, ...result, artifacts });
@@ -1887,6 +1926,11 @@ async function main() {
       cwd: payload.cwd,
       exec: async (command, args, options = {}) =>
         await execCommand(command, args, { cwd: payload.cwd, ...options, execPidPath: payload.execPidPath }),
+      execChecked: async (command, args, options = {}) =>
+        await execCheckedCommand(command, args, { cwd: payload.cwd, ...options, execPidPath: payload.execPidPath }),
+      execJson: async (command, args, options = {}) =>
+        await execJsonCommand(command, args, { cwd: payload.cwd, ...options, execPidPath: payload.execPidPath }),
+      writeTempJson: async (value) => await writeTempJson(value, payload, tempDirs),
       writeArtifact: async (name, value) => {
         assertSafeArtifactName(name);
         if (artifacts.length >= MAX_ARTIFACT_COUNT) {
@@ -1915,6 +1959,8 @@ async function main() {
       error: error instanceof Error ? error.message : String(error),
     });
     process.exitCode = 1;
+  } finally {
+    await cleanupTempDirs(tempDirs);
   }
 }
 

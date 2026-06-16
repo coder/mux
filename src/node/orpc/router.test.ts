@@ -104,7 +104,7 @@ describe("router workflow routes", () => {
     fs.mkdirSync(path.join(projectPath, ".mux", "workflows"), { recursive: true });
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "demo.js"),
-      `// description: Demo workflow\nexport default function workflow({ args }) { return { reportMarkdown: args.topic }; }\n`
+      `export const metadata = { description: "Demo workflow" };\nexport default function workflow({ args }) { return { reportMarkdown: args.topic }; }\n`
     );
     await config.editConfig((current) => {
       current.projects.set(projectPath, { workspaces: [], trusted: true });
@@ -196,7 +196,7 @@ describe("router workflow routes", () => {
     fs.mkdirSync(path.join(workspaceSubProjectPath, ".mux", "workflows"), { recursive: true });
     fs.writeFileSync(
       path.join(workspaceSubProjectPath, ".mux", "workflows", "sub-scan.js"),
-      `// description: Sub-project scan\nexport default function workflow() { return {}; }\n`
+      `export const metadata = { description: "Sub-project scan" };\nexport default function workflow() { return {}; }\n`
     );
     await config.editConfig((current) => {
       current.projects.set(subProjectPath, {
@@ -227,7 +227,7 @@ describe("router workflow routes", () => {
     fs.mkdirSync(path.join(workspacePath, ".mux", "workflows"), { recursive: true });
     fs.writeFileSync(
       path.join(workspacePath, ".mux", "workflows", "workspace-only.js"),
-      `// description: Workspace-only workflow\nexport default function workflow() { return {}; }\n`
+      `export const metadata = { description: "Workspace-only workflow" };\nexport default function workflow() { return {}; }\n`
     );
     await config.editConfig((current) => {
       current.projects.set(projectPath, {
@@ -554,7 +554,7 @@ describe("router workflow routes", () => {
     fs.mkdirSync(scratchRoot, { recursive: true });
     fs.writeFileSync(
       path.join(scratchRoot, "scratch-draft.js"),
-      "// description: Scratch draft\nexport default function workflow() { return { reportMarkdown: 'scratch api' }; }\n",
+      "export const metadata = { description: \"Scratch draft\" };\nexport default function workflow() { return { reportMarkdown: 'scratch api' }; }\n",
       "utf-8"
     );
     const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
@@ -813,7 +813,7 @@ describe("router workflow routes", () => {
   test("waits for foreground slash invocation persistence before terminal continuation", async () => {
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "backgroundable.js"),
-      "// description: Backgroundable workflow\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
     );
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {

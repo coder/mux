@@ -1,4 +1,6 @@
-// description: Review current changes for reuse, quality, and efficiency, then fix actionable issues.
+export const metadata = {
+  description: "Review current changes for reuse, quality, and efficiency, then fix actionable issues.",
+};
 
 // Workflow files execute as self-contained JavaScript; keep small helpers inline instead of importing repo utilities.
 const DEFAULT_MAX_FINDINGS = 20;

@@ -110,7 +110,7 @@ describe("ServiceContainer", () => {
     await fsPromises.mkdir(path.join(projectPath, ".mux", "workflows"), { recursive: true });
     await fsPromises.writeFile(
       path.join(projectPath, ".mux", "workflows", "security-scan.js"),
-      "// description: Security scan\nexport default function workflow() { return { reportMarkdown: 'scan done' }; }\n",
+      "export const metadata = { description: \"Security scan\" };\nexport default function workflow() { return { reportMarkdown: 'scan done' }; }\n",
       "utf-8"
     );
     await config.editConfig((current) => {
@@ -224,7 +224,7 @@ describe("ServiceContainer", () => {
     await fsPromises.mkdir(path.join(projectPath, ".mux", "workflows"), { recursive: true });
     await fsPromises.writeFile(
       path.join(projectPath, ".mux", "workflows", "failing-scan.js"),
-      "// description: Failing scan\nexport default function workflow() { throw new Error('scan failed'); }\n",
+      "export const metadata = { description: \"Failing scan\" };\nexport default function workflow() { throw new Error('scan failed'); }\n",
       "utf-8"
     );
     await config.editConfig((current) => {

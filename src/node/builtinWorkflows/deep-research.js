@@ -1,5 +1,7 @@
-// description: Coordinate delegated agents to research, verify, and synthesize a topic.
-//
+export const metadata = {
+  description: "Coordinate delegated agents to research, verify, and synthesize a topic.",
+};
+
 // Deep-research conductor: scope the topic into questions and discovery angles,
 // fan out source discovery and claim extraction on fast read-only agents,
 // adversarially verify the highest-value claims with independent votes, then
