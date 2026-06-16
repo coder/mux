@@ -318,6 +318,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
     "task_await returns as soon as the first awaited task completes by default (min_completed), so you can start dependent work on each result as it lands instead of blocking on the whole batch; for best-of-N synthesis that must compare every candidate, pass min_completed equal to the batch size (or use a foreground grouped spawn, below). " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
+    "For now, persisted sub-agent goals are not supported; pass sub-agent objectives, success criteria, and deliverables directly in the prompt. " +
     "Sub-agents observe the same system instructions as the parent (project/global AGENTS.md and custom instructions), so do not restate that shared context in the prompt; spend the prompt on task-specific information the sub-agent cannot infer from those instructions. " +
     "Caveat: instruction files are read from the child's checkout, so uncommitted AGENTS.md edits in the parent follow the same runtime visibility rules above — commit them first or pass the relevant guidance in the prompt. " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
@@ -1926,6 +1927,50 @@ export const TOOL_DEFINITIONS = {
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
   },
+  set_goal: {
+    description:
+      "Create or replace a durable goal for this current parent workspace when the user explicitly asks for multi-turn, verifiable work. " +
+      "Do not use this for one-shot questions. Objectives must be concrete, measurable, and verifiable. " +
+      "Omitted or null budget/turn fields use the effective workspace goal defaults; model-created goals must resolve to at least one budget or turn bound. " +
+      "Do not replace an active, paused, or budget-limited goal unless the user explicitly asked to replace it; when replacing, first call get_goal and pass replaceExistingGoal=true with the current expectedGoalId. " +
+      "After setting a goal during your own turn, let subsequent automatic continuation turns do the substantial goal work, then call complete_goal only after verification.",
+    schema: z
+      .object({
+        objective: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Concrete, measurable objective to pursue over automatic goal continuations."),
+        budgetCents: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Optional positive budget in cents. Omit/null to apply the effective workspace goal default."
+          ),
+        turnCap: z
+          .number()
+          .int()
+          .positive()
+          .nullish()
+          .describe(
+            "Optional positive maximum automatic continuation turns. Omit/null to apply the effective workspace goal default."
+          ),
+        replaceExistingGoal: z
+          .boolean()
+          .nullish()
+          .describe("Set true only when the user explicitly asked to replace the current goal."),
+        expectedGoalId: z
+          .string()
+          .uuid()
+          .nullish()
+          .describe(
+            "Optimistic-concurrency token required when replacing an active, paused, or budget-limited goal. Use the goalId from get_goal."
+          ),
+      })
+      .strict(),
+  },
   get_goal: {
     description:
       "Read the current workspace goal. Returns null when no goal is available in this turn.",
@@ -2770,6 +2815,7 @@ export function getAvailableTools(
         ]
       : []),
     ...(enableAgentReport ? ["agent_report"] : []),
+    "set_goal",
     "get_goal",
     "complete_goal",
     "heartbeat",

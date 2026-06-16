@@ -3569,6 +3569,7 @@ export class AgentSession {
       // already reset the segment cache, so this stream recomputes the context.
       resolveMemoryContext: (forModelString, memoryOptions) =>
         this.resolveMemoryContext(forModelString, memoryOptions),
+      allowAgentSetGoal: options?.allowAgentSetGoal === true,
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,

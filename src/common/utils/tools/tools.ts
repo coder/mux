@@ -19,6 +19,7 @@ import {
   createReviewPaneGetTool,
 } from "@/node/services/tools/review_pane";
 import { createHeartbeatTool } from "@/node/services/tools/heartbeat";
+import { createSetGoalTool } from "@/node/services/tools/set_goal";
 import { createGetGoalTool } from "@/node/services/tools/get_goal";
 import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
 import { createNotifyTool } from "@/node/services/tools/notify";
@@ -76,6 +77,7 @@ import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModelMessage } from "@/common/types/message";
+import type { GoalDefaults } from "@/constants/goals";
 import type { ProjectRef, WorkspaceMetadata } from "@/common/types/workspace";
 
 export interface ToolModelUsageEvent {
@@ -236,8 +238,11 @@ export interface ToolConfiguration {
   workspaceHeartbeatService?: WorkspaceHeartbeatToolService;
   /** Workspace goal lifecycle service for model-facing goal tools. */
   goalService?: WorkspaceGoalService;
+  /** Effective goal defaults for model-created goals in this workspace. */
+  goalDefaults?: GoalDefaults;
   /** Per-request goal tool gates derived from goal status and agent capabilities. */
   enableGoalTools?: {
+    setGoal: boolean;
     getGoal: boolean;
     completeGoal: boolean;
   };
@@ -589,6 +594,9 @@ export async function getToolsForModel(
       : {}),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
     ...(shouldExposeHeartbeatTool ? { heartbeat: createHeartbeatTool(config) } : {}),
+    ...(config.goalService && config.enableGoalTools?.setGoal
+      ? { set_goal: createSetGoalTool(config) }
+      : {}),
     ...(config.goalService && config.enableGoalTools?.getGoal
       ? { get_goal: createGetGoalTool(config) }
       : {}),

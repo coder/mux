@@ -10,6 +10,7 @@ import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { GoalRecordV1 } from "@/common/types/goal";
 import { createCompleteGoalTool } from "./complete_goal";
 import { createGetGoalTool } from "./get_goal";
+import { createSetGoalTool } from "./set_goal";
 
 // Goal tools do not touch runtime; ToolFactory config still requires one.
 // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
@@ -34,6 +35,16 @@ async function setGoalOk(
 
 function analyticsMock() {
   return { recordGoalLifecycleEvent: mock(() => undefined) };
+}
+
+async function expectToolError(action: () => Promise<unknown>): Promise<Error> {
+  try {
+    await action();
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    return error as Error;
+  }
+  throw new Error("Expected tool execution to fail");
 }
 
 describe("goal tools", () => {
@@ -82,6 +93,272 @@ describe("goal tools", () => {
     const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
 
     expect(result).toEqual({ goal: created });
+  });
+
+  test("set_goal creates an active goal using effective defaults", async () => {
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 300,
+        defaultTurnCap: 5,
+        alwaysRequireExplicitBudget: true,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ objective: "Implement the goal tool" }, mockToolCallOptions)
+    );
+    const goal = await goalService.getGoal(workspaceId);
+
+    expect(result).toMatchObject({
+      goal: {
+        objective: "Implement the goal tool",
+        status: "active",
+        budgetCents: 300,
+        turnCap: 5,
+      },
+    });
+    expect(goal).toMatchObject({
+      objective: "Implement the goal tool",
+      status: "active",
+      budgetCents: 300,
+      turnCap: 5,
+    });
+    expect(analytics.recordGoalLifecycleEvent).toHaveBeenCalledWith(
+      "goal_created",
+      expect.objectContaining({ hasBudget: true, hasTurnCap: true })
+    );
+  });
+
+  test("set_goal treats null budget and turn cap as defaults", async () => {
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 450,
+        defaultTurnCap: 3,
+        alwaysRequireExplicitBudget: true,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { objective: "Use defaults", budgetCents: null, turnCap: null },
+        mockToolCallOptions
+      )
+    );
+
+    expect(result).toMatchObject({ goal: { budgetCents: 450, turnCap: 3 } });
+  });
+
+  test("set_goal accepts explicit positive budget and turn cap", async () => {
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 300,
+        defaultTurnCap: 5,
+        alwaysRequireExplicitBudget: true,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { objective: "Use explicit limits", budgetCents: 125, turnCap: 2 },
+        mockToolCallOptions
+      )
+    );
+
+    expect(result).toMatchObject({ goal: { budgetCents: 125, turnCap: 2 } });
+  });
+
+  test("set_goal rejects model-created goals that resolve without budget or turn cap", async () => {
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 0,
+        defaultTurnCap: null,
+        alwaysRequireExplicitBudget: false,
+      },
+    });
+
+    const error = await expectToolError(() =>
+      Promise.resolve(tool.execute!({ objective: "Unbounded" }, mockToolCallOptions))
+    );
+
+    expect(error.message).toContain("requires a budget or turn cap");
+  });
+
+  test("set_goal blocks replacing an active goal without explicit replacement intent", async () => {
+    await setGoalOk(goalService, { workspaceId, objective: "Existing" });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const error = await expectToolError(() =>
+      Promise.resolve(tool.execute!({ objective: "Replacement" }, mockToolCallOptions))
+    );
+
+    expect(error.message).toContain("would replace the current active goal");
+  });
+
+  test("set_goal blocks replacing an active goal without matching expectedGoalId", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Existing" });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const error = await expectToolError(() =>
+      Promise.resolve(
+        tool.execute!(
+          {
+            objective: "Replacement",
+            replaceExistingGoal: true,
+            expectedGoalId: "00000000-0000-4000-8000-000000000000",
+          },
+          mockToolCallOptions
+        )
+      )
+    );
+
+    expect(error.message).toContain(existing.goalId);
+  });
+
+  test("set_goal replaces an active goal with matching expectedGoalId", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Existing" });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          objective: "Replacement",
+          replaceExistingGoal: true,
+          expectedGoalId: existing.goalId,
+        },
+        mockToolCallOptions
+      )
+    );
+    const goal = await goalService.getGoal(workspaceId);
+
+    expect(result).toMatchObject({ goal: { objective: "Replacement", status: "active" } });
+    expect(goal?.goalId).not.toBe(existing.goalId);
+    expect(goal?.objective).toBe("Replacement");
+  });
+
+  test("set_goal allows a new goal after a completed goal without replaceExistingGoal", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Existing" });
+    await setGoalOk(goalService, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "Done.",
+      expectedGoalId: existing.goalId,
+    });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ objective: "Follow-on" }, mockToolCallOptions)
+    );
+
+    expect(result).toMatchObject({ goal: { objective: "Follow-on", status: "active" } });
+  });
+
+  test("set_goal surfaces child workspace errors clearly", async () => {
+    const childWorkspaceId = "goal-tool-child";
+    await config.addWorkspace("/tmp/mux-goal-tool-test-project", {
+      id: childWorkspaceId,
+      name: "goal-tool-child",
+      projectName: "mux-goal-tool-test-project",
+      projectPath: "/tmp/mux-goal-tool-test-project",
+      runtimeConfig: { type: "local" },
+      parentWorkspaceId: workspaceId,
+    });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId: childWorkspaceId,
+      goalService,
+    });
+
+    const error = await expectToolError(() =>
+      Promise.resolve(tool.execute!({ objective: "Child goal" }, mockToolCallOptions))
+    );
+
+    expect(error.message).toContain("child_workspace");
+  });
+
+  test("set_goal queues mid-stream goals and requires durable goalId from a later get_goal", async () => {
+    interface StreamingOverride {
+      isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+    }
+    const serviceAccess = goalService as unknown as StreamingOverride;
+    const original = serviceAccess.isWorkspaceStreaming;
+    serviceAccess.isWorkspaceStreaming = () => Promise.resolve(true);
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 300,
+        defaultTurnCap: 2,
+        alwaysRequireExplicitBudget: true,
+      },
+    });
+
+    let projectedGoalId = "";
+    try {
+      const result: unknown = await Promise.resolve(
+        tool.execute!({ objective: "Queued while streaming" }, mockToolCallOptions)
+      );
+      expect(result).toMatchObject({ goal: { objective: "Queued while streaming" } });
+      projectedGoalId = (result as { goal: GoalRecordV1 }).goal.goalId;
+      expect(await goalService.getGoal(workspaceId)).toBeNull();
+    } finally {
+      serviceAccess.isWorkspaceStreaming = original;
+    }
+
+    const drained = await goalService.applyPendingAfterStreamEnd(workspaceId);
+    const durable = await goalService.getGoal(workspaceId);
+
+    expect(drained?.objective).toBe("Queued while streaming");
+    expect(durable?.goalId).toBe(drained?.goalId);
+    expect(durable?.goalId).not.toBe(projectedGoalId);
   });
 
   test("complete_goal completes the goal, persists the summary, and emits model telemetry", async () => {

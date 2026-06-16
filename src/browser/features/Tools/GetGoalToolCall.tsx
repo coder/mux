@@ -48,7 +48,7 @@ export const GetGoalToolCall: React.FC<GetGoalToolCallProps> = ({ result, status
           </span>
         )}
         {!goal && status === "completed" && (
-          <span className="text-muted truncate italic">No active goal</span>
+          <span className="text-muted truncate italic">No current goal</span>
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
       </ToolHeader>

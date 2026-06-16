@@ -107,6 +107,8 @@ import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 
+import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals";
+import { mergeGoalDefaults } from "@/common/utils/goals/resolveGoalSetIntent";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, resolveMinimumThinkingLevel } from "@/common/utils/thinking/policy";
@@ -250,6 +252,7 @@ export interface StreamMessageOptions {
     options?: { includeHotMemories?: boolean }
   ) => Promise<MemorySessionContext | undefined>;
   experiments?: SendMessageOptions["experiments"];
+  allowAgentSetGoal?: boolean;
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
   hasQueuedMessage?: () => boolean;
@@ -986,6 +989,7 @@ export class AIService extends EventEmitter {
       postCompactionAttachments,
       resolveMemoryContext,
       experiments,
+      allowAgentSetGoal,
       workspaceGoalService,
       disableWorkspaceAgents,
       hasQueuedMessage,
@@ -1422,8 +1426,14 @@ export class AIService extends EventEmitter {
       if (workspaceGoalService) {
         currentGoalForTools = await workspaceGoalService.getGoal(workspaceId);
       }
+      const effectiveGoalDefaults = mergeGoalDefaults(
+        normalizeGoalDefaults(cfg.goalDefaults ?? DEFAULT_GOAL_DEFAULTS),
+        metadata.goalDefaults ?? null
+      );
       const goalToolAvailability = getGoalToolAvailability({
         goalStatus: currentGoalForTools?.status ?? null,
+        parentWorkspaceId: metadata.parentWorkspaceId,
+        allowAgentSetGoal,
         agentInheritanceChain,
       });
 
@@ -1994,6 +2004,7 @@ export class AIService extends EventEmitter {
         workspaceHeartbeatService: this.workspaceHeartbeatService,
         workflowService,
         goalService: workspaceGoalService,
+        goalDefaults: effectiveGoalDefaults,
         enableGoalTools: goalToolAvailability,
         // Only child workspaces (tasks) can report to a parent.
         enableAgentReport: Boolean(metadata.parentWorkspaceId),

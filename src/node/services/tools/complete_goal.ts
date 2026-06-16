@@ -2,6 +2,7 @@ import { tool } from "ai";
 import assert from "@/common/utils/assert";
 import type { ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { formatGoalSetError } from "./goalErrors";
 
 export const createCompleteGoalTool: ToolFactory = (config) => {
   return tool({
@@ -26,7 +27,7 @@ export const createCompleteGoalTool: ToolFactory = (config) => {
         ...(goalId != null ? { expectedGoalId: goalId } : {}),
       });
       if (!result.success) {
-        throw new Error(`Failed to complete goal: ${result.error.type}`);
+        throw new Error(`Failed to complete goal: ${formatGoalSetError(result.error)}`);
       }
 
       return { goal: result.data };

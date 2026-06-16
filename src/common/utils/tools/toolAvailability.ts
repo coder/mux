@@ -11,31 +11,41 @@ export interface ToolAvailabilityContext {
 }
 
 export interface GoalToolAvailability {
+  setGoal: boolean;
   getGoal: boolean;
   completeGoal: boolean;
 }
 
 export interface GoalToolAvailabilityContext {
   goalStatus: GoalStatus | null;
+  parentWorkspaceId?: string | null;
+  allowAgentSetGoal?: boolean;
   agentInheritanceChain: ReadonlyArray<ToolsConfigCarrier & { id: AgentId }>;
 }
 
 const GOAL_TOOL_ACTIVE_STATUSES: ReadonlySet<GoalStatus> = new Set(["active", "budget_limited"]);
+const GOAL_TOOL_REPLACEABLE_STATUSES: ReadonlySet<GoalStatus> = new Set([
+  "active",
+  "budget_limited",
+  "paused",
+  "complete",
+]);
 
 export function getGoalToolAvailability(
   context: GoalToolAvailabilityContext
 ): GoalToolAvailability {
-  if (!context.goalStatus) {
-    return { getGoal: false, completeGoal: false };
-  }
-
-  if (!GOAL_TOOL_ACTIVE_STATUSES.has(context.goalStatus)) {
-    return { getGoal: false, completeGoal: false };
-  }
+  const isEditingCapable = isExecLikeEditingCapableInResolvedChain(context.agentInheritanceChain);
+  const setGoal =
+    context.allowAgentSetGoal === true && context.parentWorkspaceId == null && isEditingCapable;
+  const hasActiveGoal =
+    context.goalStatus != null && GOAL_TOOL_ACTIVE_STATUSES.has(context.goalStatus);
+  const hasGoalReadableForReplacement =
+    setGoal && context.goalStatus != null && GOAL_TOOL_REPLACEABLE_STATUSES.has(context.goalStatus);
 
   return {
-    getGoal: true,
-    completeGoal: isExecLikeEditingCapableInResolvedChain(context.agentInheritanceChain),
+    setGoal,
+    getGoal: hasActiveGoal || hasGoalReadableForReplacement,
+    completeGoal: hasActiveGoal && isEditingCapable,
   };
 }
 
