@@ -84,16 +84,19 @@ function normalizeWorkflowArgs(
   }
 
   const rawInput = workflowInputString(rawArgs);
-  const usesStructuredInput = properties.some(
+  const inputProperty = properties.find(
     (property) => property.name === RAW_INPUT_FIELD && !property.positional
   );
-  if (usesStructuredInput && typeof rawArgs === "string" && rawInput.length > 0) {
+  if (inputProperty != null && typeof rawArgs === "string" && rawInput.length > 0) {
     normalized[RAW_INPUT_FIELD] = rawInput;
   }
-  // A declared non-positional `input` field is the raw transport value itself; reparsing
-  // ordinary prose as flags would reject valid inputs like `hello world` as stray positionals.
-  if (rawInput.length > 0 && !usesStructuredInput) {
-    Object.assign(normalized, parseWorkflowInputString(rawInput, properties));
+  // Slash/CLI text arrives as `input`; when a schema also declares `input`, use it
+  // as the fallback positional target so aliases like `--quick` still parse.
+  if (rawInput.length > 0) {
+    Object.assign(
+      normalized,
+      parseWorkflowInputString(rawInput, properties, inputProperty ?? null)
+    );
   }
 
   const coerced: Record<string, unknown> = {};
@@ -173,7 +176,8 @@ function workflowInputString(rawArgs: unknown): string {
 
 function parseWorkflowInputString(
   input: string,
-  properties: ArgsPropertySchema[]
+  properties: ArgsPropertySchema[],
+  fallbackPositionalProperty: ArgsPropertySchema | null
 ): Record<string, unknown> {
   const tokenized = tokenize(input);
   if (tokenized.error.length > 0) {
@@ -236,7 +240,8 @@ function parseWorkflowInputString(
     index += flag.inlineValue == null ? 2 : 1;
   }
 
-  const positionalProperty = properties.find((property) => property.positional);
+  const positionalProperty =
+    properties.find((property) => property.positional) ?? fallbackPositionalProperty;
   if (positionalProperty != null && positional.length > 0) {
     parsed[positionalProperty.name] = positional.join(" ");
   } else if (positional.length > 0) {

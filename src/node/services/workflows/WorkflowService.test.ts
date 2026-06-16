@@ -384,7 +384,7 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     });
   });
 
-  test("keeps a declared input args field as raw input text", () => {
+  test("uses a declared input args field as fallback positional text", () => {
     const source = `const s = mux.schema;
 export const metadata = {
   argsSchema: s.object({
@@ -398,12 +398,31 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     expect(
       normalizeWorkflowArgsForSource(source, { input: "hello world --mode slow" }).args
     ).toEqual({
-      input: "hello world --mode slow",
-      mode: "fast",
+      input: "hello world",
+      mode: "slow",
     });
     expect(normalizeWorkflowArgsForSource(source, "hello world").args).toEqual({
       input: "hello world",
       mode: "fast",
+    });
+  });
+
+  test("parses aliases when input accompanies an explicit positional field", () => {
+    const source = `const s = mux.schema;
+export const metadata = {
+  argsSchema: s.object({
+    topic: s.optional(s.string({ positional: true })),
+    input: s.optional(s.string()),
+    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+  }),
+};
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+
+    expect(normalizeWorkflowArgsForSource(source, { input: "agents --quick" }).args).toEqual({
+      topic: "agents",
+      input: "agents --quick",
+      quick: true,
     });
   });
 
