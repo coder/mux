@@ -1,5 +1,10 @@
 const ISSUE_BODY_CAPTURE_BUDGET = 4000;
+const ISSUE_VIEW_BODY_CAPTURE_BYTES = 50000;
+// Keep list responses under ctx.execJson's 64 KiB stdout capture limit; issue
+// metadata also needs room, so body text gets a smaller shared byte budget.
+const ISSUE_LIST_BODY_CAPTURE_BYTES = 24000;
 const COMMENT_PAGE_SIZE = 10;
+const COMMENT_PAGE_BODY_CAPTURE_BYTES = 50000;
 const COMMENT_BODY_CAPTURE_BUDGET = 4000;
 const DEFAULT_COMMENT_LIMIT = 100;
 
@@ -63,6 +68,88 @@ function boundedCharBudget(value, fallback) {
   return Math.max(0, Math.min(value, 100000));
 }
 
+function boundedIssueListBodyCaptureBytes(limit, bodyCharBudget) {
+  const perIssueBudget = Math.floor(ISSUE_LIST_BODY_CAPTURE_BYTES / Math.max(1, limit));
+  return Math.max(0, Math.min(bodyCharBudget, ISSUE_BODY_CAPTURE_BUDGET, perIssueBudget));
+}
+
+function boundedIssueViewBodyCaptureBytes(bodyCharBudget) {
+  return Math.max(0, Math.min(bodyCharBudget, ISSUE_VIEW_BODY_CAPTURE_BYTES));
+}
+
+function commentPageSizeForBodyBudget(bodyCharBudget) {
+  const safeBudget = Math.max(1, bodyCharBudget);
+  return Math.max(
+    1,
+    Math.min(COMMENT_PAGE_SIZE, Math.floor(COMMENT_PAGE_BODY_CAPTURE_BYTES / safeBudget))
+  );
+}
+
+function boundedCommentBodyCaptureBytes(bodyCharBudget) {
+  const pageSize = commentPageSizeForBodyBudget(bodyCharBudget);
+  const perCommentBudget = Math.floor(COMMENT_PAGE_BODY_CAPTURE_BYTES / pageSize);
+  return Math.max(0, Math.min(bodyCharBudget, perCommentBudget));
+}
+
+function commentBodyCaptureBudget(options) {
+  return boundedCommentBodyCaptureBytes(
+    boundedCharBudget(options && options.bodyCharBudget, COMMENT_BODY_CAPTURE_BUDGET)
+  );
+}
+
+function commentPageSize(options) {
+  return commentPageSizeForBodyBudget(commentBodyCaptureBudget(options));
+}
+
+function utf8TruncateJqDefinitions() {
+  return (
+    "def mux_truncate_utf8($limit): " +
+    "reduce explode[] as $codepoint ({ bytes: 0, codepoints: [] }; " +
+    "($codepoint | [.] | implode | utf8bytelength) as $byteLength | " +
+    "if .bytes + $byteLength <= $limit then " +
+    "{ bytes: (.bytes + $byteLength), codepoints: (.codepoints + [$codepoint]) } " +
+    "else . end) | .codepoints | implode; " +
+    "def mux_truncate_utf8_with_marker($limit): " +
+    "if utf8bytelength > $limit then " +
+    '(mux_truncate_utf8($limit) + "\\n\\n[truncated by mux after " + ($limit | tostring) + " bytes]") ' +
+    "else . end; "
+  );
+}
+
+function issueBodyJq(byteBudget) {
+  return (
+    utf8TruncateJqDefinitions() +
+    `.body = ((.body // "") | mux_truncate_utf8_with_marker(${byteBudget}))`
+  );
+}
+
+function commentsPageJq(byteBudget) {
+  return (
+    utf8TruncateJqDefinitions() +
+    `[.[] | { id, html_url, user, author, body: ((.body // "") | mux_truncate_utf8_with_marker(${byteBudget})) }]`
+  );
+}
+
+function issueListBodyJq(byteBudget) {
+  return (
+    "def mux_truncate_utf8($limit): " +
+    "reduce explode[] as $codepoint ({ bytes: 0, codepoints: [] }; " +
+    "($codepoint | [.] | implode | utf8bytelength) as $byteLength | " +
+    "if .bytes + $byteLength <= $limit then " +
+    "{ bytes: (.bytes + $byteLength), codepoints: (.codepoints + [$codepoint]) } " +
+    "else . end) | .codepoints | implode; " +
+    `map(.body = ((.body // "") | mux_truncate_utf8(${byteBudget})))`
+  );
+}
+
+function quoteSearchLabel(label) {
+  return '"' + label.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+
+function excludedLabelSearchQuery(labels) {
+  return labels.map((label) => "-label:" + quoteSearchLabel(label)).join(" ");
+}
+
 function truncateText(value, budget) {
   const text = typeof value === "string" ? value : "";
   if (text.length <= budget) return text;
@@ -104,16 +191,21 @@ function markerStatus(body) {
   return match ? match[1] : "";
 }
 
-async function getIssueView(ctx, repository, number, fields) {
+async function getIssueView(ctx, repository, number, fields, options) {
   const args = ["issue", "view", String(number), "--json", fields.join(",")];
   if (repository) args.push("--repo", repository);
   if (fields.includes("body")) {
-    args.push("--jq", '.body = ((.body // "") | .[:' + ISSUE_BODY_CAPTURE_BUDGET + "])");
+    const bodyCaptureBudget = boundedIssueViewBodyCaptureBytes(
+      boundedCharBudget(options && options.bodyCharBudget, ISSUE_BODY_CAPTURE_BUDGET)
+    );
+    args.push("--jq", issueBodyJq(bodyCaptureBudget));
   }
   return await ctx.execJson("gh", args);
 }
 
-async function fetchCommentsPage(ctx, owner, repo, number, page) {
+async function fetchCommentsPage(ctx, owner, repo, number, page, options) {
+  const bodyCaptureBudget = commentBodyCaptureBudget(options);
+  const pageSize = commentPageSize(options);
   return await ctx.execJson("gh", [
     "api",
     "repos/" +
@@ -123,36 +215,40 @@ async function fetchCommentsPage(ctx, owner, repo, number, page) {
       "/issues/" +
       number +
       "/comments?per_page=" +
-      COMMENT_PAGE_SIZE +
+      pageSize +
       "&page=" +
       page,
     "--jq",
-    '[.[] | { id, html_url, user, author, body: ((.body // "") | .[:' +
-      COMMENT_BODY_CAPTURE_BUDGET +
-      "]) }]",
+    commentsPageJq(bodyCaptureBudget),
   ]);
 }
 
+// Marker lookups must scan busy issues beyond the first 100 comments; each page
+// is still body-truncated before stdout capture.
 async function listComments(ctx, owner, repo, number, options) {
   const comments = [];
-  const limit = boundedLimit(options && options.limit, DEFAULT_COMMENT_LIMIT);
-  for (let page = 1; page <= Math.ceil(limit / COMMENT_PAGE_SIZE); page += 1) {
-    const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page);
+  const limit = Number.isInteger(options && options.limit)
+    ? boundedLimit(options.limit, DEFAULT_COMMENT_LIMIT)
+    : null;
+  const pageSize = commentPageSize(options);
+  for (let page = 1; ; page += 1) {
+    const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page, options);
     for (const comment of pageComments) {
       comments.push(comment);
-      if (comments.length >= limit) return comments;
+      if (limit != null && comments.length >= limit) return comments;
     }
-    if (pageComments.length < COMMENT_PAGE_SIZE) break;
+    if (pageComments.length < pageSize) break;
   }
   return comments;
 }
 
-async function findComment(ctx, owner, repo, number, predicate) {
-  for (let page = 1; page <= 10; page += 1) {
-    const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page);
+async function findComment(ctx, owner, repo, number, predicate, options) {
+  const pageSize = commentPageSize(options);
+  for (let page = 1; ; page += 1) {
+    const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page, options);
     const match = pageComments.find(predicate);
     if (match) return match;
-    if (pageComments.length < COMMENT_PAGE_SIZE) break;
+    if (pageComments.length < pageSize) break;
   }
   return undefined;
 }

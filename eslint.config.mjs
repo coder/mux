@@ -785,11 +785,16 @@ export default defineConfig([
     languageOptions: {
       globals: {
         boundedCharBudget: "readonly",
+        boundedCommentBodyCaptureBytes: "readonly",
+        boundedIssueViewBodyCaptureBytes: "readonly",
+        boundedIssueListBodyCaptureBytes: "readonly",
         boundedLimit: "readonly",
         captureGit: "readonly",
+        excludedLabelSearchQuery: "readonly",
         findComment: "readonly",
         getIssueView: "readonly",
         inputObject: "readonly",
+        issueListBodyJq: "readonly",
         isMatchingMarker: "readonly",
         listComments: "readonly",
         markerStatus: "readonly",

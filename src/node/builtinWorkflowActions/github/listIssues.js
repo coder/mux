@@ -66,15 +66,20 @@ export async function execute(rawInput, ctx) {
   const excludeLabels = stringList(input.excludeLabels);
   const limit = Math.min(boundedLimit(input.limit, 100), 100);
   const includeBody = input.includeBody === true;
-  const bodyCharBudget = boundedCharBudget(input.bodyCharBudget, 2000);
+  let bodyCharBudget = boundedCharBudget(input.bodyCharBudget, 2000);
+  if (includeBody) {
+    bodyCharBudget = boundedIssueListBodyCaptureBytes(limit, bodyCharBudget);
+  }
   const jsonFields =
     "number,title,url,state,labels,author,createdAt,updatedAt" + (includeBody ? ",body" : "");
   const args = ["issue", "list", "--state", state, "--limit", String(limit), "--json", jsonFields];
   if (includeBody) {
-    args.push("--jq", 'map(.body = ((.body // "") | .[:4000]))');
+    args.push("--jq", issueListBodyJq(bodyCharBudget));
   }
   if (repository) args.push("--repo", repository);
   for (const label of includeLabels) args.push("--label", label);
+  const searchQuery = excludedLabelSearchQuery(excludeLabels);
+  if (searchQuery) args.push("--search", searchQuery);
   const issues = (await ctx.execJson("gh", args))
     .map(normalizeIssue)
     .map((issue) => ({
@@ -83,7 +88,8 @@ export async function execute(rawInput, ctx) {
     }))
     .filter((issue) => includeLabels.every((label) => issue.labelNames.includes(label)))
     .filter((issue) => excludeLabels.every((label) => !issue.labelNames.includes(label)))
-    .sort((a, b) => a.number - b.number);
+    .sort((a, b) => a.number - b.number)
+    .slice(0, limit);
   return {
     repository: repository || null,
     filters: { state, includeLabels, excludeLabels, limit, includeBody, bodyCharBudget },

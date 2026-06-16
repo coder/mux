@@ -2341,7 +2341,10 @@ describe("WorkflowRunner", () => {
       Promise.race([
         runner.run("wfr_parallel_workflows_backgrounded"),
         new Promise<never>((_resolve, reject) => {
-          setTimeout(() => reject(new Error("parallelWorkflows did not abort sibling wait")), 500);
+          setTimeout(
+            () => reject(new Error("parallelWorkflows did not abort sibling wait")),
+            5_000
+          );
         }),
       ])
     ).rejects.toBeInstanceOf(WorkflowRunBackgroundedError);

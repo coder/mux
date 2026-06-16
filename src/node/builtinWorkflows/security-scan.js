@@ -1008,6 +1008,12 @@ function safeApplySecurityPatch(applyPatch, id, source, expectedHeadSha) {
   }
 }
 
+// Workflow outputs are JSON-validated; omit missing optional patch fields instead of
+// preserving QuickJS `undefined` properties in the final structured result.
+function assignDefined(target, key, value) {
+  if (value !== undefined) target[key] = value;
+}
+
 function normalizeSecurityPatchApplication(source, result) {
   const status =
     result && result.status
@@ -1015,16 +1021,17 @@ function normalizeSecurityPatchApplication(source, result) {
       : result && result.success === true
         ? "applied"
         : "failed";
-  return {
-    sourceTaskId: source ? source.taskId : undefined,
-    status: status,
-    appliedCommits: result ? result.appliedCommits : undefined,
-    headCommitSha: result ? result.headCommitSha : undefined,
-    conflictPaths: result ? result.conflictPaths : undefined,
-    failedPatchSubject: result ? result.failedPatchSubject : undefined,
-    error: result ? result.error : undefined,
-    projectResults: result ? result.projectResults : undefined,
-  };
+  const application = { status: status };
+  if (source) assignDefined(application, "sourceTaskId", source.taskId);
+  if (result) {
+    assignDefined(application, "appliedCommits", result.appliedCommits);
+    assignDefined(application, "headCommitSha", result.headCommitSha);
+    assignDefined(application, "conflictPaths", result.conflictPaths);
+    assignDefined(application, "failedPatchSubject", result.failedPatchSubject);
+    assignDefined(application, "error", result.error);
+    assignDefined(application, "projectResults", result.projectResults);
+  }
+  return application;
 }
 
 function getAppliedHeadCommitSha(application) {

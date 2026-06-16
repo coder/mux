@@ -124,6 +124,12 @@ function __muxUtilsMustObject(value, message) {
   }
   return value;
 }
+// Workflow results must stay JSON-compatible; QuickJS preserves undefined object
+// properties, so optional patch fields are added only when present.
+function __muxAssignDefined(target, key, value) {
+  if (value !== undefined) target[key] = value;
+}
+
 function __muxPatchNormalize(result) {
   var status =
     result && result.status
@@ -131,17 +137,20 @@ function __muxPatchNormalize(result) {
       : result && result.success === true
         ? "applied"
         : "failed";
-  return {
+  var normalized = {
     success: Boolean(result && result.success),
     status: status,
-    taskId: result ? result.taskId : undefined,
-    appliedCommits: result ? result.appliedCommits : undefined,
-    headCommitSha: result ? result.headCommitSha : undefined,
-    conflictPaths: result ? result.conflictPaths : undefined,
-    failedPatchSubject: result ? result.failedPatchSubject : undefined,
-    error: result ? result.error : undefined,
-    projectResults: result ? result.projectResults : undefined,
   };
+  if (result) {
+    __muxAssignDefined(normalized, "taskId", result.taskId);
+    __muxAssignDefined(normalized, "appliedCommits", result.appliedCommits);
+    __muxAssignDefined(normalized, "headCommitSha", result.headCommitSha);
+    __muxAssignDefined(normalized, "conflictPaths", result.conflictPaths);
+    __muxAssignDefined(normalized, "failedPatchSubject", result.failedPatchSubject);
+    __muxAssignDefined(normalized, "error", result.error);
+    __muxAssignDefined(normalized, "projectResults", result.projectResults);
+  }
+  return normalized;
 }
 async function __muxPatchApplySafely(spec) {
   try {

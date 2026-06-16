@@ -356,14 +356,19 @@ function collectApplyPreflight(action, log, input, gitContext) {
   }
 
   try {
+    const preflightInput = {
+      head: input.headRef || "HEAD",
+      expectedHeadSha: reviewedHeadSha,
+      requireClean: true,
+    };
+    const expectedBranch = reviewedBranchForPreflight(gitContext.status, input);
+    // Commit-SHA heads have no branch invariant; omit the optional schema key
+    // rather than passing QuickJS `undefined` through action input validation.
+    if (expectedBranch !== undefined) preflightInput.expectedBranch = expectedBranch;
+
     const preflight = action.git.preflight({
       id: "apply-git-preflight",
-      input: {
-        head: input.headRef || "HEAD",
-        expectedBranch: reviewedBranchForPreflight(gitContext.status, input),
-        expectedHeadSha: reviewedHeadSha,
-        requireClean: true,
-      },
+      input: preflightInput,
       builtInOnly: true,
       cache: false,
     }).output;
@@ -385,9 +390,8 @@ function collectApplyPreflight(action, log, input, gitContext) {
 
 function reviewedBranchForPreflight(reviewedStatus, input) {
   if (input.headRef && isGitCommitSha(input.headRef)) return undefined;
-  return reviewedStatus && typeof reviewedStatus.branch === "string"
-    ? reviewedStatus.branch
-    : undefined;
+  const branch = reviewedStatus && typeof reviewedStatus.branch === "string" ? reviewedStatus.branch.trim() : "";
+  return branch && branch !== "HEAD (no branch)" ? branch : undefined;
 }
 
 function failedApplyPreflight(reason) {

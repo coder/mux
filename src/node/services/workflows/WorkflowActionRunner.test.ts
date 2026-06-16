@@ -802,7 +802,7 @@ JSON
       const action = await registry.resolveAction("github.listIssues", { projectTrusted: false });
 
       const result = await new WorkflowActionRunner().execute(action, {
-        input: { includeBody: true },
+        input: { includeBody: true, excludeLabels: ["done", "needs triage"] },
         cwd: tmp.path,
         timeoutMs: 30_000,
         artifactDir: path.join(tmp.path, "artifacts"),
@@ -812,6 +812,10 @@ JSON
       expect(expectObjectRecord(result.output).issues).toEqual([]);
       expect(args).toContain("--limit 100");
       expect(args).toContain("--jq");
+      expect(args).toContain("utf8bytelength");
+      expect(args).toContain("mux_truncate_utf8(240)");
+      expect(args).toContain('--search -label:"done" -label:"needs triage"');
+      expect(args).not.toContain(".[:4000]");
     } finally {
       process.env.PATH = previousPath;
     }
@@ -828,10 +832,13 @@ JSON
 set -euo pipefail
 if [[ "$1 $2" == "issue view" ]]; then
   [[ "$*" == *"--jq"* ]]
+  [[ "$*" == *"mux_truncate_utf8_with_marker(10000)"* ]]
   cat <<'JSON'
 {"number":7,"title":"Issue title","url":"https://github.com/coder/mux/issues/7","state":"OPEN","body":"Issue body","author":{"login":"issue-author"},"labels":[]}
 JSON
 elif [[ "$1" == "api" ]]; then
+  [[ "$*" == *"per_page=5"* ]]
+  [[ "$*" == *"mux_truncate_utf8_with_marker(10000)"* ]]
   cat <<'JSON'
 [{"body":"REST comment body","user":{"login":"rest-commenter"}}]
 JSON
@@ -868,6 +875,97 @@ fi
       process.env.PATH = previousPath;
     }
   });
+
+  test("built-in github marker lookups scan past the first 100 comments", async () => {
+    using tmp = new DisposableTempDir("workflow-action-github-marker-pagination");
+    const binDir = path.join(tmp.path, "bin");
+    const argsPath = path.join(tmp.path, "gh-args.txt");
+    await fs.mkdir(binDir, { recursive: true });
+    const ghPath = path.join(binDir, "gh");
+    await fs.writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(argsPath)}
+if [[ "$1 $2" == "issue view" ]]; then
+  cat <<'JSON'
+{"labels":[]}
+JSON
+elif [[ "$1" == "api" && "$*" == *"comments?per_page=10&page=11"* ]]; then
+  cat <<'JSON'
+[{"id":110,"html_url":"https://github.com/coder/mux/issues/7#issuecomment-110","body":"<!-- mux-marker key=busy promptVersion=v1 status=report-posted -->"}]
+JSON
+elif [[ "$1" == "api" && "$*" == *"comments?per_page=10&page="* ]]; then
+  printf '['
+  for i in $(seq 1 10); do
+    if [[ "$i" != "1" ]]; then printf ','; fi
+    printf '{"id":%s,"html_url":"https://example.com/%s","body":"ordinary comment"}' "$i" "$i"
+  done
+  printf ']'
+elif [[ "$1" == "api" && "$*" == *"-X PATCH"* ]]; then
+  cat <<'JSON'
+{"id":110,"html_url":"https://github.com/coder/mux/issues/7#issuecomment-110"}
+JSON
+else
+  echo "unexpected gh args: $*" >&2
+  exit 1
+fi
+`,
+      "utf-8"
+    );
+    await fs.chmod(ghPath, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = binDir + path.delimiter + (previousPath ?? "");
+    try {
+      const registry = new WorkflowActionRegistry({
+        projectRoot: path.join(tmp.path, "project-actions"),
+        globalRoot: path.join(tmp.path, "global-actions"),
+      });
+      const runner = new WorkflowActionRunner();
+      const automationAction = await registry.resolveAction("github.getIssueAutomationState", {
+        projectTrusted: false,
+      });
+      const upsertAction = await registry.resolveAction("github.upsertIssueComment", {
+        projectTrusted: false,
+      });
+
+      const automation = await runner.execute(automationAction, {
+        input: {
+          repository: "coder/mux",
+          number: 7,
+          marker: "mux-marker",
+          markerKey: "busy",
+        },
+        cwd: tmp.path,
+        timeoutMs: 30_000,
+        artifactDir: path.join(tmp.path, "automation-artifacts"),
+      });
+      const upsert = await runner.execute(upsertAction, {
+        input: { repository: "coder/mux", number: 7, marker: "mux-marker", body: "updated" },
+        cwd: tmp.path,
+        timeoutMs: 30_000,
+        artifactDir: path.join(tmp.path, "upsert-artifacts"),
+      });
+      const automationOutput = expectObjectRecord(automation.output);
+      const upsertOutput = expectObjectRecord(upsert.output);
+      const args = await fs.readFile(argsPath, "utf-8");
+
+      expect(automationOutput.reportPosted).toBe(true);
+      expect(automationOutput.markerComments).toEqual([
+        {
+          id: 110,
+          status: "report-posted",
+          url: "https://github.com/coder/mux/issues/7#issuecomment-110",
+        },
+      ]);
+      expect(upsertOutput).toMatchObject({ action: "updated", commentId: 110 });
+      expect(args).toContain("comments?per_page=10&page=11");
+      expect(args).toContain("-X PATCH");
+      expect(args).not.toContain("-X POST");
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  }, 15_000);
 
   test("describes every built-in workflow action", async () => {
     // Built-in sources must always pass static describe validation; a failure here

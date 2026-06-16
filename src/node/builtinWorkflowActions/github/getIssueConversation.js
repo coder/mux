@@ -88,25 +88,32 @@ export async function execute(rawInput, ctx) {
   const repository = repositoryFromInput(input);
   const number = requiredIssueNumber(input.number);
   const maxComments = boundedLimit(input.maxComments, 100);
-  const issueBodyBudget = boundedCharBudget(
-    input.issueBodyCharBudget ?? input.bodyCharBudget,
-    10000
+  const issueBodyBudget = boundedIssueViewBodyCaptureBytes(
+    boundedCharBudget(input.issueBodyCharBudget ?? input.bodyCharBudget, 10000)
   );
-  const commentBodyBudget = boundedCharBudget(input.commentBodyCharBudget, 10000);
+  const commentBodyBudget = boundedCommentBodyCaptureBytes(
+    boundedCharBudget(input.commentBodyCharBudget, 10000)
+  );
   const issueFields = ["number", "title", "url", "state", "body", "author", "labels"];
   let issue;
   let comments;
   if (repository) {
     const parts = splitRepository(repository);
     [issue, comments] = await Promise.all([
-      getIssueView(ctx, repository, number, issueFields),
-      listComments(ctx, parts.owner, parts.repo, number, { limit: maxComments + 1 }),
+      getIssueView(ctx, repository, number, issueFields, { bodyCharBudget: issueBodyBudget }),
+      listComments(ctx, parts.owner, parts.repo, number, {
+        limit: maxComments + 1,
+        bodyCharBudget: commentBodyBudget,
+      }),
     ]);
   } else {
-    issue = await getIssueView(ctx, repository, number, issueFields);
+    issue = await getIssueView(ctx, repository, number, issueFields, {
+      bodyCharBudget: issueBodyBudget,
+    });
     const parts = repositoryPartsForComments(repository, issue);
     comments = await listComments(ctx, parts.owner, parts.repo, number, {
       limit: maxComments + 1,
+      bodyCharBudget: commentBodyBudget,
     });
   }
   const visibleComments = comments.slice(0, maxComments);
