@@ -36,14 +36,23 @@ export function replaceWorkflowDescription(source: string, description: string):
   );
 }
 
+const LEGACY_DESCRIPTION_HEADER_PATTERN =
+  /^(\uFEFF?(?:[ \t]*(?:\r?\n))*[ \t]*)\/\/[ \t]*description:[ \t]*(.*)(?=\r?\n|$)/u;
+
 function parseLegacyWorkflowDescription(source: string): string | null {
-  const match = /^\s*\/\/\s*description:\s*(.*)$/mu.exec(source);
-  return normalizeDescription(match?.[1]);
+  const match = LEGACY_DESCRIPTION_HEADER_PATTERN.exec(source);
+  return normalizeDescription(match?.[2]);
 }
 
 function replaceLegacyWorkflowDescription(source: string, description: string): string | null {
-  if (!/^\s*\/\/\s*description:/mu.test(source)) return null;
-  return source.replace(/^\s*\/\/\s*description:.*$/mu, `// description: ${description}`);
+  const match = LEGACY_DESCRIPTION_HEADER_PATTERN.exec(source);
+  if (match == null) return null;
+  const prefix = match[1] ?? "";
+  return (
+    source.slice(0, prefix.length) +
+    `// description: ${description}` +
+    source.slice(match[0].length)
+  );
 }
 
 function normalizeDescription(value: unknown): string | null {

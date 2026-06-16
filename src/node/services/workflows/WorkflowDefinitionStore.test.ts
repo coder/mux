@@ -128,6 +128,23 @@ describe("WorkflowDefinitionStore", () => {
     expect(definition.descriptor.description).toBe("Legacy project workflow");
   });
 
+  test("ignores legacy description comments outside the header", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions-legacy-body-description");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(projectRoot, "body-comment.js"),
+      "export default function workflow() {\n  // description: Body comments are not workflow headers\n  return { reportMarkdown: 'ok' };\n}\n",
+      "utf-8"
+    );
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    const definitions = await store.listDefinitions({ projectTrusted: true });
+
+    expect(definitions).toEqual([]);
+  });
+
   test("omits project-local workflows when the project is not trusted", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
@@ -848,6 +865,32 @@ describe("WorkflowDefinitionStore", () => {
     expect(promotionError instanceof Error ? promotionError.message : "").toMatch(
       /Workflow metadata/
     );
+  });
+
+  test("promotion preserves body-only legacy description comments", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    await store.promoteDefinition({
+      name: "body-description-draft",
+      description: "Reusable body draft",
+      source:
+        "export default function workflow() {\n  // description: Keep this body comment\n  return { reportMarkdown: 'ok' };\n}\n",
+      location: "project",
+      overwrite: false,
+      projectTrusted: true,
+    });
+
+    const promotedSource = await fs.readFile(
+      path.join(projectRoot, "body-description-draft.js"),
+      "utf-8"
+    );
+    expect(
+      promotedSource.startsWith('export const metadata = { description: "Reusable body draft" };')
+    ).toBe(true);
+    expect(promotedSource).toContain("// description: Keep this body comment");
   });
 
   test("skips invalid filenames and unreadable descriptors", async () => {
