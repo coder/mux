@@ -1,3 +1,7 @@
+const COMMENT_PAGE_SIZE = 10;
+const COMMENT_BODY_CAPTURE_BUDGET = 4000;
+const DEFAULT_COMMENT_LIMIT = 100;
+
 function inputObject(input) {
   return input != null && typeof input === "object" && !Array.isArray(input) ? input : {};
 }
@@ -108,20 +112,33 @@ async function getIssueView(ctx, repository, number, fields) {
 async function fetchCommentsPage(ctx, owner, repo, number, page) {
   return await ctx.execJson("gh", [
     "api",
-    "repos/" + owner + "/" + repo + "/issues/" + number + "/comments?per_page=100&page=" + page,
+    "repos/" +
+      owner +
+      "/" +
+      repo +
+      "/issues/" +
+      number +
+      "/comments?per_page=" +
+      COMMENT_PAGE_SIZE +
+      "&page=" +
+      page,
+    "--jq",
+    '[.[] | { id, html_url, user, author, body: ((.body // "") | .[:' +
+      COMMENT_BODY_CAPTURE_BUDGET +
+      "]) }]",
   ]);
 }
 
 async function listComments(ctx, owner, repo, number, options) {
   const comments = [];
-  const limit = boundedLimit(options && options.limit, 1000);
-  for (let page = 1; page <= Math.ceil(limit / 100); page += 1) {
+  const limit = boundedLimit(options && options.limit, DEFAULT_COMMENT_LIMIT);
+  for (let page = 1; page <= Math.ceil(limit / COMMENT_PAGE_SIZE); page += 1) {
     const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page);
     for (const comment of pageComments) {
       comments.push(comment);
       if (comments.length >= limit) return comments;
     }
-    if (pageComments.length < 100) break;
+    if (pageComments.length < COMMENT_PAGE_SIZE) break;
   }
   return comments;
 }
@@ -131,7 +148,7 @@ async function findComment(ctx, owner, repo, number, predicate) {
     const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page);
     const match = pageComments.find(predicate);
     if (match) return match;
-    if (pageComments.length < 100) break;
+    if (pageComments.length < COMMENT_PAGE_SIZE) break;
   }
   return undefined;
 }

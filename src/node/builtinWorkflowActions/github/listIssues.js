@@ -64,7 +64,7 @@ export async function execute(rawInput, ctx) {
   const state = optionalString(input.state) || "open";
   const includeLabels = stringList(input.includeLabels);
   const excludeLabels = stringList(input.excludeLabels);
-  const limit = boundedLimit(input.limit, 1000);
+  const limit = Math.min(boundedLimit(input.limit, 100), 100);
   const includeBody = input.includeBody === true;
   const bodyCharBudget = boundedCharBudget(input.bodyCharBudget, 2000);
   const jsonFields =

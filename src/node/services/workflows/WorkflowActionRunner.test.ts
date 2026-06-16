@@ -774,6 +774,47 @@ export const reconcile = execute;
     }
   });
 
+  test("built-in github.listIssues uses stdout-safe default limits", async () => {
+    using tmp = new DisposableTempDir("workflow-action-github-list-limit");
+    const binDir = path.join(tmp.path, "bin");
+    const argsPath = path.join(tmp.path, "gh-args.txt");
+    await fs.mkdir(binDir, { recursive: true });
+    const ghPath = path.join(binDir, "gh");
+    await fs.writeFile(
+      ghPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" > ${JSON.stringify(argsPath)}
+cat <<'JSON'
+[]
+JSON
+`,
+      "utf-8"
+    );
+    await fs.chmod(ghPath, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = binDir + path.delimiter + (previousPath ?? "");
+    try {
+      const registry = new WorkflowActionRegistry({
+        projectRoot: path.join(tmp.path, "project-actions"),
+        globalRoot: path.join(tmp.path, "global-actions"),
+      });
+      const action = await registry.resolveAction("github.listIssues", { projectTrusted: false });
+
+      const result = await new WorkflowActionRunner().execute(action, {
+        input: null,
+        cwd: tmp.path,
+        timeoutMs: 30_000,
+        artifactDir: path.join(tmp.path, "artifacts"),
+      });
+
+      expect(expectObjectRecord(result.output).issues).toEqual([]);
+      expect(await fs.readFile(argsPath, "utf-8")).toContain("--limit 100");
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
   test("built-in github.getIssueConversation reads REST comment users", async () => {
     using tmp = new DisposableTempDir("workflow-action-github-conversation-user");
     const binDir = path.join(tmp.path, "bin");
