@@ -405,6 +405,10 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
       input: "compare foo --bar",
       mode: "fast",
     });
+    expect(normalizeWorkflowArgsForSource(source, { input: "hello --mode=--help" }).args).toEqual({
+      input: "hello",
+      mode: "--help",
+    });
     expect(normalizeWorkflowArgsForSource(source, { input: "compare --flag=" }).args).toEqual({
       input: "compare --flag=",
       mode: "fast",

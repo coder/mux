@@ -242,12 +242,13 @@ function parseWorkflowInputString(
       continue;
     }
 
-    const value = flag.inlineValue ?? tokenized.tokens[index + 1];
-    if (value == null || value.length === 0 || value.startsWith("--")) {
+    const hasInlineValue = flag.inlineValue != null;
+    const value = hasInlineValue ? flag.inlineValue : tokenized.tokens[index + 1];
+    if (value == null || value.length === 0 || (!hasInlineValue && value.startsWith("--"))) {
       throw new Error(`${flag.name} requires a value`);
     }
     parsed[property.name] = value;
-    index += flag.inlineValue == null ? 2 : 1;
+    index += hasInlineValue ? 1 : 2;
   }
 
   const positionalProperty = explicitPositionalProperty ?? fallbackPositionalProperty;
