@@ -186,6 +186,11 @@ function parseWorkflowInputString(
 
   const parsed: Record<string, unknown> = {};
   const positional: string[] = [];
+  const explicitPositionalProperty = properties.find((property) => property.positional) ?? null;
+  // Simple `{ input }` schemas should remain raw-text compatible: unknown `--...`
+  // tokens are prose unless an explicit positional field opts into strict CLI parsing.
+  const unknownFlagsArePositional =
+    explicitPositionalProperty == null && fallbackPositionalProperty != null;
   let index = 0;
   while (index < tokenized.tokens.length) {
     const token = tokenized.tokens[index];
@@ -222,6 +227,11 @@ function parseWorkflowInputString(
 
     const property = findPropertyByAlias(properties, flag.name);
     if (property == null) {
+      if (unknownFlagsArePositional) {
+        positional.push(token);
+        index += 1;
+        continue;
+      }
       throw new Error(`Unknown workflow argument flag: ${flag.name}`);
     }
 
@@ -240,8 +250,7 @@ function parseWorkflowInputString(
     index += flag.inlineValue == null ? 2 : 1;
   }
 
-  const positionalProperty =
-    properties.find((property) => property.positional) ?? fallbackPositionalProperty;
+  const positionalProperty = explicitPositionalProperty ?? fallbackPositionalProperty;
   if (positionalProperty != null && positional.length > 0) {
     parsed[positionalProperty.name] = positional.join(" ");
   } else if (positional.length > 0) {

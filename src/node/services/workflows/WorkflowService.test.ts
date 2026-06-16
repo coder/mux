@@ -401,6 +401,10 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
       input: "hello world",
       mode: "slow",
     });
+    expect(normalizeWorkflowArgsForSource(source, { input: "compare foo --bar" }).args).toEqual({
+      input: "compare foo --bar",
+      mode: "fast",
+    });
     expect(normalizeWorkflowArgsForSource(source, "hello world").args).toEqual({
       input: "hello world",
       mode: "fast",
