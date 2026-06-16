@@ -1,3 +1,4 @@
+const ISSUE_BODY_CAPTURE_BUDGET = 4000;
 const COMMENT_PAGE_SIZE = 10;
 const COMMENT_BODY_CAPTURE_BUDGET = 4000;
 const DEFAULT_COMMENT_LIMIT = 100;
@@ -106,6 +107,9 @@ function markerStatus(body) {
 async function getIssueView(ctx, repository, number, fields) {
   const args = ["issue", "view", String(number), "--json", fields.join(",")];
   if (repository) args.push("--repo", repository);
+  if (fields.includes("body")) {
+    args.push("--jq", '.body = ((.body // "") | .[:' + ISSUE_BODY_CAPTURE_BUDGET + "])");
+  }
   return await ctx.execJson("gh", args);
 }
 

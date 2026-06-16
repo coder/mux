@@ -802,14 +802,16 @@ JSON
       const action = await registry.resolveAction("github.listIssues", { projectTrusted: false });
 
       const result = await new WorkflowActionRunner().execute(action, {
-        input: null,
+        input: { includeBody: true },
         cwd: tmp.path,
         timeoutMs: 30_000,
         artifactDir: path.join(tmp.path, "artifacts"),
       });
 
+      const args = await fs.readFile(argsPath, "utf-8");
       expect(expectObjectRecord(result.output).issues).toEqual([]);
-      expect(await fs.readFile(argsPath, "utf-8")).toContain("--limit 100");
+      expect(args).toContain("--limit 100");
+      expect(args).toContain("--jq");
     } finally {
       process.env.PATH = previousPath;
     }
@@ -825,6 +827,7 @@ JSON
       `#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1 $2" == "issue view" ]]; then
+  [[ "$*" == *"--jq"* ]]
   cat <<'JSON'
 {"number":7,"title":"Issue title","url":"https://github.com/coder/mux/issues/7","state":"OPEN","body":"Issue body","author":{"login":"issue-author"},"labels":[]}
 JSON

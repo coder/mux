@@ -70,6 +70,9 @@ export async function execute(rawInput, ctx) {
   const jsonFields =
     "number,title,url,state,labels,author,createdAt,updatedAt" + (includeBody ? ",body" : "");
   const args = ["issue", "list", "--state", state, "--limit", String(limit), "--json", jsonFields];
+  if (includeBody) {
+    args.push("--jq", 'map(.body = ((.body // "") | .[:4000]))');
+  }
   if (repository) args.push("--repo", repository);
   for (const label of includeLabels) args.push("--label", label);
   const issues = (await ctx.execJson("gh", args))
