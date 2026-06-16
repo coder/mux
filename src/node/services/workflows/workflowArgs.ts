@@ -69,6 +69,7 @@ function normalizeWorkflowArgs(
   const properties = propertySchemas(schema);
   const normalized: Record<string, unknown> = {};
 
+  const explicitProperties = new Set<string>();
   for (const property of properties) {
     if (property.defaultValue !== undefined) {
       normalized[property.name] = property.defaultValue;
@@ -79,6 +80,9 @@ function normalizeWorkflowArgs(
     for (const property of properties) {
       if (property.name in rawArgs) {
         normalized[property.name] = rawArgs[property.name];
+        if (property.name !== RAW_INPUT_FIELD) {
+          explicitProperties.add(property.name);
+        }
       }
     }
   }
@@ -93,10 +97,13 @@ function normalizeWorkflowArgs(
   // Slash/CLI text arrives as `input`; when a schema also declares `input`, use it
   // as the fallback positional target so aliases like `--quick` still parse.
   if (rawInput.length > 0) {
-    Object.assign(
-      normalized,
-      parseWorkflowInputString(rawInput, properties, inputProperty ?? null)
-    );
+    const parsedInput = parseWorkflowInputString(rawInput, properties, inputProperty ?? null);
+    for (const [name, value] of Object.entries(parsedInput)) {
+      // Structured args beat the raw transport string; `input` itself is transport, not explicit.
+      if (!explicitProperties.has(name)) {
+        normalized[name] = value;
+      }
+    }
   }
 
   const coerced: Record<string, unknown> = {};

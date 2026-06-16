@@ -5,7 +5,7 @@ const s = mux.schema;
 export const metadata = {
   description: "Coordinate delegated agents to research, verify, and synthesize a topic.",
   argsSchema: s.object({
-    topic: s.optional(s.string({ positional: true })),
+    topic: s.optional(s.string()),
     input: s.optional(s.string()),
     query: s.optional(s.string()),
     quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),

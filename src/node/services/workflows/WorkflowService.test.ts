@@ -438,6 +438,39 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     });
   });
 
+  test("preserves structured args over parsed transport input", () => {
+    const source = `const s = mux.schema;
+export const metadata = {
+  argsSchema: s.object({
+    topic: s.optional(s.string()),
+    input: s.optional(s.string()),
+    query: s.optional(s.string()),
+    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+  }),
+};
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+
+    expect(
+      normalizeWorkflowArgsForSource(source, { query: "parsed query", input: "raw topic --quick" })
+        .args
+    ).toEqual({
+      query: "parsed query",
+      input: "raw topic",
+      quick: true,
+    });
+    expect(
+      normalizeWorkflowArgsForSource(source, {
+        topic: "explicit topic",
+        input: "raw topic --quick",
+      }).args
+    ).toEqual({
+      topic: "explicit topic",
+      input: "raw topic",
+      quick: true,
+    });
+  });
+
   test("normalizes exact short flag aliases before positional args", () => {
     const source = `const s = mux.schema;
 export const metadata = {
