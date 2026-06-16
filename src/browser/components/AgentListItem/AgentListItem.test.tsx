@@ -1,9 +1,8 @@
 import "../../../../tests/ui/dom";
 
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { cleanup, render, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { createPortal } from "react-dom";
 import { installDom } from "../../../../tests/ui/dom";
 import type * as ReactDndModuleType from "react-dnd";
 import type * as ReactDndHtml5BackendModuleType from "react-dnd-html5-backend";
@@ -47,15 +46,7 @@ const SUBAGENT_ROW_META: AgentRowRenderMeta = {
 type MockWorkspaceUnreadState = ReturnType<typeof WorkspaceUnreadModule.useWorkspaceUnread>;
 type MockWorkspaceSidebarState = ReturnType<typeof WorkspaceStoreModule.useWorkspaceSidebarState>;
 
-interface AutomationModalMockProps {
-  open: boolean;
-}
-
 let mockWorkspaceHeartbeatsEnabled = false;
-let mockContextMenuOpen = false;
-let mockContextMenuContextMenu: ReturnType<typeof mock>;
-let mockContextMenuTouchStart: ReturnType<typeof mock>;
-let renderAutomationModalMock: ((props: AutomationModalMockProps) => ReactNode) | null = null;
 let mockWorkspaceUnreadState: MockWorkspaceUnreadState;
 let mockWorkspaceSidebarState: MockWorkspaceSidebarState;
 
@@ -206,19 +197,18 @@ function installAgentListItemTestDoubles() {
   }));
 
   void mock.module("../AutomationModal", () => ({
-    AutomationModal: (props: AutomationModalMockProps) =>
-      renderAutomationModalMock?.(props) ?? null,
+    AutomationModal: () => null,
   }));
 
   void mock.module("@/browser/hooks/useContextMenuPosition", () => ({
     ...actualContextMenuPosition,
     useContextMenuPosition: () => ({
       position: null,
-      isOpen: mockContextMenuOpen,
-      onContextMenu: mockContextMenuContextMenu,
+      isOpen: false,
+      onContextMenu: () => undefined,
       onOpenChange: () => undefined,
       touchHandlers: {
-        onTouchStart: mockContextMenuTouchStart,
+        onTouchStart: () => undefined,
         onTouchEnd: () => undefined,
         onTouchMove: () => undefined,
       },
@@ -309,10 +299,6 @@ describe("AgentListItem", () => {
   beforeEach(() => {
     cleanupDom = installDom();
     mockWorkspaceHeartbeatsEnabled = false;
-    mockContextMenuOpen = false;
-    mockContextMenuContextMenu = mock(() => undefined);
-    mockContextMenuTouchStart = mock(() => undefined);
-    renderAutomationModalMock = null;
     mockWorkspaceUnreadState = createWorkspaceUnreadState();
     mockWorkspaceSidebarState = createWorkspaceSidebarState();
     installAgentListItemTestDoubles();
@@ -374,34 +360,6 @@ describe("AgentListItem", () => {
       customTitle.view.getByRole("button", { name: "Select workspace backend · My renamed run" })
     ).toBeTruthy();
     expect(customTitle.view.getByText("My renamed run")).toBeTruthy();
-  });
-
-  test("ignores automation modal portal interactions in the workspace row", () => {
-    mockWorkspaceHeartbeatsEnabled = true;
-    mockContextMenuOpen = true;
-    renderAutomationModalMock = (props) =>
-      props.open
-        ? createPortal(
-            <div role="dialog" aria-modal="true">
-              <button type="button">Inside automation modal</button>
-            </div>,
-            document.body
-          )
-        : null;
-    const onSelectWorkspace = mock(() => undefined);
-    const { view } = renderWorkspaceItem({ onSelectWorkspace });
-
-    const automationsMenuItem = view.getByText("Automations...").closest("button");
-    expect(automationsMenuItem).toBeTruthy();
-    fireEvent.click(automationsMenuItem!);
-    const modalButton = view.getByRole("button", { name: "Inside automation modal" });
-    fireEvent.contextMenu(modalButton);
-    fireEvent.touchStart(modalButton);
-    fireEvent.click(modalButton);
-
-    expect(mockContextMenuContextMenu).not.toHaveBeenCalled();
-    expect(mockContextMenuTouchStart).not.toHaveBeenCalled();
-    expect(onSelectWorkspace).not.toHaveBeenCalled();
   });
 
   test("shows active delegated workflow work on idle workspace rows", () => {

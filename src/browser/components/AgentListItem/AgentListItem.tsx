@@ -10,7 +10,7 @@ import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackM
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
-import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { isEventFromDialogPortal, stopKeyboardPropagation } from "@/browser/utils/events";
 import {
   isRunningOrStartingTaskStatus,
   type AgentRowRenderMeta,
@@ -262,13 +262,6 @@ function QuickArchiveButton(props: {
       </Tooltip>
     </div>
   );
-}
-
-function isEventFromDialogPortal(target: EventTarget | null): boolean {
-  // Dialogs rendered through React portals still bubble through this row's React tree.
-  // Ignore those events here instead of stopping propagation inside DialogContent, where
-  // native document listeners such as Radix/popover outside-click handlers still need them.
-  return target instanceof Element && target.closest('[role="dialog"]') != null;
 }
 
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
