@@ -118,6 +118,7 @@ const WORKFLOW_BACKGROUND_CONTINUATION_STATUSES = new Set<WorkflowRunStatus>([
 // oRPC creates a WorkflowService per request, so workflow lifecycle state that spans requests
 // needs process-wide registries.
 const pendingCrashResumeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const activeWorkflowInterruptStatusWrites = new Map<string, Promise<void>>();
 const activeWorkflowRunnerAbortControllers = new Map<string, AbortController>();
 
 export class WorkflowService {
@@ -263,17 +264,35 @@ export class WorkflowService {
   async interruptRun(input: { workspaceId: string; runId: string }): Promise<WorkflowRunRecord> {
     const run = await this.requireRunForWorkspace(input);
     assertWorkflowRunCanTransition(run.status, "interrupted");
-    // Stop the active coordinator only after ownership is validated; child cleanup and status
-    // writes can block on I/O, but a mis-scoped request must not abort another workspace's run.
-    this.abortActiveRunner(input.runId);
-    const interrupted = await this.runStore.appendStatus(
-      input.runId,
-      "interrupted",
-      this.clock?.nowIso() ?? new Date().toISOString()
-    );
-    await this.interruptChildWorkflowRuns(input.runId, input.workspaceId, new Set([input.runId]));
-    await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
-    return interrupted;
+    const interruptStatusWrite = Promise.withResolvers<void>();
+    activeWorkflowInterruptStatusWrites.set(input.runId, interruptStatusWrite.promise);
+    let statusWriteSettled = false;
+    const settleStatusWrite = () => {
+      if (statusWriteSettled) {
+        return;
+      }
+      statusWriteSettled = true;
+      interruptStatusWrite.resolve();
+    };
+    try {
+      // Stop the active coordinator only after ownership is validated; child cleanup and status
+      // writes can block on I/O, but a mis-scoped request must not abort another workspace's run.
+      this.abortActiveRunner(input.runId);
+      const interrupted = await this.runStore.appendStatus(
+        input.runId,
+        "interrupted",
+        this.clock?.nowIso() ?? new Date().toISOString()
+      );
+      settleStatusWrite();
+      await this.interruptChildWorkflowRuns(input.runId, input.workspaceId, new Set([input.runId]));
+      await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
+      return interrupted;
+    } finally {
+      settleStatusWrite();
+      if (activeWorkflowInterruptStatusWrites.get(input.runId) === interruptStatusWrite.promise) {
+        activeWorkflowInterruptStatusWrites.delete(input.runId);
+      }
+    }
   }
 
   async retryRunFromCheckpointInBackground(input: {
@@ -750,10 +769,13 @@ export class WorkflowService {
       .catch(async (error: unknown) => {
         const hadStarted = startedSettled;
         markStartFailed(error);
-        if (hadStarted || !isWorkflowRunAlreadyActiveError(error, runId)) {
-          console.error(failureMessage, error);
-          await this.notifyBackgroundRunTerminal(runId, null);
+        if (!hadStarted && isWorkflowRunAlreadyActiveError(error, runId)) {
+          return;
         }
+        if (!(await this.isInterruptedBackgroundRun(runId))) {
+          console.error(failureMessage, error);
+        }
+        await this.notifyBackgroundRunTerminal(runId, null);
       });
     this.backgroundRuns.add(runPromise);
     void runPromise.finally(() => {
@@ -761,6 +783,19 @@ export class WorkflowService {
       this.backgroundRuns.delete(runPromise);
     });
     return started;
+  }
+
+  private async isInterruptedBackgroundRun(runId: string): Promise<boolean> {
+    assert(runId.length > 0, "WorkflowService.isInterruptedBackgroundRun: runId required");
+    // interruptRun aborts the active runner before writing the durable interrupted status so
+    // cancellation is prompt; wait for that status write before classifying the background exit.
+    await activeWorkflowInterruptStatusWrites.get(runId);
+    try {
+      const run = await this.runStore.getRun(runId);
+      return run.status === "interrupted";
+    } catch {
+      return false;
+    }
   }
 
   private async notifyBackgroundRunTerminal(runId: string, result: unknown): Promise<void> {

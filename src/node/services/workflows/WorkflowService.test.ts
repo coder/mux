@@ -620,6 +620,7 @@ export default function workflow({ action }) {
     );
 
     let releaseAgent: ((value: { taskId: string; reportMarkdown: string }) => void) | undefined;
+    const runCreatedGate = Promise.withResolvers<void>();
     const lifecycleEvents: string[] = [];
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     const service = new WorkflowService({
@@ -638,6 +639,8 @@ export default function workflow({ action }) {
       runnerId: "runner-a",
     });
 
+    // Hold the callback open so this assertion checks WorkflowService's ordering instead of
+    // racing the runner after a synchronous onRunCreated callback returns.
     const resultPromise = service.startNamedWorkflow({
       name: "scheduled-scan",
       workspaceId: "workspace-1",
@@ -656,6 +659,7 @@ export default function workflow({ action }) {
             args: { severity: "high" },
           },
         });
+        return runCreatedGate.promise;
       },
     });
 
@@ -663,6 +667,8 @@ export default function workflow({ action }) {
       lifecycleEvents.includes("run-created")
     );
     expect(lifecycleEvents).toEqual(["run-created"]);
+    expect(releaseAgent).toBeUndefined();
+    runCreatedGate.resolve();
     await waitForCondition("foreground agent to start", () => releaseAgent != null);
     expect(lifecycleEvents).toEqual(["run-created", "agent-started"]);
 
@@ -2578,6 +2584,81 @@ export default function workflow({ action }) {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(interruptCalls).toBe(1);
     expect(terminalEvents).toEqual([]);
+  });
+
+  test("notifies requested interrupted background runs without logging a failure", async () => {
+    using tmp = new DisposableTempDir("workflow-service");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await writeWorkflow(
+      globalRoot,
+      "logged-interrupt-background",
+      "// description: Logged interrupt background workflow\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    let agentStarted = false;
+    const terminalEvents: Array<{ runId: string; status: string; result: unknown }> = [];
+    const consoleErrors: Array<Parameters<typeof console.error>> = [];
+    const originalConsoleError = console.error;
+    console.error = (...args: Parameters<typeof console.error>) => {
+      consoleErrors.push(args);
+    };
+    try {
+      const service = new WorkflowService({
+        definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+        runStore,
+        runtimeFactory: new QuickJSRuntimeFactory(),
+        taskAdapter: {
+          async runAgent(_spec, _lifecycle, waitOptions) {
+            agentStarted = true;
+            const abortSignal = waitOptions?.abortSignal;
+            if (abortSignal == null) {
+              throw new Error("expected a background run abort signal");
+            }
+            return await new Promise<{ taskId: string; reportMarkdown: string }>((_, reject) => {
+              abortSignal.addEventListener("abort", () => reject(new Error("Task interrupted")), {
+                once: true,
+              });
+            });
+          },
+        },
+        onBackgroundRunTerminal(event) {
+          terminalEvents.push({ runId: event.runId, status: event.status, result: event.result });
+        },
+        notifyInterruptedBackgroundRunTerminal: true,
+        generateRunId: () => "wfr_background_interrupt_logged",
+        runnerId: "runner-a",
+      });
+
+      await service.startNamedWorkflowInBackground({
+        name: "logged-interrupt-background",
+        workspaceId: "workspace-1",
+        projectTrusted: false,
+        args: {},
+      });
+      await waitForCondition("background agent to start", () => agentStarted);
+
+      const interrupted = await service.interruptRun({
+        workspaceId: "workspace-1",
+        runId: "wfr_background_interrupt_logged",
+      });
+
+      expect(interrupted.status).toBe("interrupted");
+      await waitForCondition(
+        "interrupted background terminal callback",
+        () => terminalEvents.length === 1
+      );
+      expect(terminalEvents).toEqual([
+        {
+          runId: "wfr_background_interrupt_logged",
+          status: "interrupted",
+          result: null,
+        },
+      ]);
+      expect(consoleErrors).toEqual([]);
+    } finally {
+      console.error = originalConsoleError;
+    }
   });
 
   test("auto-resumes crash-recovered running runs without resuming user-interrupted runs", async () => {
