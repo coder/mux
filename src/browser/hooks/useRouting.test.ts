@@ -49,9 +49,15 @@ const wrapper: React.FC<{ children: React.ReactNode }> = (props) =>
   );
 
 describe("useRouting", () => {
+  let previousWindow: typeof globalThis.window;
+  let previousDocument: typeof globalThis.document;
+  let testWindow: GlobalWindow | null = null;
+
   beforeEach(() => {
-    globalThis.window = new GlobalWindow({ url: "https://mux.example.com/" }) as unknown as Window &
-      typeof globalThis;
+    previousWindow = globalThis.window;
+    previousDocument = globalThis.document;
+    testWindow = new GlobalWindow({ url: "https://mux.example.com/" });
+    globalThis.window = testWindow as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
     providersConfig = null;
     routePriority = ["direct"];
@@ -62,6 +68,10 @@ describe("useRouting", () => {
   afterEach(() => {
     cleanup();
     getProvidersConfigStore().setClient(null);
+    testWindow?.close();
+    testWindow = null;
+    globalThis.window = previousWindow;
+    globalThis.document = previousDocument;
   });
 
   test("resolveRoute and availableRoutes honor gateway model accessibility", async () => {

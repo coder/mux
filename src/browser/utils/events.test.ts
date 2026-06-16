@@ -1,9 +1,19 @@
-import "../../../tests/ui/dom";
-
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { installDom } from "../../../tests/ui/dom";
 import { isEventFromDialogPortal } from "./events";
 
 describe("isEventFromDialogPortal", () => {
+  let cleanupDom: (() => void) | null = null;
+
+  beforeEach(() => {
+    cleanupDom = installDom();
+  });
+
+  afterEach(() => {
+    cleanupDom?.();
+    cleanupDom = null;
+  });
+
   test("detects targets inside role=dialog ancestors", () => {
     const dialog = document.createElement("div");
     dialog.setAttribute("role", "dialog");

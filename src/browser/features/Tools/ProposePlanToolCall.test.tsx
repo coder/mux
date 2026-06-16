@@ -1,8 +1,15 @@
 import type { ComponentProps } from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../tests/ui/dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
+import * as APIModule from "@/browser/contexts/API";
+import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
+import * as UseOpenInEditorModule from "@/browser/hooks/useOpenInEditor";
+import * as UseReviewsModule from "@/browser/hooks/useReviews";
+import * as UseStartHereModule from "@/browser/hooks/useStartHere";
+import * as DiffRendererModule from "@/browser/features/Shared/DiffRenderer";
+import * as ReviewTypesModule from "@/common/types/review";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
@@ -87,70 +94,93 @@ const useStartHereMock = mock(
   }
 );
 
-void mock.module("@/browser/hooks/useStartHere", () => ({
-  useStartHere: useStartHereMock,
-}));
+const actualUseStartHereModule = { ...UseStartHereModule };
+const actualAPIModule = { ...APIModule };
+const actualUseOpenInEditorModule = { ...UseOpenInEditorModule };
+const actualWorkspaceContextModule = { ...WorkspaceContextModule };
+const actualUseReviewsModule = { ...UseReviewsModule };
+const actualDiffRendererModule = { ...DiffRendererModule };
+const actualReviewTypesModule = { ...ReviewTypesModule };
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({ api: mockApi, status: "connected" as const, error: null }),
-}));
-
-void mock.module("@/browser/hooks/useOpenInEditor", () => ({
-  useOpenInEditor: () => () => Promise.resolve({ success: true } as const),
-}));
-
-void mock.module("@/browser/contexts/WorkspaceContext", () => ({
-  useWorkspaceContext: () => ({
-    workspaceMetadata: new Map<string, { runtimeConfig?: unknown }>(),
-  }),
-}));
-
-void mock.module("@/browser/hooks/useReviews", () => ({
-  useReviews: () => ({
-    reviews: [],
-    pendingCount: 0,
-    attachedCount: 0,
-    checkedCount: 0,
-    attachedReviews: [],
-    addReview: (data: unknown) => ({
-      id: "test-review",
-      data,
-      status: "attached" as const,
-      createdAt: Date.now(),
+async function installProposePlanModuleMocks() {
+  await mock.module("@/browser/hooks/useStartHere", () => ({
+    ...actualUseStartHereModule,
+    useStartHere: useStartHereMock,
+  }));
+  await mock.module("@/browser/contexts/API", () => ({
+    ...actualAPIModule,
+    useAPI: () => ({ api: mockApi, status: "connected" as const, error: null }),
+  }));
+  await mock.module("@/browser/hooks/useOpenInEditor", () => ({
+    ...actualUseOpenInEditorModule,
+    useOpenInEditor: () => () => Promise.resolve({ success: true } as const),
+  }));
+  await mock.module("@/browser/contexts/WorkspaceContext", () => ({
+    ...actualWorkspaceContextModule,
+    useWorkspaceContext: () => ({
+      workspaceMetadata: new Map<string, { runtimeConfig?: unknown }>(),
     }),
-    attachReview: () => undefined,
-    detachReview: () => undefined,
-    attachAllPending: () => undefined,
-    detachAllAttached: () => undefined,
-    checkReview: () => undefined,
-    uncheckReview: () => undefined,
-    removeReview: () => undefined,
-    updateReviewNote: () => undefined,
-    clearChecked: () => undefined,
-    clearAll: () => undefined,
-    getReview: () => undefined,
-  }),
-}));
+  }));
+  await mock.module("@/browser/hooks/useReviews", () => ({
+    ...actualUseReviewsModule,
+    useReviews: () => ({
+      reviews: [],
+      pendingCount: 0,
+      attachedCount: 0,
+      checkedCount: 0,
+      attachedReviews: [],
+      addReview: (data: unknown) => ({
+        id: "test-review",
+        data,
+        status: "attached" as const,
+        createdAt: Date.now(),
+      }),
+      attachReview: () => undefined,
+      detachReview: () => undefined,
+      attachAllPending: () => undefined,
+      detachAllAttached: () => undefined,
+      checkReview: () => undefined,
+      uncheckReview: () => undefined,
+      removeReview: () => undefined,
+      updateReviewNote: () => undefined,
+      clearChecked: () => undefined,
+      clearAll: () => undefined,
+      getReview: () => undefined,
+    }),
+  }));
+  await mock.module("@/browser/features/Shared/DiffRenderer", () => ({
+    ...actualDiffRendererModule,
+    SelectableDiffRenderer: (props: { filePath?: string }) => {
+      selectableDiffRendererCalls.push({ filePath: props.filePath });
+      return <div data-testid="selectable-diff-renderer" data-filepath={props.filePath ?? ""} />;
+    },
+  }));
+  await mock.module("@/common/types/review", () => ({
+    ...actualReviewTypesModule,
+    isPlanFilePath: (filePath: string) => /[/\\]plans[/\\]/.test(filePath),
+    normalizePlanFilePath: (filePath: string) => {
+      const normalizedPath = filePath.replace(/\\/g, "/");
+      const tildeMuxMatch = /^~\/\.mux\/plans\/(.+)$/.exec(normalizedPath);
+      if (tildeMuxMatch?.[1]) {
+        return `.mux/plans/${tildeMuxMatch[1]}`;
+      }
 
-void mock.module("@/browser/features/Shared/DiffRenderer", () => ({
-  SelectableDiffRenderer: (props: { filePath?: string }) => {
-    selectableDiffRendererCalls.push({ filePath: props.filePath });
-    return <div data-testid="selectable-diff-renderer" data-filepath={props.filePath ?? ""} />;
-  },
-}));
+      return normalizedPath;
+    },
+  }));
+}
 
-void mock.module("@/common/types/review", () => ({
-  isPlanFilePath: (filePath: string) => /[/\\]plans[/\\]/.test(filePath),
-  normalizePlanFilePath: (filePath: string) => {
-    const normalizedPath = filePath.replace(/\\/g, "/");
-    const tildeMuxMatch = /^~\/\.mux\/plans\/(.+)$/.exec(normalizedPath);
-    if (tildeMuxMatch?.[1]) {
-      return `.mux/plans/${tildeMuxMatch[1]}`;
-    }
-
-    return normalizedPath;
-  },
-}));
+async function restoreProposePlanModuleMocks() {
+  // Bun's mock.module() has no disposer, and mock.restore() does not undo module mocks.
+  // Restore real exports so this test's renderer stubs do not leak into review suites.
+  await mock.module("@/browser/hooks/useStartHere", () => actualUseStartHereModule);
+  await mock.module("@/browser/contexts/API", () => actualAPIModule);
+  await mock.module("@/browser/hooks/useOpenInEditor", () => actualUseOpenInEditorModule);
+  await mock.module("@/browser/contexts/WorkspaceContext", () => actualWorkspaceContextModule);
+  await mock.module("@/browser/hooks/useReviews", () => actualUseReviewsModule);
+  await mock.module("@/browser/features/Shared/DiffRenderer", () => actualDiffRendererModule);
+  await mock.module("@/common/types/review", () => actualReviewTypesModule);
+}
 
 const WORKSPACE_ID = "ws-123";
 const PLAN_PATH = "~/.mux/plans/demo/ws-123.md";
@@ -278,15 +308,21 @@ function expectSingleQuoteRoot(view: { container: HTMLElement }, text: string) {
 describe("ProposePlanToolCall", () => {
   let cleanupDom: (() => void) | null = null;
 
-  beforeEach(() => {
+  afterAll(async () => {
+    await restoreProposePlanModuleMocks();
+  });
+
+  beforeEach(async () => {
     startHereCalls = [];
     selectableDiffRendererCalls = [];
     mockApi = null;
     cleanupDom = installDom();
+    await installProposePlanModuleMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
+    await restoreProposePlanModuleMocks();
     mock.restore();
     cleanupDom?.();
     cleanupDom = null;

@@ -1,6 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { GlobalWindow } from "happy-dom";
+import * as APIModule from "@/browser/contexts/API";
+import * as PolicyContextModule from "@/browser/contexts/PolicyContext";
+import * as ProvidersConfigModule from "@/browser/hooks/useProvidersConfig";
+import * as RoutingModule from "@/browser/hooks/useRouting";
+import { installDom } from "../../../tests/ui/dom";
 import {
   filterHiddenModels,
   getDefaultModel,
@@ -78,24 +82,66 @@ const useRoutingMock = mock(() => ({
   },
 }));
 
-void mock.module("@/browser/hooks/useProvidersConfig", () => ({
-  useProvidersConfig: useProvidersConfigMock,
-}));
+const actualProvidersConfigModule = { ...ProvidersConfigModule };
+const actualRoutingModule = { ...RoutingModule };
+const actualAPIModule = { ...APIModule };
+const actualPolicyContextModule = { ...PolicyContextModule };
 
-void mock.module("@/browser/hooks/useRouting", () => ({
-  useRouting: useRoutingMock,
-}));
+async function installUseModelsModuleMocks() {
+  await mock.module("@/browser/hooks/useProvidersConfig", () => ({
+    ...actualProvidersConfigModule,
+    useProvidersConfig: useProvidersConfigMock,
+  }));
+  await mock.module("@/browser/hooks/useRouting", () => ({
+    ...actualRoutingModule,
+    useRouting: useRoutingMock,
+  }));
+  await mock.module("@/browser/contexts/API", () => ({
+    ...actualAPIModule,
+    useAPI: () => ({ api: apiMock }),
+  }));
+  await mock.module("@/browser/contexts/PolicyContext", () => ({
+    ...actualPolicyContextModule,
+    usePolicy: () => ({
+      status: { state: "disabled" as const },
+      policy: null,
+    }),
+  }));
+}
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({ api: apiMock }),
-}));
+async function restoreUseModelsModuleMocks() {
+  // Bun's mock.module() has no disposer, and mock.restore() does not undo module mocks.
+  // Restore the real modules so this file cannot poison later tests in the same process.
+  await mock.module("@/browser/hooks/useProvidersConfig", () => actualProvidersConfigModule);
+  await mock.module("@/browser/hooks/useRouting", () => actualRoutingModule);
+  await mock.module("@/browser/contexts/API", () => actualAPIModule);
+  await mock.module("@/browser/contexts/PolicyContext", () => actualPolicyContextModule);
+}
 
-void mock.module("@/browser/contexts/PolicyContext", () => ({
-  usePolicy: () => ({
-    status: { state: "disabled" as const },
-    policy: null,
-  }),
-}));
+let cleanupDom: (() => void) | null = null;
+
+async function setupUseModelsHookTest() {
+  cleanupDom = installDom();
+  window.localStorage.clear();
+  providersConfig = null;
+  routePriority = ["direct"];
+  routeOverrides = {};
+  apiMock = null;
+  await installUseModelsModuleMocks();
+}
+
+async function cleanupUseModelsHookTest() {
+  cleanup();
+  await restoreUseModelsModuleMocks();
+  mock.restore();
+  cleanupDom?.();
+  cleanupDom = null;
+  apiMock = null;
+}
+
+afterAll(async () => {
+  await restoreUseModelsModuleMocks();
+});
 
 describe("getSuggestedModels", () => {
   test("returns custom models first, then built-ins (deduped)", () => {
@@ -169,22 +215,8 @@ describe("filterHiddenModels", () => {
 });
 
 describe("useModelsFromSettings selected model preservation", () => {
-  beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-    globalThis.window.localStorage.clear();
-    providersConfig = null;
-    routePriority = ["direct"];
-    routeOverrides = {};
-    apiMock = null;
-  });
-
-  afterEach(() => {
-    cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-    apiMock = null;
-  });
+  beforeEach(setupUseModelsHookTest);
+  afterEach(cleanupUseModelsHookTest);
 
   test("getDefaultModel preserves explicit gateway-scoped defaults", () => {
     const gatewayModel = "openrouter:openai/gpt-5";
@@ -312,20 +344,8 @@ describe("useModelsFromSettings selected model preservation", () => {
 });
 
 describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
-  beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-    globalThis.window.localStorage.clear();
-    providersConfig = null;
-    routePriority = ["direct"];
-    routeOverrides = {};
-  });
-
-  afterEach(() => {
-    cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-  });
+  beforeEach(setupUseModelsHookTest);
+  afterEach(cleanupUseModelsHookTest);
 
   test("codex oauth only: shows OAuth-routable OpenAI models and hides API-key-only ones", () => {
     providersConfig = {
@@ -442,20 +462,8 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
 });
 
 describe("useModelsFromSettings provider availability gating", () => {
-  beforeEach(() => {
-    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
-    globalThis.document = globalThis.window.document;
-    globalThis.window.localStorage.clear();
-    providersConfig = null;
-    routePriority = ["direct"];
-    routeOverrides = {};
-  });
-
-  afterEach(() => {
-    cleanup();
-    globalThis.window = undefined as unknown as Window & typeof globalThis;
-    globalThis.document = undefined as unknown as Document;
-  });
+  beforeEach(setupUseModelsHookTest);
+  afterEach(cleanupUseModelsHookTest);
 
   test("hides models from unconfigured providers", () => {
     providersConfig = {
