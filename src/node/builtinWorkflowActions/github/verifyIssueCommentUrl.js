@@ -4,7 +4,7 @@ export const metadata = {
   version: 1,
   description:
     "Verify that a GitHub issue comment URL belongs to an issue and contains expected text",
-  effect: "external",
+  effect: "read",
   inputSchema: s.object(
     {
       repository: s.optional(s.string()),

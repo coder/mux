@@ -3,7 +3,7 @@ const s = mux.schema;
 export const metadata = {
   version: 1,
   description: "List GitHub issues with reusable label/state filters",
-  effect: "external",
+  effect: "read",
   inputSchema: s.nullable(
     s.object(
       {

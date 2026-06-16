@@ -601,6 +601,16 @@ module.exports.execute = async function () { return {}; };
       const resolved = await registry.resolveAction(action.name, { projectTrusted: false });
       const description = await runner.describe(resolved);
       expect(description.metadata.description).toBeTruthy();
+      if (
+        [
+          "github.getIssueAutomationState",
+          "github.getIssueConversation",
+          "github.listIssues",
+          "github.verifyIssueCommentUrl",
+        ].includes(action.name)
+      ) {
+        expect(description.metadata.effect).toBe("read");
+      }
       if (["github.ensureIssueLabels", "github.upsertIssueComment"].includes(action.name)) {
         expect(description.hasReconcile).toBe(true);
       }

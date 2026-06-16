@@ -3,7 +3,7 @@ const s = mux.schema;
 export const metadata = {
   version: 1,
   description: "Read GitHub issue automation marker comments and done labels",
-  effect: "external",
+  effect: "read",
   inputSchema: s.object(
     {
       repository: s.optional(s.string()),
