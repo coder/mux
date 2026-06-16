@@ -243,7 +243,7 @@ function parseWorkflowInputString(
     }
 
     const value = flag.inlineValue ?? tokenized.tokens[index + 1];
-    if (value == null || value.startsWith("--")) {
+    if (value == null || value.length === 0 || value.startsWith("--")) {
       throw new Error(`${flag.name} requires a value`);
     }
     parsed[property.name] = value;
@@ -270,9 +270,6 @@ function parseFlagToken(token: string): { name: string; inlineValue: string | nu
   }
   const name = token.slice(0, equalsIndex);
   const inlineValue = token.slice(equalsIndex + 1);
-  if (inlineValue.length === 0) {
-    throw new Error(`${name} requires a value`);
-  }
   return { name, inlineValue };
 }
 
