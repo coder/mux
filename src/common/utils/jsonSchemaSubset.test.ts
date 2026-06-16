@@ -86,6 +86,12 @@ describe("validateJsonSchemaSubset", () => {
     });
   });
 
+  test("accepts nulls that are included in nullable enums", () => {
+    expect(
+      validateJsonSchemaSubset({ type: ["string", "null"], enum: ["low", "high", null] }, null)
+    ).toEqual({ success: true });
+  });
+
   test("rejects schema-valued additionalProperties instead of ignoring extra values", () => {
     const result = validateJsonSchemaSubset(
       { type: "object", additionalProperties: { type: "string" } },

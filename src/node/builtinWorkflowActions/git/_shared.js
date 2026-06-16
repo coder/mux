@@ -101,7 +101,8 @@ function parseStatusLine(line) {
   const index = line[0] || " ";
   const worktree = line[1] || " ";
   const rawPath = line.slice(3);
-  const renameParts = rawPath.split(" -> ");
+  const isRenameOrCopy = index === "R" || index === "C" || worktree === "R" || worktree === "C";
+  const renameParts = isRenameOrCopy ? rawPath.split(" -> ") : [rawPath];
   return {
     status: (index + worktree).trim(),
     index,

@@ -692,6 +692,9 @@ function nullableSchema(schema: Record<string, unknown>): Record<string, unknown
   } else {
     clone.type = ["null"];
   }
+  if (Array.isArray(clone.enum) && !clone.enum.includes(null)) {
+    clone.enum = clone.enum.concat([null]);
+  }
   return clone;
 }
 

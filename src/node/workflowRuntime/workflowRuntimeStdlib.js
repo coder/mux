@@ -41,6 +41,9 @@ function __muxSchemaNullable(schema) {
   else if (Array.isArray(type))
     clone.type = type.indexOf("null") === -1 ? type.concat(["null"]) : type;
   else clone.type = ["null"];
+  if (Array.isArray(clone.enum) && clone.enum.indexOf(null) === -1) {
+    clone.enum = clone.enum.concat([null]);
+  }
   return clone;
 }
 function __muxSchemaUnion(schemas) {

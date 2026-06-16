@@ -72,7 +72,11 @@ describe("WorkflowActionRunner", () => {
         description: "Echo input",
         effect: "read",
         inputSchema: s.object(
-          { name: s.string(), title: s.optional(s.string()) },
+          {
+            name: s.string(),
+            title: s.optional(s.string()),
+            priority: s.optional(s.nullable(s.enum(["low", "high"]))),
+          },
           { additionalProperties: false }
         ),
         outputSchema: s.object(
@@ -97,7 +101,11 @@ describe("WorkflowActionRunner", () => {
     expect(description.metadata.inputSchema).toEqual({
       type: "object",
       required: ["name"],
-      properties: { name: { type: "string" }, title: { type: "string" } },
+      properties: {
+        name: { type: "string" },
+        title: { type: "string" },
+        priority: { type: ["string", "null"], enum: ["low", "high", null] },
+      },
       additionalProperties: false,
     });
     expect(description.metadata.outputSchema).toEqual({
@@ -579,6 +587,38 @@ module.exports.execute = async function () { return {}; };
     expect(expectObjectRecord(defaultStatus.output).untracked).toContain("untracked.txt");
     expect(expectObjectRecord(statusWithIgnored.output).ignored).toContain("ignored/generated.txt");
   }, 10_000);
+
+  test("built-in git.status preserves ordinary paths containing rename arrows", async () => {
+    using tmp = new DisposableTempDir("workflow-action-git-status-arrow-path");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(repoRoot, { recursive: true });
+    await execFileAsync("git", ["init"], { cwd: repoRoot });
+    await execFileAsync("git", ["config", "user.email", "mux@example.com"], { cwd: repoRoot });
+    await execFileAsync("git", ["config", "user.name", "Mux"], { cwd: repoRoot });
+    await fs.writeFile(path.join(repoRoot, "a -> b"), "initial\n", "utf-8");
+    await execFileAsync("git", ["add", "a -> b"], { cwd: repoRoot });
+    await execFileAsync("git", ["commit", "-m", "base"], { cwd: repoRoot });
+    await fs.writeFile(path.join(repoRoot, "a -> b"), "changed\n", "utf-8");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const action = await registry.resolveAction("git.status", { projectTrusted: false });
+
+    const result = await new WorkflowActionRunner().execute(action, {
+      input: null,
+      cwd: repoRoot,
+      timeoutMs: 30_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+    const output = expectObjectRecord(result.output);
+    const unstaged = output.unstaged;
+    expect(Array.isArray(unstaged)).toBe(true);
+    const firstUnstaged = expectObjectRecord(Array.isArray(unstaged) ? unstaged[0] : null);
+
+    expect(firstUnstaged.path).toContain("a -> b");
+    expect(firstUnstaged.oldPath).toBeUndefined();
+  });
 
   test("reports unsupported module syntax clearly", async () => {
     using tmp = new DisposableTempDir("workflow-action-import");

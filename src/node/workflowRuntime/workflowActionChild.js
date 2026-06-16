@@ -51,6 +51,9 @@ function schemaNullable(schema) {
   else if (Array.isArray(clone.type))
     clone.type = clone.type.includes("null") ? clone.type : [...clone.type, "null"];
   else clone.type = ["null"];
+  if (Array.isArray(clone.enum) && !clone.enum.includes(null)) {
+    clone.enum = [...clone.enum, null];
+  }
   return clone;
 }
 function schemaUnion(schemas) {
