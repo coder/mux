@@ -68,8 +68,13 @@ export function replaceStaticMetadataStringProperty(
   const metadata = findStaticMetadataLiteral(source);
   if (metadata == null) return null;
   const range = findTopLevelStringPropertyRange(source, metadata.start, metadata.end, propertyName);
-  if (range == null) return null;
-  return source.slice(0, range.start) + JSON.stringify(value) + source.slice(range.end);
+  if (range != null) {
+    return source.slice(0, range.start) + JSON.stringify(value) + source.slice(range.end);
+  }
+  if (findTopLevelPropertyValueRange(source, metadata.start, metadata.end, propertyName) != null) {
+    return null;
+  }
+  return insertTopLevelStringProperty(source, metadata.start, propertyName, value);
 }
 
 export function assertSupportedWorkflowActionSyntax(source: string): void {
@@ -169,6 +174,19 @@ function findTopLevelStringPropertyRange(
   objectEnd: number,
   propertyName: string
 ): StringLiteralRange | null {
+  const range = findTopLevelPropertyValueRange(source, objectStart, objectEnd, propertyName);
+  if (range == null) return null;
+  const quote = source[range.start];
+  if (quote !== '"' && quote !== "'" && quote !== "`") return null;
+  return { start: range.start, end: skipQuotedString(source, range.start, quote) };
+}
+
+function findTopLevelPropertyValueRange(
+  source: string,
+  objectStart: number,
+  objectEnd: number,
+  propertyName: string
+): StringLiteralRange | null {
   if (source[objectStart] !== "{") throw new Error(STATIC_METADATA_ERROR);
   let index = objectStart + 1;
   while (index < objectEnd) {
@@ -180,11 +198,7 @@ function findTopLevelStringPropertyRange(
     index = skipStaticWhitespace(source, index + 1);
     const valueStart = index;
     const valueEnd = skipStaticValue(source, index, objectEnd);
-    if (key.value === propertyName) {
-      const quote = source[valueStart];
-      if (quote !== '"' && quote !== "'" && quote !== "`") return null;
-      return { start: valueStart, end: skipQuotedString(source, valueStart, quote) };
-    }
+    if (key.value === propertyName) return { start: valueStart, end: valueEnd };
     index = skipStaticWhitespace(source, valueEnd);
     if (source[index] === ",") {
       index += 1;
@@ -194,6 +208,18 @@ function findTopLevelStringPropertyRange(
     throw new Error(STATIC_METADATA_ERROR);
   }
   return null;
+}
+
+function insertTopLevelStringProperty(
+  source: string,
+  objectStart: number,
+  propertyName: string,
+  value: string
+): string {
+  const insertionIndex = skipStaticWhitespace(source, objectStart + 1);
+  const separator = source[insertionIndex] === "}" ? "" : ", ";
+  const propertySource = `${propertyName}: ${JSON.stringify(value)}${separator}`;
+  return source.slice(0, insertionIndex) + propertySource + source.slice(insertionIndex);
 }
 
 function skipStaticHorizontalWhitespace(source: string, start: number): number {

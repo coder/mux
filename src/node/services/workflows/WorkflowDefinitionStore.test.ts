@@ -815,6 +815,32 @@ describe("WorkflowDefinitionStore", () => {
     expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(promotedSource)).not.toThrow();
   });
 
+  test("promotion adds descriptions to existing metadata without descriptions", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    await store.promoteDefinition({
+      name: "schema-only-draft",
+      description: "Reusable schema-only draft",
+      source:
+        'export const metadata = { argsSchema: { type: "object", properties: { target: { type: "string" } } } };\nexport default function workflow({ args }) { return { reportMarkdown: args.target }; }\n',
+      location: "project",
+      overwrite: false,
+      projectTrusted: true,
+    });
+
+    const promotedSource = await fs.readFile(
+      path.join(projectRoot, "schema-only-draft.js"),
+      "utf-8"
+    );
+    expect(promotedSource).toContain('description: "Reusable schema-only draft"');
+    expect(promotedSource).toContain("argsSchema");
+    expect(promotedSource.match(/export const metadata/g)).toHaveLength(1);
+    expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(promotedSource)).not.toThrow();
+  });
+
   test("promotion replaces template-literal metadata descriptions", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
