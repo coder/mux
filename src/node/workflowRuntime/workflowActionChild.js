@@ -292,7 +292,7 @@ function maskActionSourceForSyntax(source) {
       }
       continue;
     }
-    if (current === '"' || current === "'" || current === "\`") {
+    if (current === '"' || current === "'" || current === "`") {
       const quote = current;
       output += " ";
       index += 1;
@@ -394,7 +394,9 @@ function stripExportSyntax(source) {
 
 async function loadAction(payload) {
   assertSupportedActionSyntax(payload.source);
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const AsyncFunction = Object.getPrototypeOf(async function () {
+    return undefined;
+  }).constructor;
   const transformedSource = stripExportSyntax(payload.source);
   const actionDir = path.dirname(payload.sourcePath);
   const actionModule = { exports: {} };

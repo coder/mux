@@ -125,6 +125,37 @@ describe("WorkflowActionRunner", () => {
     expect(artifactContent).toContain("Ada");
   });
 
+  test("rejects schema aliases declared after action metadata", async () => {
+    using tmp = new DisposableTempDir("workflow-action-late-alias");
+    const runner = new WorkflowActionRunner();
+    const sources = [
+      `export const metadata = {
+  version: 1,
+  description: "Late alias",
+  effect: "read",
+  inputSchema: s.object({ name: s.string() }),
+};
+const s = mux.schema;
+export async function execute() { return {}; }
+`,
+      `module.exports.metadata = {
+  version: 1,
+  description: "Late alias",
+  effect: "read",
+  inputSchema: s.object({ name: s.string() }),
+};
+const s = mux.schema;
+module.exports.execute = async function () { return {}; };
+`,
+    ];
+
+    for (const [index, source] of sources.entries()) {
+      const sourcePath = path.join(tmp.path, `late-${index}.js`);
+      await fs.writeFile(sourcePath, source, "utf-8");
+      await expectRejects(runner.describe(createAction(sourcePath, source)), /Workflow metadata/);
+    }
+  });
+
   test("uses the configured cwd for the action process", async () => {
     using tmp = new DisposableTempDir("workflow-action-cwd");
     const cwd = path.join(tmp.path, "cwd");

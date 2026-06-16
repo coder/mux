@@ -27,6 +27,8 @@ const SUPPORTED_SCHEMA_OPTION_KEYS = new Set([
 ]);
 
 interface MetadataLiteralRange {
+  declarationStart: number;
+  declarationEnd: number;
   start: number;
   end: number;
   literal: string;
@@ -38,8 +40,17 @@ interface StringLiteralRange {
 }
 
 export function parseStaticWorkflowMetadataLiteral(source: string): unknown {
-  const literal = extractStaticMetadataLiteral(source);
-  return new StaticMetadataLiteralParser(literal, findStaticMuxSchemaAliases(source)).parseValue();
+  const metadata = findRequiredStaticMetadataLiteral(source);
+  return new StaticMetadataLiteralParser(
+    metadata.literal,
+    findStaticMuxSchemaAliases(source, metadata.declarationStart)
+  ).parseValue();
+}
+
+export function removeStaticWorkflowMetadataDeclaration(source: string): string {
+  const metadata = findStaticMetadataLiteral(source);
+  if (metadata == null) return source;
+  return source.slice(0, metadata.declarationStart) + source.slice(metadata.declarationEnd);
 }
 
 export function replaceStaticMetadataStringProperty(
@@ -84,10 +95,10 @@ export function hasStaticWorkflowActionCallableExport(
   });
 }
 
-function extractStaticMetadataLiteral(source: string): string {
+function findRequiredStaticMetadataLiteral(source: string): MetadataLiteralRange {
   const metadata = findStaticMetadataLiteral(source);
   if (metadata == null) throw new Error(STATIC_METADATA_ERROR);
-  return metadata.literal;
+  return metadata;
 }
 
 function findStaticMetadataLiteral(source: string): MetadataLiteralRange | null {
@@ -99,16 +110,21 @@ function findStaticMetadataLiteral(source: string): MetadataLiteralRange | null 
   for (const pattern of assignments) {
     const match = pattern.exec(maskedSource);
     if (match == null || !isTopLevelStaticMatch(maskedSource, match.index)) continue;
+    const declarationStart = match.index + (match[1]?.length ?? 0);
     const start = skipStaticWhitespace(source, match.index + match[0].length);
     const end = readObjectLiteralEnd(source, start);
-    return { start, end, literal: source.slice(start, end) };
+    let declarationEnd = skipStaticHorizontalWhitespace(source, end);
+    if (source[declarationEnd] === ";") {
+      declarationEnd = skipStaticTrailingNewline(source, declarationEnd + 1);
+    }
+    return { declarationStart, declarationEnd, start, end, literal: source.slice(start, end) };
   }
   return null;
 }
 
-function findStaticMuxSchemaAliases(source: string): Set<string> {
+function findStaticMuxSchemaAliases(source: string, beforeIndex: number): Set<string> {
   const aliases = new Set<string>();
-  const maskedSource = maskStaticJavaScriptSource(source);
+  const maskedSource = maskStaticJavaScriptSource(source.slice(0, beforeIndex));
   const pattern =
     /(^|[;\n])\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*mux\.schema\s*(?:[;\n]|$)/gmu;
   for (const match of maskedSource.matchAll(pattern)) {
@@ -151,6 +167,21 @@ function findTopLevelStringPropertyRange(
     throw new Error(STATIC_METADATA_ERROR);
   }
   return null;
+}
+
+function skipStaticHorizontalWhitespace(source: string, start: number): number {
+  let index = start;
+  while (source[index] === " " || source[index] === "\t") {
+    index += 1;
+  }
+  return index;
+}
+
+function skipStaticTrailingNewline(source: string, start: number): number {
+  const index = skipStaticHorizontalWhitespace(source, start);
+  if (source[index] === "\r" && source[index + 1] === "\n") return index + 2;
+  if (source[index] === "\n") return index + 1;
+  return index;
 }
 
 function readStaticObjectKey(source: string, start: number): { value: string; end: number } {

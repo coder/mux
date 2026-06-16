@@ -14,6 +14,7 @@ import type {
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubset } from "@/common/utils/jsonSchemaSubset";
+import { removeStaticWorkflowMetadataDeclaration } from "./staticWorkflowMetadata";
 import { WORKFLOW_RUNTIME_STDLIB_SOURCE } from "./workflowRuntimeSources.generated";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -2763,10 +2764,7 @@ function compileWorkflowSource(source: string): string {
   // also be rewritten. scripts/gen_builtin_workflows.ts guards built-in
   // sources against that corruption at generation time; scratch/project
   // authors must keep flush-left `export ` lines out of template literals.
-  const withoutWorkflowMetadata = source.replace(
-    /^export\s+(?:const|let|var)\s+metadata\s*=\s*\{[\s\S]*?\};\s*/gmu,
-    ""
-  );
+  const withoutWorkflowMetadata = removeStaticWorkflowMetadataDeclaration(source);
   const withoutNamedExports = withoutWorkflowMetadata.replace(
     /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu,
     ""

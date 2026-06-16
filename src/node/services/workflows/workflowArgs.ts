@@ -12,7 +12,7 @@ interface WorkflowMetadata {
 
 interface ArgsPropertySchema {
   name: string;
-  type: string;
+  types: string[];
   defaultValue: unknown;
   aliases: string[];
   negatedAliases: string[];
@@ -119,10 +119,9 @@ function propertySchemas(schema: Record<string, unknown>): ArgsPropertySchema[] 
     if (!isPlainObject(rawProperty)) {
       throw new Error(`Workflow args property ${name} must be an object schema`);
     }
-    const type = typeof rawProperty.type === "string" ? rawProperty.type : "string";
     return {
       name,
-      type,
+      types: schemaTypes(rawProperty.type),
       defaultValue: rawProperty.default,
       aliases: aliasList(rawProperty.aliases),
       negatedAliases: aliasList(rawProperty.negatedAliases),
@@ -132,6 +131,19 @@ function propertySchemas(schema: Record<string, unknown>): ArgsPropertySchema[] 
       enumValues: Array.isArray(rawProperty.enum) ? rawProperty.enum : [],
     };
   });
+}
+
+function schemaTypes(type: unknown): string[] {
+  if (typeof type === "string") return [type];
+  if (Array.isArray(type)) {
+    const types = type.filter((candidate): candidate is string => typeof candidate === "string");
+    return types.length > 0 ? Array.from(new Set(types)) : ["string"];
+  }
+  return ["string"];
+}
+
+function propertyAllowsType(property: ArgsPropertySchema, type: string): boolean {
+  return property.types.includes(type);
 }
 
 function aliasList(value: unknown): string[] {
@@ -185,7 +197,7 @@ function parseWorkflowInputString(
       throw new Error(`Unknown workflow argument flag: ${flag.name}`);
     }
 
-    if (property.type === "boolean") {
+    if (propertyAllowsType(property, "boolean")) {
       parsed[property.name] =
         flag.inlineValue == null ? true : coerceBoolean(flag.inlineValue, flag.name);
       index += 1;
@@ -260,36 +272,51 @@ function defaultNegatedFlagName(name: string): string {
 }
 
 function assertBooleanProperty(property: ArgsPropertySchema, flagName: string): void {
-  if (property.type !== "boolean") {
+  if (!propertyAllowsType(property, "boolean")) {
     throw new Error(`${flagName} can only negate a boolean workflow argument`);
   }
 }
 
 function coerceProperty(property: ArgsPropertySchema, value: unknown): unknown {
-  let coerced: unknown;
-  switch (property.type) {
-    case "string":
-      coerced = coerceString(value, property.name);
-      break;
-    case "boolean":
-      coerced = coerceBoolean(value, property.name);
-      break;
-    case "integer":
-      coerced = coerceInteger(value, property.name);
-      break;
-    case "number":
-      coerced = coerceNumber(value, property.name);
-      break;
-    case "array":
-      coerced = coerceArray(value, property.name);
-      break;
-    default:
-      throw new Error(`Unsupported workflow args type for ${property.name}: ${property.type}`);
+  if (value === null) {
+    if (propertyAllowsType(property, "null")) return null;
+    throw new Error(`Workflow argument ${property.name} must not be null`);
   }
 
-  validateBounds(property, coerced);
-  validateEnum(property, coerced);
-  return coerced;
+  let lastError: Error | null = null;
+  for (const type of property.types) {
+    if (type === "null") continue;
+    try {
+      const coerced = coercePropertyType(property, value, type);
+      validateBounds(property, coerced);
+      validateEnum(property, coerced);
+      return coerced;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(`Unsupported workflow args type for ${property.name}: ${property.types.join(", ")}`)
+  );
+}
+
+function coercePropertyType(property: ArgsPropertySchema, value: unknown, type: string): unknown {
+  switch (type) {
+    case "string":
+      return coerceString(value, property.name);
+    case "boolean":
+      return coerceBoolean(value, property.name);
+    case "integer":
+      return coerceInteger(value, property.name);
+    case "number":
+      return coerceNumber(value, property.name);
+    case "array":
+      return coerceArray(value, property.name);
+    default:
+      throw new Error(`Unsupported workflow args type for ${property.name}: ${type}`);
+  }
 }
 
 function coerceString(value: unknown, name: string): string {
@@ -381,9 +408,9 @@ function tokenize(input: string): TokenizeResult {
   let escaped = false;
   for (const char of input) {
     if (escaped) {
-      current += char;
+      current += char === quote || char === "\\" ? char : "\\" + char;
       escaped = false;
-    } else if (quote.length > 0 && char === "\\") {
+    } else if (quote === '"' && char === "\\") {
       escaped = true;
     } else if (quote.length > 0) {
       if (char === quote) quote = "";

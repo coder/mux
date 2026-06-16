@@ -737,15 +737,80 @@ export default defineConfig([
     },
   },
   {
-    // Built-in workflow sources are plain self-contained JS evaluated inside
-    // the QuickJS workflow sandbox (no imports, sloppy mode), so type-aware
-    // rules cannot apply. Lint them with the core untyped rules so typos and
-    // dead helpers fail loudly instead of becoming silent sandbox globals.
-    files: ["src/node/builtinWorkflows/*.js"],
+    // Workflow/action/runtime sources are plain JS evaluated outside the TS
+    // program (QuickJS or generated child-process wrappers), so type-aware rules
+    // cannot apply. Lint them with core untyped rules so typos and dead helpers
+    // fail loudly instead of becoming silent sandbox globals.
+    files: [
+      "src/node/builtinWorkflows/*.js",
+      "src/node/builtinWorkflowActions/**/*.js",
+      "src/node/workflowRuntime/*.js",
+    ],
     extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        Buffer: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+        exports: "writable",
+        module: "writable",
+        require: "readonly",
+        globalThis: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        mux: "readonly",
+      },
+    },
     rules: {
+      "@typescript-eslint/no-empty-function": "off",
+      "@typescript-eslint/no-require-imports": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+      "@typescript-eslint/prefer-for-of": "off",
+      "no-empty": ["error", { allowEmptyCatch: true }],
       "no-undef": "error",
       "no-unused-vars": "error",
+    },
+  },
+  {
+    files: ["src/node/builtinWorkflowActions/**/_shared.js"],
+    rules: {
+      "no-unused-vars": "off",
+    },
+  },
+  {
+    files: ["src/node/builtinWorkflowActions/**/*.js"],
+    ignores: ["src/node/builtinWorkflowActions/**/_shared.js"],
+    languageOptions: {
+      globals: {
+        boundedCharBudget: "readonly",
+        boundedLimit: "readonly",
+        captureGit: "readonly",
+        findComment: "readonly",
+        getIssueView: "readonly",
+        inputObject: "readonly",
+        isMatchingMarker: "readonly",
+        listComments: "readonly",
+        markerStatus: "readonly",
+        normalizeIssue: "readonly",
+        optionalString: "readonly",
+        parseNameStatus: "readonly",
+        parseStatusLine: "readonly",
+        readStatus: "readonly",
+        repositoryFromInput: "readonly",
+        requiredIssueNumber: "readonly",
+        requiredRepository: "readonly",
+        requiredString: "readonly",
+        resolveBase: "readonly",
+        resolveMergeBase: "readonly",
+        runGit: "readonly",
+        splitRepository: "readonly",
+        stringList: "readonly",
+        truncateText: "readonly",
+        tryResolveBase: "readonly",
+        tryGit: "readonly",
+      },
     },
   },
   {

@@ -11,6 +11,7 @@ import { WorkflowDefinitionStore } from "./WorkflowDefinitionStore";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import { WorkflowService } from "./WorkflowService";
 import type { WorkflowTaskAdapter } from "./WorkflowRunner";
+import { normalizeWorkflowArgsForSource } from "./workflowArgs";
 import { hashWorkflowStepInput } from "./workflowReplayKey";
 
 async function writeWorkflow(root: string, name: string, source: string) {
@@ -356,6 +357,73 @@ export default function workflow({ args }) {
           compacted: "abc\n[truncated by mux.utils.compactText after 3 characters]",
         },
       },
+    });
+  });
+
+  test("normalizes quoted Windows paths and nullable workflow args", () => {
+    const source = `const s = mux.schema;
+export const metadata = {
+  argsSchema: s.object({
+    target: s.string({ positional: true }),
+    path: s.optional(s.string({ aliases: ["--path"] })),
+    note: s.optional(s.nullable(s.string())),
+  }),
+};
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+
+    const result = normalizeWorkflowArgsForSource(source, {
+      input: `'C:\\Users\\Ada\\my repo' --path="D:\\Tools\\Mux Dir"`,
+      note: null,
+    });
+
+    expect(result.args).toEqual({
+      target: "C:\\Users\\Ada\\my repo",
+      path: "D:\\Tools\\Mux Dir",
+      note: null,
+    });
+  });
+
+  test("runs workflows with metadata strings that contain declaration terminator text", async () => {
+    using tmp = new DisposableTempDir("workflow-service-metadata-terminator");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const source = `export const metadata = { description: "desc }; suffix" };
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+    await writeWorkflow(globalRoot, "terminator", source);
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      generateRunId: () => "wfr_terminator",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(service.listDefinitions({ projectTrusted: true })).resolves.toContainEqual(
+      expect.objectContaining({ name: "terminator", description: "desc }; suffix" })
+    );
+    await expect(
+      service.startNamedWorkflow({
+        name: "terminator",
+        workspaceId: "workspace-1",
+        projectTrusted: true,
+        args: {},
+      })
+    ).resolves.toEqual({
+      runId: "wfr_terminator",
+      status: "completed",
+      result: { reportMarkdown: "ok" },
     });
   });
 
