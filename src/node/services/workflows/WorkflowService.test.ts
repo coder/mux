@@ -2778,7 +2778,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "logged-interrupt-background",
-      "// description: Logged interrupt background workflow\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Logged interrupt background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let agentStarted = false;
