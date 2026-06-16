@@ -67,4 +67,6 @@ export async function execute(rawInput, ctx) {
   };
 }
 
-export const reconcile = execute;
+export async function reconcile(input, ctx) {
+  return await execute(input, ctx);
+}

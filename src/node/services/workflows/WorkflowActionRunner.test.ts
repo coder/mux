@@ -601,6 +601,9 @@ module.exports.execute = async function () { return {}; };
       const resolved = await registry.resolveAction(action.name, { projectTrusted: false });
       const description = await runner.describe(resolved);
       expect(description.metadata.description).toBeTruthy();
+      if (["github.ensureIssueLabels", "github.upsertIssueComment"].includes(action.name)) {
+        expect(description.hasReconcile).toBe(true);
+      }
       if (action.name.startsWith("git.") || action.name.startsWith("github.")) {
         const outputSchema = expectObjectRecord(description.metadata.outputSchema);
         expect(Object.keys(expectObjectRecord(outputSchema.properties)).length).toBeGreaterThan(0);

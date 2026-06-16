@@ -64,4 +64,6 @@ export async function execute(rawInput, ctx) {
   return { action: "created", commentId: created.id || null, url: created.html_url || null };
 }
 
-export const reconcile = execute;
+export async function reconcile(input, ctx) {
+  return await execute(input, ctx);
+}
