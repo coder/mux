@@ -389,7 +389,7 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
     const globalRoot = path.join(tmp.path, "mux-home", "workflows");
     const source = `export const metadata = { description: "desc }; suffix" };
-export default function workflow() { return { reportMarkdown: "ok" }; }
+export default function workflow() { return { reportMarkdown: metadata.description }; }
 `;
     await writeWorkflow(globalRoot, "terminator", source);
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
@@ -423,7 +423,7 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     ).resolves.toEqual({
       runId: "wfr_terminator",
       status: "completed",
-      result: { reportMarkdown: "ok" },
+      result: { reportMarkdown: "desc }; suffix" },
     });
   });
 

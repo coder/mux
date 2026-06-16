@@ -486,6 +486,39 @@ module.exports.execute = async function () { return {}; };
     expect(preflightOutput.reason).toContain("dirty");
   });
 
+  test("built-in git.status skips ignored files unless requested", async () => {
+    using tmp = new DisposableTempDir("workflow-action-git-status-ignored");
+    const repoRoot = path.join(tmp.path, "repo");
+    await fs.mkdir(path.join(repoRoot, "ignored"), { recursive: true });
+    await execFileAsync("git", ["init", "-b", "main"], { cwd: repoRoot });
+    await fs.writeFile(path.join(repoRoot, ".gitignore"), "ignored/\n", "utf-8");
+    await fs.writeFile(path.join(repoRoot, "ignored", "generated.txt"), "ignored\n", "utf-8");
+    await fs.writeFile(path.join(repoRoot, "untracked.txt"), "new\n", "utf-8");
+    const registry = new WorkflowActionRegistry({
+      projectRoot: path.join(tmp.path, "project-actions"),
+      globalRoot: path.join(tmp.path, "global-actions"),
+    });
+    const action = await registry.resolveAction("git.status", { projectTrusted: false });
+    const runner = new WorkflowActionRunner();
+
+    const defaultStatus = await runner.execute(action, {
+      input: null,
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-default"),
+    });
+    const statusWithIgnored = await runner.execute(action, {
+      input: { includeIgnored: true },
+      cwd: repoRoot,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts-ignored"),
+    });
+
+    expect(expectObjectRecord(defaultStatus.output).ignored).toEqual([]);
+    expect(expectObjectRecord(defaultStatus.output).untracked).toContain("untracked.txt");
+    expect(expectObjectRecord(statusWithIgnored.output).ignored).toContain("ignored/generated.txt");
+  });
+
   test("reports unsupported module syntax clearly", async () => {
     using tmp = new DisposableTempDir("workflow-action-import");
     const sourcePath = path.join(tmp.path, "import.js");

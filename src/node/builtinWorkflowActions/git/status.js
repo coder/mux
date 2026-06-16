@@ -62,5 +62,5 @@ module.exports.metadata = {
 
 module.exports.execute = async function (rawInput, ctx) {
   const input = inputObject(rawInput);
-  return await readStatus(ctx, input, { includeIgnored: input.includeIgnored !== false });
+  return await readStatus(ctx, input, { includeIgnored: input.includeIgnored === true });
 };

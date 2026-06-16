@@ -2540,7 +2540,7 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ action }) {
         const commits = action.git.commitsBetween({ id: "commits", input: { base: "main" } });
-        const status = action.git.status({ id: "status" });
+        const status = action.git.status({ id: "status", input: { includeIgnored: true } });
         const changed = action.git.changedFiles({ id: "changed", input: { base: "main" } });
         const diff = action.git.diff({ id: "diff", input: { base: "main" } });
         const diffStat = action.git.diffStat({ id: "diff-stat", input: { base: "main" } });
