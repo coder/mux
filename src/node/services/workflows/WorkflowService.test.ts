@@ -384,6 +384,29 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     });
   });
 
+  test("keeps a declared input args field as raw input text", () => {
+    const source = `const s = mux.schema;
+export const metadata = {
+  argsSchema: s.object({
+    input: s.string(),
+    mode: s.optional(s.string({ default: "fast", aliases: ["--mode"] })),
+  }),
+};
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+
+    expect(
+      normalizeWorkflowArgsForSource(source, { input: "hello world --mode slow" }).args
+    ).toEqual({
+      input: "hello world --mode slow",
+      mode: "fast",
+    });
+    expect(normalizeWorkflowArgsForSource(source, "hello world").args).toEqual({
+      input: "hello world",
+      mode: "fast",
+    });
+  });
+
   test("runs workflows with metadata strings that contain declaration terminator text", async () => {
     using tmp = new DisposableTempDir("workflow-service-metadata-terminator");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

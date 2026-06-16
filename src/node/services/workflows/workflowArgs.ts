@@ -84,7 +84,15 @@ function normalizeWorkflowArgs(
   }
 
   const rawInput = workflowInputString(rawArgs);
-  if (rawInput.length > 0) {
+  const usesStructuredInput = properties.some(
+    (property) => property.name === RAW_INPUT_FIELD && !property.positional
+  );
+  if (usesStructuredInput && typeof rawArgs === "string" && rawInput.length > 0) {
+    normalized[RAW_INPUT_FIELD] = rawInput;
+  }
+  // A declared non-positional `input` field is the raw transport value itself; reparsing
+  // ordinary prose as flags would reject valid inputs like `hello world` as stray positionals.
+  if (rawInput.length > 0 && !usesStructuredInput) {
     Object.assign(normalized, parseWorkflowInputString(rawInput, properties));
   }
 
