@@ -9,6 +9,9 @@ const DIFF_STAT_CHAR_BUDGET = 20000;
 const REVIEW_EVIDENCE_ITEM_BUDGET = 3;
 const REVIEW_EVIDENCE_CHAR_BUDGET = 500;
 const NO_REVIEWABLE_CHANGES_SUMMARY = "No reviewable changes found.";
+const GIT_CONTEXT_SOURCE = "parent-workflow-checkout";
+const GIT_CONTEXT_PROVENANCE_NOTE =
+  "Git context was captured from the parent workflow checkout before child agent workspaces were spawned. Child agent branches may differ; status.branch/upstream describe the reviewed parent checkout.";
 const READ_ONLY_PROMPT =
   "This is a read-only review step. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.";
 const VALUE_FLAGS = [
@@ -650,6 +653,7 @@ function promptContexts(input, gitContext) {
 function renderContext(input, gitContext) {
   return fencedJson({
     input: { target: input.target, fix: input.fix, maxFindings: input.maxFindings },
+    gitContextSource: GIT_CONTEXT_SOURCE,
     gitContext: gitContext,
   });
 }
@@ -785,6 +789,7 @@ function reviewPrompt(lane, input, reviewContext) {
       input.maxFindings +
       " actionable findings. Use stable finding ids and arrays for filePaths/evidence.",
     "\nLane checklist:\n- " + lane.instructions.join("\n- "),
+    GIT_CONTEXT_PROVENANCE_NOTE,
     "\nReview context:\n" + reviewContext,
   ].join("\n\n");
 }
@@ -797,6 +802,7 @@ function synthesisPrompt(input, compactContext, reviewOutputs) {
       " highest-value issues.",
     "Do not edit files in this step. Produce triage and fix plans for the later fixer step. If a finding is false positive or not worth addressing, put it in skippedFindings without debating it.",
     "Allowed severity values are: high, medium, low. Prefer minimal cleanup over broad refactors.",
+    GIT_CONTEXT_PROVENANCE_NOTE,
     "\nCompact review context without raw diff text:\n" + compactContext,
     "\nCompacted lane outputs:\n" + fencedJson(compactReviewOutputs(reviewOutputs)),
   ].join("\n\n");
@@ -809,6 +815,7 @@ function fixPrompt(compactContext, synthesized) {
     "Use the compact context for file lists and diff metadata; inspect files directly instead of relying on raw diff text being embedded in this prompt.",
     "Preserve existing style and functionality. Run targeted validation for touched code when feasible and report exact commands/results.",
     "If a finding is false positive or not worth addressing, skip it and note why. Set madeChanges true only when files changed.",
+    GIT_CONTEXT_PROVENANCE_NOTE,
     "\nCompact review context:\n" + compactContext,
     "\nActionable findings:\n" + fencedJson(fixerPayload(synthesized)),
   ].join("\n\n");
