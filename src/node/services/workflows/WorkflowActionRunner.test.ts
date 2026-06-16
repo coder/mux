@@ -642,6 +642,37 @@ module.exports.execute = async function () { return {}; };
     }
   });
 
+  test("describes reconcile aliases that point at execute", async () => {
+    using tmp = new DisposableTempDir("workflow-action-reconcile-alias");
+    const sources = [
+      `module.exports.metadata = { version: 1, description: "Alias", effect: "workspace" };
+module.exports.execute = async function (input) { return { input, reconciled: true }; };
+module.exports.reconcile = module.exports.execute;
+`,
+      `export const metadata = { version: 1, description: "Alias", effect: "workspace" };
+export async function execute(input) { return { input, reconciled: true }; }
+export const reconcile = execute;
+`,
+    ];
+    const runner = new WorkflowActionRunner();
+    for (const [index, source] of sources.entries()) {
+      const sourcePath = path.join(tmp.path, `alias-${index}.js`);
+      await fs.writeFile(sourcePath, source, "utf-8");
+      const action = createAction(sourcePath, source);
+
+      const description = await runner.describe(action);
+      const result = await runner.reconcile(action, {
+        input: { index },
+        cwd: tmp.path,
+        timeoutMs: 10_000,
+        artifactDir: path.join(tmp.path, `artifacts-${index}`),
+      });
+
+      expect(description.hasReconcile).toBe(true);
+      expect(result.output).toEqual({ input: { index }, reconciled: true });
+    }
+  });
+
   test("describes every built-in workflow action", async () => {
     // Built-in sources must always pass static describe validation; a failure here
     // surfaces in the UI as a "blocked" action (e.g. security.hashFiles, whose regex
@@ -670,7 +701,15 @@ module.exports.execute = async function () { return {}; };
       ) {
         expect(description.metadata.effect).toBe("read");
       }
-      if (["github.ensureIssueLabels", "github.upsertIssueComment"].includes(action.name)) {
+      if (
+        [
+          "github.ensureIssueLabels",
+          "github.upsertIssueComment",
+          "security.writeEvidenceBundle",
+          "security.writeState",
+          "security.writeThreatModel",
+        ].includes(action.name)
+      ) {
         expect(description.hasReconcile).toBe(true);
       }
       if (action.name.startsWith("git.") || action.name.startsWith("github.")) {

@@ -86,7 +86,7 @@ export function hasStaticWorkflowActionCallableExport(
   name: "execute" | "reconcile"
 ): boolean {
   const maskedSource = maskStaticJavaScriptSource(source);
-  return [
+  const patterns = [
     new RegExp(`(^|[;\\n])\\s*export\\s+(?:async\\s+)?function\\s+${name}\\s*\\(`, "mu"),
     new RegExp(
       `(^|[;\\n])\\s*export\\s+(?:const|let|var)\\s+${name}\\s*=\\s*(?:async\\s*)?(?:function\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*)?\\s*\\(|(?:\\([^)]*\\)|[A-Za-z_$][A-Za-z0-9_$]*)\\s*=>)`,
@@ -96,7 +96,14 @@ export function hasStaticWorkflowActionCallableExport(
       `(^|[;\\n])\\s*(?:module\\.)?exports\\.${name}\\s*=\\s*(?:async\\s*)?(?:function\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*)?\\s*\\(|(?:\\([^)]*\\)|[A-Za-z_$][A-Za-z0-9_$]*)\\s*=>)`,
       "mu"
     ),
-  ].some((pattern) => {
+  ];
+  if (name === "reconcile") {
+    patterns.push(
+      /(^|[;\n])\s*export\s+(?:const|let|var)\s+reconcile\s*=\s*execute\s*(?:[;\n]|$)/mu,
+      /(^|[;\n])\s*(?:module\.)?exports\.reconcile\s*=\s*(?:(?:module\.)?exports\.execute|execute)\s*(?:[;\n]|$)/mu
+    );
+  }
+  return patterns.some((pattern) => {
     const match = pattern.exec(maskedSource);
     return match != null && isTopLevelStaticMatch(maskedSource, match.index);
   });
