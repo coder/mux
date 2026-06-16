@@ -566,10 +566,11 @@ function targetNeedsUntrackedContent(input, gitContext) {
 }
 
 function untrackedPaths(gitContext) {
-  return asArray(gitContext.status && gitContext.status.untracked)
+  const paths = asArray(gitContext.status && gitContext.status.untracked)
     .concat(asArray(gitContext.changedFiles && gitContext.changedFiles.untracked))
     .map(filePath)
     .filter(Boolean);
+  return Array.from(new Set(paths));
 }
 
 function filePath(value) {
@@ -788,9 +789,9 @@ function reviewPrompt(lane, input, reviewContext) {
     "The synthesis step will keep at most " +
       input.maxFindings +
       " actionable findings. Use stable finding ids and arrays for filePaths/evidence.",
-    "\nLane checklist:\n- " + lane.instructions.join("\n- "),
+    "Lane checklist:\n- " + lane.instructions.join("\n- "),
     GIT_CONTEXT_PROVENANCE_NOTE,
-    "\nReview context:\n" + reviewContext,
+    "Review context:\n" + reviewContext,
   ].join("\n\n");
 }
 
@@ -803,8 +804,8 @@ function synthesisPrompt(input, compactContext, reviewOutputs) {
     "Do not edit files in this step. Produce triage and fix plans for the later fixer step. If a finding is false positive or not worth addressing, put it in skippedFindings without debating it.",
     "Allowed severity values are: high, medium, low. Prefer minimal cleanup over broad refactors.",
     GIT_CONTEXT_PROVENANCE_NOTE,
-    "\nCompact review context without raw diff text:\n" + compactContext,
-    "\nCompacted lane outputs:\n" + fencedJson(compactReviewOutputs(reviewOutputs)),
+    "Compact review context without raw diff text:\n" + compactContext,
+    "Compacted lane outputs:\n" + fencedJson(compactReviewOutputs(reviewOutputs)),
   ].join("\n\n");
 }
 
@@ -816,8 +817,8 @@ function fixPrompt(compactContext, synthesized) {
     "Preserve existing style and functionality. Run targeted validation for touched code when feasible and report exact commands/results.",
     "If a finding is false positive or not worth addressing, skip it and note why. Set madeChanges true only when files changed.",
     GIT_CONTEXT_PROVENANCE_NOTE,
-    "\nCompact review context:\n" + compactContext,
-    "\nActionable findings:\n" + fencedJson(fixerPayload(synthesized)),
+    "Compact review context:\n" + compactContext,
+    "Actionable findings:\n" + fencedJson(fixerPayload(synthesized)),
   ].join("\n\n");
 }
 
