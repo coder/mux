@@ -156,6 +156,19 @@ module.exports.execute = async function () { return {}; };
     }
   });
 
+  test("rejects interpolated template literal metadata", async () => {
+    using tmp = new DisposableTempDir("workflow-action-interpolated-metadata");
+    const sourcePath = path.join(tmp.path, "interpolated.js");
+    const source =
+      'const branch = "main";\nexport const metadata = { version: 1, description: `Review ${branch}`, effect: "read" };\nexport async function execute() { return {}; }\n';
+    await fs.writeFile(sourcePath, source, "utf-8");
+
+    await expectRejects(
+      new WorkflowActionRunner().describe(createAction(sourcePath, source)),
+      /Workflow metadata/
+    );
+  });
+
   test("executes actions with regex literals before exports", async () => {
     using tmp = new DisposableTempDir("workflow-action-regex-before-export");
     const sourcePath = path.join(tmp.path, "regex.js");

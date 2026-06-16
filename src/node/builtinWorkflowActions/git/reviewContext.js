@@ -80,6 +80,7 @@ module.exports.metadata = {
     { additionalProperties: false }
   ),
   permissions: [
+    { kind: "command", command: "git rev-parse" },
     { kind: "command", command: "git status" },
     { kind: "command", command: "git diff" },
     { kind: "command", command: "git log" },
@@ -200,6 +201,32 @@ async function readCommits(ctx, mergeBase, head, limit) {
       const [hash, shortHash, authorName, authorEmail, authoredAt, subject] = record.split("\x1f");
       return { hash, shortHash, authorName, authorEmail, authoredAt, subject };
     });
+}
+
+async function readWorkTreeProbeError(ctx) {
+  try {
+    const result = await captureGit(ctx, ["rev-parse", "--is-inside-work-tree"], [0]);
+    return result.text.trim() === "true" ? null : "Git command is not running inside a work tree";
+  } catch (error) {
+    return String((error && error.message) || error);
+  }
+}
+
+function fallbackReviewContext(input) {
+  return {
+    base: null,
+    head: optionalString(input.head) ?? "HEAD",
+    mergeBase: null,
+    changedFiles: { branch: [], staged: [], unstaged: [], untracked: [] },
+    diffStat: { branch: "", staged: "", unstaged: "" },
+    diff: {
+      branch: "",
+      staged: "",
+      unstaged: "",
+      truncated: { branch: false, staged: false, unstaged: false },
+    },
+    commits: { commits: [], count: 0 },
+  };
 }
 
 function allChangedFiles(changedFiles, status) {
@@ -359,32 +386,26 @@ module.exports.execute = async function (rawInput, ctx) {
   let status = null;
   let context = null;
   const diffBudget = boundedInt(input.diffCharBudget, DEFAULT_DIFF_CHAR_BUDGET, 0, 500000);
-  try {
-    status = await readStatus(ctx, input, { includeIgnored: input.includeIgnored === true });
-  } catch (error) {
-    failures.push({ action: "git.status", error: String((error && error.message) || error) });
-  }
-  try {
-    context = await readGitReviewContext(ctx, input, diffBudget);
-  } catch (error) {
-    failures.push({
-      action: "git.reviewContext",
-      error: String((error && error.message) || error),
-    });
-    context = {
-      base: null,
-      head: optionalString(input.head) ?? "HEAD",
-      mergeBase: null,
-      changedFiles: { branch: [], staged: [], unstaged: [], untracked: [] },
-      diffStat: { branch: "", staged: "", unstaged: "" },
-      diff: {
-        branch: "",
-        staged: "",
-        unstaged: "",
-        truncated: { branch: false, staged: false, unstaged: false },
-      },
-      commits: { commits: [], count: 0 },
-    };
+  const workTreeProbeError = await readWorkTreeProbeError(ctx);
+  if (workTreeProbeError != null) {
+    failures.push({ action: "git.status", error: workTreeProbeError });
+    failures.push({ action: "git.reviewContext", error: workTreeProbeError });
+    context = fallbackReviewContext(input);
+  } else {
+    try {
+      status = await readStatus(ctx, input, { includeIgnored: input.includeIgnored === true });
+    } catch (error) {
+      failures.push({ action: "git.status", error: String((error && error.message) || error) });
+    }
+    try {
+      context = await readGitReviewContext(ctx, input, diffBudget);
+    } catch (error) {
+      failures.push({
+        action: "git.reviewContext",
+        error: String((error && error.message) || error),
+      });
+      context = fallbackReviewContext(input);
+    }
   }
   const files = allChangedFiles(context.changedFiles, status);
   context.changedFiles.all = files;

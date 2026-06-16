@@ -823,6 +823,33 @@ describe("WorkflowDefinitionStore", () => {
     expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(promotedSource)).not.toThrow();
   });
 
+  test("promotion rejects interpolated template-literal metadata descriptions", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    let promotionError: unknown;
+    try {
+      await store.promoteDefinition({
+        name: "dynamic-description-draft",
+        description: "Reusable dynamic draft",
+        source:
+          'const branch = "main";\nexport const metadata = { description: `Scratch ${branch}` };\nexport default function workflow() { return { reportMarkdown: "ok" }; }\n',
+        location: "project",
+        overwrite: false,
+        projectTrusted: true,
+      });
+    } catch (error) {
+      promotionError = error;
+    }
+
+    expect(promotionError).toBeInstanceOf(Error);
+    expect(promotionError instanceof Error ? promotionError.message : "").toMatch(
+      /Workflow metadata/
+    );
+  });
+
   test("skips invalid filenames and unreadable descriptors", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

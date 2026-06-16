@@ -232,6 +232,9 @@ function readStaticStringLiteral(
   while (index < source.length) {
     const char = source[index];
     if (char === quote) return { value, end: index + 1 };
+    if (isStaticTemplateInterpolationStart(source, index, quote)) {
+      throw new Error(STATIC_METADATA_ERROR);
+    }
     if (char === "\\") {
       const escape = source[index + 1];
       if (escape == null) throw new Error(STATIC_METADATA_ERROR);
@@ -341,10 +344,17 @@ function skipQuotedString(source: string, start: number, quote: string): number 
       index += 2;
       continue;
     }
+    if (isStaticTemplateInterpolationStart(source, index, quote)) {
+      throw new Error(STATIC_METADATA_ERROR);
+    }
     if (char === quote) return index + 1;
     index += 1;
   }
   throw new Error(STATIC_METADATA_ERROR);
+}
+
+function isStaticTemplateInterpolationStart(source: string, index: number, quote: string): boolean {
+  return quote === "`" && source[index] === "$" && source[index + 1] === "{";
 }
 
 function skipLineComment(source: string, start: number): number {
@@ -451,6 +461,9 @@ class StaticMetadataLiteralParser {
       const char = this.source[this.index];
       this.index += 1;
       if (char === quote) return value;
+      if (isStaticTemplateInterpolationStart(this.source, this.index - 1, quote)) {
+        throw new Error(STATIC_METADATA_ERROR);
+      }
       if (char === "\\") value += this.readEscapeSequence();
       else value += char;
     }
