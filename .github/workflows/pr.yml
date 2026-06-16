@@ -207,7 +207,7 @@ jobs:
             "captures parent Git action context"
             "does not mix automatic Git context"
             "continues with diff context"
-            "built-in deep-review-workflow > auto-fix"
+            "auto-fix (applies|loop|uses|skips|honors|lets|checkpoint|delegates|rejects)"
             "prose mentions of --fix"
             "--no-fix"
             "--loop without --fix"
