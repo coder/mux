@@ -292,13 +292,27 @@ function maskActionSourceForSyntax(source) {
       }
       continue;
     }
+    if (current === "/" && isRegExpLiteralStart(output)) {
+      const closingIndex = findRegExpLiteralEnd(source, index);
+      if (closingIndex !== -1) {
+        output += "/";
+        index += 1;
+        while (index < closingIndex) {
+          output += " ";
+          index += 1;
+        }
+        output += "/";
+        index += 1;
+        continue;
+      }
+    }
     if (current === '"' || current === "'" || current === "`") {
       const quote = current;
-      output += " ";
+      output += quote;
       index += 1;
       while (index < source.length) {
         const stringCurrent = source[index];
-        output += stringCurrent === "\n" ? "\n" : " ";
+        output += stringCurrent === "\n" ? "\n" : stringCurrent === quote ? quote : " ";
         index += 1;
         if (stringCurrent === "\\") {
           if (index < source.length) {
@@ -315,6 +329,52 @@ function maskActionSourceForSyntax(source) {
     index += 1;
   }
   return output;
+}
+
+function findRegExpLiteralEnd(source, openIndex) {
+  let index = openIndex + 1;
+  let inCharacterClass = false;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === "\n") return -1;
+    if (character === "\\") {
+      index += source[index + 1] === "\n" ? 1 : 2;
+      continue;
+    }
+    if (character === "[") inCharacterClass = true;
+    else if (character === "]") inCharacterClass = false;
+    else if (character === "/" && !inCharacterClass) return index;
+    index += 1;
+  }
+  return -1;
+}
+
+const REGEX_CONTEXT_KEYWORDS = new Set([
+  "return",
+  "throw",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "case",
+  "yield",
+  "await",
+]);
+
+function isRegExpLiteralStart(maskedPrefix) {
+  let index = maskedPrefix.length - 1;
+  while (index >= 0 && /\s/.test(maskedPrefix[index])) index -= 1;
+  if (index < 0) return true;
+  const character = maskedPrefix[index];
+  if (/[A-Za-z0-9_$]/.test(character)) {
+    let start = index;
+    while (start >= 0 && /[A-Za-z0-9_$]/.test(maskedPrefix[start])) start -= 1;
+    return REGEX_CONTEXT_KEYWORDS.has(maskedPrefix.slice(start + 1, index + 1));
+  }
+  return ![")", "]", "}", '"', "'", "`"].includes(character);
 }
 
 function assertSupportedActionSyntax(source) {

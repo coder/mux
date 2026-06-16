@@ -156,6 +156,32 @@ module.exports.execute = async function () { return {}; };
     }
   });
 
+  test("executes actions with regex literals before exports", async () => {
+    using tmp = new DisposableTempDir("workflow-action-regex-before-export");
+    const sourcePath = path.join(tmp.path, "regex.js");
+    const source = `
+      const objectStart = /\\{/;
+      export const metadata = { version: 1, description: "Regex before export", effect: "read" };
+      export async function execute() {
+        return { ok: objectStart.test("{") };
+      }
+    `;
+    await fs.writeFile(sourcePath, source, "utf-8");
+    const runner = new WorkflowActionRunner();
+    const action = createAction(sourcePath, source);
+
+    const description = await runner.describe(action);
+    const result = await runner.execute(action, {
+      input: null,
+      cwd: tmp.path,
+      timeoutMs: 10_000,
+      artifactDir: path.join(tmp.path, "artifacts"),
+    });
+
+    expect(description.hasReconcile).toBe(false);
+    expect(result.output).toEqual({ ok: true });
+  });
+
   test("uses the configured cwd for the action process", async () => {
     using tmp = new DisposableTempDir("workflow-action-cwd");
     const cwd = path.join(tmp.path, "cwd");
