@@ -407,6 +407,22 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     });
   });
 
+  test("normalizes exact short flag aliases before positional args", () => {
+    const source = `const s = mux.schema;
+export const metadata = {
+  argsSchema: s.object({
+    target: s.optional(s.string({ positional: true })),
+    help: s.optional(s.boolean({ default: false, aliases: ["--help", "-h"] })),
+  }),
+};
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+
+    expect(normalizeWorkflowArgsForSource(source, { input: "-h" }).args).toEqual({
+      help: true,
+    });
+  });
+
   test("runs workflows with metadata strings that contain declaration terminator text", async () => {
     using tmp = new DisposableTempDir("workflow-service-metadata-terminator");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

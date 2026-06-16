@@ -22,7 +22,7 @@ export const metadata = {
     maxFindings: s.optional(
       s.integer({ default: 20, minimum: 1, aliases: ["--max-findings"] })
     ),
-    help: s.optional(s.boolean({ default: false, aliases: ["--help"] })),
+    help: s.optional(s.boolean({ default: false, aliases: ["--help", "-h"] })),
   }),
 };
 

@@ -193,6 +193,22 @@ function parseWorkflowInputString(
       continue;
     }
 
+    const exactAliasProperty = findPropertyByAlias(properties, token);
+    if (exactAliasProperty != null) {
+      if (propertyAllowsType(exactAliasProperty, "boolean")) {
+        parsed[exactAliasProperty.name] = true;
+        index += 1;
+        continue;
+      }
+      const value = tokenized.tokens[index + 1];
+      if (value == null || value.startsWith("--")) {
+        throw new Error(`${token} requires a value`);
+      }
+      parsed[exactAliasProperty.name] = value;
+      index += 2;
+      continue;
+    }
+
     const flag = parseFlagToken(token);
     if (flag == null) {
       positional.push(token);
