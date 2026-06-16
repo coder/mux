@@ -53,6 +53,7 @@ interface AutomationModalMockProps {
 
 let mockWorkspaceHeartbeatsEnabled = false;
 let mockContextMenuOpen = false;
+let mockContextMenuContextMenu: ReturnType<typeof mock>;
 let mockContextMenuTouchStart: ReturnType<typeof mock>;
 let renderAutomationModalMock: ((props: AutomationModalMockProps) => ReactNode) | null = null;
 let mockWorkspaceUnreadState: MockWorkspaceUnreadState;
@@ -214,7 +215,7 @@ function installAgentListItemTestDoubles() {
     useContextMenuPosition: () => ({
       position: null,
       isOpen: mockContextMenuOpen,
-      onContextMenu: () => undefined,
+      onContextMenu: mockContextMenuContextMenu,
       onOpenChange: () => undefined,
       touchHandlers: {
         onTouchStart: mockContextMenuTouchStart,
@@ -309,6 +310,7 @@ describe("AgentListItem", () => {
     cleanupDom = installDom();
     mockWorkspaceHeartbeatsEnabled = false;
     mockContextMenuOpen = false;
+    mockContextMenuContextMenu = mock(() => undefined);
     mockContextMenuTouchStart = mock(() => undefined);
     renderAutomationModalMock = null;
     mockWorkspaceUnreadState = createWorkspaceUnreadState();
@@ -393,9 +395,11 @@ describe("AgentListItem", () => {
     expect(automationsMenuItem).toBeTruthy();
     fireEvent.click(automationsMenuItem!);
     const modalButton = view.getByRole("button", { name: "Inside automation modal" });
+    fireEvent.contextMenu(modalButton);
     fireEvent.touchStart(modalButton);
     fireEvent.click(modalButton);
 
+    expect(mockContextMenuContextMenu).not.toHaveBeenCalled();
     expect(mockContextMenuTouchStart).not.toHaveBeenCalled();
     expect(onSelectWorkspace).not.toHaveBeenCalled();
   });

@@ -824,7 +824,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
             onSelectWorkspace(workspaceSelection);
           }
         }}
-        onContextMenu={ctxMenu.onContextMenu}
+        onContextMenu={(event) => {
+          if (isEventFromDialogPortal(event.target)) return;
+          ctxMenu.onContextMenu(event);
+        }}
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
