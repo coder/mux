@@ -12,9 +12,7 @@ export const metadata = {
 };
 
 async function getLabelNames(ctx, repository, number) {
-  const args = ["issue", "view", String(number), "--json", "labels"];
-  if (repository) args.push("--repo", repository);
-  const issue = await ctx.execJson("gh", args);
+  const issue = await getIssueView(ctx, repository, number, ["labels"]);
   return normalizeIssue(issue).labelNames;
 }
 
@@ -35,7 +33,10 @@ export async function execute(rawInput, ctx) {
   for (const label of missingAddLabels) args.push("--add-label", label);
   for (const label of presentRemoveLabels) args.push("--remove-label", label);
   await ctx.execChecked("gh", args);
-  const after = await getLabelNames(ctx, repository, number);
+  const after = before.filter((label) => !presentRemoveLabels.includes(label));
+  for (const label of missingAddLabels) {
+    if (!after.includes(label)) after.push(label);
+  }
   return {
     changed: true,
     before,

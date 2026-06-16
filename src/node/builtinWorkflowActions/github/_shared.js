@@ -99,14 +99,24 @@ function markerStatus(body) {
   return match ? match[1] : "";
 }
 
+async function getIssueView(ctx, repository, number, fields) {
+  const args = ["issue", "view", String(number), "--json", fields.join(",")];
+  if (repository) args.push("--repo", repository);
+  return await ctx.execJson("gh", args);
+}
+
+async function fetchCommentsPage(ctx, owner, repo, number, page) {
+  return await ctx.execJson("gh", [
+    "api",
+    "repos/" + owner + "/" + repo + "/issues/" + number + "/comments?per_page=100&page=" + page,
+  ]);
+}
+
 async function listComments(ctx, owner, repo, number, options) {
   const comments = [];
   const limit = boundedLimit(options && options.limit, 1000);
   for (let page = 1; page <= Math.ceil(limit / 100); page += 1) {
-    const pageComments = await ctx.execJson("gh", [
-      "api",
-      "repos/" + owner + "/" + repo + "/issues/" + number + "/comments?per_page=100&page=" + page,
-    ]);
+    const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page);
     for (const comment of pageComments) {
       comments.push(comment);
       if (comments.length >= limit) return comments;
@@ -118,10 +128,7 @@ async function listComments(ctx, owner, repo, number, options) {
 
 async function findComment(ctx, owner, repo, number, predicate) {
   for (let page = 1; page <= 10; page += 1) {
-    const pageComments = await ctx.execJson("gh", [
-      "api",
-      "repos/" + owner + "/" + repo + "/issues/" + number + "/comments?per_page=100&page=" + page,
-    ]);
+    const pageComments = await fetchCommentsPage(ctx, owner, repo, number, page);
     const match = pageComments.find(predicate);
     if (match) return match;
     if (pageComments.length < 100) break;

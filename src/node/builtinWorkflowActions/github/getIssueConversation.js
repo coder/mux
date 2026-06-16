@@ -46,19 +46,22 @@ export async function execute(rawInput, ctx) {
     10000
   );
   const commentBodyBudget = boundedCharBudget(input.commentBodyCharBudget, 10000);
-  const args = [
-    "issue",
-    "view",
-    String(number),
-    "--json",
-    "number,title,url,state,body,author,labels",
-  ];
-  if (repository) args.push("--repo", repository);
-  const issue = await ctx.execJson("gh", args);
-  const parts = repositoryPartsForComments(repository, issue);
-  const comments = await listComments(ctx, parts.owner, parts.repo, number, {
-    limit: maxComments + 1,
-  });
+  const issueFields = ["number", "title", "url", "state", "body", "author", "labels"];
+  let issue;
+  let comments;
+  if (repository) {
+    const parts = splitRepository(repository);
+    [issue, comments] = await Promise.all([
+      getIssueView(ctx, repository, number, issueFields),
+      listComments(ctx, parts.owner, parts.repo, number, { limit: maxComments + 1 }),
+    ]);
+  } else {
+    issue = await getIssueView(ctx, repository, number, issueFields);
+    const parts = repositoryPartsForComments(repository, issue);
+    comments = await listComments(ctx, parts.owner, parts.repo, number, {
+      limit: maxComments + 1,
+    });
+  }
   const visibleComments = comments.slice(0, maxComments);
   const hasOmittedComments = comments.length > visibleComments.length;
   const normalizedIssue = normalizeIssue(issue);

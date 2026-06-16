@@ -1,3 +1,4 @@
+import { isPlainObject } from "@/common/utils/isPlainObject";
 import { parseStaticWorkflowMetadataLiteral } from "./WorkflowActionRunner";
 
 export interface WorkflowArgsNormalizationResult {
@@ -47,12 +48,12 @@ function parseWorkflowMetadata(source: string): WorkflowMetadata | null {
   } catch {
     return null;
   }
-  if (!isRecord(rawMetadata)) {
+  if (!isPlainObject(rawMetadata)) {
     throw new Error("Workflow metadata must be a static object literal");
   }
   const metadata: WorkflowMetadata = {};
   if (rawMetadata.argsSchema !== undefined) {
-    if (!isRecord(rawMetadata.argsSchema)) {
+    if (!isPlainObject(rawMetadata.argsSchema)) {
       throw new Error("Workflow metadata.argsSchema must be an object schema");
     }
     metadata.argsSchema = rawMetadata.argsSchema;
@@ -74,7 +75,7 @@ function normalizeWorkflowArgs(
     }
   }
 
-  if (isRecord(rawArgs)) {
+  if (isPlainObject(rawArgs)) {
     for (const property of properties) {
       if (property.name in rawArgs) {
         normalized[property.name] = rawArgs[property.name];
@@ -103,19 +104,19 @@ function assertObjectSchema(schema: Record<string, unknown>): void {
   if (schema.type !== "object") {
     throw new Error('Workflow metadata.argsSchema must have type "object"');
   }
-  if (!isRecord(schema.properties)) {
+  if (!isPlainObject(schema.properties)) {
     throw new Error("Workflow metadata.argsSchema.properties must be an object");
   }
 }
 
 function propertySchemas(schema: Record<string, unknown>): ArgsPropertySchema[] {
   const rawProperties = schema.properties;
-  if (!isRecord(rawProperties)) {
+  if (!isPlainObject(rawProperties)) {
     throw new Error("Workflow metadata.argsSchema.properties must be an object");
   }
 
   return Object.entries(rawProperties).map(([name, rawProperty]) => {
-    if (!isRecord(rawProperty)) {
+    if (!isPlainObject(rawProperty)) {
       throw new Error(`Workflow args property ${name} must be an object schema`);
     }
     const type = typeof rawProperty.type === "string" ? rawProperty.type : "string";
@@ -144,7 +145,7 @@ function workflowInputString(rawArgs: unknown): string {
   if (typeof rawArgs === "string") {
     return rawArgs;
   }
-  if (isRecord(rawArgs) && typeof rawArgs[RAW_INPUT_FIELD] === "string") {
+  if (isPlainObject(rawArgs) && typeof rawArgs[RAW_INPUT_FIELD] === "string") {
     return rawArgs[RAW_INPUT_FIELD];
   }
   return "";
@@ -400,8 +401,4 @@ function tokenize(input: string): TokenizeResult {
   if (escaped) current += "\\";
   if (current.length > 0) tokens.push(current);
   return { tokens, error: "" };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === "object" && !Array.isArray(value);
 }
