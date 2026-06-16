@@ -4,10 +4,12 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, mock, spyOn, test } from "bun:test";
+import assert from "@/common/utils/assert";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { WorkflowActionRegistry } from "./WorkflowActionRegistry";
+import { WorkflowActionRunner } from "./WorkflowActionRunner";
 import { WorkflowRunStore } from "./WorkflowRunStore";
 import {
   WorkflowRunBackgroundedError,
@@ -2079,6 +2081,173 @@ describe("WorkflowRunner", () => {
     });
 
     await expect(runner.run("wfr_missing_id")).rejects.toThrow(/stable id/);
+  });
+
+  test("runs parallelActions concurrently and returns ordered results", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-actions");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_actions",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelActions }) {
+        const results = parallelActions([
+          { name: "git.status", id: "first", input: { label: "first" } },
+          { name: "git.status", id: "second", input: { label: "second" } },
+        ]);
+        return { reportMarkdown: results.map((result) => result.output.label).join(" + ") };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const started: string[] = [];
+    const bothStarted = createDeferred();
+    const releaseActions = createDeferred();
+    const actionRunner = new WorkflowActionRunner({
+      hostActions: new Map([
+        [
+          "git.status",
+          {
+            metadata: {
+              version: 1,
+              description: "Barrier",
+              effect: "read",
+              outputSchema: { type: "object" },
+            },
+            async execute(input) {
+              assert(input != null && typeof input === "object", "expected action input object");
+              const label = (input as { label?: unknown }).label;
+              assert(typeof label === "string", "expected action label");
+              started.push(label);
+              if (started.length === 2) {
+                bothStarted.resolve();
+              }
+              await releaseActions.promise;
+              return { label };
+            },
+          },
+        ],
+      ]),
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      actionRunner,
+      projectTrusted: true,
+      defaultActionCwd: tmp.path,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const runSettled = runner.run("wfr_parallel_actions").then(
+      (result) => ({ status: "fulfilled" as const, result }),
+      (error: unknown) => ({ status: "rejected" as const, error })
+    );
+    const startRace = await Promise.race([
+      bothStarted.promise.then(() => ({ status: "started" as const })),
+      runSettled,
+    ]);
+    if (startRace.status === "rejected") {
+      throw startRace.error;
+    }
+    releaseActions.resolve();
+
+    expect(started.sort()).toEqual(["first", "second"]);
+    const settled = await runSettled;
+    if (settled.status === "rejected") {
+      throw settled.error;
+    }
+    expect(settled.result).toEqual({ reportMarkdown: "first + second" });
+    const run = await store.getRun("wfr_parallel_actions");
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "action", stepId: "first", status: "started" }),
+        expect.objectContaining({ type: "action", stepId: "second", status: "started" }),
+        expect.objectContaining({ type: "action", stepId: "first", status: "completed" }),
+        expect.objectContaining({ type: "action", stepId: "second", status: "completed" }),
+      ])
+    );
+  });
+
+  test("runs parallelWorkflows through built-in workflows.start", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-workflows");
+    const projectRoot = path.join(tmp.path, "project-actions");
+    const globalRoot = path.join(tmp.path, "global-actions");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_workflows",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelWorkflows }) {
+        const results = parallelWorkflows([
+          { id: "child-a", name: "child-simple", args: { topic: "A" } },
+          { id: "child-b", name: "child-simple", args: { topic: "B" } },
+        ]);
+        return {
+          reportMarkdown: results.map((result) => result.reportMarkdown).join(" + "),
+          structuredOutput: { statuses: results.map((result) => result.status) },
+        };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      actionRegistry: new WorkflowActionRegistry({ projectRoot, globalRoot }),
+      childRunAdapter: {
+        async runChildWorkflowToTerminal(input) {
+          const args = input.args as { topic: string };
+          return {
+            runId: input.childRunId,
+            status: "completed",
+            result: { reportMarkdown: `Child ${args.topic}` },
+          };
+        },
+      },
+      projectTrusted: true,
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_parallel_workflows")).resolves.toEqual({
+      reportMarkdown: "Child A + Child B",
+      structuredOutput: { statuses: ["completed", "completed"] },
+    });
+    const run = await store.getRun("wfr_parallel_workflows");
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "workflow", stepId: "child-a", status: "started" }),
+        expect.objectContaining({ type: "workflow", stepId: "child-b", status: "started" }),
+        expect.objectContaining({ type: "workflow", stepId: "child-a", status: "completed" }),
+        expect.objectContaining({ type: "workflow", stepId: "child-b", status: "completed" }),
+      ])
+    );
   });
 
   test("runs user-defined workflow actions and persists action events", async () => {

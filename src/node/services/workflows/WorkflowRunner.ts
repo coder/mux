@@ -100,6 +100,11 @@ export interface WorkflowActionSpec {
   cache?: boolean;
 }
 
+export interface WorkflowActionInvocationSpec {
+  name: string;
+  spec: WorkflowActionSpec;
+}
+
 export interface WorkflowStartInput {
   name: string;
   args: unknown;
@@ -208,16 +213,19 @@ function createForegroundWaitBackgroundedError(): Error {
   return error;
 }
 
-// parallelAgents accepts an optional second argument: { maxParallel?: number }.
-// maxParallel caps how many sub-agent tasks run at once; remaining specs start
-// as running ones finish (sliding window) instead of all launching up front.
-function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
+// Parallel fan-out primitives accept an optional second argument: { maxParallel?: number }.
+// maxParallel caps how many steps run at once; remaining specs start as running
+// ones finish (sliding window) instead of all launching up front.
+function parseWorkflowParallelOptions(
+  raw: unknown,
+  primitiveName: "parallelAgents" | "parallelActions"
+): { maxParallel?: number } {
   if (raw == null) {
     return {};
   }
   assert(
     typeof raw === "object" && !Array.isArray(raw),
-    "parallelAgents options must be an object"
+    `${primitiveName} options must be an object`
   );
   const { maxParallel } = raw as { maxParallel?: unknown };
   if (maxParallel == null) {
@@ -225,9 +233,17 @@ function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
   }
   assert(
     typeof maxParallel === "number" && Number.isInteger(maxParallel) && maxParallel > 0,
-    "parallelAgents options.maxParallel must be a positive integer"
+    `${primitiveName} options.maxParallel must be a positive integer`
   );
   return { maxParallel };
+}
+
+function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
+  return parseWorkflowParallelOptions(raw, "parallelAgents");
+}
+
+function parseParallelActionsOptions(raw: unknown): { maxParallel?: number } {
+  return parseWorkflowParallelOptions(raw, "parallelActions");
 }
 
 function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
@@ -517,6 +533,21 @@ export class WorkflowRunner {
               abortSignal: setupRuntime.getAbortSignal(),
               backgroundOnMessageQueued: options?.backgroundOnMessageQueued ?? true,
               leaseGuard,
+            });
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              await markBackgrounded();
+            }
+            throw error;
+          }
+        });
+        setupRuntime.registerFunction("__workflowParallelActions", async (rawSpecs, rawOptions) => {
+          try {
+            return await this.runActionStepsInParallel(runId, sequence, rawSpecs, {
+              abortSignal: setupRuntime.getAbortSignal(),
+              backgroundOnMessageQueued: options?.backgroundOnMessageQueued ?? true,
+              leaseGuard,
+              rawOptions,
             });
           } catch (error) {
             if (isForegroundWaitBackgroundedError(error)) {
@@ -822,6 +853,105 @@ export class WorkflowRunner {
       abortSignal: options.abortSignal,
       leaseGuard: options.leaseGuard,
     });
+  }
+
+  private async runActionStepsInParallel(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    rawInvocations: unknown,
+    options: {
+      abortSignal?: AbortSignal;
+      backgroundOnMessageQueued?: boolean;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+      rawOptions?: unknown;
+    }
+  ): Promise<Array<WorkflowActionResult | WorkflowNestedResult>> {
+    assert(Array.isArray(rawInvocations), "parallelActions requires an array of action specs");
+    if (rawInvocations.length === 0) {
+      return [];
+    }
+    const { maxParallel } = parseParallelActionsOptions(options.rawOptions);
+    const invocations = rawInvocations.map(parseWorkflowActionInvocationSpec);
+    const seenStepIds = new Set<string>();
+    for (const invocation of invocations) {
+      assertWorkflowStepId(invocation.spec.id, "parallelActions");
+      assert(
+        !seenStepIds.has(invocation.spec.id),
+        `parallelActions requires unique step ids; duplicate id: ${invocation.spec.id}`
+      );
+      seenStepIds.add(invocation.spec.id);
+    }
+
+    const results = new Array<WorkflowActionResult | WorkflowNestedResult>(invocations.length);
+    const batchAbortController = new AbortController();
+    const upstreamAbortSignal = options.abortSignal;
+    const abortBatch = () => batchAbortController.abort();
+    if (upstreamAbortSignal?.aborted) {
+      abortBatch();
+    } else {
+      upstreamAbortSignal?.addEventListener("abort", abortBatch, { once: true });
+    }
+
+    let batchStopped = false;
+    let foregroundBackgrounded = false;
+    let firstError: unknown;
+    let hasFirstError = false;
+    const rememberFirstError = (error: unknown) => {
+      if (!hasFirstError) {
+        firstError = error;
+        hasFirstError = true;
+      }
+    };
+    const windowSemaphore =
+      maxParallel != null && maxParallel < invocations.length
+        ? new AsyncSemaphore(maxParallel)
+        : undefined;
+    const guardedRuns = invocations.map(async (invocation, index) => {
+      const slot = windowSemaphore ? await windowSemaphore.acquire() : undefined;
+      try {
+        if (batchStopped || batchAbortController.signal.aborted) {
+          throw new Error(
+            `parallelActions step ${invocation.spec.id} canceled before it started: a sibling action failed or the batch was aborted`
+          );
+        }
+        const result = await this.runActionStep(runId, sequence, invocation.name, invocation.spec, {
+          abortSignal: batchAbortController.signal,
+          backgroundOnMessageQueued: options.backgroundOnMessageQueued,
+          leaseGuard: options.leaseGuard,
+        });
+        return { index, result };
+      } catch (error) {
+        rememberFirstError(error);
+        batchStopped = true;
+        if (isForegroundWaitBackgroundedError(error)) {
+          foregroundBackgrounded = true;
+        }
+        return { index, error };
+      } finally {
+        slot?.release();
+      }
+    });
+
+    const unsettledRuns = new Map(guardedRuns.map((run, index) => [index, run]));
+    try {
+      while (unsettledRuns.size > 0) {
+        const settled = await Promise.race(unsettledRuns.values());
+        unsettledRuns.delete(settled.index);
+        if (!("error" in settled)) {
+          results[settled.index] = settled.result;
+        }
+      }
+    } finally {
+      upstreamAbortSignal?.removeEventListener("abort", abortBatch);
+    }
+
+    if (foregroundBackgrounded) {
+      throw createForegroundWaitBackgroundedError();
+    }
+    if (hasFirstError) {
+      throw firstError;
+    }
+    return results;
   }
 
   private async runNestedWorkflowStep(
@@ -2131,6 +2261,18 @@ class WorkflowEventSequence {
   }
 }
 
+function parseWorkflowActionInvocationSpec(rawInvocation: unknown): WorkflowActionInvocationSpec {
+  assert(
+    rawInvocation != null && typeof rawInvocation === "object" && !Array.isArray(rawInvocation),
+    "parallelActions requires action spec objects"
+  );
+  const invocation = rawInvocation as Record<string, unknown>;
+  const name = invocation.name ?? invocation.actionName ?? invocation.action;
+  assert(typeof name === "string" && name.length > 0, "parallelActions action name is required");
+  const rawSpec = invocation.spec ?? invocation;
+  return { name, spec: parseWorkflowActionSpec(rawSpec) };
+}
+
 function parseWorkflowActionSpec(rawSpec: unknown): WorkflowActionSpec {
   assert(rawSpec != null && typeof rawSpec === "object", "action requires a spec object");
   const spec = rawSpec as Record<string, unknown>;
@@ -2642,6 +2784,23 @@ function __muxCreateWorkflowActionProxy(path) {
     },
   });
 }
+function __muxParallelWorkflows(specs, options) {
+  if (!Array.isArray(specs)) throw new Error("parallelWorkflows requires an array of workflow specs");
+  return __workflowParallelActions(specs.map(function (spec) {
+    if (spec == null || typeof spec !== "object" || Array.isArray(spec)) {
+      throw new Error("parallelWorkflows requires workflow spec objects");
+    }
+    return {
+      name: "workflows.start",
+      id: spec.id,
+      input: {
+        name: spec.name,
+        args: Object.prototype.hasOwnProperty.call(spec, "args") ? spec.args : {},
+      },
+      builtInOnly: true,
+    };
+  }), options);
+}
 ${compiled}
 return (async () => await __muxWorkflow({
   args: __workflowArgs(),
@@ -2651,6 +2810,8 @@ return (async () => await __muxWorkflow({
   action: __muxCreateWorkflowActionProxy([]),
   applyPatch: __workflowApplyPatch,
   parallelAgents: __workflowParallelAgents,
+  parallelActions: __workflowParallelActions,
+  parallelWorkflows: __muxParallelWorkflows,
 }))();
 `;
 }
