@@ -54,6 +54,15 @@ const DialogContent = React.forwardRef<
       maxHeight,
       style,
       onEscapeKeyDown,
+      onClick,
+      onMouseDown,
+      onMouseUp,
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onTouchStart,
+      onTouchMove,
+      onTouchEnd,
       ...props
     },
     ref
@@ -67,6 +76,44 @@ const DialogContent = React.forwardRef<
           // Radix uses capture phase for Escape, so we must use onEscapeKeyDown (not onKeyDown).
           e.stopPropagation();
           onEscapeKeyDown?.(e);
+        }}
+        onClick={(e) => {
+          // React portals still bubble synthetic events through their component tree. Dialogs are
+          // sometimes rendered from clickable workspace rows, so keep modal interactions local.
+          e.stopPropagation();
+          onClick?.(e);
+        }}
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          onMouseDown?.(e);
+        }}
+        onMouseUp={(e) => {
+          e.stopPropagation();
+          onMouseUp?.(e);
+        }}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          onPointerDown?.(e);
+        }}
+        onPointerMove={(e) => {
+          e.stopPropagation();
+          onPointerMove?.(e);
+        }}
+        onPointerUp={(e) => {
+          e.stopPropagation();
+          onPointerUp?.(e);
+        }}
+        onTouchStart={(e) => {
+          e.stopPropagation();
+          onTouchStart?.(e);
+        }}
+        onTouchMove={(e) => {
+          e.stopPropagation();
+          onTouchMove?.(e);
+        }}
+        onTouchEnd={(e) => {
+          e.stopPropagation();
+          onTouchEnd?.(e);
         }}
         className={cn(
           "bg-dark border-border fixed top-[50%] left-[50%] z-[1500] grid w-[90%] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
