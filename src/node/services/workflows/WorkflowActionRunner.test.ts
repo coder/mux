@@ -156,6 +156,27 @@ module.exports.execute = async function () { return {}; };
     }
   });
 
+  test("rejects mutable schema aliases", async () => {
+    using tmp = new DisposableTempDir("workflow-action-mutable-alias");
+    const runner = new WorkflowActionRunner();
+    const sources = [
+      `let s = mux.schema;
+export const metadata = { version: 1, description: "Mutable", effect: "read", inputSchema: s.object({ name: s.string() }) };
+export async function execute() { return {}; }
+`,
+      `var s = mux.schema;
+module.exports.metadata = { version: 1, description: "Mutable", effect: "read", inputSchema: s.object({ name: s.string() }) };
+module.exports.execute = async function () { return {}; };
+`,
+    ];
+
+    for (const [index, source] of sources.entries()) {
+      const sourcePath = path.join(tmp.path, `mutable-${index}.js`);
+      await fs.writeFile(sourcePath, source, "utf-8");
+      await expectRejects(runner.describe(createAction(sourcePath, source)), /Workflow metadata/);
+    }
+  });
+
   test("rejects interpolated template literal metadata", async () => {
     using tmp = new DisposableTempDir("workflow-action-interpolated-metadata");
     const sourcePath = path.join(tmp.path, "interpolated.js");

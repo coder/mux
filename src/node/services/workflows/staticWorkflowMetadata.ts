@@ -153,7 +153,7 @@ function findStaticMuxSchemaAliases(source: string, beforeIndex: number): Set<st
   const aliases = new Set<string>();
   const maskedSource = maskStaticJavaScriptSource(source.slice(0, beforeIndex));
   const pattern =
-    /(^|[;\n])\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*mux\.schema\s*(?:[;\n]|$)/gmu;
+    /(^|[;\n])\s*(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*mux\.schema\s*(?:[;\n]|$)/gmu;
   for (const match of maskedSource.matchAll(pattern)) {
     if (!isTopLevelStaticMatch(maskedSource, match.index)) continue;
     const alias = match[2];
