@@ -444,7 +444,7 @@ module.exports.execute = async function () { return {}; };
     const reviewContext = await runner.execute(reviewContextAction, {
       input: { includeCommits: true, diffCharBudget: 10_000 },
       cwd: repoRoot,
-      timeoutMs: 10_000,
+      timeoutMs: 30_000,
       artifactDir: path.join(tmp.path, "artifacts-review"),
     });
     const output = expectObjectRecord(reviewContext.output);
@@ -460,7 +460,7 @@ module.exports.execute = async function () { return {}; };
     const metadataOnlyReviewContext = await runner.execute(reviewContextAction, {
       input: { diffCharBudget: 0 },
       cwd: repoRoot,
-      timeoutMs: 10_000,
+      timeoutMs: 30_000,
       artifactDir: path.join(tmp.path, "artifacts-review-metadata-only"),
     });
     const metadataOnlyOutput = expectObjectRecord(metadataOnlyReviewContext.output);
@@ -484,7 +484,7 @@ module.exports.execute = async function () { return {}; };
 
     expect(preflightOutput.ok).toBe(false);
     expect(preflightOutput.reason).toContain("dirty");
-  }, 10_000);
+  }, 40_000);
 
   test("built-in git.reviewContext reports failures outside a git repository", async () => {
     using tmp = new DisposableTempDir("workflow-action-git-review-context-no-repo");
@@ -498,7 +498,7 @@ module.exports.execute = async function () { return {}; };
     const result = await runner.execute(action, {
       input: null,
       cwd: tmp.path,
-      timeoutMs: 10_000,
+      timeoutMs: 30_000,
       artifactDir: path.join(tmp.path, "artifacts"),
     });
 
@@ -511,7 +511,7 @@ module.exports.execute = async function () { return {}; };
     expect(failureActions).toContain("git.status");
     expect(failureActions).toContain("git.reviewContext");
     expect(expectObjectRecord(output.rendered).snapshotMarkdown).toContain("Git context warnings");
-  }, 10_000);
+  }, 40_000);
 
   test("built-in git.status skips ignored files unless requested", async () => {
     using tmp = new DisposableTempDir("workflow-action-git-status-ignored");

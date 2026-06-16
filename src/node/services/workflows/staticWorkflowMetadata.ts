@@ -182,7 +182,7 @@ function findTopLevelStringPropertyRange(
     const valueEnd = skipStaticValue(source, index, objectEnd);
     if (key.value === propertyName) {
       const quote = source[valueStart];
-      if (quote !== '"' && quote !== "'") return null;
+      if (quote !== '"' && quote !== "'" && quote !== "`") return null;
       return { start: valueStart, end: skipQuotedString(source, valueStart, quote) };
     }
     index = skipStaticWhitespace(source, valueEnd);
@@ -385,7 +385,7 @@ class StaticMetadataLiteralParser {
     const char = this.source[this.index];
     if (char === "{") return this.readObject();
     if (char === "[") return this.readArray();
-    if (char === '"' || char === "'") return this.readString(char);
+    if (char === '"' || char === "'" || char === "`") return this.readString(char);
     const schemaCallPrefix = this.matchSchemaCallPrefix();
     if (schemaCallPrefix != null) return this.readSchemaCall(schemaCallPrefix);
     if (this.source.startsWith("true", this.index)) {
@@ -437,7 +437,7 @@ class StaticMetadataLiteralParser {
   private readObjectKey(): string {
     this.skipWhitespaceAndComments();
     const char = this.source[this.index];
-    if (char === '"' || char === "'") return this.readString(char);
+    if (char === '"' || char === "'" || char === "`") return this.readString(char);
     const match = /^[A-Za-z_$][A-Za-z0-9_$-]*/u.exec(this.source.slice(this.index));
     if (match == null) throw new Error(STATIC_METADATA_ERROR);
     this.index += match[0].length;
@@ -464,6 +464,7 @@ class StaticMetadataLiteralParser {
       case '"':
       case "'":
       case "\\":
+      case "`":
         return char;
       case "b":
         return "\b";

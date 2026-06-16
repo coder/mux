@@ -798,6 +798,31 @@ describe("WorkflowDefinitionStore", () => {
     expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(promotedSource)).not.toThrow();
   });
 
+  test("promotion replaces template-literal metadata descriptions", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    await store.promoteDefinition({
+      name: "template-description-draft",
+      description: "Reusable template draft",
+      source:
+        'export const metadata = { description: `Scratch template draft`, argsSchema: { type: "object" } };\nexport default function workflow() { return { reportMarkdown: metadata.description }; }\n',
+      location: "project",
+      overwrite: false,
+      projectTrusted: true,
+    });
+
+    const promotedSource = await fs.readFile(
+      path.join(projectRoot, "template-description-draft.js"),
+      "utf-8"
+    );
+    expect(promotedSource).toContain('description: "Reusable template draft"');
+    expect(promotedSource.match(/export const metadata/g)).toHaveLength(1);
+    expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(promotedSource)).not.toThrow();
+  });
+
   test("skips invalid filenames and unreadable descriptors", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");

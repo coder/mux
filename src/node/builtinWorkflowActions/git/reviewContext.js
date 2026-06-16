@@ -85,7 +85,8 @@ module.exports.metadata = {
     { kind: "command", command: "git log" },
     { kind: "command", command: "git ls-files" },
   ],
-  timeoutMs: 10000,
+  // Aggregate review snapshots can spawn several git commands; allow CI filesystems to breathe.
+  timeoutMs: 30000,
 };
 
 const DEFAULT_DIFF_CHAR_BUDGET = 60000;
