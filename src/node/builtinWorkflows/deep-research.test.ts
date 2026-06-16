@@ -53,9 +53,9 @@ describe("normalizeDeepResearchInput", () => {
     expect(normalizeDeepResearchInput("   ")).toEqual({ topic: "", mode: "smart" });
   });
 
-  test("prefers topic over input over query", () => {
+  test("prefers topic over parsed query over raw input", () => {
     expect(normalizeDeepResearchInput({ topic: "a", input: "b", query: "c" }).topic).toBe("a");
-    expect(normalizeDeepResearchInput({ input: "b", query: "c" }).topic).toBe("b");
+    expect(normalizeDeepResearchInput({ input: "b", query: "c" }).topic).toBe("c");
     expect(normalizeDeepResearchInput({ query: "c" }).topic).toBe("c");
   });
 

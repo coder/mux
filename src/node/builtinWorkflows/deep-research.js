@@ -745,10 +745,10 @@ export function normalizeDeepResearchInput(args) {
 function normalizeResearchTopic(args) {
   if (typeof args === "string") return nonEmptyString(args);
   if (args && typeof args === "object") {
-    // Slash invocations pass { input }; programmatic callers may use topic or query.
+    // Slash invocations pass { input }; parsed --query should win over raw flag text.
     if (typeof args.topic === "string" && args.topic.trim()) return args.topic.trim();
-    if (typeof args.input === "string" && args.input.trim()) return args.input.trim();
     if (typeof args.query === "string" && args.query.trim()) return args.query.trim();
+    if (typeof args.input === "string" && args.input.trim()) return args.input.trim();
   }
   return "";
 }
