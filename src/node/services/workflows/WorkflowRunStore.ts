@@ -14,14 +14,15 @@ import {
   WorkflowRunRecordSchema,
   WorkflowStepRecordSchema,
 } from "@/common/orpc/schemas";
-import type {
-  StructuredTaskOutput,
-  WorkflowDefinitionDescriptor,
-  WorkflowRunEvent,
-  WorkflowRunParent,
-  WorkflowRunRecord,
-  WorkflowRunStatus,
-  WorkflowStepRecord,
+import {
+  isActiveWorkflowRunStatus,
+  type StructuredTaskOutput,
+  type WorkflowDefinitionDescriptor,
+  type WorkflowRunEvent,
+  type WorkflowRunParent,
+  type WorkflowRunRecord,
+  type WorkflowRunStatus,
+  type WorkflowStepRecord,
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -208,7 +209,24 @@ export class WorkflowRunStore {
   async getRunStatusSnapshot(runId: string): Promise<WorkflowRunStatusSnapshot> {
     assertValidWorkflowRunId(runId);
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
-    return WorkflowRunStatusSnapshotSchema.parse(rawRun);
+    const snapshot = WorkflowRunStatusSnapshotSchema.parse(rawRun);
+    if (
+      !isActiveWorkflowRunStatus(snapshot.status) ||
+      (await this.hasActiveWorkflowMutationLock(runId))
+    ) {
+      return snapshot;
+    }
+
+    // Crash recovery: status events hit the journal before run.json is rewritten.
+    // Active-looking snapshots must consult the journal so completed workflows do not
+    // keep the sidebar active forever after a mid-transition crash.
+    const events = await this.readEvents(runId);
+    const latestEvent = events.at(-1);
+    return WorkflowRunStatusSnapshotSchema.parse({
+      ...snapshot,
+      status: getRunStatusFromEvents(events) ?? snapshot.status,
+      updatedAt: latestEvent?.at ?? snapshot.updatedAt,
+    });
   }
 
   async listRunStatusSnapshots(): Promise<WorkflowRunStatusSnapshot[]> {

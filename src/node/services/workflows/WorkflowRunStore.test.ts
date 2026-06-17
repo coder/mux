@@ -82,6 +82,28 @@ describe("WorkflowRunStore", () => {
     expect(snapshots[1]?.parentWorkflow?.runId).toBe("wfr_123");
   });
 
+  test("reconciles active status snapshots with terminal journal events", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-status-reconcile");
+    const store = await createStore(tmp.path);
+    await store.appendStatus("wfr_123", "running", "2026-05-29T00:00:01.000Z");
+    await store.appendStatus("wfr_123", "completed", "2026-05-29T00:00:02.000Z");
+
+    const runFile = path.join(tmp.path, "workflows", "wfr_123", "run.json");
+    const staleRun = JSON.parse(await fs.readFile(runFile, "utf-8")) as Record<string, unknown>;
+    staleRun.status = "running";
+    staleRun.updatedAt = "2026-05-29T00:00:01.000Z";
+    await fs.writeFile(runFile, JSON.stringify(staleRun, null, 2), "utf-8");
+
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({
+      status: "completed",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+    });
+    await expect(store.getRunStatusSnapshot("wfr_123")).resolves.toMatchObject({
+      status: "completed",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+    });
+  });
+
   test("rejects invalid run ids before resolving run file paths", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = new WorkflowRunStore({ sessionDir: tmp.path });
