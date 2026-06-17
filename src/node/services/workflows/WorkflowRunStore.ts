@@ -15,7 +15,6 @@ import {
   WorkflowStepRecordSchema,
 } from "@/common/orpc/schemas";
 import {
-  isActiveWorkflowRunStatus,
   type StructuredTaskOutput,
   type WorkflowDefinitionDescriptor,
   type WorkflowRunEvent,
@@ -210,16 +209,13 @@ export class WorkflowRunStore {
     assertValidWorkflowRunId(runId);
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
     const snapshot = WorkflowRunStatusSnapshotSchema.parse(rawRun);
-    if (
-      !isActiveWorkflowRunStatus(snapshot.status) ||
-      (await this.hasActiveWorkflowMutationLock(runId))
-    ) {
+    if (await this.hasActiveWorkflowMutationLock(runId)) {
       return snapshot;
     }
 
     // Crash recovery: status events hit the journal before run.json is rewritten.
-    // Active-looking snapshots must consult the journal so completed workflows do not
-    // keep the sidebar active forever after a mid-transition crash.
+    // Status snapshots consult the journal so recovered workflows do not keep stale
+    // active or inactive sidebar state forever after a mid-transition crash.
     const events = await this.readEvents(runId);
     const latestEvent = events.at(-1);
     return WorkflowRunStatusSnapshotSchema.parse({
