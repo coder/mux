@@ -6856,7 +6856,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "## Before authoring",
       "",
       "1. Run `workflow_list` to see existing workflows.",
-      "2. If an existing workflow is close, run `workflow_read({ name })` and adapt the pattern.",
+      '2. If an existing workflow is close, run `workflow_read({ name, view: "source" })` and adapt the pattern.',
       "3. Run `workflow_action_list` before writing `action.*` or `parallelActions` calls; use each action's metadata `inputSchema`, `outputSchema`, `effect`, and `permissions` to choose valid arguments.",
       "4. For one-off drafts, write a scratch workflow:",
       "",
