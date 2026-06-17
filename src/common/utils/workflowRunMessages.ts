@@ -2,6 +2,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 
+export const SCHEDULED_WORKFLOW_TRIGGER_LABEL = "Automation:";
 export const WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE = "workflow-trigger-display";
 export const WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE = "workflow-run-card-display";
 export const WORKFLOW_RESULT_METADATA_TYPE = "workflow-result";

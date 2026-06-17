@@ -4,6 +4,7 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
+import { SCHEDULED_WORKFLOW_TRIGGER_LABEL } from "@/common/utils/workflowRunMessages";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { DisplayedUserMessage, InlineSkillSnapshotMap } from "@/common/types/message";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
@@ -81,6 +82,36 @@ describe("UserMessageContent inline skill rendering", () => {
     expect(
       view.getByRole("region", { name: "Source for workflow deep-review-workflow" }).tabIndex
     ).toBe(0);
+  });
+
+  test("highlights the scheduled workflow name instead of the automation label", () => {
+    const view = render(
+      <UserMessageContent
+        content={`${SCHEDULED_WORKFLOW_TRIGGER_LABEL} github-issue-triage`}
+        commandPrefix={SCHEDULED_WORKFLOW_TRIGGER_LABEL}
+        workflowDefinitionPreview={{
+          descriptor: {
+            name: "github-issue-triage",
+            description: "Triage GitHub issues",
+            scope: "project",
+            executable: true,
+          },
+          source: "export default function workflow() {}",
+        }}
+        variant="sent"
+      />
+    );
+
+    const trigger = view.getByRole("button", {
+      name: "Show workflow definition preview for github-issue-triage",
+    });
+    expect(trigger.textContent).toBe("github-issue-triage");
+    expect(getSkillBadges(view.container).map((badge) => badge.textContent)).toEqual([
+      "github-issue-triage",
+    ]);
+    expect(view.container.textContent?.replace(/\u00a0/g, " ")).toContain(
+      "Automation: github-issue-triage"
+    );
   });
 
   test("opens the slash workflow preview from the focusable command badge", async () => {

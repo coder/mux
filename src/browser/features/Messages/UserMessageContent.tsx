@@ -6,6 +6,7 @@ import type {
   WorkflowDefinitionPreviewForDisplay,
 } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
+import { SCHEDULED_WORKFLOW_TRIGGER_LABEL } from "@/common/utils/workflowRunMessages";
 import { ReviewBlockFromData } from "../Shared/ReviewBlock";
 import {
   HoverCard,
@@ -101,6 +102,55 @@ const imageContainerStyles = {
 
 const markdownClassName = "user-message-markdown";
 
+interface ScheduledWorkflowTriggerDisplay {
+  label: string;
+  workflowName: string;
+  remainingContent: string;
+}
+
+function getScheduledWorkflowTriggerDisplay(options: {
+  textContent: string;
+  commandPrefix?: string;
+  workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
+}): ScheduledWorkflowTriggerDisplay | null {
+  if (
+    options.commandPrefix !== SCHEDULED_WORKFLOW_TRIGGER_LABEL ||
+    !options.textContent.startsWith(SCHEDULED_WORKFLOW_TRIGGER_LABEL)
+  ) {
+    return null;
+  }
+
+  const contentAfterLabel = options.textContent
+    .slice(SCHEDULED_WORKFLOW_TRIGGER_LABEL.length)
+    .trimStart();
+  if (contentAfterLabel.length === 0) {
+    return null;
+  }
+
+  const previewName = options.workflowDefinitionPreview?.descriptor.name;
+  if (previewName && contentAfterLabel.startsWith(previewName)) {
+    const nextChar = contentAfterLabel.charAt(previewName.length);
+    if (nextChar === "" || /\s/u.test(nextChar)) {
+      return {
+        label: SCHEDULED_WORKFLOW_TRIGGER_LABEL,
+        workflowName: previewName,
+        remainingContent: contentAfterLabel.slice(previewName.length),
+      };
+    }
+  }
+
+  const workflowName = contentAfterLabel.trim();
+  if (workflowName.length === 0 || workflowName.includes("\n")) {
+    return null;
+  }
+
+  return {
+    label: SCHEDULED_WORKFLOW_TRIGGER_LABEL,
+    workflowName,
+    remainingContent: "",
+  };
+}
+
 function dataUrlToBlob(dataUrl: string): Blob | null {
   if (!dataUrl.startsWith("data:")) return null;
 
@@ -190,6 +240,62 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const snapshotMarkdown = buildAgentSkillSnapshotMarkdown(props.agentSkillSnapshot);
     const workflowDefinitionPreview = props.workflowDefinitionPreview;
 
+    const renderWorkflowDefinitionBadge = (label: string) => {
+      if (!workflowDefinitionPreview) {
+        return <AgentSkillBadge>{label}</AgentSkillBadge>;
+      }
+
+      return (
+        <HoverClickPopover
+          align="start"
+          content={<WorkflowDefinitionPreviewCard preview={workflowDefinitionPreview} />}
+          contentClassName="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[560px] max-w-[80vw] overflow-auto border-2 p-3"
+          interactiveContent
+          side="top"
+        >
+          {/* Workflow previews use the run record snapshot so old invocations show what actually ran. */}
+          <AgentSkillBadge
+            as="button"
+            aria-label={`Show workflow definition preview for ${workflowDefinitionPreview.descriptor.name}`}
+            className="cursor-help"
+          >
+            {label}
+          </AgentSkillBadge>
+        </HoverClickPopover>
+      );
+    };
+
+    const scheduledWorkflowDisplay = getScheduledWorkflowTriggerDisplay({
+      textContent,
+      commandPrefix: shouldHighlightPrefix,
+      workflowDefinitionPreview,
+    });
+    if (scheduledWorkflowDisplay) {
+      const charAfterWorkflow = scheduledWorkflowDisplay.remainingContent.charAt(0);
+      const hasSpaceAfterWorkflow = charAfterWorkflow === " ";
+      const hasNewlineAfterWorkflow = charAfterWorkflow === "\n";
+
+      return (
+        <div className={hasNewlineAfterWorkflow ? "" : "flex flex-wrap items-baseline"}>
+          {/* Scheduled triggers start with an automation label; color the workflow name instead. */}
+          <span className="font-mono text-[13px] font-medium" style={markdownStyles[props.variant]}>
+            {scheduledWorkflowDisplay.label}&nbsp;
+          </span>
+          {renderWorkflowDefinitionBadge(scheduledWorkflowDisplay.workflowName)}
+          {hasSpaceAfterWorkflow && <span>&nbsp;</span>}
+          {scheduledWorkflowDisplay.remainingContent.trim() && (
+            <MarkdownRenderer
+              content={scheduledWorkflowDisplay.remainingContent.trim()}
+              className={markdownClassName}
+              style={markdownStyles[props.variant]}
+              inlineSkillSnapshots={props.inlineSkillSnapshots}
+              preserveLineBreaks
+            />
+          )}
+        </div>
+      );
+    }
+
     const badge = snapshotMarkdown ? (
       <HoverCard openDelay={150}>
         <HoverCardTrigger asChild>
@@ -213,22 +319,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
         </HoverCardPortal>
       </HoverCard>
     ) : workflowDefinitionPreview ? (
-      <HoverClickPopover
-        align="start"
-        content={<WorkflowDefinitionPreviewCard preview={workflowDefinitionPreview} />}
-        contentClassName="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[560px] max-w-[80vw] overflow-auto border-2 p-3"
-        interactiveContent
-        side="top"
-      >
-        {/* Workflow previews use the run record snapshot so old invocations show what actually ran. */}
-        <AgentSkillBadge
-          as="button"
-          aria-label={`Show workflow definition preview for ${workflowDefinitionPreview.descriptor.name}`}
-          className="cursor-help"
-        >
-          {shouldHighlightPrefix}
-        </AgentSkillBadge>
-      </HoverClickPopover>
+      renderWorkflowDefinitionBadge(shouldHighlightPrefix)
     ) : (
       <AgentSkillBadge>{shouldHighlightPrefix}</AgentSkillBadge>
     );
