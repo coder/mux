@@ -7849,8 +7849,11 @@ export class WorkspaceService extends EventEmitter {
           workspaceIds,
           async (workspaceId): Promise<readonly [string, WorkspaceActivitySnapshot] | null> => {
             const snapshot = snapshots.get(workspaceId) ?? null;
+            const hadWorkflowActivityCache = this.activeWorkflowRunIdsByWorkspace.has(workspaceId);
             const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId);
-            if (snapshot == null && activeWorkflowRunCount === 0) {
+            // Keep a zero-count tombstone for workspaces whose workflow-only activity
+            // was cleared while a frontend activity subscription was disconnected.
+            if (snapshot == null && activeWorkflowRunCount === 0 && !hadWorkflowActivityCache) {
               return null;
             }
             return [

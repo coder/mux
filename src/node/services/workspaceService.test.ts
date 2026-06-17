@@ -283,6 +283,10 @@ describe("WorkspaceService workflow activity", () => {
       });
       expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBeUndefined();
 
+      const clearedActivityList = await workspaceService.getActivityList();
+      expect(clearedActivityList[workspaceId]).toBeDefined();
+      expect(clearedActivityList[workspaceId]?.activeWorkflowRunCount).toBeUndefined();
+
       await workspaceService.emitWorkflowRunActivity({
         workspaceId,
         runId: "wfr_next",
