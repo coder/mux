@@ -665,9 +665,10 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     toolCallId: string
   ): WorkflowRunToolAttachment | undefined {
-    const attachment = streamInfo.pendingWorkflowRunAttachments.get(toolCallId);
+    const pendingAttachments = (streamInfo.pendingWorkflowRunAttachments ??= new Map());
+    const attachment = pendingAttachments.get(toolCallId);
     if (attachment != null) {
-      streamInfo.pendingWorkflowRunAttachments.delete(toolCallId);
+      pendingAttachments.delete(toolCallId);
     }
     return attachment;
   }
@@ -704,7 +705,7 @@ export class StreamManager extends EventEmitter {
       (part) => part.type === "dynamic-tool" && part.toolCallId === event.toolCallId
     );
     if (partIndex === -1) {
-      streamInfo.pendingWorkflowRunAttachments.set(event.toolCallId, attachment);
+      (streamInfo.pendingWorkflowRunAttachments ??= new Map()).set(event.toolCallId, attachment);
       return true;
     }
 
