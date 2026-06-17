@@ -126,7 +126,7 @@ function WorkflowActionListRow(props: { descriptor: WorkflowActionDescriptor }) 
               {action.metadata.effect}
             </WorkflowBadge>
           ) : (
-            <WorkflowBadge tone="warning">blocked</WorkflowBadge>
+            <WorkflowBadge tone="danger">blocked</WorkflowBadge>
           )}
         </span>
         <span

@@ -140,7 +140,9 @@ describe("WorkflowActionListToolCall", () => {
 
     expect(view.getByText("git.changedFiles")).toBeTruthy();
     expect(view.getByText("read")).toBeTruthy();
-    expect(view.getByText("blocked")).toBeTruthy();
+    const blockedBadge = view.getByText("blocked");
+    expect(blockedBadge.classList.contains("text-danger")).toBe(true);
+    expect(blockedBadge.classList.contains("text-warning")).toBe(false);
     // Blocked actions surface their reason in the row description slot.
     expect(view.getByText("Project is not trusted")).toBeTruthy();
   });

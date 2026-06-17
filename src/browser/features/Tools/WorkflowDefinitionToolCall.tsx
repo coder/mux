@@ -58,7 +58,7 @@ export function WorkflowKindBadge() {
 
 export function WorkflowBadge(props: {
   children: React.ReactNode;
-  tone?: "normal" | "success" | "warning";
+  tone?: "normal" | "success" | "warning" | "danger";
 }) {
   return (
     <span
@@ -66,6 +66,8 @@ export function WorkflowBadge(props: {
         "border-border bg-background/40 rounded border px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
         props.tone === "success" && "border-success/30 text-success",
         props.tone === "warning" && "border-warning/30 text-warning",
+        // Blocked workflows/actions need to stand apart from yellow external-action warnings.
+        props.tone === "danger" && "border-danger/40 bg-danger-overlay text-danger",
         (props.tone == null || props.tone === "normal") && "text-muted"
       )}
     >
@@ -149,7 +151,7 @@ function WorkflowDefinitionListRow(props: { descriptor: WorkflowDefinitionDescri
       </span>
       <div className="flex items-center gap-1.5">
         <WorkflowBadge>{descriptor.scope}</WorkflowBadge>
-        {!descriptor.executable && <WorkflowBadge tone="warning">blocked</WorkflowBadge>}
+        {!descriptor.executable && <WorkflowBadge tone="danger">blocked</WorkflowBadge>}
       </div>
       <div className="min-w-0 [@container(max-width:640px)]:col-span-2">
         <div className="text-muted truncate text-[11px]" title={descriptor.description}>
@@ -193,7 +195,7 @@ export function WorkflowDefinitionCard(props: {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-foreground font-mono text-[12px] font-medium">{descriptor.name}</span>
         <WorkflowBadge>{descriptor.scope}</WorkflowBadge>
-        {!descriptor.executable && <WorkflowBadge tone="warning">blocked</WorkflowBadge>}
+        {!descriptor.executable && <WorkflowBadge tone="danger">blocked</WorkflowBadge>}
       </div>
       {!props.compact && (
         <div className="text-muted mt-1 text-[11px]">{descriptor.description}</div>

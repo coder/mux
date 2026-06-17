@@ -167,7 +167,9 @@ describe("WorkflowDefinitionToolCall", () => {
     clickToolHeader(view, "2 definitions");
 
     expect(view.queryByText("executable")).toBeNull();
-    expect(view.getByText("blocked")).toBeTruthy();
+    const blockedBadge = view.getByText("blocked");
+    expect(blockedBadge.classList.contains("text-danger")).toBe(true);
+    expect(blockedBadge.classList.contains("text-warning")).toBe(false);
     expect(view.getByText("Project is not trusted")).toBeTruthy();
   });
 });
