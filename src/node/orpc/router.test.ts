@@ -116,7 +116,11 @@ describe("router workflow routes", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  function createContext(options: { enabled: boolean; workspacePath?: string }): ORPCContext {
+  function createContext(options: {
+    enabled: boolean;
+    workspacePath?: string;
+    subProjectPath?: string;
+  }): ORPCContext {
     const workspacePath = options.workspacePath ?? projectPath;
     return {
       workflowSchedulerService: {
@@ -139,6 +143,7 @@ describe("router workflow routes", () => {
             name: "workspace-1",
             projectPath,
             namedWorkspacePath: workspacePath,
+            ...(options.subProjectPath != null ? { subProjectPath: options.subProjectPath } : {}),
             runtimeConfig: { type: "local", srcBaseDir: tempDir },
           },
         })),
@@ -794,6 +799,35 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
         rawCommand: "/workflow needs-project-path hello",
       })
     );
+  });
+
+  test("fills slash projectPath defaults from the active sub-project", async () => {
+    const subProjectPath = path.join(projectPath, "packages", "api");
+    fs.mkdirSync(subProjectPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(projectPath, ".mux", "workflows", "needs-active-project.js"),
+      `const s = mux.schema;
+export const metadata = {
+  description: "Needs active project",
+  argsSchema: s.object({ projectPath: s.string() }),
+};
+export default function workflow({ args }) { return { reportMarkdown: args.projectPath }; }
+`
+    );
+    const client = createRouterClient(router(), {
+      context: createContext({ enabled: true, subProjectPath }),
+    });
+
+    const result = await client.workflows.start({
+      workspaceId: "workspace-1",
+      name: "needs-active-project",
+      runInBackground: true,
+      args: {},
+      rawCommand: "/workflow needs-active-project",
+    });
+
+    const run = await client.workflows.getRun({ workspaceId: "workspace-1", runId: result.runId });
+    expect(run?.args).toEqual({ projectPath: subProjectPath });
   });
 
   test("reports workflow argument validation as a bad request", async () => {

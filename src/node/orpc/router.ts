@@ -358,7 +358,11 @@ export async function resolveWorkflowContext(
     notifyInterruptedBackgroundRunTerminal?: boolean;
     projectPath?: string;
   } = {}
-): Promise<{ service: WorkflowService; projectTrusted: boolean; projectPath: string }> {
+): Promise<{
+  service: WorkflowService;
+  projectTrusted: boolean;
+  workflowExecutionProjectPath: string;
+}> {
   assert(workspaceId.length > 0, "resolveWorkflowContext: workspaceId is required");
   assertDynamicWorkflowsEnabled(context);
   await context.aiService.waitForInit(workspaceId);
@@ -368,9 +372,16 @@ export async function resolveWorkflowContext(
   }
   const metadata = metadataResult.data;
   const requestedWorkflowProjectPath = options.projectPath?.trim();
-  const workflowProjectPath =
-    requestedWorkflowProjectPath != null && requestedWorkflowProjectPath.length > 0
-      ? requestedWorkflowProjectPath
+  const hasRequestedWorkflowProjectPath =
+    requestedWorkflowProjectPath != null && requestedWorkflowProjectPath.length > 0;
+  const metadataSubProjectPath = metadata.subProjectPath?.trim();
+  const workflowProjectPath = hasRequestedWorkflowProjectPath
+    ? requestedWorkflowProjectPath
+    : metadata.projectPath;
+  const workflowExecutionProjectPath = hasRequestedWorkflowProjectPath
+    ? requestedWorkflowProjectPath
+    : metadataSubProjectPath && metadataSubProjectPath.length > 0
+      ? metadataSubProjectPath
       : metadata.projectPath;
   const projectTrusted = isTrustedProjectPath(context, workflowProjectPath);
   const runtime = createRuntimeForWorkspace(metadata);
@@ -398,7 +409,7 @@ export async function resolveWorkflowContext(
   const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
 
   return {
-    projectPath: workflowProjectPath,
+    workflowExecutionProjectPath,
     projectTrusted,
     service: new WorkflowService({
       definitionStore: new WorkflowDefinitionStore({
@@ -2145,22 +2156,22 @@ export const router = (authToken?: string) => {
               manualFollowUp: true,
             });
           }
-          const { service, projectPath, projectTrusted } = await resolveWorkflowContext(
-            context,
-            input.workspaceId,
-            { onBackgroundRunTerminal }
-          );
+          const { service, workflowExecutionProjectPath, projectTrusted } =
+            await resolveWorkflowContext(context, input.workspaceId, { onBackgroundRunTerminal });
           if (input.rawCommand != null) {
             await context.workspaceService.prepareManualWorkflowInvocation(input.workspaceId);
           }
-          // Slash workflow commands run from a workspace project; expose that server-resolved
-          // context as schema defaults without adding hidden fields to persisted command args.
+          // Slash workflow commands run from the active project/sub-project; expose that
+          // server-resolved context as schema defaults without adding hidden fields to
+          // persisted command args.
           const workflowStartArgs = {
             name: input.name,
             workspaceId: input.workspaceId,
             projectTrusted,
             args: input.args ?? {},
-            ...(input.rawCommand != null ? { defaultArgs: { projectPath } } : {}),
+            ...(input.rawCommand != null
+              ? { defaultArgs: { projectPath: workflowExecutionProjectPath } }
+              : {}),
           };
           const persistInvocation = async (details: {
             runId: string;
