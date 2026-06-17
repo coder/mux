@@ -72,6 +72,23 @@ export const WorkflowActionDescriptorSchema = z.discriminatedUnion("executable",
   }).strict(),
 ]);
 
+export const WorkflowDefinitionMetadataSchema = z.record(z.string(), JsonValueSchema);
+
+export const WorkflowDefinitionArgSummarySchema = z
+  .object({
+    name: z.string().min(1),
+    types: z.array(z.string().min(1)).min(1),
+    required: z.boolean(),
+    aliases: z.array(z.string().min(1)).optional(),
+    negatedAliases: z.array(z.string().min(1)).optional(),
+    positional: z.boolean().optional(),
+    default: JsonValueSchema.optional(),
+    enum: z.array(JsonValueSchema).optional(),
+    minimum: z.number().optional(),
+    maximum: z.number().optional(),
+  })
+  .strict();
+
 export const WorkflowDefinitionDescriptorSchema = z
   .object({
     name: WorkflowNameSchema,

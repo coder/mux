@@ -311,7 +311,20 @@ export const WorkflowReadToolCall: React.FC<WorkflowReadToolCallProps> = ({
               <WorkflowSection title="Definition">
                 <WorkflowDefinitionCard descriptor={successResult.descriptor} />
               </WorkflowSection>
-              <WorkflowSourceBlock source={successResult.source} />
+              {successResult.metadata != null && (
+                <WorkflowSection title="Metadata">
+                  <WorkflowJsonBlock value={successResult.metadata} ariaLabel="Workflow metadata" />
+                </WorkflowSection>
+              )}
+              {successResult.source != null ? (
+                <WorkflowSourceBlock source={successResult.source} />
+              ) : (
+                <div className="text-muted text-[11px]">
+                  Source omitted in metadata view ({successResult.sourceStats.chars} chars,{" "}
+                  {successResult.sourceStats.lines} lines). Re-run workflow_read with view source to
+                  inspect implementation.
+                </div>
+              )}
             </>
           ) : status === "executing" ? (
             <WorkflowLoadingState />

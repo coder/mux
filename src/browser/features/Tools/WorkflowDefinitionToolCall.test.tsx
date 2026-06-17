@@ -16,6 +16,18 @@ const source = `export default function workflow({ args, agent }) {
   return agent({ id: "review", prompt: "Review " + topic });
 }`;
 
+const metadata = {
+  description: "Deep research",
+  argsSchema: {
+    type: "object",
+    properties: {
+      topic: { type: "string" },
+    },
+  },
+};
+
+const sourceStats = { chars: source.length, lines: source.split(/\r\n|\r|\n/u).length };
+
 const TEST_WORKSPACE_ID = "workflow-definition-tool-test";
 
 function renderWithTooltip(ui: React.ReactElement) {
@@ -81,13 +93,15 @@ describe("WorkflowDefinitionToolCall", () => {
         args={{ name: "deep-research" }}
         status="completed"
         result={{
+          view: "metadata",
           descriptor: {
             name: "deep-research",
             description: "Deep research",
             scope: "built-in",
             executable: true,
           },
-          source,
+          metadata,
+          sourceStats,
         }}
       />,
       "workflow_read"
@@ -113,12 +127,15 @@ describe("WorkflowDefinitionToolCall", () => {
         args={{ name: "deep-research" }}
         status="completed"
         result={{
+          view: "source",
           descriptor: {
             name: "deep-research",
             description: "Deep research",
             scope: "built-in",
             executable: true,
           },
+          metadata,
+          sourceStats,
           source,
         }}
       />
@@ -132,6 +149,32 @@ describe("WorkflowDefinitionToolCall", () => {
 
     expect(view.getByText("Deep research")).toBeTruthy();
     expect(view.container.textContent).toContain("return agent");
+  });
+
+  test("renders workflow_read metadata view without highlighted source", () => {
+    const view = renderWithTooltip(
+      <WorkflowReadToolCall
+        args={{ name: "deep-research" }}
+        status="completed"
+        result={{
+          view: "metadata",
+          descriptor: {
+            name: "deep-research",
+            description: "Deep research",
+            scope: "built-in",
+            executable: true,
+          },
+          metadata,
+          sourceStats,
+        }}
+      />
+    );
+
+    clickToolHeader(view, "deep-research");
+
+    expect(view.getByText("Metadata")).toBeTruthy();
+    expect(view.container.textContent).toContain("Source omitted in metadata view");
+    expect(view.container.textContent).not.toContain("return agent");
   });
 
   test("renders workflow_list as definition cards after manual expansion", () => {

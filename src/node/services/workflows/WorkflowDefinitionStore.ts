@@ -3,7 +3,11 @@ import * as path from "node:path";
 
 import { WorkflowDefinitionDescriptorSchema, WorkflowNameSchema } from "@/common/orpc/schemas";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
-import type { WorkflowDefinitionDescriptor, WorkflowName } from "@/common/types/workflow";
+import type {
+  WorkflowDefinitionArgSummary,
+  WorkflowDefinitionDescriptor,
+  WorkflowName,
+} from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { shellQuote } from "@/common/utils/shell";
@@ -16,6 +20,7 @@ import {
   BUILT_IN_WORKFLOW_DEFINITIONS,
   type BuiltInWorkflowDefinition,
 } from "./builtInWorkflowDefinitions";
+import { parseWorkflowDefinitionMetadata, summarizeWorkflowArgs } from "./workflowMetadata";
 import { parseWorkflowDescription, replaceWorkflowDescription } from "./workflowDescription";
 
 export interface WorkflowDefinitionStoreOptions {
@@ -52,6 +57,10 @@ export interface WorkflowDefinitionReadResult {
   descriptor: WorkflowDefinitionDescriptor;
   source: string;
 }
+
+export type WorkflowDefinitionSummary = WorkflowDefinitionDescriptor & {
+  args?: WorkflowDefinitionArgSummary[];
+};
 
 interface ScannedWorkflowDefinition {
   descriptor: WorkflowDefinitionDescriptor;
@@ -772,6 +781,12 @@ function readBuiltInDefinitions(
   return definitions;
 }
 
+function summarizeDefinition(definition: ScannedWorkflowDefinition): WorkflowDefinitionSummary {
+  const metadata = parseWorkflowDefinitionMetadata(definition.source);
+  const args = summarizeWorkflowArgs(metadata);
+  return args == null ? definition.descriptor : { ...definition.descriptor, args };
+}
+
 function normalizePromotionDescription(description: string): string {
   const normalized = description.replace(/\s+/gu, " ").trim();
   assert(normalized.length > 0, "Workflow promotion description is required");
@@ -816,6 +831,15 @@ export class WorkflowDefinitionStore {
     const byName = await this.collectDefinitions(options);
     return Array.from(byName.values())
       .map((definition) => definition.descriptor)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async listDefinitionsWithMetadata(options: {
+    projectTrusted: boolean;
+  }): Promise<WorkflowDefinitionSummary[]> {
+    const byName = await this.collectDefinitions(options);
+    return Array.from(byName.values())
+      .map(summarizeDefinition)
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 

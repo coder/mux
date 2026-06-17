@@ -67,6 +67,19 @@ const source = `export default function workflow({ args, agent, phase, log }) {
 }
 `;
 
+const workflowMetadata = {
+  description:
+    "Review an artifact, adversarially verify findings, fix them, and repeat until clean.",
+  argsSchema: {
+    type: "object",
+    properties: {
+      artifact: { type: "string", positional: true },
+    },
+  },
+};
+
+const sourceStats = { chars: source.length, lines: source.split(/\r\n|\r|\n/u).length };
+
 const meta = {
   ...lightweightMeta,
   title: "App/Chat/Tools/WorkflowDefinitions",
@@ -82,6 +95,7 @@ export const WorkflowRead: Story = {
       args={{ name: "review-fix-loop" }}
       status="completed"
       result={{
+        view: "source",
         descriptor: {
           name: "review-fix-loop",
           description:
@@ -90,6 +104,8 @@ export const WorkflowRead: Story = {
           sourcePath: "/repo/.mux/workflows/.scratch/review-fix-loop.js",
           executable: true,
         },
+        metadata: workflowMetadata,
+        sourceStats,
         source,
       }}
     />

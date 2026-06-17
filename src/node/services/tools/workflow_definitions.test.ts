@@ -20,6 +20,33 @@ const descriptor = {
   executable: true,
 };
 
+const workflowSource = `const s = mux.schema;
+export const metadata = {
+  description: "Deep research",
+  argsSchema: s.object({
+    topic: s.optional(s.string({ positional: true })),
+    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+  }),
+};
+export default function workflow() { return null; }
+`;
+
+const compactArgs = [
+  {
+    name: "topic",
+    types: ["string"],
+    required: false,
+    positional: true,
+  },
+  {
+    name: "quick",
+    types: ["boolean"],
+    required: false,
+    aliases: ["--quick"],
+    default: false,
+  },
+];
+
 describe("workflow definition tools", () => {
   test("lists available workflows through WorkflowService", async () => {
     using tempDir = new TestTempDir("test-workflow-list-tool");
@@ -45,6 +72,35 @@ describe("workflow definition tools", () => {
 
     expect(listDefinitions).toHaveBeenCalledWith({ projectTrusted: true });
     expect(result).toEqual({ workflows: [descriptor] });
+  });
+
+  test("prefers compact workflow argument metadata when available", async () => {
+    using tempDir = new TestTempDir("test-workflow-list-tool-metadata");
+    const listDefinitions = mock(async () => [descriptor]);
+    const listDefinitionsWithMetadata = mock(async () => [{ ...descriptor, args: compactArgs }]);
+    const tool = createWorkflowListTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      workflowService: {
+        listDefinitions,
+        listDefinitionsWithMetadata,
+        readDefinition: mock(async () => ({
+          descriptor,
+          source: workflowSource,
+        })),
+        startNamedWorkflow: mock(async () => ({
+          runId: "wfr_1",
+          status: "completed" as const,
+          result: null,
+        })),
+      },
+    });
+
+    const result = await tool.execute!({}, mockToolCallOptions);
+
+    expect(listDefinitionsWithMetadata).toHaveBeenCalledWith({ projectTrusted: true });
+    expect(listDefinitions).not.toHaveBeenCalled();
+    expect(result).toEqual({ workflows: [{ ...descriptor, args: compactArgs }] });
   });
 
   test("lists available workflow actions through WorkflowService", async () => {
@@ -87,11 +143,11 @@ describe("workflow definition tools", () => {
     expect(result).toEqual({ actions: [actionDescriptor] });
   });
 
-  test("reads a workflow source through WorkflowService", async () => {
+  test("reads workflow metadata without source by default", async () => {
     using tempDir = new TestTempDir("test-workflow-read-tool");
     const readDefinition = mock(async () => ({
       descriptor,
-      source: "export default function workflow() { return null; }",
+      source: workflowSource,
     }));
     const tool = createWorkflowReadTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
@@ -111,8 +167,52 @@ describe("workflow definition tools", () => {
 
     expect(readDefinition).toHaveBeenCalledWith({ name: "deep-research", projectTrusted: false });
     expect(result).toEqual({
+      view: "metadata",
       descriptor,
-      source: "export default function workflow() { return null; }",
+      metadata: {
+        description: "Deep research",
+        argsSchema: {
+          type: "object",
+          required: [],
+          properties: {
+            topic: { type: "string", positional: true },
+            quick: { type: "boolean", default: false, aliases: ["--quick"] },
+          },
+        },
+      },
+      args: compactArgs,
+      sourceStats: {
+        chars: workflowSource.length,
+        lines: workflowSource.split(/\r\n|\r|\n/u).length,
+      },
+    });
+  });
+
+  test("returns workflow source only when requested", async () => {
+    using tempDir = new TestTempDir("test-workflow-read-source-tool");
+    const tool = createWorkflowReadTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: false,
+      workflowService: {
+        listDefinitions: mock(async () => []),
+        readDefinition: mock(async () => ({ descriptor, source: workflowSource })),
+        startNamedWorkflow: mock(async () => ({
+          runId: "wfr_1",
+          status: "completed" as const,
+          result: null,
+        })),
+      },
+    });
+
+    const result = await tool.execute!(
+      { name: "deep-research", view: "source" },
+      mockToolCallOptions
+    );
+
+    expect(result).toMatchObject({
+      view: "source",
+      descriptor,
+      source: workflowSource,
     });
   });
 });

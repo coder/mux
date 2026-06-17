@@ -16,6 +16,7 @@ import { WorkflowActionRunner } from "./WorkflowActionRunner";
 import type {
   WorkflowDefinitionStore,
   WorkflowDefinitionReadResult,
+  WorkflowDefinitionSummary,
   WorkflowPromotionLocation,
 } from "./WorkflowDefinitionStore";
 import type { WorkflowRunStore } from "./WorkflowRunStore";
@@ -205,6 +206,12 @@ export class WorkflowService {
       }
     }
     return descriptors;
+  }
+
+  async listDefinitionsWithMetadata(options: {
+    projectTrusted: boolean;
+  }): Promise<WorkflowDefinitionSummary[]> {
+    return await this.definitionStore.listDefinitionsWithMetadata(options);
   }
 
   async readDefinition(input: {

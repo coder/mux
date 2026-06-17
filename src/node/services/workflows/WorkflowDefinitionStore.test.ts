@@ -193,6 +193,50 @@ describe("WorkflowDefinitionStore", () => {
     expect(discovered.every((candidate) => candidate.scope !== "scratch")).toBe(true);
   });
 
+  test("lists compact argument metadata without returning source", async () => {
+    using tmp = new DisposableTempDir("workflow-definitions-metadata-summary");
+    const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
+    const globalRoot = path.join(tmp.path, "mux-home", "workflows");
+    await fs.mkdir(projectRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(projectRoot, "schema-demo.js"),
+      `const s = mux.schema;
+export const metadata = {
+  description: "Schema demo",
+  argsSchema: s.object({
+    target: s.optional(s.string({ positional: true })),
+    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+  }),
+};
+export default function workflow({ args }) { return { reportMarkdown: args.target }; }
+`,
+      "utf-8"
+    );
+    const store = new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] });
+
+    const definitions = await store.listDefinitionsWithMetadata({ projectTrusted: true });
+
+    expect(definitions).toEqual([
+      {
+        name: "schema-demo",
+        description: "Schema demo",
+        scope: "project",
+        sourcePath: path.join(projectRoot, "schema-demo.js"),
+        executable: true,
+        args: [
+          { name: "target", types: ["string"], required: false, positional: true },
+          {
+            name: "quick",
+            types: ["boolean"],
+            required: false,
+            aliases: ["--quick"],
+            default: false,
+          },
+        ],
+      },
+    ]);
+  });
+
   test("keeps local scratch listing read-only until a scratch workflow exists", async () => {
     using tmp = new DisposableTempDir("workflow-definitions");
     const workspaceRoot = path.join(tmp.path, "project");

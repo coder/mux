@@ -158,6 +158,7 @@ export interface ToolConfiguration {
   /** Durable workflow lifecycle service for dynamic workflow tools. */
   workflowService?: {
     listDefinitions(options: { projectTrusted: boolean }): Promise<unknown[]>;
+    listDefinitionsWithMetadata?(options: { projectTrusted: boolean }): Promise<unknown[]>;
     readDefinition(input: {
       name: string;
       projectTrusted: boolean;

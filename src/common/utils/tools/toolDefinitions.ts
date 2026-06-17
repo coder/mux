@@ -32,7 +32,9 @@ import {
   AgentSkillPackageSchema,
   SkillNameSchema,
   WorkflowActionDescriptorSchema,
+  WorkflowDefinitionArgSummarySchema,
   WorkflowDefinitionDescriptorSchema,
+  WorkflowDefinitionMetadataSchema,
   WorkflowNameSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
@@ -930,22 +932,45 @@ export const TaskListToolResultSchema = z
 
 export const WorkflowListToolArgsSchema = z.object({}).strict();
 
+export const WorkflowDefinitionToolDescriptorSchema = z.intersection(
+  WorkflowDefinitionDescriptorSchema,
+  z
+    .object({
+      args: z.array(WorkflowDefinitionArgSummarySchema).optional(),
+    })
+    .passthrough()
+);
+
 export const WorkflowListToolResultSchema = z
   .object({
-    workflows: z.array(WorkflowDefinitionDescriptorSchema),
+    workflows: z.array(WorkflowDefinitionToolDescriptorSchema),
   })
   .strict();
+
+export const WorkflowReadToolViewSchema = z.enum(["metadata", "source"]);
 
 export const WorkflowReadToolArgsSchema = z
   .object({
     name: WorkflowNameSchema,
+    view: WorkflowReadToolViewSchema.nullish(),
+  })
+  .strict();
+
+export const WorkflowReadToolSourceStatsSchema = z
+  .object({
+    chars: z.number().int().nonnegative(),
+    lines: z.number().int().nonnegative(),
   })
   .strict();
 
 export const WorkflowReadToolResultSchema = z
   .object({
+    view: WorkflowReadToolViewSchema,
     descriptor: WorkflowDefinitionDescriptorSchema,
-    source: z.string().min(1),
+    metadata: WorkflowDefinitionMetadataSchema.nullable(),
+    args: z.array(WorkflowDefinitionArgSummarySchema).optional(),
+    sourceStats: WorkflowReadToolSourceStatsSchema,
+    source: z.string().min(1).optional(),
   })
   .strict();
 
@@ -1814,12 +1839,12 @@ export const TOOL_DEFINITIONS = {
   },
   workflow_list: {
     description:
-      "List durable workflow definitions available in this workspace. Use this before workflow_run when you do not already know the workflow name. Before writing or editing workflow JS, read the built-in workflow-authoring skill. Scratch workflows are workspace files at .mux/workflows/.scratch/<name>.js and should be authored with file_read/file_edit_* tools.",
+      "List durable workflow definitions available in this workspace. Use this before workflow_run when you do not already know the workflow name. Returns descriptors plus compact argument hints when a workflow declares metadata.argsSchema, so many workflows can be run without a follow-up read. Before writing or editing workflow JS, read the built-in workflow-authoring skill. Scratch workflows are workspace files at .mux/workflows/.scratch/<name>.js and should be authored with file_read/file_edit_* tools.",
     schema: WorkflowListToolArgsSchema,
   },
   workflow_read: {
     description:
-      "Read a durable workflow definition's descriptor and source by name. Use this to inspect expected args or understand a workflow before running it. Before authoring new workflow JS, read the built-in workflow-authoring skill for available globals, schema limits, and replay rules.",
+      "Read a durable workflow definition by name. Defaults to metadata view, returning descriptor, parsed metadata, compact argument hints, and source size without the implementation source to avoid context pollution. Pass view='source' only when you truly need the full workflow JavaScript. Before authoring new workflow JS, read the built-in workflow-authoring skill for available globals, schema limits, and replay rules.",
     schema: WorkflowReadToolArgsSchema,
   },
   workflow_action_list: {
