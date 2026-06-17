@@ -297,7 +297,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
     metadata: {
       version: 1,
       description:
-        "Idempotently ensure an active persistent workspace exists for a work-item key (tag workItemKey); unarchives matching workspaces and creates when missing",
+        "Idempotently ensure a persistent workspace exists for a work-item key (tag workItemKey); creates it when missing",
       effect: "external",
       inputSchema: {
         type: "object",
