@@ -47,6 +47,7 @@ import * as forkOrchestratorModule from "@/node/services/utils/forkOrchestrator"
 import * as runtimeExecHelpers from "@/node/utils/runtime/helpers";
 import * as removeManagedGitWorktreeModule from "@/node/worktree/removeManagedGitWorktree";
 import * as workspaceTitleGenerator from "./workspaceTitleGenerator";
+import { WorkflowRunStore } from "./workflows/WorkflowRunStore";
 import { WorkspaceGoalService } from "./workspaceGoalService";
 import { IdleDispatcher } from "./idleDispatcher";
 import type { GoalRecordV1 } from "@/common/types/goal";
@@ -213,6 +214,230 @@ function createFrontendWorkspaceMetadata(
     namedWorkspacePath: overrides.namedWorkspacePath ?? `/tmp/${overrides.id}`,
   };
 }
+
+describe("WorkspaceService workflow activity", () => {
+  test("caches active workflow run counts and updates emitted activity from status events", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const listStatusSnapshotsSpy = spyOn(WorkflowRunStore.prototype, "listRunStatusSnapshots");
+    try {
+      const workspaceId = "workflow-activity";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "workflow-activity",
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-06-17T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+      const extensionMetadata = new ExtensionMetadataService(
+        path.join(config.rootDir, "extensionMetadata.json")
+      );
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        extensionMetadata,
+      });
+      const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(workspaceId) });
+      const definition = {
+        name: "demo",
+        description: "Demo workflow",
+        scope: "global" as const,
+        executable: true,
+      };
+      await runStore.createRun({
+        id: "wfr_active",
+        workspaceId,
+        definition,
+        definitionSource: "export default function workflow() { return {}; }",
+        args: {},
+        now: "2026-06-17T00:00:00.000Z",
+      });
+      await runStore.createRun({
+        id: "wfr_nested",
+        workspaceId,
+        definition,
+        definitionSource: "export default function workflow() { return {}; }",
+        args: {},
+        parentWorkflow: { runId: "wfr_active", stepId: "child", inputHash: "hash", depth: 0 },
+        now: "2026-06-17T00:00:01.000Z",
+      });
+
+      expect((await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount).toBe(
+        1
+      );
+      expect((await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount).toBe(
+        1
+      );
+      expect(listStatusSnapshotsSpy).toHaveBeenCalledTimes(1);
+
+      const activityEvents: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => activityEvents.push(event));
+      await workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_active",
+        status: "completed",
+      });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBeUndefined();
+
+      const clearedActivityList = await workspaceService.getActivityList();
+      expect(clearedActivityList[workspaceId]).toBeDefined();
+      expect(clearedActivityList[workspaceId]?.activeWorkflowRunCount).toBeUndefined();
+
+      await workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_next",
+        status: "running",
+      });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
+      await workspaceService.updateAgentStatus(workspaceId, {
+        emoji: "🔄",
+        message: "Still running workflow",
+      });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
+
+      workspaceService.emitWorkspaceActivity(workspaceId, {
+        recency: Date.now(),
+        streaming: false,
+        lastModel: null,
+        lastThinkingLevel: null,
+      });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
+
+      expect(listStatusSnapshotsSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      listStatusSnapshotsSpy.mockRestore();
+      await cleanup();
+    }
+  });
+
+  test("shares initial active workflow cache bootstrap across parallel status events", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const scanStarted = createDeferred<void>();
+    const releaseScan = createDeferred<void>();
+    const listStatusSnapshotsSpy = spyOn(
+      WorkflowRunStore.prototype,
+      "listRunStatusSnapshots"
+    ).mockImplementation(async () => {
+      scanStarted.resolve();
+      await releaseScan.promise;
+      return [];
+    });
+
+    try {
+      const workspaceId = "workflow-activity-race";
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+      });
+      const activityEvents: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => activityEvents.push(event));
+
+      const first = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_first",
+        status: "running",
+      });
+      await scanStarted.promise;
+      const second = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_second",
+        status: "running",
+      });
+
+      releaseScan.resolve();
+      await Promise.all([first, second]);
+
+      expect(listStatusSnapshotsSpy).toHaveBeenCalledTimes(1);
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(2);
+      expect((await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount).toBe(
+        2
+      );
+    } finally {
+      listStatusSnapshotsSpy.mockRestore();
+      releaseScan.resolve();
+      await cleanup();
+    }
+  });
+
+  test("emits current workflow count after overlapping metadata snapshot reads", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const firstSnapshotStarted = createDeferred<void>();
+    const releaseFirstSnapshot = createDeferred<void>();
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(config.rootDir, "extensionMetadata.json")
+    );
+    const getSnapshotSpy = spyOn(extensionMetadata, "getSnapshot");
+
+    try {
+      const workspaceId = "workflow-activity-overlap";
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        extensionMetadata,
+      });
+      await workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_first",
+        status: "running",
+      });
+      await workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_second",
+        status: "running",
+      });
+
+      let shouldDelayNextSnapshot = true;
+      getSnapshotSpy.mockImplementation(async (id: string) => {
+        if (shouldDelayNextSnapshot) {
+          shouldDelayNextSnapshot = false;
+          firstSnapshotStarted.resolve();
+          await releaseFirstSnapshot.promise;
+        }
+        return ExtensionMetadataService.prototype.getSnapshot.call(extensionMetadata, id);
+      });
+      const activityEvents: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => activityEvents.push(event));
+
+      const first = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_first",
+        status: "completed",
+      });
+      await firstSnapshotStarted.promise;
+      const second = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_second",
+        status: "completed",
+      });
+
+      await second;
+      releaseFirstSnapshot.resolve();
+      await first;
+
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBeUndefined();
+      expect(
+        (await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount
+      ).toBeUndefined();
+    } finally {
+      getSnapshotSpy.mockRestore();
+      releaseFirstSnapshot.resolve();
+      await cleanup();
+    }
+  });
+});
 
 describe("WorkspaceService workflow invocation events", () => {
   test("emits workflow slash invocation rows through the active session chat stream", async () => {

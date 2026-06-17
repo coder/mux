@@ -152,7 +152,10 @@ import {
   WorkflowDefinitionStore,
 } from "@/node/services/workflows/WorkflowDefinitionStore";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
-import { WorkflowService } from "@/node/services/workflows/WorkflowService";
+import {
+  WorkflowService,
+  type WorkflowRunStatusChangedEvent,
+} from "@/node/services/workflows/WorkflowService";
 import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { resolveWorkflowScratchRoots } from "@/node/services/workflows/workflowScratchRoots";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
@@ -438,6 +441,9 @@ export class AIService extends EventEmitter {
   private workflowHostActions?: ReadonlyMap<string, HostWorkflowAction>;
   private memoryService?: MemoryService;
   private extraTools?: Record<string, Tool>;
+  private onWorkflowRunStatusChanged?: (
+    event: WorkflowRunStatusChangedEvent
+  ) => Promise<void> | void;
   private workflowResultContinuationSender?: WorkflowResultContinuationSender;
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
   private desktopSessionManager?: DesktopSessionManager;
@@ -592,6 +598,12 @@ export class AIService extends EventEmitter {
       log.warn("Failed to build memory session context", { workspaceId, error });
       return null;
     }
+  }
+
+  setWorkflowRunStatusChangedHandler(
+    handler: (event: WorkflowRunStatusChangedEvent) => Promise<void> | void
+  ): void {
+    this.onWorkflowRunStatusChanged = handler;
   }
 
   setWorkflowResultContinuationSender(sender: WorkflowResultContinuationSender): void {
@@ -1755,6 +1767,9 @@ export class AIService extends EventEmitter {
               runStore: new WorkflowRunStore({
                 sessionDir: this.config.getSessionDir(workspaceId),
               }),
+              ...(this.onWorkflowRunStatusChanged != null
+                ? { onRunStatusChanged: this.onWorkflowRunStatusChanged }
+                : {}),
               // workspace.* built-ins run in-process with backend services.
               actionRunner: new WorkflowActionRunner({
                 hostActions: this.workflowHostActions,

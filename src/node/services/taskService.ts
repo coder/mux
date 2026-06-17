@@ -74,7 +74,7 @@ import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService"
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
-import type { WorkflowRunStatus } from "@/common/types/workflow";
+import { isActiveWorkflowRunStatus, isTerminalWorkflowRunStatus } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   isWorkflowDisplayOnlyMessage,
@@ -410,12 +410,6 @@ function isWorkspaceBusyIdleOnlySend(error: unknown): boolean {
   );
 }
 
-const ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
-  "pending",
-  "running",
-  "backgrounded",
-]);
-
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
 /** Maximum consecutive auto-resumes before stopping. Prevents infinite loops when descendants are stuck. */
@@ -688,10 +682,6 @@ function isResetBoundaryMessage(message: MuxMessage): boolean {
 
 function isWorkflowSupersessionMessage(message: MuxMessage): boolean {
   return isManualUserSupersessionMessage(message) || isResetBoundaryMessage(message);
-}
-
-function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {
-  return status === "completed" || status === "failed" || status === "interrupted";
 }
 
 function isFailedWorkflowRunSnapshot(value: unknown, runId: string): boolean {
@@ -978,7 +968,7 @@ export class TaskService {
           (run) =>
             referencedRunIdSet.has(run.id) &&
             run.workspaceId === workspaceId &&
-            ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES.has(run.status)
+            isActiveWorkflowRunStatus(run.status)
         )
         .map((run) => run.id);
     } catch (error: unknown) {
@@ -1011,7 +1001,7 @@ export class TaskService {
         if (!referencedRunIdSet.has(run.id) || run.workspaceId !== workspaceId) {
           continue;
         }
-        if (ACTIVE_BACKGROUND_WORKFLOW_RUN_STATUSES.has(run.status)) {
+        if (isActiveWorkflowRunStatus(run.status)) {
           blockingRunIds.push(run.id);
           continue;
         }

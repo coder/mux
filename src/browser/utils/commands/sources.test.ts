@@ -536,6 +536,7 @@ function makeWorkspaceState(goal: WorkspaceState["goal"]): WorkspaceState {
     loadedSkills: [],
     skillLoadErrors: [],
     agentStatus: undefined,
+    activeWorkflowRunCount: 0,
     lastAbortReason: null,
     pendingStreamStartTime: null,
     pendingStreamModel: null,

@@ -41,7 +41,21 @@ export type WorkflowStepRecord = z.infer<typeof WorkflowStepRecordSchema>;
 export type WorkflowRunParent = z.infer<typeof WorkflowRunParentSchema>;
 export type WorkflowRunRecord = z.infer<typeof WorkflowRunRecordSchema>;
 
-export function isNestedWorkflowRun(run: WorkflowRunRecord): boolean {
+const ACTIVE_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
+  "pending",
+  "running",
+  "backgrounded",
+]);
+
+export function isActiveWorkflowRunStatus(status: WorkflowRunStatus): boolean {
+  return ACTIVE_WORKFLOW_RUN_STATUSES.has(status);
+}
+
+export function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "interrupted";
+}
+
+export function isNestedWorkflowRun(run: { parentWorkflow?: WorkflowRunParent | null }): boolean {
   return run.parentWorkflow != null;
 }
 

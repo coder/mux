@@ -541,6 +541,7 @@ function installProjectSidebarTestDoubles() {
     loadedSkills: [],
     skillLoadErrors: [],
     agentStatus: undefined,
+    activeWorkflowRunCount: 0,
     terminalActiveCount: 0,
     terminalSessionCount: 0,
   }));

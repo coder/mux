@@ -1,10 +1,11 @@
 import * as crypto from "node:crypto";
 
-import type {
-  WorkflowActionDescriptor,
-  WorkflowDefinitionDescriptor,
-  WorkflowRunRecord,
-  WorkflowRunStatus,
+import {
+  isActiveWorkflowRunStatus,
+  type WorkflowActionDescriptor,
+  type WorkflowDefinitionDescriptor,
+  type WorkflowRunRecord,
+  type WorkflowRunStatus,
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -19,7 +20,7 @@ import type {
   WorkflowDefinitionSummary,
   WorkflowPromotionLocation,
 } from "./WorkflowDefinitionStore";
-import type { WorkflowRunStore } from "./WorkflowRunStore";
+import type { WorkflowRunStatusSnapshot, WorkflowRunStore } from "./WorkflowRunStore";
 import {
   WorkflowRunBackgroundedError,
   WorkflowRunner,
@@ -38,6 +39,12 @@ export interface WorkflowBackgroundRunTerminalEvent {
   run: WorkflowRunRecord;
 }
 
+export interface WorkflowRunStatusChangedEvent {
+  workspaceId: string;
+  runId: string;
+  status: WorkflowRunStatus;
+}
+
 export interface WorkflowServiceOptions {
   definitionStore: WorkflowDefinitionStore;
   runStore: WorkflowRunStore;
@@ -49,6 +56,7 @@ export interface WorkflowServiceOptions {
   /** workflowName is the human-readable definition name, used to label spawned tasks. */
   taskAdapterFactory?: (runId: string, workflowName?: string) => WorkflowTaskAdapter;
   onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
+  onRunStatusChanged?: (event: WorkflowRunStatusChangedEvent) => Promise<void> | void;
   /** When true, background terminal notifications also fire for interrupted runs. */
   notifyInterruptedBackgroundRunTerminal?: boolean;
   generateRunId?: () => string;
@@ -140,6 +148,9 @@ export class WorkflowService {
   private readonly onBackgroundRunTerminal?: (
     event: WorkflowBackgroundRunTerminalEvent
   ) => Promise<void> | void;
+  private readonly onRunStatusChanged?: (
+    event: WorkflowRunStatusChangedEvent
+  ) => Promise<void> | void;
   private readonly notifyInterruptedBackgroundRunTerminal: boolean;
   private readonly generateRunId: () => string;
   private readonly getCurrentProjectTrusted?: () => boolean | Promise<boolean>;
@@ -163,6 +174,7 @@ export class WorkflowService {
     this.taskAdapter = options.taskAdapter;
     this.taskAdapterFactory = options.taskAdapterFactory;
     this.onBackgroundRunTerminal = options.onBackgroundRunTerminal;
+    this.onRunStatusChanged = options.onRunStatusChanged;
     this.notifyInterruptedBackgroundRunTerminal =
       options.notifyInterruptedBackgroundRunTerminal === true;
     this.generateRunId = options.generateRunId ?? generateWorkflowRunId;
@@ -271,6 +283,31 @@ export class WorkflowService {
     }
   }
 
+  private async notifyRunStatusChanged(
+    run: WorkflowRunStatusSnapshot,
+    status: WorkflowRunStatus = run.status
+  ): Promise<void> {
+    if (this.onRunStatusChanged == null || run.parentWorkflow != null) {
+      return;
+    }
+    try {
+      await this.onRunStatusChanged({ workspaceId: run.workspaceId, runId: run.id, status });
+    } catch (error) {
+      console.error("Workflow run activity notification failed:", error);
+    }
+  }
+
+  private async notifyLatestRunStatus(runId: string): Promise<void> {
+    if (this.onRunStatusChanged == null) {
+      return;
+    }
+    try {
+      await this.notifyRunStatusChanged(await this.runStore.getRunStatusSnapshot(runId));
+    } catch (error) {
+      console.error("Failed to load workflow run for activity notification:", error);
+    }
+  }
+
   async interruptRun(input: { workspaceId: string; runId: string }): Promise<WorkflowRunRecord> {
     const run = await this.requireRunForWorkspace(input);
     assertWorkflowRunCanTransition(run.status, "interrupted");
@@ -294,6 +331,7 @@ export class WorkflowService {
         this.clock?.nowIso() ?? new Date().toISOString()
       );
       settleStatusWrite();
+      await this.notifyRunStatusChanged(interrupted);
       await this.interruptChildWorkflowRuns(input.runId, input.workspaceId, new Set([input.runId]));
       await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
       return interrupted;
@@ -317,6 +355,7 @@ export class WorkflowService {
       allowRetryFromFailedCheckpoint: true,
       projectTrusted: input.projectTrusted,
     });
+    await this.notifyRunStatusChanged(run, "running");
     return { runId: input.runId, status: "running", result: null };
   }
 
@@ -332,6 +371,7 @@ export class WorkflowService {
       allowResumeFromInterrupted: run.status === "interrupted",
       projectTrusted: input.projectTrusted,
     });
+    await this.notifyRunStatusChanged(run, "running");
     return { runId: input.runId, status: "running", result: null };
   }
 
@@ -346,7 +386,7 @@ export class WorkflowService {
     assertWorkflowRunCanTransition(run.status, "running");
     return await this.runForegroundWithAbortInterrupt({
       workspaceId: input.workspaceId,
-      runId: input.runId,
+      run,
       projectTrusted: input.projectTrusted,
       abortSignal: input.abortSignal,
       runnerOptions: { allowResumeFromInterrupted: run.status === "interrupted" },
@@ -365,7 +405,7 @@ export class WorkflowService {
     assertWorkflowRunCanRetryFromCheckpoint(run);
     return await this.runForegroundWithAbortInterrupt({
       workspaceId: input.workspaceId,
-      runId: input.runId,
+      run,
       projectTrusted: input.projectTrusted,
       abortSignal: input.abortSignal,
       runnerOptions: { allowRetryFromFailedCheckpoint: true },
@@ -379,7 +419,7 @@ export class WorkflowService {
    */
   private async runForegroundWithAbortInterrupt(input: {
     workspaceId: string;
-    runId: string;
+    run: WorkflowRunStatusSnapshot;
     projectTrusted: boolean;
     abortSignal?: AbortSignal;
     runnerOptions: Pick<
@@ -388,33 +428,37 @@ export class WorkflowService {
     >;
     backgroundedFailureMessage: string;
   }): Promise<StartNamedWorkflowResult> {
+    const runId = input.run.id;
     if (isAbortSignalAborted(input.abortSignal)) {
       // The caller was aborted before the runner started; leave the run in its current
       // (still resumable) state instead of churning status transitions.
-      throw new Error(`Workflow run interrupted: ${input.runId}`);
+      throw new Error(`Workflow run interrupted: ${runId}`);
     }
+
+    await this.notifyRunStatusChanged(input.run, "running");
 
     const runnerAbortController = new AbortController();
     let unregisterRunnerAbort: () => void = () => undefined;
     const abortInterrupt = this.interruptRunOnAbort(
       input.workspaceId,
-      input.runId,
+      runId,
       input.abortSignal,
       runnerAbortController
     );
     try {
-      const runner = await this.createRunner(input.runId, input.projectTrusted);
-      const result = await runner.run(input.runId, {
+      const runner = await this.createRunner(runId, input.projectTrusted);
+      const result = await runner.run(runId, {
         abortSignal: runnerAbortController.signal,
         onLeaseAcquired: () => {
           unregisterRunnerAbort = this.registerActiveRunnerAbortController(
-            input.runId,
+            runId,
             runnerAbortController
           );
         },
         ...input.runnerOptions,
       });
-      return { runId: input.runId, status: "completed", result };
+      await this.notifyRunStatusChanged(input.run, "completed");
+      return { runId, status: "completed", result };
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
         // The runner durably appended `backgrounded` before throwing, so the continuation
@@ -425,19 +469,21 @@ export class WorkflowService {
         // silently reverted back to `running`. Likewise skip the continuation entirely
         // when this call was aborted (interruptRunOnAbort aborts our runner controller and
         // is concurrently transitioning the run to `interrupted`).
+        await this.notifyRunStatusChanged(input.run, "backgrounded");
         if (!runnerAbortController.signal.aborted) {
-          void this.runInBackground(input.runId, input.backgroundedFailureMessage, {
+          void this.runInBackground(runId, input.backgroundedFailureMessage, {
             projectTrusted: input.projectTrusted,
           }).catch(() => undefined);
         }
-        return { runId: input.runId, status: "backgrounded", result: null };
+        return { runId, status: "backgrounded", result: null };
       }
+      await this.notifyLatestRunStatus(runId);
       throw error;
     } finally {
       abortInterrupt.remove();
       try {
         await abortInterrupt.wait();
-        await this.ensureInterruptedAfterAbort(input.workspaceId, input.runId, input.abortSignal);
+        await this.ensureInterruptedAfterAbort(input.workspaceId, runId, input.abortSignal);
       } finally {
         unregisterRunnerAbort();
       }
@@ -495,12 +541,14 @@ export class WorkflowService {
   ): Promise<StartNamedWorkflowResult> {
     const createdRun = await this.createNamedWorkflowRun(input);
     const runId = createdRun.id;
+    await this.notifyRunStatusChanged(createdRun);
     await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
     const run = await this.runStore.appendStatus(
       runId,
       "running",
       this.clock?.nowIso() ?? new Date().toISOString()
     );
+    await this.notifyRunStatusChanged(run);
     await input.onBackgroundRunCreated?.({ runId, status: "running", result: null, run });
     void this.runInBackground(runId, "Background workflow run failed:", {
       projectTrusted: input.projectTrusted,
@@ -511,6 +559,7 @@ export class WorkflowService {
   async startNamedWorkflow(input: StartNamedWorkflowInput): Promise<StartNamedWorkflowResult> {
     const createdRun = await this.createNamedWorkflowRun(input);
     const runId = createdRun.id;
+    await this.notifyRunStatusChanged(createdRun);
     await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
     if (isAbortSignalAborted(input.abortSignal)) {
       await this.interruptRun({ workspaceId: input.workspaceId, runId });
@@ -539,14 +588,17 @@ export class WorkflowService {
           );
         },
       });
+      await this.notifyRunStatusChanged(createdRun, "completed");
       return { runId, status: "completed", result };
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
+        await this.notifyRunStatusChanged(createdRun, "backgrounded");
         void this.runInBackground(runId, "Backgrounded workflow run failed:", {
           projectTrusted: input.projectTrusted,
         }).catch(() => undefined);
         return { runId, status: "backgrounded", result: null };
       }
+      await this.notifyLatestRunStatus(runId);
       throw error;
     } finally {
       abortInterrupt.remove();
@@ -736,6 +788,7 @@ export class WorkflowService {
       projectTrusted: boolean;
     }
   ): Promise<void> {
+    const runStatus = await this.runStore.getRunStatusSnapshot(runId);
     const runner = await this.createRunner(runId, runnerOptions.projectTrusted);
     const runnerAbortController = new AbortController();
     let unregisterRunnerAbort: () => void = () => undefined;
@@ -777,6 +830,7 @@ export class WorkflowService {
         ...runnerOptions,
       })
       .then(async (result) => {
+        await this.notifyRunStatusChanged(runStatus, "completed");
         await this.notifyBackgroundRunTerminal(runId, result);
       })
       .catch(async (error: unknown) => {
@@ -788,6 +842,7 @@ export class WorkflowService {
         if (!(await this.isInterruptedBackgroundRun(runId))) {
           console.error(failureMessage, error);
         }
+        await this.notifyLatestRunStatus(runId);
         await this.notifyBackgroundRunTerminal(runId, null);
       });
     this.backgroundRuns.add(runPromise);
@@ -848,7 +903,7 @@ export class WorkflowService {
       (run) =>
         run.workspaceId === workspaceId &&
         run.parentWorkflow?.runId === parentRunId &&
-        (isInterruptibleWorkflowRunStatus(run.status) || run.status === "interrupted")
+        (isActiveWorkflowRunStatus(run.status) || run.status === "interrupted")
     );
     for (const child of activeChildren) {
       await this.interruptChildWorkflowRun(child, workspaceId, seenRunIds);
@@ -866,10 +921,7 @@ export class WorkflowService {
     seenRunIds.add(child.id);
     this.abortActiveRunner(child.id);
     const interrupted = await this.appendInterruptedIfActive(child.id);
-    if (
-      !isInterruptibleWorkflowRunStatus(interrupted.status) &&
-      interrupted.status !== "interrupted"
-    ) {
+    if (!isActiveWorkflowRunStatus(interrupted.status) && interrupted.status !== "interrupted") {
       return;
     }
     await this.interruptChildWorkflowRuns(child.id, workspaceId, seenRunIds);
@@ -878,7 +930,7 @@ export class WorkflowService {
 
   private async appendInterruptedIfActive(runId: string): Promise<WorkflowRunRecord> {
     const run = await this.runStore.getRun(runId);
-    if (!isInterruptibleWorkflowRunStatus(run.status)) {
+    if (!isActiveWorkflowRunStatus(run.status)) {
       return run;
     }
     try {
@@ -889,7 +941,7 @@ export class WorkflowService {
       );
     } catch (error) {
       const latest = await this.runStore.getRun(runId);
-      if (!isInterruptibleWorkflowRunStatus(latest.status)) {
+      if (!isActiveWorkflowRunStatus(latest.status)) {
         return latest;
       }
       throw error;
@@ -1181,10 +1233,6 @@ function forwardAbortSignal(
 
 function isAbortSignalAborted(abortSignal?: AbortSignal): boolean {
   return abortSignal?.aborted === true;
-}
-
-function isInterruptibleWorkflowRunStatus(status: WorkflowRunStatus): boolean {
-  return status === "pending" || status === "running" || status === "backgrounded";
 }
 
 function getWorkflowRunResult(run: WorkflowRunRecord): unknown {

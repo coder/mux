@@ -3,6 +3,8 @@ import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import type { z } from "zod";
+
 import writeFileAtomic from "write-file-atomic";
 
 import {
@@ -12,18 +14,29 @@ import {
   WorkflowRunRecordSchema,
   WorkflowStepRecordSchema,
 } from "@/common/orpc/schemas";
-import type {
-  StructuredTaskOutput,
-  WorkflowDefinitionDescriptor,
-  WorkflowRunEvent,
-  WorkflowRunParent,
-  WorkflowRunRecord,
-  WorkflowRunStatus,
-  WorkflowStepRecord,
+import {
+  type StructuredTaskOutput,
+  type WorkflowDefinitionDescriptor,
+  type WorkflowRunEvent,
+  type WorkflowRunParent,
+  type WorkflowRunRecord,
+  type WorkflowRunStatus,
+  type WorkflowStepRecord,
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
+
+const WorkflowRunStatusSnapshotSchema = WorkflowRunRecordSchema.pick({
+  id: true,
+  workspaceId: true,
+  status: true,
+  parentWorkflow: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type WorkflowRunStatusSnapshot = z.infer<typeof WorkflowRunStatusSnapshotSchema>;
 
 export interface WorkflowRunStoreOptions {
   sessionDir: string;
@@ -190,6 +203,54 @@ export class WorkflowRunStore {
       return await this.getRunFileSnapshot(runId);
     }
     return await this.getRunUnlocked(runId);
+  }
+
+  async getRunStatusSnapshot(runId: string): Promise<WorkflowRunStatusSnapshot> {
+    assertValidWorkflowRunId(runId);
+    const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
+    const snapshot = WorkflowRunStatusSnapshotSchema.parse(rawRun);
+    if (await this.hasActiveWorkflowMutationLock(runId)) {
+      return snapshot;
+    }
+
+    // Crash recovery: status events hit the journal before run.json is rewritten.
+    // Status snapshots consult the journal so recovered workflows do not keep stale
+    // active or inactive sidebar state forever after a mid-transition crash.
+    const events = await this.readEvents(runId);
+    const latestEvent = events.at(-1);
+    return WorkflowRunStatusSnapshotSchema.parse({
+      ...snapshot,
+      status: getRunStatusFromEvents(events) ?? snapshot.status,
+      updatedAt: latestEvent?.at ?? snapshot.updatedAt,
+    });
+  }
+
+  async listRunStatusSnapshots(): Promise<WorkflowRunStatusSnapshot[]> {
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(this.workflowsDir(), { withFileTypes: true });
+    } catch {
+      return [];
+    }
+
+    const snapshots = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry): Promise<WorkflowRunStatusSnapshot | null> => {
+          try {
+            return await this.getRunStatusSnapshot(entry.name);
+          } catch (error) {
+            log.warn(
+              `Skipping unreadable workflow run status '${entry.name}': ${getErrorMessage(error)}`
+            );
+            return null;
+          }
+        })
+    );
+
+    return snapshots
+      .filter((snapshot): snapshot is WorkflowRunStatusSnapshot => snapshot != null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   async listRuns(): Promise<WorkflowRunRecord[]> {
