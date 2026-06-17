@@ -631,6 +631,7 @@ export class AIService extends EventEmitter {
       "tool-call-end",
       "reasoning-delta",
       "reasoning-end",
+      "workflow-run-attached",
       "usage-delta",
     ] as const) {
       this.streamManager.on(event, (data) => this.emit(event, data));
