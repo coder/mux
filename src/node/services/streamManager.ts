@@ -1662,14 +1662,11 @@ export class StreamManager extends EventEmitter {
     const existingPartIndex = streamInfo.parts.findIndex(
       (p) => p.type === "dynamic-tool" && p.toolCallId === toolCallId
     );
+    const pendingAttachment = this.takePendingWorkflowRunAttachment(streamInfo, toolCallId);
 
     if (existingPartIndex !== -1) {
       const existingPart = streamInfo.parts[existingPartIndex];
       if (existingPart.type === "dynamic-tool") {
-        const pendingAttachment = this.takePendingWorkflowRunAttachment(
-          streamInfo,
-          existingPart.toolCallId
-        );
         streamInfo.parts[existingPartIndex] = {
           ...existingPart,
           ...(pendingAttachment != null ? { workflowRun: pendingAttachment } : {}),
@@ -1681,7 +1678,6 @@ export class StreamManager extends EventEmitter {
       // Fallback: if the matching tool-call part is missing, still persist output so the UI
       // does not stay stuck in input-available. Input may be missing for provider-native tools.
       const toolCall = toolCalls.get(toolCallId);
-      const pendingAttachment = this.takePendingWorkflowRunAttachment(streamInfo, toolCallId);
       streamInfo.parts.push({
         type: "dynamic-tool" as const,
         toolCallId,
