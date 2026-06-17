@@ -74,6 +74,7 @@ import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionMan
 import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 import type { ORPCContext } from "@/node/orpc/context";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
+import { SCHEDULED_WORKFLOW_TRIGGER_LABEL } from "@/common/utils/workflowRunMessages";
 import {
   getRuntimeConfigForScheduledNewWorkspaceTarget,
   getSupportedWorkflowScheduleNewWorkspaceTemplate,
@@ -392,7 +393,7 @@ export class ServiceContainer {
         // Same construction as the workflows.* ORPC routes so scheduled runs
         // behave identically to manual ones (run store, trust, host actions).
         const context = this.toORPCContext();
-        const rawCommand = `Automation: ${input.name}`;
+        const rawCommand = `${SCHEDULED_WORKFLOW_TRIGGER_LABEL} ${input.name}`;
         let createdRunId: string | null = null;
         const sendTerminalContinuation = async (
           event: Parameters<typeof sendWorkflowRunTerminalContinuation>[0]["event"]
