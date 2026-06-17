@@ -2,7 +2,7 @@
  * Strip UI-only tool output before sending to providers.
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxMessage, MuxToolPart } from "@/common/types/message";
 import { sanitizeUnknownForProviderOutput } from "@/common/utils/providerOutputSanitization";
 import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { stripWorkflowRunRecordForModel } from "@/common/utils/workflowRunMessages";
@@ -39,9 +39,20 @@ function stripResolvedSourcePath(source: unknown): unknown {
   return stripped;
 }
 
-function stripWorkflowRunAttachment<P extends { workflowRun?: unknown }>(
-  part: P
-): Omit<P, "workflowRun"> {
+function stripWorkflowRunAttachment(part: MuxToolPart): MuxToolPart {
+  if (part.workflowRun == null) {
+    return part;
+  }
+
+  if (part.state === "input-available") {
+    const { workflowRun: _workflowRun, ...stripped } = part;
+    return stripped;
+  }
+  if (part.state === "output-available") {
+    const { workflowRun: _workflowRun, ...stripped } = part;
+    return stripped;
+  }
+
   const { workflowRun: _workflowRun, ...stripped } = part;
   return stripped;
 }

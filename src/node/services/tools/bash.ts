@@ -26,6 +26,7 @@ import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import { getErrorMessage } from "@/common/utils/errors";
+import { emitChatEventBestEffort } from "./toolUtils";
 
 const CAT_FILE_READ_NOTICE =
   "[IMPORTANT]\n\nDO NOT use `cat`, `rg`, or `grep` to read files. Use the `file_read` tool instead (supports offset/limit paging). Bash output may be truncated or auto-filtered, which can hide parts of the file.";
@@ -1112,14 +1113,18 @@ ${scriptWithEnv}`;
         if (liveOutputStopped) return;
         if (text.length === 0) return;
 
-        config.emitChatEvent({
-          type: "bash-output",
-          workspaceId: config.workspaceId,
-          toolCallId,
-          text,
-          isError,
-          timestamp: Date.now(),
-        } satisfies BashOutputEvent);
+        emitChatEventBestEffort(
+          config,
+          {
+            type: "bash-output",
+            workspaceId: config.workspaceId,
+            toolCallId,
+            text,
+            isError,
+            timestamp: Date.now(),
+          } satisfies BashOutputEvent,
+          "bash"
+        );
       };
 
       const flushLiveOutput = (): void => {

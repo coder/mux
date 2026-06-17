@@ -5,13 +5,13 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
 import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
-import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import {
   WorkflowResumeToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
 import { isWorkflowRunTaskId } from "./taskId";
 import {
+  emitWorkflowRunAttachedEvent,
   parseToolResult,
   recordBackgroundWorkflowRunReference,
   requireWorkspaceId,
@@ -43,27 +43,6 @@ interface WorkflowResumeService {
     runId: string;
     projectTrusted: boolean;
   }): Promise<{ runId: string; status: string; result: unknown }>;
-}
-
-async function emitWorkflowRunAttachedEvent(input: {
-  config: ToolConfiguration;
-  workspaceId: string;
-  toolCallId?: string;
-  run: WorkflowRunRecord;
-}): Promise<void> {
-  if (!input.config.emitChatEvent || !input.toolCallId) {
-    return;
-  }
-
-  const event: WorkflowRunAttachedEvent = {
-    type: "workflow-run-attached",
-    workspaceId: input.workspaceId,
-    toolCallId: input.toolCallId,
-    runId: input.run.id,
-    run: input.run,
-    timestamp: Date.now(),
-  };
-  await input.config.emitChatEvent(event);
 }
 
 function requireWorkflowResumeService(config: ToolConfiguration): WorkflowResumeService {
@@ -198,6 +177,7 @@ export const createWorkflowResumeTool: ToolFactory = (config: ToolConfiguration)
         config,
         workspaceId,
         toolCallId: options.toolCallId,
+        runId: run.id,
         run,
       });
 

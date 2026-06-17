@@ -6,9 +6,8 @@ import {
   WorkflowRunToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
-import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
-import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import {
+  emitWorkflowRunAttachedEvent,
   parseToolResult,
   recordBackgroundWorkflowRunReference,
   requireWorkspaceId,
@@ -35,29 +34,6 @@ function isBackgroundWorkflowResult(
   status: string
 ): boolean {
   return args.run_in_background === true || status === "backgrounded";
-}
-
-async function emitWorkflowRunAttachedEvent(input: {
-  config: ToolConfiguration;
-  workspaceId: string;
-  toolCallId?: string;
-  runId: string;
-  run: unknown;
-}): Promise<void> {
-  if (!input.config.emitChatEvent || !input.toolCallId) {
-    return;
-  }
-
-  const parsedRun = WorkflowRunRecordSchema.safeParse(input.run);
-  const event: WorkflowRunAttachedEvent = {
-    type: "workflow-run-attached",
-    workspaceId: input.workspaceId,
-    toolCallId: input.toolCallId,
-    runId: input.runId,
-    ...(parsedRun.success ? { run: parsedRun.data } : {}),
-    timestamp: Date.now(),
-  };
-  await input.config.emitChatEvent(event);
 }
 
 export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) => {

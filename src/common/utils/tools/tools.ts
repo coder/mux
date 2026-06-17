@@ -132,7 +132,7 @@ export interface ToolConfiguration {
    * Optional callback for emitting UI-only workspace chat events.
    * Used for streaming bash stdout/stderr to the UI without sending it to the model.
    */
-  emitChatEvent?: (event: WorkspaceChatMessage) => void;
+  emitChatEvent?: (event: WorkspaceChatMessage) => Promise<void> | void;
   /** Primary project path for workspace-scoped tools that need project-relative coordinates. */
   workspaceProjectPath?: string;
   /** Absolute cwd for workspace-scoped tools that accept execution-relative paths. */

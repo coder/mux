@@ -1276,6 +1276,62 @@ describe("WorkflowRunToolCall", () => {
     );
   });
 
+  test("uses resume result status when the attachment run snapshot is stale", async () => {
+    const staleRun = {
+      ...createWorkflowRunForExpansionTest({ id: "wfr_resume_stale", status: "running" }),
+      status: "interrupted" as const,
+      updatedAt: "2026-05-29T00:00:03.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "status" as const,
+          at: "2026-05-29T00:00:03.000Z",
+          status: "interrupted" as const,
+        },
+      ],
+    };
+    const refreshedRun = {
+      ...staleRun,
+      status: "completed" as const,
+      updatedAt: "2026-05-29T00:00:04.000Z",
+      events: [
+        ...staleRun.events,
+        {
+          sequence: 2,
+          type: "status" as const,
+          at: "2026-05-29T00:00:04.000Z",
+          status: "completed" as const,
+        },
+      ],
+    };
+    const getRun = mock(async () => refreshedRun);
+
+    const view = render(
+      <APIHarness client={{ workflows: { getRun } }}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowResumeToolCall
+              args={{ run_id: staleRun.id, run_in_background: true, mode: "resume" }}
+              result={{ status: "running", runId: staleRun.id, result: null, mode: "resume" }}
+              status="completed"
+              workspaceId={TEST_WORKSPACE_ID}
+              toolCallId="resume-call-1"
+              workflowRunHint={{ runId: staleRun.id, run: staleRun }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    const workflowHeader = getWorkflowHeader(view);
+    expect(workflowHeader.textContent).toContain("executing");
+    expect(workflowHeader.textContent).not.toContain("interrupted");
+    await waitFor(() =>
+      expect(getRun).toHaveBeenCalledWith({ workspaceId: TEST_WORKSPACE_ID, runId: staleRun.id })
+    );
+    await waitFor(() => expect(getWorkflowHeader(view).textContent).toContain("completed"));
+  });
+
   test("discovers foreground workflow runs and renders live run details", async () => {
     const staleRun = {
       id: "wfr_stale",

@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import type { z } from "zod";
 
 import { getErrorMessage } from "@/common/utils/errors";
+import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
+import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { recordAgentWorkflowRunReference } from "@/node/services/agentWorkflowRunReferences";
 import { log } from "@/node/services/log";
@@ -32,6 +35,48 @@ export function parseToolResult<TSchema>(
 
 export function dedupeStrings(values: readonly string[]): string[] {
   return Array.from(new Set(values));
+}
+
+export function emitChatEventBestEffort(
+  config: ToolConfiguration,
+  event: WorkspaceChatMessage,
+  context: string
+): void {
+  const emitted = config.emitChatEvent?.(event);
+  if (emitted == null) {
+    return;
+  }
+
+  emitted.catch((error: unknown) => {
+    log.debug("Failed to emit tool chat event", {
+      context,
+      eventType: event.type,
+      error: getErrorMessage(error),
+    });
+  });
+}
+
+export async function emitWorkflowRunAttachedEvent(input: {
+  config: ToolConfiguration;
+  workspaceId: string;
+  toolCallId?: string;
+  runId: string;
+  run?: unknown;
+}): Promise<void> {
+  if (!input.config.emitChatEvent || !input.toolCallId) {
+    return;
+  }
+
+  const parsedRun = WorkflowRunRecordSchema.safeParse(input.run);
+  const event: WorkflowRunAttachedEvent = {
+    type: "workflow-run-attached",
+    workspaceId: input.workspaceId,
+    toolCallId: input.toolCallId,
+    runId: input.runId,
+    ...(parsedRun.success ? { run: parsedRun.data } : {}),
+    timestamp: Date.now(),
+  };
+  await input.config.emitChatEvent(event);
 }
 
 /**

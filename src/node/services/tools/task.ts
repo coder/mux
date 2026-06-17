@@ -20,7 +20,12 @@ import { log } from "@/node/services/log";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 
 import { buildTaskGroupLaunches, type TaskGroupKind } from "@/common/utils/tools/taskGroups";
-import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
+import {
+  emitChatEventBestEffort,
+  parseToolResult,
+  requireTaskService,
+  requireWorkspaceId,
+} from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
   coerceThinkingLevel,
@@ -160,13 +165,17 @@ function emitTaskCreatedEvent(params: {
     return;
   }
 
-  params.config.emitChatEvent({
-    type: "task-created",
-    workspaceId: params.workspaceId,
-    toolCallId: params.toolCallId,
-    taskId: params.taskId,
-    timestamp: Date.now(),
-  } satisfies TaskCreatedEvent);
+  emitChatEventBestEffort(
+    params.config,
+    {
+      type: "task-created",
+      workspaceId: params.workspaceId,
+      toolCallId: params.toolCallId,
+      taskId: params.taskId,
+      timestamp: Date.now(),
+    } satisfies TaskCreatedEvent,
+    "task"
+  );
 }
 
 function toAggregatePendingStatus(

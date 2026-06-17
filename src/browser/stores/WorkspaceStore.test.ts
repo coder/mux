@@ -4783,6 +4783,26 @@ describe("WorkspaceStore", () => {
       });
     });
 
+    it("retains an existing workflow run snapshot when a later attachment omits it", async () => {
+      const workspaceId = "workflow-run-attached-workspace-retain-run";
+      const run = createWorkflowRunRecord({ id: "wfr_retained", workspaceId });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-retain", run.id, 1, run),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-retain", run.id, 2),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-retain")).toEqual({
+        runId: "wfr_retained",
+        run,
+      });
+    });
+
     it("replays pre-caught-up workflow run attachments after full replay catches up", async () => {
       const workspaceId = "workflow-run-attached-workspace-2";
       const run = createWorkflowRunRecord({ id: "wfr_replayed", workspaceId });
@@ -4798,6 +4818,36 @@ describe("WorkspaceStore", () => {
 
       expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-2")).toEqual({
         runId: "wfr_replayed",
+        run,
+      });
+    });
+
+    it("keeps workflow run attachment hints when a background resume result omits the run", async () => {
+      const workspaceId = "workflow-run-attached-workspace-keep-after-result";
+      const run = createWorkflowRunRecord({
+        id: "wfr_keep_after_result",
+        workspaceId,
+        status: "interrupted",
+      });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-keep", run.id, 1, run),
+        toolCallEndEvent(
+          workspaceId,
+          "call-workflow-keep",
+          "workflow_resume",
+          { status: "running", runId: run.id, result: null, mode: "resume" },
+          { messageId: "m-workflow-keep", timestamp: 2 }
+        ),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-keep")).toEqual({
+        runId: run.id,
         run,
       });
     });

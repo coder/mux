@@ -90,6 +90,7 @@ import {
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
 import { APPROX_CHARS_PER_TOKEN } from "@/constants/streaming";
 import { trackStreamCompleted } from "@/common/telemetry";
+import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessages";
 
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
@@ -918,8 +919,20 @@ export class WorkspaceStore {
       if (toolCallEnd.toolName === "task") {
         transient?.liveTaskIds.delete(toolCallEnd.toolCallId);
       }
-      if (toolCallEnd.toolName === "workflow_run" || toolCallEnd.toolName === "workflow_resume") {
-        transient?.liveWorkflowRuns.delete(toolCallEnd.toolCallId);
+      if (isWorkflowRunEmittingToolName(toolCallEnd.toolName)) {
+        const result =
+          typeof toolCallEnd.result === "object" && toolCallEnd.result !== null
+            ? (toolCallEnd.result as { run?: unknown; status?: unknown })
+            : null;
+        // Background workflow_resume can return a fresh running/backgrounded status while omitting
+        // a stale pre-dispatch run. Keep the attachment hint so the card still has workspace/id
+        // context for polling until a fresh run snapshot arrives.
+        const shouldKeepRunHintForPolling =
+          result?.run == null &&
+          (result?.status === "running" || result?.status === "backgrounded");
+        if (!shouldKeepRunHintForPolling) {
+          transient?.liveWorkflowRuns.delete(toolCallEnd.toolCallId);
+        }
       }
       applyWorkspaceChatEventToAggregator(aggregator, data);
 
@@ -1697,7 +1710,7 @@ export class WorkspaceStore {
       if (msg.toolName === "advisor") {
         activeAdvisorToolCallIds.add(msg.toolCallId);
       }
-      if (msg.toolName === "workflow_run" || msg.toolName === "workflow_resume") {
+      if (isWorkflowRunEmittingToolName(msg.toolName)) {
         activeWorkflowToolCallIds.add(msg.toolCallId);
       }
     }
@@ -4338,13 +4351,14 @@ export class WorkspaceStore {
     if (isWorkflowRunAttachedEvent(data)) {
       const transient = this.assertChatTransientState(workspaceId);
       const current = transient.liveWorkflowRuns.get(data.toolCallId);
-      if (current?.runId === data.runId && current.run === data.run) {
+      const nextRun = data.run ?? (current?.runId === data.runId ? current.run : undefined);
+      if (current?.runId === data.runId && current.run === nextRun) {
         return;
       }
 
       transient.liveWorkflowRuns.set(data.toolCallId, {
         runId: data.runId,
-        ...(data.run != null ? { run: data.run } : {}),
+        ...(nextRun != null ? { run: nextRun } : {}),
       });
 
       this.states.bump(workspaceId);

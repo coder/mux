@@ -227,6 +227,7 @@ function historicalToolMessage(
     output?: unknown;
     historySequence?: number;
     partial?: boolean;
+    workflowRun?: { runId: string; timestamp: number };
   } = {}
 ) {
   const message = createMuxMessage(id, "assistant", "", {
@@ -241,6 +242,7 @@ function historicalToolMessage(
     toolName,
     state: "output-available",
     input,
+    ...(options.workflowRun != null ? { workflowRun: options.workflowRun } : {}),
     output: options.output ?? { success: true },
   });
   return message;
@@ -255,6 +257,31 @@ function historicalTodoMessage(
 }
 
 describe("StreamingMessageAggregator", () => {
+  describe("workflow run attachments", () => {
+    test("preserves persisted workflow run attachments on displayed tool rows", () => {
+      const aggregator = createTestAggregator();
+      const workflowRun = { runId: "wfr_partial", timestamp: 101 };
+      const message = historicalToolMessage(
+        "partial-workflow",
+        "workflow_run",
+        { name: "simplify", args: {} },
+        {
+          toolCallId: "workflow-call-1",
+          historySequence: 7,
+          partial: true,
+          workflowRun,
+        }
+      );
+
+      aggregator.loadHistoricalMessages([message], false);
+
+      const toolRow = aggregator
+        .getDisplayedMessages()
+        .find((row) => row.type === "tool" && row.toolCallId === "workflow-call-1");
+      expect(toolRow).toMatchObject({ workflowRun });
+    });
+  });
+
   describe("init state reference stability", () => {
     test("should return new array reference when state changes", async () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

@@ -56,6 +56,7 @@ import {
   type WorkflowPromotionTarget,
 } from "./WorkflowDefinitionToolCall";
 import {
+  useWorkflowToolLiveRun,
   useWorkspaceStoreRaw,
   type WorkflowToolLiveRunState,
 } from "@/browser/stores/WorkspaceStore";
@@ -66,6 +67,7 @@ interface WorkflowRunToolCallProps {
   result?: WorkflowRunToolResult;
   status?: ToolStatus;
   workspaceId?: string;
+  toolCallId?: string;
   startedAt?: number;
   /** Which tool rendered this card; controls the header icon. */
   toolName?: "workflow_run" | "workflow_resume";
@@ -1030,16 +1032,19 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   result,
   status = "pending",
   workspaceId,
+  toolCallId,
   startedAt,
   toolName = "workflow_run",
   knownRunId,
-  workflowRunHint,
+  workflowRunHint: explicitWorkflowRunHint,
 }) => {
   const apiState = useContext(APIContext);
   const commandRegistry = useOptionalCommandRegistry();
   const registerCommandSource = commandRegistry?.registerSource;
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = isWorkflowRunSuccessResult(result) ? result : null;
+  const liveWorkflowRunHint = useWorkflowToolLiveRun(workspaceId, toolCallId);
+  const workflowRunHint = explicitWorkflowRunHint ?? liveWorkflowRunHint;
   const [refreshedRun, setRefreshedRun] = useState<WorkflowRunRecord | null>(null);
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
   const [workflowActionInFlightRunId, setWorkflowActionInFlightRunId] = useState<string | null>(
@@ -1063,7 +1068,14 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   });
   const runId = selectedRun.runId;
   const run = selectedRun.run;
-  const displayStatus = run?.status ?? successResult?.status ?? status;
+  const hasRefreshedRunSnapshot =
+    refreshedRun != null && refreshedRun.id === runId && run === refreshedRun;
+  // workflow_resume can return a fresh dispatch status while intentionally omitting a stale
+  // pre-dispatch run snapshot. Trust that result status only until polling provides a fresher run.
+  const displayStatus =
+    successResult?.run == null && successResult?.status != null && !hasRefreshedRunSnapshot
+      ? successResult.status
+      : (run?.status ?? successResult?.status ?? status);
   const displayEventSequence = getLatestWorkflowEventSequence(run);
   const resultValue = successResult?.result ?? getLatestResultEvent(run);
   const reportMarkdown = getReportMarkdown(resultValue);
@@ -1639,6 +1651,7 @@ interface WorkflowResumeToolCallProps {
   result?: WorkflowResumeToolResult;
   status?: ToolStatus;
   workspaceId?: string;
+  toolCallId?: string;
   startedAt?: number;
   workflowRunHint?: WorkflowToolLiveRunState | null;
 }
@@ -1659,6 +1672,7 @@ export const WorkflowResumeToolCall: React.FC<WorkflowResumeToolCallProps> = (pr
       result={props.result}
       status={props.status}
       workspaceId={props.workspaceId}
+      toolCallId={props.toolCallId}
       startedAt={props.startedAt}
       toolName="workflow_resume"
       workflowRunHint={props.workflowRunHint}

@@ -505,6 +505,7 @@ function appendToolRows(
     historySequence: options.historySequence,
     streamSequence: options.nextStreamSequence(),
     isLastPartOfMessage: options.isLastPartOfMessage,
+    ...(part.workflowRun != null ? { workflowRun: part.workflowRun } : {}),
     timestamp: part.timestamp ?? options.baseTimestamp,
     nestedCalls,
   });

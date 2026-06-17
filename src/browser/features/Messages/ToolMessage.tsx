@@ -9,7 +9,6 @@ import {
   extractHookOutput,
   extractHookDuration,
 } from "../Tools/Shared/HookOutputDisplay";
-import { useWorkflowToolLiveRun } from "@/browser/stores/WorkspaceStore";
 import { ToolNameProvider } from "./ToolNameContext";
 
 interface ToolMessageProps {
@@ -49,10 +48,6 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   // Extract hook output if present (only shown when hook produced output)
   const hookOutput = extractHookOutput(result);
   const hookDuration = extractHookDuration(result);
-  const workflowToolCallId =
-    toolName === "workflow_run" || toolName === "workflow_resume" ? toolCallId : undefined;
-  const workflowRunHint = useWorkflowToolLiveRun(workspaceId, workflowToolCallId);
-
   return (
     <div className={className}>
       {/* ToolNameProvider lets useStickyExpand key the auto-expand preference by tool name. */}
@@ -67,7 +62,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           workspaceId={workspaceId}
           toolCallId={toolCallId}
           // Workflow-specific
-          workflowRunHint={workflowRunHint}
+          workflowRunHint={message.workflowRun}
           // Bash-specific
           startedAt={message.timestamp}
           // FileEdit-specific
