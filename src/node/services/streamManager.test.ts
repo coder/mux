@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
-import type { CompletedMessagePart } from "@/common/types/stream";
+import type { CompletedMessagePart, WorkflowRunAttachedEvent } from "@/common/types/stream";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import {
@@ -303,6 +303,11 @@ describe("StreamManager - workflow run attachments", () => {
       ) => Promise<void>
     >(streamManager, "appendPartAndEmit");
 
+    const replayedAttachments: WorkflowRunAttachedEvent[] = [];
+    streamManager.on("workflow-run-attached", (event: WorkflowRunAttachedEvent) => {
+      replayedAttachments.push(event);
+    });
+
     await appendPartAndEmit.call(
       streamManager,
       workspaceId,
@@ -317,6 +322,17 @@ describe("StreamManager - workflow run attachments", () => {
       },
       false
     );
+
+    expect(replayedAttachments).toEqual([
+      {
+        type: "workflow-run-attached",
+        workspaceId,
+        messageId,
+        toolCallId: "workflow-call-race",
+        runId: "wfr_race",
+        timestamp: timestamp + 1,
+      },
+    ]);
 
     const partial = await historyService.readPartial(workspaceId);
     const part = partial?.parts[0];
