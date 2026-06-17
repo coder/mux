@@ -173,7 +173,7 @@ describe("WorkflowDefinitionToolCall", () => {
     clickToolHeader(view, "deep-research");
 
     expect(view.getByText("Metadata")).toBeTruthy();
-    expect(view.container.textContent).toContain("Source omitted in metadata view");
+    expect(view.queryByText("Source")).toBeNull();
     expect(view.container.textContent).not.toContain("return agent");
   });
 
