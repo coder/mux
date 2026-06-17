@@ -777,6 +777,8 @@ export type DisplayedMessage =
       streamSequence?: number; // Local ordering within this assistant message
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
+      /** Durable workflow run attachment recovered from partial history. */
+      workflowRun?: MuxToolPart["workflowRun"];
       // Nested tool calls for code_execution (from PTC streaming or reconstructed from result)
       nestedCalls?: Array<{
         toolCallId: string;

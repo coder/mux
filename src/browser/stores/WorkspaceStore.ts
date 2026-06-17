@@ -13,9 +13,7 @@ import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
 import type { AssistedReviewHunk } from "@/common/types/review";
-
-/** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
-const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
+import type { WorkflowRunRecord } from "@/common/types/workflow";
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import {
   StreamingMessageAggregator,
@@ -48,6 +46,7 @@ import {
   isAdvisorPhaseEvent,
   isBashOutputEvent,
   isTaskCreatedEvent,
+  isWorkflowRunAttachedEvent,
   isMuxMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
@@ -91,6 +90,10 @@ import {
 import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui";
 import { APPROX_CHARS_PER_TOKEN } from "@/constants/streaming";
 import { trackStreamCompleted } from "@/common/telemetry";
+import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessages";
+
+/** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
+const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
 
 export type AutoRetryStatus = Extract<
   WorkspaceChatMessage,
@@ -241,6 +244,11 @@ export interface AdvisorLiveTextState {
 export type AdvisorLiveOutputState = AdvisorLiveTextState;
 export type AdvisorLiveReasoningState = AdvisorLiveTextState;
 
+export interface WorkflowToolLiveRunState {
+  runId: string;
+  run?: WorkflowRunRecord;
+}
+
 interface WorkspaceChatTransientState {
   caughtUp: boolean;
   isHydratingTranscript: boolean;
@@ -253,6 +261,7 @@ interface WorkspaceChatTransientState {
   liveAdvisorReasoning: Map<string, AdvisorLiveReasoningState>;
   liveAdvisorPhase: Map<string, AdvisorLivePhaseState>;
   liveTaskIds: Map<string, string[]>;
+  liveWorkflowRuns: Map<string, WorkflowToolLiveRunState>;
   autoRetryStatus: AutoRetryStatus | null;
 }
 
@@ -382,6 +391,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     liveAdvisorReasoning: new Map(),
     liveAdvisorPhase: new Map(),
     liveTaskIds: new Map(),
+    liveWorkflowRuns: new Map(),
     autoRetryStatus: null,
   };
 }
@@ -908,6 +918,21 @@ export class WorkspaceStore {
       }
       if (toolCallEnd.toolName === "task") {
         transient?.liveTaskIds.delete(toolCallEnd.toolCallId);
+      }
+      if (isWorkflowRunEmittingToolName(toolCallEnd.toolName)) {
+        const result =
+          typeof toolCallEnd.result === "object" && toolCallEnd.result !== null
+            ? (toolCallEnd.result as { run?: unknown; status?: unknown })
+            : null;
+        // Background workflow_resume can return a fresh running/backgrounded status while omitting
+        // a stale pre-dispatch run. Keep the attachment hint so the card still has workspace/id
+        // context for polling until a fresh run snapshot arrives.
+        const shouldKeepRunHintForPolling =
+          result?.run == null &&
+          (result?.status === "running" || result?.status === "backgrounded");
+        if (!shouldKeepRunHintForPolling) {
+          transient?.liveWorkflowRuns.delete(toolCallEnd.toolCallId);
+        }
       }
       applyWorkspaceChatEventToAggregator(aggregator, data);
 
@@ -1667,13 +1692,15 @@ export class WorkspaceStore {
     if (
       transient.liveBashOutput.size === 0 &&
       transient.liveAdvisorOutput.size === 0 &&
-      transient.liveAdvisorReasoning.size === 0
+      transient.liveAdvisorReasoning.size === 0 &&
+      transient.liveWorkflowRuns.size === 0
     ) {
       return;
     }
 
     const activeBashToolCallIds = new Set<string>();
     const activeAdvisorToolCallIds = new Set<string>();
+    const activeWorkflowToolCallIds = new Set<string>();
     for (const msg of aggregator.getDisplayedMessages()) {
       if (msg.type !== "tool") continue;
 
@@ -1682,6 +1709,9 @@ export class WorkspaceStore {
       }
       if (msg.toolName === "advisor") {
         activeAdvisorToolCallIds.add(msg.toolCallId);
+      }
+      if (isWorkflowRunEmittingToolName(msg.toolName)) {
+        activeWorkflowToolCallIds.add(msg.toolCallId);
       }
     }
 
@@ -1700,6 +1730,12 @@ export class WorkspaceStore {
     for (const toolCallId of Array.from(transient.liveAdvisorOutput.keys())) {
       if (!activeAdvisorToolCallIds.has(toolCallId)) {
         transient.liveAdvisorOutput.delete(toolCallId);
+      }
+    }
+
+    for (const toolCallId of Array.from(transient.liveWorkflowRuns.keys())) {
+      if (!activeWorkflowToolCallIds.has(toolCallId)) {
+        transient.liveWorkflowRuns.delete(toolCallId);
       }
     }
   }
@@ -2324,6 +2360,10 @@ export class WorkspaceStore {
    */
   bumpState(workspaceId: string): void {
     this.states.bump(workspaceId);
+  }
+
+  getWorkflowToolLiveRun(workspaceId: string, toolCallId: string): WorkflowToolLiveRunState | null {
+    return this.chatTransientState.get(workspaceId)?.liveWorkflowRuns.get(toolCallId) ?? null;
   }
 
   /**
@@ -3984,7 +4024,8 @@ export class WorkspaceStore {
       data.type === "advisor-output" ||
       data.type === "advisor-reasoning-output" ||
       data.type === "advisor-phase" ||
-      data.type === "task-created"
+      data.type === "task-created" ||
+      data.type === "workflow-run-attached"
     );
   }
 
@@ -4065,6 +4106,7 @@ export class WorkspaceStore {
         transient.liveAdvisorOutput.clear();
         transient.liveAdvisorReasoning.clear();
         transient.liveAdvisorPhase.clear();
+        transient.liveWorkflowRuns.clear();
         transient.liveTaskIds.clear();
       }
 
@@ -4302,6 +4344,23 @@ export class WorkspaceStore {
       });
 
       // Low-frequency: bump immediately so advisor progress updates feel responsive.
+      this.states.bump(workspaceId);
+      return;
+    }
+
+    if (isWorkflowRunAttachedEvent(data)) {
+      const transient = this.assertChatTransientState(workspaceId);
+      const current = transient.liveWorkflowRuns.get(data.toolCallId);
+      const nextRun = data.run ?? (current?.runId === data.runId ? current.run : undefined);
+      if (current?.runId === data.runId && current.run === nextRun) {
+        return;
+      }
+
+      transient.liveWorkflowRuns.set(data.toolCallId, {
+        runId: data.runId,
+        ...(nextRun != null ? { run: nextRun } : {}),
+      });
+
       this.states.bump(workspaceId);
       return;
     }
@@ -4629,6 +4688,27 @@ export function useTaskToolLiveTaskIds(
     () => {
       if (!workspaceId || !toolCallId) return null;
       return store.getTaskToolLiveTaskIds(workspaceId, toolCallId);
+    }
+  );
+}
+
+/**
+ * Hook to get the exact durable workflow run attached to a running workflow tool call.
+ */
+export function useWorkflowToolLiveRun(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): WorkflowToolLiveRunState | null {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId || !toolCallId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return null;
+      return store.getWorkflowToolLiveRun(workspaceId, toolCallId);
     }
   );
 }

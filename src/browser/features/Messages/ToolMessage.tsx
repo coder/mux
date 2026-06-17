@@ -48,7 +48,6 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   // Extract hook output if present (only shown when hook produced output)
   const hookOutput = extractHookOutput(result);
   const hookDuration = extractHookDuration(result);
-
   return (
     <div className={className}>
       {/* ToolNameProvider lets useStickyExpand key the auto-expand preference by tool name. */}
@@ -62,6 +61,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
           // Identity props (used by bash for live output, ask_user_question for caching)
           workspaceId={workspaceId}
           toolCallId={toolCallId}
+          // Workflow-specific
+          workflowRunHint={message.workflowRun}
           // Bash-specific
           startedAt={message.timestamp}
           // FileEdit-specific

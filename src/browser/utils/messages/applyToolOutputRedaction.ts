@@ -2,7 +2,7 @@
  * Strip UI-only tool output before sending to providers.
  * Produces a cloned array safe for sending to providers without touching persisted history/UI.
  */
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxMessage, MuxToolPart } from "@/common/types/message";
 import { sanitizeUnknownForProviderOutput } from "@/common/utils/providerOutputSanitization";
 import { stripToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 import { stripWorkflowRunRecordForModel } from "@/common/utils/workflowRunMessages";
@@ -36,6 +36,24 @@ function stripResolvedSourcePath(source: unknown): unknown {
       stripped[key] = value;
     }
   }
+  return stripped;
+}
+
+function stripWorkflowRunAttachment(part: MuxToolPart): MuxToolPart {
+  if (part.workflowRun == null) {
+    return part;
+  }
+
+  if (part.state === "input-available") {
+    const { workflowRun: _workflowRun, ...stripped } = part;
+    return stripped;
+  }
+  if (part.state === "output-available") {
+    const { workflowRun: _workflowRun, ...stripped } = part;
+    return stripped;
+  }
+
+  const { workflowRun: _workflowRun, ...stripped } = part;
   return stripped;
 }
 
@@ -73,16 +91,17 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
 
     const newParts = msg.parts.map((part) => {
       if (part.type !== "dynamic-tool") return part;
-      if (part.state !== "output-available") return part;
+      const providerPart = stripWorkflowRunAttachment(part);
+      if (providerPart.state !== "output-available") return providerPart;
 
       const outputWithoutUiOnly = stripWorkflowRunRecordForModel(
-        part.toolName,
-        stripToolOutputUiOnly(part.output)
+        providerPart.toolName,
+        stripToolOutputUiOnly(providerPart.output)
       );
       const sanitizedOutput = sanitizeUnknownForProviderOutput(
         stripLegacyImageToolOutputForModel(outputWithoutUiOnly)
       );
-      const nestedCalls = part.nestedCalls?.map((nestedCall) => {
+      const nestedCalls = providerPart.nestedCalls?.map((nestedCall) => {
         if (nestedCall.state !== "output-available") {
           return nestedCall;
         }
@@ -98,7 +117,7 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
         };
       });
       return {
-        ...part,
+        ...providerPart,
         ...(nestedCalls ? { nestedCalls } : {}),
         output: sanitizedOutput,
       };

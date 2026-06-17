@@ -4,6 +4,7 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 import { AgentIdSchema } from "./agentDefinition";
 import { StreamErrorTypeSchema } from "./errors";
 import { AgentSkillScopeSchema, SkillNameSchema } from "./agentSkill";
+import { WorkflowRunIdSchema, WorkflowRunRecordSchema } from "./workflow";
 
 export const FilePartSchema = z.object({
   url: z.string(),
@@ -23,6 +24,14 @@ export const MuxReasoningPartSchema = z.object({
   timestamp: z.number().optional(),
 });
 
+export const WorkflowRunToolAttachmentSchema = z.object({
+  runId: WorkflowRunIdSchema,
+  run: WorkflowRunRecordSchema.optional(),
+  timestamp: z.number(),
+});
+
+export type WorkflowRunToolAttachment = z.infer<typeof WorkflowRunToolAttachmentSchema>;
+
 // Base schema for tool parts - shared fields
 const MuxToolPartBase = z.object({
   type: z.literal("dynamic-tool"),
@@ -30,6 +39,7 @@ const MuxToolPartBase = z.object({
   toolName: z.string(),
   input: z.unknown(),
   timestamp: z.number().optional(),
+  workflowRun: WorkflowRunToolAttachmentSchema.optional(),
 });
 
 /**

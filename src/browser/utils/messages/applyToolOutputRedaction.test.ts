@@ -34,6 +34,36 @@ describe("applyToolOutputRedaction", () => {
     expect(part.output).toEqual({ success: true, answer: "continue" });
   });
 
+  it("strips workflow run attachment hints from provider-bound tool parts", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-workflow",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "workflow-call-1",
+            toolName: "workflow_run",
+            input: { name: "deep-research", args: {} },
+            state: "input-available",
+            workflowRun: {
+              runId: "wfr_123",
+              timestamp: 123,
+            },
+          },
+        ],
+      },
+    ];
+
+    const result = applyToolOutputRedaction(messages);
+    const part = result[0]?.parts[0];
+    if (part?.type !== "dynamic-tool") {
+      throw new Error("Expected dynamic tool part");
+    }
+
+    expect("workflowRun" in part).toBe(false);
+  });
+
   it("scrubs legacy image tool payloads before replaying history to providers", () => {
     const imageResult = {
       success: true,

@@ -55,7 +55,11 @@ import {
   formatWorkflowSavedMessage,
   type WorkflowPromotionTarget,
 } from "./WorkflowDefinitionToolCall";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkflowToolLiveRun,
+  useWorkspaceStoreRaw,
+  type WorkflowToolLiveRunState,
+} from "@/browser/stores/WorkspaceStore";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
 interface WorkflowRunToolCallProps {
@@ -63,6 +67,7 @@ interface WorkflowRunToolCallProps {
   result?: WorkflowRunToolResult;
   status?: ToolStatus;
   workspaceId?: string;
+  toolCallId?: string;
   startedAt?: number;
   /** Which tool rendered this card; controls the header icon. */
   toolName?: "workflow_run" | "workflow_resume";
@@ -71,6 +76,7 @@ interface WorkflowRunToolCallProps {
    * direct getRun discovery while executing instead of name+args matching against listRuns.
    */
   knownRunId?: string;
+  workflowRunHint?: WorkflowToolLiveRunState | null;
 }
 
 type WorkflowRunAction = "interrupt" | "resume" | "retryFromCheckpoint";
@@ -1026,15 +1032,19 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   result,
   status = "pending",
   workspaceId,
+  toolCallId,
   startedAt,
   toolName = "workflow_run",
   knownRunId,
+  workflowRunHint: explicitWorkflowRunHint,
 }) => {
   const apiState = useContext(APIContext);
   const commandRegistry = useOptionalCommandRegistry();
   const registerCommandSource = commandRegistry?.registerSource;
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = isWorkflowRunSuccessResult(result) ? result : null;
+  const liveWorkflowRunHint = useWorkflowToolLiveRun(workspaceId, toolCallId);
+  const workflowRunHint = explicitWorkflowRunHint ?? liveWorkflowRunHint;
   const [refreshedRun, setRefreshedRun] = useState<WorkflowRunRecord | null>(null);
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
   const [workflowActionInFlightRunId, setWorkflowActionInFlightRunId] = useState<string | null>(
@@ -1045,17 +1055,27 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     workflowActionInFlightRunIdRef.current = nextRunId;
     setWorkflowActionInFlightRunId(nextRunId);
   };
-  const baseRun = successResult?.run;
+  const baseRun =
+    successResult?.run != null && workflowRunHint?.run != null
+      ? getNewestWorkflowRunSnapshot(successResult.run, workflowRunHint.run)
+      : (successResult?.run ?? workflowRunHint?.run);
   const selectedRun = selectWorkflowRunSnapshot({
-    // knownRunId (workflow_resume) provides exact identity before any result arrives, which
-    // also disables the heuristic name+args foreground discovery below.
-    runId: successResult?.runId ?? knownRunId,
+    // knownRunId (workflow_resume) and workflowRunHint provide exact identities before any
+    // result arrives, which also disables the heuristic name+args foreground discovery below.
+    runId: successResult?.runId ?? knownRunId ?? workflowRunHint?.runId,
     baseRun,
     refreshedRun,
   });
   const runId = selectedRun.runId;
   const run = selectedRun.run;
-  const displayStatus = run?.status ?? successResult?.status ?? status;
+  const hasRefreshedRunSnapshot =
+    refreshedRun != null && refreshedRun.id === runId && run === refreshedRun;
+  // workflow_resume can return a fresh dispatch status while intentionally omitting a stale
+  // pre-dispatch run snapshot. Trust that result status only until polling provides a fresher run.
+  const displayStatus =
+    successResult?.run == null && successResult?.status != null && !hasRefreshedRunSnapshot
+      ? successResult.status
+      : (run?.status ?? successResult?.status ?? status);
   const displayEventSequence = getLatestWorkflowEventSequence(run);
   const resultValue = successResult?.result ?? getLatestResultEvent(run);
   const reportMarkdown = getReportMarkdown(resultValue);
@@ -1109,11 +1129,16 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     workspaceId != null &&
     refreshedRun?.id === knownRunId &&
     refreshedRun.workspaceId === workspaceId;
+  const workflowRunHintConfirmed =
+    workflowRunHint?.runId != null &&
+    workspaceId != null &&
+    (workflowRunHint.run?.workspaceId == null || workflowRunHint.run.workspaceId === workspaceId);
   const runIdentityConfirmed =
     successResult?.runId != null ||
     baseRun?.id != null ||
     discoveredForegroundRunConfirmed ||
-    discoveredKnownRunConfirmed;
+    discoveredKnownRunConfirmed ||
+    workflowRunHintConfirmed;
   const canInterrupt =
     runIdentityConfirmed &&
     apiState?.api != null &&
@@ -1349,16 +1374,16 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     };
   }, [apiState?.api, args, runId, startedAt, status, workspaceId]);
 
+  const exactDiscoveryRunId = knownRunId ?? workflowRunHint?.runId;
+
   useEffect(() => {
-    // workflow_resume knows the exact run from its args, so fetch the live snapshot by ID
-    // while the tool call executes. Keep polling even after a snapshot loads: the first
-    // poll can race the backend's `running` append and capture the stale pre-resume
-    // status (interrupted/failed), which the regular refresh effect never polls. Hand off
-    // only once the snapshot reaches a status the regular refresh effect covers.
+    // workflow_resume args and workflowRunHint carry exact run identity, so fetch by ID while
+    // the tool call executes. Keep polling until the snapshot reaches a status the regular
+    // refresh effect covers; the first poll can race the backend's `running` append.
     if (
       apiState?.api == null ||
       workspaceId == null ||
-      knownRunId == null ||
+      exactDiscoveryRunId == null ||
       (run != null && REFRESHING_WORKFLOW_STATUSES.has(run.status)) ||
       status !== "executing"
     ) {
@@ -1368,7 +1393,10 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     let ignore = false;
     const discover = async () => {
       try {
-        const nextRun = await apiState.api.workflows.getRun({ workspaceId, runId: knownRunId });
+        const nextRun = await apiState.api.workflows.getRun({
+          workspaceId,
+          runId: exactDiscoveryRunId,
+        });
         if (!ignore && nextRun != null) {
           setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
         }
@@ -1385,7 +1413,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       ignore = true;
       window.clearInterval(interval);
     };
-  }, [apiState?.api, knownRunId, run, status, workspaceId]);
+  }, [apiState?.api, exactDiscoveryRunId, run, status, workspaceId]);
 
   useEffect(() => {
     if (
@@ -1623,7 +1651,9 @@ interface WorkflowResumeToolCallProps {
   result?: WorkflowResumeToolResult;
   status?: ToolStatus;
   workspaceId?: string;
+  toolCallId?: string;
   startedAt?: number;
+  workflowRunHint?: WorkflowToolLiveRunState | null;
 }
 
 /**
@@ -1642,8 +1672,10 @@ export const WorkflowResumeToolCall: React.FC<WorkflowResumeToolCallProps> = (pr
       result={props.result}
       status={props.status}
       workspaceId={props.workspaceId}
+      toolCallId={props.toolCallId}
       startedAt={props.startedAt}
       toolName="workflow_resume"
+      workflowRunHint={props.workflowRunHint}
       knownRunId={props.args.run_id}
     />
   );

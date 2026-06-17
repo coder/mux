@@ -15,6 +15,7 @@ import {
 import type { MuxMessageMetadata } from "../../types/message";
 import { MuxProviderOptionsSchema } from "./providerOptions";
 import { RuntimeModeSchema } from "./runtime";
+import { WorkflowRunIdSchema, WorkflowRunRecordSchema } from "./workflow";
 
 // Chat Events
 
@@ -424,6 +425,20 @@ export const TaskCreatedEventSchema = z.object({
   timestamp: z.number().meta({ description: "When the task was created (Date.now())" }),
 });
 
+export const WorkflowRunAttachedEventSchema = z.object({
+  type: z.literal("workflow-run-attached"),
+  workspaceId: z.string(),
+  messageId: z.string().optional(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
+  toolCallId: z.string(),
+  runId: WorkflowRunIdSchema,
+  run: WorkflowRunRecordSchema.optional(),
+  timestamp: z.number().meta({ description: "When the workflow run was attached (Date.now())" }),
+});
+
 export const ToolCallEndEventSchema = z.object({
   type: z.literal("tool-call-end"),
   workspaceId: z.string(),
@@ -623,6 +638,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   AdvisorOutputEventSchema,
   AdvisorReasoningOutputEventSchema,
   TaskCreatedEventSchema,
+  WorkflowRunAttachedEventSchema,
   AdvisorPhaseEventSchema,
   // Reasoning events
   ReasoningDeltaEventSchema,

@@ -7,6 +7,7 @@ import {
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
 import {
+  emitWorkflowRunAttachedEvent,
   parseToolResult,
   recordBackgroundWorkflowRunReference,
   requireWorkspaceId,
@@ -42,12 +43,22 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
     execute: async (args, options): Promise<unknown> => {
       const workspaceId = requireWorkspaceId(config, "workflow_run");
       const workflowService = requireWorkflowService(config);
+      const toolCallId = options.toolCallId;
 
       const startInput = {
         name: args.name,
         workspaceId,
         projectTrusted: config.trusted === true,
         args: args.args ?? {},
+        onRunCreated: async (event: { runId: string; run: unknown }) => {
+          await emitWorkflowRunAttachedEvent({
+            config,
+            workspaceId,
+            toolCallId,
+            runId: event.runId,
+            run: event.run,
+          });
+        },
       };
       const invocationStartedAtMs = Date.now();
       const result =

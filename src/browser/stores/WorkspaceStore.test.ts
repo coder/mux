@@ -12,6 +12,7 @@ import {
 } from "bun:test";
 import type { CompactionFollowUpRequest, DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkflowRunRecord } from "@/common/types/workflow";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
 import type { WorkspaceActivitySnapshot, WorkspaceChatMessage } from "@/common/orpc/types";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -545,12 +546,56 @@ const advisorReasoningOutputEvent = (
   timestamp,
 });
 
+function createWorkflowRunRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
+  return {
+    id: "wfr_live",
+    workspaceId: "workspace-1",
+    definition: {
+      name: "deep-research",
+      description: "Deep research",
+      scope: "built-in",
+      executable: true,
+    },
+    definitionSource: "export default function workflow() { return null; }",
+    definitionHash: "sha256:test",
+    args: {},
+    status: "running",
+    createdAt: "2026-05-29T00:00:00.000Z",
+    updatedAt: "2026-05-29T00:00:01.000Z",
+    events: [
+      {
+        sequence: 1,
+        type: "status",
+        at: "2026-05-29T00:00:01.000Z",
+        status: "running",
+      },
+    ],
+    steps: [],
+    ...overrides,
+  };
+}
+
 const taskCreatedEvent = (
   workspaceId: string,
   toolCallId: string,
   taskId: string,
   timestamp: number
 ): WorkspaceChatMessage => ({ type: "task-created", workspaceId, toolCallId, taskId, timestamp });
+
+const workflowRunAttachedEvent = (
+  workspaceId: string,
+  toolCallId: string,
+  runId: string,
+  timestamp: number,
+  run?: WorkflowRunRecord
+): WorkspaceChatMessage => ({
+  type: "workflow-run-attached",
+  workspaceId,
+  toolCallId,
+  runId,
+  timestamp,
+  ...(run != null ? { run } : {}),
+});
 
 const TEST_MODEL = "claude-sonnet-4";
 
@@ -4715,6 +4760,119 @@ describe("WorkspaceStore", () => {
         () => store.getAdvisorToolLiveReasoning(workspaceId, "call-advisor-reasoning-2") === null
       );
       expect(clearedLiveReasoning).toBe(true);
+    });
+  });
+
+  describe("workflow-run-attached events", () => {
+    it("exposes the exact workflow run while the workflow tool is running", async () => {
+      const workspaceId = "workflow-run-attached-workspace-1";
+      const run = createWorkflowRunRecord({ id: "wfr_live", workspaceId });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-1", run.id, 1, run),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-1")).toEqual({
+        runId: "wfr_live",
+        run,
+      });
+    });
+
+    it("retains an existing workflow run snapshot when a later attachment omits it", async () => {
+      const workspaceId = "workflow-run-attached-workspace-retain-run";
+      const run = createWorkflowRunRecord({ id: "wfr_retained", workspaceId });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-retain", run.id, 1, run),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-retain", run.id, 2),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-retain")).toEqual({
+        runId: "wfr_retained",
+        run,
+      });
+    });
+
+    it("replays pre-caught-up workflow run attachments after full replay catches up", async () => {
+      const workspaceId = "workflow-run-attached-workspace-2";
+      const run = createWorkflowRunRecord({ id: "wfr_replayed", workspaceId });
+
+      mockChatScript([
+        workflowRunAttachedEvent(workspaceId, "call-workflow-2", run.id, 1, run),
+        Promise.resolve(),
+        { type: "caught-up", replay: "full" },
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-2")).toEqual({
+        runId: "wfr_replayed",
+        run,
+      });
+    });
+
+    it("keeps workflow run attachment hints when a background resume result omits the run", async () => {
+      const workspaceId = "workflow-run-attached-workspace-keep-after-result";
+      const run = createWorkflowRunRecord({
+        id: "wfr_keep_after_result",
+        workspaceId,
+        status: "interrupted",
+      });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-keep", run.id, 1, run),
+        toolCallEndEvent(
+          workspaceId,
+          "call-workflow-keep",
+          "workflow_resume",
+          { status: "running", runId: run.id, result: null, mode: "resume" },
+          { messageId: "m-workflow-keep", timestamp: 2 }
+        ),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-keep")).toEqual({
+        runId: run.id,
+        run,
+      });
+    });
+
+    it("clears workflow run attachment hints when the workflow tool result arrives", async () => {
+      const workspaceId = "workflow-run-attached-workspace-3";
+      const run = createWorkflowRunRecord({ id: "wfr_cleared", workspaceId });
+
+      mockChatScript([
+        caughtUpEvent(),
+        Promise.resolve(),
+        workflowRunAttachedEvent(workspaceId, "call-workflow-3", run.id, 1, run),
+        toolCallEndEvent(
+          workspaceId,
+          "call-workflow-3",
+          "workflow_run",
+          { status: "completed", runId: run.id, result: null, run },
+          { messageId: "m-workflow-3", timestamp: 2 }
+        ),
+      ]);
+
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      expect(store.getWorkflowToolLiveRun(workspaceId, "call-workflow-3")).toBeNull();
     });
   });
 

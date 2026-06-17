@@ -132,7 +132,7 @@ export interface ToolConfiguration {
    * Optional callback for emitting UI-only workspace chat events.
    * Used for streaming bash stdout/stderr to the UI without sending it to the model.
    */
-  emitChatEvent?: (event: WorkspaceChatMessage) => void;
+  emitChatEvent?: (event: WorkspaceChatMessage) => Promise<void> | void;
   /** Primary project path for workspace-scoped tools that need project-relative coordinates. */
   workspaceProjectPath?: string;
   /** Absolute cwd for workspace-scoped tools that accept execution-relative paths. */
@@ -174,6 +174,12 @@ export interface ToolConfiguration {
       workspaceId: string;
       projectTrusted: boolean;
       args: unknown;
+      onRunCreated?: (event: {
+        runId: string;
+        status: "pending";
+        result: null;
+        run: unknown;
+      }) => Promise<void> | void;
     }): Promise<{ runId: string; status: string; result: unknown }>;
     startNamedWorkflow(input: {
       name: string;
@@ -181,6 +187,12 @@ export interface ToolConfiguration {
       projectTrusted: boolean;
       args: unknown;
       abortSignal?: AbortSignal;
+      onRunCreated?: (event: {
+        runId: string;
+        status: "pending";
+        result: null;
+        run: unknown;
+      }) => Promise<void> | void;
     }): Promise<{ runId: string; status: string; result: unknown }>;
     interruptRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
     resumeRun?(input: {

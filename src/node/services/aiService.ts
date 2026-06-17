@@ -1949,6 +1949,11 @@ export class AIService extends EventEmitter {
           if ("workspaceId" in event && event.workspaceId !== workspaceId) {
             return;
           }
+          if (event.type === "workflow-run-attached") {
+            return this.streamManager.attachWorkflowRunToToolCall(event).then(() => {
+              this.emit(event.type, event as never);
+            });
+          }
           this.emit(event.type, event as never);
         },
         workspaceProjectPath: metadata.projectPath,

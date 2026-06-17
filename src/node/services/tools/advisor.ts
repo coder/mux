@@ -21,6 +21,7 @@ import type {
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
 import { log } from "@/node/services/log";
+import { emitChatEventBestEffort } from "./toolUtils";
 
 type StreamTextProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
 
@@ -173,13 +174,17 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           return;
         }
 
-        config.emitChatEvent({
-          type: "advisor-phase",
-          workspaceId: config.workspaceId,
-          toolCallId,
-          phase,
-          timestamp: Date.now(),
-        } satisfies AdvisorPhaseEvent);
+        emitChatEventBestEffort(
+          config,
+          {
+            type: "advisor-phase",
+            workspaceId: config.workspaceId,
+            toolCallId,
+            phase,
+            timestamp: Date.now(),
+          } satisfies AdvisorPhaseEvent,
+          "advisor"
+        );
       };
 
       const emitAdvisorOutput = (text: string): void => {
@@ -188,13 +193,17 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           return;
         }
 
-        config.emitChatEvent({
-          type: "advisor-output",
-          workspaceId: config.workspaceId,
-          toolCallId,
-          text,
-          timestamp: Date.now(),
-        } satisfies AdvisorOutputEvent);
+        emitChatEventBestEffort(
+          config,
+          {
+            type: "advisor-output",
+            workspaceId: config.workspaceId,
+            toolCallId,
+            text,
+            timestamp: Date.now(),
+          } satisfies AdvisorOutputEvent,
+          "advisor"
+        );
       };
 
       const emitAdvisorReasoningOutput = (text: string): void => {
@@ -203,13 +212,17 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           return;
         }
 
-        config.emitChatEvent({
-          type: "advisor-reasoning-output",
-          workspaceId: config.workspaceId,
-          toolCallId,
-          text,
-          timestamp: Date.now(),
-        } satisfies AdvisorReasoningOutputEvent);
+        emitChatEventBestEffort(
+          config,
+          {
+            type: "advisor-reasoning-output",
+            workspaceId: config.workspaceId,
+            toolCallId,
+            text,
+            timestamp: Date.now(),
+          } satisfies AdvisorReasoningOutputEvent,
+          "advisor"
+        );
       };
 
       emitAdvisorPhase("preparing_context");

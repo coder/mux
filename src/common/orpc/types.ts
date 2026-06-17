@@ -15,6 +15,7 @@ import type {
   AdvisorPhaseEvent,
   BashOutputEvent,
   TaskCreatedEvent,
+  WorkflowRunAttachedEvent,
   ReasoningDeltaEvent,
   ReasoningEndEvent,
   UsageDeltaEvent,
@@ -118,6 +119,12 @@ export function isAdvisorReasoningOutputEvent(
 
 export function isTaskCreatedEvent(msg: WorkspaceChatMessage): msg is TaskCreatedEvent {
   return (msg as { type?: string }).type === "task-created";
+}
+
+export function isWorkflowRunAttachedEvent(
+  msg: WorkspaceChatMessage
+): msg is WorkflowRunAttachedEvent {
+  return (msg as { type?: string }).type === "workflow-run-attached";
 }
 
 export function isAdvisorPhaseEvent(msg: WorkspaceChatMessage): msg is AdvisorPhaseEvent {

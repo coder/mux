@@ -223,6 +223,51 @@ function createStreamInfoForTests(
   };
 }
 
+describe("StreamManager - workflow run attachments", () => {
+  test("persists attached workflow run metadata to partial immediately", async () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "workflow-attachment-workspace";
+    const messageId = "workflow-attachment-message";
+    const timestamp = Date.now();
+    const streamInfo = createStreamInfoForTests({
+      messageId,
+      lastPartialWriteTime: timestamp,
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "workflow-call-1",
+          toolName: "workflow_run",
+          input: { name: "deep-research", args: {} },
+          state: "input-available",
+          timestamp,
+        },
+      ],
+    });
+
+    getWorkspaceStreamsForTests(streamManager).set(workspaceId, streamInfo);
+
+    const attached = await streamManager.attachWorkflowRunToToolCall({
+      type: "workflow-run-attached",
+      workspaceId,
+      messageId,
+      toolCallId: "workflow-call-1",
+      runId: "wfr_attached",
+      timestamp: timestamp + 1,
+    });
+
+    expect(attached).toBe(true);
+    const partial = await historyService.readPartial(workspaceId);
+    const part = partial?.parts[0];
+    if (part?.type !== "dynamic-tool") {
+      throw new Error("Expected workflow tool part in persisted partial");
+    }
+    expect(part.workflowRun).toEqual({
+      runId: "wfr_attached",
+      timestamp: timestamp + 1,
+    });
+  });
+});
+
 describe("StreamManager - createTempDirForStream", () => {
   test("creates ~/.mux-tmp/<token> under the runtime's home", async () => {
     using home = new DisposableTempDir("stream-home");

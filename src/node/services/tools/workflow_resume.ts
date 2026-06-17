@@ -11,6 +11,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { isWorkflowRunTaskId } from "./taskId";
 import {
+  emitWorkflowRunAttachedEvent,
   parseToolResult,
   recordBackgroundWorkflowRunReference,
   requireWorkspaceId,
@@ -171,6 +172,14 @@ export const createWorkflowResumeTool: ToolFactory = (config: ToolConfiguration)
       }
 
       assertRunStatusAllowsMode(run, mode);
+
+      await emitWorkflowRunAttachedEvent({
+        config,
+        workspaceId,
+        toolCallId: options.toolCallId,
+        runId: run.id,
+        run,
+      });
 
       const dispatchInput = {
         workspaceId,
