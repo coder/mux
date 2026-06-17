@@ -2015,12 +2015,11 @@ export class WorkspaceService extends EventEmitter {
   }): Promise<void> {
     assert(event.workspaceId.length > 0, "emitWorkflowRunActivity requires workspaceId");
     assert(event.runId.length > 0, "emitWorkflowRunActivity requires runId");
-    const activeWorkflowRunCount = await this.updateActiveWorkflowRunCount(event);
-    const snapshot = mergeActiveWorkflowRunCount(
-      await this.extensionMetadata.getSnapshot(event.workspaceId),
-      activeWorkflowRunCount
+    await this.updateActiveWorkflowRunCount(event);
+    this.emitWorkspaceActivity(
+      event.workspaceId,
+      await this.extensionMetadata.getSnapshot(event.workspaceId)
     );
-    this.emitWorkspaceActivity(event.workspaceId, snapshot);
   }
 
   /**

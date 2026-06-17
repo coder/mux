@@ -364,6 +364,75 @@ describe("WorkspaceService workflow activity", () => {
       await cleanup();
     }
   });
+
+  test("emits current workflow count after overlapping metadata snapshot reads", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const firstSnapshotStarted = createDeferred<void>();
+    const releaseFirstSnapshot = createDeferred<void>();
+    const extensionMetadata = new ExtensionMetadataService(
+      path.join(config.rootDir, "extensionMetadata.json")
+    );
+    const getSnapshotSpy = spyOn(extensionMetadata, "getSnapshot");
+
+    try {
+      const workspaceId = "workflow-activity-overlap";
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        extensionMetadata,
+      });
+      await workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_first",
+        status: "running",
+      });
+      await workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_second",
+        status: "running",
+      });
+
+      let shouldDelayNextSnapshot = true;
+      getSnapshotSpy.mockImplementation(async (id: string) => {
+        if (shouldDelayNextSnapshot) {
+          shouldDelayNextSnapshot = false;
+          firstSnapshotStarted.resolve();
+          await releaseFirstSnapshot.promise;
+        }
+        return ExtensionMetadataService.prototype.getSnapshot.call(extensionMetadata, id);
+      });
+      const activityEvents: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => activityEvents.push(event));
+
+      const first = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_first",
+        status: "completed",
+      });
+      await firstSnapshotStarted.promise;
+      const second = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_second",
+        status: "completed",
+      });
+
+      await second;
+      releaseFirstSnapshot.resolve();
+      await first;
+
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBeUndefined();
+      expect(
+        (await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount
+      ).toBeUndefined();
+    } finally {
+      getSnapshotSpy.mockRestore();
+      releaseFirstSnapshot.resolve();
+      await cleanup();
+    }
+  });
 });
 
 describe("WorkspaceService workflow invocation events", () => {
