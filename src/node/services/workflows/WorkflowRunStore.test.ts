@@ -48,6 +48,40 @@ describe("WorkflowRunStore", () => {
     expect(run.events.map((event) => event.sequence)).toEqual([1]);
   });
 
+  test("lists lightweight run status snapshots without hydrating journals or source", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-status-snapshots");
+    const store = await createStore(tmp.path);
+    await store.createRun({
+      id: "wfr_child",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: source,
+      args: {},
+      parentWorkflow: { runId: "wfr_123", stepId: "child", inputHash: "hash", depth: 0 },
+      now: "2026-05-29T00:00:01.000Z",
+    });
+    await store.appendStatus("wfr_123", "running", "2026-05-29T00:00:02.000Z");
+
+    await fs.writeFile(path.join(tmp.path, "workflows", "wfr_123", "definition.js"), "broken");
+    await fs.writeFile(
+      path.join(tmp.path, "workflows", "wfr_123", "events.jsonl"),
+      "{not-json}\n",
+      "utf-8"
+    );
+
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({ definitionSource: "broken" });
+    const snapshots = await store.listRunStatusSnapshots();
+
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[0]).toMatchObject({
+      id: "wfr_123",
+      workspaceId: "workspace-1",
+      status: "running",
+    });
+    expect(snapshots[1]?.id).toBe("wfr_child");
+    expect(snapshots[1]?.parentWorkflow?.runId).toBe("wfr_123");
+  });
+
   test("rejects invalid run ids before resolving run file paths", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = new WorkflowRunStore({ sessionDir: tmp.path });

@@ -224,16 +224,25 @@ function formatWorkflowRunCount(count: number): string {
   return count === 1 ? "Workflow running" : `${count} workflows running`;
 }
 
+function SidebarActivityIndicator(props: { text: string; testId: string }) {
+  return (
+    <div
+      className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4"
+      data-testid={props.testId}
+    >
+      <span className="min-w-0 truncate">{props.text}</span>
+    </div>
+  );
+}
+
 function WorkflowActivityIndicator(props: { workspaceId: string; activeWorkflowRunCount: number }) {
   const statusText = formatWorkflowRunCount(props.activeWorkflowRunCount);
 
   return (
-    <div
-      className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4"
-      data-testid={`workspace-workflow-activity-${props.workspaceId}`}
-    >
-      <span className="min-w-0 truncate">{statusText}</span>
-    </div>
+    <SidebarActivityIndicator
+      text={statusText}
+      testId={`workspace-workflow-activity-${props.workspaceId}`}
+    />
   );
 }
 
@@ -247,12 +256,10 @@ function DelegatedActivityIndicator(props: {
   }
 
   return (
-    <div
-      className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4"
-      data-testid={`workspace-delegated-activity-${props.workspaceId}`}
-    >
-      <span className="min-w-0 truncate">{statusText}</span>
-    </div>
+    <SidebarActivityIndicator
+      text={statusText}
+      testId={`workspace-delegated-activity-${props.workspaceId}`}
+    />
   );
 }
 

@@ -10,9 +10,10 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { canRetryWorkflowFromCheckpoint } from "@/common/utils/workflowRetryEligibility";
 import {
+  isActiveWorkflowRunStatus,
   isNestedWorkflowRun,
+  isTerminalWorkflowRunStatus,
   type WorkflowRunRecord,
-  type WorkflowRunStatus,
 } from "@/common/types/workflow";
 
 import { fromBashTaskId, isWorkflowRunTaskId, toBashTaskId } from "./taskId";
@@ -93,14 +94,6 @@ function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[
   };
 }
 
-function isWorkflowRunAwaitableStatus(status: WorkflowRunStatus): boolean {
-  return status === "pending" || status === "running" || status === "backgrounded";
-}
-
-function isWorkflowRunTerminalStatus(status: WorkflowRunStatus): boolean {
-  return status === "completed" || status === "failed" || status === "interrupted";
-}
-
 function parseWorkflowRun(value: unknown): WorkflowRunRecord {
   return WorkflowRunRecordSchema.parse(value);
 }
@@ -111,7 +104,7 @@ function getWorkflowRunElapsedMs(run: WorkflowRunRecord): number | undefined {
     return undefined;
   }
   const updatedAtMs = parseTimestampMs(run.updatedAt);
-  const endAtMs = isWorkflowRunTerminalStatus(run.status) ? updatedAtMs : Date.now();
+  const endAtMs = isTerminalWorkflowRunStatus(run.status) ? updatedAtMs : Date.now();
   return Math.max(0, (endAtMs ?? Date.now()) - createdAtMs);
 }
 
@@ -286,7 +279,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           const parsed = WorkflowRunRecordSchema.safeParse(rawRun);
           if (
             !parsed.success ||
-            !isWorkflowRunAwaitableStatus(parsed.data.status) ||
+            !isActiveWorkflowRunStatus(parsed.data.status) ||
             isNestedWorkflowRun(parsed.data)
           ) {
             continue;
@@ -384,12 +377,12 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         if (run == null) {
           return { status: "not_found" as const, taskId: runId };
         }
-        if (timeoutMs === 0 || isWorkflowRunTerminalStatus(run.status)) {
+        if (timeoutMs === 0 || isTerminalWorkflowRunStatus(run.status)) {
           return buildWorkflowAwaitResult(run);
         }
 
         const deadline = Date.now() + (timeoutMs ?? DEFAULT_TASK_AWAIT_TIMEOUT_MS);
-        while (!isWorkflowRunTerminalStatus(run.status)) {
+        while (!isTerminalWorkflowRunStatus(run.status)) {
           if (abortSignal?.aborted) {
             return { status: "error" as const, taskId: runId, error: "Interrupted" };
           }

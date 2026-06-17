@@ -1793,9 +1793,13 @@ export default function workflow({ action }) {
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let calls = 0;
     const backgroundFlags: Array<boolean | undefined> = [];
+    const statusEvents: Array<{ workspaceId: string; runId: string; status: string }> = [];
     const service = new WorkflowService({
       definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
       runStore,
+      onRunStatusChanged: (event) => {
+        statusEvents.push(event);
+      },
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent(_spec, _lifecycle, waitOptions) {
@@ -1823,6 +1827,12 @@ export default function workflow({ action }) {
     await waitForWorkflowRunFileStatus(tmp.path, "wfr_backgrounded", "completed");
     expect(calls).toBe(2);
     expect(backgroundFlags).toEqual([true, false]);
+    await waitForCondition("backgrounded workflow status events", () => statusEvents.length === 3);
+    expect(statusEvents).toEqual([
+      { workspaceId: "workspace-1", runId: "wfr_backgrounded", status: "pending" },
+      { workspaceId: "workspace-1", runId: "wfr_backgrounded", status: "backgrounded" },
+      { workspaceId: "workspace-1", runId: "wfr_backgrounded", status: "completed" },
+    ]);
   });
 
   test("can keep foreground workflow waits in the foreground", async () => {

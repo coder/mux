@@ -128,6 +128,7 @@ import {
   type MuxMessage,
 } from "@/common/types/message";
 import {
+  isActiveWorkflowRunStatus,
   isNestedWorkflowRun,
   type WorkflowRunRecord,
   type WorkflowRunStatus,
@@ -1459,12 +1460,6 @@ export declare interface WorkspaceService {
   ): boolean;
 }
 
-const ACTIVE_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
-  "pending",
-  "running",
-  "backgrounded",
-]);
-
 function createDefaultActivitySnapshot(): WorkspaceActivitySnapshot {
   return {
     recency: 0,
@@ -1472,6 +1467,20 @@ function createDefaultActivitySnapshot(): WorkspaceActivitySnapshot {
     lastModel: null,
     lastThinkingLevel: null,
   };
+}
+
+function mergeActiveWorkflowRunCount(
+  snapshot: WorkspaceActivitySnapshot | null,
+  activeWorkflowRunCount: number
+): WorkspaceActivitySnapshot {
+  assert(activeWorkflowRunCount >= 0, "active workflow run count must be non-negative");
+  const merged: WorkspaceActivitySnapshot = { ...(snapshot ?? createDefaultActivitySnapshot()) };
+  if (activeWorkflowRunCount > 0) {
+    merged.activeWorkflowRunCount = activeWorkflowRunCount;
+  } else {
+    delete merged.activeWorkflowRunCount;
+  }
+  return merged;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
@@ -1484,6 +1493,9 @@ export class WorkspaceService extends EventEmitter {
     string,
     { chat: () => void; metadata: () => void }
   >();
+
+  // Lazily bootstrapped workflow activity cache so sidebar refreshes don't rescan run history.
+  private readonly activeWorkflowRunIdsByWorkspace = new Map<string, Set<string>>();
 
   // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
   private readonly postCompactionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1902,20 +1914,22 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
-  private async getActiveWorkflowRunCount(
-    workspaceId: string,
-    changedRun?: { runId: string; status: WorkflowRunStatus }
-  ): Promise<number> {
-    assert(workspaceId.length > 0, "getActiveWorkflowRunCount requires workspaceId");
+  private async getActiveWorkflowRunIds(workspaceId: string): Promise<Set<string>> {
+    assert(workspaceId.length > 0, "getActiveWorkflowRunIds requires workspaceId");
+    const cached = this.activeWorkflowRunIdsByWorkspace.get(workspaceId);
+    if (cached != null) {
+      return cached;
+    }
+
     const activeRunIds = new Set<string>();
     try {
       const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
-      const runs = await runStore.listRuns();
+      const runs = await runStore.listRunStatusSnapshots();
       for (const run of runs) {
         if (
           run.workspaceId === workspaceId &&
           !isNestedWorkflowRun(run) &&
-          ACTIVE_WORKFLOW_RUN_STATUSES.has(run.status)
+          isActiveWorkflowRunStatus(run.status)
         ) {
           activeRunIds.add(run.id);
         }
@@ -1927,28 +1941,26 @@ export class WorkspaceService extends EventEmitter {
       });
     }
 
-    if (changedRun != null) {
-      if (ACTIVE_WORKFLOW_RUN_STATUSES.has(changedRun.status)) {
-        activeRunIds.add(changedRun.runId);
-      } else {
-        activeRunIds.delete(changedRun.runId);
-      }
-    }
-
-    return activeRunIds.size;
+    this.activeWorkflowRunIdsByWorkspace.set(workspaceId, activeRunIds);
+    return activeRunIds;
   }
 
-  private async withActiveWorkflowRunCount(
-    workspaceId: string,
-    snapshot: WorkspaceActivitySnapshot | null,
-    changedRun?: { runId: string; status: WorkflowRunStatus }
-  ): Promise<WorkspaceActivitySnapshot> {
-    const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId, changedRun);
-    const baseSnapshot = snapshot ?? createDefaultActivitySnapshot();
-    return {
-      ...baseSnapshot,
-      ...(activeWorkflowRunCount > 0 ? { activeWorkflowRunCount } : {}),
-    };
+  private async getActiveWorkflowRunCount(workspaceId: string): Promise<number> {
+    return (await this.getActiveWorkflowRunIds(workspaceId)).size;
+  }
+
+  private async updateActiveWorkflowRunCount(event: {
+    workspaceId: string;
+    runId: string;
+    status: WorkflowRunStatus;
+  }): Promise<number> {
+    const activeRunIds = await this.getActiveWorkflowRunIds(event.workspaceId);
+    if (isActiveWorkflowRunStatus(event.status)) {
+      activeRunIds.add(event.runId);
+    } else {
+      activeRunIds.delete(event.runId);
+    }
+    return activeRunIds.size;
   }
 
   public async emitWorkflowRunActivity(event: {
@@ -1958,10 +1970,10 @@ export class WorkspaceService extends EventEmitter {
   }): Promise<void> {
     assert(event.workspaceId.length > 0, "emitWorkflowRunActivity requires workspaceId");
     assert(event.runId.length > 0, "emitWorkflowRunActivity requires runId");
-    const snapshot = await this.withActiveWorkflowRunCount(
-      event.workspaceId,
+    const activeWorkflowRunCount = await this.updateActiveWorkflowRunCount(event);
+    const snapshot = mergeActiveWorkflowRunCount(
       await this.extensionMetadata.getSnapshot(event.workspaceId),
-      { runId: event.runId, status: event.status }
+      activeWorkflowRunCount
     );
     this.emitWorkspaceActivity(event.workspaceId, snapshot);
   }
@@ -7768,6 +7780,9 @@ export class WorkspaceService extends EventEmitter {
     try {
       const snapshots = await this.extensionMetadata.getAllSnapshots();
       const workspaceIds = new Set(snapshots.keys());
+      for (const workspaceId of this.activeWorkflowRunIdsByWorkspace.keys()) {
+        workspaceIds.add(workspaceId);
+      }
       try {
         for (const metadata of await this.config.getAllWorkspaceMetadata()) {
           workspaceIds.add(metadata.id);
@@ -7787,10 +7802,7 @@ export class WorkspaceService extends EventEmitter {
             }
             return [
               workspaceId,
-              {
-                ...(snapshot ?? createDefaultActivitySnapshot()),
-                ...(activeWorkflowRunCount > 0 ? { activeWorkflowRunCount } : {}),
-              },
+              mergeActiveWorkflowRunCount(snapshot, activeWorkflowRunCount),
             ] as const;
           }
         )
