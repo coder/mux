@@ -173,6 +173,34 @@ async function findWorkspaceById(services: WorkspaceHostActionServices, workspac
   return all.find((metadata) => metadata.id === workspaceId);
 }
 
+type WorkspaceArchivedStateTransition = (
+  workspaceId: string
+) => Promise<{ success: true } | { success: false; error: string }>;
+
+async function transitionWorkspaceArchivedState(
+  services: WorkspaceHostActionServices,
+  ctx: HostWorkflowActionContext,
+  actionName: "workspace.archive" | "workspace.unarchive",
+  workspaceId: string,
+  targetArchived: boolean,
+  transition: WorkspaceArchivedStateTransition
+): Promise<boolean> {
+  throwIfAborted(ctx, actionName);
+  const existing = await findWorkspaceById(services, workspaceId);
+  if (!existing) {
+    throw new Error(`${actionName}: workspace not found: ${workspaceId}`);
+  }
+  if (isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt) === targetArchived) {
+    return true;
+  }
+  throwIfAborted(ctx, actionName);
+  const transitionResult = await transition(workspaceId);
+  if (!transitionResult.success) {
+    throw new Error(`${actionName} failed: ${transitionResult.error}`);
+  }
+  return false;
+}
+
 /**
  * Work-item keys (e.g. "PROJ-123", "release/v1.2") rarely satisfy
  * validateWorkspaceName ([a-z0-9_-], max 64 chars), which would make
@@ -554,20 +582,15 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
     hasReconcile: true,
     createExecute: (services) => async (rawInput, ctx) => {
       const input = WorkspaceIdInputSchema.parse(rawInput);
-      throwIfAborted(ctx, "workspace.archive");
-      const existing = await findWorkspaceById(services, input.workspaceId);
-      if (!existing) {
-        throw new Error(`workspace.archive: workspace not found: ${input.workspaceId}`);
-      }
-      if (isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt)) {
-        return { archived: true, alreadyArchived: true };
-      }
-      throwIfAborted(ctx, "workspace.archive");
-      const archiveResult = await services.workspaceService.archive(input.workspaceId);
-      if (!archiveResult.success) {
-        throw new Error(`workspace.archive failed: ${archiveResult.error}`);
-      }
-      return { archived: true, alreadyArchived: false };
+      const alreadyArchived = await transitionWorkspaceArchivedState(
+        services,
+        ctx,
+        "workspace.archive",
+        input.workspaceId,
+        true,
+        (workspaceId) => services.workspaceService.archive(workspaceId)
+      );
+      return { archived: true, alreadyArchived };
     },
   },
 
@@ -589,20 +612,15 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
     hasReconcile: true,
     createExecute: (services) => async (rawInput, ctx) => {
       const input = WorkspaceIdInputSchema.parse(rawInput);
-      throwIfAborted(ctx, "workspace.unarchive");
-      const existing = await findWorkspaceById(services, input.workspaceId);
-      if (!existing) {
-        throw new Error(`workspace.unarchive: workspace not found: ${input.workspaceId}`);
-      }
-      if (!isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt)) {
-        return { unarchived: true, alreadyUnarchived: true };
-      }
-      throwIfAborted(ctx, "workspace.unarchive");
-      const unarchiveResult = await services.workspaceService.unarchive(input.workspaceId);
-      if (!unarchiveResult.success) {
-        throw new Error(`workspace.unarchive failed: ${unarchiveResult.error}`);
-      }
-      return { unarchived: true, alreadyUnarchived: false };
+      const alreadyUnarchived = await transitionWorkspaceArchivedState(
+        services,
+        ctx,
+        "workspace.unarchive",
+        input.workspaceId,
+        false,
+        (workspaceId) => services.workspaceService.unarchive(workspaceId)
+      );
+      return { unarchived: true, alreadyUnarchived };
     },
   },
 };
