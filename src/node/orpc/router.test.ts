@@ -825,6 +825,37 @@ export default function workflow({ args }) { return { reportMarkdown: args.topic
     expect(thrown).toHaveProperty("message", "Workflow argument topic is required");
   });
 
+  test("reports malformed workflow argument schemas as a bad request", async () => {
+    fs.writeFileSync(
+      path.join(projectPath, ".mux", "workflows", "bad-args-schema.js"),
+      `export const metadata = {
+  description: "Bad args schema",
+  argsSchema: { type: "object", properties: { topic: "bad" } },
+};
+export default function workflow() { return { reportMarkdown: "should not run" }; }
+`
+    );
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    let thrown: unknown;
+    try {
+      await client.workflows.start({
+        workspaceId: "workspace-1",
+        name: "bad-args-schema",
+        args: { topic: "hello" },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ORPCError);
+    expect((thrown as { code?: string }).code).toBe("BAD_REQUEST");
+    expect(thrown).toHaveProperty(
+      "message",
+      "Workflow args property topic must be an object schema"
+    );
+  });
+
   test("waits for chat idle before starting slash workflow invocations", async () => {
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {

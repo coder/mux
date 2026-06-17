@@ -2148,9 +2148,7 @@ export const router = (authToken?: string) => {
           const { service, projectPath, projectTrusted } = await resolveWorkflowContext(
             context,
             input.workspaceId,
-            {
-              ...(onBackgroundRunTerminal != null ? { onBackgroundRunTerminal } : {}),
-            }
+            { onBackgroundRunTerminal }
           );
           if (input.rawCommand != null) {
             await context.workspaceService.prepareManualWorkflowInvocation(input.workspaceId);

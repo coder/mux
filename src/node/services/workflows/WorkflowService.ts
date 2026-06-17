@@ -713,7 +713,7 @@ export class WorkflowService {
     );
 
     const normalized = normalizeWorkflowArgsForSource(definition.source, input.args, {
-      ...(input.defaultArgs != null ? { defaultArgs: input.defaultArgs } : {}),
+      defaultArgs: input.defaultArgs,
     });
     return await this.runStore.createRun({
       id: runId,
