@@ -61,9 +61,11 @@ import type { ReviewActionCallbacks } from "../Shared/InlineReviewNote";
 import { isPlanFilePath, normalizePlanFilePath } from "@/common/types/review";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
+  Check,
   Clipboard,
   ClipboardCheck,
   ClipboardList,
+  Copy,
   FileText,
   ListStart,
   MessageSquareOff,
@@ -655,11 +657,13 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const actionButtons: ButtonConfig[] = [copyButton];
 
   // Copy the plan's on-disk file path (replaces the former mux.md "Share" link action).
+  // Use the Copy/Check icons (the repo's copy-a-value idiom, see RuntimeBadge) so this
+  // button is visually distinct from the Clipboard "Copy" button that copies plan content.
   if (planPath) {
     actionButtons.push({
       label: copiedPath ? "Copied" : "Copy file path",
       onClick: () => void copyPathToClipboard(planPath),
-      icon: copiedPath ? <ClipboardCheck /> : <Clipboard />,
+      icon: copiedPath ? <Check /> : <Copy />,
       tooltip: planPath,
     });
   }
