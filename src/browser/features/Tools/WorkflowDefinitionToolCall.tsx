@@ -76,6 +76,12 @@ export function WorkflowBadge(props: {
   );
 }
 
+// Blocked workflows/actions share one badge so the "blocked" label and danger
+// tone stay coupled wherever a non-executable entry is shown.
+export function BlockedBadge() {
+  return <WorkflowBadge tone="danger">blocked</WorkflowBadge>;
+}
+
 export function WorkflowSection(props: {
   title: string;
   children: React.ReactNode;
@@ -151,7 +157,7 @@ function WorkflowDefinitionListRow(props: { descriptor: WorkflowDefinitionDescri
       </span>
       <div className="flex items-center gap-1.5">
         <WorkflowBadge>{descriptor.scope}</WorkflowBadge>
-        {!descriptor.executable && <WorkflowBadge tone="danger">blocked</WorkflowBadge>}
+        {!descriptor.executable && <BlockedBadge />}
       </div>
       <div className="min-w-0 [@container(max-width:640px)]:col-span-2">
         <div className="text-muted truncate text-[11px]" title={descriptor.description}>
@@ -195,7 +201,7 @@ export function WorkflowDefinitionCard(props: {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-foreground font-mono text-[12px] font-medium">{descriptor.name}</span>
         <WorkflowBadge>{descriptor.scope}</WorkflowBadge>
-        {!descriptor.executable && <WorkflowBadge tone="danger">blocked</WorkflowBadge>}
+        {!descriptor.executable && <BlockedBadge />}
       </div>
       {!props.compact && (
         <div className="text-muted mt-1 text-[11px]">{descriptor.description}</div>
