@@ -1495,6 +1495,10 @@ export class WorkspaceService extends EventEmitter {
   >();
 
   // Lazily bootstrapped workflow activity cache so sidebar refreshes don't rescan run history.
+  private readonly activeWorkflowRunIdBootstrapsByWorkspace = new Map<
+    string,
+    Promise<Set<string>>
+  >();
   private readonly activeWorkflowRunIdsByWorkspace = new Map<string, Set<string>>();
 
   // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
@@ -1914,14 +1918,10 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
-  private async getActiveWorkflowRunIds(workspaceId: string): Promise<Set<string>> {
-    assert(workspaceId.length > 0, "getActiveWorkflowRunIds requires workspaceId");
-    const cached = this.activeWorkflowRunIdsByWorkspace.get(workspaceId);
-    if (cached != null) {
-      return cached;
-    }
-
-    const activeRunIds = new Set<string>();
+  private async populateActiveWorkflowRunIds(
+    workspaceId: string,
+    activeRunIds: Set<string>
+  ): Promise<Set<string>> {
     try {
       const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
       const runs = await runStore.listRunStatusSnapshots();
@@ -1940,9 +1940,33 @@ export class WorkspaceService extends EventEmitter {
         error,
       });
     }
-
-    this.activeWorkflowRunIdsByWorkspace.set(workspaceId, activeRunIds);
     return activeRunIds;
+  }
+
+  private async getActiveWorkflowRunIds(workspaceId: string): Promise<Set<string>> {
+    assert(workspaceId.length > 0, "getActiveWorkflowRunIds requires workspaceId");
+    const cached = this.activeWorkflowRunIdsByWorkspace.get(workspaceId);
+    if (cached != null) {
+      const bootstrap = this.activeWorkflowRunIdBootstrapsByWorkspace.get(workspaceId);
+      if (bootstrap != null) {
+        await bootstrap;
+      }
+      return cached;
+    }
+
+    // Install the shared Set before awaiting disk so parallel workflow status events
+    // mutate the same cache instead of racing to replace each other after bootstrap.
+    const activeRunIds = new Set<string>();
+    this.activeWorkflowRunIdsByWorkspace.set(workspaceId, activeRunIds);
+    const bootstrap = this.populateActiveWorkflowRunIds(workspaceId, activeRunIds);
+    this.activeWorkflowRunIdBootstrapsByWorkspace.set(workspaceId, bootstrap);
+    try {
+      return await bootstrap;
+    } finally {
+      if (this.activeWorkflowRunIdBootstrapsByWorkspace.get(workspaceId) === bootstrap) {
+        this.activeWorkflowRunIdBootstrapsByWorkspace.delete(workspaceId);
+      }
+    }
   }
 
   private async getActiveWorkflowRunCount(workspaceId: string): Promise<number> {

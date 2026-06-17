@@ -309,6 +309,61 @@ describe("WorkspaceService workflow activity", () => {
       await cleanup();
     }
   });
+
+  test("shares initial active workflow cache bootstrap across parallel status events", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const scanStarted = createDeferred<void>();
+    const releaseScan = createDeferred<void>();
+    const listStatusSnapshotsSpy = spyOn(
+      WorkflowRunStore.prototype,
+      "listRunStatusSnapshots"
+    ).mockImplementation(async () => {
+      scanStarted.resolve();
+      await releaseScan.promise;
+      return [];
+    });
+
+    try {
+      const workspaceId = "workflow-activity-race";
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        extensionMetadata: new ExtensionMetadataService(
+          path.join(config.rootDir, "extensionMetadata.json")
+        ),
+      });
+      const activityEvents: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => activityEvents.push(event));
+
+      const first = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_first",
+        status: "running",
+      });
+      await scanStarted.promise;
+      const second = workspaceService.emitWorkflowRunActivity({
+        workspaceId,
+        runId: "wfr_second",
+        status: "running",
+      });
+
+      releaseScan.resolve();
+      await Promise.all([first, second]);
+
+      expect(listStatusSnapshotsSpy).toHaveBeenCalledTimes(1);
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(2);
+      expect((await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount).toBe(
+        2
+      );
+    } finally {
+      listStatusSnapshotsSpy.mockRestore();
+      releaseScan.resolve();
+      await cleanup();
+    }
+  });
 });
 
 describe("WorkspaceService workflow invocation events", () => {
