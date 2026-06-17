@@ -39,6 +39,13 @@ function stripResolvedSourcePath(source: unknown): unknown {
   return stripped;
 }
 
+function stripWorkflowRunAttachment<P extends { workflowRun?: unknown }>(
+  part: P
+): Omit<P, "workflowRun"> {
+  const { workflowRun: _workflowRun, ...stripped } = part;
+  return stripped;
+}
+
 function stripLegacyImageToolOutputForModel(output: unknown): unknown {
   if (Array.isArray(output)) {
     return output.map(stripLegacyImageToolOutputForModel);
@@ -73,16 +80,17 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
 
     const newParts = msg.parts.map((part) => {
       if (part.type !== "dynamic-tool") return part;
-      if (part.state !== "output-available") return part;
+      const providerPart = stripWorkflowRunAttachment(part);
+      if (providerPart.state !== "output-available") return providerPart;
 
       const outputWithoutUiOnly = stripWorkflowRunRecordForModel(
-        part.toolName,
-        stripToolOutputUiOnly(part.output)
+        providerPart.toolName,
+        stripToolOutputUiOnly(providerPart.output)
       );
       const sanitizedOutput = sanitizeUnknownForProviderOutput(
         stripLegacyImageToolOutputForModel(outputWithoutUiOnly)
       );
-      const nestedCalls = part.nestedCalls?.map((nestedCall) => {
+      const nestedCalls = providerPart.nestedCalls?.map((nestedCall) => {
         if (nestedCall.state !== "output-available") {
           return nestedCall;
         }
@@ -98,7 +106,7 @@ export function applyToolOutputRedaction(messages: MuxMessage[]): MuxMessage[] {
         };
       });
       return {
-        ...part,
+        ...providerPart,
         ...(nestedCalls ? { nestedCalls } : {}),
         output: sanitizedOutput,
       };

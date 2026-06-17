@@ -641,7 +641,7 @@ export class AgentSession {
 
   private getStreamLastTimestamp(streamInfo: {
     startTime?: number;
-    parts: Array<{ timestamp?: number }>;
+    parts: Array<{ timestamp?: number; workflowRun?: { timestamp?: number } }>;
     toolCompletionTimestamps: Map<string, number>;
   }): number {
     // Use a nonzero floor so live-mode replay never sends afterTimestamp=0 when a
@@ -654,6 +654,13 @@ export class AgentSession {
       }
       streamLastTimestamp = timestamp;
       break;
+    }
+
+    for (const part of streamInfo.parts) {
+      const workflowRunTimestamp = part.workflowRun?.timestamp;
+      if (workflowRunTimestamp !== undefined && workflowRunTimestamp > streamLastTimestamp) {
+        streamLastTimestamp = workflowRunTimestamp;
+      }
     }
 
     for (const completionTimestamp of streamInfo.toolCompletionTimestamps.values()) {
@@ -4437,6 +4444,9 @@ export class AgentSession {
       this.emitChatEvent(payload);
     });
     forward("task-created", (payload) => {
+      this.emitChatEvent(payload);
+    });
+    forward("workflow-run-attached", (payload) => {
       this.emitChatEvent(payload);
     });
     forward("advisor-phase", (payload) => {

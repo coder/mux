@@ -170,6 +170,12 @@ export interface ToolConfiguration {
       workspaceId: string;
       projectTrusted: boolean;
       args: unknown;
+      onRunCreated?: (event: {
+        runId: string;
+        status: "pending";
+        result: null;
+        run: unknown;
+      }) => Promise<void> | void;
     }): Promise<{ runId: string; status: string; result: unknown }>;
     startNamedWorkflow(input: {
       name: string;
@@ -177,6 +183,12 @@ export interface ToolConfiguration {
       projectTrusted: boolean;
       args: unknown;
       abortSignal?: AbortSignal;
+      onRunCreated?: (event: {
+        runId: string;
+        status: "pending";
+        result: null;
+        run: unknown;
+      }) => Promise<void> | void;
     }): Promise<{ runId: string; status: string; result: unknown }>;
     interruptRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
     resumeRun?(input: {

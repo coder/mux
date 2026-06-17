@@ -22,6 +22,7 @@ import type {
   UsageDeltaEvent,
   ToolCallEndEvent,
   CompletedMessagePart,
+  WorkflowRunAttachedEvent,
 } from "@/common/types/stream";
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
@@ -645,6 +646,41 @@ export class StreamManager extends EventEmitter {
     streamInfo.toolModelUsages.push(clonePersistedToolModelUsage(event));
   }
 
+  async attachWorkflowRunToToolCall(event: WorkflowRunAttachedEvent): Promise<boolean> {
+    const workspaceId = event.workspaceId as WorkspaceId;
+    const streamInfo = this.workspaceStreams.get(workspaceId);
+    if (
+      streamInfo == null ||
+      (event.messageId != null && streamInfo.messageId !== event.messageId)
+    ) {
+      return false;
+    }
+
+    const partIndex = streamInfo.parts.findIndex(
+      (part) => part.type === "dynamic-tool" && part.toolCallId === event.toolCallId
+    );
+    if (partIndex === -1) {
+      return false;
+    }
+
+    const part = streamInfo.parts[partIndex];
+    if (part.type !== "dynamic-tool") {
+      return false;
+    }
+
+    streamInfo.parts[partIndex] = {
+      ...part,
+      workflowRun: {
+        runId: event.runId,
+        ...(event.run != null ? { run: event.run } : {}),
+        timestamp: event.timestamp,
+      },
+    };
+
+    await this.flushPartialWrite(workspaceId, streamInfo);
+    return true;
+  }
+
   /**
    * Write the current partial message to disk (throttled by mtime)
    * Ensures writes happen during rapid streaming (crash-resilient)
@@ -1083,6 +1119,19 @@ export class StreamManager extends EventEmitter {
         tokens,
         timestamp,
       });
+
+      if (part.workflowRun != null) {
+        this.emit("workflow-run-attached", {
+          type: "workflow-run-attached",
+          workspaceId: workspaceId as string,
+          messageId,
+          ...(isReplay ? { replay: true } : {}),
+          toolCallId: part.toolCallId,
+          runId: part.workflowRun.runId,
+          ...(part.workflowRun.run != null ? { run: part.workflowRun.run } : {}),
+          timestamp: part.workflowRun.timestamp,
+        } satisfies WorkflowRunAttachedEvent);
+      }
 
       // If tool has output, emit completion
       if (part.state === "output-available") {
@@ -3951,21 +4000,30 @@ export class StreamManager extends EventEmitter {
             // transition to output-available. Use the recorded tool completion timestamp
             // (from tool-call-end emission) to decide whether completion happened after
             // the reconnect cursor.
-            if (part.type === "dynamic-tool" && part.state === "output-available") {
-              const completionTimestamp = streamInfo.toolCompletionTimestamps.get(part.toolCallId);
-              if (completionTimestamp === undefined) {
-                log.warn(
-                  "[streamManager] Missing tool completion timestamp during replay; dropping replayed completion to avoid duplicate side effects",
-                  {
-                    workspaceId,
-                    messageId: streamInfo.messageId,
-                    toolCallId: part.toolCallId,
-                  }
-                );
-                return false;
+            if (part.type === "dynamic-tool") {
+              const workflowRunAttachedAt = part.workflowRun?.timestamp;
+              if (workflowRunAttachedAt !== undefined && workflowRunAttachedAt > afterTimestamp) {
+                return true;
               }
 
-              return completionTimestamp > afterTimestamp;
+              if (part.state === "output-available") {
+                const completionTimestamp = streamInfo.toolCompletionTimestamps.get(
+                  part.toolCallId
+                );
+                if (completionTimestamp === undefined) {
+                  log.warn(
+                    "[streamManager] Missing tool completion timestamp during replay; dropping replayed completion to avoid duplicate side effects",
+                    {
+                      workspaceId,
+                      messageId: streamInfo.messageId,
+                      toolCallId: part.toolCallId,
+                    }
+                  );
+                  return false;
+                }
+
+                return completionTimestamp > afterTimestamp;
+              }
             }
 
             return false;

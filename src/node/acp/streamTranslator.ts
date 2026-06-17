@@ -214,6 +214,7 @@ export class StreamTranslator {
       case "reasoning-end":
       case "delete":
       case "task-created":
+      case "workflow-run-attached":
       case "usage-delta":
       case "session-usage-delta":
       case "queued-message-changed":

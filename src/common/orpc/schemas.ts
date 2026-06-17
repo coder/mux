@@ -264,6 +264,7 @@ export {
   ToolCallStartEventSchema,
   BashOutputEventSchema,
   TaskCreatedEventSchema,
+  WorkflowRunAttachedEventSchema,
   AdvisorOutputEventSchema,
   AdvisorReasoningOutputEventSchema,
   AdvisorPhaseEventSchema,

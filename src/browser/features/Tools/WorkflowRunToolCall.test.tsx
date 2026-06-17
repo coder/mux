@@ -1218,6 +1218,64 @@ describe("WorkflowRunToolCall", () => {
     expect(workflowHeader.textContent).not.toContain("pending");
   });
 
+  test("renders attached foreground workflow runs without heuristic discovery", async () => {
+    const attachedRun = {
+      id: "wfr_attached",
+      workspaceId: "workspace-1",
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:attached",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        { sequence: 1, type: "phase" as const, at: "2026-05-29T00:00:02.000Z", name: "scope" },
+      ],
+      steps: [],
+    };
+    const listRuns = mock(async () => []);
+    const getRun = mock(async () => attachedRun);
+    const api = {
+      workflows: {
+        listRuns,
+        getRun,
+      },
+    };
+
+    const view = render(
+      <APIHarness client={api}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                name: "deep-research",
+                args: { topic: "workflow cards" },
+                run_in_background: false,
+              }}
+              status="executing"
+              workspaceId="workspace-1"
+              startedAt={Date.parse("2026-05-29T00:00:00.500Z")}
+              workflowRunHint={{ runId: "wfr_attached", run: attachedRun }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    expect(view.getByText("wfr_attached")).toBeTruthy();
+    expect(view.getByText("scope")).toBeTruthy();
+    expect(listRuns).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(getRun).toHaveBeenCalledWith({ workspaceId: "workspace-1", runId: "wfr_attached" })
+    );
+  });
+
   test("discovers foreground workflow runs and renders live run details", async () => {
     const staleRun = {
       id: "wfr_stale",

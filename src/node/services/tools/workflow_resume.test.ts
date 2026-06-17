@@ -6,6 +6,7 @@ import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflowRetryEligibility";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
+import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 
 const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
@@ -129,6 +130,49 @@ describe("workflow_resume tool", () => {
       mode: "resume",
       run: expect.objectContaining({ id: "wfr_resume_me" }),
     });
+  });
+
+  test("emits a workflow run attachment before resuming", async () => {
+    using tempDir = new TestTempDir("test-workflow-resume-attached");
+    const run = buildRun({ id: "wfr_resume_attached" });
+    const emittedEvents: WorkflowRunAttachedEvent[] = [];
+    let emitChatEventSettled = false;
+    let resumeWaitedForEmission = false;
+    const workflowService = buildWorkflowService({
+      getRun: mock(async () => run),
+      resumeRun: mock(async () => {
+        resumeWaitedForEmission = emitChatEventSettled;
+        return { runId: run.id, status: "running" as const, result: null };
+      }),
+    });
+    const tool = createWorkflowResumeTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      emitChatEvent: async (event) => {
+        await Promise.resolve();
+        if (event.type === "workflow-run-attached") {
+          emittedEvents.push(event);
+          emitChatEventSettled = true;
+        }
+      },
+      workflowService,
+    });
+
+    await tool.execute!(
+      { run_id: run.id, run_in_background: false, mode: null },
+      mockToolCallOptions
+    );
+
+    expect(resumeWaitedForEmission).toBe(true);
+    expect(emittedEvents).toHaveLength(1);
+    expect(emittedEvents[0]).toMatchObject({
+      type: "workflow-run-attached",
+      workspaceId: "workspace-1",
+      toolCallId: "test-call-id",
+      runId: run.id,
+      run: expect.objectContaining({ id: run.id, status: "interrupted" }),
+    });
+    expect(typeof emittedEvents[0]?.timestamp).toBe("number");
   });
 
   test("resumes in background and records an agent workflow run reference", async () => {

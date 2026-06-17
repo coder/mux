@@ -6,6 +6,8 @@ import {
   WorkflowRunToolResultSchema,
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
+import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
+import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import {
   parseToolResult,
   recordBackgroundWorkflowRunReference,
@@ -35,6 +37,29 @@ function isBackgroundWorkflowResult(
   return args.run_in_background === true || status === "backgrounded";
 }
 
+async function emitWorkflowRunAttachedEvent(input: {
+  config: ToolConfiguration;
+  workspaceId: string;
+  toolCallId?: string;
+  runId: string;
+  run: unknown;
+}): Promise<void> {
+  if (!input.config.emitChatEvent || !input.toolCallId) {
+    return;
+  }
+
+  const parsedRun = WorkflowRunRecordSchema.safeParse(input.run);
+  const event: WorkflowRunAttachedEvent = {
+    type: "workflow-run-attached",
+    workspaceId: input.workspaceId,
+    toolCallId: input.toolCallId,
+    runId: input.runId,
+    ...(parsedRun.success ? { run: parsedRun.data } : {}),
+    timestamp: Date.now(),
+  };
+  await input.config.emitChatEvent(event);
+}
+
 export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.workflow_run.description,
@@ -42,12 +67,22 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
     execute: async (args, options): Promise<unknown> => {
       const workspaceId = requireWorkspaceId(config, "workflow_run");
       const workflowService = requireWorkflowService(config);
+      const toolCallId = options.toolCallId;
 
       const startInput = {
         name: args.name,
         workspaceId,
         projectTrusted: config.trusted === true,
         args: args.args ?? {},
+        onRunCreated: async (event: { runId: string; run: unknown }) => {
+          await emitWorkflowRunAttachedEvent({
+            config,
+            workspaceId,
+            toolCallId,
+            runId: event.runId,
+            run: event.run,
+          });
+        },
       };
       const invocationStartedAtMs = Date.now();
       const result =
