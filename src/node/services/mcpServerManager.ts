@@ -14,7 +14,11 @@ import type {
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { PolicyService } from "@/node/services/policyService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
-import { parseBearerWwwAuthenticate, type McpOauthService } from "@/node/services/mcpOauthService";
+import {
+  parseBearerWwwAuthenticate,
+  probeServerForBearerChallenge,
+  type McpOauthService,
+} from "@/node/services/mcpOauthService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
 import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
@@ -349,47 +353,52 @@ function extractWwwAuthenticateHeader(error: unknown): string | null {
   return null;
 }
 
-async function probeWwwAuthenticateHeader(url: string): Promise<string | null> {
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), 3_000);
+function createWwwAuthenticateCaptureFetch() {
+  let capturedHeader: string | null = null;
 
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "text/event-stream",
-      },
-      redirect: "manual",
-      signal: abortController.signal,
-    });
+  // @ai-sdk/mcp expects a full fetch implementation (including static helpers like
+  // preconnect), so wrap the call path while preserving the original function shape.
+  const fetchWithCapture = Object.assign(async (...args: Parameters<typeof fetch>) => {
+    const response = await fetch(...args);
+    if (!capturedHeader && (response.status === 401 || response.status === 403)) {
+      capturedHeader = extractHeaderValue(response.headers, "www-authenticate");
+    }
+    return response;
+  }, fetch) as typeof fetch;
 
-    return response.headers.get("www-authenticate");
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+  return {
+    fetch: fetchWithCapture,
+    getCapturedHeader: () => capturedHeader,
+  };
 }
 
 async function extractBearerOauthChallenge(options: {
   error: unknown;
   serverUrl: string | null;
+  transport: Extract<MCPServerTransport, "http" | "sse" | "auto"> | null;
+  capturedWwwAuthenticateHeader?: string | null;
 }): Promise<BearerChallenge | null> {
   const status = extractHttpStatusCode(options.error);
   if (status !== 401 && status !== 403) {
     return null;
   }
 
-  let header = extractWwwAuthenticateHeader(options.error);
-  if (!header && options.serverUrl) {
-    header = await probeWwwAuthenticateHeader(options.serverUrl);
+  let challenge = options.capturedWwwAuthenticateHeader
+    ? parseBearerWwwAuthenticate(options.capturedWwwAuthenticateHeader)
+    : null;
+
+  if (!challenge) {
+    const header = extractWwwAuthenticateHeader(options.error);
+    challenge = header ? parseBearerWwwAuthenticate(header) : null;
   }
 
-  if (!header) {
-    return null;
+  if (!challenge && options.serverUrl && options.transport) {
+    challenge = await probeServerForBearerChallenge({
+      serverUrl: options.serverUrl,
+      transport: options.transport,
+    });
   }
 
-  const challenge = parseBearerWwwAuthenticate(header);
   if (!challenge) {
     return null;
   }
@@ -425,6 +434,7 @@ async function runServerTest(
   const testPromise = (async (): Promise<MCPTestResult> => {
     let stdioTransport: MCPStdioTransport | null = null;
     let client: Awaited<ReturnType<typeof createMCPClient>> | null = null;
+    let getCapturedWwwAuthenticateHeader: (() => string | null) | null = null;
 
     try {
       if (server.transport === "stdio") {
@@ -442,9 +452,13 @@ async function runServerTest(
       } else {
         log.debug(`[MCP] Testing ${logContext}`, { transport: server.transport });
 
+        const challengeCapture = createWwwAuthenticateCaptureFetch();
+        getCapturedWwwAuthenticateHeader = challengeCapture.getCapturedHeader;
+
         const transportBase = {
           url: server.url,
           headers: server.headers,
+          fetch: challengeCapture.fetch,
           ...(server.authProvider ? { authProvider: server.authProvider } : {}),
         };
 
@@ -520,6 +534,8 @@ async function runServerTest(
       const oauthChallenge = await extractBearerOauthChallenge({
         error,
         serverUrl: server.transport === "stdio" ? null : server.url,
+        transport: server.transport === "stdio" ? null : server.transport,
+        capturedWwwAuthenticateHeader: getCapturedWwwAuthenticateHeader?.() ?? null,
       });
 
       return {

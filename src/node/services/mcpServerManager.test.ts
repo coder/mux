@@ -1033,6 +1033,63 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("test() includes oauthChallenge when auth is only advertised on POST", async () => {
+    let baseUrl = "";
+    let resourceMetadataUrl = "";
+
+    const server = createServer((req, res) => {
+      if (req.method === "POST") {
+        res.statusCode = 401;
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+        );
+        res.setHeader("Content-Type", "application/json");
+        res.end(
+          JSON.stringify({
+            error: "invalid_token",
+            error_description: "Authentication failed.",
+          })
+        );
+        return;
+      }
+
+      res.statusCode = 405;
+      res.setHeader("Allow", "POST, DELETE");
+      res.end("Method Not Allowed");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind POST-only OAuth challenge test server");
+      }
+
+      baseUrl = `http://127.0.0.1:${address.port}/mcp`;
+      resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+
+      const result = await manager.test({
+        projectPath: PROJECT_PATH,
+        transport: "auto",
+        url: baseUrl,
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) {
+        throw new Error("Expected test() to fail");
+      }
+
+      expect(result.oauthChallenge).toEqual({
+        scope: "mcp.read",
+        resourceMetadataUrl,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test("tool execution failure with closed-client error marks instance isClosed for restart", async () => {
     const workspaceId = "ws-tool-closed";
     configService.listServers = mock(() =>

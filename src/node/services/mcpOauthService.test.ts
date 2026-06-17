@@ -5,7 +5,11 @@ import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
 import { MCPConfigService } from "./mcpConfigService";
-import { McpOauthService, parseBearerWwwAuthenticate } from "./mcpOauthService";
+import {
+  McpOauthService,
+  parseBearerWwwAuthenticate,
+  probeServerForBearerChallenge,
+} from "./mcpOauthService";
 
 function getStoreFilePath(muxHome: string): string {
   return path.join(muxHome, "mcp-oauth.json");
@@ -238,6 +242,98 @@ describe("parseBearerWwwAuthenticate", () => {
     expect(challenge).not.toBeNull();
     expect(challenge?.scope).toBe("mcp.read");
     expect(challenge?.resourceMetadataUrl).toBeUndefined();
+  });
+});
+
+describe("probeServerForBearerChallenge", () => {
+  test("prefers POST for http servers that reject GET", async () => {
+    let resourceMetadataUrl = "";
+    const seenMethods: string[] = [];
+
+    const server = createServer((req, res) => {
+      seenMethods.push(req.method ?? "UNKNOWN");
+      res.statusCode = req.method === "POST" ? 401 : 405;
+      if (req.method === "POST") {
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+        );
+      }
+      res.end(req.method === "POST" ? "Unauthorized" : "Method Not Allowed");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind probe test server");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}/mcp`;
+      resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+
+      const challenge = await probeServerForBearerChallenge({
+        serverUrl: baseUrl,
+        transport: "http",
+      });
+
+      expect(challenge).toMatchObject({
+        raw: `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`,
+        scope: "mcp.read",
+      });
+      expect(challenge?.resourceMetadataUrl?.toString()).toBe(resourceMetadataUrl);
+      expect(seenMethods).toEqual(["POST"]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("falls back to GET for auto servers when POST has no challenge", async () => {
+    let resourceMetadataUrl = "";
+    const seenMethods: string[] = [];
+
+    const server = createServer((req, res) => {
+      seenMethods.push(req.method ?? "UNKNOWN");
+      if (req.method === "POST") {
+        res.statusCode = 405;
+        res.end("Method Not Allowed");
+        return;
+      }
+
+      res.statusCode = 401;
+      res.setHeader(
+        "WWW-Authenticate",
+        `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+      );
+      res.end("Unauthorized");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind auto probe test server");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}/mcp`;
+      resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+
+      const challenge = await probeServerForBearerChallenge({
+        serverUrl: baseUrl,
+        transport: "auto",
+      });
+
+      expect(challenge).toMatchObject({
+        raw: `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`,
+        scope: "mcp.read",
+      });
+      expect(challenge?.resourceMetadataUrl?.toString()).toBe(resourceMetadataUrl);
+      expect(seenMethods).toEqual(["POST", "GET"]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 

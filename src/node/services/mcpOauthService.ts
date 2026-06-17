@@ -203,38 +203,83 @@ export function parseBearerWwwAuthenticate(header: string): BearerChallenge | nu
   };
 }
 
-async function probeServerForBearerChallenge(serverUrl: string): Promise<BearerChallenge | null> {
-  const requestUrl = sanitizeServerUrlForRequest(serverUrl);
+type BearerChallengeProbeTransport = OAuthFlowBase["transport"];
+
+interface BearerChallengeProbeRequest {
+  method: "GET" | "POST";
+  headers: Record<string, string>;
+  body?: string;
+}
+
+function getWwwAuthenticateHeader(response: Response): string | null {
+  return response.headers.get("www-authenticate") ?? response.headers.get("WWW-Authenticate");
+}
+
+function getBearerChallengeProbeRequests(
+  transport: BearerChallengeProbeTransport
+): BearerChallengeProbeRequest[] {
+  const sseRequest: BearerChallengeProbeRequest = {
+    method: "GET",
+    headers: {
+      Accept: "text/event-stream",
+    },
+  };
+
+  const httpRequest: BearerChallengeProbeRequest = {
+    method: "POST",
+    headers: {
+      Accept: "application/json, text/event-stream",
+      "Content-Type": "application/json",
+    },
+    // Mirror the HTTP transport's verb so POST-only MCP endpoints still emit their
+    // Bearer challenge, but keep the payload tiny because we only need auth hints.
+    body: "{}",
+  };
+
+  // Prefer the configured transport's verb first, then fall back to the other
+  // remote verb so challenge discovery stays resilient across mixed deployments.
+  return transport === "sse" ? [sseRequest, httpRequest] : [httpRequest, sseRequest];
+}
+
+export async function probeServerForBearerChallenge(options: {
+  serverUrl: string;
+  transport: BearerChallengeProbeTransport;
+}): Promise<BearerChallenge | null> {
+  const requestUrl = sanitizeServerUrlForRequest(options.serverUrl);
   if (!requestUrl) {
     return null;
   }
 
-  // Best-effort probe: do a simple unauthenticated request and parse WWW-Authenticate.
-  //
-  // We intentionally avoid sending MCP-specific headers here because the probe is
-  // only used to extract OAuth hints (scope/resource_metadata) and must not be
-  // protocol-version coupled.
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), 5_000);
 
   try {
-    const response = await fetch(requestUrl, {
-      method: "GET",
-      headers: {
-        Accept: "text/event-stream",
-      },
-      redirect: "manual",
-      signal: abortController.signal,
-    });
+    for (const request of getBearerChallengeProbeRequests(options.transport)) {
+      try {
+        const response = await fetch(requestUrl, {
+          method: request.method,
+          headers: request.headers,
+          ...(request.body ? { body: request.body } : {}),
+          redirect: "manual",
+          signal: abortController.signal,
+        });
 
-    const header =
-      response.headers.get("www-authenticate") ?? response.headers.get("WWW-Authenticate");
-    if (!header) {
-      return null;
+        const header = getWwwAuthenticateHeader(response);
+        if (!header) {
+          continue;
+        }
+
+        const challenge = parseBearerWwwAuthenticate(header);
+        if (challenge) {
+          return challenge;
+        }
+      } catch {
+        if (abortController.signal.aborted) {
+          break;
+        }
+      }
     }
 
-    return parseBearerWwwAuthenticate(header);
-  } catch {
     return null;
   } finally {
     clearTimeout(timeout);
@@ -671,7 +716,10 @@ export class McpOauthService {
 
     // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
     // @ai-sdk/mcp can still fall back to well-known discovery.
-    const challenge = await probeServerForBearerChallenge(serverUrlForDiscovery);
+    const challenge = await probeServerForBearerChallenge({
+      serverUrl: serverUrlForDiscovery,
+      transport,
+    });
 
     const flow: DesktopFlow = {
       flowId,
@@ -812,7 +860,10 @@ export class McpOauthService {
 
     // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
     // @ai-sdk/mcp can still fall back to well-known discovery.
-    const challenge = await probeServerForBearerChallenge(serverUrlForDiscovery);
+    const challenge = await probeServerForBearerChallenge({
+      serverUrl: serverUrlForDiscovery,
+      transport,
+    });
 
     const flow: ServerFlow = {
       flowId,
