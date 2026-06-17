@@ -78,6 +78,13 @@ function fakeServices(options: FakeServiceOptions = {}) {
     ),
     sendMessage: mock(() => Promise.resolve(Ok(undefined))),
     archive: mock(() => Promise.resolve(Ok({ archived: true }))),
+    unarchive: mock((workspaceId: string) => {
+      const metadata = knownWorkspaces.find((workspace) => workspace.id === workspaceId);
+      if (metadata) {
+        metadata.unarchivedAt = new Date().toISOString();
+      }
+      return Promise.resolve(Ok(undefined));
+    }),
   };
   const services: WorkspaceHostActionServices = {
     workspaceService: {
@@ -87,6 +94,8 @@ function fakeServices(options: FakeServiceOptions = {}) {
         calls.sendMessage as unknown as WorkspaceHostActionServices["workspaceService"]["sendMessage"],
       archive:
         calls.archive as unknown as WorkspaceHostActionServices["workspaceService"]["archive"],
+      unarchive:
+        calls.unarchive as unknown as WorkspaceHostActionServices["workspaceService"]["unarchive"],
       getGoalContinuationRuntimeState: () => ({
         isInitializing: false,
         isRuntimeCompatible: true,
@@ -371,15 +380,45 @@ describe("workspace.ensure", () => {
     const output = (await ensure.execute(
       { projectPath: "/proj", key: "issue-1-investigate", trunkBranch: "main" },
       ctx
-    )) as { created: boolean; workspaceId: string };
-    expect(output.created).toBe(true);
-    expect(output.workspaceId).toBe("created-ws");
+    )) as { action: string; created: boolean; workspaceId: string; archived: boolean };
+    expect(output).toMatchObject({
+      action: "created",
+      created: true,
+      workspaceId: "created-ws",
+      archived: false,
+      unarchived: false,
+    });
     expect(calls.create).toHaveBeenCalledTimes(1);
     const tags = calls.create.mock.calls[0][7];
     expect(tags).toEqual({ [WORK_ITEM_TAG_KEY]: "issue-1-investigate" });
   });
 
-  test("is idempotent: an existing tagged workspace (even archived) blocks creation", async () => {
+  test("reuses an active tagged workspace without creating or unarchiving", async () => {
+    const { services, calls } = fakeServices({
+      workspaces: [
+        workspaceMeta({
+          id: "existing",
+          tags: { [WORK_ITEM_TAG_KEY]: "issue-1-investigate" },
+        }),
+      ],
+    });
+    const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
+    const output = await ensure.execute(
+      { projectPath: "/proj", key: "issue-1-investigate", trunkBranch: "main" },
+      ctx
+    );
+    expect(output).toEqual({
+      action: "reused",
+      created: false,
+      workspaceId: "existing",
+      archived: false,
+      unarchived: false,
+    });
+    expect(calls.create).not.toHaveBeenCalled();
+    expect(calls.unarchive).not.toHaveBeenCalled();
+  });
+
+  test("unarchives a tagged workspace instead of returning it archived", async () => {
     const { services, calls } = fakeServices({
       workspaces: [
         workspaceMeta({
@@ -390,12 +429,30 @@ describe("workspace.ensure", () => {
       ],
     });
     const ensure = getAction(createWorkspaceHostActions(services), "workspace.ensure");
-    const output = (await ensure.execute(
+    const output = await ensure.execute(
       { projectPath: "/proj", key: "issue-1-investigate", trunkBranch: "main" },
       ctx
-    )) as { created: boolean; workspaceId: string; archived: boolean };
-    expect(output).toEqual({ created: false, workspaceId: "existing", archived: true });
+    );
+    expect(output).toEqual({
+      action: "unarchived",
+      created: false,
+      workspaceId: "existing",
+      archived: false,
+      unarchived: true,
+    });
+    const second = await ensure.execute(
+      { projectPath: "/proj", key: "issue-1-investigate", trunkBranch: "main" },
+      ctx
+    );
+    expect(second).toEqual({
+      action: "reused",
+      created: false,
+      workspaceId: "existing",
+      archived: false,
+      unarchived: false,
+    });
     expect(calls.create).not.toHaveBeenCalled();
+    expect(calls.unarchive).toHaveBeenCalledTimes(1);
   });
 
   test("reconcile re-runs the idempotent ensure", () => {
@@ -709,5 +766,28 @@ describe("workspace.archive", () => {
     });
     expect(calls.archive).toHaveBeenCalledTimes(1);
     await expectRejects(archive.execute({ workspaceId: "missing" }, ctx), /not found/);
+  });
+});
+
+describe("workspace.unarchive", () => {
+  test("short-circuits when the workspace is already unarchived", async () => {
+    const { services, calls } = fakeServices({ workspaces: [workspaceMeta({ id: "ws-1" })] });
+    const unarchive = getAction(createWorkspaceHostActions(services), "workspace.unarchive");
+    const output = await unarchive.execute({ workspaceId: "ws-1" }, ctx);
+    expect(output).toEqual({ unarchived: true, alreadyUnarchived: true });
+    expect(calls.unarchive).not.toHaveBeenCalled();
+  });
+
+  test("unarchives archived workspaces and errors on unknown ids", async () => {
+    const { services, calls } = fakeServices({
+      workspaces: [workspaceMeta({ id: "ws-1", archivedAt: new Date().toISOString() })],
+    });
+    const unarchive = getAction(createWorkspaceHostActions(services), "workspace.unarchive");
+    expect(await unarchive.execute({ workspaceId: "ws-1" }, ctx)).toEqual({
+      unarchived: true,
+      alreadyUnarchived: false,
+    });
+    expect(calls.unarchive).toHaveBeenCalledTimes(1);
+    await expectRejects(unarchive.execute({ workspaceId: "missing" }, ctx), /not found/);
   });
 });

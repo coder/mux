@@ -20,11 +20,11 @@
  *
  * Design notes (from the reconcile-loop dispatcher design):
  * - `ensure` is idempotent by work-item key (workspace tag `workItemKey`), so
- *   it is replay-safe and exports `reconcile = execute`.
+ *   it is replay-safe, unarchives archived matches, and exports `reconcile = execute`.
  * - `sendMessage` deliberately has NO reconcile: re-sending a chat message is
  *   not idempotent. A crashed workflow must restart the loop (which re-derives
  *   the plan from observed state) rather than replay a half-finished send.
- * - `archive` is a reconciliation outcome (source says done), idempotent.
+ * - `archive`/`unarchive` are reconciliation outcomes (source says done/active), idempotent.
  */
 
 import { createHash } from "crypto";
@@ -56,7 +56,7 @@ export const WORK_ITEM_TAG_KEY = "workItemKey";
 export interface WorkspaceHostActionServices {
   workspaceService: Pick<
     WorkspaceService,
-    "list" | "create" | "sendMessage" | "archive" | "getGoalContinuationRuntimeState"
+    "list" | "create" | "sendMessage" | "archive" | "unarchive" | "getGoalContinuationRuntimeState"
   >;
   historyService: Pick<HistoryService, "getHistoryFromLatestBoundary">;
   config: Pick<Config, "loadConfigOrDefault" | "findWorkspace" | "getAllWorkspaceMetadata">;
@@ -164,7 +164,7 @@ async function findWorkspaceByWorkItemKey(
 
 /**
  * Look up a workspace by id from the live WorkspaceService.list(). Shared by the
- * id-targeted host actions (sendMessage/archive), which receive an explicit
+ * id-targeted host actions (sendMessage/archive/unarchive), which receive an explicit
  * workspaceId. Distinct from findWorkspaceByWorkItemKey, which reads config
  * directly to avoid list()'s hidden-workspace filtering and error swallowing.
  */
@@ -269,7 +269,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
     metadata: {
       version: 1,
       description:
-        "Idempotently ensure a persistent workspace exists for a work-item key (tag workItemKey); creates it when missing",
+        "Idempotently ensure an active persistent workspace exists for a work-item key (tag workItemKey); unarchives matching workspaces and creates when missing",
       effect: "external",
       inputSchema: {
         type: "object",
@@ -318,10 +318,32 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
             new Set([requestedProjectPath, owningProjectPath])
           );
           if (existing) {
+            const archived = isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt);
+            if (!archived) {
+              return {
+                action: "reused",
+                created: false,
+                workspaceId: existing.id,
+                archived: false,
+                unarchived: false,
+              };
+            }
+
+            // `ensure` means downstream workflow steps can use the workspace. An
+            // archived match satisfies identity, but not that active-state postcondition.
+            throwIfAborted(ctx, "workspace.ensure");
+            const unarchiveResult = await services.workspaceService.unarchive(existing.id);
+            if (!unarchiveResult.success) {
+              throw new Error(
+                `workspace.ensure failed to unarchive workspace: ${unarchiveResult.error}`
+              );
+            }
             return {
+              action: "unarchived",
               created: false,
               workspaceId: existing.id,
-              archived: isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt),
+              archived: false,
+              unarchived: true,
             };
           }
 
@@ -346,9 +368,11 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
             throw new Error(`workspace.ensure failed to create workspace: ${createResult.error}`);
           }
           return {
+            action: "created",
             created: true,
             workspaceId: createResult.data.metadata.id,
             archived: false,
+            unarchived: false,
           };
         });
       };
@@ -544,6 +568,41 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
         throw new Error(`workspace.archive failed: ${archiveResult.error}`);
       }
       return { archived: true, alreadyArchived: false };
+    },
+  },
+
+  "workspace.unarchive": {
+    metadata: {
+      version: 1,
+      description: "Unarchive a workspace (idempotent; succeeds when already unarchived)",
+      effect: "external",
+      inputSchema: {
+        type: "object",
+        properties: {
+          workspaceId: { type: "string" },
+        },
+        required: ["workspaceId"],
+      },
+      outputSchema: { type: "object" },
+      timeoutMs: 120_000,
+    },
+    hasReconcile: true,
+    createExecute: (services) => async (rawInput, ctx) => {
+      const input = WorkspaceIdInputSchema.parse(rawInput);
+      throwIfAborted(ctx, "workspace.unarchive");
+      const existing = await findWorkspaceById(services, input.workspaceId);
+      if (!existing) {
+        throw new Error(`workspace.unarchive: workspace not found: ${input.workspaceId}`);
+      }
+      if (!isWorkspaceArchived(existing.archivedAt, existing.unarchivedAt)) {
+        return { unarchived: true, alreadyUnarchived: true };
+      }
+      throwIfAborted(ctx, "workspace.unarchive");
+      const unarchiveResult = await services.workspaceService.unarchive(input.workspaceId);
+      if (!unarchiveResult.success) {
+        throw new Error(`workspace.unarchive failed: ${unarchiveResult.error}`);
+      }
+      return { unarchived: true, alreadyUnarchived: false };
     },
   },
 };
