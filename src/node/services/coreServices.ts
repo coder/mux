@@ -160,12 +160,17 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.sessionTimingService,
     opts.opResolver
   );
+  // Tool-started workflows share the same sidebar activity cache as ORPC-started workflows,
+  // so terminal updates must prune active run counts regardless of launch path.
+  aiService.setWorkflowRunStatusChangedHandler((event) =>
+    workspaceService.emitWorkflowRunActivity(event)
+  );
   aiService.setWorkflowResultContinuationSender(workspaceService);
   workspaceService.setMemoryConsolidationService(memoryConsolidationService);
   workspaceService.setMCPServerManager(mcpServerManager);
   workspaceService.setWorkspaceGoalService(workspaceGoalService);
   workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {
-    workspaceService.emit("activity", { workspaceId, activity: snapshot });
+    workspaceService.emitWorkspaceActivity(workspaceId, snapshot);
   });
   // Wire user-initiated `promoteUpcomingGoal` through `interruptStream`
   // so promoting mid-stream cleanly aborts the in-flight turn before
