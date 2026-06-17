@@ -1963,6 +1963,27 @@ export class WorkspaceService extends EventEmitter {
     return activeRunIds.size;
   }
 
+  private mergeCachedActiveWorkflowRunCount(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot | null
+  ): WorkspaceActivitySnapshot | null {
+    const activeRunIds = this.activeWorkflowRunIdsByWorkspace.get(workspaceId);
+    if (activeRunIds == null) {
+      return snapshot;
+    }
+    if (snapshot == null && activeRunIds.size === 0) {
+      return null;
+    }
+    return mergeActiveWorkflowRunCount(snapshot, activeRunIds.size);
+  }
+
+  private async mergeCurrentActiveWorkflowRunCount(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot
+  ): Promise<WorkspaceActivitySnapshot> {
+    return mergeActiveWorkflowRunCount(snapshot, await this.getActiveWorkflowRunCount(workspaceId));
+  }
+
   public async emitWorkflowRunActivity(event: {
     workspaceId: string;
     runId: string;
@@ -1987,7 +2008,10 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
   ): void {
-    this.emit("activity", { workspaceId, activity: snapshot });
+    this.emit("activity", {
+      workspaceId,
+      activity: this.mergeCachedActiveWorkflowRunCount(workspaceId, snapshot),
+    });
   }
 
   private async emitWorkspaceActivityUpdate(
@@ -1996,7 +2020,10 @@ export class WorkspaceService extends EventEmitter {
     update: () => Promise<WorkspaceActivitySnapshot>
   ): Promise<void> {
     try {
-      this.emitWorkspaceActivity(workspaceId, await update());
+      this.emitWorkspaceActivity(
+        workspaceId,
+        await this.mergeCurrentActiveWorkflowRunCount(workspaceId, await update())
+      );
     } catch (error) {
       log.error(`Failed to ${description}`, { workspaceId, error });
     }
@@ -2083,11 +2110,14 @@ export class WorkspaceService extends EventEmitter {
       const shouldTagCompaction =
         !streaming && this.compactionStreamGenerations.get(workspaceId) === streamGeneration;
       const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
-      this.emitWorkspaceActivity(workspaceId, {
-        ...snapshot,
-        ...(shouldTagCompaction ? { isCompaction: true } : {}),
-        ...(shouldTagIdleCompaction ? { isIdleCompaction: true } : {}),
-      });
+      this.emitWorkspaceActivity(
+        workspaceId,
+        await this.mergeCurrentActiveWorkflowRunCount(workspaceId, {
+          ...snapshot,
+          ...(shouldTagCompaction ? { isCompaction: true } : {}),
+          ...(shouldTagIdleCompaction ? { isIdleCompaction: true } : {}),
+        })
+      );
     } catch (error) {
       log.error("Failed to update workspace streaming status", { workspaceId, error });
     } finally {

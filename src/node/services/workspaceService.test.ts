@@ -289,6 +289,20 @@ describe("WorkspaceService workflow activity", () => {
         status: "running",
       });
       expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
+      await workspaceService.updateAgentStatus(workspaceId, {
+        emoji: "🔄",
+        message: "Still running workflow",
+      });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
+
+      workspaceService.emitWorkspaceActivity(workspaceId, {
+        recency: Date.now(),
+        streaming: false,
+        lastModel: null,
+        lastThinkingLevel: null,
+      });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
+
       expect(listStatusSnapshotsSpy).toHaveBeenCalledTimes(1);
     } finally {
       listStatusSnapshotsSpy.mockRestore();
