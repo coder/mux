@@ -234,6 +234,7 @@ describe("StreamManager - workflow run attachments", () => {
     const streamInfo = createStreamInfoForTests({
       messageId,
       lastPartialWriteTime: timestamp,
+      pendingWorkflowRunAttachments: undefined,
       parts: [
         {
           type: "dynamic-tool",

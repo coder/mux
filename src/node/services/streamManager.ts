@@ -714,7 +714,7 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
-    streamInfo.pendingWorkflowRunAttachments.delete(event.toolCallId);
+    streamInfo.pendingWorkflowRunAttachments?.delete(event.toolCallId);
     streamInfo.parts[partIndex] = {
       ...part,
       workflowRun: attachment,
