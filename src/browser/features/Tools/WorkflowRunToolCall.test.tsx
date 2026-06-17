@@ -1197,6 +1197,60 @@ describe("WorkflowRunToolCall", () => {
     });
   });
 
+  test("shows workflow events before invocation arguments", () => {
+    const runningRun = {
+      id: "wfr_event_priority",
+      workspaceId: TEST_WORKSPACE_ID,
+      definition: {
+        name: "deep-research",
+        description: "Deep research",
+        scope: "built-in" as const,
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return null; }",
+      definitionHash: "sha256:event-priority",
+      args: { topic: "workflow cards" },
+      status: "running" as const,
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:02.000Z",
+      events: [
+        {
+          sequence: 1,
+          type: "action" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          stepId: "collect-sources",
+          name: "github.issue.get",
+          status: "completed" as const,
+          effect: "read" as const,
+          details: { issue: 149 },
+        },
+      ],
+      steps: [],
+    };
+
+    const view = renderWithStickyToolProviders(
+      <WorkflowRunToolCall
+        args={{
+          name: "deep-research",
+          args: { topic: "workflow cards" },
+          run_in_background: false,
+        }}
+        status="executing"
+        result={{
+          status: "running",
+          runId: runningRun.id,
+          result: null,
+          run: runningRun,
+        }}
+      />
+    );
+
+    const eventsTitle = view.getByText("Workflow events (1)");
+    const argumentsTitle = view.getByText("Arguments");
+    expect(Boolean(eventsTitle.compareDocumentPosition(argumentsTitle) & 4)).toBe(true);
+    expect(view.getByText("collect-sources / github.issue.get / completed")).toBeTruthy();
+  });
+
   test("renders executing foreground workflow status before the durable run is discovered", () => {
     const view = render(
       <ThemeProvider forcedTheme="dark">

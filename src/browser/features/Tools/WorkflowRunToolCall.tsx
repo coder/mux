@@ -1483,23 +1483,6 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
             </WorkflowSection>
           )}
 
-          {/* Large workflow payloads stay collapsed so completed runs remain scannable. */}
-          <WorkflowDisclosureSection title="Arguments">
-            <WorkflowJsonBlock value={invocationArgs} className="max-h-[180px]" />
-          </WorkflowDisclosureSection>
-
-          {run?.definitionSource && (
-            <WorkflowDisclosureSection title="Definition source">
-              <div className="border-border bg-code-bg max-h-[260px] overflow-auto rounded border p-2">
-                <HighlightedCode
-                  language="javascript"
-                  code={run.definitionSource.trimEnd()}
-                  showLineNumbers
-                />
-              </div>
-            </WorkflowDisclosureSection>
-          )}
-
           {(canInterrupt || canResume || canRetryFromCheckpoint || canPromote) && (
             <div className="mb-2 flex flex-wrap gap-2 text-[10px]">
               {canInterrupt && (
@@ -1625,6 +1608,23 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                 </ol>
               </div>
             </WorkflowSection>
+          )}
+
+          {/* Keep detailed workflow payloads below live progress so short viewports show actions first. */}
+          <WorkflowDisclosureSection title="Arguments">
+            <WorkflowJsonBlock value={invocationArgs} className="max-h-[180px]" />
+          </WorkflowDisclosureSection>
+
+          {run?.definitionSource && (
+            <WorkflowDisclosureSection title="Definition source">
+              <div className="border-border bg-code-bg max-h-[260px] overflow-auto rounded border p-2">
+                <HighlightedCode
+                  language="javascript"
+                  code={run.definitionSource.trimEnd()}
+                  showLineNumbers
+                />
+              </div>
+            </WorkflowDisclosureSection>
           )}
 
           {structuredOutput !== undefined && (

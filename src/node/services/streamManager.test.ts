@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
+import type { CompletedMessagePart } from "@/common/types/stream";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import {
@@ -200,6 +201,7 @@ function createStreamInfoForTests(
     startTime: now,
     lastPartTimestamp: now,
     toolCompletionTimestamps: new Map<string, number>(),
+    pendingWorkflowRunAttachments: new Map<string, unknown>(),
     model,
     metadataModel: overrides.metadataModel ?? model,
     historySequence: 1,
@@ -263,6 +265,66 @@ describe("StreamManager - workflow run attachments", () => {
     }
     expect(part.workflowRun).toEqual({
       runId: "wfr_attached",
+      timestamp: timestamp + 1,
+    });
+  });
+
+  test("persists workflow attachments that arrive before the tool part", async () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "workflow-attachment-race-workspace";
+    const messageId = "workflow-attachment-race-message";
+    const timestamp = Date.now();
+    const streamInfo = createStreamInfoForTests({
+      messageId,
+      lastPartialWriteTime: timestamp,
+      parts: [],
+    });
+
+    getWorkspaceStreamsForTests(streamManager).set(workspaceId, streamInfo);
+
+    const attached = await streamManager.attachWorkflowRunToToolCall({
+      type: "workflow-run-attached",
+      workspaceId,
+      messageId,
+      toolCallId: "workflow-call-race",
+      runId: "wfr_race",
+      timestamp: timestamp + 1,
+    });
+
+    expect(attached).toBe(true);
+    expect(await historyService.readPartial(workspaceId)).toBeNull();
+
+    const appendPartAndEmit = getPrivateMethodForTests<
+      (
+        workspaceId: string,
+        streamInfo: Record<string, unknown>,
+        part: CompletedMessagePart,
+        schedulePartialWrite?: boolean
+      ) => Promise<void>
+    >(streamManager, "appendPartAndEmit");
+
+    await appendPartAndEmit.call(
+      streamManager,
+      workspaceId,
+      streamInfo,
+      {
+        type: "dynamic-tool",
+        toolCallId: "workflow-call-race",
+        toolName: "workflow_run",
+        input: { name: "deep-research", args: {} },
+        state: "input-available",
+        timestamp: timestamp + 2,
+      },
+      false
+    );
+
+    const partial = await historyService.readPartial(workspaceId);
+    const part = partial?.parts[0];
+    if (part?.type !== "dynamic-tool") {
+      throw new Error("Expected workflow tool part in persisted partial");
+    }
+    expect(part.workflowRun).toEqual({
+      runId: "wfr_race",
       timestamp: timestamp + 1,
     });
   });
