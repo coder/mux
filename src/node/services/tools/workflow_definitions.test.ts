@@ -195,6 +195,33 @@ describe("workflow definition tools", () => {
     });
   });
 
+  test("synthesizes workflow_read metadata for minimal service results", async () => {
+    using tempDir = new TestTempDir("test-workflow-read-tool-fallback-metadata");
+    const tool = createWorkflowReadTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: false,
+      workflowService: {
+        listDefinitions: mock(async () => []),
+        readDefinition: mock(async () => ({ descriptor, source: workflowSource })),
+        startNamedWorkflow: mock(async () => ({
+          runId: "wfr_1",
+          status: "completed" as const,
+          result: null,
+        })),
+      },
+    });
+
+    const result = await tool.execute!({ name: "deep-research" }, mockToolCallOptions);
+
+    expect(result).toEqual({
+      view: "metadata",
+      descriptor,
+      metadata,
+      args: compactArgs,
+      sourceStats,
+    });
+  });
+
   test("returns workflow source only when requested", async () => {
     using tempDir = new TestTempDir("test-workflow-read-source-tool");
     const tool = createWorkflowReadTool({
