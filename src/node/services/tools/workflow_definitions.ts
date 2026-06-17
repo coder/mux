@@ -1,17 +1,12 @@
 import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { WorkflowDefinitionDescriptorSchema } from "@/common/orpc/schemas";
 import {
   TOOL_DEFINITIONS,
   WorkflowActionListToolResultSchema,
   WorkflowListToolResultSchema,
   WorkflowReadToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
-import {
-  summarizeWorkflowArgs,
-  workflowDefinitionMetadataForSource,
-} from "@/node/services/workflows/workflowMetadata";
 import { parseToolResult } from "./toolUtils";
 
 function requireWorkflowService(config: ToolConfiguration, toolName: string) {
@@ -19,13 +14,6 @@ function requireWorkflowService(config: ToolConfiguration, toolName: string) {
     throw new Error(`${toolName} requires workflowService`);
   }
   return config.workflowService;
-}
-
-function workflowSourceStats(source: string): { chars: number; lines: number } {
-  return {
-    chars: source.length,
-    lines: source.length === 0 ? 0 : source.split(/\r\n|\r|\n/u).length,
-  };
 }
 
 export const createWorkflowListTool: ToolFactory = (config: ToolConfiguration) => {
@@ -78,15 +66,12 @@ export const createWorkflowReadTool: ToolFactory = (config: ToolConfiguration) =
         name: args.name,
         projectTrusted: config.trusted === true,
       });
-      const descriptor = WorkflowDefinitionDescriptorSchema.parse(result.descriptor);
-      const metadata = workflowDefinitionMetadataForSource(result.source, descriptor.description);
-      const argsSummary = summarizeWorkflowArgs(metadata);
       const payload = {
         view,
-        descriptor,
-        metadata,
-        ...(argsSummary != null ? { args: argsSummary } : {}),
-        sourceStats: workflowSourceStats(result.source),
+        descriptor: result.descriptor,
+        metadata: result.metadata,
+        ...(result.args != null ? { args: result.args } : {}),
+        sourceStats: result.sourceStats,
         ...(view === "source" ? { source: result.source } : {}),
       };
 

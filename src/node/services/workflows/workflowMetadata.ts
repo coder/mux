@@ -5,7 +5,27 @@ import type {
 import { WorkflowDefinitionArgSummarySchema } from "@/common/orpc/schemas";
 import assert from "@/common/utils/assert";
 import { isPlainObject } from "@/common/utils/isPlainObject";
+import {
+  parseLegacyWorkflowDescription,
+  parseWorkflowMetadataDescription,
+} from "./workflowDescription";
 import { parseStaticWorkflowMetadataLiteral } from "./staticWorkflowMetadata";
+
+export interface WorkflowDefinitionSourceStats {
+  chars: number;
+  lines: number;
+}
+
+export interface WorkflowDefinitionMetadataSummary {
+  metadata: WorkflowDefinitionMetadata;
+  args?: WorkflowDefinitionArgSummary[];
+  sourceStats: WorkflowDefinitionSourceStats;
+}
+
+export interface WorkflowDefinitionSourceSummary {
+  description: string | null;
+  metadataSummary: WorkflowDefinitionMetadataSummary | null;
+}
 
 export function parseWorkflowDefinitionMetadata(source: string): WorkflowDefinitionMetadata | null {
   let rawMetadata: unknown;
@@ -20,24 +40,28 @@ export function parseWorkflowDefinitionMetadata(source: string): WorkflowDefinit
   return rawMetadata;
 }
 
-export function workflowDefinitionMetadataForSource(
+export function summarizeWorkflowDefinitionSource(
   source: string,
-  fallbackDescription: string
-): WorkflowDefinitionMetadata {
+  fallbackDescription?: string
+): WorkflowDefinitionSourceSummary {
   assert(
-    fallbackDescription.trim().length > 0,
-    "Workflow metadata fallback description is required"
+    fallbackDescription == null || fallbackDescription.trim().length > 0,
+    "Workflow metadata fallback description must be non-empty when provided"
   );
-  const metadata = parseWorkflowDefinitionMetadata(source);
-  if (metadata != null) {
-    return typeof metadata.description === "string"
-      ? metadata
-      : { ...metadata, description: fallbackDescription };
-  }
-  // Legacy `// description:` workflows have no static metadata object. Return a
-  // tiny synthetic metadata object so the tool still gives agents the useful
-  // descriptor-level description without sending implementation source.
-  return { description: fallbackDescription };
+  const parsedMetadata = parseWorkflowDefinitionMetadata(source);
+  const metadataDescription =
+    parsedMetadata == null ? null : parseWorkflowMetadataDescription(parsedMetadata);
+  const description =
+    metadataDescription ?? parseLegacyWorkflowDescription(source) ?? fallbackDescription ?? null;
+  const metadata =
+    description == null
+      ? null
+      : metadataForDescription(parsedMetadata, description, metadataDescription != null);
+
+  return {
+    description,
+    metadataSummary: metadata == null ? null : metadataSummaryForSource(source, metadata),
+  };
 }
 
 export function summarizeWorkflowArgs(
@@ -52,11 +76,41 @@ export function summarizeWorkflowArgs(
     return undefined;
   }
 
-  const required = new Set(requiredArgNames(argsSchema.required));
+  const required = new Set(nonEmptyStringArray(argsSchema.required));
   const summaries = Object.entries(rawProperties)
     .map(([name, rawProperty]) => summarizeWorkflowArg(name, rawProperty, required))
     .filter((summary): summary is WorkflowDefinitionArgSummary => summary != null);
   return summaries.length > 0 ? summaries : undefined;
+}
+
+function metadataForDescription(
+  parsedMetadata: WorkflowDefinitionMetadata | null,
+  description: string,
+  metadataHasDescription: boolean
+): WorkflowDefinitionMetadata {
+  if (parsedMetadata != null) {
+    return !metadataHasDescription ? { ...parsedMetadata, description } : parsedMetadata;
+  }
+  return { description };
+}
+
+function metadataSummaryForSource(
+  source: string,
+  metadata: WorkflowDefinitionMetadata
+): WorkflowDefinitionMetadataSummary {
+  const args = summarizeWorkflowArgs(metadata);
+  return {
+    metadata,
+    ...(args != null ? { args } : {}),
+    sourceStats: workflowSourceStats(source),
+  };
+}
+
+function workflowSourceStats(source: string): WorkflowDefinitionSourceStats {
+  return {
+    chars: source.length,
+    lines: source.length === 0 ? 0 : source.split(/\r\n|\r|\n/u).length,
+  };
 }
 
 function summarizeWorkflowArg(
@@ -73,10 +127,10 @@ function summarizeWorkflowArg(
     required: required.has(name),
   };
 
-  const aliases = stringArray(rawProperty.aliases);
+  const aliases = nonEmptyStringArray(rawProperty.aliases);
   if (aliases.length > 0) summary.aliases = aliases;
 
-  const negatedAliases = stringArray(rawProperty.negatedAliases);
+  const negatedAliases = nonEmptyStringArray(rawProperty.negatedAliases);
   if (negatedAliases.length > 0) summary.negatedAliases = negatedAliases;
 
   if (rawProperty.positional === true) summary.positional = true;
@@ -97,27 +151,18 @@ function summarizeWorkflowArg(
   return WorkflowDefinitionArgSummarySchema.parse(summary);
 }
 
-function requiredArgNames(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((item): item is string => typeof item === "string" && item.length > 0);
-}
-
 function schemaTypes(value: unknown): string[] {
   if (typeof value === "string" && value.length > 0) {
     return [value];
   }
   if (Array.isArray(value)) {
-    const types = value.filter(
-      (item): item is string => typeof item === "string" && item.length > 0
-    );
+    const types = nonEmptyStringArray(value);
     return types.length > 0 ? Array.from(new Set(types)) : ["unknown"];
   }
   return ["unknown"];
 }
 
-function stringArray(value: unknown): string[] {
+function nonEmptyStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) {
     return [];
   }

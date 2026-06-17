@@ -20,8 +20,11 @@ import {
   BUILT_IN_WORKFLOW_DEFINITIONS,
   type BuiltInWorkflowDefinition,
 } from "./builtInWorkflowDefinitions";
-import { parseWorkflowDefinitionMetadata, summarizeWorkflowArgs } from "./workflowMetadata";
-import { parseWorkflowDescription, replaceWorkflowDescription } from "./workflowDescription";
+import {
+  summarizeWorkflowDefinitionSource,
+  type WorkflowDefinitionMetadataSummary,
+} from "./workflowMetadata";
+import { replaceWorkflowDescription } from "./workflowDescription";
 
 export interface WorkflowDefinitionStoreOptions {
   projectRoot: string;
@@ -53,7 +56,7 @@ export interface PromoteWorkflowDefinitionInput {
   projectTrusted: boolean;
 }
 
-export interface WorkflowDefinitionReadResult {
+export interface WorkflowDefinitionReadResult extends WorkflowDefinitionMetadataSummary {
   descriptor: WorkflowDefinitionDescriptor;
   source: string;
 }
@@ -65,6 +68,7 @@ export type WorkflowDefinitionSummary = WorkflowDefinitionDescriptor & {
 interface ScannedWorkflowDefinition {
   descriptor: WorkflowDefinitionDescriptor;
   source: string;
+  metadataSummary: WorkflowDefinitionMetadataSummary;
 }
 
 const WORKFLOW_SCRATCH_GIT_EXCLUDE_COMMENT = "# mux: local scratch workflow drafts";
@@ -133,8 +137,8 @@ async function scanDirectory(
       continue;
     }
 
-    const description = parseWorkflowDescription(source);
-    if (description == null) {
+    const sourceSummary = summarizeWorkflowDefinitionSource(source);
+    if (sourceSummary.description == null || sourceSummary.metadataSummary == null) {
       log.warn(
         `Skipping workflow '${sourcePath}' because it is missing workflow description metadata`
       );
@@ -143,7 +147,7 @@ async function scanDirectory(
 
     const descriptor = descriptorForFile({
       name: nameResult.data,
-      description,
+      description: sourceSummary.description,
       scope,
       sourcePath,
     });
@@ -151,7 +155,7 @@ async function scanDirectory(
       continue;
     }
 
-    definitions.push({ descriptor, source });
+    definitions.push({ descriptor, source, metadataSummary: sourceSummary.metadataSummary });
   }
 
   return definitions;
@@ -261,8 +265,8 @@ async function scanRuntimeDirectory(
       continue;
     }
 
-    const description = parseWorkflowDescription(source);
-    if (description == null) {
+    const sourceSummary = summarizeWorkflowDefinitionSource(source);
+    if (sourceSummary.description == null || sourceSummary.metadataSummary == null) {
       log.warn(
         `Skipping workflow '${sourcePath}' because it is missing workflow description metadata`
       );
@@ -271,7 +275,7 @@ async function scanRuntimeDirectory(
 
     const descriptor = descriptorForFile({
       name: nameResult.data,
-      description,
+      description: sourceSummary.description,
       scope,
       sourcePath,
     });
@@ -279,7 +283,7 @@ async function scanRuntimeDirectory(
       continue;
     }
 
-    definitions.push({ descriptor, source });
+    definitions.push({ descriptor, source, metadataSummary: sourceSummary.metadataSummary });
   }
 
   return definitions;
@@ -776,14 +780,22 @@ function readBuiltInDefinitions(
       scope: "built-in",
       executable: true,
     });
-    definitions.push({ descriptor, source: builtIn.source });
+    const sourceSummary = summarizeWorkflowDefinitionSource(builtIn.source, builtIn.description);
+    assert(
+      sourceSummary.metadataSummary != null,
+      "Built-in workflow definition metadata summary is required"
+    );
+    definitions.push({
+      descriptor,
+      source: builtIn.source,
+      metadataSummary: sourceSummary.metadataSummary,
+    });
   }
   return definitions;
 }
 
 function summarizeDefinition(definition: ScannedWorkflowDefinition): WorkflowDefinitionSummary {
-  const metadata = parseWorkflowDefinitionMetadata(definition.source);
-  const args = summarizeWorkflowArgs(metadata);
+  const { args } = definition.metadataSummary;
   return args == null ? definition.descriptor : { ...definition.descriptor, args };
 }
 
@@ -856,6 +868,7 @@ export class WorkflowDefinitionStore {
     return {
       descriptor: definition.descriptor,
       source: definition.source,
+      ...definition.metadataSummary,
     };
   }
 

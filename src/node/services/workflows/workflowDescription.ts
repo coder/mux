@@ -20,13 +20,16 @@ export function parseWorkflowDescription(source: string): string | null {
   } catch {
     return parseLegacyWorkflowDescription(source);
   }
-  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
-    const description = normalizeDescription(
-      (rawMetadata as { description?: unknown }).description
-    );
-    if (description != null) return description;
-  }
+  const description = parseWorkflowMetadataDescription(rawMetadata);
+  if (description != null) return description;
   return parseLegacyWorkflowDescription(source);
+}
+
+export function parseWorkflowMetadataDescription(rawMetadata: unknown): string | null {
+  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
+    return normalizeDescription((rawMetadata as { description?: unknown }).description);
+  }
+  return null;
 }
 
 export function replaceWorkflowDescription(source: string, description: string): string | null {
@@ -39,7 +42,7 @@ export function replaceWorkflowDescription(source: string, description: string):
 const LEGACY_DESCRIPTION_HEADER_PATTERN =
   /^(\uFEFF?(?:[ \t]*(?:\r?\n))*[ \t]*)\/\/[ \t]*description:[ \t]*(.*)(?=\r?\n|$)/u;
 
-function parseLegacyWorkflowDescription(source: string): string | null {
+export function parseLegacyWorkflowDescription(source: string): string | null {
   const match = LEGACY_DESCRIPTION_HEADER_PATTERN.exec(source);
   return normalizeDescription(match?.[2]);
 }

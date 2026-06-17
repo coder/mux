@@ -159,10 +159,13 @@ export interface ToolConfiguration {
   workflowService?: {
     listDefinitions(options: { projectTrusted: boolean }): Promise<unknown[]>;
     listDefinitionsWithMetadata?(options: { projectTrusted: boolean }): Promise<unknown[]>;
-    readDefinition(input: {
-      name: string;
-      projectTrusted: boolean;
-    }): Promise<{ descriptor: unknown; source: string }>;
+    readDefinition(input: { name: string; projectTrusted: boolean }): Promise<{
+      descriptor: unknown;
+      source: string;
+      metadata?: unknown;
+      args?: unknown[];
+      sourceStats?: { chars: number; lines: number };
+    }>;
     listActions?(options: { projectTrusted: boolean }): Promise<unknown[]>;
     getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
     listRuns?(input: { workspaceId: string }): Promise<unknown[]>;

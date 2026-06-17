@@ -31,6 +31,23 @@ export const metadata = {
 export default function workflow() { return null; }
 `;
 
+const metadata = {
+  description: "Deep research",
+  argsSchema: {
+    type: "object",
+    required: [],
+    properties: {
+      topic: { type: "string", positional: true },
+      quick: { type: "boolean", default: false, aliases: ["--quick"] },
+    },
+  },
+};
+
+const sourceStats = {
+  chars: workflowSource.length,
+  lines: workflowSource.split(/\r\n|\r|\n/u).length,
+};
+
 const compactArgs = [
   {
     name: "topic",
@@ -148,6 +165,9 @@ describe("workflow definition tools", () => {
     const readDefinition = mock(async () => ({
       descriptor,
       source: workflowSource,
+      metadata,
+      args: compactArgs,
+      sourceStats,
     }));
     const tool = createWorkflowReadTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
@@ -169,22 +189,9 @@ describe("workflow definition tools", () => {
     expect(result).toEqual({
       view: "metadata",
       descriptor,
-      metadata: {
-        description: "Deep research",
-        argsSchema: {
-          type: "object",
-          required: [],
-          properties: {
-            topic: { type: "string", positional: true },
-            quick: { type: "boolean", default: false, aliases: ["--quick"] },
-          },
-        },
-      },
+      metadata,
       args: compactArgs,
-      sourceStats: {
-        chars: workflowSource.length,
-        lines: workflowSource.split(/\r\n|\r|\n/u).length,
-      },
+      sourceStats,
     });
   });
 
@@ -195,7 +202,13 @@ describe("workflow definition tools", () => {
       trusted: false,
       workflowService: {
         listDefinitions: mock(async () => []),
-        readDefinition: mock(async () => ({ descriptor, source: workflowSource })),
+        readDefinition: mock(async () => ({
+          descriptor,
+          source: workflowSource,
+          metadata,
+          args: compactArgs,
+          sourceStats,
+        })),
         startNamedWorkflow: mock(async () => ({
           runId: "wfr_1",
           status: "completed" as const,
