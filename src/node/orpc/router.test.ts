@@ -801,11 +801,13 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
     );
   });
 
-  test("fills slash projectPath defaults from the active sub-project", async () => {
+  test("fills slash projectPath defaults from the active sub-project checkout", async () => {
+    const workspacePath = path.join(tempDir, "workspace-checkout");
     const subProjectPath = path.join(projectPath, "packages", "api");
-    fs.mkdirSync(subProjectPath, { recursive: true });
+    const workspaceSubProjectPath = path.join(workspacePath, "packages", "api");
+    fs.mkdirSync(path.join(workspacePath, ".mux", "workflows"), { recursive: true });
     fs.writeFileSync(
-      path.join(projectPath, ".mux", "workflows", "needs-active-project.js"),
+      path.join(workspacePath, ".mux", "workflows", "needs-active-project.js"),
       `const s = mux.schema;
 export const metadata = {
   description: "Needs active project",
@@ -815,7 +817,7 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
 `
     );
     const client = createRouterClient(router(), {
-      context: createContext({ enabled: true, subProjectPath }),
+      context: createContext({ enabled: true, workspacePath, subProjectPath }),
     });
 
     const result = await client.workflows.start({
@@ -827,7 +829,7 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
     });
 
     const run = await client.workflows.getRun({ workspaceId: "workspace-1", runId: result.runId });
-    expect(run?.args).toEqual({ projectPath: subProjectPath });
+    expect(run?.args).toEqual({ projectPath: workspaceSubProjectPath });
   });
 
   test("reports workflow argument validation as a bad request", async () => {

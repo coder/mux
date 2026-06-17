@@ -374,26 +374,22 @@ export async function resolveWorkflowContext(
   const requestedWorkflowProjectPath = options.projectPath?.trim();
   const hasRequestedWorkflowProjectPath =
     requestedWorkflowProjectPath != null && requestedWorkflowProjectPath.length > 0;
-  const metadataSubProjectPath = metadata.subProjectPath?.trim();
   const workflowProjectPath = hasRequestedWorkflowProjectPath
     ? requestedWorkflowProjectPath
     : metadata.projectPath;
-  const workflowExecutionProjectPath = hasRequestedWorkflowProjectPath
-    ? requestedWorkflowProjectPath
-    : metadataSubProjectPath && metadataSubProjectPath.length > 0
-      ? metadataSubProjectPath
-      : metadata.projectPath;
   const projectTrusted = isTrustedProjectPath(context, workflowProjectPath);
   const runtime = createRuntimeForWorkspace(metadata);
   const workspaceRootPath = resolveWorkspaceRootPath(metadata, runtime);
-  const workspacePath =
-    options.projectPath != null
-      ? appendSubProjectRelativePath(
-          { ...metadata, subProjectPath: workflowProjectPath },
-          runtime,
-          workspaceRootPath
-        )
-      : workspaceRootPath;
+  const workflowExecutionProjectPath = hasRequestedWorkflowProjectPath
+    ? appendSubProjectRelativePath(
+        { ...metadata, subProjectPath: workflowProjectPath },
+        runtime,
+        workspaceRootPath
+      )
+    : appendSubProjectRelativePath(metadata, runtime, workspaceRootPath);
+  const workspacePath = hasRequestedWorkflowProjectPath
+    ? workflowExecutionProjectPath
+    : workspaceRootPath;
   const runtimeType = getRuntimeType(metadata.runtimeConfig);
   const useRuntimeProjectIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
   const disableHostWorkflowActions = shouldDisableHostWorkflowActions(runtimeType);
