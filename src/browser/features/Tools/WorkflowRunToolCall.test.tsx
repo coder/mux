@@ -1197,7 +1197,7 @@ describe("WorkflowRunToolCall", () => {
     });
   });
 
-  test("shows workflow events before invocation arguments", () => {
+  test("shows invocation arguments and definition source before workflow events", () => {
     const runningRun = {
       id: "wfr_event_priority",
       workspaceId: TEST_WORKSPACE_ID,
@@ -1245,9 +1245,11 @@ describe("WorkflowRunToolCall", () => {
       />
     );
 
-    const eventsTitle = view.getByText("Workflow events (1)");
     const argumentsTitle = view.getByText("Arguments");
-    expect(Boolean(eventsTitle.compareDocumentPosition(argumentsTitle) & 4)).toBe(true);
+    const definitionSourceTitle = view.getByText("Definition source");
+    const eventsTitle = view.getByText("Workflow events (1)");
+    expect(Boolean(argumentsTitle.compareDocumentPosition(eventsTitle) & 4)).toBe(true);
+    expect(Boolean(definitionSourceTitle.compareDocumentPosition(eventsTitle) & 4)).toBe(true);
     expect(view.getByText("collect-sources / github.issue.get / completed")).toBeTruthy();
   });
 
