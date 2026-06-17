@@ -168,7 +168,10 @@ function getWorkspaceAttentionSignal(
   try {
     const sidebarState = workspaceStore.getWorkspaceSidebarState(workspaceId);
     const isWorking =
-      (sidebarState.canInterrupt || sidebarState.isStarting) && !sidebarState.awaitingUserQuestion;
+      (sidebarState.canInterrupt ||
+        sidebarState.isStarting ||
+        sidebarState.activeWorkflowRunCount > 0) &&
+      !sidebarState.awaitingUserQuestion;
     return {
       isWorking,
       awaitingUserQuestion: sidebarState.awaitingUserQuestion,
@@ -1171,12 +1174,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const workspaceHasAttention = useCallback(
     (workspace: FrontendWorkspaceMetadata) => {
       const workspaceId = workspace.id;
-      const aggregator = workspaceStore.getAggregator(workspaceId);
-      const hasActiveStreams = aggregator?.hasInterruptibleActiveStream() ?? false;
-      const isStarting = aggregator?.getPendingStreamStartTime() != null && !hasActiveStreams;
-      const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
-      const isWorking = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
-      const hasError = aggregator?.getLastAbortReason()?.reason === "system";
+      const attentionSignal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
+      const isWorking = attentionSignal?.isWorking === true;
+      const awaitingUserQuestion = attentionSignal?.awaitingUserQuestion === true;
+      const hasError = attentionSignal?.hasSystemError === true;
       const isRemoving = workspace.isRemoving === true;
       const isArchiving = archivingWorkspaceIds.has(workspaceId);
       const isInitializing = workspace.isInitializing === true;

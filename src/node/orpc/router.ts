@@ -456,6 +456,7 @@ export async function resolveWorkflowContext(
             subagentFileReports: subagentFileReportsExperimentEnabled,
           },
         }),
+      onRunStatusChanged: (event) => context.workspaceService.emitWorkflowRunActivity(event),
       ...(options.onBackgroundRunTerminal != null
         ? { onBackgroundRunTerminal: options.onBackgroundRunTerminal }
         : {}),

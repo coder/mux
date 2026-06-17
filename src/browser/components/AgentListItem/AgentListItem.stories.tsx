@@ -459,9 +459,42 @@ function renderAppSidebarThreeActiveSubAgents() {
   );
 }
 
+function renderWorkflowOnlyActivity() {
+  const workflowWorkspace = createWorkspace({
+    id: "ws-workflow-only",
+    name: "workflow-only",
+    title: "Workflow-only run",
+    projectName: PROJECT_NAME,
+    projectPath: PROJECT_PATH,
+    createdAt: new Date(NOW - 6_000).toISOString(),
+  });
+
+  return (
+    <StoryScaffold
+      workspaces={[workflowWorkspace]}
+      workspaceActivitySnapshots={{
+        [workflowWorkspace.id]: {
+          recency: NOW,
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          activeWorkflowRunCount: 1,
+        },
+      }}
+    >
+      <WorkspaceRow workspace={workflowWorkspace} />
+    </StoryScaffold>
+  );
+}
+
 // Composite gallery covering the primary single-workspace states. Replaces the
 // former FigmaStates, Selected, Active, ErrorState, Archiving, Question, and
 // Draft stories — one snapshot, all states preserved and labeled.
+export const WorkflowOnlyActivity: Story = {
+  args: undefined as never,
+  render: renderWorkflowOnlyActivity,
+};
+
 export const States: Story = {
   args: undefined as never,
   render: renderStatesGallery,

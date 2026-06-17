@@ -240,10 +240,14 @@ export default function workflow({ args, agent }) {
         return { taskId: "task_1", reportMarkdown: "child summary" };
       },
     };
+    const statusEvents: Array<{ workspaceId: string; runId: string; status: string }> = [];
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     const service = new WorkflowService({
       definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
       runStore,
+      onRunStatusChanged: (event) => {
+        statusEvents.push(event);
+      },
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter,
       generateRunId: () => "wfr_demo",
@@ -267,6 +271,10 @@ export default function workflow({ args, agent }) {
       status: "completed",
       result: { reportMarkdown: "Final child summary" },
     });
+    expect(statusEvents).toEqual([
+      { workspaceId: "workspace-1", runId: "wfr_demo", status: "pending" },
+      { workspaceId: "workspace-1", runId: "wfr_demo", status: "completed" },
+    ]);
     expect(run.definitionSource).toBe(source);
     expect(run.definition.scope).toBe("global");
   });

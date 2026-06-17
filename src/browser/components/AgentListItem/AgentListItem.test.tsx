@@ -75,6 +75,7 @@ function createWorkspaceSidebarState(
     loadedSkills: [],
     skillLoadErrors: [],
     agentStatus: undefined,
+    activeWorkflowRunCount: 0,
     terminalActiveCount: 0,
     terminalSessionCount: 0,
     ...overrides,
@@ -360,6 +361,31 @@ describe("AgentListItem", () => {
       customTitle.view.getByRole("button", { name: "Select workspace backend · My renamed run" })
     ).toBeTruthy();
     expect(customTitle.view.getByText("My renamed run")).toBeTruthy();
+  });
+
+  test("shows workflow-only activity on idle workspace rows", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeWorkflowRunCount: 1 });
+
+    const { row } = renderWorkspaceItem();
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByText("Workflow running")).toBeTruthy();
+    expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("keeps sidebar status text while workflow-only activity drives the active dot", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeWorkflowRunCount: 1,
+      agentStatus: { emoji: "🔄", message: "Verifying workflow output" },
+    });
+
+    const { row } = renderWorkspaceItem();
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByText("Workflow running")).toBeNull();
   });
 
   test("shows active delegated workflow work on idle workspace rows", () => {

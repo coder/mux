@@ -127,7 +127,12 @@ import {
   type MuxMessageMetadata,
   type MuxMessage,
 } from "@/common/types/message";
-import type { WorkflowRunRecord } from "@/common/types/workflow";
+import {
+  isNestedWorkflowRun,
+  type WorkflowRunRecord,
+  type WorkflowRunStatus,
+} from "@/common/types/workflow";
+import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import {
   WORKFLOW_RESULT_METADATA_TYPE,
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
@@ -1454,6 +1459,21 @@ export declare interface WorkspaceService {
   ): boolean;
 }
 
+const ACTIVE_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
+  "pending",
+  "running",
+  "backgrounded",
+]);
+
+function createDefaultActivitySnapshot(): WorkspaceActivitySnapshot {
+  return {
+    recency: 0,
+    streaming: false,
+    lastModel: null,
+    lastThinkingLevel: null,
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class WorkspaceService extends EventEmitter {
   private readonly sessions = new Map<string, AgentSession>();
@@ -1880,6 +1900,70 @@ export class WorkspaceService extends EventEmitter {
       }
       void this.refreshAndEmitMetadata(event.workspaceId);
     });
+  }
+
+  private async getActiveWorkflowRunCount(
+    workspaceId: string,
+    changedRun?: { runId: string; status: WorkflowRunStatus }
+  ): Promise<number> {
+    assert(workspaceId.length > 0, "getActiveWorkflowRunCount requires workspaceId");
+    const activeRunIds = new Set<string>();
+    try {
+      const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
+      const runs = await runStore.listRuns();
+      for (const run of runs) {
+        if (
+          run.workspaceId === workspaceId &&
+          !isNestedWorkflowRun(run) &&
+          ACTIVE_WORKFLOW_RUN_STATUSES.has(run.status)
+        ) {
+          activeRunIds.add(run.id);
+        }
+      }
+    } catch (error) {
+      log.debug("Failed to inspect active workflow runs for workspace activity", {
+        workspaceId,
+        error,
+      });
+    }
+
+    if (changedRun != null) {
+      if (ACTIVE_WORKFLOW_RUN_STATUSES.has(changedRun.status)) {
+        activeRunIds.add(changedRun.runId);
+      } else {
+        activeRunIds.delete(changedRun.runId);
+      }
+    }
+
+    return activeRunIds.size;
+  }
+
+  private async withActiveWorkflowRunCount(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot | null,
+    changedRun?: { runId: string; status: WorkflowRunStatus }
+  ): Promise<WorkspaceActivitySnapshot> {
+    const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId, changedRun);
+    const baseSnapshot = snapshot ?? createDefaultActivitySnapshot();
+    return {
+      ...baseSnapshot,
+      ...(activeWorkflowRunCount > 0 ? { activeWorkflowRunCount } : {}),
+    };
+  }
+
+  public async emitWorkflowRunActivity(event: {
+    workspaceId: string;
+    runId: string;
+    status: WorkflowRunStatus;
+  }): Promise<void> {
+    assert(event.workspaceId.length > 0, "emitWorkflowRunActivity requires workspaceId");
+    assert(event.runId.length > 0, "emitWorkflowRunActivity requires runId");
+    const snapshot = await this.withActiveWorkflowRunCount(
+      event.workspaceId,
+      await this.extensionMetadata.getSnapshot(event.workspaceId),
+      { runId: event.runId, status: event.status }
+    );
+    this.emitWorkspaceActivity(event.workspaceId, snapshot);
   }
 
   /**
@@ -7683,7 +7767,39 @@ export class WorkspaceService extends EventEmitter {
   async getActivityList(): Promise<Record<string, WorkspaceActivitySnapshot>> {
     try {
       const snapshots = await this.extensionMetadata.getAllSnapshots();
-      return Object.fromEntries(snapshots.entries());
+      const workspaceIds = new Set(snapshots.keys());
+      try {
+        for (const metadata of await this.config.getAllWorkspaceMetadata()) {
+          workspaceIds.add(metadata.id);
+        }
+      } catch (error) {
+        log.debug("Failed to include all workspaces while listing activity", { error });
+      }
+
+      const entries = await Promise.all(
+        Array.from(
+          workspaceIds,
+          async (workspaceId): Promise<readonly [string, WorkspaceActivitySnapshot] | null> => {
+            const snapshot = snapshots.get(workspaceId) ?? null;
+            const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId);
+            if (snapshot == null && activeWorkflowRunCount === 0) {
+              return null;
+            }
+            return [
+              workspaceId,
+              {
+                ...(snapshot ?? createDefaultActivitySnapshot()),
+                ...(activeWorkflowRunCount > 0 ? { activeWorkflowRunCount } : {}),
+              },
+            ] as const;
+          }
+        )
+      );
+      return Object.fromEntries(
+        entries.filter(
+          (entry): entry is readonly [string, WorkspaceActivitySnapshot] => entry != null
+        )
+      );
     } catch (error) {
       log.error("Failed to list activity:", error);
       return {};

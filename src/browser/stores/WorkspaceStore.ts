@@ -123,6 +123,7 @@ export interface WorkspaceState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  activeWorkflowRunCount: number;
   lastAbortReason: StreamAbortReasonSnapshot | null;
   pendingStreamStartTime: number | null;
   // Model used for the pending send (used during "starting" phase)
@@ -181,6 +182,7 @@ export interface WorkspaceSidebarState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  activeWorkflowRunCount: number;
   terminalActiveCount: number;
   terminalSessionCount: number;
   goal?: GoalSnapshot | null;
@@ -1974,6 +1976,7 @@ export class WorkspaceStore {
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const agentStatus =
         displayStatus ?? liveTodoStatus ?? fallbackAgentStatus ?? persistedTodoStatus;
+      const activeWorkflowRunCount = activity?.activeWorkflowRunCount ?? 0;
       const goal = activity?.goal ?? null;
 
       return {
@@ -1998,6 +2001,7 @@ export class WorkspaceStore {
         skillLoadErrors: aggregator.getSkillLoadErrors(),
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus,
+        activeWorkflowRunCount,
         pendingStreamStartTime,
         pendingStreamModel: aggregator.getPendingStreamModel(),
         autoRetryStatus: transient.autoRetryStatus,
@@ -2108,6 +2112,7 @@ export class WorkspaceStore {
       cached.loadedSkills === fullState.loadedSkills &&
       cached.skillLoadErrors === fullState.skillLoadErrors &&
       cached.agentStatus === fullState.agentStatus &&
+      cached.activeWorkflowRunCount === fullState.activeWorkflowRunCount &&
       cached.terminalActiveCount === terminalActiveCount &&
       cached.terminalSessionCount === terminalSessionCount &&
       cached.goal === fullState.goal
@@ -2130,6 +2135,7 @@ export class WorkspaceStore {
       loadedSkills: fullState.loadedSkills,
       skillLoadErrors: fullState.skillLoadErrors,
       agentStatus: fullState.agentStatus,
+      activeWorkflowRunCount: fullState.activeWorkflowRunCount,
       terminalActiveCount,
       terminalSessionCount,
       goal: fullState.goal,
@@ -2791,6 +2797,7 @@ export class WorkspaceStore {
       previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
+      (previous?.activeWorkflowRunCount ?? 0) !== (snapshot?.activeWorkflowRunCount ?? 0) ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||
       !areAgentStatusesEqual(previous?.todoStatus, snapshot?.todoStatus) ||
       previous?.goal?.goalId !== snapshot?.goal?.goalId ||

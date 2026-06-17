@@ -16,6 +16,7 @@ import {
   type AgentRowRenderMeta,
   type WorkspaceDelegatedActivity,
 } from "@/browser/utils/ui/workspaceFiltering";
+import assert from "@/common/utils/assert";
 import { cn } from "@/common/lib/utils";
 import {
   TASK_GROUP_KIND,
@@ -216,6 +217,24 @@ function formatDelegatedActivityText(activity: WorkspaceDelegatedActivity): stri
   }
 
   return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function formatWorkflowRunCount(count: number): string {
+  assert(count > 0, "formatWorkflowRunCount requires a positive count");
+  return count === 1 ? "Workflow running" : `${count} workflows running`;
+}
+
+function WorkflowActivityIndicator(props: { workspaceId: string; activeWorkflowRunCount: number }) {
+  const statusText = formatWorkflowRunCount(props.activeWorkflowRunCount);
+
+  return (
+    <div
+      className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4"
+      data-testid={`workspace-workflow-activity-${props.workspaceId}`}
+    >
+      <span className="min-w-0 truncate">{statusText}</span>
+    </div>
+  );
 }
 
 function DelegatedActivityIndicator(props: {
@@ -612,6 +631,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     awaitingUserQuestion,
     isStarting,
     agentStatus,
+    activeWorkflowRunCount,
     terminalActiveCount,
     lastAbortReason,
   } = useWorkspaceSidebarState(workspaceId);
@@ -626,13 +646,19 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     useWorkspaceStreamingStatusPhase(streamingStatusPhase);
   const isWorking = displayStreamingStatusPhase !== null && !awaitingUserQuestion;
   const hasError = lastAbortReason?.reason === "system";
+  const hasActiveWorkflowRun = activeWorkflowRunCount > 0;
   const hasActiveDelegatedWork = (delegatedActivity?.activeCount ?? 0) > 0;
   const delegatedStatusText = delegatedActivity
     ? formatDelegatedActivityText(delegatedActivity)
     : null;
   const hasDelegatedStatusText = delegatedStatusText != null;
+  const shouldShowWorkflowStatus =
+    hasActiveWorkflowRun && !agentStatus && displayStreamingStatusPhase === null;
   const hasOwnLiveStatusText =
-    awaitingUserQuestion || displayStreamingStatusPhase !== null || isRemoving;
+    awaitingUserQuestion ||
+    displayStreamingStatusPhase !== null ||
+    isRemoving ||
+    shouldShowWorkflowStatus;
   const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const visualState = getVisualState({
     awaitingUserQuestion,
@@ -641,7 +667,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isArchiving: isArchiving === true,
     isWorking,
     isStarting: displayStreamingStatusPhase === "starting",
-    hasActiveDelegatedWork,
+    hasActiveDelegatedWork: hasActiveDelegatedWork || hasActiveWorkflowRun,
     isUnread,
     isSelected,
     hasError,
@@ -653,7 +679,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     Boolean(agentStatus) ||
     awaitingUserQuestion ||
     displayStreamingStatusPhase !== null ||
-    isRemoving;
+    isRemoving ||
+    shouldShowWorkflowStatus;
   // Keep archiving feedback inline with the title so the row doesn't jump to a
   // two-line layout right before it disappears from the sidebar.
   const shouldShowInlineArchivingStatus = isArchiving === true && !isRemoving;
@@ -1144,6 +1171,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 <DelegatedActivityIndicator
                   workspaceId={workspaceId}
                   activity={delegatedActivity}
+                />
+              ) : shouldShowWorkflowStatus ? (
+                <WorkflowActivityIndicator
+                  workspaceId={workspaceId}
+                  activeWorkflowRunCount={activeWorkflowRunCount}
                 />
               ) : (
                 <WorkspaceStatusIndicator
