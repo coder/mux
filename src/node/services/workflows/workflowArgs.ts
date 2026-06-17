@@ -6,6 +6,17 @@ export interface WorkflowArgsNormalizationResult {
   metadata: WorkflowMetadata | null;
 }
 
+export class WorkflowArgsValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkflowArgsValidationError";
+  }
+}
+
+export interface WorkflowArgsNormalizationOptions {
+  defaultArgs?: Record<string, unknown>;
+}
+
 interface WorkflowMetadata {
   argsSchema?: Record<string, unknown>;
 }
@@ -31,14 +42,18 @@ const RAW_INPUT_FIELD = "input";
 
 export function normalizeWorkflowArgsForSource(
   definitionSource: string,
-  rawArgs: unknown
+  rawArgs: unknown,
+  options: WorkflowArgsNormalizationOptions = {}
 ): WorkflowArgsNormalizationResult {
   const metadata = parseWorkflowMetadata(definitionSource);
   if (metadata?.argsSchema == null) {
     return { args: rawArgs, metadata };
   }
 
-  return { args: normalizeWorkflowArgs(metadata.argsSchema, rawArgs), metadata };
+  return {
+    args: normalizeWorkflowArgs(metadata.argsSchema, rawArgs, options.defaultArgs ?? {}),
+    metadata,
+  };
 }
 
 function parseWorkflowMetadata(source: string): WorkflowMetadata | null {
@@ -61,9 +76,14 @@ function parseWorkflowMetadata(source: string): WorkflowMetadata | null {
   return metadata;
 }
 
+function validationError(message: string): WorkflowArgsValidationError {
+  return new WorkflowArgsValidationError(message);
+}
+
 function normalizeWorkflowArgs(
   schema: Record<string, unknown>,
-  rawArgs: unknown
+  rawArgs: unknown,
+  defaultArgs: Record<string, unknown>
 ): Record<string, unknown> {
   assertObjectSchema(schema);
   const properties = propertySchemas(schema);
@@ -73,6 +93,12 @@ function normalizeWorkflowArgs(
   for (const property of properties) {
     if (property.defaultValue !== undefined) {
       normalized[property.name] = property.defaultValue;
+    }
+  }
+  // Invocation context should help only workflows that explicitly declare the field.
+  for (const property of properties) {
+    if (!(property.name in normalized) && property.name in defaultArgs) {
+      normalized[property.name] = defaultArgs[property.name];
     }
   }
 
@@ -188,7 +214,7 @@ function parseWorkflowInputString(
 ): Record<string, unknown> {
   const tokenized = tokenize(input);
   if (tokenized.error.length > 0) {
-    throw new Error(tokenized.error);
+    throw validationError(tokenized.error);
   }
 
   const parsed: Record<string, unknown> = {};
@@ -218,7 +244,7 @@ function parseWorkflowInputString(
       }
       const value = tokenized.tokens[index + 1];
       if (value == null || value.startsWith("--")) {
-        throw new Error(`${token} requires a value`);
+        throw validationError(`${token} requires a value`);
       }
       parsed[exactAliasProperty.name] = value;
       index += 2;
@@ -239,7 +265,7 @@ function parseWorkflowInputString(
         index += 1;
         continue;
       }
-      throw new Error(`Unknown workflow argument flag: ${flag.name}`);
+      throw validationError(`Unknown workflow argument flag: ${flag.name}`);
     }
 
     if (propertyAllowsType(property, "boolean")) {
@@ -252,7 +278,7 @@ function parseWorkflowInputString(
     const hasInlineValue = flag.inlineValue != null;
     const value = hasInlineValue ? flag.inlineValue : tokenized.tokens[index + 1];
     if (value == null || value.length === 0 || (!hasInlineValue && value.startsWith("--"))) {
-      throw new Error(`${flag.name} requires a value`);
+      throw validationError(`${flag.name} requires a value`);
     }
     parsed[property.name] = value;
     index += hasInlineValue ? 1 : 2;
@@ -262,7 +288,7 @@ function parseWorkflowInputString(
   if (positionalProperty != null && positional.length > 0) {
     parsed[positionalProperty.name] = positional.join(" ");
   } else if (positional.length > 0) {
-    throw new Error(`Unexpected workflow positional argument: ${positional[0]}`);
+    throw validationError(`Unexpected workflow positional argument: ${positional[0]}`);
   }
 
   return parsed;
@@ -316,14 +342,14 @@ function defaultNegatedFlagName(name: string): string {
 
 function assertBooleanProperty(property: ArgsPropertySchema, flagName: string): void {
   if (!propertyAllowsType(property, "boolean")) {
-    throw new Error(`${flagName} can only negate a boolean workflow argument`);
+    throw validationError(`${flagName} can only negate a boolean workflow argument`);
   }
 }
 
 function coerceProperty(property: ArgsPropertySchema, value: unknown): unknown {
   if (value === null) {
     if (propertyAllowsType(property, "null")) return null;
-    throw new Error(`Workflow argument ${property.name} must not be null`);
+    throw validationError(`Workflow argument ${property.name} must not be null`);
   }
 
   let lastError: Error | null = null;
@@ -364,7 +390,7 @@ function coercePropertyType(property: ArgsPropertySchema, value: unknown, type: 
 
 function coerceString(value: unknown, name: string): string {
   if (typeof value !== "string") {
-    throw new Error(`Workflow argument ${name} must be a string`);
+    throw validationError(`Workflow argument ${name} must be a string`);
   }
   return value.trim();
 }
@@ -378,13 +404,13 @@ function coerceBoolean(value: unknown, name: string): boolean {
     if (["true", "1", "yes", "on"].includes(normalized)) return true;
     if (["false", "0", "no", "off"].includes(normalized)) return false;
   }
-  throw new Error(`Workflow argument ${name} must be a boolean`);
+  throw validationError(`Workflow argument ${name} must be a boolean`);
 }
 
 function coerceInteger(value: unknown, name: string): number {
   const number = coerceNumber(value, name);
   if (!Number.isInteger(number)) {
-    throw new Error(`Workflow argument ${name} must be an integer`);
+    throw validationError(`Workflow argument ${name} must be an integer`);
   }
   return number;
 }
@@ -393,14 +419,14 @@ function coerceNumber(value: unknown, name: string): number {
   const number =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   if (!Number.isFinite(number)) {
-    throw new Error(`Workflow argument ${name} must be a number`);
+    throw validationError(`Workflow argument ${name} must be a number`);
   }
   return number;
 }
 
 function coerceArray(value: unknown, name: string): unknown[] {
   if (!Array.isArray(value)) {
-    throw new Error(`Workflow argument ${name} must be an array`);
+    throw validationError(`Workflow argument ${name} must be an array`);
   }
   return value;
 }
@@ -410,10 +436,10 @@ function validateBounds(property: ArgsPropertySchema, value: unknown): void {
     return;
   }
   if (property.minimum != null && value < property.minimum) {
-    throw new Error(`Workflow argument ${property.name} must be >= ${property.minimum}`);
+    throw validationError(`Workflow argument ${property.name} must be >= ${property.minimum}`);
   }
   if (property.maximum != null && value > property.maximum) {
-    throw new Error(`Workflow argument ${property.name} must be <= ${property.maximum}`);
+    throw validationError(`Workflow argument ${property.name} must be <= ${property.maximum}`);
   }
 }
 
@@ -422,7 +448,7 @@ function validateEnum(property: ArgsPropertySchema, value: unknown): void {
     return;
   }
   if (!property.enumValues.some((candidate) => Object.is(candidate, value))) {
-    throw new Error(
+    throw validationError(
       `Workflow argument ${property.name} must be one of: ${property.enumValues.join(", ")}`
     );
   }
@@ -435,7 +461,7 @@ function validateRequired(schema: Record<string, unknown>, value: Record<string,
       throw new Error("Workflow metadata.argsSchema.required entries must be strings");
     }
     if (!(property in value)) {
-      throw new Error(`Workflow argument ${property} is required`);
+      throw validationError(`Workflow argument ${property} is required`);
     }
   }
 }

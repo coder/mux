@@ -471,6 +471,38 @@ export default function workflow() { return { reportMarkdown: "ok" }; }
     });
   });
 
+  test("applies invocation default args only for schema-declared missing fields", () => {
+    const source = `const s = mux.schema;
+export const metadata = {
+  argsSchema: s.object({
+    projectPath: s.string(),
+    topic: s.optional(s.string({ default: "schema topic" })),
+    input: s.optional(s.string()),
+  }),
+};
+export default function workflow() { return { reportMarkdown: "ok" }; }
+`;
+
+    expect(
+      normalizeWorkflowArgsForSource(
+        source,
+        { input: "hello" },
+        {
+          defaultArgs: { projectPath: "/repo", ignored: true },
+        }
+      ).args
+    ).toEqual({ projectPath: "/repo", topic: "schema topic", input: "hello" });
+    expect(
+      normalizeWorkflowArgsForSource(
+        source,
+        { projectPath: "/explicit" },
+        {
+          defaultArgs: { projectPath: "/repo" },
+        }
+      ).args
+    ).toEqual({ projectPath: "/explicit", topic: "schema topic" });
+  });
+
   test("normalizes exact short flag aliases before positional args", () => {
     const source = `const s = mux.schema;
 export const metadata = {

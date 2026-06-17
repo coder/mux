@@ -78,6 +78,8 @@ export interface StartNamedWorkflowInput {
   workspaceId: string;
   projectTrusted: boolean;
   args: unknown;
+  /** Server-resolved invocation context; applied only to schema-declared args that callers omit. */
+  defaultArgs?: Record<string, unknown>;
   /** Called after the durable run record exists but before the foreground runner can block. */
   onRunCreated?: (event: WorkflowRunCreatedEvent) => Promise<void> | void;
   onBackgroundRunCreated?: (event: WorkflowBackgroundRunCreatedEvent) => Promise<void> | void;
@@ -710,7 +712,9 @@ export class WorkflowService {
       "WorkflowService.createNamedWorkflowRun: generated run id is required"
     );
 
-    const normalized = normalizeWorkflowArgsForSource(definition.source, input.args);
+    const normalized = normalizeWorkflowArgsForSource(definition.source, input.args, {
+      ...(input.defaultArgs != null ? { defaultArgs: input.defaultArgs } : {}),
+    });
     return await this.runStore.createRun({
       id: runId,
       workspaceId: input.workspaceId,
