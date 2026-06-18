@@ -2,7 +2,7 @@ const s = mux.schema;
 
 export const metadata = {
   description:
-    "Review current changes for reuse, quality, and efficiency, then fix actionable issues.",
+    "Review current changes for reuse, quality, efficiency, and polish, then fix actionable issues.",
   argsSchema: s.object({
     target: s.optional(s.string({ positional: true })),
     fix: s.optional(
@@ -77,6 +77,18 @@ const REVIEW_LANES = [
       "Find redundant computations, repeated file reads, duplicate network/API calls, N+1 patterns, and missed concurrency.",
       "Find hot-path bloat, recurring no-op updates, and updater wrappers that defeat same-reference no-op returns.",
       "Find TOCTOU existence pre-checks, unbounded memory, missing cleanup, and overly broad reads or loads.",
+    ],
+  },
+  {
+    id: "polish",
+    title: "Simplify: polish review",
+    instructions: [
+      "Inspect the diff for AI-generated slop introduced by the current changes.",
+      "Flag comments that restate the code, explain obvious behavior, or are inconsistent with nearby file style.",
+      "Flag defensive checks, try/catch blocks, or fallback paths that are abnormal for the surrounding trusted codepath.",
+      "Flag type escapes such as `as any` that bypass type issues instead of modeling them.",
+      "Flag style inconsistencies that make new code look generated rather than maintained.",
+      "Do not flag purposeful assertions, security checks, input validation, or comments that explain non-obvious rationale.",
     ],
   },
 ];
@@ -921,7 +933,7 @@ function usageResult(error) {
   const lines = [
     "# simplify workflow",
     "",
-    "Review current git changes for code reuse, quality, and efficiency, then fix actionable issues.",
+    "Review current git changes for code reuse, quality, efficiency, and polish, then fix actionable issues.",
     "",
     "## Usage",
     "",
