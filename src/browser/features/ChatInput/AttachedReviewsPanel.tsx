@@ -28,10 +28,7 @@ export const AttachedReviewsPanel: React.FC<AttachedReviewsPanelProps> = ({
   if (reviews.length === 0) return null;
 
   return (
-    <div
-      className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5"
-      data-component="AttachedReviewsPanel"
-    >
+    <div className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5">
       {/* Header with count and clear all button */}
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted font-medium">

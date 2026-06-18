@@ -5,44 +5,17 @@ jest.mock("lottie-react", () => ({
   default: () => null,
 }));
 
-import React from "react";
-import { act, fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 
 import { preloadTestModules, type TestEnvironment } from "../../ipc/setup";
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import { useWorkspaceStoreRaw, workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 import { createAppHarness, type AppHarness } from "../harness";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
-}
-
-type WorkspaceStorePublic = ReturnType<typeof useWorkspaceStoreRaw>;
-type CapturedWorkspaceStore = Pick<WorkspaceStorePublic, "getAggregator" | "setInterrupting"> & {
-  processStreamEvent: (
-    workspaceId: string,
-    aggregator: unknown,
-    data: WorkspaceChatMessage
-  ) => void;
-};
-
-function captureRawWorkspaceStore(): { store: CapturedWorkspaceStore; unmount: () => void } {
-  let store: CapturedWorkspaceStore | null = null;
-  const CaptureStore: React.FC = () => {
-    store = useWorkspaceStoreRaw() as unknown as CapturedWorkspaceStore;
-    return null;
-  };
-
-  const view = render(React.createElement(CaptureStore));
-  if (!store) {
-    view.unmount();
-    throw new Error("Failed to capture workspace store");
-  }
-
-  return { store, unmount: view.unmount };
 }
 
 function getBackgroundProcessManager(env: TestEnvironment): BackgroundProcessManager {
@@ -226,16 +199,6 @@ describe("Send dispatch modes (mock AI router)", () => {
 
   test("pressing Enter on an empty composer sends the queued message now", async () => {
     const app = await createAppHarness({ branchPrefix: "queued-enter-send-now" });
-    const capturedStore = captureRawWorkspaceStore();
-    type SetInterrupting = typeof capturedStore.store.setInterrupting;
-    const setInterruptingCalls: string[] = [];
-    const originalSetInterrupting = capturedStore.store.setInterrupting.bind(
-      capturedStore.store
-    ) as SetInterrupting;
-    capturedStore.store.setInterrupting = ((workspaceId) => {
-      setInterruptingCalls.push(workspaceId);
-      return originalSetInterrupting(workspaceId);
-    }) as SetInterrupting;
 
     try {
       await startStreamingTurn(app, "queued enter source");
@@ -250,20 +213,21 @@ describe("Send dispatch modes (mock AI router)", () => {
       );
 
       const queuedText = "queued enter send now test";
-      const aggregator = capturedStore.store.getAggregator(app.workspaceId);
-      if (!aggregator) {
-        throw new Error("Expected workspace aggregator to exist");
-      }
-
-      act(() => {
-        capturedStore.store.processStreamEvent(app.workspaceId, aggregator, {
-          type: "queued-message-changed",
-          workspaceId: app.workspaceId,
-          queuedMessages: [queuedText],
-          displayText: queuedText,
-          queueDispatchMode: "turn-end",
-        });
-      });
+      await app.chat.typeWithoutSending(queuedText);
+      await openSendModeMenu(app.view.container);
+      const sendAfterTurnRow = await waitFor(
+        () => {
+          const row = Array.from(app.view.container.querySelectorAll("button")).find((button) =>
+            button.textContent?.includes("Send after turn")
+          );
+          if (!row) {
+            throw new Error("Send after turn row not found");
+          }
+          return row;
+        },
+        { timeout: 30_000 }
+      );
+      fireEvent.click(sendAfterTurnRow);
 
       await waitFor(() => {
         const textContent = app.view.container.textContent ?? "";
@@ -280,13 +244,25 @@ describe("Send dispatch modes (mock AI router)", () => {
       expect(fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 })).toBe(
         false
       );
+      // A fast second Enter press should be ignored while the send-now interrupt is in flight.
+      expect(fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 })).toBe(
+        false
+      );
 
-      await waitFor(() => {
-        expect(setInterruptingCalls).toContain(app.workspaceId);
-      });
+      await waitFor(
+        () => {
+          const textContent = app.view.container.textContent ?? "";
+          expect(textContent).not.toContain("Queued - Sending after turn");
+        },
+        { timeout: 30_000 }
+      );
+      await app.chat.expectTranscriptContains(`Mock response: ${queuedText}`, 60_000);
+      await app.chat.expectStreamComplete(60_000);
+      const responseMatches = app.view.container.textContent?.match(
+        new RegExp(`Mock response: ${queuedText}`, "g")
+      );
+      expect(responseMatches).toHaveLength(1);
     } finally {
-      capturedStore.store.setInterrupting = originalSetInterrupting;
-      capturedStore.unmount();
       await app.dispose();
     }
   }, 60_000);

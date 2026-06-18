@@ -3,6 +3,7 @@ import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
 import type { Review } from "@/common/types/review";
 import type { EditingMessageState, PendingUserMessage } from "@/browser/utils/chatEditing";
 import type { SendMessageOptions } from "@/common/orpc/types";
+import type { QueuedMessage } from "@/common/types/message";
 
 export type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPolicy"]>;
 export type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
@@ -45,6 +46,9 @@ export interface ChatInputWorkspaceVariant {
   onEditLastUserMessage?: () => void;
   canInterrupt?: boolean;
   disabled?: boolean;
+  /** Queued follow-up currently waiting during an active workspace stream. */
+  queuedMessage?: QueuedMessage | null;
+  onSendQueuedImmediately?: () => Promise<void>;
   /** Optional explanation displayed when input is disabled */
   disabledReason?: string;
   onReady?: (api: ChatInputAPI) => void;

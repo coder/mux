@@ -31,7 +31,7 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
   const handleRemove = props.onRemove;
 
   return (
-    <div className="flex flex-wrap gap-2 py-2" data-component="ChatAttachments">
+    <div className="flex flex-wrap gap-2 py-2">
       {props.attachments.map((attachment) => {
         const baseMediaType = getBaseMediaType(attachment.mediaType);
         const isImage = baseMediaType.startsWith("image/");

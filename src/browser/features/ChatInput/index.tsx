@@ -2904,6 +2904,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (isMobileTouch) {
         return;
       }
+      if (
+        variant === "workspace" &&
+        !e.repeat &&
+        !editingMessageForUi &&
+        props.queuedMessage != null &&
+        props.onSendQueuedImmediately &&
+        input.trim() === "" &&
+        attachments.length === 0 &&
+        reviewPanelItems.length === 0
+      ) {
+        // User request: with an already-queued follow-up and an empty composer, Enter
+        // should activate the visible "Send now" action instead of requiring a mouse click.
+        e.preventDefault();
+        e.stopPropagation();
+        void props.onSendQueuedImmediately();
+        return;
+      }
       e.preventDefault();
       void handleSend();
     }

@@ -833,15 +833,50 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     await restoreQueuedDraft(queuedMessage);
   }, [restoreQueuedDraft, workspaceState?.queuedMessage]);
 
+  const sendQueuedImmediatelyInFlightRef = useRef<string | null>(null);
+
+  // The backend can resolve the interrupt RPC before the queued-message-cleared
+  // event renders, so keep duplicate send-now attempts blocked until the queued
+  // message id changes or clears.
+  useEffect(() => {
+    const queuedMessageId = workspaceState?.queuedMessage?.id ?? null;
+    if (queuedMessageId !== sendQueuedImmediatelyInFlightRef.current) {
+      sendQueuedImmediatelyInFlightRef.current = null;
+    }
+  }, [workspaceState?.queuedMessage?.id]);
+
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
-    if (!workspaceState?.queuedMessage || !workspaceState.canInterrupt) return;
-    // Set "interrupting" state immediately so UI shows "interrupting..." without flash
-    storeRaw.setInterrupting(workspaceId);
-    await api?.workspace.interruptStream({
-      workspaceId,
-      options: { sendQueuedImmediately: true },
-    });
+    const queuedMessage = workspaceState?.queuedMessage;
+    if (
+      !api ||
+      !queuedMessage ||
+      !workspaceState.canInterrupt ||
+      sendQueuedImmediatelyInFlightRef.current === queuedMessage.id
+    ) {
+      return;
+    }
+
+    sendQueuedImmediatelyInFlightRef.current = queuedMessage.id;
+    try {
+      // Set "interrupting" state immediately so UI shows "interrupting..." without flash.
+      storeRaw.setInterrupting(workspaceId);
+      const interruptResult = await api.workspace.interruptStream({
+        workspaceId,
+        options: { sendQueuedImmediately: true },
+      });
+      if (
+        !interruptResult.success &&
+        sendQueuedImmediatelyInFlightRef.current === queuedMessage.id
+      ) {
+        sendQueuedImmediatelyInFlightRef.current = null;
+      }
+    } catch (error) {
+      if (sendQueuedImmediatelyInFlightRef.current === queuedMessage.id) {
+        sendQueuedImmediatelyInFlightRef.current = null;
+      }
+      throw error;
+    }
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
 
   const handleCancelCompactionFromBarrier = useCallback(() => {
@@ -1740,91 +1775,45 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // workspace, so this only ever delays the initial mount — it never unmounts
   // visible decorations.
 
-  const handleQueuedComposerKeyDownCapture = (event: React.KeyboardEvent) => {
-    if (
-      event.key !== "Enter" ||
-      event.shiftKey ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.altKey ||
-      event.repeat
-    ) {
-      return;
-    }
-    if (!props.queuedMessage || !props.onSendQueuedImmediately) {
-      return;
-    }
-    if (
-      typeof window !== "undefined" &&
-      window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches
-    ) {
-      return;
-    }
-    if (
-      !(event.target instanceof HTMLElement) ||
-      event.target.tagName.toLowerCase() !== "textarea"
-    ) {
-      return;
-    }
-    const target = event.target as HTMLTextAreaElement;
-    if (target.value.trim().length > 0) {
-      return;
-    }
-    const chatInputSection = target.closest('[data-component="ChatInputSection"]');
-    if (
-      chatInputSection?.querySelector(
-        '[data-component="ChatAttachments"], [data-component="AttachedReviewsPanel"]'
-      )
-    ) {
-      return;
-    }
-
-    // User request: with an already-queued follow-up and an empty composer, Enter
-    // should activate the visible "Send now" action instead of requiring a mouse click.
-    event.preventDefault();
-    event.stopPropagation();
-    void props.onSendQueuedImmediately();
-  };
-
   return (
     <>
       <ChatInputDecorationStackLane items={props.revealDecorations ? decorationEntries : []} />
-      <div onKeyDownCapture={handleQueuedComposerKeyDownCapture}>
-        <ChatInput
-          key={props.workspaceId}
-          variant="workspace"
-          workspaceId={props.workspaceId}
-          runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
-          onMessageSendStarted={props.onMessageSendStarted}
-          onMessageSent={props.onMessageSent}
-          onResetContext={props.onResetContext}
-          onTruncateHistory={props.onTruncateHistory}
-          onModelChange={props.onModelChange}
-          disabled={!props.projectName || !props.workspaceName || props.isPreStreamAgentTask}
-          disabledReason={
-            props.isPreStreamAgentTask
-              ? props.preStreamAgentTaskStatus === "starting"
-                ? "Starting - waiting for launch to accept the initial prompt."
-                : "Queued - waiting for an available parallel task slot. This will start automatically."
-              : undefined
-          }
-          isTranscriptCaughtUp={props.isTranscriptCaughtUp}
-          isStreamStarting={props.isStreamStarting}
-          isCompacting={props.isCompacting}
-          editingMessage={props.editingMessage}
-          onCancelEdit={props.onCancelEdit}
-          onEditLastUserMessage={props.onEditLastUserMessage}
-          canInterrupt={props.canInterrupt}
-          onReady={props.onChatInputReady}
-          attachedReviews={reviews.attachedReviews}
-          onDetachReview={reviews.detachReview}
-          onDetachAllReviews={reviews.detachAllAttached}
-          onCheckReview={reviews.checkReview}
-          onCheckReviews={props.onCheckReviews}
-          onDeleteReview={reviews.removeReview}
-          onUpdateReviewNote={reviews.updateReviewNote}
-        />
-      </div>
+      <ChatInput
+        key={props.workspaceId}
+        variant="workspace"
+        workspaceId={props.workspaceId}
+        runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
+        onMessageSendStarted={props.onMessageSendStarted}
+        onMessageSent={props.onMessageSent}
+        onResetContext={props.onResetContext}
+        onTruncateHistory={props.onTruncateHistory}
+        onModelChange={props.onModelChange}
+        disabled={!props.projectName || !props.workspaceName || props.isPreStreamAgentTask}
+        disabledReason={
+          props.isPreStreamAgentTask
+            ? props.preStreamAgentTaskStatus === "starting"
+              ? "Starting - waiting for launch to accept the initial prompt."
+              : "Queued - waiting for an available parallel task slot. This will start automatically."
+            : undefined
+        }
+        isTranscriptCaughtUp={props.isTranscriptCaughtUp}
+        isStreamStarting={props.isStreamStarting}
+        isCompacting={props.isCompacting}
+        editingMessage={props.editingMessage}
+        onCancelEdit={props.onCancelEdit}
+        onEditLastUserMessage={props.onEditLastUserMessage}
+        canInterrupt={props.canInterrupt}
+        queuedMessage={props.queuedMessage}
+        onSendQueuedImmediately={props.onSendQueuedImmediately}
+        onReady={props.onChatInputReady}
+        attachedReviews={reviews.attachedReviews}
+        onDetachReview={reviews.detachReview}
+        onDetachAllReviews={reviews.detachAllAttached}
+        onCheckReview={reviews.checkReview}
+        onCheckReviews={props.onCheckReviews}
+        onDeleteReview={reviews.removeReview}
+        onUpdateReviewNote={reviews.updateReviewNote}
+      />
     </>
   );
 };
