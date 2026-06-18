@@ -1740,43 +1740,91 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // workspace, so this only ever delays the initial mount — it never unmounts
   // visible decorations.
 
+  const handleQueuedComposerKeyDownCapture = (event: React.KeyboardEvent) => {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.repeat
+    ) {
+      return;
+    }
+    if (!props.queuedMessage || !props.onSendQueuedImmediately) {
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches
+    ) {
+      return;
+    }
+    if (
+      !(event.target instanceof HTMLElement) ||
+      event.target.tagName.toLowerCase() !== "textarea"
+    ) {
+      return;
+    }
+    const target = event.target as HTMLTextAreaElement;
+    if (target.value.trim().length > 0) {
+      return;
+    }
+    const chatInputSection = target.closest('[data-component="ChatInputSection"]');
+    if (
+      chatInputSection?.querySelector(
+        '[data-component="ChatAttachments"], [data-component="AttachedReviewsPanel"]'
+      )
+    ) {
+      return;
+    }
+
+    // User request: with an already-queued follow-up and an empty composer, Enter
+    // should activate the visible "Send now" action instead of requiring a mouse click.
+    event.preventDefault();
+    event.stopPropagation();
+    void props.onSendQueuedImmediately();
+  };
+
   return (
     <>
       <ChatInputDecorationStackLane items={props.revealDecorations ? decorationEntries : []} />
-      <ChatInput
-        key={props.workspaceId}
-        variant="workspace"
-        workspaceId={props.workspaceId}
-        runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
-        onMessageSendStarted={props.onMessageSendStarted}
-        onMessageSent={props.onMessageSent}
-        onResetContext={props.onResetContext}
-        onTruncateHistory={props.onTruncateHistory}
-        onModelChange={props.onModelChange}
-        disabled={!props.projectName || !props.workspaceName || props.isPreStreamAgentTask}
-        disabledReason={
-          props.isPreStreamAgentTask
-            ? props.preStreamAgentTaskStatus === "starting"
-              ? "Starting - waiting for launch to accept the initial prompt."
-              : "Queued - waiting for an available parallel task slot. This will start automatically."
-            : undefined
-        }
-        isTranscriptCaughtUp={props.isTranscriptCaughtUp}
-        isStreamStarting={props.isStreamStarting}
-        isCompacting={props.isCompacting}
-        editingMessage={props.editingMessage}
-        onCancelEdit={props.onCancelEdit}
-        onEditLastUserMessage={props.onEditLastUserMessage}
-        canInterrupt={props.canInterrupt}
-        onReady={props.onChatInputReady}
-        attachedReviews={reviews.attachedReviews}
-        onDetachReview={reviews.detachReview}
-        onDetachAllReviews={reviews.detachAllAttached}
-        onCheckReview={reviews.checkReview}
-        onCheckReviews={props.onCheckReviews}
-        onDeleteReview={reviews.removeReview}
-        onUpdateReviewNote={reviews.updateReviewNote}
-      />
+      <div onKeyDownCapture={handleQueuedComposerKeyDownCapture}>
+        <ChatInput
+          key={props.workspaceId}
+          variant="workspace"
+          workspaceId={props.workspaceId}
+          runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
+          onMessageSendStarted={props.onMessageSendStarted}
+          onMessageSent={props.onMessageSent}
+          onResetContext={props.onResetContext}
+          onTruncateHistory={props.onTruncateHistory}
+          onModelChange={props.onModelChange}
+          disabled={!props.projectName || !props.workspaceName || props.isPreStreamAgentTask}
+          disabledReason={
+            props.isPreStreamAgentTask
+              ? props.preStreamAgentTaskStatus === "starting"
+                ? "Starting - waiting for launch to accept the initial prompt."
+                : "Queued - waiting for an available parallel task slot. This will start automatically."
+              : undefined
+          }
+          isTranscriptCaughtUp={props.isTranscriptCaughtUp}
+          isStreamStarting={props.isStreamStarting}
+          isCompacting={props.isCompacting}
+          editingMessage={props.editingMessage}
+          onCancelEdit={props.onCancelEdit}
+          onEditLastUserMessage={props.onEditLastUserMessage}
+          canInterrupt={props.canInterrupt}
+          onReady={props.onChatInputReady}
+          attachedReviews={reviews.attachedReviews}
+          onDetachReview={reviews.detachReview}
+          onDetachAllReviews={reviews.detachAllAttached}
+          onCheckReview={reviews.checkReview}
+          onCheckReviews={props.onCheckReviews}
+          onDeleteReview={reviews.removeReview}
+          onUpdateReviewNote={reviews.updateReviewNote}
+        />
+      </div>
     </>
   );
 };

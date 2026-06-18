@@ -5,17 +5,44 @@ jest.mock("lottie-react", () => ({
   default: () => null,
 }));
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import React from "react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { preloadTestModules, type TestEnvironment } from "../../ipc/setup";
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { useWorkspaceStoreRaw, workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 import { createAppHarness, type AppHarness } from "../harness";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
+}
+
+type WorkspaceStorePublic = ReturnType<typeof useWorkspaceStoreRaw>;
+type CapturedWorkspaceStore = Pick<WorkspaceStorePublic, "getAggregator" | "setInterrupting"> & {
+  processStreamEvent: (
+    workspaceId: string,
+    aggregator: unknown,
+    data: WorkspaceChatMessage
+  ) => void;
+};
+
+function captureRawWorkspaceStore(): { store: CapturedWorkspaceStore; unmount: () => void } {
+  let store: CapturedWorkspaceStore | null = null;
+  const CaptureStore: React.FC = () => {
+    store = useWorkspaceStoreRaw() as unknown as CapturedWorkspaceStore;
+    return null;
+  };
+
+  const view = render(React.createElement(CaptureStore));
+  if (!store) {
+    view.unmount();
+    throw new Error("Failed to capture workspace store");
+  }
+
+  return { store, unmount: view.unmount };
 }
 
 function getBackgroundProcessManager(env: TestEnvironment): BackgroundProcessManager {
@@ -67,6 +94,30 @@ async function getActiveTextarea(container: HTMLElement): Promise<HTMLTextAreaEl
       }
 
       return enabled;
+    },
+    { timeout: 10_000 }
+  );
+}
+
+async function getComposerDockTextarea(container: HTMLElement): Promise<HTMLTextAreaElement> {
+  return waitFor(
+    () => {
+      const dock = container.querySelector('[data-testid="chat-composer-dock"]');
+      if (!dock) {
+        throw new Error("Chat composer dock not found");
+      }
+
+      const textarea = dock.querySelector(
+        'textarea[aria-label="Message Claude"]'
+      ) as HTMLTextAreaElement | null;
+      if (!textarea) {
+        throw new Error("Composer textarea not found");
+      }
+      if (textarea.disabled) {
+        throw new Error("Composer textarea is disabled");
+      }
+
+      return textarea;
     },
     { timeout: 10_000 }
   );
@@ -169,6 +220,73 @@ describe("Send dispatch modes (mock AI router)", () => {
         expect(goal?.status).toBe("paused");
       });
     } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("pressing Enter on an empty composer sends the queued message now", async () => {
+    const app = await createAppHarness({ branchPrefix: "queued-enter-send-now" });
+    const capturedStore = captureRawWorkspaceStore();
+    type SetInterrupting = typeof capturedStore.store.setInterrupting;
+    const setInterruptingCalls: string[] = [];
+    const originalSetInterrupting = capturedStore.store.setInterrupting.bind(
+      capturedStore.store
+    ) as SetInterrupting;
+    capturedStore.store.setInterrupting = ((workspaceId) => {
+      setInterruptingCalls.push(workspaceId);
+      return originalSetInterrupting(workspaceId);
+    }) as SetInterrupting;
+
+    try {
+      await startStreamingTurn(app, "queued enter source");
+      await waitFor(
+        () => {
+          const state = workspaceStore.getWorkspaceSidebarState(app.workspaceId);
+          if (!state.canInterrupt) {
+            throw new Error("Expected source stream to be interruptible");
+          }
+        },
+        { timeout: 30_000 }
+      );
+
+      const queuedText = "queued enter send now test";
+      const aggregator = capturedStore.store.getAggregator(app.workspaceId);
+      if (!aggregator) {
+        throw new Error("Expected workspace aggregator to exist");
+      }
+
+      act(() => {
+        capturedStore.store.processStreamEvent(app.workspaceId, aggregator, {
+          type: "queued-message-changed",
+          workspaceId: app.workspaceId,
+          queuedMessages: [queuedText],
+          displayText: queuedText,
+          queueDispatchMode: "turn-end",
+        });
+      });
+
+      await waitFor(() => {
+        const textContent = app.view.container.textContent ?? "";
+        expect(textContent).toContain("Queued - Sending after turn");
+        expect(textContent).toContain("Send now");
+      });
+
+      const textarea = await getComposerDockTextarea(app.view.container);
+      await waitFor(() => {
+        expect(textarea.value).toBe("");
+      });
+
+      textarea.focus();
+      expect(fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 })).toBe(
+        false
+      );
+
+      await waitFor(() => {
+        expect(setInterruptingCalls).toContain(app.workspaceId);
+      });
+    } finally {
+      capturedStore.store.setInterrupting = originalSetInterrupting;
+      capturedStore.unmount();
       await app.dispose();
     }
   }, 60_000);
