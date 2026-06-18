@@ -1749,7 +1749,7 @@ export class WorkflowRunner {
     }
 
     while (pending.length > 0) {
-      const currentPending = pending;
+      const queued = pending;
       pending = [];
       const batchAbortController = new AbortController();
       const upstreamAbortSignal = options.waitOptions?.abortSignal;
@@ -1773,37 +1773,27 @@ export class WorkflowRunner {
         ...options.waitOptions,
         abortSignal: batchAbortController.signal,
       };
-      const effectivePending = currentPending.map((step) => ({
-        ...step,
-        runSpec:
-          step.attempt === 1
-            ? step.spec
-            : buildRetryAgentSpec(
-                step.spec,
-                step.attempt - 1,
-                step.retryMessage ?? "previous attempt failed"
-              ),
-      }));
       // maxParallel caps live child tasks with a sliding window: the next spec
-      // starts as soon as any running one finishes, instead of waiting for a
-      // whole fixed-size batch to drain.
-      const windowSemaphore =
-        maxParallel != null && maxParallel < effectivePending.length
-          ? new AsyncSemaphore(maxParallel)
-          : undefined;
+      // starts as soon as any running one finishes. Validation retries are
+      // requeued at the front so a schema-only failure immediately uses the
+      // freed slot instead of waiting for unrelated slow siblings to drain.
+      const maxActive = maxParallel ?? queued.length;
+      assert(maxActive > 0, "WorkflowRunner.parallelAgents maxActive must be positive");
+
       // Under a window, tasks must be created lazily when a slot frees;
       // bulk-creating the whole wave up front would start every child at once.
-      const bulkCreatableSteps = windowSemaphore
-        ? []
-        : effectivePending.filter((step) => step.taskId == null);
-      if (
-        bulkCreatableSteps.length > 0 &&
+      const createAgentTasks =
+        maxParallel == null &&
         this.taskAdapter.createAgentTasks != null &&
         this.taskAdapter.waitForAgentTask != null
-      ) {
+          ? this.taskAdapter.createAgentTasks.bind(this.taskAdapter)
+          : undefined;
+      const bulkCreatableSteps =
+        createAgentTasks != null ? queued.filter((step) => step.taskId == null) : [];
+      if (createAgentTasks != null && bulkCreatableSteps.length > 0) {
         try {
-          const createdTasks = await this.taskAdapter.createAgentTasks(
-            bulkCreatableSteps.map((step) => step.runSpec),
+          const createdTasks = await createAgentTasks(
+            bulkCreatableSteps.map((step) => step.spec),
             {
               onTaskCreated: async (index, taskId) => {
                 const step = bulkCreatableSteps[index];
@@ -1844,47 +1834,80 @@ export class WorkflowRunner {
           throw error;
         }
       }
-      // Any settled sibling failure dooms the whole batch (the settle loop
-      // below rethrows it), so window-queued steps that have not started yet
-      // must not spawn fresh child tasks once a sibling has failed.
+
       let batchFailed = false;
-      const guardedRuns = effectivePending.map(async (step, pendingIndex) => {
-        const slot = windowSemaphore ? await windowSemaphore.acquire() : undefined;
-        try {
-          if (batchFailed || batchAbortController.signal.aborted) {
-            throw new Error(
-              `parallelAgents step ${step.spec.id} canceled before it started: a sibling task failed or the batch was aborted`
-            );
+      let nextRunIndex = 0;
+      const unsettledRuns = new Map<
+        number,
+        Promise<
+          | {
+              runIndex: number;
+              step: (typeof queued)[number];
+              rawResult: WorkflowAgentResult;
+            }
+          | { runIndex: number; step: (typeof queued)[number]; error: unknown }
+        >
+      >();
+
+      const startRun = (step: (typeof queued)[number]): void => {
+        const runIndex = nextRunIndex;
+        nextRunIndex += 1;
+        const runSpec =
+          step.attempt === 1
+            ? step.spec
+            : buildRetryAgentSpec(
+                step.spec,
+                step.attempt - 1,
+                step.retryMessage ?? "previous attempt failed"
+              );
+        const run = (async () => {
+          try {
+            if (batchFailed || batchAbortController.signal.aborted) {
+              throw new Error(
+                `parallelAgents step ${step.spec.id} canceled before it started: a sibling task failed or the batch was aborted`
+              );
+            }
+            const rawResult = await this.runOrResumeAgentStep(runId, sequence, {
+              spec: runSpec,
+              inputHash: step.inputHash,
+              startedAt: step.startedAt,
+              taskId: step.taskId,
+              leaseGuard: options.leaseGuard,
+              waitOptions: batchWaitOptions,
+            });
+            return { runIndex, step, rawResult };
+          } catch (error) {
+            batchFailed = true;
+            if (isForegroundWaitBackgroundedError(error)) {
+              foregroundBackgrounded = true;
+              abortBatch();
+            } else if (!foregroundBackgrounded) {
+              await interruptRemainingTasks();
+            }
+            return { runIndex, step, error };
           }
-          const rawResult = await this.runOrResumeAgentStep(runId, sequence, {
-            spec: step.runSpec,
-            inputHash: step.inputHash,
-            startedAt: step.startedAt,
-            taskId: step.taskId,
-            leaseGuard: options.leaseGuard,
-            waitOptions: batchWaitOptions,
-          });
-          return { pendingIndex, step, rawResult };
-        } catch (error) {
-          // Set before the slot is released (finally below) so the next
-          // admitted waiter deterministically observes the failure.
-          batchFailed = true;
-          if (isForegroundWaitBackgroundedError(error)) {
-            foregroundBackgrounded = true;
-            abortBatch();
-          } else if (!foregroundBackgrounded) {
-            await interruptRemainingTasks();
-          }
-          return { pendingIndex, step, error };
-        } finally {
-          slot?.release();
+        })();
+        unsettledRuns.set(runIndex, run);
+      };
+
+      const launchAvailable = (): void => {
+        while (
+          !batchFailed &&
+          !batchAbortController.signal.aborted &&
+          unsettledRuns.size < maxActive &&
+          queued.length > 0
+        ) {
+          const step = queued.shift();
+          assert(step != null, "WorkflowRunner.parallelAgents queued step is required");
+          startRun(step);
         }
-      });
-      const unsettledRuns = new Map(guardedRuns.map((run, index) => [index, run]));
+      };
+
       try {
+        launchAvailable();
         while (unsettledRuns.size > 0) {
           const settled = await Promise.race(unsettledRuns.values());
-          unsettledRuns.delete(settled.pendingIndex);
+          unsettledRuns.delete(settled.runIndex);
           if ("error" in settled) {
             await Promise.allSettled(unsettledRuns.values());
             if (foregroundBackgrounded) {
@@ -1903,6 +1926,7 @@ export class WorkflowRunner {
               !isRetryableAgentOutputError(error) ||
               settled.step.attempt >= WORKFLOW_AGENT_MAX_ATTEMPTS
             ) {
+              batchFailed = true;
               await interruptRemainingTasks();
               await Promise.allSettled(unsettledRuns.values());
               throw error;
@@ -1915,7 +1939,7 @@ export class WorkflowRunner {
               settled.step.attempt,
               error
             );
-            pending.push({
+            queued.unshift({
               ...settled.step,
               startedAt: this.clock.nowIso(),
               taskId: undefined,
@@ -1923,6 +1947,7 @@ export class WorkflowRunner {
               retryMessage: getErrorMessage(error),
             });
           }
+          launchAvailable();
         }
       } finally {
         upstreamAbortSignal?.removeEventListener("abort", abortBatch);
