@@ -1698,12 +1698,22 @@ export class TaskService {
 
     let config = this.config.loadConfigOrDefault();
     let taskIndex = this.buildAgentTaskIndex(config);
-    let awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "awaiting_report"
-    );
-    let runningTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "running"
-    );
+    // Recompute the startup recovery candidate lists from a config snapshot. Hoisted into a
+    // closure so the post-interrupt refresh below reuses the exact same status filters.
+    const listStartupRecoveryCandidates = (
+      sourceConfig: ProjectsConfig
+    ): {
+      awaitingReportTasks: AgentTaskWorkspaceEntry[];
+      runningTasks: AgentTaskWorkspaceEntry[];
+    } => ({
+      awaitingReportTasks: this.listAgentTaskWorkspaces(sourceConfig).filter(
+        (t) => t.taskStatus === "awaiting_report"
+      ),
+      runningTasks: this.listAgentTaskWorkspaces(sourceConfig).filter(
+        (t) => t.taskStatus === "running"
+      ),
+    });
+    let { awaitingReportTasks, runningTasks } = listStartupRecoveryCandidates(config);
 
     let interruptedInactiveWorkflowOwnerAtStartup = false;
     for (const task of [...awaitingReportTasks, ...runningTasks]) {
@@ -1725,10 +1735,7 @@ export class TaskService {
       // blocked by a child that this startup pass just interrupted.
       config = this.config.loadConfigOrDefault();
       taskIndex = this.buildAgentTaskIndex(config);
-      awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
-        (t) => t.taskStatus === "awaiting_report"
-      );
-      runningTasks = this.listAgentTaskWorkspaces(config).filter((t) => t.taskStatus === "running");
+      ({ awaitingReportTasks, runningTasks } = listStartupRecoveryCandidates(config));
     }
 
     let resumedAwaitingReportCount = 0;
