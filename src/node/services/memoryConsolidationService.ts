@@ -177,13 +177,22 @@ function findNewestWorkspaceRecord(
   );
 }
 
+/**
+ * Effective ordering timestamp for a harvest record: when it completed, or when
+ * it started if still pending. findNewestHarvestRecord and pruneHarvestRecords
+ * must rank records the same way, so both derive recency from this single key.
+ */
+function harvestRecordTime(record: MemoryHarvestRecord): number {
+  return record.completedAt ?? record.startedAt;
+}
+
 function findNewestHarvestRecord(
   records: Record<string, MemoryHarvestRecord> | undefined
 ): MemoryHarvestRecord | null {
   if (records === undefined) return null;
   return Object.values(records).reduce<MemoryHarvestRecord | null>((latest, record) => {
-    const recordTime = record.completedAt ?? record.startedAt;
-    const latestTime = latest === null ? -1 : (latest.completedAt ?? latest.startedAt);
+    const recordTime = harvestRecordTime(record);
+    const latestTime = latest === null ? -1 : harvestRecordTime(latest);
     return recordTime > latestTime ? record : latest;
   }, null);
 }
@@ -231,11 +240,9 @@ function parseHarvestRecords(value: unknown): Record<string, Record<string, Memo
 }
 
 function pruneHarvestRecords(records: Record<string, MemoryHarvestRecord>): void {
-  const ranked = Object.entries(records).sort(([, left], [, right]) => {
-    const leftTime = left.completedAt ?? left.startedAt;
-    const rightTime = right.completedAt ?? right.startedAt;
-    return rightTime - leftTime;
-  });
+  const ranked = Object.entries(records).sort(
+    ([, left], [, right]) => harvestRecordTime(right) - harvestRecordTime(left)
+  );
   for (const [boundaryKey] of ranked.slice(HARVEST_RECORD_RETENTION)) {
     delete records[boundaryKey];
   }

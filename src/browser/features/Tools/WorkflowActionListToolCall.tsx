@@ -20,6 +20,7 @@ import {
 } from "./Shared/ToolPrimitives";
 import { getStatusDisplay, isToolErrorResult, type ToolStatus } from "./Shared/toolUtils";
 import {
+  BlockedBadge,
   WorkflowBadge,
   WorkflowJsonBlock,
   WorkflowKindBadge,
@@ -126,7 +127,7 @@ function WorkflowActionListRow(props: { descriptor: WorkflowActionDescriptor }) 
               {action.metadata.effect}
             </WorkflowBadge>
           ) : (
-            <WorkflowBadge tone="danger">blocked</WorkflowBadge>
+            <BlockedBadge />
           )}
         </span>
         <span

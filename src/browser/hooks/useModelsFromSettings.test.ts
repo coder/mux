@@ -87,20 +87,28 @@ const actualRoutingModule = { ...RoutingModule };
 const actualAPIModule = { ...APIModule };
 const actualPolicyContextModule = { ...PolicyContextModule };
 
+// Specifiers mocked by this suite, shared by install/restore so the two helpers can never
+// drift: a path that gets mocked but not restored would silently re-introduce the
+// cross-suite leakage these helpers exist to prevent.
+const PROVIDERS_CONFIG_MODULE = "@/browser/hooks/useProvidersConfig";
+const ROUTING_MODULE = "@/browser/hooks/useRouting";
+const API_MODULE = "@/browser/contexts/API";
+const POLICY_CONTEXT_MODULE = "@/browser/contexts/PolicyContext";
+
 async function installUseModelsModuleMocks() {
-  await mock.module("@/browser/hooks/useProvidersConfig", () => ({
+  await mock.module(PROVIDERS_CONFIG_MODULE, () => ({
     ...actualProvidersConfigModule,
     useProvidersConfig: useProvidersConfigMock,
   }));
-  await mock.module("@/browser/hooks/useRouting", () => ({
+  await mock.module(ROUTING_MODULE, () => ({
     ...actualRoutingModule,
     useRouting: useRoutingMock,
   }));
-  await mock.module("@/browser/contexts/API", () => ({
+  await mock.module(API_MODULE, () => ({
     ...actualAPIModule,
     useAPI: () => ({ api: apiMock }),
   }));
-  await mock.module("@/browser/contexts/PolicyContext", () => ({
+  await mock.module(POLICY_CONTEXT_MODULE, () => ({
     ...actualPolicyContextModule,
     usePolicy: () => ({
       status: { state: "disabled" as const },
@@ -112,10 +120,10 @@ async function installUseModelsModuleMocks() {
 async function restoreUseModelsModuleMocks() {
   // Bun's mock.module() has no disposer, and mock.restore() does not undo module mocks.
   // Restore the real modules so this file cannot poison later tests in the same process.
-  await mock.module("@/browser/hooks/useProvidersConfig", () => actualProvidersConfigModule);
-  await mock.module("@/browser/hooks/useRouting", () => actualRoutingModule);
-  await mock.module("@/browser/contexts/API", () => actualAPIModule);
-  await mock.module("@/browser/contexts/PolicyContext", () => actualPolicyContextModule);
+  await mock.module(PROVIDERS_CONFIG_MODULE, () => actualProvidersConfigModule);
+  await mock.module(ROUTING_MODULE, () => actualRoutingModule);
+  await mock.module(API_MODULE, () => actualAPIModule);
+  await mock.module(POLICY_CONTEXT_MODULE, () => actualPolicyContextModule);
 }
 
 let cleanupDom: (() => void) | null = null;

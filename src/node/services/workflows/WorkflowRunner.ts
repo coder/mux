@@ -17,6 +17,7 @@ import { validateJsonSchemaSubset } from "@/common/utils/jsonSchemaSubset";
 import { removeCommonJsWorkflowMetadataDeclaration } from "./staticWorkflowMetadata";
 import { WORKFLOW_RUNTIME_STDLIB_SOURCE } from "./workflowRuntimeSources.generated";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
+import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
 import type { ResolvedWorkflowAction, WorkflowActionRegistry } from "./WorkflowActionRegistry";
@@ -1001,7 +1002,7 @@ export class WorkflowRunner {
     const run = await this.runStore.getRun(runId);
     const driftedStep = run.steps.find(
       (step) =>
-        step.stepId === spec.id && step.inputHash !== inputHash && step.taskId?.startsWith("wfr_")
+        step.stepId === spec.id && step.inputHash !== inputHash && isWorkflowRunTaskId(step.taskId)
     );
     if (driftedStep != null) {
       throw new Error(

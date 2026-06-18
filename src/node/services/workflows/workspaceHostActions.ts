@@ -118,6 +118,21 @@ const WorkspaceIdInputSchema = z.object({
   workspaceId: z.string().min(1),
 });
 
+/**
+ * Metadata JSON Schema for the id-targeted host actions whose only input is a
+ * workspace id (getLatestAssistantMessage, archive, unarchive). Shared so a new
+ * id-only action can't drift from the rest — #3583's workspace.unarchive
+ * otherwise duplicated this block verbatim. Runtime parsing of these inputs
+ * uses the matching WorkspaceIdInputSchema above.
+ */
+const WORKSPACE_ID_ONLY_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    workspaceId: { type: "string" },
+  },
+  required: ["workspaceId"],
+} as const;
+
 function listedWorkspace(metadata: {
   id: string;
   name: string;
@@ -524,13 +539,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       version: 1,
       description: "Read the most recent assistant message text from a workspace's chat history",
       effect: "read",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspaceId: { type: "string" },
-        },
-        required: ["workspaceId"],
-      },
+      inputSchema: WORKSPACE_ID_ONLY_INPUT_SCHEMA,
       outputSchema: { type: "object" },
       timeoutMs: 30_000,
     },
@@ -569,13 +578,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       version: 1,
       description: "Archive a workspace (idempotent; succeeds when already archived)",
       effect: "external",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspaceId: { type: "string" },
-        },
-        required: ["workspaceId"],
-      },
+      inputSchema: WORKSPACE_ID_ONLY_INPUT_SCHEMA,
       outputSchema: { type: "object" },
       timeoutMs: 120_000,
     },
@@ -599,13 +602,7 @@ const WORKSPACE_HOST_ACTION_DEFINITIONS: Record<string, WorkspaceHostActionDefin
       version: 1,
       description: "Unarchive a workspace (idempotent; succeeds when already unarchived)",
       effect: "external",
-      inputSchema: {
-        type: "object",
-        properties: {
-          workspaceId: { type: "string" },
-        },
-        required: ["workspaceId"],
-      },
+      inputSchema: WORKSPACE_ID_ONLY_INPUT_SCHEMA,
       outputSchema: { type: "object" },
       timeoutMs: 120_000,
     },

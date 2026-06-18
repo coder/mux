@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 
 import {
   isActiveWorkflowRunStatus,
+  isTerminalWorkflowRunStatus,
   type WorkflowActionDescriptor,
   type WorkflowDefinitionDescriptor,
   type WorkflowRunRecord,
@@ -708,12 +709,7 @@ export class WorkflowService {
     }
 
     const run = await this.getRun({ workspaceId, runId });
-    if (
-      run == null ||
-      run.status === "completed" ||
-      run.status === "failed" ||
-      run.status === "interrupted"
-    ) {
+    if (run == null || isTerminalWorkflowRunStatus(run.status)) {
       return;
     }
 

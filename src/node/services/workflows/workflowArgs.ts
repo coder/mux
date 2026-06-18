@@ -40,6 +40,11 @@ interface TokenizeResult {
 
 const RAW_INPUT_FIELD = "input";
 
+// Shared by assertObjectSchema and propertySchemas so the two `properties`
+// validators can't drift to differing messages for the same failure.
+const ARGS_SCHEMA_PROPERTIES_ERROR_MESSAGE =
+  "Workflow metadata.argsSchema.properties must be an object";
+
 export function normalizeWorkflowArgsForSource(
   definitionSource: string,
   rawArgs: unknown,
@@ -146,14 +151,14 @@ function assertObjectSchema(schema: Record<string, unknown>): void {
     throw validationError('Workflow metadata.argsSchema must have type "object"');
   }
   if (!isPlainObject(schema.properties)) {
-    throw validationError("Workflow metadata.argsSchema.properties must be an object");
+    throw validationError(ARGS_SCHEMA_PROPERTIES_ERROR_MESSAGE);
   }
 }
 
 function propertySchemas(schema: Record<string, unknown>): ArgsPropertySchema[] {
   const rawProperties = schema.properties;
   if (!isPlainObject(rawProperties)) {
-    throw validationError("Workflow metadata.argsSchema.properties must be an object");
+    throw validationError(ARGS_SCHEMA_PROPERTIES_ERROR_MESSAGE);
   }
 
   return Object.entries(rawProperties).map(([name, rawProperty]) => {

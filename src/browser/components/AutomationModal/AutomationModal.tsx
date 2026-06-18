@@ -34,6 +34,12 @@ import {
   workflowScheduleIntervalMinutesToMs,
 } from "@/browser/utils/workflowScheduleIntervalMinutes";
 
+// Fallback messages shown when the save/remove RPC fails without a specific
+// error string. Deduplicated so the wording stays consistent across the
+// pre-check, RPC-result, and thrown-error paths below.
+const SAVE_AUTOMATION_ERROR_MESSAGE = "Failed to save automation.";
+const REMOVE_AUTOMATION_ERROR_MESSAGE = "Failed to remove automation.";
+
 interface AutomationModalProps {
   open: boolean;
   projectPath: string;
@@ -308,7 +314,7 @@ export function AutomationModal(props: AutomationModalProps) {
           schedule: workspaceSchedule,
         });
         if (!result.success) {
-          setSaveError(result.error ?? "Failed to save automation.");
+          setSaveError(result.error ?? SAVE_AUTOMATION_ERROR_MESSAGE);
           return false;
         }
       } else {
@@ -327,7 +333,7 @@ export function AutomationModal(props: AutomationModalProps) {
           },
         });
         if (!result.success) {
-          setSaveError(result.error ?? "Failed to save automation.");
+          setSaveError(result.error ?? SAVE_AUTOMATION_ERROR_MESSAGE);
           return false;
         }
       }
@@ -335,7 +341,7 @@ export function AutomationModal(props: AutomationModalProps) {
       await refreshProjects();
       return true;
     } catch (error) {
-      setSaveError(getErrorMessage(error) || "Failed to save automation.");
+      setSaveError(getErrorMessage(error) || SAVE_AUTOMATION_ERROR_MESSAGE);
       return false;
     } finally {
       setIsSaving(false);
@@ -388,7 +394,7 @@ export function AutomationModal(props: AutomationModalProps) {
           scheduleId: props.projectWorkflowSchedule.id,
         });
         if (!result.success) {
-          throw new Error(result.error ?? "Failed to remove automation.");
+          throw new Error(result.error ?? REMOVE_AUTOMATION_ERROR_MESSAGE);
         }
       } else if (isLegacyWorkspaceSchedule) {
         const result = await api.workspace.setWorkflowSchedule({
@@ -396,13 +402,13 @@ export function AutomationModal(props: AutomationModalProps) {
           schedule: null,
         });
         if (!result.success) {
-          throw new Error(result.error ?? "Failed to remove automation.");
+          throw new Error(result.error ?? REMOVE_AUTOMATION_ERROR_MESSAGE);
         }
       }
       await refreshProjects();
       props.onOpenChange(false);
     } catch (error) {
-      setSaveError(getErrorMessage(error) || "Failed to remove automation.");
+      setSaveError(getErrorMessage(error) || REMOVE_AUTOMATION_ERROR_MESSAGE);
     } finally {
       setIsSaving(false);
     }
