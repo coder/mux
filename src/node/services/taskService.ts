@@ -1570,14 +1570,39 @@ export class TaskService {
     await this.maybeStartQueuedTasks();
     const maybeStartQueuedTasksMs = Date.now() - maybeStartQueuedTasksStartedAt;
 
-    const config = this.config.loadConfigOrDefault();
-    const taskIndex = this.buildAgentTaskIndex(config);
-    const awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
+    let config = this.config.loadConfigOrDefault();
+    let taskIndex = this.buildAgentTaskIndex(config);
+    let awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
       (t) => t.taskStatus === "awaiting_report"
     );
-    const runningTasks = this.listAgentTaskWorkspaces(config).filter(
+    let runningTasks = this.listAgentTaskWorkspaces(config).filter(
       (t) => t.taskStatus === "running"
     );
+
+    let interruptedInactiveWorkflowOwnerAtStartup = false;
+    for (const task of [...awaitingReportTasks, ...runningTasks]) {
+      if (!task.id) continue;
+      if (
+        await this.interruptTaskRecoveryForInactiveWorkflowOwner(
+          task.id,
+          config,
+          "startup-inactive-workflow-owner-prepass",
+          taskIndex
+        )
+      ) {
+        interruptedInactiveWorkflowOwnerAtStartup = true;
+      }
+    }
+    if (interruptedInactiveWorkflowOwnerAtStartup) {
+      // Refresh before descendant checks so a parent awaiting_report task does not stay
+      // blocked by a child that this startup pass just interrupted.
+      config = this.config.loadConfigOrDefault();
+      taskIndex = this.buildAgentTaskIndex(config);
+      awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
+        (t) => t.taskStatus === "awaiting_report"
+      );
+      runningTasks = this.listAgentTaskWorkspaces(config).filter((t) => t.taskStatus === "running");
+    }
 
     let resumedAwaitingReportCount = 0;
     let skippedAwaitingReportDueToActiveDescendants = 0;
