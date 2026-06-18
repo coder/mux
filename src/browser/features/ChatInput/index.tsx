@@ -912,6 +912,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           dynamicWorkflowsEnabled: dynamicWorkflowsExperimentEnabled,
           draftId: props.pendingDraftId,
           userModel: preferredModel,
+          stagedMcpOverrides: props.stagedMcpOverrides,
         }
       : {
           // Dummy values for workspace variant (never used)

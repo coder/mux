@@ -1,6 +1,7 @@
-import React, { useRef, useCallback, useState, useEffect } from "react";
+import React, { useRef, useCallback, useState, useEffect, useMemo } from "react";
 import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import { cn } from "@/common/lib/utils";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
@@ -210,6 +211,40 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
 
   const didAutoFocusRef = useRef(false);
 
+  /**
+   * Per-draft staged MCP overrides for the workspace this chat will create.
+   *
+   * Keyed by `pendingDraftId ?? "__pending__"` (matches the same scope ID
+   * ChatInput uses for draft persistence). When the user submits, the staged
+   * overrides for the active draft are forwarded to ChatInput/useCreationWorkspace,
+   * which calls `api.workspace.mcp.set` after the workspace is created.
+   *
+   * Reset entirely on projectPath change so drafts can't leak across projects.
+   */
+  const [stagedMcpOverridesByDraft, setStagedMcpOverridesByDraft] = useState<
+    Map<string, WorkspaceMCPOverrides>
+  >(() => new Map());
+
+  useEffect(() => {
+    setStagedMcpOverridesByDraft(new Map());
+  }, [projectPath]);
+
+  const activeDraftKey = pendingDraftId ?? "__pending__";
+  const stagedMcpOverrides = useMemo<WorkspaceMCPOverrides>(
+    () => stagedMcpOverridesByDraft.get(activeDraftKey) ?? {},
+    [stagedMcpOverridesByDraft, activeDraftKey]
+  );
+  const handleStagedMcpOverridesChange = useCallback(
+    (next: WorkspaceMCPOverrides) => {
+      setStagedMcpOverridesByDraft((prev) => {
+        const map = new Map(prev);
+        map.set(activeDraftKey, next);
+        return map;
+      });
+    },
+    [activeDraftKey]
+  );
+
   const handleDismissAgentsInit = useCallback(() => {
     setShowAgentsInitNudge(false);
   }, [setShowAgentsInitNudge]);
@@ -331,6 +366,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       pendingDraftId={pendingDraftId}
                       onReady={handleChatReady}
                       onWorkspaceCreated={onWorkspaceCreated}
+                      stagedMcpOverrides={stagedMcpOverrides}
                     />
                   </>
                 )}
@@ -340,7 +376,11 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* MCP servers: overview between creation and archived workspaces */}
             <div className="flex justify-center px-4 pb-4">
               <div className="w-full max-w-3xl">
-                <ProjectMCPOverview projectPath={projectPath} />
+                <ProjectMCPOverview
+                  projectPath={projectPath}
+                  stagedOverrides={stagedMcpOverrides}
+                  onStagedOverridesChange={handleStagedMcpOverridesChange}
+                />
               </div>
             </div>
 
