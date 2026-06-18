@@ -5,7 +5,7 @@ import type { z } from "zod";
 
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
-import type { Config, Workspace as WorkspaceConfigEntry } from "@/node/config";
+import type { Config, ProjectsConfig, Workspace as WorkspaceConfigEntry } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
@@ -74,7 +74,11 @@ import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService"
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
 import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
-import { isActiveWorkflowRunStatus, isTerminalWorkflowRunStatus } from "@/common/types/workflow";
+import {
+  isActiveWorkflowRunStatus,
+  isTerminalWorkflowRunStatus,
+  type WorkflowRunStatus,
+} from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   isWorkflowDisplayOnlyMessage,
@@ -458,6 +462,13 @@ interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
   childrenByParent: Map<string, string[]>;
   parentById: Map<string, string>;
+}
+
+interface InactiveWorkflowTaskOwner {
+  ownerTaskId: string;
+  runId: string;
+  status?: WorkflowRunStatus;
+  reason: string;
 }
 
 interface PendingTaskWaiter {
@@ -1029,6 +1040,127 @@ export class TaskService {
     }
   }
 
+  // Workflow abort/interrupt is the source of truth: task-level restart and stream-end
+  // recovery must not resurrect a workflow child (or its descendants) once the owning run
+  // is no longer active. Manual workflow_resume replays from the workflow journal instead.
+  private findWorkflowTaskOwnerInAncestry(
+    index: AgentTaskIndex,
+    taskId: string
+  ): { taskId: string; workspace: AgentTaskWorkspaceEntry } | null {
+    assert(taskId.length > 0, "findWorkflowTaskOwnerInAncestry requires taskId");
+    let current: string | undefined = taskId;
+    for (let depth = 0; current != null; depth += 1) {
+      assert(
+        depth < 32,
+        `findWorkflowTaskOwnerInAncestry: possible parentWorkspaceId cycle starting at ${taskId}`
+      );
+      const entry = index.byId.get(current);
+      if (entry?.workflowTask != null) {
+        return { taskId: current, workspace: entry };
+      }
+      current = index.parentById.get(current);
+    }
+    return null;
+  }
+
+  private async getInactiveWorkflowTaskOwnerForRecovery(
+    taskId: string,
+    config: ProjectsConfig
+  ): Promise<InactiveWorkflowTaskOwner | null> {
+    assert(taskId.length > 0, "getInactiveWorkflowTaskOwnerForRecovery requires taskId");
+    const owner = this.findWorkflowTaskOwnerInAncestry(this.buildAgentTaskIndex(config), taskId);
+    if (owner == null) {
+      return null;
+    }
+
+    const workflowTask = owner.workspace.workflowTask;
+    assert(workflowTask != null, "workflow task owner must include workflowTask metadata");
+    const parentWorkspaceId = coerceNonEmptyString(owner.workspace.parentWorkspaceId);
+    if (!parentWorkspaceId) {
+      return {
+        ownerTaskId: owner.taskId,
+        runId: workflowTask.runId,
+        reason: "workflow-owned task is missing its parent workspace",
+      };
+    }
+
+    try {
+      const runStore = new WorkflowRunStore({
+        sessionDir: this.config.getSessionDir(parentWorkspaceId),
+      });
+      const run = await runStore.getRun(workflowTask.runId);
+      if (run.workspaceId !== parentWorkspaceId) {
+        return {
+          ownerTaskId: owner.taskId,
+          runId: workflowTask.runId,
+          status: run.status,
+          reason: `workflow run belongs to ${run.workspaceId}, not ${parentWorkspaceId}`,
+        };
+      }
+      if (isActiveWorkflowRunStatus(run.status)) {
+        return null;
+      }
+      return {
+        ownerTaskId: owner.taskId,
+        runId: workflowTask.runId,
+        status: run.status,
+        reason: `workflow run is ${run.status}`,
+      };
+    } catch (error: unknown) {
+      return {
+        ownerTaskId: owner.taskId,
+        runId: workflowTask.runId,
+        reason: `workflow run is unavailable: ${getErrorMessage(error)}`,
+      };
+    }
+  }
+
+  private async interruptTaskRecoveryForInactiveWorkflowOwner(
+    taskId: string,
+    config: ProjectsConfig,
+    trigger: string
+  ): Promise<boolean> {
+    assert(taskId.length > 0, "interruptTaskRecoveryForInactiveWorkflowOwner requires taskId");
+    assert(trigger.length > 0, "interruptTaskRecoveryForInactiveWorkflowOwner requires trigger");
+    const inactiveOwner = await this.getInactiveWorkflowTaskOwnerForRecovery(taskId, config);
+    if (inactiveOwner == null) {
+      return false;
+    }
+
+    let updated = false;
+    await this.editWorkspaceEntry(
+      taskId,
+      (ws) => {
+        if (hasCompletedAgentReport(ws)) {
+          return;
+        }
+        const previousStatus = ws.taskStatus;
+        const persistedQueuedPrompt = coerceNonEmptyString(ws.taskPrompt);
+        ws.taskStatus = "interrupted";
+        ws.reportedAt = undefined;
+        if (previousStatus !== "queued" && !persistedQueuedPrompt) {
+          ws.taskPrompt = undefined;
+        }
+        updated = true;
+      },
+      { allowMissing: true }
+    );
+
+    log.debug("Skipping workflow-owned task recovery after inactive workflow owner", {
+      taskId,
+      trigger,
+      ownerTaskId: inactiveOwner.ownerTaskId,
+      workflowRunId: inactiveOwner.runId,
+      workflowRunStatus: inactiveOwner.status,
+      reason: inactiveOwner.reason,
+    });
+    if (updated) {
+      this.rejectWaiters(taskId, new Error("Task interrupted"));
+      await this.emitWorkspaceMetadata(taskId);
+    }
+    return true;
+  }
+
   private markTaskQueueBackgrounded(taskId: string): void {
     this.userBackgroundedTaskIds.add(taskId);
   }
@@ -1422,6 +1554,16 @@ export class TaskService {
     for (const task of awaitingReportTasks) {
       if (!task.id) continue;
 
+      if (
+        await this.interruptTaskRecoveryForInactiveWorkflowOwner(
+          task.id,
+          config,
+          "startup-awaiting-report"
+        )
+      ) {
+        continue;
+      }
+
       // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
@@ -1446,6 +1588,12 @@ export class TaskService {
 
     for (const task of runningTasks) {
       if (!task.id) continue;
+      if (
+        await this.interruptTaskRecoveryForInactiveWorkflowOwner(task.id, config, "startup-running")
+      ) {
+        continue;
+      }
+
       // Best-effort: if mux restarted mid-stream, nudge the agent to continue and report.
       // Only do this when the task has no running descendants, to avoid duplicate spawns.
       const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
@@ -4301,6 +4449,12 @@ export class TaskService {
         }
         const taskId = task.id;
         assert(taskId != null && taskId.length > 0, "queued task id is required");
+        if (
+          await this.interruptTaskRecoveryForInactiveWorkflowOwner(taskId, config, "queued-launch")
+        ) {
+          continue;
+        }
+
         if (this.aiService.isStreaming(taskId)) {
           await this.setTaskStatus(taskId, "running");
           reservedSlots += 1;
@@ -4647,6 +4801,15 @@ export class TaskService {
       return false;
     }
     if (entry.workspace.taskStatus !== "awaiting_report") {
+      return false;
+    }
+    if (
+      await this.interruptTaskRecoveryForInactiveWorkflowOwner(
+        workspaceId,
+        cfg,
+        `completion-tool-${options?.reason ?? "unknown"}`
+      )
+    ) {
       return false;
     }
     if (this.hasActiveDescendantAgentTasks(cfg, workspaceId)) {
@@ -4998,6 +5161,13 @@ export class TaskService {
       return;
     }
 
+    if (
+      reportArgs == null &&
+      (await this.interruptTaskRecoveryForInactiveWorkflowOwner(workspaceId, cfg, "stream-end"))
+    ) {
+      return;
+    }
+
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
 
     // Never allow a task to finish/report while it still has active descendant tasks.
@@ -5075,6 +5245,12 @@ export class TaskService {
     // Stream errors only need settlement handling while the task is mid-run
     // (running) or waiting on its completion tool (awaiting_report).
     if (status !== "running" && status !== "awaiting_report") {
+      return;
+    }
+
+    if (
+      await this.interruptTaskRecoveryForInactiveWorkflowOwner(workspaceId, cfg, "stream-error")
+    ) {
       return;
     }
 
