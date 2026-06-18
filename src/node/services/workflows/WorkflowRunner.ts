@@ -1779,27 +1779,24 @@ export class WorkflowRunner {
       // freed slot instead of waiting for unrelated slow siblings to drain.
       const maxActive = maxParallel ?? queued.length;
       assert(maxActive > 0, "WorkflowRunner.parallelAgents maxActive must be positive");
+      const usesWindow = maxParallel != null && maxParallel < queued.length;
 
       let batchFailed = false;
-      const throwIfQueuedWorkCannotLaunch = async (): Promise<void> => {
-        if (queued.length === 0 || (!batchFailed && !batchAbortController.signal.aborted)) {
+      const throwIfAbortPreventsQueuedWork = async (): Promise<void> => {
+        if (queued.length === 0 || !batchAbortController.signal.aborted) {
           return;
         }
         if (foregroundBackgrounded) {
           throw createForegroundWaitBackgroundedError();
         }
         await interruptRemainingTasks();
-        throw new Error(
-          batchAbortController.signal.aborted
-            ? `parallelAgents aborted before launching ${queued.length} queued step(s)`
-            : `parallelAgents stopped before launching ${queued.length} queued step(s)`
-        );
+        throw new Error(`parallelAgents aborted before launching ${queued.length} queued step(s)`);
       };
 
       // Under a window, tasks must be created lazily when a slot frees;
       // bulk-creating the whole wave up front would start every child at once.
       const createAgentTasks =
-        maxParallel == null &&
+        !usesWindow &&
         this.taskAdapter.createAgentTasks != null &&
         this.taskAdapter.waitForAgentTask != null
           ? this.taskAdapter.createAgentTasks.bind(this.taskAdapter)
@@ -1874,7 +1871,7 @@ export class WorkflowRunner {
       };
 
       try {
-        await throwIfQueuedWorkCannotLaunch();
+        await throwIfAbortPreventsQueuedWork();
         if (createAgentTasks != null && bulkCreatableSteps.length > 0) {
           try {
             const createdTasks = await createAgentTasks(
@@ -1928,9 +1925,9 @@ export class WorkflowRunner {
           }
         }
 
-        await throwIfQueuedWorkCannotLaunch();
+        await throwIfAbortPreventsQueuedWork();
         launchAvailable();
-        await throwIfQueuedWorkCannotLaunch();
+        await throwIfAbortPreventsQueuedWork();
         while (unsettledRuns.size > 0) {
           const settled = await Promise.race(unsettledRuns.values());
           unsettledRuns.delete(settled.runIndex);
@@ -1976,7 +1973,7 @@ export class WorkflowRunner {
             });
           }
           launchAvailable();
-          await throwIfQueuedWorkCannotLaunch();
+          await throwIfAbortPreventsQueuedWork();
         }
       } finally {
         upstreamAbortSignal?.removeEventListener("abort", abortBatch);

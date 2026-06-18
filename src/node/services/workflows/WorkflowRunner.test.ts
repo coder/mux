@@ -1130,10 +1130,13 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
-        const results = parallelAgents([
-          { id: "source-a", title: "Read source 1", prompt: "Read source A" },
-          { id: "source-b", title: "Read source 2", prompt: "Read source B" },
-        ]);
+        const results = parallelAgents(
+          [
+            { id: "source-a", title: "Read source 1", prompt: "Read source A" },
+            { id: "source-b", title: "Read source 2", prompt: "Read source B" },
+          ],
+          { maxParallel: 2 }
+        );
         return { reportMarkdown: results.map((result) => result.reportMarkdown).join(" + ") };
       }`,
       args: {},
@@ -1428,6 +1431,57 @@ describe("WorkflowRunner", () => {
     });
 
     await expect(runner.run("wfr_parallel_failure")).rejects.toThrow("source-a failed");
+
+    expect(calls).toEqual(["source-a", "source-b"]);
+    expect(interruptRunCalls).toBe(1);
+  });
+
+  test("preserves the original parallelAgents child failure when queued specs remain", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-window-failure");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_window_failure",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelAgents }) {
+        parallelAgents(
+          [
+            { id: "source-a", prompt: "Read source A" },
+            { id: "source-b", prompt: "Read source B" },
+            { id: "source-c", prompt: "Read source C" },
+          ],
+          { maxParallel: 2 }
+        );
+        return { reportMarkdown: "unreachable" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const releaseSourceA = createDeferred();
+    const calls: string[] = [];
+    let interruptRunCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        calls.push(spec.id);
+        if (spec.id === "source-a") {
+          await releaseSourceA.promise;
+          return { taskId: "task_source-a", reportMarkdown: "source-a" };
+        }
+        if (spec.id === "source-b") {
+          throw new Error("source-b failed");
+        }
+        throw new Error("source-c should stay queued after source-b fails");
+      },
+      async interruptRun() {
+        interruptRunCalls += 1;
+        releaseSourceA.resolve();
+      },
+    });
+
+    await expect(runner.run("wfr_parallel_window_failure")).rejects.toThrow("source-b failed");
 
     expect(calls).toEqual(["source-a", "source-b"]);
     expect(interruptRunCalls).toBe(1);
