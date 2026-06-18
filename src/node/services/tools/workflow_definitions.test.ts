@@ -25,7 +25,7 @@ export const metadata = {
   description: "Deep research",
   argsSchema: s.object({
     topic: s.optional(s.string({ positional: true })),
-    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+    mode: s.optional(s.enum(["quick", "smart", "fast"], { aliases: ["--mode"] })),
   }),
 };
 export default function workflow() { return null; }
@@ -38,7 +38,7 @@ const metadata = {
     required: [],
     properties: {
       topic: { type: "string", positional: true },
-      quick: { type: "boolean", default: false, aliases: ["--quick"] },
+      mode: { type: "string", enum: ["quick", "smart", "fast"], aliases: ["--mode"] },
     },
   },
 };
@@ -56,11 +56,11 @@ const compactArgs = [
     positional: true,
   },
   {
-    name: "quick",
-    types: ["boolean"],
+    name: "mode",
+    types: ["string"],
     required: false,
-    aliases: ["--quick"],
-    default: false,
+    aliases: ["--mode"],
+    enum: ["quick", "smart", "fast"],
   },
 ];
 

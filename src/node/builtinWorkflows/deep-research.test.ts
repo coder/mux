@@ -59,11 +59,9 @@ describe("normalizeDeepResearchInput", () => {
     expect(normalizeDeepResearchInput({ query: "c" }).topic).toBe("c");
   });
 
-  test("an explicit mode string overrides the quick flag", () => {
-    expect(normalizeDeepResearchInput({ topic: "t", quick: true }).mode).toBe("quick");
-    expect(normalizeDeepResearchInput({ topic: "t", quick: true, mode: "smart" }).mode).toBe(
-      "smart"
-    );
+  test("uses explicit mode strings", () => {
+    expect(normalizeDeepResearchInput({ topic: "t", mode: "quick" }).mode).toBe("quick");
+    expect(normalizeDeepResearchInput({ topic: "t", mode: "smart" }).mode).toBe("smart");
     expect(normalizeDeepResearchInput({ topic: "t", mode: " FAST " }).mode).toBe("quick");
     expect(normalizeDeepResearchInput({ topic: "t", mode: "unknown" }).mode).toBe("smart");
   });
