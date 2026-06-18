@@ -1159,7 +1159,8 @@ export class TaskService {
     taskId: string,
     config: ProjectsConfig,
     trigger: string,
-    index?: AgentTaskIndex
+    index?: AgentTaskIndex,
+    options?: { scheduleQueueDrain?: boolean }
   ): Promise<boolean> {
     assert(taskId.length > 0, "interruptTaskRecoveryForInactiveWorkflowOwner requires taskId");
     assert(trigger.length > 0, "interruptTaskRecoveryForInactiveWorkflowOwner requires trigger");
@@ -1188,6 +1189,9 @@ export class TaskService {
     if (interrupted) {
       this.rejectWaiters(taskId, new Error("Task interrupted"));
       await this.emitWorkspaceMetadata(taskId);
+      if (options?.scheduleQueueDrain !== false) {
+        this.scheduleMaybeStartQueuedTasks();
+      }
     }
     return true;
   }
@@ -1587,7 +1591,8 @@ export class TaskService {
           task.id,
           config,
           "startup-inactive-workflow-owner-prepass",
-          taskIndex
+          taskIndex,
+          { scheduleQueueDrain: false }
         )
       ) {
         interruptedInactiveWorkflowOwnerAtStartup = true;
@@ -4490,7 +4495,8 @@ export class TaskService {
             taskId,
             config,
             "queued-inactive-workflow-owner-prepass",
-            taskIndex
+            taskIndex,
+            { scheduleQueueDrain: false }
           )
         ) {
           interruptedInactiveWorkflowQueuedTask = true;
@@ -4524,7 +4530,8 @@ export class TaskService {
             taskId,
             config,
             "queued-launch",
-            taskIndex
+            taskIndex,
+            { scheduleQueueDrain: false }
           )
         ) {
           continue;

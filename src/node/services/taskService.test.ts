@@ -9027,6 +9027,10 @@ describe("TaskService", () => {
 
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const maybeStartQueuedTasks = spyOn(
+      taskService as unknown as { maybeStartQueuedTasks: () => Promise<void> },
+      "maybeStartQueuedTasks"
+    ).mockResolvedValue(undefined);
 
     await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
@@ -9038,6 +9042,7 @@ describe("TaskService", () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("interrupted");
+    expect(maybeStartQueuedTasks).toHaveBeenCalledTimes(1);
   });
 
   test("non-plan subagent stream-end with final assistant text finalizes an implicit report", async () => {
