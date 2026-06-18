@@ -8,7 +8,6 @@ export const metadata = {
     topic: s.optional(s.string()),
     input: s.optional(s.string()),
     query: s.optional(s.string()),
-    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
     mode: s.optional(s.enum(["quick", "smart", "fast"], { aliases: ["--mode"] })),
   }),
 };
@@ -735,9 +734,8 @@ Return confidence, remaining gaps, and finding labels as structured output. Put 
 
 export function normalizeDeepResearchInput(args) {
   let mode = "smart";
-  if (args && typeof args === "object") {
-    if (args.quick === true) mode = "quick";
-    if (typeof args.mode === "string") mode = normalizeResearchMode(args.mode);
+  if (args && typeof args === "object" && typeof args.mode === "string") {
+    mode = normalizeResearchMode(args.mode);
   }
   return { topic: normalizeResearchTopic(args), mode };
 }
