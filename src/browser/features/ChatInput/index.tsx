@@ -232,6 +232,10 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
 }
 const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
+// Shared so the three "blocked while editing a message" attachment guards surface identical copy
+// and can't drift if one is reworded.
+const EDIT_MODE_ATTACHMENT_ERROR_MESSAGE = "Attachments cannot be added while editing a message.";
+
 export type { ChatInputProps, ChatInputAPI };
 
 interface SendOverrides {
@@ -2002,7 +2006,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (editingMessageForUi) {
         pushToast({
           type: "error",
-          message: "Attachments cannot be added while editing a message.",
+          message: EDIT_MODE_ATTACHMENT_ERROR_MESSAGE,
         });
         return;
       }
@@ -2041,7 +2045,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (editingMessageForUi) {
       pushToast({
         type: "error",
-        message: "Attachments cannot be added while editing a message.",
+        message: EDIT_MODE_ATTACHMENT_ERROR_MESSAGE,
       });
       return;
     }
@@ -2219,7 +2223,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (editingMessageForUi) {
         pushToast({
           type: "error",
-          message: "Attachments cannot be added while editing a message.",
+          message: EDIT_MODE_ATTACHMENT_ERROR_MESSAGE,
         });
         return;
       }
