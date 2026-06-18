@@ -952,6 +952,20 @@ export class WorkflowRunner {
           // Preserve the original child failure; workflow failure handling will surface that cause.
         }
       };
+      // A child-task failure aborts the batch the same way regardless of which
+      // launch path raised it: a foreground-backgrounded wait flips the batch to
+      // backgrounded and aborts it (so the abort guards drain queued work),
+      // while any other failure interrupts the still-running siblings unless the
+      // batch was already backgrounded. Shared by the per-run and bulk-create
+      // catch blocks so the two stay in lockstep.
+      const applyChildFailureToBatch = async (error: unknown): Promise<void> => {
+        if (isForegroundWaitBackgroundedError(error)) {
+          foregroundBackgrounded = true;
+          abortBatch();
+        } else if (!foregroundBackgrounded) {
+          await interruptRemainingTasks();
+        }
+      };
       const batchWaitOptions: WorkflowAgentWaitOptions = {
         ...options.waitOptions,
         abortSignal: batchAbortController.signal,
@@ -1029,12 +1043,7 @@ export class WorkflowRunner {
             return { runIndex, step, runResult };
           } catch (error) {
             batchFailed = true;
-            if (isForegroundWaitBackgroundedError(error)) {
-              foregroundBackgrounded = true;
-              abortBatch();
-            } else if (!foregroundBackgrounded) {
-              await interruptRemainingTasks();
-            }
+            await applyChildFailureToBatch(error);
             return { runIndex, step, error };
           }
         })();
@@ -1099,12 +1108,7 @@ export class WorkflowRunner {
               bulkCreatableSteps[index].taskId = createdTask.taskId;
             }
           } catch (error) {
-            if (isForegroundWaitBackgroundedError(error)) {
-              foregroundBackgrounded = true;
-              abortBatch();
-            } else if (!foregroundBackgrounded) {
-              await interruptRemainingTasks();
-            }
+            await applyChildFailureToBatch(error);
             throw error;
           }
         }
