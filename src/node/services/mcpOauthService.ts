@@ -286,6 +286,49 @@ export async function probeServerForBearerChallenge(options: {
   }
 }
 
+/**
+ * Resolve the OAuth scope to request for an authorization flow.
+ *
+ * The Bearer challenge's `scope=` wins when present. Otherwise we fall back to
+ * the Protected Resource Metadata's `scopes_supported` (RFC 9728). @ai-sdk/mcp
+ * fetches this same metadata to locate the authorization server but ignores its
+ * advertised scopes, so without this a server that omits `scope=` from its 401
+ * (e.g. Carta) grants only identity scopes and every resource call then fails
+ * with a permission error.
+ *
+ * ponytail: re-fetches the PRM the SDK already fetched internally; the SDK does
+ * not expose it, and this is one extra GET during an interactive flow.
+ */
+export async function resolveOAuthScope(
+  challenge: BearerChallenge | null
+): Promise<string | undefined> {
+  if (challenge?.scope) {
+    return challenge.scope;
+  }
+  if (!challenge?.resourceMetadataUrl) {
+    return undefined;
+  }
+  const scopes = await fetchProtectedResourceScopes(challenge.resourceMetadataUrl);
+  return scopes.length > 0 ? scopes.join(" ") : undefined;
+}
+
+async function fetchProtectedResourceScopes(url: URL): Promise<string[]> {
+  try {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const json: unknown = await response.json();
+    const scopes = isPlainObject(json) ? json.scopes_supported : undefined;
+    return Array.isArray(scopes) ? scopes.filter((s): s is string => typeof s === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | null {
   if (!isPlainObject(value)) {
     return null;
@@ -732,7 +775,7 @@ export class McpOauthService {
       clientInformation: null,
       authorizeUrl: "",
       redirectUri,
-      scope: challenge?.scope,
+      scope: await resolveOAuthScope(challenge),
       resourceMetadataUrl: challenge?.resourceMetadataUrl,
       codeVerifier: null,
       server: serverListener,
@@ -876,7 +919,7 @@ export class McpOauthService {
       clientInformation: null,
       authorizeUrl: "",
       redirectUri: redirectUri.toString(),
-      scope: challenge?.scope,
+      scope: await resolveOAuthScope(challenge),
       resourceMetadataUrl: challenge?.resourceMetadataUrl,
       codeVerifier: null,
       timeout: setTimeout(() => {

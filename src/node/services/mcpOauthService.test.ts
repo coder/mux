@@ -9,6 +9,7 @@ import {
   McpOauthService,
   parseBearerWwwAuthenticate,
   probeServerForBearerChallenge,
+  resolveOAuthScope,
 } from "./mcpOauthService";
 
 function getStoreFilePath(muxHome: string): string {
@@ -580,6 +581,57 @@ describe("McpOauthService.startDesktopFlow", () => {
       await service.cancelDesktopFlow(startResult.data.flowId);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe("resolveOAuthScope", () => {
+  async function startMetadataServer(
+    body: unknown
+  ): Promise<{ url: URL; close: () => Promise<void> }> {
+    const server = createServer((_req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Failed to bind metadata server");
+    }
+    return {
+      url: new URL(`http://127.0.0.1:${address.port}/.well-known/oauth-protected-resource`),
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  test("uses the challenge scope when present", async () => {
+    expect(await resolveOAuthScope({ raw: "", scope: "mcp.read" })).toBe("mcp.read");
+  });
+
+  test("falls back to all advertised PRM scopes when the challenge omits scope", async () => {
+    // Carta advertises read_* and readwrite_* scopes but omits scope= from its
+    // 401. Cap-table reads require the readwrite_* scopes, so request every
+    // advertised scope rather than dropping readwrite_* as redundant.
+    const metadata = await startMetadataServer({
+      scopes_supported: ["openid", "cuid", "read_mcp_companies", "readwrite_mcp_companies"],
+    });
+    try {
+      expect(await resolveOAuthScope({ raw: "", resourceMetadataUrl: metadata.url })).toBe(
+        "openid cuid read_mcp_companies readwrite_mcp_companies"
+      );
+    } finally {
+      await metadata.close();
+    }
+  });
+
+  test("returns undefined when PRM advertises no scopes", async () => {
+    const metadata = await startMetadataServer({ resource: "https://example.com" });
+    try {
+      expect(
+        await resolveOAuthScope({ raw: "", resourceMetadataUrl: metadata.url })
+      ).toBeUndefined();
+    } finally {
+      await metadata.close();
     }
   });
 });
