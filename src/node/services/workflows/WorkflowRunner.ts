@@ -1917,7 +1917,9 @@ export class WorkflowRunner {
           }
           try {
             results[settled.step.index] = await this.recordAgentResult(runId, sequence, {
-              ...settled.step,
+              spec: settled.step.spec,
+              inputHash: settled.step.inputHash,
+              startedAt: settled.step.startedAt,
               leaseGuard: options.leaseGuard,
               rawResult: settled.rawResult,
             });
