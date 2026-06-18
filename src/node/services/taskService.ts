@@ -1726,6 +1726,13 @@ export class TaskService {
       });
     }
 
+    if (interruptedInactiveWorkflowOwnerAtStartup) {
+      // Startup queue draining already ran before these interruptions freed slots.
+      // Run it once more after recovery prompts so unrelated queued work is not stranded.
+      await this.maybeStartQueuedTasks();
+      config = this.config.loadConfigOrDefault();
+    }
+
     // Restart-safety for git patch artifacts:
     // - If mux crashed mid-generation, patch artifacts can be left "pending".
     // - Completed tasks can be stranded in config until cleanup runs again, so restart should
