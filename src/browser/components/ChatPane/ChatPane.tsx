@@ -858,6 +858,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     }
 
     sendQueuedImmediatelyInFlightRef.current = queuedMessage.id;
+    // Release the duplicate-send guard only if it still points at this attempt; a
+    // newer queued message (or a clear) may have already reset it in the meantime.
+    const clearInFlightGuardIfCurrent = () => {
+      if (sendQueuedImmediatelyInFlightRef.current === queuedMessage.id) {
+        sendQueuedImmediatelyInFlightRef.current = null;
+      }
+    };
     try {
       // Set "interrupting" state immediately so UI shows "interrupting..." without flash.
       storeRaw.setInterrupting(workspaceId);
@@ -865,16 +872,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         workspaceId,
         options: { sendQueuedImmediately: true },
       });
-      if (
-        !interruptResult.success &&
-        sendQueuedImmediatelyInFlightRef.current === queuedMessage.id
-      ) {
-        sendQueuedImmediatelyInFlightRef.current = null;
+      if (!interruptResult.success) {
+        clearInFlightGuardIfCurrent();
       }
     } catch (error) {
-      if (sendQueuedImmediatelyInFlightRef.current === queuedMessage.id) {
-        sendQueuedImmediatelyInFlightRef.current = null;
-      }
+      clearInFlightGuardIfCurrent();
       throw error;
     }
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
