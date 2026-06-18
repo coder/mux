@@ -5773,6 +5773,7 @@ describe("TaskService", () => {
 
     const rootId = "root-queue-after-interrupt";
     const runningTaskId = "running-inactive-workflow-occupies-slot";
+    const queuedWorkflowTaskId = "queued-inactive-workflow";
     const queuedTaskId = "queued-starts-after-interrupt";
     const workflowRunId = "wfr_queue_after_interrupt";
 
@@ -5796,6 +5797,17 @@ describe("TaskService", () => {
           taskModelString: defaultModel,
           runtimeConfig,
           workflowTask: { runId: workflowRunId, stepId: "running" },
+        }),
+        projectWorkspace(projectPath, "queued-workflow", queuedWorkflowTaskId, {
+          name: "agent_explore_queued_workflow",
+          parentWorkspaceId: rootId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "queued",
+          taskPrompt: "abandoned workflow queued work",
+          taskModelString: defaultModel,
+          runtimeConfig,
+          workflowTask: { runId: workflowRunId, stepId: "queued" },
         }),
         projectWorkspace(projectPath, "queued", queuedTaskId, {
           name: "agent_explore_queued",
@@ -5833,6 +5845,7 @@ describe("TaskService", () => {
     await taskService.initialize();
 
     expect(findWorkspaceInConfig(config, runningTaskId)?.taskStatus).toBe("interrupted");
+    expect(findWorkspaceInConfig(config, queuedWorkflowTaskId)?.taskStatus).toBe("interrupted");
     expect(findWorkspaceInConfig(config, queuedTaskId)?.taskStatus).toBe("running");
     expect(sendMessage).toHaveBeenCalledWith(
       queuedTaskId,

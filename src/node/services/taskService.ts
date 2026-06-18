@@ -4468,8 +4468,40 @@ export class TaskService {
     {
       await using _lock = await this.mutex.acquire();
 
-      const config = this.config.loadConfigOrDefault();
+      let config = this.config.loadConfigOrDefault();
       const taskSettings: TaskSettings = config.taskSettings ?? DEFAULT_TASK_SETTINGS;
+      const listQueuedTasks = (sourceConfig: ProjectsConfig): AgentTaskWorkspaceEntry[] =>
+        this.listAgentTaskWorkspaces(sourceConfig)
+          .filter((task) => task.taskStatus === "queued" && typeof task.id === "string")
+          .sort((a, b) => {
+            const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
+            const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
+            return aTime - bTime;
+          });
+      let taskIndex = this.buildAgentTaskIndex(config);
+      let queuedTasks = listQueuedTasks(config);
+
+      let interruptedInactiveWorkflowQueuedTask = false;
+      for (const task of queuedTasks) {
+        const taskId = task.id;
+        assert(taskId != null && taskId.length > 0, "queued task id is required");
+        if (
+          await this.interruptTaskRecoveryForInactiveWorkflowOwner(
+            taskId,
+            config,
+            "queued-inactive-workflow-owner-prepass",
+            taskIndex
+          )
+        ) {
+          interruptedInactiveWorkflowQueuedTask = true;
+        }
+      }
+      if (interruptedInactiveWorkflowQueuedTask) {
+        config = this.config.loadConfigOrDefault();
+        taskIndex = this.buildAgentTaskIndex(config);
+        queuedTasks = listQueuedTasks(config);
+      }
+
       const availableSlots = Math.max(
         0,
         taskSettings.maxParallelAgentTasks - this.countActiveAgentTasks(config)
@@ -4479,15 +4511,6 @@ export class TaskService {
         availableSlots,
       });
       if (availableSlots === 0) return;
-
-      const taskIndex = this.buildAgentTaskIndex(config);
-      const queuedTasks = this.listAgentTaskWorkspaces(config)
-        .filter((task) => task.taskStatus === "queued" && typeof task.id === "string")
-        .sort((a, b) => {
-          const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-          const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-          return aTime - bTime;
-        });
 
       let reservedSlots = 0;
       for (const task of queuedTasks) {
