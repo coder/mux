@@ -1053,16 +1053,17 @@ export class TaskService {
   // Workflow abort/interrupt is the source of truth: task-level restart and stream-end
   // recovery must not resurrect a workflow child (or its descendants) once the owning run
   // is no longer active. Manual workflow_resume replays from the workflow journal instead.
-  private findWorkflowTaskOwnerInAncestry(
+  private findWorkflowTaskOwnersInAncestry(
     index: AgentTaskIndex,
     taskId: string
-  ): WorkflowTaskOwner | null {
-    assert(taskId.length > 0, "findWorkflowTaskOwnerInAncestry requires taskId");
+  ): WorkflowTaskOwner[] {
+    assert(taskId.length > 0, "findWorkflowTaskOwnersInAncestry requires taskId");
+    const owners: WorkflowTaskOwner[] = [];
     let current: string | undefined = taskId;
     for (let depth = 0; current != null; depth += 1) {
       assert(
         depth < 32,
-        `findWorkflowTaskOwnerInAncestry: possible parentWorkspaceId cycle starting at ${taskId}`
+        `findWorkflowTaskOwnersInAncestry: possible parentWorkspaceId cycle starting at ${taskId}`
       );
       const entry = index.byId.get(current);
       if (entry == null) {
@@ -1071,27 +1072,23 @@ export class TaskService {
       }
       const workflowTask = entry.workflowTask;
       if (workflowTask != null) {
-        return { taskId: current, workspace: entry, workflowTask };
+        owners.push({ taskId: current, workspace: entry, workflowTask });
       }
       current = index.parentById.get(current);
     }
-    return null;
+    return owners;
   }
 
-  private async getInactiveWorkflowTaskOwnerForRecovery(
-    taskId: string,
-    config: ProjectsConfig,
-    index?: AgentTaskIndex
-  ): Promise<InactiveWorkflowTaskOwner | null> {
-    assert(taskId.length > 0, "getInactiveWorkflowTaskOwnerForRecovery requires taskId");
-    const owner = this.findWorkflowTaskOwnerInAncestry(
-      index ?? this.buildAgentTaskIndex(config),
-      taskId
-    );
-    if (owner == null) {
-      return null;
-    }
+  private findWorkflowTaskOwnerInAncestry(
+    index: AgentTaskIndex,
+    taskId: string
+  ): WorkflowTaskOwner | null {
+    return this.findWorkflowTaskOwnersInAncestry(index, taskId)[0] ?? null;
+  }
 
+  private async getInactiveWorkflowTaskOwner(
+    owner: WorkflowTaskOwner
+  ): Promise<InactiveWorkflowTaskOwner | null> {
     const workflowTask = owner.workflowTask;
     const parentWorkspaceId = coerceNonEmptyString(owner.workspace.parentWorkspaceId);
     if (!parentWorkspaceId) {
@@ -1131,6 +1128,25 @@ export class TaskService {
         reason: `workflow run is unavailable: ${getErrorMessage(error)}`,
       };
     }
+  }
+
+  private async getInactiveWorkflowTaskOwnerForRecovery(
+    taskId: string,
+    config: ProjectsConfig,
+    index?: AgentTaskIndex
+  ): Promise<InactiveWorkflowTaskOwner | null> {
+    assert(taskId.length > 0, "getInactiveWorkflowTaskOwnerForRecovery requires taskId");
+    const owners = this.findWorkflowTaskOwnersInAncestry(
+      index ?? this.buildAgentTaskIndex(config),
+      taskId
+    );
+    for (const owner of owners) {
+      const inactiveOwner = await this.getInactiveWorkflowTaskOwner(owner);
+      if (inactiveOwner != null) {
+        return inactiveOwner;
+      }
+    }
+    return null;
   }
 
   private applyInterruptedTaskStatus(

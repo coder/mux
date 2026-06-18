@@ -5610,6 +5610,7 @@ describe("TaskService", () => {
     const awaitingChildId = "child-workflow-awaiting";
     const nestedRunningChildId = "child-workflow-nested-running";
     const workflowRunId = "wfr_interrupted_owner";
+    const innerWorkflowRunId = "wfr_active_inner_owner";
 
     await saveWorkspaces(
       config,
@@ -5655,6 +5656,7 @@ describe("TaskService", () => {
           taskStatus: "running",
           taskModelString: defaultModel,
           runtimeConfig,
+          workflowTask: { runId: innerWorkflowRunId, stepId: "nested" },
         }),
       ],
       testTaskSettings(10, 3)
@@ -5674,6 +5676,23 @@ describe("TaskService", () => {
       now: "2026-05-29T00:00:00.000Z",
     });
     await runStore.appendStatus(workflowRunId, "interrupted", "2026-05-29T00:00:01.000Z");
+    const innerRunStore = new WorkflowRunStore({
+      sessionDir: config.getSessionDir(runningChildId),
+    });
+    await innerRunStore.createRun({
+      id: innerWorkflowRunId,
+      workspaceId: runningChildId,
+      definition: {
+        name: "inner-running",
+        description: "Inner running",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await innerRunStore.appendStatus(innerWorkflowRunId, "running", "2026-05-29T00:00:01.000Z");
 
     const { aiService } = createAIServiceMocks(config, { isStreaming: mock(() => false) });
     const { workspaceService, sendMessage, resumeStream } = createWorkspaceServiceMocks();
