@@ -1780,6 +1780,22 @@ export class WorkflowRunner {
       const maxActive = maxParallel ?? queued.length;
       assert(maxActive > 0, "WorkflowRunner.parallelAgents maxActive must be positive");
 
+      let batchFailed = false;
+      const throwIfQueuedWorkCannotLaunch = async (): Promise<void> => {
+        if (queued.length === 0 || (!batchFailed && !batchAbortController.signal.aborted)) {
+          return;
+        }
+        if (foregroundBackgrounded) {
+          throw createForegroundWaitBackgroundedError();
+        }
+        await interruptRemainingTasks();
+        throw new Error(
+          batchAbortController.signal.aborted
+            ? `parallelAgents aborted before launching ${queued.length} queued step(s)`
+            : `parallelAgents stopped before launching ${queued.length} queued step(s)`
+        );
+      };
+
       // Under a window, tasks must be created lazily when a slot frees;
       // bulk-creating the whole wave up front would start every child at once.
       const createAgentTasks =
@@ -1790,52 +1806,6 @@ export class WorkflowRunner {
           : undefined;
       const bulkCreatableSteps =
         createAgentTasks != null ? queued.filter((step) => step.taskId == null) : [];
-      if (createAgentTasks != null && bulkCreatableSteps.length > 0) {
-        try {
-          const createdTasks = await createAgentTasks(
-            bulkCreatableSteps.map((step) => step.spec),
-            {
-              onTaskCreated: async (index, taskId) => {
-                const step = bulkCreatableSteps[index];
-                assert(step != null, "WorkflowRunner.parallelAgents bulk lifecycle index mismatch");
-                assert(taskId.length > 0, "WorkflowRunner.parallelAgents bulk taskId is required");
-                options.leaseGuard.throwIfLost();
-                await this.recordStepStarted(runId, {
-                  stepId: step.spec.id,
-                  inputHash: step.inputHash,
-                  taskId,
-                  startedAt: step.startedAt,
-                });
-                await this.recordTaskStartedEventIfMissing(runId, sequence, {
-                  stepId: step.spec.id,
-                  taskId,
-                  title: step.spec.title,
-                });
-              },
-            }
-          );
-          if (createdTasks.length !== bulkCreatableSteps.length) {
-            throw new Error("parallelAgents bulk task creation returned the wrong number of tasks");
-          }
-          for (const [index, createdTask] of createdTasks.entries()) {
-            assert(
-              createdTask.taskId.length > 0,
-              "WorkflowRunner.parallelAgents created taskId is required"
-            );
-            bulkCreatableSteps[index].taskId = createdTask.taskId;
-          }
-        } catch (error) {
-          if (isForegroundWaitBackgroundedError(error)) {
-            foregroundBackgrounded = true;
-            abortBatch();
-          } else if (!foregroundBackgrounded) {
-            await interruptRemainingTasks();
-          }
-          throw error;
-        }
-      }
-
-      let batchFailed = false;
       let nextRunIndex = 0;
       const unsettledRuns = new Map<
         number,
@@ -1904,7 +1874,63 @@ export class WorkflowRunner {
       };
 
       try {
+        await throwIfQueuedWorkCannotLaunch();
+        if (createAgentTasks != null && bulkCreatableSteps.length > 0) {
+          try {
+            const createdTasks = await createAgentTasks(
+              bulkCreatableSteps.map((step) => step.spec),
+              {
+                onTaskCreated: async (index, taskId) => {
+                  const step = bulkCreatableSteps[index];
+                  assert(
+                    step != null,
+                    "WorkflowRunner.parallelAgents bulk lifecycle index mismatch"
+                  );
+                  assert(
+                    taskId.length > 0,
+                    "WorkflowRunner.parallelAgents bulk taskId is required"
+                  );
+                  options.leaseGuard.throwIfLost();
+                  await this.recordStepStarted(runId, {
+                    stepId: step.spec.id,
+                    inputHash: step.inputHash,
+                    taskId,
+                    startedAt: step.startedAt,
+                  });
+                  await this.recordTaskStartedEventIfMissing(runId, sequence, {
+                    stepId: step.spec.id,
+                    taskId,
+                    title: step.spec.title,
+                  });
+                },
+              }
+            );
+            if (createdTasks.length !== bulkCreatableSteps.length) {
+              throw new Error(
+                "parallelAgents bulk task creation returned the wrong number of tasks"
+              );
+            }
+            for (const [index, createdTask] of createdTasks.entries()) {
+              assert(
+                createdTask.taskId.length > 0,
+                "WorkflowRunner.parallelAgents created taskId is required"
+              );
+              bulkCreatableSteps[index].taskId = createdTask.taskId;
+            }
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              foregroundBackgrounded = true;
+              abortBatch();
+            } else if (!foregroundBackgrounded) {
+              await interruptRemainingTasks();
+            }
+            throw error;
+          }
+        }
+
+        await throwIfQueuedWorkCannotLaunch();
         launchAvailable();
+        await throwIfQueuedWorkCannotLaunch();
         while (unsettledRuns.size > 0) {
           const settled = await Promise.race(unsettledRuns.values());
           unsettledRuns.delete(settled.runIndex);
@@ -1950,6 +1976,7 @@ export class WorkflowRunner {
             });
           }
           launchAvailable();
+          await throwIfQueuedWorkCannotLaunch();
         }
       } finally {
         upstreamAbortSignal?.removeEventListener("abort", abortBatch);

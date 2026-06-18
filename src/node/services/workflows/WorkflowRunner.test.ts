@@ -1487,6 +1487,61 @@ describe("WorkflowRunner", () => {
     expect(interruptRunCalls).toBe(0);
   });
 
+  test("does not complete parallelAgents when abort prevents queued tasks from launching", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-abort-queued");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_abort_queued",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelAgents }) {
+        parallelAgents([
+          { id: "source-a", prompt: "Read source A" },
+          { id: "source-b", prompt: "Read source B" },
+        ]);
+        return { reportMarkdown: "must not complete" };
+      }`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const abortController = new AbortController();
+    let interruptRunCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("queued agents should not start after abort");
+      },
+      async createAgentTasks(
+        specs,
+        lifecycle?: { onTaskCreated?: (index: number, taskId: string) => Promise<void> | void }
+      ) {
+        for (const [index, spec] of specs.entries()) {
+          await lifecycle?.onTaskCreated?.(index, `task_${spec.id}`);
+        }
+        abortController.abort();
+        return specs.map((spec) => ({ taskId: `task_${spec.id}`, status: "starting" as const }));
+      },
+      async waitForAgentTask() {
+        throw new Error("queued agents should not be waited after abort");
+      },
+      async interruptRun() {
+        interruptRunCalls += 1;
+      },
+    });
+
+    await expect(
+      runner.run("wfr_parallel_abort_queued", { abortSignal: abortController.signal })
+    ).rejects.toThrow(
+      /Execution aborted|parallelAgents aborted before launching 2 queued step\(s\)/
+    );
+
+    const run = await store.getRun("wfr_parallel_abort_queued");
+    expect(interruptRunCalls).toBe(1);
+    expect(run.status).not.toBe("completed");
+  });
+
   test("retries parallelAgents validation failures before slower siblings finish", async () => {
     using tmp = new DisposableTempDir("workflow-runner-parallel-validation-incremental");
     const store = new WorkflowRunStore({
