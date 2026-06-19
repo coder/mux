@@ -167,10 +167,6 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     // Applying one patch mutates HEAD, so complete each dry-run + real apply pair before
     // checking the next patch. This preserves the old Orchestrator conflict model.
     await using _lock = await this.patchApplyMutex.acquire();
-    const pathViolation = await this.getAllowedPatchPathViolation(spec);
-    if (pathViolation != null) {
-      return { success: false, taskId: spec.sourceTaskId, error: pathViolation };
-    }
     const applyPatchArtifact = this.resolvePatchArtifactApplier();
     const baseArgs: TaskApplyGitPatchArgs = {
       task_id: spec.sourceTaskId,
@@ -189,6 +185,11 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     );
     if (!dryRun.success) {
       return dryRun;
+    }
+
+    const pathViolation = await this.getAllowedPatchPathViolation(spec);
+    if (pathViolation != null) {
+      return { success: false, taskId: spec.sourceTaskId, error: pathViolation };
     }
 
     return await applyPatchArtifact(
@@ -242,7 +243,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     const violations = new Set<string>();
     for (const projectArtifact of projectArtifacts) {
       if (projectArtifact.status !== "ready") {
-        continue;
+        return `Patch artifact for ${projectArtifact.projectName} is ${projectArtifact.status}; cannot validate allowedPathPrefixes.`;
       }
       const patchPath = await this.getProjectPatchMboxPath(
         workspaceSessionDir,

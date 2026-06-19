@@ -460,11 +460,15 @@ describe("WorkflowTaskServiceAdapter", () => {
       Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
     );
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
-    const applyPatchArtifact = mock(async () => ({
-      success: true as const,
-      taskId: "task_impl",
-      projectResults: [],
-    }));
+    const applyPatchCalls: unknown[] = [];
+    const applyPatchArtifact = mock(async (args: unknown) => {
+      applyPatchCalls.push(args);
+      return {
+        success: true as const,
+        taskId: "task_impl",
+        projectResults: [],
+      };
+    });
     const patchToolConfig: TaskApplyGitPatchConfiguration = {
       cwd: "/repo",
       runtime: undefined as unknown as TaskApplyGitPatchConfiguration["runtime"],
@@ -492,7 +496,10 @@ describe("WorkflowTaskServiceAdapter", () => {
 
     expect(result).toMatchObject({ success: false, taskId: "task_impl" });
     expect(result.success ? "" : result.error).toContain("src/app.ts");
-    expect(applyPatchArtifact).not.toHaveBeenCalled();
+    expect(applyPatchArtifact).toHaveBeenCalledTimes(1);
+    expect(applyPatchCalls).toEqual([
+      expect.objectContaining({ task_id: "task_impl", dry_run: true }),
+    ]);
   });
 
   test("returns dry-run conflicts without applying workflow patches", async () => {
