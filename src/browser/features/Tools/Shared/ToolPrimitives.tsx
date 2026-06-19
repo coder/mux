@@ -33,7 +33,6 @@ import {
   Square,
   Target,
   Wrench,
-  Zap,
 } from "lucide-react";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -243,7 +242,6 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   workflow_read: BookOpen,
   workflow_run: Sparkles,
   workflow_resume: RotateCcw,
-  workflow_action_list: Zap,
   agent_report: FileText,
   agent_skill_read: GraduationCap,
   agent_skill_read_file: GraduationCap,

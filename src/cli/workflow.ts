@@ -29,7 +29,6 @@ import { createCoreServices } from "@/node/services/coreServices";
 import { log, type LogLevel } from "@/node/services/log";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
-import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
 import { WorkflowDefinitionStore } from "@/node/services/workflows/WorkflowDefinitionStore";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { WorkflowService } from "@/node/services/workflows/WorkflowService";
@@ -353,9 +352,6 @@ async function createWorkflowContext(options: {
     services = createCoreServices({
       config,
       extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
-      // Session config lives in tempDir (deleted on exit) — disable workspace.*
-      // host actions so workflows can't create worktrees whose tags evaporate.
-      ephemeralConfigRoot: true,
       mcpConfig: realConfig,
     });
     codexOauthService = new CodexOauthService(config, services.providerService);
@@ -405,8 +401,6 @@ function createWorkflowService(input: {
   model: string;
   thinkingLevel: ParsedThinkingInput;
 }): WorkflowService {
-  const projectActionRoot = path.join(input.ctx.projectDir, ".mux", "actions");
-  const globalActionRoot = path.join(input.ctx.realConfig.rootDir, "actions");
   const experiments = buildExperimentsObject(input.opts.experiment);
   const runtime = createRuntime(input.ctx.runtimeConfig, {
     projectPath: input.ctx.projectDir,
@@ -420,15 +414,6 @@ function createWorkflowService(input: {
       realConfig: input.ctx.realConfig,
       projectDir: input.ctx.projectDir,
     }),
-    actionRegistry: new WorkflowActionRegistry({
-      projectRoot: projectActionRoot,
-      globalRoot: globalActionRoot,
-    }),
-    // No actionRunner override: the default runner has no workspace.* host
-    // action map, so those built-ins fail fast via their generated stubs.
-    // Deliberate — this CLI runs on an ephemeral config root (see
-    // CoreServicesOptions.ephemeralConfigRoot) where created workspaces would
-    // lose their identifying tags on exit.
     runStore: new WorkflowRunStore({ sessionDir: workspaceSessionDir }),
     runtimeFactory: new QuickJSRuntimeFactory(),
     taskAdapterFactory: (runId) =>
@@ -450,7 +435,6 @@ function createWorkflowService(input: {
           trusted: input.ctx.projectTrusted,
         },
       }),
-    defaultActionCwd: input.ctx.workspacePath,
     getCurrentProjectTrusted: () => input.ctx.projectTrusted,
     runnerId: input.ctx.workspaceId,
   });

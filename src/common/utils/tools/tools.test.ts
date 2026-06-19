@@ -255,7 +255,6 @@ describe("getToolsForModel", () => {
             descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
             source: "export default function workflow() { return null; }",
           })),
-          listActions: mock(async () => []),
           startNamedWorkflow: mock(async () => ({
             runId: "wfr_1",
             status: "completed" as const,
@@ -268,7 +267,6 @@ describe("getToolsForModel", () => {
     );
     expect(withoutExperiment.workflow_list).toBeUndefined();
     expect(withoutExperiment.workflow_read).toBeUndefined();
-    expect(withoutExperiment.workflow_action_list).toBeUndefined();
     expect(withoutExperiment.workflow_run).toBeUndefined();
     expect(withoutExperiment.workflow_resume).toBeUndefined();
 
@@ -286,7 +284,6 @@ describe("getToolsForModel", () => {
             descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
             source: "export default function workflow() { return null; }",
           })),
-          listActions: mock(async () => []),
           startNamedWorkflow: mock(async () => ({
             runId: "wfr_1",
             status: "completed" as const,
@@ -299,7 +296,6 @@ describe("getToolsForModel", () => {
     );
     expect(withExperiment.workflow_list).toBeDefined();
     expect(withExperiment.workflow_read).toBeDefined();
-    expect(withExperiment.workflow_action_list).toBeDefined();
     expect(withExperiment.workflow_run).toBeDefined();
     expect(withExperiment.workflow_resume).toBeDefined();
   });

@@ -144,13 +144,7 @@ import {
   filterWorkflowDisplayOnlyMessages,
 } from "@/common/utils/workflowRunMessages";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
-import { WorkflowActionRegistry } from "@/node/services/workflows/WorkflowActionRegistry";
 import {
-  WorkflowActionRunner,
-  type HostWorkflowAction,
-} from "@/node/services/workflows/WorkflowActionRunner";
-import {
-  shouldDisableHostWorkflowActions,
   shouldUseRuntimeWorkflowProjectIO,
   WorkflowDefinitionStore,
 } from "@/node/services/workflows/WorkflowDefinitionStore";
@@ -442,7 +436,6 @@ export class AIService extends EventEmitter {
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
-  private workflowHostActions?: ReadonlyMap<string, HostWorkflowAction>;
   private memoryService?: MemoryService;
   private extraTools?: Record<string, Tool>;
   private onWorkflowRunStatusChanged?: (
@@ -521,20 +514,6 @@ export class AIService extends EventEmitter {
     service: NonNullable<ToolConfiguration["workspaceHeartbeatService"]>
   ): void {
     this.workspaceHeartbeatService = service;
-  }
-
-  /**
-   * Host actions (workspace.*) for workflow runners. Built once in coreServices
-   * — which owns WorkspaceService/HistoryService/Config — and injected here so
-   * both the workflow tool path (this service) and the ORPC workflow router can
-   * share one map without duplicating service wiring.
-   */
-  setWorkflowHostActions(hostActions: ReadonlyMap<string, HostWorkflowAction>): void {
-    this.workflowHostActions = hostActions;
-  }
-
-  getWorkflowHostActions(): ReadonlyMap<string, HostWorkflowAction> | undefined {
-    return this.workflowHostActions;
   }
 
   setMemoryService(memoryService: MemoryService): void {
@@ -1780,7 +1759,6 @@ export class AIService extends EventEmitter {
       );
       const runtimeType = getRuntimeType(metadata.runtimeConfig);
       const useRuntimeProjectWorkflowIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
-      const disableHostWorkflowActions = shouldDisableHostWorkflowActions(runtimeType);
       const workflowScratchRoots = resolveWorkflowScratchRoots(this.config, workspaceId, {
         workspaceRootPath: workspacePath,
         normalizePath: runtime.normalizePath.bind(runtime),
@@ -1802,26 +1780,12 @@ export class AIService extends EventEmitter {
                 projectRuntime: useRuntimeProjectWorkflowIO ? runtime : undefined,
                 projectCwd: useRuntimeProjectWorkflowIO ? workspacePath : undefined,
               }),
-              actionRegistry: new WorkflowActionRegistry({
-                projectRoot: runtime.normalizePath(".mux/actions", workspacePath),
-                globalRoot: path.join(this.config.rootDir, "actions"),
-                // Host-spawned action execution is unsafe for remote/devcontainer workspaces.
-                // Passing the runtime makes the registry hide/block actions until runtime-backed
-                // action execution exists.
-                projectRuntime: disableHostWorkflowActions ? runtime : undefined,
-                projectCwd: disableHostWorkflowActions ? workspacePath : undefined,
-              }),
-              defaultActionCwd: workspacePath,
               runStore: new WorkflowRunStore({
                 sessionDir: this.config.getSessionDir(workspaceId),
               }),
               ...(this.onWorkflowRunStatusChanged != null
                 ? { onRunStatusChanged: this.onWorkflowRunStatusChanged }
                 : {}),
-              // workspace.* built-ins run in-process with backend services.
-              actionRunner: new WorkflowActionRunner({
-                hostActions: this.workflowHostActions,
-              }),
               runtimeFactory: new QuickJSRuntimeFactory(),
               taskAdapterFactory: (runId, workflowName) =>
                 new WorkflowTaskServiceAdapter({

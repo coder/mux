@@ -391,7 +391,7 @@ export class ServiceContainer {
       },
       startWorkflow: async (input) => {
         // Same construction as the workflows.* ORPC routes so scheduled runs
-        // behave identically to manual ones (run store, trust, host actions).
+        // behave identically to manual ones (run store, trust).
         const context = this.toORPCContext();
         const rawCommand = `${SCHEDULED_WORKFLOW_TRIGGER_LABEL} ${input.name}`;
         let createdRunId: string | null = null;

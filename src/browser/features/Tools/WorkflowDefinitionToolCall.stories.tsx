@@ -7,7 +7,6 @@ import {
   WorkflowListToolCall,
   WorkflowReadToolCall,
 } from "@/browser/features/Tools/WorkflowDefinitionToolCall";
-import { WorkflowActionListToolCall } from "@/browser/features/Tools/WorkflowActionListToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 
 const NARROW_VIEWPORT_GLOBALS = { viewport: { value: "mobile1", isRotated: false } };
@@ -112,91 +111,6 @@ export const WorkflowRead: Story = {
   ),
 };
 
-export const WorkflowActionList: Story = {
-  render: () => (
-    <WorkflowActionListToolCall
-      args={{}}
-      status="completed"
-      result={{
-        actions: [
-          {
-            name: "git.changedFiles",
-            scope: "built-in",
-            sourcePath: "/__mux_builtin_workflow_actions__/git/changedFiles.js",
-            executable: true,
-            hasReconcile: false,
-            metadata: {
-              version: 1,
-              description:
-                "Return changed file lists for branch, staged, unstaged, and untracked files.",
-              effect: "read",
-              inputSchema: { type: "object", properties: { base: { type: "string" } } },
-              outputSchema: {
-                type: "object",
-                properties: { files: { type: "array", items: { type: "string" } } },
-              },
-              timeoutMs: 60_000,
-            },
-          },
-          {
-            name: "git.commit",
-            scope: "built-in",
-            sourcePath: "/__mux_builtin_workflow_actions__/git/commit.js",
-            executable: true,
-            hasReconcile: true,
-            metadata: {
-              version: 2,
-              description: "Create a git commit from staged changes.",
-              effect: "workspace",
-            },
-          },
-          {
-            name: "slack.notify",
-            scope: "global",
-            sourcePath: "~/.mux/workflows/actions/slack/notify.js",
-            executable: true,
-            hasReconcile: false,
-            metadata: {
-              version: "2026-01-01",
-              description: "Post a message to a Slack channel via webhook.",
-              effect: "external",
-              permissions: { network: ["hooks.slack.com"] },
-            },
-          },
-          {
-            name: "audit.scan",
-            scope: "project",
-            sourcePath: "/repo/.mux/workflows/actions/audit/scan.js",
-            executable: false,
-            blockedReason: "Trust this project before running project-local actions.",
-          },
-        ],
-      }}
-    />
-  ),
-};
-
-/** iPhone-sized variant: name + badges on one row, description stacked below. */
-export const WorkflowActionListNarrow: Story = {
-  ...WorkflowActionList,
-  globals: NARROW_VIEWPORT_GLOBALS,
-  decorators: [NarrowContainerDecorator],
-  parameters: {
-    // Pinned mobile mode so Chromatic doesn't silently snapshot the wide grid.
-    // hasTouch matches the repo's other mobile1 modes so touch-target CSS applies.
-    // Modes stay inline (not hoisted) so the snapshot budget estimator counts them.
-    chromatic: { modes: { "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true } } },
-  },
-  play: async ({ canvasElement }) => {
-    expandToolCard(canvasElement, "4 actions");
-    await expectDescriptionBelowName(
-      canvasElement,
-      "git.changedFiles",
-      /Return changed file lists/
-    );
-  },
-};
-
 export const WorkflowList: Story = {
   render: () => (
     <WorkflowListToolCall
@@ -238,7 +152,6 @@ export const WorkflowListNarrow: Story = {
   globals: NARROW_VIEWPORT_GLOBALS,
   decorators: [NarrowContainerDecorator],
   parameters: {
-    // Inline modes for the budget estimator; see WorkflowActionListNarrow.
     chromatic: { modes: { "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true } } },
   },
   play: async ({ canvasElement }) => {

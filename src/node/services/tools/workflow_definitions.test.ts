@@ -1,11 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await */
 import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
-import {
-  createWorkflowActionListTool,
-  createWorkflowListTool,
-  createWorkflowReadTool,
-} from "./workflow_definitions";
+import { createWorkflowListTool, createWorkflowReadTool } from "./workflow_definitions";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
 const mockToolCallOptions: ToolExecutionOptions = {
@@ -118,46 +114,6 @@ describe("workflow definition tools", () => {
     expect(listDefinitionsWithMetadata).toHaveBeenCalledWith({ projectTrusted: true });
     expect(listDefinitions).not.toHaveBeenCalled();
     expect(result).toEqual({ workflows: [{ ...descriptor, args: compactArgs }] });
-  });
-
-  test("lists available workflow actions through WorkflowService", async () => {
-    using tempDir = new TestTempDir("test-workflow-action-list-tool");
-    const actionDescriptor = {
-      name: "git.status",
-      scope: "built-in" as const,
-      sourcePath: "/__mux_builtin_workflow_actions__/git/status.js",
-      executable: true as const,
-      metadata: {
-        version: 1,
-        description: "Return git status",
-        effect: "read" as const,
-        outputSchema: { type: "object" },
-      },
-      hasReconcile: false,
-    };
-    const listActions = mock(async () => [actionDescriptor]);
-    const tool = createWorkflowActionListTool({
-      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
-      trusted: true,
-      workflowService: {
-        listDefinitions: mock(async () => []),
-        readDefinition: mock(async () => ({
-          descriptor,
-          source: "export default function workflow() { return null; }",
-        })),
-        listActions,
-        startNamedWorkflow: mock(async () => ({
-          runId: "wfr_1",
-          status: "completed" as const,
-          result: null,
-        })),
-      },
-    });
-
-    const result = await tool.execute!({}, mockToolCallOptions);
-
-    expect(listActions).toHaveBeenCalledWith({ projectTrusted: true });
-    expect(result).toEqual({ actions: [actionDescriptor] });
   });
 
   test("reads workflow metadata without source by default", async () => {

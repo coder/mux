@@ -79,10 +79,10 @@ interface WorkflowRunToolCallProps {
   workflowRunHint?: WorkflowToolLiveRunState | null;
 }
 
-type WorkflowRunAction = "interrupt" | "resume" | "retryFromCheckpoint";
+type WorkflowRunControlAction = "interrupt" | "resume" | "retryFromCheckpoint";
 
-function shouldKeepWorkflowActionPolling(input: {
-  action: WorkflowRunAction;
+function shouldKeepWorkflowControlPolling(input: {
+  action: WorkflowRunControlAction;
   run: WorkflowRunRecord;
   baselineSequence: number;
 }): boolean {
@@ -99,7 +99,7 @@ async function updateWorkflowRunFromAction(input: {
   api: APIClient;
   workspaceId: string;
   runId: string;
-  action: WorkflowRunAction;
+  action: WorkflowRunControlAction;
   setActionError: React.Dispatch<React.SetStateAction<string | null>>;
   setRefreshedRun: React.Dispatch<React.SetStateAction<WorkflowRunRecord | null>>;
   setResumingRunId: React.Dispatch<React.SetStateAction<string | null>>;
@@ -130,7 +130,7 @@ async function updateWorkflowRunFromAction(input: {
     if ("id" in nextRun) {
       input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
       if (
-        !shouldKeepWorkflowActionPolling({
+        !shouldKeepWorkflowControlPolling({
           action: input.action,
           run: nextRun,
           baselineSequence: input.baselineSequence,
@@ -147,7 +147,7 @@ async function updateWorkflowRunFromAction(input: {
     if (refreshed != null) {
       input.setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, refreshed));
       if (
-        !shouldKeepWorkflowActionPolling({
+        !shouldKeepWorkflowControlPolling({
           action: input.action,
           run: refreshed,
           baselineSequence: input.baselineSequence,
@@ -207,25 +207,18 @@ function getStructuredOutput(value: unknown): unknown {
 }
 
 type WorkflowTaskEvent = Extract<WorkflowRunEvent, { type: "task" }>;
-type WorkflowActionEvent = Extract<WorkflowRunEvent, { type: "action" }>;
 type WorkflowChildEvent = Extract<WorkflowRunEvent, { type: "workflow" }>;
 type WorkflowPatchEvent = Extract<WorkflowRunEvent, { type: "patch" }>;
 
 type WorkflowDisplayRow =
   | { kind: "event"; event: WorkflowRunEvent }
   | { kind: "task"; firstEvent: WorkflowTaskEvent; latestEvent: WorkflowTaskEvent }
-  | { kind: "action"; firstEvent: WorkflowActionEvent; latestEvent: WorkflowActionEvent }
   | { kind: "workflow"; firstEvent: WorkflowChildEvent; latestEvent: WorkflowChildEvent }
   | { kind: "patch"; firstEvent: WorkflowPatchEvent; latestEvent: WorkflowPatchEvent };
 
 type WorkflowTaskRow = Extract<WorkflowDisplayRow, { kind: "task" }>;
-type WorkflowActionRow = Extract<WorkflowDisplayRow, { kind: "action" }>;
 type WorkflowChildRow = Extract<WorkflowDisplayRow, { kind: "workflow" }>;
 type WorkflowPatchRow = Extract<WorkflowDisplayRow, { kind: "patch" }>;
-interface PendingWorkflowActionRows {
-  rows: WorkflowActionRow[];
-  ambiguous: boolean;
-}
 
 function getTaskEventKey(event: WorkflowTaskEvent): string {
   return `task:${event.stepId}:${event.taskId}`;
@@ -238,47 +231,9 @@ function getWorkflowChildEventKey(event: WorkflowChildEvent): string {
 function getPatchEventKey(event: WorkflowPatchEvent): string {
   return `patch:${event.stepId}:${event.sourceTaskId}`;
 }
-
-function getActionEventKey(event: WorkflowActionEvent): string {
-  return JSON.stringify([
-    "action",
-    event.stepId,
-    event.name,
-    event.effect,
-    event.sourcePath ?? "",
-    event.sourceHash ?? "",
-  ]);
-}
-
-function createWorkflowActionRow(event: WorkflowActionEvent): WorkflowActionRow {
-  return {
-    kind: "action",
-    firstEvent: event,
-    latestEvent: event,
-  };
-}
-
-function getPendingActionRows(
-  actionRows: Map<string, PendingWorkflowActionRows>,
-  key: string
-): PendingWorkflowActionRows {
-  const existingRows = actionRows.get(key);
-  if (existingRows != null) {
-    return existingRows;
-  }
-  const createdRows: PendingWorkflowActionRows = { rows: [], ambiguous: false };
-  actionRows.set(key, createdRows);
-  return createdRows;
-}
-
-function canCoalesceWorkflowActionTerminal(event: WorkflowActionEvent): boolean {
-  return event.status === "completed" || event.status === "failed" || event.status === "reconciled";
-}
-
 function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDisplayRow[] {
   const rows: WorkflowDisplayRow[] = [];
   const taskRows = new Map<string, WorkflowTaskRow>();
-  const actionRows = new Map<string, PendingWorkflowActionRows>();
   const workflowRows = new Map<string, WorkflowChildRow>();
   const patchRows = new Map<string, WorkflowPatchRow>();
 
@@ -343,53 +298,6 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
       continue;
     }
 
-    if (event.type === "action") {
-      const key = getActionEventKey(event);
-      if (event.status === "started") {
-        const pendingRows = getPendingActionRows(actionRows, key);
-        if (pendingRows.rows.length > 0) {
-          pendingRows.ambiguous = true;
-        }
-        const row = createWorkflowActionRow(event);
-        pendingRows.rows.push(row);
-        rows.push(row);
-        continue;
-      }
-
-      if (!canCoalesceWorkflowActionTerminal(event)) {
-        rows.push(createWorkflowActionRow(event));
-        continue;
-      }
-
-      const pendingRows = actionRows.get(key);
-      if (pendingRows == null) {
-        rows.push(createWorkflowActionRow(event));
-        continue;
-      }
-
-      if (pendingRows.rows.length === 1 && !pendingRows.ambiguous) {
-        const row = pendingRows.rows.at(0);
-        if (row == null) {
-          throw new Error("Expected pending action row to exist");
-        }
-        row.latestEvent = event;
-        actionRows.delete(key);
-        continue;
-      }
-
-      if (pendingRows.rows.length > 0) {
-        // Ambiguous persisted streams cannot be paired without invocation IDs; keep raw rows
-        // instead of merging terminal details into the wrong action start row.
-        pendingRows.ambiguous = true;
-        pendingRows.rows.shift();
-        if (pendingRows.rows.length === 0) {
-          actionRows.delete(key);
-        }
-      }
-      rows.push(createWorkflowActionRow(event));
-      continue;
-    }
-
     rows.push({ kind: "event", event });
   }
   return rows;
@@ -398,9 +306,6 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
 function getDisplayRowKey(row: WorkflowDisplayRow): string {
   if (row.kind === "task") {
     return getTaskEventKey(row.firstEvent);
-  }
-  if (row.kind === "action") {
-    return `${getActionEventKey(row.firstEvent)}:${row.firstEvent.sequence}`;
   }
   if (row.kind === "workflow") {
     return getWorkflowChildEventKey(row.firstEvent);
@@ -590,9 +495,7 @@ function WorkflowEventTooltip(props: {
   );
 }
 
-function getWorkflowMergedRowDetail(
-  row: WorkflowActionRow | WorkflowChildRow | WorkflowPatchRow
-): unknown {
+function getWorkflowMergedRowDetail(row: WorkflowChildRow | WorkflowPatchRow): unknown {
   const firstDetail = getWorkflowEventDetail(row.firstEvent);
   const latestDetail = getWorkflowEventDetail(row.latestEvent);
   if (row.firstEvent === row.latestEvent || row.latestEvent.status === "started") {
@@ -1047,13 +950,13 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const workflowRunHint = explicitWorkflowRunHint ?? liveWorkflowRunHint;
   const [refreshedRun, setRefreshedRun] = useState<WorkflowRunRecord | null>(null);
   const [resumingRunId, setResumingRunId] = useState<string | null>(null);
-  const [workflowActionInFlightRunId, setWorkflowActionInFlightRunId] = useState<string | null>(
+  const [workflowControlInFlightRunId, setWorkflowControlInFlightRunId] = useState<string | null>(
     null
   );
-  const workflowActionInFlightRunIdRef = useRef<string | null>(null);
-  const setWorkflowActionInFlight = (nextRunId: string | null) => {
-    workflowActionInFlightRunIdRef.current = nextRunId;
-    setWorkflowActionInFlightRunId(nextRunId);
+  const workflowControlInFlightRunIdRef = useRef<string | null>(null);
+  const setWorkflowControlInFlight = (nextRunId: string | null) => {
+    workflowControlInFlightRunIdRef.current = nextRunId;
+    setWorkflowControlInFlightRunId(nextRunId);
   };
   const baseRun =
     successResult?.run != null && workflowRunHint?.run != null
@@ -1105,7 +1008,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     useState<WorkflowPromotionTarget | null>(null);
   const savingPromotionTargetRef = useRef<WorkflowPromotionTarget | null>(null);
   const resumeOrRetryPendingForRun =
-    runId != null && (resumingRunId === runId || workflowActionInFlightRunId === runId);
+    runId != null && (resumingRunId === runId || workflowControlInFlightRunId === runId);
   const displayDefinition = promotedDefinition ?? run?.definition;
   // workflow_resume cards only know the run ID until a snapshot loads; prefer the real
   // workflow name once available.
@@ -1164,16 +1067,16 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     savingPromotionTarget == null &&
     savingPromotionTargetRef.current == null;
 
-  const updateRunFromAction = async (action: WorkflowRunAction) => {
+  const updateRunFromAction = async (action: WorkflowRunControlAction) => {
     if (apiState?.api == null || run?.workspaceId == null || runId == null) {
       return;
     }
     const isResumeOrRetry = action === "resume" || action === "retryFromCheckpoint";
     if (isResumeOrRetry) {
-      if (workflowActionInFlightRunIdRef.current === runId || resumingRunId === runId) {
+      if (workflowControlInFlightRunIdRef.current === runId || resumingRunId === runId) {
         return;
       }
-      setWorkflowActionInFlight(runId);
+      setWorkflowControlInFlight(runId);
     }
     try {
       await updateWorkflowRunFromAction({
@@ -1188,7 +1091,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       });
     } finally {
       if (isResumeOrRetry) {
-        setWorkflowActionInFlight(null);
+        setWorkflowControlInFlight(null);
       }
     }
   };
@@ -1431,7 +1334,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
         if (!ignore && nextRun != null) {
           setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, nextRun));
           if (
-            !shouldKeepWorkflowActionPolling({
+            !shouldKeepWorkflowControlPolling({
               action: "retryFromCheckpoint",
               run: nextRun,
               baselineSequence: displayEventSequence,
@@ -1597,7 +1500,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                         />
                       );
                     }
-                    if (row.kind === "action" || row.kind === "workflow" || row.kind === "patch") {
+                    if (row.kind === "workflow" || row.kind === "patch") {
                       return (
                         <WorkflowEventRow
                           key={getDisplayRowKey(row)}

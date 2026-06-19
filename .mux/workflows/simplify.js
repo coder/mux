@@ -1,9 +1,11 @@
+const mux = globalThis.mux || { schema: workflowSchema(), utils: workflowUtils() };
 const s = mux.schema;
 
 export const metadata = {
   description:
     "Review current changes for reuse, quality, efficiency, and polish, then fix actionable issues.",
   argsSchema: s.object({
+    input: s.optional(s.string()),
     target: s.optional(s.string({ positional: true })),
     fix: s.optional(
       s.boolean({
@@ -19,38 +21,22 @@ export const metadata = {
     trunk: s.optional(s.string()),
     headRef: s.optional(s.string({ aliases: ["--head"] })),
     head: s.optional(s.string()),
-    maxFindings: s.optional(
-      s.integer({ default: 20, minimum: 1, aliases: ["--max-findings"] })
-    ),
+    maxFindings: s.optional(s.integer({ default: 20, minimum: 1, aliases: ["--max-findings"] })),
     help: s.optional(s.boolean({ default: false, aliases: ["--help", "-h"] })),
   }),
 };
 
-// Workflow files execute as self-contained JavaScript; keep small helpers inline instead of importing repo utilities.
+// Git context and apply preflight run as structured-output agent steps. Fixes
+// are made in an exec child and integrated only through mux.patch.applySafely.
+const SCHEMA = s;
+const WORKFLOW_UTILS = workflowUtils();
 const DEFAULT_MAX_FINDINGS = 20;
-// Review agents get bounded diff text; synthesis/fix phases get metadata only.
-const REVIEW_DIFF_CHAR_BUDGET = 60000;
-const METADATA_ARRAY_ITEM_BUDGET = 200;
-const DIFF_STAT_CHAR_BUDGET = 20000;
-const REVIEW_EVIDENCE_ITEM_BUDGET = 3;
-const REVIEW_EVIDENCE_CHAR_BUDGET = 500;
-const NO_REVIEWABLE_CHANGES_SUMMARY = "No reviewable changes found.";
-const GIT_CONTEXT_SOURCE = "parent-workflow-checkout";
-const GIT_CONTEXT_PROVENANCE_NOTE =
-  "Git context was captured from the parent workflow checkout before child agent workspaces were spawned. Child agent branches may differ; status.branch/upstream describe the reviewed parent checkout.";
-const READ_ONLY_PROMPT =
-  "This is a read-only review step. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.";
-const VALUE_FLAGS = [
-  { name: "--base", key: "baseRef" },
-  { name: "--trunk", key: "trunkRef" },
-  { name: "--head", key: "headRef" },
-  { name: "--max-findings", key: "maxFindings" },
-];
-const STATUS_ARRAY_FIELDS = ["staged", "unstaged", "untracked", "ignored"];
-const CHANGED_FILE_ARRAY_FIELDS = ["branch", "staged", "unstaged", "untracked"];
-const DIFF_FIELDS = ["branch", "staged", "unstaged"];
+const REVIEW_DIFF_CHAR_BUDGET = 70000;
 const REVIEW_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
+const NO_REVIEWABLE_CHANGES_SUMMARY = "No reviewable changes found.";
+const READ_ONLY_PROMPT =
+  "This is a read-only review step. Do not edit files, create commits, apply patches, push branches, or open PRs. Inspect repository evidence only as needed and report findings.";
 const REVIEW_LANES = [
   {
     id: "reuse",
@@ -87,120 +73,39 @@ const REVIEW_LANES = [
       "Flag comments that restate the code, explain obvious behavior, or are inconsistent with nearby file style.",
       "Flag defensive checks, try/catch blocks, or fallback paths that are abnormal for the surrounding trusted codepath.",
       "Flag type escapes such as `as any` that bypass type issues instead of modeling them.",
-      "Flag style inconsistencies that make new code look generated rather than maintained.",
       "Do not flag purposeful assertions, security checks, input validation, or comments that explain non-obvious rationale.",
     ],
   },
 ];
 
-const SCHEMA = s;
-const SEVERITY_SCHEMA = SCHEMA.enum(["high", "medium", "low"]);
-const FINDING_CORE_PROPERTIES = {
-  id: SCHEMA.string(),
-  title: SCHEMA.string(),
-  severity: SEVERITY_SCHEMA,
-  filePaths: SCHEMA.array(SCHEMA.string()),
-  rationale: SCHEMA.string(),
-};
-const FINDING_SCHEMA = SCHEMA.object({
-  ...FINDING_CORE_PROPERTIES,
-  recommendation: SCHEMA.string(),
-  evidence: SCHEMA.array(SCHEMA.string()),
-});
-const REVIEW_SCHEMA = SCHEMA.object({
-  summary: SCHEMA.string(),
-  findings: SCHEMA.array(FINDING_SCHEMA),
-});
-const SYNTHESIS_FINDING_SCHEMA = SCHEMA.object({
-  ...FINDING_CORE_PROPERTIES,
-  fixPlan: SCHEMA.string(),
-});
-const SKIPPED_FINDING_SCHEMA = SCHEMA.object({
-  id: SCHEMA.string(),
-  title: SCHEMA.string(),
-  reason: SCHEMA.string(),
-});
-const SYNTHESIS_SCHEMA = SCHEMA.object({
-  summary: SCHEMA.string(),
-  shouldFix: SCHEMA.boolean(),
-  actionableFindings: SCHEMA.array(SYNTHESIS_FINDING_SCHEMA),
-  skippedFindings: SCHEMA.array(SKIPPED_FINDING_SCHEMA),
-  validationPlan: SCHEMA.array(SCHEMA.string()),
-});
-const FIXER_SCHEMA = SCHEMA.object({
-  madeChanges: SCHEMA.boolean(),
-  fixedFindingIds: SCHEMA.array(SCHEMA.string()),
-  skippedFindings: SCHEMA.array(
-    SCHEMA.object({
-      id: SCHEMA.string(),
-      reason: SCHEMA.string(),
-    })
-  ),
-  validation: SCHEMA.array(
-    SCHEMA.object({
-      command: SCHEMA.string(),
-      status: SCHEMA.string(),
-      summary: SCHEMA.string(),
-    })
-  ),
-});
-
-const EMPTY_SYNTHESIS = {
-  summary: NO_REVIEWABLE_CHANGES_SUMMARY,
-  shouldFix: false,
-  actionableFindings: [],
-  skippedFindings: [],
-  validationPlan: [],
-};
-
-export default async function simplifyWorkflow({ args, phase, log, action, agent }) {
-  assert(action && agent, "workflow runtime APIs are required");
-
+export default async function simplifyWorkflow({ args, phase, log, agent }) {
   const parsed = parseArgs(args);
   if (parsed.error) return usageResult(parsed.error);
-
   const input = parsed.input;
   if (input.help) return usageResult();
 
   phase("capture-context", { target: input.target || "current git changes", fix: input.fix });
-  const gitContext = collectGitContext(action, input, log);
-  const contexts = promptContexts(input, gitContext);
-  log("Captured simplify context", {
+  const gitContext = collectGitContextAgent(agent, input);
+  const reviewContext = promptContext(input, gitContext);
+  log("Captured simplify context via sub-agent", {
     target: input.target || "current git changes",
-    gitFailures: gitContext.failures.length,
-    diffCompactions: mux.utils.asArray(contexts.outputGitContext.diff?.workflowCompactions).length,
+    fileCount: gitContext.files.length,
+    failureCount: gitContext.failures.length,
   });
-
-  if (shouldSkipForUntrackedContent(input, gitContext)) {
-    const reason = untrackedChangesSkipReason();
-    return {
-      reportMarkdown: "## Simplify workflow result\n\n" + reason,
-      structuredOutput: {
-        mode: "untracked-changes-skip-review",
-        gitContext: contexts.outputGitContext,
-        reviews: [],
-        synthesis: { ...EMPTY_SYNTHESIS, summary: reason },
-      },
-    };
-  }
 
   if (!hasReviewableContext(input, gitContext)) {
     return {
       reportMarkdown: "## Simplify workflow result\n\n" + NO_REVIEWABLE_CHANGES_SUMMARY,
       structuredOutput: {
         mode: "no-reviewable-changes",
-        gitContext: contexts.outputGitContext,
+        gitContext,
         reviews: [],
-        synthesis: EMPTY_SYNTHESIS,
+        synthesis: emptySynthesis(NO_REVIEWABLE_CHANGES_SUMMARY),
       },
     };
   }
 
-  phase("review", {
-    lanes: REVIEW_LANES.map(function (lane) {
-      return lane.id;
-    }),
-  });
+  phase("review", { lanes: REVIEW_LANES.map(property("id")) });
   const reviewOutputs = mux
     .parallelMap({
       items: REVIEW_LANES,
@@ -212,64 +117,55 @@ export default async function simplifyWorkflow({ args, phase, log, action, agent
       },
       agentId: REVIEW_AGENT_ID,
       prompt: function (lane) {
-        return reviewPrompt(lane, input, contexts.review);
+        return reviewPrompt(lane, input, reviewContext);
       },
-      outputSchema: REVIEW_SCHEMA,
+      outputSchema: reviewSchema(),
       maxParallel: REVIEW_LANES.length,
     })
     .map(function (review) {
-      return mux.utils.mustObject(review.structuredOutput, "review structured output is required");
+      return review.structuredOutput;
     });
-
   const rawFindingCount = reviewOutputs.reduce(function (count, output) {
-    return count + output.findings.length;
+    return count + WORKFLOW_UTILS.asArray(output.findings).length;
   }, 0);
 
-  phase("synthesize", { rawFindingCount: rawFindingCount });
+  phase("synthesize", { rawFindingCount });
   const synthesis = agent({
     id: "synthesize-simplify-findings",
     title: "Simplify: synthesize findings",
     agentId: EXEC_AGENT_ID,
-    prompt: synthesisPrompt(input, contexts.compact, reviewOutputs),
-    outputSchema: SYNTHESIS_SCHEMA,
+    prompt: synthesisPrompt(input, reviewContext, reviewOutputs),
+    outputSchema: synthesisSchema(),
   });
-  const synthesized = mux.utils.mustObject(
-    synthesis.structuredOutput,
-    "synthesis structured output is required"
+  const synthesized = synthesis.structuredOutput;
+  const actionableFindings = WORKFLOW_UTILS.asArray(synthesized.actionableFindings).slice(
+    0,
+    input.maxFindings
   );
-  const actionableFindings = synthesized.actionableFindings;
 
   if (!input.fix || !synthesized.shouldFix || actionableFindings.length === 0) {
     return {
       reportMarkdown: reviewOnlyReport(input, synthesis.reportMarkdown),
       structuredOutput: {
         mode: input.fix ? "no-actionable-fixes" : "review-only",
-        gitContext: contexts.outputGitContext,
+        gitContext,
         reviews: reviewOutputs,
         synthesis: synthesized,
       },
     };
   }
 
-  // Workflow child workspaces do not inherit parent dirt; keep the review result but skip auto-fix.
-  if (hasUncommittedChanges(gitContext)) {
+  phase("fix-preflight", { actionableFindingCount: actionableFindings.length });
+  const preflight = collectApplyPreflightAgent(agent, input, gitContext);
+  if (!preflight.ok) {
     return skipFixResult(
       synthesis.reportMarkdown,
-      uncommittedChangesSkipReason(),
-      "uncommitted-changes-skip-fix",
-      contexts.outputGitContext,
+      preflight.reason || "Auto-fix preflight failed.",
+      "apply-preflight-skip",
+      gitContext,
       reviewOutputs,
-      synthesized
-    );
-  }
-  if (!isRequestedHeadCurrent(gitContext.status, input)) {
-    return skipFixResult(
-      synthesis.reportMarkdown,
-      nonCurrentHeadSkipReason(),
-      "non-current-head-skip-fix",
-      contexts.outputGitContext,
-      reviewOutputs,
-      synthesized
+      synthesized,
+      preflight
     );
   }
 
@@ -278,14 +174,10 @@ export default async function simplifyWorkflow({ args, phase, log, action, agent
     id: "fix-simplify-findings",
     title: "Simplify: fix actionable findings",
     agentId: EXEC_AGENT_ID,
-    prompt: fixPrompt(contexts.compact, synthesized),
-    outputSchema: FIXER_SCHEMA,
+    prompt: fixPrompt(reviewContext, synthesized, preflight),
+    outputSchema: fixerSchema(),
   });
-  const fixerOutput = mux.utils.mustObject(
-    fixer.structuredOutput,
-    "fixer structured output is required"
-  );
-
+  const fixerOutput = fixer.structuredOutput;
   if (!fixerOutput.madeChanges) {
     return {
       reportMarkdown:
@@ -294,618 +186,165 @@ export default async function simplifyWorkflow({ args, phase, log, action, agent
         fixer.reportMarkdown,
       structuredOutput: {
         mode: "fixer-made-no-changes",
-        gitContext: contexts.outputGitContext,
+        gitContext,
         reviews: reviewOutputs,
         synthesis: synthesized,
-        fix: { fixer: fixerOutput, applied: null },
+        fix: { preflight, fixer: fixerOutput, applied: null },
       },
     };
   }
 
   phase("apply-fixes", { madeChanges: true });
-  const applyPreflight = collectApplyPreflight(action, log, input, gitContext);
-  if (applyPreflight.skippedReason) {
-    return {
-      reportMarkdown:
-        synthesis.reportMarkdown +
-        "\n\n---\n\n## Fix pass\n\n" +
-        fixer.reportMarkdown +
-        "\n\n### Patch application\n\n" +
-        applyPreflight.skippedReason,
-      structuredOutput: {
-        mode: "apply-preflight-skip",
-        gitContext: contexts.outputGitContext,
-        reviews: reviewOutputs,
-        synthesis: synthesized,
-        fix: { fixer: fixerOutput, applied: applyPreflight },
-      },
-    };
-  }
-
-  const applied = await mux.patch.applySafely({
-    id: "apply-simplify-fixes",
-    source: fixer,
-    expectedHeadSha: applyPreflight.expectedHeadSha,
-  });
+  const applySpec = { id: "apply-simplify-fixes", source: fixer };
+  if (preflight.expectedHeadSha) applySpec.expectedHeadSha = preflight.expectedHeadSha;
+  const applied = await mux.patch.applySafely(applySpec);
 
   return {
     reportMarkdown: fixReport(synthesis.reportMarkdown, fixer.reportMarkdown, applied),
     structuredOutput: {
       mode: "fix-attempted",
-      gitContext: contexts.outputGitContext,
+      gitContext,
       reviews: reviewOutputs,
       synthesis: synthesized,
-      fix: { fixer: fixerOutput, applied: applied },
+      fix: { preflight, fixer: fixerOutput, applied },
     },
   };
 }
 
-function skipFixResult(
-  synthesisMarkdown,
-  reason,
-  mode,
-  outputGitContext,
-  reviewOutputs,
-  synthesized
-) {
+function collectGitContextAgent(agent, input) {
+  return agent({
+    id: "git-review-context",
+    title: "Collect simplify Git context",
+    agentId: REVIEW_AGENT_ID,
+    prompt:
+      READ_ONLY_PROMPT +
+      "\n\nUse bash/git to collect status, changed files, diff stat, bounded diff text, and commits for the current changes. Return the result as structuredOutput. If refs are omitted, compare against origin/HEAD, main, master, or trunk when available; include staged and unstaged changes. Keep diff text bounded and explain truncation in failures.\n\nInput:\n" +
+      JSON.stringify(input, null, 2),
+    outputSchema: gitContextSchema(),
+  }).structuredOutput;
+}
+
+function collectApplyPreflightAgent(agent, input, gitContext) {
+  return agent({
+    id: "apply-git-preflight",
+    title: "Simplify: Git apply preflight",
+    agentId: REVIEW_AGENT_ID,
+    prompt:
+      READ_ONLY_PROMPT +
+      "\n\nUse bash/git to check that the current branch/head still match the reviewed snapshot and that the worktree is clean enough for applying the child patch. Return ok=false with a clear reason instead of hiding problems.\n\nInput and reviewed context:\n" +
+      JSON.stringify({ input, status: gitContext.status }, null, 2),
+    outputSchema: preflightSchema(),
+  }).structuredOutput;
+}
+
+function reviewPrompt(lane, input, context) {
+  return (
+    READ_ONLY_PROMPT +
+    "\n\nSimplify lane: " +
+    lane.id +
+    "\n" +
+    lane.instructions
+      .map(function (item) {
+        return "- " + item;
+      })
+      .join("\n") +
+    "\n\nReview target:\n" +
+    renderInput(input) +
+    "\n\nGit context:\n" +
+    JSON.stringify(context, null, 2) +
+    "\n\nReturn only concrete simplification opportunities. Prefer an empty findings array over speculative feedback."
+  );
+}
+
+function synthesisPrompt(input, context, reviews) {
+  return (
+    READ_ONLY_PROMPT +
+    "\n\nDeduplicate simplify review findings, keep only actionable high-signal items, and create a fix plan for safe changes. Do not propose broad refactors.\n\nReview target:\n" +
+    renderInput(input) +
+    "\n\nGit context summary:\n" +
+    JSON.stringify(context.compact, null, 2) +
+    "\n\nReview outputs:\n" +
+    JSON.stringify(reviews, null, 2)
+  );
+}
+
+function fixPrompt(context, synthesized, preflight) {
+  return (
+    "Fix the actionable simplify findings below. Make minimal code changes, preserve existing behavior, run relevant validation, and commit your changes locally so the parent workflow can apply your patch artifact. Do not push or open a PR. Skip unsafe or speculative findings with reasons.\n\nPreflight:\n" +
+    JSON.stringify(preflight, null, 2) +
+    "\n\nGit context:\n" +
+    JSON.stringify(context.compact, null, 2) +
+    "\n\nSynthesis:\n" +
+    JSON.stringify(synthesized, null, 2)
+  );
+}
+
+function promptContext(input, gitContext) {
   return {
-    reportMarkdown: synthesisMarkdown + "\n\n---\n\n## Simplify workflow result\n\n" + reason,
-    structuredOutput: {
-      mode: mode,
-      gitContext: outputGitContext,
-      reviews: reviewOutputs,
-      synthesis: synthesized,
+    compact: {
+      target: input.target || "current git changes",
+      refs: { baseRef: input.baseRef, trunkRef: input.trunkRef, headRef: input.headRef },
+      status: gitContext.status,
+      files: gitContext.files,
+      diffStat: gitContext.diffStat,
+      commits: gitContext.commits,
+      failures: gitContext.failures,
+    },
+    review: {
+      target: input.target || "current git changes",
+      gitContext: Object.assign({}, gitContext, {
+        diff: compactText(gitContext.diff, REVIEW_DIFF_CHAR_BUDGET),
+      }),
     },
   };
 }
 
-function collectApplyPreflight(action, log, input, gitContext) {
-  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
-  if (typeof reviewedHeadSha !== "string" || !reviewedHeadSha) {
-    return failedApplyPreflight(
-      "Auto-fix was skipped because the reviewed HEAD snapshot is unavailable."
-    );
-  }
-
-  try {
-    const preflightInput = {
-      head: input.headRef || "HEAD",
-      expectedHeadSha: reviewedHeadSha,
-      requireClean: true,
-    };
-    const expectedBranch = reviewedBranchForPreflight(gitContext.status, input);
-    // Commit-SHA heads have no branch invariant; omit the optional schema key
-    // rather than passing QuickJS `undefined` through action input validation.
-    if (expectedBranch !== undefined) preflightInput.expectedBranch = expectedBranch;
-
-    const preflight = action.git.preflight({
-      id: "apply-git-preflight",
-      input: preflightInput,
-      builtInOnly: true,
-      cache: false,
-    }).output;
-    if (preflight && preflight.ok === true) {
-      return { success: true, status: "ready", expectedHeadSha: reviewedHeadSha };
-    }
-    return failedApplyPreflight(
-      (preflight && preflight.reason) ||
-        "Auto-fix was skipped because fresh Git preflight did not pass."
-    );
-  } catch (error) {
-    const message = formatError(error);
-    log("Git preflight unavailable for simplify auto-fix", { error: message });
-    return failedApplyPreflight(
-      "Auto-fix was skipped because fresh Git preflight was unavailable."
-    );
-  }
-}
-
-function reviewedBranchForPreflight(reviewedStatus, input) {
-  if (input.headRef && isGitCommitSha(input.headRef)) return undefined;
-  const branch = reviewedStatus && typeof reviewedStatus.branch === "string" ? reviewedStatus.branch.trim() : "";
-  return branch && branch !== "HEAD (no branch)" ? branch : undefined;
-}
-
-function failedApplyPreflight(reason) {
-  return { success: false, status: "failed", skippedReason: reason, error: reason };
-}
-
-function nonCurrentHeadSkipReason() {
-  return "Auto-fix was skipped because the requested `--head` is not the current checkout. Check out that branch/ref or pass the current commit SHA before applying fixes.";
-}
-
-function untrackedChangesSkipReason() {
-  return "Review was skipped because untracked file contents are not available to workflow child workspaces. Add them with `git add -N` or commit them, then rerun `/workflow simplify`.";
-}
-
-function uncommittedChangesSkipReason() {
-  return "Auto-fix was skipped because uncommitted changes are present. Commit or stash them, then rerun `/workflow simplify --fix`.";
-}
-
-function collectGitContext(action, input, log) {
-  const requestedRefs = gitRefs(input);
-  try {
-    const context = action.git.reviewContext({
-      id: "git-review-context",
-      input: {
-        ...requestedRefs,
-        diffCharBudget: REVIEW_DIFF_CHAR_BUDGET,
-        metadataCharBudget: DIFF_STAT_CHAR_BUDGET,
-      },
-      builtInOnly: true,
-    }).output;
-    if (!context || typeof context !== "object") {
-      return emptyGitContext(input, requestedRefs, [
-        { name: "reviewContext", error: "git.reviewContext returned no context" },
-      ]);
-    }
-    return {
-      ...context,
-      target: input.target,
-      refs: refsWithResolvedBase(requestedRefs, context.changedFiles),
-      failures: mux.utils.asArray(context.failures),
-    };
-  } catch (error) {
-    const failure = { name: "reviewContext", error: formatError(error) };
-    log("Git review context action failed; continuing with empty simplify context", failure);
-    return emptyGitContext(input, requestedRefs, [failure]);
-  }
-}
-
-function emptyGitContext(input, refs, failures) {
-  return {
-    target: input.target,
-    refs: refs,
-    failures: failures,
-    status: null,
-    changedFiles: null,
-    diffStat: null,
-    diff: null,
-  };
-}
-
-function gitRefs(input) {
-  const refs = {};
-  if (input.baseRef) refs.base = input.baseRef;
-  if (input.trunkRef) refs.trunk = input.trunkRef;
-  if (input.headRef) refs.head = input.headRef;
-  return refs;
-}
-
-function refsWithResolvedBase(refs, changedFiles) {
-  const base =
-    changedFiles && typeof changedFiles === "object" && typeof changedFiles.base === "string"
-      ? changedFiles.base
-      : "";
-  if (refs.base || refs.trunk || !base) return refs;
-  return { ...refs, base };
-}
-
-// The diff actions only return branch/staged/unstaged hunks; untracked-only contexts
-// are captured by changedFiles.
-
-function isRequestedHeadCurrent(status, input) {
-  if (!status || typeof status !== "object") return false;
-  const currentHeadSha = typeof status.headSha === "string" ? status.headSha : "";
-  const requestedHead = input && input.headRef ? input.headRef : "";
-  const requestedHeadSha =
-    typeof status.requestedHeadSha === "string"
-      ? status.requestedHeadSha
-      : requestedHead
-        ? ""
-        : currentHeadSha;
-  if (!currentHeadSha || !requestedHeadSha || currentHeadSha !== requestedHeadSha) return false;
-
-  if (!requestedHead || requestedHead === "HEAD") return true;
-
-  const currentBranch = typeof status.branch === "string" ? status.branch : "";
-  const currentBranchRef = currentBranch ? "refs/heads/" + currentBranch : "";
-  const requestedHeadRef =
-    typeof status.requestedHeadRef === "string" ? status.requestedHeadRef : "";
-  if (requestedHeadRef) return Boolean(currentBranchRef && requestedHeadRef === currentBranchRef);
-  if (currentBranch && (requestedHead === currentBranch || requestedHead === currentBranchRef)) {
-    return true;
-  }
-  return isGitCommitSha(requestedHead);
-}
-
-function isGitCommitSha(value) {
-  return /^[0-9a-f]{7,64}$/i.test(value);
-}
-
-function shouldSkipForUntrackedContent(input, gitContext) {
-  if (!hasUntrackedChanges(gitContext)) return false;
-  return input.target
-    ? targetNeedsUntrackedContent(input, gitContext)
-    : hasOnlyUntrackedChanges(gitContext);
-}
-
-function targetNeedsUntrackedContent(input, gitContext) {
-  if (!input.target) return true;
-  const target = normalizedPath(input.target);
-  if (!target) return false;
-  if (target === ".") return true;
-  return untrackedPaths(gitContext).some(function (path) {
-    const untracked = normalizedPath(path);
-    return untracked === target || untracked.startsWith(target + "/");
-  });
-}
-
-function untrackedPaths(gitContext) {
-  const paths = mux.utils
-    .asArray(gitContext.status && gitContext.status.untracked)
-    .concat(mux.utils.asArray(gitContext.changedFiles && gitContext.changedFiles.untracked))
-    .map(filePath)
-    .filter(Boolean);
-  return Array.from(new Set(paths));
-}
-
-function filePath(value) {
-  if (typeof value === "string") return value;
-  return value && typeof value.path === "string" ? value.path : "";
-}
-
-function normalizedPath(value) {
-  if (typeof value !== "string") return "";
-  const trimmed = value.trim().replace(/\\/g, "/");
-  if (trimmed === "." || trimmed === "./") return ".";
-  return trimmed.replace(/^\.\//, "").replace(/\/+$/, "");
-}
-
-function hasOnlyUntrackedChanges(gitContext) {
-  return (
-    hasUntrackedChanges(gitContext) &&
-    !hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.branch) &&
-    !hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) &&
-    !hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) &&
-    !hasText(gitContext.diff && gitContext.diff.branch) &&
-    !hasText(gitContext.diff && gitContext.diff.staged) &&
-    !hasText(gitContext.diff && gitContext.diff.unstaged)
-  );
-}
-
-function hasUntrackedChanges(gitContext) {
-  return (
-    hasArrayItems(gitContext.status && gitContext.status.untracked) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.untracked)
-  );
-}
-
-function hasUncommittedChanges(gitContext) {
-  return (
-    hasUncommittedStatus(gitContext.status) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.untracked)
-  );
-}
-
-function hasUncommittedStatus(status) {
-  return (
-    hasArrayItems(status && status.staged) ||
-    hasArrayItems(status && status.unstaged) ||
-    hasArrayItems(status && status.untracked)
+function renderInput(input) {
+  return JSON.stringify(
+    {
+      target: input.target || "current git changes",
+      baseRef: input.baseRef,
+      trunkRef: input.trunkRef,
+      headRef: input.headRef,
+      maxFindings: input.maxFindings,
+    },
+    null,
+    2
   );
 }
 
 function hasReviewableContext(input, gitContext) {
-  if (input.target) return true;
-  if (mux.utils.asArray(gitContext.failures).length > 0) return true;
-  if (!gitContext.status || gitContext.status.clean !== true) return true;
-  return (
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.branch) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.staged) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.unstaged) ||
-    hasArrayItems(gitContext.changedFiles && gitContext.changedFiles.untracked) ||
-    hasText(gitContext.diff && gitContext.diff.branch) ||
-    hasText(gitContext.diff && gitContext.diff.staged) ||
-    hasText(gitContext.diff && gitContext.diff.unstaged)
+  return Boolean(
+    input.target ||
+    gitContext.hasReviewableChanges ||
+    gitContext.diff ||
+    gitContext.files.length > 0 ||
+    gitContext.commits.length > 0
   );
 }
 
-function promptContexts(input, gitContext) {
-  const compactedGitContext = compactMetadata(gitContext);
-  const reviewDiff = compactDiff(gitContext.diff, REVIEW_DIFF_CHAR_BUDGET);
-  const reviewGitContext = { ...compactedGitContext, diff: reviewDiff };
-  const outputGitContext = {
-    ...compactedGitContext,
-    diff: diffSummary(gitContext.diff, reviewDiff),
-  };
+function skipFixResult(markdown, reason, mode, gitContext, reviews, synthesized, preflight) {
   return {
-    review: renderContext(input, reviewGitContext),
-    compact: renderContext(input, outputGitContext),
-    outputGitContext: outputGitContext,
+    reportMarkdown: markdown + "\n\n---\n\n## Simplify workflow result\n\n" + reason,
+    structuredOutput: {
+      mode,
+      gitContext,
+      reviews,
+      synthesis: synthesized,
+      fix: { preflight, fixer: null, applied: null },
+    },
   };
 }
 
-function renderContext(input, gitContext) {
-  return mux.utils.fencedJson({
-    input: { target: input.target, fix: input.fix, maxFindings: input.maxFindings },
-    gitContextSource: GIT_CONTEXT_SOURCE,
-    gitContext: gitContext,
-  });
-}
-
-function compactMetadata(gitContext) {
+function usageResult(error) {
+  const details = error ? "Error: " + error + "\n\n" : "";
   return {
-    ...gitContext,
-    status: compactStatus(gitContext.status),
-    changedFiles: compactChangedFiles(gitContext.changedFiles),
-    diffStat: compactDiffStat(gitContext.diffStat),
+    reportMarkdown:
+      "## Simplify workflow usage\n\n" +
+      details +
+      "Run `/workflow simplify [target] [--fix|--review-only] [--base REF] [--head REF] [--max-findings N]`. By default the workflow reviews and fixes current Git changes when safe.",
+    structuredOutput: { mode: "usage", error: error || "" },
   };
-}
-
-function compactStatus(status) {
-  return compactFields(status, STATUS_ARRAY_FIELDS, compactArray, METADATA_ARRAY_ITEM_BUDGET);
-}
-
-function compactChangedFiles(changedFiles) {
-  return compactFields(
-    changedFiles,
-    CHANGED_FILE_ARRAY_FIELDS,
-    compactArray,
-    METADATA_ARRAY_ITEM_BUDGET
-  );
-}
-
-function compactDiffStat(diffStat) {
-  return compactFields(diffStat, DIFF_FIELDS, mux.utils.compactText, DIFF_STAT_CHAR_BUDGET);
-}
-
-function compactFields(value, fields, compactor, limit) {
-  if (!value || typeof value !== "object") return value;
-  const compacted = { ...value };
-  fields.forEach(function (field) {
-    compacted[field] = compactor(value[field], limit);
-  });
-  return compacted;
-}
-
-function compactArray(value, limit) {
-  if (!Array.isArray(value) || value.length <= limit) return value;
-  return {
-    total: value.length,
-    shown: value.slice(0, limit),
-    omitted: value.length - limit,
-  };
-}
-
-function compactDiff(diff, budget) {
-  if (!diff || typeof diff !== "object") return diff;
-
-  const compacted = {
-    base: diff.base,
-    head: diff.head,
-    mergeBase: diff.mergeBase,
-    truncated: diff.truncated,
-    workflowBudgetChars: budget,
-    workflowCompactions: [],
-  };
-  let remaining = budget;
-
-  DIFF_FIELDS.forEach(function (field) {
-    const value = diff[field];
-    if (typeof value !== "string") {
-      compacted[field] = value;
-      return;
-    }
-
-    const included = Math.max(0, Math.min(value.length, remaining));
-    compacted[field] =
-      included === value.length ? value : value.slice(0, included) + diffOmittedMessage(field);
-    remaining -= included;
-    if (included < value.length) {
-      compacted.workflowCompactions.push({
-        field: field,
-        originalChars: value.length,
-        includedChars: included,
-      });
-    }
-  });
-
-  return compacted;
-}
-
-function diffSummary(diff, compactedDiff) {
-  if (!diff || typeof diff !== "object") return diff;
-  return {
-    base: diff.base,
-    head: diff.head,
-    mergeBase: diff.mergeBase,
-    truncated: diff.truncated,
-    workflowBudgetChars: compactedDiff && compactedDiff.workflowBudgetChars,
-    workflowCompactions: compactedDiff ? mux.utils.asArray(compactedDiff.workflowCompactions) : [],
-    chars: diffFieldLengths(diff),
-  };
-}
-
-function diffFieldLengths(diff) {
-  const lengths = {};
-  DIFF_FIELDS.forEach(function (field) {
-    lengths[field] = stringLength(diff[field]);
-  });
-  return lengths;
-}
-
-function diffOmittedMessage(field) {
-  return (
-    "\n\n[Workflow prompt budget omitted the rest of the " +
-    field +
-    " diff. Inspect the file directly before making claims about omitted hunks.]"
-  );
-}
-
-function reviewPrompt(lane, input, reviewContext) {
-  return [
-    READ_ONLY_PROMPT,
-    "You are the " + lane.title + " lane. Review every changed file in the supplied Git context.",
-    "If an explicit target is provided and the Git diff is empty, inspect that target path in the workspace before making claims.",
-    "Diff text is capped by workflowBudgetChars; if workflowCompactions or built-in truncated flags are present, inspect files directly before making claims about omitted hunks.",
-    "Untracked paths in Git metadata are names only. Do not make findings about untracked files unless their contents are visible in a diff or explicit target.",
-    "Allowed severity values are: high, medium, low. Return high-signal, actionable findings only; an empty findings array is fine.",
-    "The synthesis step will keep at most " +
-      input.maxFindings +
-      " actionable findings. Use stable finding ids and arrays for filePaths/evidence.",
-    "Lane checklist:\n- " + lane.instructions.join("\n- "),
-    GIT_CONTEXT_PROVENANCE_NOTE,
-    "Review context:\n" + reviewContext,
-  ].join("\n\n");
-}
-
-function synthesisPrompt(input, compactContext, reviewOutputs) {
-  return [
-    READ_ONLY_PROMPT,
-    "Deduplicate and triage these simplify review findings. Keep actionableFindings to the " +
-      input.maxFindings +
-      " highest-value issues.",
-    "Do not edit files in this step. Produce triage and fix plans for the later fixer step. If a finding is false positive or not worth addressing, put it in skippedFindings without debating it.",
-    "Allowed severity values are: high, medium, low. Prefer minimal cleanup over broad refactors.",
-    GIT_CONTEXT_PROVENANCE_NOTE,
-    "Compact review context without raw diff text:\n" + compactContext,
-    "Compacted lane outputs:\n" + mux.utils.fencedJson(compactReviewOutputs(reviewOutputs)),
-  ].join("\n\n");
-}
-
-function fixPrompt(compactContext, synthesized) {
-  return [
-    "Fix the actionable simplify findings with minimal, correct, reviewable changes. Do not push or open a PR.",
-    "If you change files, create one local commit containing only those changes so the workflow can export a patch artifact.",
-    "Use the compact context for file lists and diff metadata; inspect files directly instead of relying on raw diff text being embedded in this prompt.",
-    "Preserve existing style and functionality. Run targeted validation for touched code when feasible and report exact commands/results.",
-    "If a finding is false positive or not worth addressing, skip it and note why. Set madeChanges true only when files changed.",
-    GIT_CONTEXT_PROVENANCE_NOTE,
-    "Compact review context:\n" + compactContext,
-    "Actionable findings:\n" + mux.utils.fencedJson(fixerPayload(synthesized)),
-  ].join("\n\n");
-}
-
-function compactReviewOutputs(reviewOutputs) {
-  return reviewOutputs.map(function (output) {
-    return {
-      summary: output.summary,
-      findings: output.findings.map(compactReviewFinding),
-    };
-  });
-}
-
-function compactReviewFinding(finding) {
-  const evidence = finding.evidence;
-  return {
-    id: finding.id,
-    title: finding.title,
-    severity: finding.severity,
-    filePaths: finding.filePaths,
-    rationale: finding.rationale,
-    recommendation: finding.recommendation,
-    evidenceCount: evidence.length,
-    evidenceSamples: evidence.slice(0, REVIEW_EVIDENCE_ITEM_BUDGET).map(function (evidenceItem) {
-      return mux.utils.compactText(evidenceItem, REVIEW_EVIDENCE_CHAR_BUDGET);
-    }),
-  };
-}
-
-function fixerPayload(synthesized) {
-  return {
-    summary: synthesized.summary,
-    shouldFix: synthesized.shouldFix,
-    actionableFindings: synthesized.actionableFindings,
-    validationPlan: synthesized.validationPlan,
-  };
-}
-
-function parseArgs(args) {
-  const raw = args && typeof args === "object" ? args : {};
-  const input = {
-    help: Boolean(raw.help),
-    fix: raw.fix !== false && raw.reviewOnly !== true,
-    target: text(raw.target),
-    baseRef: text(raw.baseRef || raw.base),
-    trunkRef: text(raw.trunkRef || raw.trunk),
-    headRef: text(raw.headRef || raw.head),
-    maxFindings: mux.utils.boundedInt(
-      raw.maxFindings,
-      DEFAULT_MAX_FINDINGS,
-      1,
-      Number.MAX_SAFE_INTEGER
-    ),
-  };
-  const tokenized = tokenize(String(raw.input || ""));
-  if (tokenized.error) return { input: input, error: tokenized.error };
-
-  const targetParts = [];
-  let index = 0;
-  while (index < tokenized.tokens.length) {
-    const token = tokenized.tokens[index];
-    const valueFlag = parseValueFlag(tokenized.tokens, index);
-    if (token === "--help" || token === "-h") input.help = true;
-    else if (token === "--review-only" || token === "--no-fix") input.fix = false;
-    else if (token === "--fix") input.fix = true;
-    else if (valueFlag && valueFlag.error) return { input: input, error: valueFlag.error };
-    else if (valueFlag) {
-      input[valueFlag.key] =
-        valueFlag.key === "maxFindings"
-          ? mux.utils.boundedInt(valueFlag.value, DEFAULT_MAX_FINDINGS, 1, Number.MAX_SAFE_INTEGER)
-          : valueFlag.value;
-      index = valueFlag.nextIndex;
-      continue;
-    } else targetParts.push(token);
-    index += 1;
-  }
-
-  if (!input.target) input.target = targetParts.join(" ").trim();
-  return { input: input, error: "" };
-}
-
-function parseValueFlag(tokens, index) {
-  const token = tokens[index];
-  for (let flagIndex = 0; flagIndex < VALUE_FLAGS.length; flagIndex += 1) {
-    const flag = VALUE_FLAGS[flagIndex];
-    if (token === flag.name) {
-      if (index + 1 >= tokens.length) return { error: flag.name + " requires a value" };
-      return { key: flag.key, value: tokens[index + 1], nextIndex: index + 2 };
-    }
-    if (token.startsWith(flag.name + "=")) {
-      const value = token.slice(flag.name.length + 1);
-      if (!value) return { error: flag.name + " requires a value" };
-      return { key: flag.key, value: value, nextIndex: index + 1 };
-    }
-  }
-  return null;
-}
-
-function tokenize(input) {
-  const tokens = [];
-  let current = "";
-  let quote = "";
-  let escaped = false;
-  for (let index = 0; index < input.length; index += 1) {
-    const char = input[index];
-    if (escaped) {
-      current += char;
-      escaped = false;
-    } else if (quote && char === "\\") {
-      const next = input[index + 1];
-      if (next === "\\" || (next === quote && !isClosingQuote(input, index + 1))) {
-        escaped = true;
-      } else current += char;
-    } else if (quote) {
-      if (char === quote) quote = "";
-      else current += char;
-    } else if (char === '"' || char === "'") {
-      quote = char;
-    } else if (/\s/.test(char)) {
-      if (current) tokens.push(current);
-      current = "";
-    } else current += char;
-  }
-  if (quote) return { tokens: tokens, error: "unterminated quoted argument" };
-  if (escaped) current += "\\";
-  if (current) tokens.push(current);
-  return { tokens: tokens, error: "" };
-}
-
-function isClosingQuote(input, quoteIndex) {
-  return quoteIndex + 1 >= input.length || /\s/.test(input[quoteIndex + 1]);
 }
 
 function reviewOnlyReport(input, markdown) {
@@ -925,59 +364,277 @@ function fixReport(synthesisMarkdown, fixerMarkdown, applied) {
     "\n\n### Patch application\n\n- Status: " +
     status +
     "\n- Success: " +
-    String(success)
+    (success ? "yes" : "no") +
+    (applied && applied.error ? "\n- Error: " + applied.error : "")
   );
 }
 
-function usageResult(error) {
-  const lines = [
-    "# simplify workflow",
-    "",
-    "Review current git changes for code reuse, quality, efficiency, and polish, then fix actionable issues.",
-    "",
-    "## Usage",
-    "",
-    "- `/workflow simplify` — review current git changes and apply fixes.",
-    "- `/workflow simplify --review-only` — review and synthesize findings without applying fixes.",
-    "- `/workflow simplify --base main --head HEAD` — review a specific ref range.",
-    "- `/workflow simplify path/or/context` — provide an explicit target when there are no Git changes.",
-    "",
-    "## Options",
-    "",
-    "- `--review-only` / `--no-fix`",
-    "- `--fix`",
-    "- `--base <ref>`",
-    "- `--trunk <ref>`",
-    "- `--head <ref>`",
-    "- `--max-findings <n>`",
-  ];
-  if (error) lines.splice(2, 0, "", "**Argument error:** " + error);
+function reviewSchema() {
+  return SCHEMA.object(
+    { summary: SCHEMA.string(), findings: SCHEMA.array(findingSchema()) },
+    { additionalProperties: false }
+  );
+}
+
+function findingSchema() {
+  return SCHEMA.object(
+    {
+      id: SCHEMA.string(),
+      title: SCHEMA.string(),
+      severity: SCHEMA.enum(["high", "medium", "low"]),
+      filePaths: SCHEMA.array(SCHEMA.string()),
+      rationale: SCHEMA.string(),
+      recommendation: SCHEMA.string(),
+      evidence: SCHEMA.array(SCHEMA.string()),
+    },
+    { additionalProperties: false }
+  );
+}
+
+function synthesisSchema() {
+  return SCHEMA.object(
+    {
+      summary: SCHEMA.string(),
+      shouldFix: SCHEMA.boolean(),
+      actionableFindings: SCHEMA.array(
+        SCHEMA.object(
+          {
+            id: SCHEMA.string(),
+            title: SCHEMA.string(),
+            severity: SCHEMA.enum(["high", "medium", "low"]),
+            filePaths: SCHEMA.array(SCHEMA.string()),
+            rationale: SCHEMA.string(),
+            fixPlan: SCHEMA.string(),
+          },
+          { additionalProperties: false }
+        )
+      ),
+      skippedFindings: SCHEMA.array(
+        SCHEMA.object(
+          { id: SCHEMA.string(), title: SCHEMA.string(), reason: SCHEMA.string() },
+          { additionalProperties: false }
+        )
+      ),
+      validationPlan: SCHEMA.array(SCHEMA.string()),
+    },
+    { additionalProperties: false }
+  );
+}
+
+function fixerSchema() {
+  return SCHEMA.object(
+    {
+      madeChanges: SCHEMA.boolean(),
+      fixedFindingIds: SCHEMA.array(SCHEMA.string()),
+      skippedFindings: SCHEMA.array(
+        SCHEMA.object(
+          { id: SCHEMA.string(), reason: SCHEMA.string() },
+          { additionalProperties: false }
+        )
+      ),
+      validation: SCHEMA.array(
+        SCHEMA.object(
+          { command: SCHEMA.string(), status: SCHEMA.string(), summary: SCHEMA.string() },
+          { additionalProperties: false }
+        )
+      ),
+    },
+    { additionalProperties: false }
+  );
+}
+
+function gitContextSchema() {
+  return SCHEMA.object(
+    {
+      status: SCHEMA.object(
+        {
+          branch: SCHEMA.string(),
+          upstream: SCHEMA.string(),
+          headSha: SCHEMA.string(),
+          clean: SCHEMA.boolean(),
+          staged: SCHEMA.array(SCHEMA.string()),
+          unstaged: SCHEMA.array(SCHEMA.string()),
+          untracked: SCHEMA.array(SCHEMA.string()),
+        },
+        { additionalProperties: false }
+      ),
+      files: SCHEMA.array(SCHEMA.string()),
+      diffStat: SCHEMA.string(),
+      diff: SCHEMA.string(),
+      commits: SCHEMA.array(SCHEMA.string()),
+      failures: SCHEMA.array(SCHEMA.object({ name: SCHEMA.string(), error: SCHEMA.string() })),
+      hasReviewableChanges: SCHEMA.boolean(),
+    },
+    { additionalProperties: false }
+  );
+}
+
+function preflightSchema() {
+  return SCHEMA.object(
+    {
+      ok: SCHEMA.boolean(),
+      reason: SCHEMA.string(),
+      branch: SCHEMA.string(),
+      headSha: SCHEMA.string(),
+      expectedHeadSha: SCHEMA.string(),
+      clean: SCHEMA.boolean(),
+      staged: SCHEMA.array(SCHEMA.string()),
+      unstaged: SCHEMA.array(SCHEMA.string()),
+      untracked: SCHEMA.array(SCHEMA.string()),
+    },
+    { additionalProperties: false }
+  );
+}
+
+function emptySynthesis(summary) {
   return {
-    reportMarkdown: lines.join("\n"),
-    structuredOutput: { help: true, error: error || "" },
+    summary,
+    shouldFix: false,
+    actionableFindings: [],
+    skippedFindings: [],
+    validationPlan: [],
+  };
+}
+
+function parseArgs(args) {
+  const raw = args && typeof args === "object" ? args : {};
+  const parsedText = parseTextArgs(typeof args === "string" ? args : text(raw.input));
+  if (parsedText.error) {
+    return { input: defaultInput(raw), error: parsedText.error };
+  }
+  const merged = Object.assign({}, raw, parsedText.values);
+  const input = defaultInput(merged);
+  if (!input.target) input.target = parsedText.target;
+  return { input, error: "" };
+}
+
+function defaultInput(raw) {
+  return {
+    help: Boolean(raw.help),
+    fix: raw.fix !== false && raw.reviewOnly !== true,
+    target: text(raw.target),
+    baseRef: text(raw.baseRef || raw.base),
+    trunkRef: text(raw.trunkRef || raw.trunk),
+    headRef: text(raw.headRef || raw.head),
+    maxFindings: boundedInt(raw.maxFindings, DEFAULT_MAX_FINDINGS, 1, Number.MAX_SAFE_INTEGER),
+  };
+}
+
+function parseTextArgs(value) {
+  const tokens = String(value || "")
+    .split(/\s+/)
+    .filter(Boolean);
+  const values = {};
+  const target = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "--help" || token === "-h") values.help = true;
+    else if (token === "--review-only" || token === "--no-fix") values.fix = false;
+    else if (token === "--fix") values.fix = true;
+    else if (
+      token === "--base" ||
+      token === "--trunk" ||
+      token === "--head" ||
+      token === "--max-findings"
+    ) {
+      index += 1;
+      if (index >= tokens.length)
+        return { values, target: target.join(" "), error: token + " requires a value" };
+      const key =
+        token === "--base"
+          ? "baseRef"
+          : token === "--trunk"
+            ? "trunkRef"
+            : token === "--head"
+              ? "headRef"
+              : "maxFindings";
+      values[key] = tokens[index];
+    } else target.push(token);
+  }
+  return { values, target: target.join(" "), error: "" };
+}
+
+function boundedInt(value, fallback, min, max) {
+  const number =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isInteger(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function compactText(value, limit) {
+  const textValue = typeof value === "string" ? value : "";
+  if (textValue.length <= limit) return textValue;
+  return (
+    textValue.slice(0, limit) + "\n[truncated by simplify workflow after " + limit + " characters]"
+  );
+}
+
+function property(name) {
+  return function (value) {
+    return value[name];
   };
 }
 
 function text(value) {
-  return typeof value === "string" ? value.trim() : "";
+  return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
-function hasArrayItems(value) {
-  return Array.isArray(value) && value.length > 0;
+function workflowSchema() {
+  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
+  function withOptions(schema, options) {
+    return options && typeof options === "object" && !Array.isArray(options)
+      ? Object.assign(schema, options)
+      : schema;
+  }
+  function optional(schema) {
+    const clone = Object.assign({}, schema || {});
+    Object.defineProperty(clone, "__muxOptional", { value: true });
+    return clone;
+  }
+  function isOptional(schema) {
+    return Boolean(schema && schema.__muxOptional === true);
+  }
+  return {
+    string: function (options) {
+      return withOptions({ type: "string" }, options);
+    },
+    integer: function (options) {
+      return withOptions({ type: "integer" }, options);
+    },
+    boolean: function (options) {
+      return withOptions({ type: "boolean" }, options);
+    },
+    array: function (items, options) {
+      return withOptions({ type: "array", items }, options);
+    },
+    enum: function (values, options) {
+      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
+    },
+    optional,
+    object: function (properties, options) {
+      const sourceProperties = properties || {};
+      const keys = Object.keys(sourceProperties);
+      const cleanProperties = {};
+      const required = [];
+      for (const key of keys) {
+        const schema = sourceProperties[key];
+        cleanProperties[key] = isOptional(schema) ? Object.assign({}, schema) : schema;
+        if (!isOptional(schema)) required.push(key);
+      }
+      const objectSchema = { type: "object", required, properties: cleanProperties };
+      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
+        objectSchema.additionalProperties = options.additionalProperties;
+      }
+      return objectSchema;
+    },
+  };
 }
 
-function hasText(value) {
-  return stringLength(value) > 0;
-}
-
-function stringLength(value) {
-  return typeof value === "string" ? value.length : 0;
-}
-
-function formatError(error) {
-  return error && typeof error.message === "string" ? error.message : String(error);
-}
-
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
+function workflowUtils() {
+  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
+  return {
+    asArray: function (value) {
+      return Array.isArray(value) ? value : [];
+    },
+  };
 }

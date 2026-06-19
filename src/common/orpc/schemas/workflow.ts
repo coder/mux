@@ -35,42 +35,8 @@ export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   ])
 );
 
-export const WorkflowActionScopeSchema = z.enum(["project", "global", "built-in"]);
-
-export const WorkflowActionEffectSchema = z.enum(["read", "workspace", "external"]);
-
-export const WorkflowActionMetadataSchema = z.object({
-  version: z.union([z.number().int().positive(), z.string().min(1)]),
-  description: z.string().min(1).max(1024),
-  effect: WorkflowActionEffectSchema,
-  inputSchema: JsonValueSchema.optional(),
-  outputSchema: JsonValueSchema.optional(),
-  permissions: JsonValueSchema.optional(),
-  timeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .max(24 * 60 * 60 * 1000)
-    .optional(),
-});
-
-const WorkflowActionDescriptorBaseSchema = z.object({
-  name: z.string().min(1),
-  scope: WorkflowActionScopeSchema,
-  sourcePath: z.string().min(1),
-});
-
-export const WorkflowActionDescriptorSchema = z.discriminatedUnion("executable", [
-  WorkflowActionDescriptorBaseSchema.extend({
-    executable: z.literal(true),
-    metadata: WorkflowActionMetadataSchema,
-    hasReconcile: z.boolean(),
-  }).strict(),
-  WorkflowActionDescriptorBaseSchema.extend({
-    executable: z.literal(false),
-    blockedReason: z.string().min(1),
-  }).strict(),
-]);
+// Kept only so older workflow run records with legacy host-step events remain parseable.
+const LegacyWorkflowHostStepEffectSchema = z.enum(["read", "workspace", "external"]);
 
 export const WorkflowDefinitionMetadataSchema = z.record(z.string(), JsonValueSchema);
 
@@ -173,7 +139,7 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
     stepId: z.string().min(1),
     name: z.string().min(1),
     status: z.enum(["started", "completed", "failed", "cached", "reconciled"]),
-    effect: WorkflowActionEffectSchema,
+    effect: LegacyWorkflowHostStepEffectSchema,
     sourcePath: z.string().min(1).optional(),
     sourceHash: z.string().min(1).optional(),
     details: JsonValueSchema.optional(),
@@ -268,7 +234,6 @@ export const WorkflowRunRecordSchema = z.object({
   definitionHash: z.string().min(1),
   args: JsonValueSchema,
   agentOutputSchemaRequired: z.boolean().optional(),
-  defaultActionCwd: z.string().min(1).optional(),
   parentWorkflow: WorkflowRunParentSchema.optional(),
   status: WorkflowRunStatusSchema,
   createdAt: IsoDateTimeSchema,

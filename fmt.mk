@@ -6,7 +6,7 @@
 .PHONY: fmt fmt-check fmt-prettier fmt-prettier-check fmt-shell fmt-shell-check fmt-nix fmt-nix-check fmt-python fmt-python-check fmt-sync-docs fmt-sync-docs-check update-flake-hash flake-hash-check
 
 # Centralized patterns - single source of truth
-PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'src/node/builtinWorkflows/*.js' 'src/node/builtinWorkflowActions/**/*.js' 'src/node/workflowRuntime/*.js' 'mobile/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.mdx' 'package.json' 'tsconfig*.json' 'README.md'
+PRETTIER_PATTERNS := 'src/**/*.{ts,tsx,json}' 'src/node/builtinWorkflows/*.js' 'src/node/workflowRuntime/*.js' 'mobile/**/*.{ts,tsx,json}' 'tests/**/*.ts' 'docs/**/*.mdx' 'package.json' 'tsconfig*.json' 'README.md'
 SHELL_SCRIPTS := scripts
 PYTHON_DIRS := benchmarks
 
@@ -115,12 +115,10 @@ fmt-sync-docs:
 	@bun scripts/gen_docs.ts
 	@bun scripts/gen_builtin_skills.ts --sync-mux-docs-skill
 	@bun scripts/gen_builtin_workflows.ts
-	@bun scripts/gen_builtin_workflow_actions.ts
 	@bun scripts/gen_workflow_runtime_sources.ts
 
 fmt-sync-docs-check:
 	@bun scripts/gen_docs.ts check
 	@bun scripts/gen_builtin_skills.ts check --sync-mux-docs-skill
 	@bun scripts/gen_builtin_workflows.ts check
-	@bun scripts/gen_builtin_workflow_actions.ts check
 	@bun scripts/gen_workflow_runtime_sources.ts check

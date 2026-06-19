@@ -569,7 +569,6 @@ async function main(): Promise<number> {
     extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
     // Session config lives in tempDir (deleted on exit) — disable workspace.*
     // host actions so workflows can't create worktrees whose tags evaporate.
-    ephemeralConfigRoot: true,
     mcpConfig: realConfig,
     mcpServerManagerOptions: {
       inlineServers,

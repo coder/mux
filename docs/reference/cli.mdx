@@ -140,8 +140,8 @@ Run durable workflow definitions from the command line without opening the deskt
 <Note>
   `mux workflow` is experimental. Invoking the command implicitly enables the `dynamic-workflows`
   experiment for that invocation only. The initial CLI runner supports the `local` runtime only;
-  `worktree`, SSH, Docker, and devcontainer workflow execution are blocked until their
-  workflow/action isolation and cleanup semantics are implemented.
+  `worktree`, SSH, Docker, and devcontainer workflow execution are blocked until their workflow
+  isolation and cleanup semantics are implemented.
 </Note>
 
 ```bash
@@ -149,13 +149,13 @@ Run durable workflow definitions from the command line without opening the deskt
 mux workflow list
 
 # Inspect a workflow and include its source
-mux workflow show deep-review-workflow --source
+mux workflow show deep-research --source
 
 # Run with positional text, mapped to { "input": "research workflow runners" }
 mux workflow run deep-research "research workflow runners"
 
 # Run with structured JSON args and machine-readable output
-mux workflow run deep-review-workflow --args-json '{"base":"main"}' --json
+mux workflow run deep-research --args-json '{"input":"workflow runners"}' --json
 
 # Same as above, using the alias
 mux wf run deep-research "research workflow runners"

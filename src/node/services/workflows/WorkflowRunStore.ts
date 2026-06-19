@@ -49,7 +49,6 @@ export interface CreateWorkflowRunInput {
   definition: WorkflowDefinitionDescriptor;
   definitionSource: string;
   args: unknown;
-  defaultActionCwd?: string;
   agentOutputSchemaRequired?: boolean;
   parentWorkflow?: WorkflowRunParent;
   now: string;
@@ -115,7 +114,6 @@ export class WorkflowRunStore {
       definitionHash: hashSource(input.definitionSource),
       args: input.args,
       agentOutputSchemaRequired: input.agentOutputSchemaRequired ?? true,
-      ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
       ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
       status: "pending",
       createdAt: input.now,
@@ -171,7 +169,6 @@ export class WorkflowRunStore {
           definitionHash: hashSource(input.definitionSource),
           args: input.args,
           agentOutputSchemaRequired: input.agentOutputSchemaRequired ?? true,
-          ...(input.defaultActionCwd != null ? { defaultActionCwd: input.defaultActionCwd } : {}),
           ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
           status: "pending",
           createdAt: input.now,

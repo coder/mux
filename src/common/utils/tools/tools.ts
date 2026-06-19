@@ -43,7 +43,6 @@ import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
 import {
-  createWorkflowActionListTool,
   createWorkflowListTool,
   createWorkflowReadTool,
 } from "@/node/services/tools/workflow_definitions";
@@ -182,7 +181,6 @@ export interface ToolConfiguration {
       args?: unknown[];
       sourceStats?: { chars: number; lines: number };
     }>;
-    listActions?(options: { projectTrusted: boolean }): Promise<unknown[]>;
     getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
     listRuns?(input: { workspaceId: string }): Promise<unknown[]>;
     startNamedWorkflowInBackground?(input: {
@@ -586,7 +584,6 @@ export async function getToolsForModel(
       ? {
           workflow_list: createWorkflowListTool(config),
           workflow_read: createWorkflowReadTool(config),
-          workflow_action_list: createWorkflowActionListTool(config),
           workflow_run: createWorkflowRunTool(config),
           workflow_resume: createWorkflowResumeTool(config),
         }

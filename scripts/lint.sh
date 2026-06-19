@@ -22,12 +22,11 @@ if [ -n "$PNG_FILES" ]; then
   exit 1
 fi
 
-# Workflow/action/runtime sources are executable JS embedded into the app; lint them
+# Workflow runtime sources are executable JS embedded into the app; lint them
 # alongside the TS sources (they get dedicated non-type-aware config blocks).
 ESLINT_PATTERNS=(
   'src/**/*.{ts,tsx}'
   'src/node/builtinWorkflows/*.js'
-  'src/node/builtinWorkflowActions/**/*.js'
   'src/node/workflowRuntime/*.js'
 )
 

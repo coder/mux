@@ -21,7 +21,6 @@ try {
   // themselves are excluded from the main-process program). No-op when in sync.
   for (const command of [
     "bun scripts/gen_builtin_workflows.ts",
-    "bun scripts/gen_builtin_workflow_actions.ts",
     "bun scripts/gen_workflow_runtime_sources.ts",
   ]) {
     execSync(command, {

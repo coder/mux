@@ -19,7 +19,6 @@ const OUTPUT_PATH = path.join(
 
 const SOURCES = [
   ["WORKFLOW_RUNTIME_STDLIB_SOURCE", "workflowRuntimeStdlib.js"],
-  ["WORKFLOW_ACTION_CHILD_SOURCE", "workflowActionChild.js"],
 ] as const;
 
 function normalizeNewlines(input: string): string {

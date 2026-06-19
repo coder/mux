@@ -133,9 +133,6 @@ describe("router workflow routes", () => {
       config,
       aiService: {
         waitForInit: mock(async () => undefined),
-        // No workspace.* host actions wired in this fixture; resolveWorkflowContext
-        // tolerates undefined (actions fall through to their throwing stubs).
-        getWorkflowHostActions: mock(() => undefined),
         getWorkspaceMetadata: mock(async () => ({
           success: true,
           data: {

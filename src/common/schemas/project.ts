@@ -126,7 +126,7 @@ export const WorkspaceConfigSchema = z.object({
     .optional()
     .meta({
       description:
-        "Programmatic key/value tags (e.g. workItemKey) set via API/CLI/workflow actions; " +
+        "Programmatic key/value tags (e.g. workItemKey) set via API/CLI/workflows; " +
         "not rendered in the UI. Stable identity for orchestration loops, unlike title/name.",
     }),
   workflowTask: WorkflowTaskMetadataSchema.optional().meta({
