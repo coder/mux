@@ -3,7 +3,10 @@ import { describe, expect, mock, test } from "bun:test";
 import { Ok } from "@/common/types/result";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type { WorkspaceHeartbeatToolService } from "@/common/utils/tools/tools";
+import type {
+  WorkspaceHeartbeatSettingsUpdate,
+  WorkspaceHeartbeatToolService,
+} from "@/common/utils/tools/tools";
 import { HEARTBEAT_DEFAULT_CONTEXT_MODE } from "@/constants/heartbeat";
 import { createHeartbeatTool } from "./heartbeat";
 import { createTestToolConfig, mockToolCallOptions, TestTempDir } from "./testHelpers";
@@ -20,17 +23,26 @@ function createService(initial: WorkspaceHeartbeatSettings | null = null): {
       expect(workspaceId).toBe("ws-heartbeat");
       return stored;
     }),
-    setHeartbeatSettings: mock((workspaceId: string, settings: WorkspaceHeartbeatSettings) => {
-      expect(workspaceId).toBe("ws-heartbeat");
-      stored = settings;
-      return Promise.resolve(Ok(undefined));
-    }),
+    setHeartbeatSettings: mock(
+      (workspaceId: string, settings: WorkspaceHeartbeatSettingsUpdate) => {
+        expect(workspaceId).toBe("ws-heartbeat");
+        const hasMessageUpdate = Object.prototype.hasOwnProperty.call(settings, "message");
+        const nextMessage = hasMessageUpdate ? settings.message?.trim() : stored?.message;
+        stored = {
+          enabled: settings.enabled ?? stored?.enabled ?? true,
+          intervalMs: settings.intervalMs ?? stored?.intervalMs ?? 15 * 60 * 1000,
+          contextMode:
+            settings.contextMode ?? stored?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE,
+          ...(nextMessage ? { message: nextMessage } : {}),
+        };
+        return Promise.resolve(Ok(stored));
+      }
+    ),
     unsetHeartbeatSettings: mock((workspaceId: string) => {
       expect(workspaceId).toBe("ws-heartbeat");
       stored = null;
       return Promise.resolve(Ok(undefined));
     }),
-    getHeartbeatDefaultIntervalMs: mock(() => 15 * 60 * 1000),
   };
   return { service, getStored: () => stored };
 }
@@ -101,7 +113,6 @@ describe("heartbeat tool", () => {
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       contextMode: "reset",
-      message: "",
     });
   });
 

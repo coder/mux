@@ -1,14 +1,11 @@
 import { tool } from "ai";
 import assert from "@/common/utils/assert";
-import type { ToolFactory } from "@/common/utils/tools/tools";
+import type { ToolFactory, WorkspaceHeartbeatSettingsUpdate } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
-import {
-  HEARTBEAT_DEFAULT_CONTEXT_MODE,
-  HEARTBEAT_MAX_INTERVAL_MS,
-  HEARTBEAT_MIN_INTERVAL_MS,
-} from "@/constants/heartbeat";
+import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import { requireWorkspaceId } from "./toolUtils";
 
 function hasProvided<K extends keyof HeartbeatToolArgs>(
   args: HeartbeatToolArgs,
@@ -60,8 +57,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
     inputSchema: TOOL_DEFINITIONS.heartbeat.schema,
     execute: async (args): Promise<HeartbeatToolResult> => {
       try {
-        const workspaceId = config.workspaceId;
-        assert(workspaceId, "heartbeat tool requires workspaceId");
+        const workspaceId = requireWorkspaceId(config, "heartbeat");
 
         const heartbeatService = config.workspaceHeartbeatService;
         if (!heartbeatService) {
@@ -84,46 +80,39 @@ export const createHeartbeatTool: ToolFactory = (config) =>
           if (!unsetResult.success) {
             return { success: false, error: unsetResult.error };
           }
-          const settings = heartbeatService.getHeartbeatSettings(workspaceId);
           return {
             success: true,
             action: args.action,
-            configured: settings != null,
-            settings,
-            summary: summarize({ action: args.action, settings }),
+            configured: false,
+            settings: null,
+            summary: summarize({ action: args.action, settings: null }),
           };
         }
 
-        const currentSettings = heartbeatService.getHeartbeatSettings(workspaceId);
-        const defaultIntervalMs = heartbeatService.getHeartbeatDefaultIntervalMs();
-        assert(
-          Number.isInteger(defaultIntervalMs) &&
-            defaultIntervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
-            defaultIntervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
-          "heartbeat default interval must be within supported bounds"
-        );
+        const settingsUpdate: WorkspaceHeartbeatSettingsUpdate = {};
+        if (hasProvided(args, "enabled")) {
+          settingsUpdate.enabled = args.enabled;
+        }
+        if (hasProvided(args, "intervalMs")) {
+          settingsUpdate.intervalMs = args.intervalMs;
+        }
+        if (hasProvided(args, "contextMode")) {
+          settingsUpdate.contextMode = args.contextMode;
+        }
+        if (hasProvided(args, "message")) {
+          settingsUpdate.message = args.message;
+        }
 
-        const nextSettings = {
-          enabled: hasProvided(args, "enabled") ? args.enabled : (currentSettings?.enabled ?? true),
-          intervalMs: hasProvided(args, "intervalMs")
-            ? args.intervalMs
-            : (currentSettings?.intervalMs ?? defaultIntervalMs),
-          contextMode: hasProvided(args, "contextMode")
-            ? args.contextMode
-            : (currentSettings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE),
-          ...(hasProvided(args, "message") ? { message: args.message } : {}),
-        };
-
-        const setResult = await heartbeatService.setHeartbeatSettings(workspaceId, nextSettings);
+        const setResult = await heartbeatService.setHeartbeatSettings(workspaceId, settingsUpdate);
         if (!setResult.success) {
           return { success: false, error: setResult.error };
         }
 
-        const settings = heartbeatService.getHeartbeatSettings(workspaceId);
+        const settings = setResult.data;
         return {
           success: true,
           action: args.action,
-          configured: settings != null,
+          configured: true,
           settings,
           summary: summarize({ action: args.action, settings }),
         };

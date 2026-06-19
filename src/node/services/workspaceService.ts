@@ -8,7 +8,7 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
-import type { Workspace } from "@/common/types/project";
+import type { ProjectsConfig, Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { normalizeTaskSettings } from "@/common/types/tasks";
@@ -265,7 +265,13 @@ const AUTO_NEW_WORKSPACE_BASE_NAME = "workspace";
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
 type WorkspaceHeartbeatSettings = z.infer<typeof WorkspaceHeartbeatSettingsSchema>;
+type WorkspaceHeartbeatSettingsUpdate = Partial<WorkspaceHeartbeatSettings>;
 type WorkspaceGoalDefaultsOverride = z.infer<typeof WorkspaceGoalDefaultsOverrideSchema>;
+interface HeartbeatWorkspaceConfigEntry {
+  normalizedWorkspaceId: string;
+  config: ProjectsConfig;
+  workspaceEntry: Workspace;
+}
 interface HeartbeatExecutionRequest {
   contextMode: HeartbeatContextMode;
   sendOptions: SendMessageOptions;
@@ -420,6 +426,22 @@ function isHeartbeatContextMode(value: unknown): value is HeartbeatContextMode {
 
 function sanitizeHeartbeatContextMode(value: unknown): HeartbeatContextMode {
   return isHeartbeatContextMode(value) ? value : HEARTBEAT_DEFAULT_CONTEXT_MODE;
+}
+
+function normalizeHeartbeatSettings(
+  settings: WorkspaceHeartbeatSettings | null | undefined
+): WorkspaceHeartbeatSettings | null {
+  if (!settings) {
+    return null;
+  }
+
+  const message = sanitizeHeartbeatMessage(settings.message);
+  return {
+    enabled: settings.enabled,
+    intervalMs: settings.intervalMs,
+    contextMode: sanitizeHeartbeatContextMode(settings.contextMode),
+    ...(message != null ? { message } : {}),
+  };
 }
 
 interface WorkspaceAgentStatus {
@@ -3975,39 +3997,44 @@ export class WorkspaceService extends EventEmitter {
     return this.enrichMaybeFrontendMetadata(found);
   }
 
-  getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null {
+  private resolveHeartbeatWorkspaceEntry(
+    workspaceId: string,
+    methodName: "getHeartbeatSettings" | "setHeartbeatSettings" | "unsetHeartbeatSettings"
+  ): Result<HeartbeatWorkspaceConfigEntry, string> {
     const normalizedWorkspaceId = workspaceId.trim();
-    assert(
-      normalizedWorkspaceId.length > 0,
-      "getHeartbeatSettings requires a non-empty workspaceId"
-    );
+    assert(normalizedWorkspaceId.length > 0, `${methodName} requires a non-empty workspaceId`);
 
     const found = this.config.findWorkspace(normalizedWorkspaceId);
     if (!found) {
-      return null;
+      return Err("Workspace not found");
     }
 
     const config = this.config.loadConfigOrDefault();
     const projectConfig = config.projects.get(found.projectPath);
+    if (!projectConfig) {
+      return Err(`Project not found: ${found.projectPath}`);
+    }
+
     const workspaceEntry =
-      projectConfig?.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
-      projectConfig?.workspaces.find((workspace) => workspace.path === found.workspacePath);
-    if (!workspaceEntry?.heartbeat) {
+      projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+      projectConfig.workspaces.find((workspace) => workspace.path === found.workspacePath);
+    if (!workspaceEntry) {
+      return Err("Workspace not found");
+    }
+
+    return Ok({ normalizedWorkspaceId, config, workspaceEntry });
+  }
+
+  getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null {
+    const resolved = this.resolveHeartbeatWorkspaceEntry(workspaceId, "getHeartbeatSettings");
+    if (!resolved.success) {
       return null;
     }
 
-    const message = sanitizeHeartbeatMessage(workspaceEntry.heartbeat.message);
-    const contextMode = sanitizeHeartbeatContextMode(workspaceEntry.heartbeat.contextMode);
-    return {
-      enabled: workspaceEntry.heartbeat.enabled,
-      intervalMs: workspaceEntry.heartbeat.intervalMs,
-      contextMode,
-      ...(message != null ? { message } : {}),
-    };
+    return normalizeHeartbeatSettings(resolved.data.workspaceEntry.heartbeat);
   }
 
-  getHeartbeatDefaultIntervalMs(): number {
-    const config = this.config.loadConfigOrDefault();
+  private getHeartbeatDefaultIntervalMsFromConfig(config: ProjectsConfig): number {
     const intervalMs = config.heartbeatDefaultIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
     assert(
       Number.isInteger(intervalMs) &&
@@ -4018,33 +4045,19 @@ export class WorkspaceService extends EventEmitter {
     return intervalMs;
   }
 
+  getHeartbeatDefaultIntervalMs(): number {
+    const config = this.config.loadConfigOrDefault();
+    return this.getHeartbeatDefaultIntervalMsFromConfig(config);
+  }
+
   async unsetHeartbeatSettings(workspaceId: string): Promise<Result<void, string>> {
     try {
-      const normalizedWorkspaceId = workspaceId.trim();
-      assert(
-        normalizedWorkspaceId.length > 0,
-        "unsetHeartbeatSettings requires a non-empty workspaceId"
-      );
-
-      const found = this.config.findWorkspace(normalizedWorkspaceId);
-      if (!found) {
-        return Err("Workspace not found");
+      const resolved = this.resolveHeartbeatWorkspaceEntry(workspaceId, "unsetHeartbeatSettings");
+      if (!resolved.success) {
+        return Err(resolved.error);
       }
 
-      const { projectPath, workspacePath } = found;
-      const config = this.config.loadConfigOrDefault();
-      const projectConfig = config.projects.get(projectPath);
-      if (!projectConfig) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const workspaceEntry =
-        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
-        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
-      if (!workspaceEntry) {
-        return Err("Workspace not found");
-      }
-
+      const { normalizedWorkspaceId, config, workspaceEntry } = resolved.data;
       if (!workspaceEntry.heartbeat) {
         return Ok(undefined);
       }
@@ -4065,19 +4078,28 @@ export class WorkspaceService extends EventEmitter {
 
   async setHeartbeatSettings(
     workspaceId: string,
-    settings: WorkspaceHeartbeatSettings
-  ): Promise<Result<void, string>> {
+    settings: WorkspaceHeartbeatSettingsUpdate
+  ): Promise<Result<WorkspaceHeartbeatSettings, string>> {
     try {
-      const normalizedWorkspaceId = workspaceId.trim();
       assert(
-        normalizedWorkspaceId.length > 0,
-        "setHeartbeatSettings requires a non-empty workspaceId"
+        settings != null && typeof settings === "object",
+        "setHeartbeatSettings requires settings"
       );
-      assert(typeof settings.enabled === "boolean", "Heartbeat enabled flag must be a boolean");
-      assert(Number.isInteger(settings.intervalMs), "Heartbeat interval must be an integer");
+
+      const hasEnabledUpdate = Object.prototype.hasOwnProperty.call(settings, "enabled");
       assert(
-        settings.intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
-          settings.intervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
+        !hasEnabledUpdate || typeof settings.enabled === "boolean",
+        "Heartbeat enabled flag must be a boolean when provided"
+      );
+      const hasIntervalUpdate = Object.prototype.hasOwnProperty.call(settings, "intervalMs");
+      assert(
+        !hasIntervalUpdate || Number.isInteger(settings.intervalMs),
+        "Heartbeat interval must be an integer when provided"
+      );
+      assert(
+        !hasIntervalUpdate ||
+          (settings.intervalMs! >= HEARTBEAT_MIN_INTERVAL_MS &&
+            settings.intervalMs! <= HEARTBEAT_MAX_INTERVAL_MS),
         `Heartbeat interval must be between ${HEARTBEAT_MIN_INTERVAL_MS} and ${HEARTBEAT_MAX_INTERVAL_MS} ms`
       );
       const hasMessageUpdate = Object.prototype.hasOwnProperty.call(settings, "message");
@@ -4093,36 +4115,26 @@ export class WorkspaceService extends EventEmitter {
         "Heartbeat context mode must be a supported value when provided"
       );
 
-      const found = this.config.findWorkspace(normalizedWorkspaceId);
-      if (!found) {
-        return Err("Workspace not found");
+      const resolved = this.resolveHeartbeatWorkspaceEntry(workspaceId, "setHeartbeatSettings");
+      if (!resolved.success) {
+        return Err(resolved.error);
       }
 
-      const { projectPath, workspacePath } = found;
-      const config = this.config.loadConfigOrDefault();
-      const projectConfig = config.projects.get(projectPath);
-      if (!projectConfig) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const workspaceEntry =
-        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
-        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
-      if (!workspaceEntry) {
-        return Err("Workspace not found");
-      }
-
+      const { normalizedWorkspaceId, config, workspaceEntry } = resolved.data;
+      const currentSettings = normalizeHeartbeatSettings(workspaceEntry.heartbeat);
+      const defaultIntervalMs = this.getHeartbeatDefaultIntervalMsFromConfig(config);
       const nextMessage = hasMessageUpdate
         ? sanitizeHeartbeatMessage(settings.message)
-        : sanitizeHeartbeatMessage(workspaceEntry.heartbeat?.message);
-      const nextContextMode = hasContextModeUpdate
-        ? sanitizeHeartbeatContextMode(settings.contextMode)
-        : sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode);
+        : currentSettings?.message;
       // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
       const nextSettings: WorkspaceHeartbeatSettings = {
-        enabled: settings.enabled,
-        intervalMs: settings.intervalMs,
-        contextMode: nextContextMode,
+        enabled: hasEnabledUpdate ? settings.enabled! : (currentSettings?.enabled ?? true),
+        intervalMs: hasIntervalUpdate
+          ? settings.intervalMs!
+          : (currentSettings?.intervalMs ?? defaultIntervalMs),
+        contextMode: hasContextModeUpdate
+          ? sanitizeHeartbeatContextMode(settings.contextMode)
+          : (currentSettings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE),
         ...(nextMessage != null ? { message: nextMessage } : {}),
       };
 
@@ -4130,9 +4142,10 @@ export class WorkspaceService extends EventEmitter {
         workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
         workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs ||
         workspaceEntry.heartbeat?.message !== nextSettings.message ||
-        sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode) !== nextContextMode;
+        sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode) !==
+          nextSettings.contextMode;
       if (!changed) {
-        return Ok(undefined);
+        return Ok(nextSettings);
       }
 
       workspaceEntry.heartbeat = nextSettings;
@@ -4145,7 +4158,7 @@ export class WorkspaceService extends EventEmitter {
       await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
 
-      return Ok(undefined);
+      return Ok(nextSettings);
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to set heartbeat settings: ${message}`);

@@ -4251,14 +4251,18 @@ export const router = (authToken?: string) => {
         set: t
           .input(schemas.workspace.heartbeat.set.input)
           .output(schemas.workspace.heartbeat.set.output)
-          .handler(({ context, input }) =>
-            context.workspaceService.setHeartbeatSettings(input.workspaceId, {
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.setHeartbeatSettings(input.workspaceId, {
               enabled: input.enabled,
               intervalMs: input.intervalMs,
               ...(input.message != null ? { message: input.message } : {}),
               ...(input.contextMode != null ? { contextMode: input.contextMode } : {}),
-            })
-          ),
+            });
+            if (!result.success) {
+              return result;
+            }
+            return Ok(undefined);
+          }),
       },
       goalDefaults: {
         // Per-workspace override of the global `goalDefaults` block.

@@ -110,9 +110,10 @@ describe("getToolsForModel", () => {
 
     const heartbeatService: WorkspaceHeartbeatToolService = {
       getHeartbeatSettings: mock(() => null),
-      setHeartbeatSettings: mock(async () => Ok(undefined)),
+      setHeartbeatSettings: mock(async () =>
+        Ok({ enabled: true, intervalMs: 30 * 60 * 1000, contextMode: "normal" as const })
+      ),
       unsetHeartbeatSettings: mock(async () => Ok(undefined)),
-      getHeartbeatDefaultIntervalMs: mock(() => 30 * 60 * 1000),
     };
     const toolsWithHeartbeat = await getToolsForModel(
       "noop:model",

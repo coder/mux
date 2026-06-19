@@ -102,16 +102,16 @@ export interface AdvisorStepCaptureRef {
   frozenSnapshotsByToolCallId: Map<string, AdvisorToolCallSnapshot>;
 }
 
-type WorkspaceHeartbeatSettings = NonNullable<WorkspaceMetadata["heartbeat"]>;
+export type WorkspaceHeartbeatSettings = NonNullable<WorkspaceMetadata["heartbeat"]>;
+export type WorkspaceHeartbeatSettingsUpdate = Partial<WorkspaceHeartbeatSettings>;
 
 export interface WorkspaceHeartbeatToolService {
   getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null;
   setHeartbeatSettings(
     workspaceId: string,
-    settings: WorkspaceHeartbeatSettings
-  ): Promise<Result<void, string>>;
+    settings: WorkspaceHeartbeatSettingsUpdate
+  ): Promise<Result<WorkspaceHeartbeatSettings, string>>;
   unsetHeartbeatSettings(workspaceId: string): Promise<Result<void, string>>;
-  getHeartbeatDefaultIntervalMs(): number;
 }
 
 /**
