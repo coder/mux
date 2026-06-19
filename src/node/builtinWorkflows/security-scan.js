@@ -291,6 +291,9 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
       id: "apply-security-state",
       source: persistence,
       expectedHeadSha: persistenceExpectedHeadSha,
+      // Security state patches are constrained by prompt to .mux/security and
+      // should persist even when the scan target includes uncommitted work.
+      force: true,
     });
     structuredOutput.persistence = persistence.structuredOutput;
   } else {
