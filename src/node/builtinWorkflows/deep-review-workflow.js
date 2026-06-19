@@ -72,7 +72,7 @@ export default async function deepReviewWorkflow({ args, phase, log, agent }) {
 
     const fixedCount = countFixedIssues(pass);
     remainingFixes = Math.max(0, remainingFixes - fixedCount);
-    if (!input.loop || fixedCount === 0 || remainingFixes === 0) break;
+    if (!input.loop || fixedCount === 0) break;
   }
 
   if (passes.length === 1) return passes[0];
@@ -245,6 +245,14 @@ async function runDeepReviewPass(context) {
   const fixableIssues = selectFixableIssues(input, final.structuredOutput, verified);
   if (!input.fix || fixableIssues.length === 0) return result;
 
+  const deterministicSkipReason = autoFixSkipReason(input, gitContext);
+  if (deterministicSkipReason) {
+    return appendFixSkipped(result, deterministicSkipReason, {
+      ok: false,
+      reason: deterministicSkipReason,
+    });
+  }
+
   context.phase(
     "fix-preflight",
     withIteration({ fixableCount: fixableIssues.length }, context.iteration)
@@ -271,6 +279,26 @@ async function runDeepReviewPass(context) {
   if (preflight.expectedHeadSha) applySpec.expectedHeadSha = preflight.expectedHeadSha;
   const applied = await mux.patch.applySafely(applySpec);
   return appendFixApplied(result, fixer.reportMarkdown, fixerOutput, applied);
+}
+
+function autoFixSkipReason(input, gitContext) {
+  if (input.diff)
+    return "Auto-fix requires a local current workspace target, not an explicit diff.";
+  if (input.files.length > 0) {
+    return "Auto-fix requires a Git-derived local review target, not explicit file snapshots.";
+  }
+  if (looksNonLocalTarget(input.target))
+    return "Auto-fix requires a local current workspace target.";
+  const status = gitContext && gitContext.status;
+  if (!status || !status.headSha) {
+    return "Auto-fix requires a reviewed local Git branch and HEAD snapshot.";
+  }
+  return "";
+}
+
+function looksNonLocalTarget(target) {
+  const textValue = String(target || "").trim();
+  return /^https?:\/\//i.test(textValue) || /^git@/i.test(textValue);
 }
 
 function collectGitReviewContextAgent(agent, input, suffix) {
