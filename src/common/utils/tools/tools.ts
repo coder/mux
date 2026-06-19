@@ -256,6 +256,7 @@ export interface ToolConfiguration {
     dynamicWorkflows?: boolean;
     subagentFileReports?: boolean;
     memory?: boolean;
+    workspaceHeartbeats?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];
@@ -549,6 +550,13 @@ export async function getToolsForModel(
       : {}),
   };
 
+  // HeartbeatService intentionally skips child task workspaces, and the
+  // workspace-heartbeats experiment gates every user-facing way to create schedules.
+  const shouldExposeHeartbeatTool =
+    config.workspaceHeartbeatService != null &&
+    config.experiments?.workspaceHeartbeats === true &&
+    !config.enableAgentReport;
+
   // Non-runtime tools execute immediately (no init wait needed)
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const nonRuntimeTools: Record<string, Tool> = {
@@ -580,11 +588,7 @@ export async function getToolsForModel(
         }
       : {}),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
-    // HeartbeatService intentionally skips child task workspaces, so only expose
-    // the model-facing configurator where the setting can actually take effect.
-    ...(config.workspaceHeartbeatService && !config.enableAgentReport
-      ? { heartbeat: createHeartbeatTool(config) }
-      : {}),
+    ...(shouldExposeHeartbeatTool ? { heartbeat: createHeartbeatTool(config) } : {}),
     ...(config.goalService && config.enableGoalTools?.getGoal
       ? { get_goal: createGetGoalTool(config) }
       : {}),

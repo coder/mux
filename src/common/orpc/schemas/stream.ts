@@ -709,6 +709,7 @@ export const ExperimentsSchema = z.object({
   subagentFileReports: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
   memory: z.boolean().optional(),
+  workspaceHeartbeats: z.boolean().optional(),
 });
 
 /**

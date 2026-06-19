@@ -21,6 +21,7 @@ interface WorkflowTaskExperiments {
   programmaticToolCallingExclusive?: boolean;
   advisorTool?: boolean;
   execSubagentHardRestart?: boolean;
+  workspaceHeartbeats?: boolean;
   dynamicWorkflows?: boolean;
   subagentFileReports?: boolean;
 }

@@ -91,7 +91,7 @@ describe("getToolsForModel", () => {
     expect(toolsWithReport.agent_report).toBeDefined();
   });
 
-  test("includes heartbeat only when the heartbeat service is configured", async () => {
+  test("includes heartbeat only when the heartbeat service and experiment are configured", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = createInitStateManager();
 
@@ -102,6 +102,7 @@ describe("getToolsForModel", () => {
         runtime,
         runtimeTempDir: "/tmp",
         workspaceId: "ws-1",
+        experiments: { workspaceHeartbeats: true },
       },
       "ws-1",
       initStateManager
@@ -110,11 +111,27 @@ describe("getToolsForModel", () => {
 
     const heartbeatService: WorkspaceHeartbeatToolService = {
       getHeartbeatSettings: mock(() => null),
-      setHeartbeatSettings: mock(async () =>
-        Ok({ enabled: true, intervalMs: 30 * 60 * 1000, contextMode: "normal" as const })
+      setHeartbeatSettings: mock(() =>
+        Promise.resolve(
+          Ok({ enabled: true, intervalMs: 30 * 60 * 1000, contextMode: "normal" as const })
+        )
       ),
-      unsetHeartbeatSettings: mock(async () => Ok(undefined)),
+      unsetHeartbeatSettings: mock(() => Promise.resolve(Ok(undefined))),
     };
+    const toolsWithExperimentDisabled = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        workspaceHeartbeatService: heartbeatService,
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(toolsWithExperimentDisabled.heartbeat).toBeUndefined();
+
     const toolsWithHeartbeat = await getToolsForModel(
       "noop:model",
       {
@@ -122,6 +139,7 @@ describe("getToolsForModel", () => {
         runtime,
         runtimeTempDir: "/tmp",
         workspaceId: "ws-1",
+        experiments: { workspaceHeartbeats: true },
         workspaceHeartbeatService: heartbeatService,
       },
       "ws-1",
@@ -135,6 +153,7 @@ describe("getToolsForModel", () => {
         runtimeTempDir: "/tmp",
         workspaceId: "child-ws",
         enableAgentReport: true,
+        experiments: { workspaceHeartbeats: true },
         workspaceHeartbeatService: heartbeatService,
       },
       "child-ws",

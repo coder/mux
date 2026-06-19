@@ -1353,6 +1353,9 @@ export class AIService extends EventEmitter {
       const memoryExperimentEnabled =
         experiments?.memory ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
+      const workspaceHeartbeatsExperimentEnabled =
+        experiments?.workspaceHeartbeats ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS) === true;
       const memoryHotSetExperimentEnabled =
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true;
       // Once final tool policy keeps the memory tool, upgrade the index-only
@@ -1802,6 +1805,7 @@ export class AIService extends EventEmitter {
                     ...experiments,
                     dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
                     subagentFileReports: subagentFileReportsExperimentEnabled,
+                    workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
                   },
                 }),
               // Background workflow tools outlive the model turn that started them. Feed the
@@ -1855,6 +1859,7 @@ export class AIService extends EventEmitter {
                         ...experiments,
                         dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
                         subagentFileReports: subagentFileReportsExperimentEnabled,
+                        workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
                       },
                       skipAiSettingsPersistence: true,
                       muxMetadata: {
@@ -2083,6 +2088,7 @@ export class AIService extends EventEmitter {
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
           subagentFileReports: subagentFileReportsExperimentEnabled,
           memory: memoryExperimentEnabled,
+          workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
         },
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,
