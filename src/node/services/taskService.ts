@@ -6015,6 +6015,9 @@ export class TaskService {
       });
       return true;
     }
+    if (this.isDeferredWorkspaceTurnMessage(record, event.messageId)) {
+      return true;
+    }
 
     const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
     await this.settleWorkspaceTurn({

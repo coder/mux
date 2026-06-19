@@ -1225,6 +1225,39 @@ describe("TaskService", () => {
     expect(workspaceMocks.sendMessage.mock.calls[1]?.[0]).toBe("childworkspace");
   });
 
+  test("workspace-turn deferred stream-end does not finalize the handle", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const event: StreamEndEvent = {
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_deferred",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Pre-handoff text" }],
+    };
+    const internal = taskService as unknown as {
+      markWorkspaceTurnStreamEndDeferred: (event: StreamEndEvent) => Promise<void>;
+      finalizeWorkspaceTurnFromStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
+    };
+
+    await internal.markWorkspaceTurnStreamEndDeferred(event);
+    expect(await internal.finalizeWorkspaceTurnFromStreamEnd(event)).toBe(true);
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+      deferredMessageIds: ["msg_deferred"],
+    });
+  });
+
   test("workspace-turn stale recovery skips deferred pre-handoff stream-end history", async () => {
     const { config, parentId, projectPath, taskService, historyService } =
       await startWorkspaceTurnForTest();
