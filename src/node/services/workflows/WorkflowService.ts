@@ -277,7 +277,22 @@ export class WorkflowService {
   }
 
   async interruptRun(input: { workspaceId: string; runId: string }): Promise<WorkflowRunRecord> {
+    return await this.interruptRunTree(input, new Set(), false);
+  }
+
+  private async interruptRunTree(
+    input: { workspaceId: string; runId: string },
+    visitedRunIds: Set<string>,
+    skipTerminalRun: boolean
+  ): Promise<WorkflowRunRecord> {
     const run = await this.requireRunForWorkspace(input);
+    if (visitedRunIds.has(input.runId)) {
+      return run;
+    }
+    visitedRunIds.add(input.runId);
+    if (skipTerminalRun && isTerminalWorkflowRunStatus(run.status)) {
+      return run;
+    }
     assertWorkflowRunCanTransition(run.status, "interrupted");
     const interruptStatusWrite = Promise.withResolvers<void>();
     activeWorkflowInterruptStatusWrites.set(input.runId, interruptStatusWrite.promise);
@@ -301,12 +316,34 @@ export class WorkflowService {
       settleStatusWrite();
       await this.notifyRunStatusChanged(interrupted);
       await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
+      await this.interruptChildWorkflowRuns(input, visitedRunIds);
       return interrupted;
     } finally {
       settleStatusWrite();
       if (activeWorkflowInterruptStatusWrites.get(input.runId) === interruptStatusWrite.promise) {
         activeWorkflowInterruptStatusWrites.delete(input.runId);
       }
+    }
+  }
+
+  private async interruptChildWorkflowRuns(
+    input: { workspaceId: string; runId: string },
+    visitedRunIds: Set<string>
+  ): Promise<void> {
+    const childRuns = (await this.runStore.listRunStatusSnapshots()).filter(
+      (snapshot) =>
+        snapshot.workspaceId === input.workspaceId &&
+        snapshot.parentWorkflow?.runId === input.runId &&
+        !isTerminalWorkflowRunStatus(snapshot.status)
+    );
+    for (const childRun of childRuns) {
+      // Child workflow runs from older workflow definitions are still persisted separately;
+      // interrupting the parent must also stop their run-scoped agents before returning.
+      await this.interruptRunTree(
+        { workspaceId: input.workspaceId, runId: childRun.id },
+        visitedRunIds,
+        true
+      );
     }
   }
 

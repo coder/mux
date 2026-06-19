@@ -804,6 +804,113 @@ export default function workflow() { return { reportMarkdown: "should not run" }
     expect(completedStep?.result).toEqual({ reportMarkdown: "done" });
   });
 
+  test("interrupts nested child workflow runs before returning", async () => {
+    using tmp = new DisposableTempDir("workflow-service-nested-interrupt");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const definition = {
+      name: "demo",
+      description: "Demo",
+      scope: "built-in",
+      executable: true,
+    } as const;
+    const definitionSource =
+      "export default function workflow() { return { reportMarkdown: 'unused' }; }\n";
+    await runStore.createRun({
+      id: "wfr_parent",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_parent", "running", "2026-05-29T00:00:01.000Z");
+    await runStore.createRun({
+      id: "wfr_child",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource,
+      args: {},
+      parentWorkflow: {
+        runId: "wfr_parent",
+        stepId: "child-step",
+        inputHash: "child-input",
+        depth: 0,
+      },
+      now: "2026-05-29T00:00:02.000Z",
+    });
+    await runStore.appendStatus("wfr_child", "running", "2026-05-29T00:00:03.000Z");
+    await runStore.createRun({
+      id: "wfr_grandchild",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource,
+      args: {},
+      parentWorkflow: {
+        runId: "wfr_child",
+        stepId: "grandchild-step",
+        inputHash: "grandchild-input",
+        depth: 1,
+      },
+      now: "2026-05-29T00:00:04.000Z",
+    });
+    await runStore.appendStatus("wfr_grandchild", "backgrounded", "2026-05-29T00:00:05.000Z");
+    await runStore.createRun({
+      id: "wfr_completed_child",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource,
+      args: {},
+      parentWorkflow: {
+        runId: "wfr_parent",
+        stepId: "completed-child-step",
+        inputHash: "completed-child-input",
+        depth: 0,
+      },
+      now: "2026-05-29T00:00:06.000Z",
+    });
+    await runStore.appendStatus("wfr_completed_child", "completed", "2026-05-29T00:00:07.000Z");
+    const interruptedRunIds: string[] = [];
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapterFactory: (runId) => ({
+        async runAgent() {
+          throw new Error("unused");
+        },
+        async interruptRun() {
+          interruptedRunIds.push(runId);
+        },
+      }),
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:08.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const interrupted = await service.interruptRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_parent",
+    });
+
+    expect(interrupted.status).toBe("interrupted");
+    await expect(runStore.getRun("wfr_child")).resolves.toMatchObject({
+      status: "interrupted",
+    });
+    await expect(runStore.getRun("wfr_grandchild")).resolves.toMatchObject({
+      status: "interrupted",
+    });
+    await expect(runStore.getRun("wfr_completed_child")).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(interruptedRunIds).toEqual(["wfr_parent", "wfr_child", "wfr_grandchild"]);
+  });
+
   test("interrupts foreground workflow runs when the caller aborts", async () => {
     using tmp = new DisposableTempDir("workflow-service");
     const projectRoot = path.join(tmp.path, "project", ".mux", "workflows");
