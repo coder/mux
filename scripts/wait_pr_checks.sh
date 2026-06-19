@@ -83,11 +83,12 @@ CHECK_PR_CHECKS_ONCE() {
   local pr_state
   local mergeable
   local merge_state
+  local review_decision
   local checks
   local reviews_output
 
   # Get PR status
-  status=$(gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus,state 2>/dev/null || echo "error")
+  status=$(gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus,reviewDecision,state 2>/dev/null || echo "error")
 
   if [ "$status" = "error" ]; then
     echo "❌ Failed to get PR status. Does PR #$PR_NUMBER exist?"
@@ -116,6 +117,8 @@ CHECK_PR_CHECKS_ONCE() {
   merge_state=$(echo "$status" | jq -r '.mergeStateStatus')
   LAST_MERGE_STATE="$merge_state"
 
+  review_decision=$(echo "$status" | jq -r '.reviewDecision // ""')
+
   case "$mergeable" in
     MERGEABLE | CONFLICTING | UNKNOWN) ;;
     *)
@@ -128,6 +131,14 @@ CHECK_PR_CHECKS_ONCE() {
     BEHIND | BLOCKED | CLEAN | DIRTY | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE) ;;
     *)
       echo "❌ assertion failed: unexpected merge state '$merge_state' for PR #$PR_NUMBER" >&2
+      return 1
+      ;;
+  esac
+
+  case "$review_decision" in
+    "" | APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED) ;;
+    *)
+      echo "❌ assertion failed: unexpected review decision '$review_decision' for PR #$PR_NUMBER" >&2
       return 1
       ;;
   esac
@@ -150,6 +161,16 @@ CHECK_PR_CHECKS_ONCE() {
     echo "  git fetch origin"
     echo "  git rebase origin/main"
     echo "  git push --force-with-lease"
+    return 1
+  fi
+
+  if [ "$review_decision" = "CHANGES_REQUESTED" ]; then
+    echo "❌ PR has a blocking changes-requested review."
+    return 1
+  fi
+
+  if [ "$review_decision" = "REVIEW_REQUIRED" ]; then
+    echo "❌ PR requires an approving GitHub review before merge."
     return 1
   fi
 
@@ -244,8 +265,9 @@ CHECK_PR_CHECKS_ONCE() {
     fi
 
     # If a Chromatic status is required in branch protection, GitHub reports
-    # the aggregate merge state as BLOCKED even though this repo's readiness
-    # policy ignores those UI statuses.
+    # the aggregate merge state as BLOCKED. At this point non-Chromatic checks,
+    # review-thread checks, and GitHub's reviewDecision gate have passed, so an
+    # ignored unready status is the only remaining blocker this script can see.
     local merge_state_blocked_by_ignored_chromatic=0
     if { [ "$merge_state" = "UNSTABLE" ] || [ "$merge_state" = "BLOCKED" ]; } && [ "$ignored_unready_count" -gt 0 ]; then
       merge_state_blocked_by_ignored_chromatic=1
