@@ -231,6 +231,7 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
     // experiment is enabled implicitly for this invocation (never persisted).
     dynamicWorkflows: true,
     subagentFileReports: experimentIds.includes(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS),
+    workspaceHeartbeats: experimentIds.includes(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS),
   };
 }
 

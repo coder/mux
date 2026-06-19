@@ -12,6 +12,7 @@ import {
 } from "@/common/config/worktreeArchiveBehavior";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { type ExternalSecretResolver, secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
@@ -1574,6 +1575,37 @@ describe("Config", () => {
       const workspace = projectConfig!.workspaces[0];
       expect(workspace.id).toBe("project-feature-branch");
       expect(workspace.name).toBe("feature-branch");
+    });
+
+    it("defaults sparse persisted heartbeat intervals in workspace metadata", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "heartbeat-sparse");
+      const sparseHeartbeat = { enabled: true } as const;
+
+      await config.editConfig((cfg) => {
+        cfg.heartbeatDefaultIntervalMs = 45 * 60 * 1000;
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-heartbeat-sparse",
+              name: "heartbeat-sparse",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              runtimeConfig: { type: "local" },
+              // Simulates older/corrupt persisted config; workspace metadata must stay schema-valid.
+              heartbeat: sparseHeartbeat as NonNullable<WorkspaceMetadata["heartbeat"]>,
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.heartbeat).toEqual({
+        enabled: true,
+        intervalMs: 45 * 60 * 1000,
+      });
     });
 
     it("should use existing metadata file if present (legacy format)", async () => {

@@ -56,7 +56,12 @@ import {
   type WorktreeArchiveBehavior,
 } from "@/common/config/worktreeArchiveBehavior";
 import { PlatformPaths } from "@/common/utils/paths";
-import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_CONTEXT_MODE_VALUES,
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 import { normalizeGoalDefaults } from "@/constants/goals";
 import {
   isValidModelFormat,
@@ -77,6 +82,51 @@ import {
 // Re-export project/provider types from dedicated schema/types files (for preload usage)
 export type { Workspace, ProjectConfig, ProjectsConfig, ProviderConfig, CanonicalProvidersConfig };
 export type ProvidersConfig = CanonicalProvidersConfig | Record<string, ProviderConfig>;
+
+function isValidHeartbeatIntervalMs(intervalMs: unknown): intervalMs is number {
+  return (
+    typeof intervalMs === "number" &&
+    Number.isInteger(intervalMs) &&
+    intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+    intervalMs <= HEARTBEAT_MAX_INTERVAL_MS
+  );
+}
+
+function isWorkspaceHeartbeatContextMode(
+  value: unknown
+): value is NonNullable<NonNullable<WorkspaceMetadata["heartbeat"]>["contextMode"]> {
+  return (
+    typeof value === "string" &&
+    HEARTBEAT_CONTEXT_MODE_VALUES.some((candidate) => candidate === value)
+  );
+}
+
+function normalizeWorkspaceMetadataHeartbeat(
+  heartbeat: Workspace["heartbeat"] | undefined,
+  config: ProjectsConfig
+): WorkspaceMetadata["heartbeat"] | undefined {
+  if (!heartbeat) {
+    return undefined;
+  }
+
+  const persisted = heartbeat as Partial<NonNullable<Workspace["heartbeat"]>>;
+  const defaultIntervalMs = isValidHeartbeatIntervalMs(config.heartbeatDefaultIntervalMs)
+    ? config.heartbeatDefaultIntervalMs
+    : HEARTBEAT_DEFAULT_INTERVAL_MS;
+  const message = typeof persisted.message === "string" ? persisted.message : undefined;
+  const contextMode = isWorkspaceHeartbeatContextMode(persisted.contextMode)
+    ? persisted.contextMode
+    : undefined;
+
+  return {
+    enabled: persisted.enabled === true,
+    intervalMs: isValidHeartbeatIntervalMs(persisted.intervalMs)
+      ? persisted.intervalMs
+      : defaultIntervalMs,
+    ...(message != null ? { message } : {}),
+    ...(contextMode != null ? { contextMode } : {}),
+  };
+}
 
 function parseOptionalNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") {
@@ -1663,7 +1713,7 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
-              heartbeat: workspace.heartbeat,
+              heartbeat: normalizeWorkspaceMetadataHeartbeat(workspace.heartbeat, config),
               workflowSchedule: parsePersistedWorkflowSchedule(workspace.workflowSchedule),
               goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
