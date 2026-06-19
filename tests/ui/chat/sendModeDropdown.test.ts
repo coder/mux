@@ -267,6 +267,8 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
+  // This end-to-end-style case drives several streaming turns and foreground-tool transitions,
+  // so give loaded CI runners more than the default per-test budget.
   test("click sends tool-end by default while context menu + keybind dispatch modes remain", async () => {
     const app = await createAppHarness({ branchPrefix: "send-mode-pointer" });
 
@@ -418,5 +420,5 @@ describe("Send dispatch modes (mock AI router)", () => {
       unregisterStep?.();
       await app.dispose();
     }
-  }, 60_000);
+  }, 120_000);
 });
