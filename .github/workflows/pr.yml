@@ -242,6 +242,7 @@ jobs:
           isolated_unit_tests=(
             src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx
             src/browser/features/Messages/InlineSkillMarkdown.test.tsx
+            src/browser/hooks/useChatTranscriptFullWidth.test.tsx
             src/browser/utils/commands/sources.test.ts
           )
           bun test --max-concurrency=1 "${isolated_unit_tests[@]}"
@@ -251,6 +252,7 @@ jobs:
               ! -path 'src/node/services/workflows/builtInWorkflowDefinitions.test.ts' \
               ! -path 'src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx' \
               ! -path 'src/browser/features/Messages/InlineSkillMarkdown.test.tsx' \
+              ! -path 'src/browser/hooks/useChatTranscriptFullWidth.test.tsx' \
               ! -path 'src/browser/utils/commands/sources.test.ts' \
               -print0
           )
