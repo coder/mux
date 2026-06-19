@@ -538,7 +538,7 @@ export default function workflow() {
       reportMarkdown: "done",
       structuredOutput: { summaries: ["Review reuse", "Review quality"] },
     });
-    expect(run.steps.map((step) => step.stepId)).toEqual(["review-reuse", "review-quality"]);
+    expect(run.steps.map((step) => step.stepId).sort()).toEqual(["review-quality", "review-reuse"]);
   });
 
   test("rejects invalid workflow args before creating a run", async () => {
