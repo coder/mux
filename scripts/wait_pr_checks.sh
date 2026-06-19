@@ -180,6 +180,7 @@ CHECK_PR_CHECKS_ONCE() {
   local jq_defs
   local filtered_checks
   local ignored_checks
+  local filtered_count
   local ignored_unready_count
   local ignored_unready_checks
 
@@ -193,6 +194,7 @@ CHECK_PR_CHECKS_ONCE() {
   jq_defs=$(chromatic_check_jq_defs)
   filtered_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check | not) ]")
   ignored_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check) ]")
+  filtered_count=$(echo "$filtered_checks" | jq 'length')
   checks=$(echo "$filtered_checks" | jq -r "$jq_defs if length == 0 then \"(no non-Chromatic checks reported)\" else .[] | check_line end")
   ignored_unready_count=$(echo "$ignored_checks" | jq "$jq_defs [ .[] | select(is_unready_check) ] | length")
   ignored_unready_checks=$(echo "$ignored_checks" | jq -r "$jq_defs [ .[] | select(is_unready_check) ] | .[]? | check_line")
@@ -213,11 +215,10 @@ CHECK_PR_CHECKS_ONCE() {
     has_pass=1
   fi
 
-  if [ "$(echo "$filtered_checks" | jq 'length')" -eq 0 ]; then
-    echo "❌ assertion failed: no non-Chromatic checks were reported for PR #$PR_NUMBER" >&2
-    echo "Ignored Chromatic-related checks:" >&2
-    echo "$ignored_checks" | jq -r "$jq_defs .[]? | check_line" >&2
-    return 1
+  # Immediately after a push, GitHub may report no checks yet. Treat that as
+  # pending, not as a terminal failure.
+  if [ "$filtered_count" -eq 0 ]; then
+    return 10
   fi
 
   if [ "$has_fail" -eq 0 ] && [ "$has_pending" -eq 0 ] && [ "$has_pass" -eq 0 ]; then
