@@ -62,6 +62,7 @@ import { THINKING_LEVELS } from "@/common/types/thinking";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
+import { WorkspaceTurnFinalMessageRefSchema } from "@/common/types/workspaceTurn";
 
 import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
@@ -332,19 +333,66 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
   );
 }
 
+const WorkspaceTaskKindSchema = z.enum(["subagent", "workspace"]);
+const WorkspaceTaskModeSchema = z.enum(["new", "fork", "existing"]);
+const WorkspaceTaskTargetSchema = z
+  .object({
+    mode: WorkspaceTaskModeSchema.nullish(),
+    workspaceId: z.string().trim().min(1).nullish(),
+    branchName: z.string().trim().min(1).nullish(),
+    trunkBranch: z.string().trim().min(1).nullish(),
+    disposable: z.boolean().nullish(),
+  })
+  .strict();
+
 /** Shared validation across both task-arg schema variants (with/without `isolation`). */
 function refineTaskToolAgentArgs(
   args: {
+    kind?: "subagent" | "workspace" | null;
     agentId?: string | null;
     subagent_type?: string | null;
     prompt: string;
     n?: number | null;
     variants?: string[] | null;
+    workspace?: { mode?: "new" | "fork" | "existing" | null; workspaceId?: string | null } | null;
   },
   ctx: z.RefinementCtx
 ): void {
+  const kind = args.kind ?? "subagent";
   const hasAgentId = typeof args.agentId === "string" && args.agentId.length > 0;
   const hasSubagentType = typeof args.subagent_type === "string" && args.subagent_type.length > 0;
+
+  if (kind === "workspace") {
+    if (hasAgentId || hasSubagentType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Workspace tasks do not accept agentId or subagent_type",
+        path: ["agentId"],
+      });
+    }
+    if (args.n != null || args.variants != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Workspace tasks do not support n or variants yet",
+        path: args.n != null ? ["n"] : ["variants"],
+      });
+    }
+    if ((args.workspace?.mode ?? "new") === "fork") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'workspace.mode="fork" is not supported for workspace tasks yet',
+        path: ["workspace", "mode"],
+      });
+    }
+    if ((args.workspace?.mode ?? "new") === "existing" && args.workspace?.workspaceId == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "workspace.workspaceId is required when workspace.mode is existing",
+        path: ["workspace", "workspaceId"],
+      });
+    }
+    return;
+  }
 
   if (!hasAgentId && !hasSubagentType) {
     ctx.addIssue({
@@ -397,6 +445,9 @@ function refineTaskToolAgentArgs(
 }
 
 const taskToolBaseShape = {
+  kind: WorkspaceTaskKindSchema.nullish().describe(
+    'Task kind. Omit or use "subagent" for the existing child-workspace sub-agent flow; use "workspace" to start a normal full workspace turn.'
+  ),
   // Prefer agentId. subagent_type is a deprecated alias for backwards compatibility.
   agentId: TaskAgentIdSchema.nullish(),
   subagent_type: SubagentTypeSchema.nullish(),
@@ -408,6 +459,9 @@ const taskToolBaseShape = {
   ),
   variants: TaskToolVariantsSchema.nullish().describe(
     `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
+  ),
+  workspace: WorkspaceTaskTargetSchema.nullish().describe(
+    'Workspace target for kind="workspace". Omit for a new full workspace; use mode="existing" with workspaceId only for workspaces previously created by this caller.'
   ),
   model: TaskToolModelSchema.nullish().describe(
     "Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available."
@@ -445,10 +499,13 @@ export function buildTaskToolAgentArgsSchema(options: {
   return options.includeIsolation ? TaskToolArgsSchema : TaskToolArgsSchemaWithoutIsolation;
 }
 
+const TaskHandleKindSchema = z.enum(["agent_task", "workspace_turn"]);
 const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
     status: z.enum(["queued", "starting", "running", "completed", "interrupted"]),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
     label: z.string().optional(),
   })
@@ -462,6 +519,10 @@ const TaskToolCompletedReportSchema = z
     structuredOutput: z.unknown().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
+    messageId: z.string().optional(),
+    finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
     label: z.string().optional(),
   })
@@ -472,6 +533,8 @@ export const TaskToolQueuedResultSchema = z
     status: z.enum(["queued", "starting", "running"]),
     taskId: z.string().optional(),
     taskIds: z.array(z.string()).min(1).optional(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
     tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
     note: z
@@ -504,6 +567,10 @@ export const TaskToolCompletedResultSchema = z
     structuredOutput: z.unknown().optional(),
     agentId: z.string().optional(),
     agentType: z.string().optional(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
+    messageId: z.string().optional(),
+    finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
   })
   .strict()
@@ -673,6 +740,10 @@ export const TaskAwaitToolCompletedResultSchema = z
     status: z.literal("completed"),
     taskId: z.string(),
     reportMarkdown: z.string(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
+    messageId: z.string().optional(),
+    finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
     structuredOutput: z.unknown().optional(),
     title: z.string().optional(),
     output: z.string().optional(),
@@ -694,6 +765,8 @@ export const TaskAwaitToolActiveResultSchema = z
       "interrupted",
     ]),
     taskId: z.string(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     note: z.string().optional(),
@@ -961,6 +1034,8 @@ export const TaskListToolTaskSchema = z
     workspaceName: z.string().optional(),
     title: z.string().optional(),
     createdAt: z.string().optional(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskListThinkingLevelSchema.optional(),
     depth: z.number().int().min(0),

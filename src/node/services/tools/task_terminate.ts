@@ -8,6 +8,7 @@ import {
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
 
+import { isWorkspaceTurnTaskId } from "@/node/services/taskHandleStore";
 import { fromBashTaskId, isWorkflowRunTaskId } from "./taskId";
 import {
   dedupeStrings,
@@ -89,6 +90,22 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
         uniqueTaskIds.map(async (taskId) => {
           if (isWorkflowRunTaskId(taskId)) {
             return await interruptWorkflowRun(config, workspaceId, taskId);
+          }
+
+          if (isWorkspaceTurnTaskId(taskId)) {
+            const interruptResult = await taskService.interruptWorkspaceTurn(workspaceId, taskId);
+            if (!interruptResult.success) {
+              const msg = interruptResult.error;
+              if (/not found/i.test(msg) || /scope/i.test(msg)) {
+                return { status: "invalid_scope" as const, taskId };
+              }
+              return { status: "error" as const, taskId, error: msg };
+            }
+            return {
+              status: "interrupted" as const,
+              taskId,
+              note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
+            };
           }
 
           const maybeProcessId = fromBashTaskId(taskId);

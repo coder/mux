@@ -82,6 +82,38 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         }
       }
 
+      const workspaceTurnStatuses = statuses.filter(
+        (
+          status
+        ): status is "queued" | "starting" | "running" | "interrupted" | "completed" | "failed" =>
+          status === "queued" ||
+          status === "starting" ||
+          status === "running" ||
+          status === "interrupted" ||
+          status === "completed" ||
+          status === "failed"
+      );
+      if (workspaceTurnStatuses.length > 0 && taskService.listWorkspaceTurnTasks != null) {
+        const storeStatuses = workspaceTurnStatuses.map((status) =>
+          status === "failed" ? "error" : status
+        );
+        const workspaceTurns = await taskService.listWorkspaceTurnTasks(workspaceId, {
+          statuses: storeStatuses,
+        });
+        for (const turn of workspaceTurns) {
+          tasks.push({
+            taskId: turn.handleId,
+            status: turn.status === "error" ? "failed" : turn.status,
+            parentWorkspaceId: workspaceId,
+            handleKind: "workspace_turn",
+            workspaceId: turn.workspaceId,
+            title: turn.title,
+            createdAt: turn.createdAt,
+            depth: 1,
+          });
+        }
+      }
+
       if (config.backgroundProcessManager) {
         const depthByWorkspaceId = new Map<string, number>();
         depthByWorkspaceId.set(workspaceId, 0);

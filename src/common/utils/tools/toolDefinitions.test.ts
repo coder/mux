@@ -114,6 +114,62 @@ describe("TOOL_DEFINITIONS", () => {
     ).toBe(false);
   });
 
+  it("accepts workspace task args without an agent id", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      kind: "workspace",
+      prompt: "Summarize this repository",
+      title: "Repository summary",
+      run_in_background: true,
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.kind).toBe("workspace");
+      expect(parsed.data.agentId).toBeUndefined();
+      expect(parsed.data.subagent_type).toBeUndefined();
+    }
+  });
+
+  it("rejects workspace task fanout until workspace handles support it", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        kind: "workspace",
+        prompt: "Summarize this repository",
+        title: "Repository summary",
+        n: 2,
+      }).success
+    ).toBe(false);
+
+    expect(
+      TaskToolArgsSchema.safeParse({
+        kind: "workspace",
+        prompt: "Summarize ${variant}",
+        title: "Repository summary",
+        variants: ["frontend", "backend"],
+      }).success
+    ).toBe(false);
+  });
+
+  it("requires workspaceId for existing workspace task targets", () => {
+    expect(
+      TaskToolArgsSchema.safeParse({
+        kind: "workspace",
+        prompt: "Continue in that workspace",
+        title: "Follow-up",
+        workspace: { mode: "existing" },
+      }).success
+    ).toBe(false);
+
+    expect(
+      TaskToolArgsSchema.safeParse({
+        kind: "workspace",
+        prompt: "Continue in that workspace",
+        title: "Follow-up",
+        workspace: { mode: "existing", workspaceId: "child-workspace" },
+      }).success
+    ).toBe(true);
+  });
+
   it("accepts bash tool calls using command (alias for script)", () => {
     const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
       command: "ls",

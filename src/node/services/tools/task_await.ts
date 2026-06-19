@@ -26,6 +26,10 @@ import {
 } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
+  isWorkspaceTurnTaskId,
+  type WorkspaceTurnTaskStatus,
+} from "@/node/services/taskHandleStore";
+import {
   ForegroundWaitBackgroundedError,
   type AgentTaskStatus,
   type AgentTaskStatusLookup,
@@ -49,6 +53,10 @@ function isAgentTaskActiveStatus(status: AgentTaskStatus | null): status is Agen
     status === "running" ||
     status === "awaiting_report"
   );
+}
+
+function isWorkspaceTurnActiveStatus(status: WorkspaceTurnTaskStatus): boolean {
+  return status === "queued" || status === "starting" || status === "running";
 }
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
@@ -288,8 +296,18 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         }
         return dedupeStrings(workflowRunIds);
       };
+      const listInScopeWorkspaceTurnTaskIds = async (): Promise<string[]> => {
+        if (taskService.listWorkspaceTurnTasks == null) {
+          return [];
+        }
+        const turns = await taskService.listWorkspaceTurnTasks(workspaceId, {
+          statuses: ["queued", "starting", "running"],
+        });
+        return turns.map((turn) => turn.handleId);
+      };
       const listInScopeAwaitableTaskIds = async (): Promise<string[]> => {
         const awaitableTaskIds = [...activeDescendantAgentTaskIds];
+        awaitableTaskIds.push(...(await listInScopeWorkspaceTurnTaskIds()));
         awaitableTaskIds.push(...(await listInScopeBackgroundBashTaskIds()));
         awaitableTaskIds.push(...(await listInScopeWorkflowRunIds()));
         return dedupeStrings(awaitableTaskIds);
@@ -309,7 +327,10 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         : await listInScopeAwaitableTaskIds();
 
       const agentTaskIds = uniqueTaskIds.filter(
-        (taskId) => !taskId.startsWith("bash:") && !isWorkflowRunTaskId(taskId)
+        (taskId) =>
+          !taskId.startsWith("bash:") &&
+          !isWorkflowRunTaskId(taskId) &&
+          !isWorkspaceTurnTaskId(taskId)
       );
       const bulkFilter = (
         taskService as unknown as {
@@ -488,6 +509,177 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
+        if (isWorkspaceTurnTaskId(taskId)) {
+          const snapshot = await taskService.getWorkspaceTurnSnapshot(workspaceId, taskId);
+          if (snapshot == null) {
+            const activeTaskIds = requestedIds
+              ? await listInScopeWorkspaceTurnTaskIds().catch(() => undefined)
+              : undefined;
+            return {
+              status: requestedIds ? ("invalid_scope" as const) : ("not_found" as const),
+              taskId,
+              activeTaskIds,
+            };
+          }
+          if (timeoutMs === 0 || !isWorkspaceTurnActiveStatus(snapshot.status)) {
+            if (snapshot.status === "completed") {
+              return {
+                status: "completed" as const,
+                taskId,
+                handleKind: "workspace_turn" as const,
+                workspaceId: snapshot.workspaceId,
+                reportMarkdown:
+                  snapshot.reportMarkdown ?? "Workspace turn completed without final text output.",
+                title: snapshot.title,
+                messageId: snapshot.messageId,
+                finalMessageRef: snapshot.finalMessageRef,
+                note: COMPLETED_REPORT_REFETCH_NOTE,
+              };
+            }
+            if (snapshot.status === "interrupted") {
+              return {
+                status: "interrupted" as const,
+                taskId,
+                handleKind: "workspace_turn" as const,
+                workspaceId: snapshot.workspaceId,
+                note: "Workspace turn was interrupted. The full workspace is preserved.",
+              };
+            }
+            if (snapshot.status === "error") {
+              return {
+                status: "error" as const,
+                taskId,
+                error: snapshot.error ?? "Workspace turn failed",
+              };
+            }
+          }
+          if (timeoutMs === 0) {
+            return {
+              status: snapshot.status as "queued" | "starting" | "running",
+              taskId,
+              handleKind: "workspace_turn" as const,
+              workspaceId: snapshot.workspaceId,
+              note: "Workspace turn is still running.",
+            };
+          }
+          try {
+            const report = await taskService.waitForWorkspaceTurn(taskId, {
+              timeoutMs: timeoutMs ?? DEFAULT_TASK_AWAIT_TIMEOUT_MS,
+              abortSignal: taskSignal,
+              requestingWorkspaceId: workspaceId,
+              backgroundOnMessageQueued: true,
+            });
+            return {
+              status: "completed" as const,
+              taskId,
+              handleKind: "workspace_turn" as const,
+              workspaceId: report.workspaceId,
+              reportMarkdown: report.reportMarkdown,
+              title: report.title,
+              messageId: report.messageId,
+              finalMessageRef: report.finalMessageRef,
+              note: COMPLETED_REPORT_REFETCH_NOTE,
+            };
+          } catch (error: unknown) {
+            const message = getErrorMessage(error);
+            if (error instanceof ForegroundWaitBackgroundedError) {
+              const latest = await taskService.getWorkspaceTurnSnapshot(workspaceId, taskId);
+              const status =
+                latest != null && isWorkspaceTurnActiveStatus(latest.status)
+                  ? (latest.status as "queued" | "starting" | "running")
+                  : ("running" as const);
+              return {
+                status,
+                taskId,
+                handleKind: "workspace_turn" as const,
+                ...(latest?.workspaceId != null ? { workspaceId: latest.workspaceId } : {}),
+                note: "Workspace turn sent to background because a new message was queued. Use task_await to monitor progress.",
+              };
+            }
+            if (abortSignal?.aborted) {
+              return { status: "error" as const, taskId, error: "Interrupted" };
+            }
+            if (taskSignal.aborted) {
+              const latest = await taskService.getWorkspaceTurnSnapshot(workspaceId, taskId);
+              if (latest == null) return { status: "not_found" as const, taskId };
+              if (latest.status === "completed") {
+                return {
+                  status: "completed" as const,
+                  taskId,
+                  handleKind: "workspace_turn" as const,
+                  workspaceId: latest.workspaceId,
+                  reportMarkdown:
+                    latest.reportMarkdown ?? "Workspace turn completed without final text output.",
+                  title: latest.title,
+                  messageId: latest.messageId,
+                  finalMessageRef: latest.finalMessageRef,
+                  note: COMPLETED_REPORT_REFETCH_NOTE,
+                };
+              }
+              if (latest.status === "error") {
+                return {
+                  status: "error" as const,
+                  taskId,
+                  error: latest.error ?? "Workspace turn failed",
+                };
+              }
+              return {
+                status: isWorkspaceTurnActiveStatus(latest.status)
+                  ? (latest.status as "queued" | "starting" | "running")
+                  : "interrupted",
+                taskId,
+                handleKind: "workspace_turn" as const,
+                workspaceId: latest.workspaceId,
+                note: "Workspace turn await detached; task continues in background.",
+              };
+            }
+            if (/timed out/i.test(message)) {
+              const latest = await taskService.getWorkspaceTurnSnapshot(workspaceId, taskId);
+              if (latest == null) return { status: "not_found" as const, taskId };
+              if (latest.status === "completed") {
+                return {
+                  status: "completed" as const,
+                  taskId,
+                  handleKind: "workspace_turn" as const,
+                  workspaceId: latest.workspaceId,
+                  reportMarkdown:
+                    latest.reportMarkdown ?? "Workspace turn completed without final text output.",
+                  title: latest.title,
+                  messageId: latest.messageId,
+                  finalMessageRef: latest.finalMessageRef,
+                  note: COMPLETED_REPORT_REFETCH_NOTE,
+                };
+              }
+              if (latest.status === "error") {
+                return {
+                  status: "error" as const,
+                  taskId,
+                  error: latest.error ?? "Workspace turn failed",
+                };
+              }
+              if (latest.status === "interrupted") {
+                return {
+                  status: "interrupted" as const,
+                  taskId,
+                  handleKind: "workspace_turn" as const,
+                  workspaceId: latest.workspaceId,
+                  note: "Workspace turn was interrupted. The full workspace is preserved.",
+                };
+              }
+              return {
+                status: latest.status,
+                taskId,
+                handleKind: "workspace_turn" as const,
+                workspaceId: latest.workspaceId,
+              };
+            }
+            if (/out of scope/i.test(message) || /not found/i.test(message)) {
+              return { status: "invalid_scope" as const, taskId };
+            }
+            return { status: "error" as const, taskId, error: message };
+          }
+        }
+
         if (isWorkflowRunTaskId(taskId)) {
           return await awaitWorkflowRun(taskId, taskSignal);
         }
@@ -499,6 +691,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           if (requestedIds) {
             const suggestedTaskIds = dedupeStrings([
               ...activeDescendantAgentTaskIds,
+              ...(await listInScopeWorkspaceTurnTaskIds().catch(() => [])),
               ...(await getSuggestionBashTaskIds()),
               ...(await getSuggestionWorkflowRunIds()),
             ]);

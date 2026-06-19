@@ -2176,6 +2176,46 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(initialMetadata.routeProvider).toBe("openrouter");
   });
 
+  it("passes muxMetadata into initial stream metadata", async () => {
+    using muxHome = new DisposableTempDir("ai-service-mux-metadata");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-mux-metadata";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+      muxMetadata: {
+        type: "workspace-turn-task",
+        taskHandleId: "wst_handle",
+        ownerWorkspaceId: "owner-workspace",
+        turnId: "turn-id",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamCall = harness.startStreamCalls[0];
+    expect(startStreamCall).toBeDefined();
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+
+    const initialMetadata = initialMetadataFromStartStreamCall(startStreamCall);
+    expect(initialMetadata.muxMetadata).toEqual({
+      type: "workspace-turn-task",
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: "owner-workspace",
+      turnId: "turn-id",
+    });
+  });
+
   it("omits routeProvider from initial stream metadata when unresolved", async () => {
     using muxHome = new DisposableTempDir("ai-service-route-provider-absent");
     const projectPath = path.join(muxHome.path, "project");

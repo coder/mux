@@ -20,7 +20,7 @@ import {
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 import type { GoalRecordV1 } from "@/common/types/goal";
-import type { ModelMessage, MuxMessage } from "@/common/types/message";
+import type { ModelMessage, MuxMessage, MuxMessageMetadata } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { StreamManager, type ModelFallbackOptions, type StreamTextOnChunk } from "./streamManager";
@@ -251,6 +251,7 @@ export interface StreamMessageOptions {
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
   hasQueuedMessage?: () => boolean;
+  muxMetadata?: MuxMessageMetadata;
   openaiTruncationModeOverride?: "auto" | "disabled";
 }
 
@@ -1004,6 +1005,7 @@ export class AIService extends EventEmitter {
       disableWorkspaceAgents,
       hasQueuedMessage,
       openaiTruncationModeOverride,
+      muxMetadata,
     } = opts;
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
@@ -2684,6 +2686,7 @@ export class AIService extends EventEmitter {
           // Preserve the resolved route source so stream events and persisted messages
           // keep non-gateway attribution even when the model ID itself is gateway-agnostic.
           ...(routeProvider != null ? { routeProvider } : {}),
+          ...(muxMetadata !== undefined ? { muxMetadata } : {}),
           ...(acpPromptId != null ? { acpPromptId } : {}),
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },

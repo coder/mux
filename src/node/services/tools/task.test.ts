@@ -93,6 +93,82 @@ describe("task tool", () => {
     expect(parseWithIsolation(tool).success).toBe(true);
   });
 
+  it("rejects unsupported workspace fork mode in the schema", () => {
+    using tempDir = new TestTempDir("test-task-tool-workspace-fork-schema");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "worktree" },
+    });
+
+    const parsed = (
+      tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } }
+    ).safeParse({
+      kind: "workspace",
+      prompt: "summarize the fork",
+      title: "Workspace fork",
+      workspace: { mode: "fork" },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("starts a background workspace turn without requiring a sub-agent id", async () => {
+    using tempDir = new TestTempDir("test-task-tool-workspace-turn");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const createWorkspaceTurn = mock(() =>
+      Ok({
+        taskId: "wst_child-turn",
+        kind: "workspace_turn" as const,
+        status: "running" as const,
+        workspaceId: "child-workspace",
+      })
+    );
+    const create = mock(() => Err("sub-agent path should not be used"));
+    const waitForWorkspaceTurn = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = {
+      create,
+      createWorkspaceTurn,
+      waitForWorkspaceTurn,
+    } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          kind: "workspace",
+          prompt: "summarize the repository",
+          title: "Repository summary",
+          run_in_background: true,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).not.toHaveBeenCalled();
+    expect(waitForWorkspaceTurn).not.toHaveBeenCalled();
+    expect(createWorkspaceTurn).toHaveBeenCalledTimes(1);
+    const createWorkspaceTurnCall = createWorkspaceTurn.mock.calls[0] as unknown[];
+    expect(createWorkspaceTurnCall[0]).toMatchObject({
+      ownerWorkspaceId: "parent-workspace",
+      prompt: "summarize the repository",
+      title: "Repository summary",
+      parentRuntimeAiSettings: { modelString: "openai:gpt-4o-mini", thinkingLevel: "high" },
+      workspace: { mode: "new" },
+    });
+    expect(result).toMatchObject({
+      status: "running",
+      taskId: "wst_child-turn",
+      workspaceId: "child-workspace",
+      handleKind: "workspace_turn",
+    });
+  });
+
   it("forwards isolation to taskService.create", async () => {
     using tempDir = new TestTempDir("test-task-tool-isolation-passthrough");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
@@ -954,6 +1030,50 @@ describe("task tool", () => {
     if (caught instanceof Error) {
       expect(caught.message).toMatch(/maxTaskNestingDepth/i);
     }
+  });
+
+  it("should reject workspace turns while in plan agent", async () => {
+    using tempDir = new TestTempDir("test-task-tool-plan-workspace");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const createWorkspaceTurn = mock(() =>
+      Ok({
+        taskId: "wst_child-turn",
+        kind: "workspace_turn" as const,
+        status: "running" as const,
+        workspaceId: "child-workspace",
+      })
+    );
+    const taskService = { createWorkspaceTurn } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      planFileOnly: true,
+      taskService,
+    });
+
+    let caught: unknown = null;
+    try {
+      await Promise.resolve(
+        tool.execute!(
+          {
+            kind: "workspace",
+            prompt: "implement it",
+            title: "Workspace turn",
+            run_in_background: true,
+          },
+          mockToolCallOptions
+        )
+      );
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toMatch(/plan agent/i);
+    }
+    expect(createWorkspaceTurn).not.toHaveBeenCalled();
   });
 
   it('should reject spawning "exec" tasks while in plan agent', async () => {
