@@ -275,8 +275,20 @@ async function runDeepReviewPass(context) {
     return appendFixNoChanges(result, fixer.reportMarkdown, fixerOutput);
 
   context.phase("apply-fixes", withIteration({ madeChanges: true }, context.iteration));
-  const applySpec = { id: stepId("apply-review-fixes", suffix), source: fixer };
-  if (preflight.expectedHeadSha) applySpec.expectedHeadSha = preflight.expectedHeadSha;
+  const expectedHeadSha =
+    preflight.expectedHeadSha || (gitContext.status && gitContext.status.headSha);
+  if (!expectedHeadSha) {
+    return appendFixSkipped(
+      result,
+      "Auto-fix requires a reviewed local Git HEAD snapshot.",
+      preflight
+    );
+  }
+  const applySpec = {
+    id: stepId("apply-review-fixes", suffix),
+    source: fixer,
+    expectedHeadSha,
+  };
   const applied = await mux.patch.applySafely(applySpec);
   return appendFixApplied(result, fixer.reportMarkdown, fixerOutput, applied);
 }

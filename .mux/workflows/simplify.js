@@ -194,9 +194,24 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
   }
 
   phase("apply-fixes", { madeChanges: true });
-  const applySpec = { id: "apply-simplify-fixes", source: fixer };
-  if (preflight.expectedHeadSha) applySpec.expectedHeadSha = preflight.expectedHeadSha;
-  const applied = await mux.patch.applySafely(applySpec);
+  const expectedHeadSha =
+    preflight.expectedHeadSha || (gitContext.status && gitContext.status.headSha);
+  if (!expectedHeadSha) {
+    return skipFixResult(
+      synthesis.reportMarkdown,
+      "Auto-fix requires a reviewed local Git HEAD snapshot.",
+      "apply-preflight-skip",
+      gitContext,
+      reviewOutputs,
+      synthesized,
+      preflight
+    );
+  }
+  const applied = await mux.patch.applySafely({
+    id: "apply-simplify-fixes",
+    source: fixer,
+    expectedHeadSha,
+  });
 
   return {
     reportMarkdown: fixReport(synthesis.reportMarkdown, fixer.reportMarkdown, applied),

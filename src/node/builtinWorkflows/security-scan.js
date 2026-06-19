@@ -394,9 +394,22 @@ async function runSecurityFixPass(context) {
       applied: null,
     };
   }
-  const applySpec = { id: "apply-security-fixes", source: fixer };
-  if (preflight.expectedHeadSha) applySpec.expectedHeadSha = preflight.expectedHeadSha;
-  const applied = await mux.patch.applySafely(applySpec);
+  const expectedHeadSha =
+    preflight.expectedHeadSha ||
+    (context.stateContext.gitContext && context.stateContext.gitContext.headSha);
+  if (!expectedHeadSha) {
+    return {
+      reportMarkdown: "Security auto-fix requires a reviewed local Git HEAD snapshot.",
+      preflight,
+      fixer: fixer.structuredOutput,
+      applied: null,
+    };
+  }
+  const applied = await mux.patch.applySafely({
+    id: "apply-security-fixes",
+    source: fixer,
+    expectedHeadSha,
+  });
   return {
     reportMarkdown: fixer.reportMarkdown,
     preflight,
