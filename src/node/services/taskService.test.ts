@@ -547,7 +547,7 @@ describe("TaskService", () => {
     const aiMocks = createAIServiceMocks(config, {
       ...(options.isStreaming != null ? { isStreaming: options.isStreaming } : {}),
     });
-    const { taskService } = createTaskServiceHarness(config, {
+    const { historyService, taskService } = createTaskServiceHarness(config, {
       aiService: aiMocks.aiService,
       workspaceService: workspaceMocks.workspaceService,
     });
@@ -570,6 +570,7 @@ describe("TaskService", () => {
       taskService,
       workspaceMocks,
       aiMocks,
+      historyService,
       created: created.data,
     };
   }
@@ -933,6 +934,76 @@ describe("TaskService", () => {
       error: "Workspace turn interrupted after restart",
       workspaceId: "childworkspace",
     });
+  });
+
+  test("getWorkspaceTurnSnapshot recovers stale completed handles from matching history", async () => {
+    const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
+    const appendResult = await historyService.appendToHistory(
+      created.workspaceId,
+      createMuxMessage("msg_completed", "assistant", "Recovered final text", {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: created.taskId,
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+    };
+
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, created.taskId);
+    expect(snapshot).toMatchObject({
+      status: "completed",
+      workspaceId: created.workspaceId,
+      messageId: "msg_completed",
+      reportMarkdown: "Recovered final text",
+      finalMessageRef: { messageId: "msg_completed", finishReason: "stop", textCharCount: 20 },
+    });
+  });
+
+  test("getWorkspaceTurnSnapshot recovers stale truncated handles from matching history as errors", async () => {
+    const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
+    const appendResult = await historyService.appendToHistory(
+      created.workspaceId,
+      createMuxMessage("msg_truncated_history", "assistant", "Partial text", {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "length",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: created.taskId,
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+    };
+
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, created.taskId);
+    expect(snapshot).toMatchObject({
+      status: "error",
+      workspaceId: created.workspaceId,
+      messageId: "msg_truncated_history",
+      error: "Workspace turn ended before completion (finishReason: length)",
+    });
+    expect(snapshot?.reportMarkdown).toBeUndefined();
   });
 
   test("listWorkspaceTurnTasks settles stale active handles before returning", async () => {

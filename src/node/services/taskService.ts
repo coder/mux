@@ -3849,7 +3849,13 @@ export class TaskService {
     );
 
     await this.taskHandleStore.upsertWorkspaceTurn(params.next);
-    this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
+    if (
+      active?.handleId === params.record.handleId &&
+      active.ownerWorkspaceId === params.record.ownerWorkspaceId
+    ) {
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+    }
     this.settleWorkspaceTurnWaiters(params.record.handleId, params.waiterSettlement);
     this.markTaskForegroundRelevant(params.record.handleId);
     await this.cleanupDisposableWorkspaceTurn(params.next);
@@ -4900,6 +4906,19 @@ export class TaskService {
     if (record.status !== "starting" && record.status !== "running") {
       return;
     }
+    const recovered = await this.recoverTerminalWorkspaceTurnFromHistory(record);
+    if (recovered != null) {
+      await this.settleWorkspaceTurn({
+        record,
+        next: recovered,
+        waiterSettlement:
+          recovered.status === "completed"
+            ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(recovered) }
+            : { status: "error", error: new Error(recovered.error ?? "Workspace turn failed") },
+      });
+      return;
+    }
+
     const next: WorkspaceTurnTaskHandleRecord = {
       ...record,
       status: "interrupted",
@@ -5667,14 +5686,13 @@ export class TaskService {
     return true;
   }
 
-  private getWorkspaceTurnMetadata(
-    event: StreamEndEvent
+  private getWorkspaceTurnMetadataFromValue(
+    muxMetadata: unknown
   ): { taskHandleId: string; ownerWorkspaceId: string; turnId: string } | null {
-    const muxMetadata = event.metadata.muxMetadata;
     if (typeof muxMetadata !== "object" || muxMetadata == null || Array.isArray(muxMetadata)) {
       return null;
     }
-    const data = muxMetadata as unknown as Record<string, unknown>;
+    const data = muxMetadata as Record<string, unknown>;
     if (data.type !== "workspace-turn-task") {
       return null;
     }
@@ -5685,6 +5703,12 @@ export class TaskService {
       return null;
     }
     return { taskHandleId, ownerWorkspaceId, turnId };
+  }
+
+  private getWorkspaceTurnMetadata(
+    event: StreamEndEvent
+  ): { taskHandleId: string; ownerWorkspaceId: string; turnId: string } | null {
+    return this.getWorkspaceTurnMetadataFromValue(event.metadata.muxMetadata);
   }
 
   private buildWorkspaceTurnReportMarkdown(event: StreamEndEvent): string {
@@ -5724,6 +5748,90 @@ export class TaskService {
       partCount: event.parts.length,
       textCharCount,
     };
+  }
+
+  private buildWorkspaceTurnStreamEndEventFromHistory(
+    record: WorkspaceTurnTaskHandleRecord,
+    message: MuxMessage
+  ): StreamEndEvent | null {
+    if (message.role !== "assistant" || message.metadata?.partial === true) {
+      return null;
+    }
+    const metadata = this.getWorkspaceTurnMetadataFromValue(message.metadata?.muxMetadata);
+    if (
+      metadata == null ||
+      metadata.taskHandleId !== record.handleId ||
+      metadata.ownerWorkspaceId !== record.ownerWorkspaceId ||
+      metadata.turnId !== record.turnId
+    ) {
+      return null;
+    }
+    return {
+      type: "stream-end",
+      workspaceId: record.workspaceId,
+      messageId: message.id,
+      metadata: {
+        ...message.metadata,
+        model: coerceNonEmptyString(message.metadata?.model) ?? record.modelString ?? defaultModel,
+      },
+      parts: message.parts as StreamEndEvent["parts"],
+    };
+  }
+
+  private buildTerminalWorkspaceTurnRecordFromEvent(
+    record: WorkspaceTurnTaskHandleRecord,
+    event: StreamEndEvent
+  ): WorkspaceTurnTaskHandleRecord {
+    // Truncated/non-stop provider finishes are partial output, not a completed delegated turn.
+    if (event.metadata.finishReason != null && event.metadata.finishReason !== "stop") {
+      return {
+        ...record,
+        status: "error",
+        updatedAt: getIsoNow(),
+        messageId: event.messageId,
+        error: `Workspace turn ended before completion (finishReason: ${event.metadata.finishReason})`,
+        finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
+        finalMessage: {
+          messageId: event.messageId,
+          metadata: event.metadata,
+        },
+      };
+    }
+    return {
+      ...record,
+      status: "completed",
+      updatedAt: getIsoNow(),
+      messageId: event.messageId,
+      reportMarkdown: this.buildWorkspaceTurnReportMarkdown(event),
+      finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
+      finalMessage: {
+        messageId: event.messageId,
+        metadata: event.metadata,
+      },
+    };
+  }
+
+  private async recoverTerminalWorkspaceTurnFromHistory(
+    record: WorkspaceTurnTaskHandleRecord
+  ): Promise<WorkspaceTurnTaskHandleRecord | null> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+      record.workspaceId
+    );
+    if (!historyResult.success) {
+      log.warn("Workspace turn stale recovery could not read history", {
+        handleId: record.handleId,
+        workspaceId: record.workspaceId,
+        error: historyResult.error,
+      });
+      return null;
+    }
+    for (const message of historyResult.data.toReversed()) {
+      const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
+      if (event != null) {
+        return this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+      }
+    }
+    return null;
   }
 
   private async finalizeWorkspaceTurnFromStreamEnd(event: StreamEndEvent): Promise<boolean> {
@@ -5766,45 +5874,14 @@ export class TaskService {
       return true;
     }
 
-    // Truncated/non-stop provider finishes are partial output, not a completed delegated turn.
-    if (event.metadata.finishReason != null && event.metadata.finishReason !== "stop") {
-      const error = `Workspace turn ended before completion (finishReason: ${event.metadata.finishReason})`;
-      const next: WorkspaceTurnTaskHandleRecord = {
-        ...record,
-        status: "error",
-        updatedAt: getIsoNow(),
-        messageId: event.messageId,
-        error,
-        finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
-        finalMessage: {
-          messageId: event.messageId,
-          metadata: event.metadata,
-        },
-      };
-      await this.settleWorkspaceTurn({
-        record,
-        next,
-        waiterSettlement: { status: "error", error: new Error(error) },
-      });
-      return true;
-    }
-
-    const next: WorkspaceTurnTaskHandleRecord = {
-      ...record,
-      status: "completed",
-      updatedAt: getIsoNow(),
-      messageId: event.messageId,
-      reportMarkdown: this.buildWorkspaceTurnReportMarkdown(event),
-      finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
-      finalMessage: {
-        messageId: event.messageId,
-        metadata: event.metadata,
-      },
-    };
+    const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
     await this.settleWorkspaceTurn({
       record,
       next,
-      waiterSettlement: { status: "completed", result: this.buildWorkspaceTurnWaitResult(next) },
+      waiterSettlement:
+        next.status === "completed"
+          ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(next) }
+          : { status: "error", error: new Error(next.error ?? "Workspace turn failed") },
     });
     return true;
   }
