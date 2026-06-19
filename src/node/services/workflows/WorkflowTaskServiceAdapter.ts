@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import type { SubagentGitPatchArtifact } from "@/common/utils/tools/toolDefinitions";
 import type { ParsedThinkingInput } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -19,6 +20,7 @@ import {
 } from "@/node/services/subagentGitPatchArtifacts";
 import {
   applyTaskGitPatchArtifact,
+  findGitPatchArtifactInWorkspaceOrAncestors,
   type TaskApplyGitPatchArgs,
   type TaskApplyGitPatchConfiguration,
   type TaskApplyGitPatchResult,
@@ -232,12 +234,15 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       return "applyPatch allowedPathPrefixes requires patch artifact metadata";
     }
 
-    const artifact = await readSubagentGitPatchArtifact(workspaceSessionDir, spec.sourceTaskId);
-    if (artifact == null) {
+    const artifactLookup = await this.findPatchArtifactForPathValidation(
+      workspaceSessionDir,
+      spec.sourceTaskId
+    );
+    if (artifactLookup == null) {
       return `Patch artifact not found for task ${spec.sourceTaskId}`;
     }
 
-    const projectArtifacts = artifact.projectArtifacts.filter(
+    const projectArtifacts = artifactLookup.artifact.projectArtifacts.filter(
       (projectArtifact) =>
         spec.projectPath == null || projectArtifact.projectPath === spec.projectPath
     );
@@ -250,7 +255,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
         return `Patch artifact for ${projectArtifact.projectName} is ${projectArtifact.status}; cannot validate allowedPathPrefixes.`;
       }
       const patchPath = await this.getProjectPatchMboxPath(
-        workspaceSessionDir,
+        artifactLookup.artifactSessionDir,
         spec.sourceTaskId,
         projectArtifact
       );
@@ -270,6 +275,23 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       return undefined;
     }
     return `Patch touches paths outside allowed prefixes (${spec.allowedPathPrefixes.join(", ")}): ${Array.from(violations).join(", ")}`;
+  }
+
+  private async findPatchArtifactForPathValidation(
+    workspaceSessionDir: string,
+    sourceTaskId: string
+  ): Promise<{ artifact: SubagentGitPatchArtifact; artifactSessionDir: string } | null> {
+    const workspaceId = this.patchToolConfig?.workspaceId;
+    if (workspaceId != null && workspaceId.length > 0) {
+      return await findGitPatchArtifactInWorkspaceOrAncestors({
+        workspaceId,
+        workspaceSessionDir,
+        childTaskId: sourceTaskId,
+      });
+    }
+
+    const artifact = await readSubagentGitPatchArtifact(workspaceSessionDir, sourceTaskId);
+    return artifact == null ? null : { artifact, artifactSessionDir: workspaceSessionDir };
   }
 
   private async getProjectPatchMboxPath(

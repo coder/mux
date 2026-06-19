@@ -283,7 +283,7 @@ async function isGitAmInProgress(params: {
   }
 }
 
-async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
+export async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
   workspaceId: string;
   workspaceSessionDir: string;
   childTaskId: string;
