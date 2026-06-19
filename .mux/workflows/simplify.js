@@ -141,6 +141,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
     0,
     input.maxFindings
   );
+  const fixSynthesis = Object.assign({}, synthesized, { actionableFindings });
 
   if (!input.fix || !synthesized.shouldFix || actionableFindings.length === 0) {
     return {
@@ -163,7 +164,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       "apply-preflight-skip",
       gitContext,
       reviewOutputs,
-      synthesized,
+      fixSynthesis,
       preflight
     );
   }
@@ -173,7 +174,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
     id: "fix-simplify-findings",
     title: "Simplify: fix actionable findings",
     agentId: EXEC_AGENT_ID,
-    prompt: fixPrompt(reviewContext, synthesized, preflight),
+    prompt: fixPrompt(reviewContext, fixSynthesis, preflight),
     outputSchema: fixerSchema(),
   });
   const fixerOutput = fixer.structuredOutput;
@@ -187,7 +188,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
         mode: "fixer-made-no-changes",
         gitContext,
         reviews: reviewOutputs,
-        synthesis: synthesized,
+        synthesis: fixSynthesis,
         fix: { preflight, fixer: fixerOutput, applied: null },
       },
     };
@@ -203,7 +204,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       "apply-preflight-skip",
       gitContext,
       reviewOutputs,
-      synthesized,
+      fixSynthesis,
       preflight
     );
   }
@@ -214,7 +215,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       "apply-preflight-skip",
       gitContext,
       reviewOutputs,
-      synthesized,
+      fixSynthesis,
       preflight
     );
   }
@@ -230,7 +231,7 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       mode: "fix-attempted",
       gitContext,
       reviews: reviewOutputs,
-      synthesis: synthesized,
+      synthesis: fixSynthesis,
       fix: { preflight, fixer: fixerOutput, applied },
     },
   };
