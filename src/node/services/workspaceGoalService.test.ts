@@ -673,6 +673,49 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
+  test("model-created goals stay active and arm kickoff after a normal user turn", async () => {
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-set-goal-request", "user", "Set yourself a goal and continue", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(async (input) => {
+        executed.push(input);
+        const continuationAppend = await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage("model-created-goal-continuation", "user", input.message, {
+            timestamp: Date.now(),
+            kind: GOAL_CONTINUATION_KIND,
+          })
+        );
+        expect(continuationAppend.success).toBe(true);
+        return true;
+      }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const goal = await setGoalOk(service, {
+      workspaceId,
+      objective: "Model-created auto goal",
+      status: "active",
+      initiator: "model",
+    });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(goal.status).toBe("active");
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: goal.goalId,
+      status: "active",
+    });
+  });
+
   test("strips set_goal capability from synthetic goal continuations", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Continue safely" });
     const dispatcher = new IdleDispatcher();
