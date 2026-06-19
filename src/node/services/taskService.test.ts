@@ -1508,6 +1508,94 @@ describe("TaskService", () => {
     expect(report.reportMarkdown).toBe("Done");
   });
 
+  test("workspace-turn terminal settlements do not overwrite each other", async () => {
+    const completed = await startWorkspaceTurnForTest();
+    const staleRunningRecord = await completed.taskService.getWorkspaceTurnSnapshot(
+      completed.parentId,
+      "wst_handle"
+    );
+    assert(staleRunningRecord, "expected running workspace-turn record");
+    const completedInternal = completed.taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      settleWorkspaceTurn: (params: unknown) => Promise<void>;
+    };
+    await completedInternal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_done",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: completed.parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Done" }],
+    });
+    await completedInternal.settleWorkspaceTurn({
+      record: staleRunningRecord,
+      next: {
+        ...staleRunningRecord,
+        status: "interrupted",
+        updatedAt: "2026-06-19T00:00:01.000Z",
+      },
+      waiterSettlement: { status: "error", error: new Error("late interrupt") },
+    });
+    expect(
+      await completed.taskService.getWorkspaceTurnSnapshot(completed.parentId, "wst_handle")
+    ).toMatchObject({
+      status: "completed",
+      messageId: "msg_done",
+      reportMarkdown: "Done",
+    });
+
+    const interrupted = await startWorkspaceTurnForTest({
+      stableIds: ["secondhandle", "secondturn"],
+    });
+    const staleInterruptedRecord = await interrupted.taskService.getWorkspaceTurnSnapshot(
+      interrupted.parentId,
+      "wst_secondhandle"
+    );
+    assert(staleInterruptedRecord, "expected second running workspace-turn record");
+    const interruptResult = await interrupted.taskService.interruptWorkspaceTurn(
+      interrupted.parentId,
+      "wst_secondhandle"
+    );
+    expect(interruptResult.success).toBe(true);
+    await (
+      interrupted.taskService as unknown as {
+        settleWorkspaceTurn: (params: unknown) => Promise<void>;
+      }
+    ).settleWorkspaceTurn({
+      record: staleInterruptedRecord,
+      next: {
+        ...staleInterruptedRecord,
+        status: "completed",
+        updatedAt: "2026-06-19T00:00:01.000Z",
+        messageId: "msg_late_done",
+        reportMarkdown: "Late done",
+      },
+      waiterSettlement: {
+        status: "completed",
+        result: {
+          taskId: "wst_secondhandle",
+          workspaceId: "childworkspace",
+          reportMarkdown: "Late done",
+        },
+      },
+    });
+    const interruptedSnapshot = await interrupted.taskService.getWorkspaceTurnSnapshot(
+      interrupted.parentId,
+      "wst_secondhandle"
+    );
+    expect(interruptedSnapshot).toMatchObject({ status: "interrupted" });
+    expect(interruptedSnapshot?.reportMarkdown).toBeUndefined();
+  });
+
   test("waitForWorkspaceTurn foreground waits can be sent to background", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
 

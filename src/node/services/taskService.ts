@@ -894,6 +894,9 @@ export class TaskService {
   // concurrently from multiple child stream-end handlers for the same parent, and it must remain
   // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
   private readonly deferredBestOfLocks = new MutexMap<string>();
+  // Serialize terminal writes per workspace-turn handle so late completions/interruptions cannot
+  // overwrite an already-settled handle.
+  private readonly workspaceTurnSettlementLocks = new MutexMap<string>();
   private readonly mutex = new AsyncMutex();
   private maybeStartQueuedTasksInFlight: Promise<void> | undefined;
   private maybeStartQueuedTasksRerunRequested = false;
@@ -3833,6 +3836,10 @@ export class TaskService {
     }
   }
 
+  private isTerminalWorkspaceTurnStatus(status: WorkspaceTurnTaskStatus): boolean {
+    return status === "completed" || status === "interrupted" || status === "error";
+  }
+
   private async settleWorkspaceTurn(params: {
     record: WorkspaceTurnTaskHandleRecord;
     next: WorkspaceTurnTaskHandleRecord;
@@ -3849,18 +3856,58 @@ export class TaskService {
       "settleWorkspaceTurn requires stable workspaceId"
     );
 
-    await this.taskHandleStore.upsertWorkspaceTurn(params.next);
-    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
-    if (
-      active?.handleId === params.record.handleId &&
-      active.ownerWorkspaceId === params.record.ownerWorkspaceId
-    ) {
-      this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
-    }
-    this.settleWorkspaceTurnWaiters(params.record.handleId, params.waiterSettlement);
-    this.markTaskForegroundRelevant(params.record.handleId);
-    await this.cleanupDisposableWorkspaceTurn(params.next);
-    this.scheduleMaybeStartQueuedTasks();
+    await this.workspaceTurnSettlementLocks.withLock(params.record.handleId, async () => {
+      const current = await this.taskHandleStore.getWorkspaceTurn(
+        params.record.ownerWorkspaceId,
+        params.record.handleId
+      );
+      if (current == null) {
+        return;
+      }
+      assert(
+        current.workspaceId === params.record.workspaceId,
+        "settleWorkspaceTurn requires current record to match workspaceId"
+      );
+
+      if (this.isTerminalWorkspaceTurnStatus(current.status)) {
+        const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
+        if (
+          active?.handleId === params.record.handleId &&
+          active.ownerWorkspaceId === params.record.ownerWorkspaceId
+        ) {
+          this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+        }
+        this.settleWorkspaceTurnWaiters(
+          current.handleId,
+          current.status === "completed"
+            ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(current) }
+            : {
+                status: "error",
+                error: new Error(
+                  current.error ??
+                    (current.status === "interrupted"
+                      ? "Workspace turn interrupted"
+                      : "Workspace turn failed")
+                ),
+              }
+        );
+        this.markTaskForegroundRelevant(current.handleId);
+        return;
+      }
+
+      await this.taskHandleStore.upsertWorkspaceTurn(params.next);
+      const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
+      if (
+        active?.handleId === params.record.handleId &&
+        active.ownerWorkspaceId === params.record.ownerWorkspaceId
+      ) {
+        this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+      }
+      this.settleWorkspaceTurnWaiters(params.record.handleId, params.waiterSettlement);
+      this.markTaskForegroundRelevant(params.record.handleId);
+      await this.cleanupDisposableWorkspaceTurn(params.next);
+      this.scheduleMaybeStartQueuedTasks();
+    });
   }
 
   async waitForWorkspaceTurn(

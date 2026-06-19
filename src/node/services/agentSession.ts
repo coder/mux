@@ -3543,7 +3543,9 @@ export class AgentSession {
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
-    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    const typedMuxMetadata =
+      (options?.muxMetadata as MuxMessageMetadata | undefined) ??
+      lastUserMessage?.metadata?.muxMetadata;
     const acpPromptId =
       normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(typedMuxMetadata);
     const delegatedToolNames =
