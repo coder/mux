@@ -322,6 +322,60 @@ describe("goal tools", () => {
     expect(goal?.objective).toBe("Replacement");
   });
 
+  test("set_goal replaces an active goal when the replacement objective is unchanged", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Repeatable" });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          objective: "Repeatable",
+          replaceExistingGoal: true,
+          expectedGoalId: existing.goalId,
+          turnCap: 4,
+        },
+        mockToolCallOptions
+      )
+    );
+    const goal = await goalService.getGoal(workspaceId);
+
+    expect(result).toMatchObject({ goal: { objective: "Repeatable", turnCap: 4 } });
+    expect((result as { goal: GoalRecordV1 }).goal.goalId).not.toBe(existing.goalId);
+    expect(goal?.goalId).toBe((result as { goal: GoalRecordV1 }).goal.goalId);
+  });
+
+  test("set_goal starts a same-objective follow-on after a completed goal", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Repeatable" });
+    await setGoalOk(goalService, {
+      workspaceId,
+      status: "complete",
+      completionSummary: "First pass complete.",
+      expectedGoalId: existing.goalId,
+    });
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ objective: "Repeatable", turnCap: 4 }, mockToolCallOptions)
+    );
+    const goal = await goalService.getGoal(workspaceId);
+
+    expect(result).toMatchObject({ goal: { objective: "Repeatable", status: "active" } });
+    expect((result as { goal: GoalRecordV1 }).goal.goalId).not.toBe(existing.goalId);
+    expect(goal?.goalId).toBe((result as { goal: GoalRecordV1 }).goal.goalId);
+  });
+
   test("set_goal allows a new goal after a completed goal without replaceExistingGoal", async () => {
     const existing = await setGoalOk(goalService, { workspaceId, objective: "Existing" });
     await setGoalOk(goalService, {
@@ -424,7 +478,7 @@ describe("goal tools", () => {
     expect(completed).toMatchObject({ goal: { goalId: returnedGoalId, status: "complete" } });
   });
 
-  test("set_goal preserves the returned id for same-objective mid-stream updates", async () => {
+  test("set_goal returns a durable new id for same-objective mid-stream replacements", async () => {
     const existing = await setGoalOk(goalService, { workspaceId, objective: "Same objective" });
     await setGoalOk(goalService, { workspaceId, status: "paused" });
     interface StreamingOverride {
@@ -462,9 +516,9 @@ describe("goal tools", () => {
     const drained = await goalService.applyPendingAfterStreamEnd(workspaceId);
     const durable = await goalService.getGoal(workspaceId);
 
-    expect(returnedGoalId).toBe(existing.goalId);
-    expect(drained?.goalId).toBe(existing.goalId);
-    expect(durable).toMatchObject({ goalId: existing.goalId, turnCap: 3 });
+    expect(returnedGoalId).not.toBe(existing.goalId);
+    expect(drained?.goalId).toBe(returnedGoalId);
+    expect(durable).toMatchObject({ goalId: returnedGoalId, turnCap: 3 });
   });
 
   test("set_goal persists immediately if streaming ends before queueing under the lock", async () => {

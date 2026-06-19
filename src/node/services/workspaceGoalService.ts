@@ -125,6 +125,11 @@ export interface SetGoalInput {
   requireUserAcknowledgmentSinceMs?: number | null;
   initiator?: GoalLifecycleInitiator;
   /**
+   * Internal model-tool path: treat an objective payload as "start a new goal"
+   * even when the objective text matches the current goal.
+   */
+  forceNewGoal?: boolean | null;
+  /**
    * When true and a current goal already exists, an objective update mutates
    * the existing record in place (preserving goalId + accounting) instead of
    * archiving + replacing. See the matching field on the public
@@ -215,6 +220,7 @@ interface PendingGoalMutation {
   expectedGoalId?: string | null;
   replacementGuard?: SetGoalReplacementGuard | null;
   initiator?: GoalLifecycleInitiator;
+  forceNewGoal?: boolean | null;
   /** Stable id for the optimistic record returned before the deferred write drains. */
   projectedGoalId?: string | null;
   /**
@@ -1897,7 +1903,7 @@ export class WorkspaceGoalService {
             updatedAtMs: Date.now(),
           });
           projected = this.applyMutableFields(renamed, input);
-        } else if (current?.objective === objective) {
+        } else if (input.forceNewGoal !== true && current?.objective === objective) {
           const hasMutableChange =
             input.status != null ||
             input.completionSummary != null ||
@@ -1943,6 +1949,7 @@ export class WorkspaceGoalService {
             : {}),
           ...(input.replacementGuard != null ? { replacementGuard: input.replacementGuard } : {}),
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
+          ...(input.forceNewGoal != null ? { forceNewGoal: input.forceNewGoal } : {}),
           projectedGoalId: projected.goalId,
           // Forward `editInPlace` so an inline rename submitted while the
           // agent is streaming still takes the rename branch when the
@@ -2066,7 +2073,7 @@ export class WorkspaceGoalService {
         return Ok(withEdits);
       }
 
-      if (current?.objective === objective) {
+      if (input.forceNewGoal !== true && current?.objective === objective) {
         const hasMutableChange =
           input.status != null ||
           input.completionSummary != null ||
@@ -2153,7 +2160,7 @@ export class WorkspaceGoalService {
       await this.pushSnapshot(input.workspaceId, next);
       this.emitBudgetChanged(current, next, input);
       this.emitLifecycle(current ? "goal_replaced" : "goal_created", {
-        sameObjective: false,
+        sameObjective: current?.objective === objective,
         objectiveLengthBucket: lengthBucket(objective.length),
         hasBudget: next.budgetCents != null,
         hasTurnCap: next.turnCap != null,

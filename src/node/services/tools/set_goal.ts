@@ -53,6 +53,7 @@ export const createSetGoalTool: ToolFactory = (config) => {
         budgetCents: resolved.budgetCents,
         turnCap: resolved.turnCap,
         initiator: "model",
+        forceNewGoal: true,
         replacementGuard: {
           replaceExistingGoal: replaceExistingGoal ?? null,
           expectedGoalId: expectedGoalId ?? null,
