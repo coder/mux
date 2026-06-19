@@ -135,6 +135,27 @@ describe("WorkspaceService heartbeat settings", () => {
     expect(updateRecencyTimestamp).not.toHaveBeenCalled();
   });
 
+  test("unsets heartbeat settings and updates workspace recency", async () => {
+    const updateRecencyTimestamp = mock<(workspaceId: string, timestamp?: number) => Promise<void>>(
+      () => Promise.resolve()
+    );
+    (
+      service as unknown as {
+        updateRecencyTimestamp: (workspaceId: string, timestamp?: number) => Promise<void>;
+      }
+    ).updateRecencyTimestamp = updateRecencyTimestamp;
+
+    const result = await service.unsetHeartbeatSettings(TEST_WORKSPACE_ID);
+
+    expect(result.success).toBe(true);
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat;
+    expect(persistedHeartbeat).toBeUndefined();
+    expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toBeNull();
+    expect(updateRecencyTimestamp).toHaveBeenCalledTimes(1);
+  });
+
   test("preserves the existing message when a write omits the message field", async () => {
     const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
       enabled: true,

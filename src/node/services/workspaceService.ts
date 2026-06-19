@@ -4006,6 +4006,63 @@ export class WorkspaceService extends EventEmitter {
     };
   }
 
+  getHeartbeatDefaultIntervalMs(): number {
+    const config = this.config.loadConfigOrDefault();
+    const intervalMs = config.heartbeatDefaultIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
+    assert(
+      Number.isInteger(intervalMs) &&
+        intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+        intervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
+      "Configured heartbeat default interval must be within supported bounds"
+    );
+    return intervalMs;
+  }
+
+  async unsetHeartbeatSettings(workspaceId: string): Promise<Result<void, string>> {
+    try {
+      const normalizedWorkspaceId = workspaceId.trim();
+      assert(
+        normalizedWorkspaceId.length > 0,
+        "unsetHeartbeatSettings requires a non-empty workspaceId"
+      );
+
+      const found = this.config.findWorkspace(normalizedWorkspaceId);
+      if (!found) {
+        return Err("Workspace not found");
+      }
+
+      const { projectPath, workspacePath } = found;
+      const config = this.config.loadConfigOrDefault();
+      const projectConfig = config.projects.get(projectPath);
+      if (!projectConfig) {
+        return Err(`Project not found: ${projectPath}`);
+      }
+
+      const workspaceEntry =
+        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
+        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
+      if (!workspaceEntry) {
+        return Err("Workspace not found");
+      }
+
+      if (!workspaceEntry.heartbeat) {
+        return Ok(undefined);
+      }
+
+      delete workspaceEntry.heartbeat;
+      await this.config.saveConfig(config);
+
+      const interactionTimestamp = Date.now();
+      await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return Err(`Failed to unset heartbeat settings: ${message}`);
+    }
+  }
+
   async setHeartbeatSettings(
     workspaceId: string,
     settings: WorkspaceHeartbeatSettings

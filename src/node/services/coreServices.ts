@@ -160,6 +160,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.sessionTimingService,
     opts.opResolver
   );
+  aiService.setWorkspaceHeartbeatService(workspaceService);
   // Tool-started workflows share the same sidebar activity cache as ORPC-started workflows,
   // so terminal updates must prune active run counts regardless of launch path.
   aiService.setWorkflowRunStatusChangedHandler((event) =>

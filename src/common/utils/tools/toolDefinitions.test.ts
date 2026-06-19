@@ -229,6 +229,29 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("validates heartbeat tool configuration bounds", () => {
+    expect(TOOL_DEFINITIONS.heartbeat.schema.safeParse({ action: "get" }).success).toBe(true);
+    expect(
+      TOOL_DEFINITIONS.heartbeat.schema.safeParse({
+        action: "set",
+        enabled: true,
+        intervalMs: 5 * 60 * 1000,
+        contextMode: "compact",
+      }).success
+    ).toBe(true);
+    expect(
+      TOOL_DEFINITIONS.heartbeat.schema.safeParse({
+        action: "set",
+        intervalMs: 60 * 1000,
+      }).success
+    ).toBe(false);
+    expect(
+      TOOL_DEFINITIONS.heartbeat.schema.safeParse({
+        action: "configure",
+      }).success
+    ).toBe(false);
+  });
+
   it("requires complete_goal summary", () => {
     expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({}).success).toBe(false);
     expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({ summary: "Done." }).success).toBe(
@@ -441,6 +464,12 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(tools).toContain("skills_catalog_search");
     expect(tools).toContain("skills_catalog_read");
+  });
+
+  it("includes the workspace heartbeat tool", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).toContain("heartbeat");
   });
 
   it("only includes Review pane tools when enableReviewPane is not disabled", () => {

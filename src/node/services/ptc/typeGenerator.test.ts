@@ -220,6 +220,14 @@ describe("generateMuxTypes", () => {
     expect(types).not.toContain("function file_read(args: FileReadArgs): unknown");
   });
 
+  test("heartbeat tool gets a typed result so sandbox code can check result.success", async () => {
+    const types = await generateMuxTypes({
+      heartbeat: createMockTool(z.object({ action: z.string() })),
+    });
+    expect(types).toContain("HeartbeatResult");
+    expect(types).not.toContain("function heartbeat(args: HeartbeatArgs): unknown");
+  });
+
   test("memory tool gets a typed result so sandbox code can check result.success", async () => {
     const types = await generateMuxTypes({
       memory: createMockTool(z.object({ command: z.string() })),

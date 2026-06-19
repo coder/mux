@@ -18,6 +18,7 @@ import {
   createReviewPaneUpdateTool,
   createReviewPaneGetTool,
 } from "@/node/services/tools/review_pane";
+import { createHeartbeatTool } from "@/node/services/tools/heartbeat";
 import { createGetGoalTool } from "@/node/services/tools/get_goal";
 import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
 import { createNotifyTool } from "@/node/services/tools/notify";
@@ -60,6 +61,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 
+import type { Result } from "@/common/types/result";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
@@ -74,7 +76,7 @@ import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModelMessage } from "@/common/types/message";
-import type { ProjectRef } from "@/common/types/workspace";
+import type { ProjectRef, WorkspaceMetadata } from "@/common/types/workspace";
 
 export interface ToolModelUsageEvent {
   source: "tool";
@@ -98,6 +100,18 @@ export interface AdvisorStepCaptureRef {
   currentStepText: string;
   currentStepReasoning: string;
   frozenSnapshotsByToolCallId: Map<string, AdvisorToolCallSnapshot>;
+}
+
+type WorkspaceHeartbeatSettings = NonNullable<WorkspaceMetadata["heartbeat"]>;
+
+export interface WorkspaceHeartbeatToolService {
+  getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null;
+  setHeartbeatSettings(
+    workspaceId: string,
+    settings: WorkspaceHeartbeatSettings
+  ): Promise<Result<void, string>>;
+  unsetHeartbeatSettings(workspaceId: string): Promise<Result<void, string>>;
+  getHeartbeatDefaultIntervalMs(): number;
 }
 
 /**
@@ -218,6 +232,8 @@ export interface ToolConfiguration {
       projectTrusted: boolean;
     }): Promise<{ runId: string; status: string; result: unknown }>;
   };
+  /** Workspace heartbeat settings service for model-facing heartbeat configuration. */
+  workspaceHeartbeatService?: WorkspaceHeartbeatToolService;
   /** Workspace goal lifecycle service for model-facing goal tools. */
   goalService?: WorkspaceGoalService;
   /** Per-request goal tool gates derived from goal status and agent capabilities. */
@@ -564,6 +580,11 @@ export async function getToolsForModel(
         }
       : {}),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    // HeartbeatService intentionally skips child task workspaces, so only expose
+    // the model-facing configurator where the setting can actually take effect.
+    ...(config.workspaceHeartbeatService && !config.enableAgentReport
+      ? { heartbeat: createHeartbeatTool(config) }
+      : {}),
     ...(config.goalService && config.enableGoalTools?.getGoal
       ? { get_goal: createGetGoalTool(config) }
       : {}),

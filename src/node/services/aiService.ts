@@ -445,6 +445,7 @@ export class AIService extends EventEmitter {
     event: WorkflowRunStatusChangedEvent
   ) => Promise<void> | void;
   private workflowResultContinuationSender?: WorkflowResultContinuationSender;
+  private workspaceHeartbeatService?: ToolConfiguration["workspaceHeartbeatService"];
   private analyticsService?: { executeRawQuery(sql: string): Promise<unknown> };
   private desktopSessionManager?: DesktopSessionManager;
 
@@ -510,6 +511,12 @@ export class AIService extends EventEmitter {
 
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  setWorkspaceHeartbeatService(
+    service: NonNullable<ToolConfiguration["workspaceHeartbeatService"]>
+  ): void {
+    this.workspaceHeartbeatService = service;
   }
 
   /**
@@ -1979,6 +1986,7 @@ export class AIService extends EventEmitter {
         ancestorPlanFilePaths,
         workspaceId,
         muxScope,
+        workspaceHeartbeatService: this.workspaceHeartbeatService,
         workflowService,
         goalService: workspaceGoalService,
         enableGoalTools: goalToolAvailability,

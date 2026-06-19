@@ -39,6 +39,7 @@ import {
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
   WorkflowStepStatusSchema,
+  WorkspaceHeartbeatSettingsSchema,
 } from "@/common/orpc/schemas";
 import {
   RUNTIME_MODE,
@@ -62,6 +63,12 @@ import { THINKING_LEVELS } from "@/common/types/thinking";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
+
+import {
+  HEARTBEAT_CONTEXT_MODE_VALUES,
+  HEARTBEAT_MAX_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+} from "@/constants/heartbeat";
 
 // -----------------------------------------------------------------------------
 // ask_user_question (plan-mode interactive questions)
@@ -163,6 +170,46 @@ export const AskUserQuestionToolResultSchema = z.union([
   AskUserQuestionToolSummarySchema,
   AskUserQuestionToolLegacySchema,
 ]);
+
+// -----------------------------------------------------------------------------
+// heartbeat (workspace idle check-in schedule)
+// -----------------------------------------------------------------------------
+
+export const HeartbeatToolActionSchema = z.enum(["get", "set", "unset"]);
+export const HeartbeatToolArgsSchema = z
+  .object({
+    action: HeartbeatToolActionSchema.describe(
+      'Operation to perform: "get" reads the current heartbeat, "set" enables or configures it, and "unset" removes this workspace\'s heartbeat settings.'
+    ),
+    enabled: z
+      .boolean()
+      .nullish()
+      .describe(
+        'set: whether scheduled heartbeats are enabled. Omit to preserve the current value; when creating new settings, omitted means "enabled".'
+      ),
+    intervalMs: z
+      .number()
+      .int()
+      .min(HEARTBEAT_MIN_INTERVAL_MS)
+      .max(HEARTBEAT_MAX_INTERVAL_MS)
+      .nullish()
+      .describe(
+        `set: heartbeat interval in milliseconds (${HEARTBEAT_MIN_INTERVAL_MS}–${HEARTBEAT_MAX_INTERVAL_MS}). Omit to preserve the current interval or use the global default for new settings.`
+      ),
+    message: z
+      .string()
+      .nullish()
+      .describe(
+        "set: optional custom instruction body appended after the fixed idle-workspace lead-in. Pass an empty string to clear the custom message."
+      ),
+    contextMode: z
+      .enum(HEARTBEAT_CONTEXT_MODE_VALUES)
+      .nullish()
+      .describe(
+        'set: context preparation for heartbeat turns: "normal" uses current context, "compact" compacts first, and "reset" appends a reset boundary first. Omit to preserve the current mode.'
+      ),
+  })
+  .strict();
 
 // -----------------------------------------------------------------------------
 // advisor (nested strategic guidance)
@@ -1910,6 +1957,15 @@ export const TOOL_DEFINITIONS = {
       .strict(),
   },
 
+  heartbeat: {
+    description:
+      "Read or change this workspace's scheduled heartbeat. " +
+      "The tool only affects the current workspace; it does not accept a workspaceId. " +
+      "Use action='set' to enable or configure the heartbeat interval, custom message, context mode, or enabled flag. " +
+      "Use action='unset' to remove this workspace's heartbeat settings entirely. " +
+      "Use action='get' before changing settings when you need to preserve existing values.",
+    schema: HeartbeatToolArgsSchema,
+  },
   todo_write: {
     description:
       "Create or update the todo list for tracking multi-step tasks (limit: 7 items). " +
@@ -2522,6 +2578,20 @@ export const WebFetchToolResultSchema = z.union([
   }),
 ]);
 
+export const HeartbeatToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    action: HeartbeatToolActionSchema,
+    configured: z.boolean(),
+    settings: WorkspaceHeartbeatSettingsSchema.nullable(),
+    summary: z.string(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
 export const MemoryToolResultSchema = z.union([
   z.object({
     success: z.literal(true),
@@ -2557,6 +2627,7 @@ export type BridgeableToolName =
   | "task_apply_git_patch"
   | "task_list"
   | "task_terminate"
+  | "heartbeat"
   | "memory";
 
 /**
@@ -2582,6 +2653,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_terminate: TaskTerminateToolResultSchema,
+  heartbeat: HeartbeatToolResultSchema,
   memory: MemoryToolResultSchema,
 };
 
@@ -2700,6 +2772,7 @@ export function getAvailableTools(
     ...(enableAgentReport ? ["agent_report"] : []),
     "get_goal",
     "complete_goal",
+    "heartbeat",
     "todo_write",
     "todo_read",
     ...(enableReviewPane ? ["review_pane_update", "review_pane_get"] : []),
