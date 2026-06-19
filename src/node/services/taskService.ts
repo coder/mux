@@ -5909,23 +5909,25 @@ export class TaskService {
     if (metadata == null) {
       return;
     }
-    const record = await this.taskHandleStore.getWorkspaceTurn(
-      metadata.ownerWorkspaceId,
-      metadata.taskHandleId
-    );
-    if (
-      record == null ||
-      record.workspaceId !== event.workspaceId ||
-      record.turnId !== metadata.turnId ||
-      !this.isActiveWorkspaceTurn(record) ||
-      this.isDeferredWorkspaceTurnMessage(record, event.messageId)
-    ) {
-      return;
-    }
-    await this.taskHandleStore.upsertWorkspaceTurn({
-      ...record,
-      updatedAt: getIsoNow(),
-      deferredMessageIds: [...(record.deferredMessageIds ?? []), event.messageId],
+    await this.workspaceTurnSettlementLocks.withLock(metadata.taskHandleId, async () => {
+      const record = await this.taskHandleStore.getWorkspaceTurn(
+        metadata.ownerWorkspaceId,
+        metadata.taskHandleId
+      );
+      if (
+        record == null ||
+        record.workspaceId !== event.workspaceId ||
+        record.turnId !== metadata.turnId ||
+        !this.isActiveWorkspaceTurn(record) ||
+        this.isDeferredWorkspaceTurnMessage(record, event.messageId)
+      ) {
+        return;
+      }
+      await this.taskHandleStore.upsertWorkspaceTurn({
+        ...record,
+        updatedAt: getIsoNow(),
+        deferredMessageIds: [...(record.deferredMessageIds ?? []), event.messageId],
+      });
     });
   }
 

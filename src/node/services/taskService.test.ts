@@ -1258,6 +1258,37 @@ describe("TaskService", () => {
     });
   });
 
+  test("workspace-turn deferred marker does not rewrite terminal handles", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const interruptResult = await taskService.interruptWorkspaceTurn(parentId, "wst_handle");
+    expect(interruptResult.success).toBe(true);
+    await (
+      taskService as unknown as {
+        markWorkspaceTurnStreamEndDeferred: (event: StreamEndEvent) => Promise<void>;
+      }
+    ).markWorkspaceTurnStreamEndDeferred({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_deferred_after_interrupt",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Pre-handoff text" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({ status: "interrupted" });
+    expect(snapshot?.deferredMessageIds).toBeUndefined();
+  });
+
   test("workspace-turn stale recovery skips deferred pre-handoff stream-end history", async () => {
     const { config, parentId, projectPath, taskService, historyService } =
       await startWorkspaceTurnForTest();
