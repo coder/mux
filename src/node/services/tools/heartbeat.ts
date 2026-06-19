@@ -1,6 +1,10 @@
 import { tool } from "ai";
 import assert from "@/common/utils/assert";
-import type { ToolFactory, WorkspaceHeartbeatSettingsUpdate } from "@/common/utils/tools/tools";
+import type {
+  ToolFactory,
+  WorkspaceHeartbeatSettings,
+  WorkspaceHeartbeatSettingsUpdate,
+} from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -51,6 +55,22 @@ function summarize(
   return `Heartbeat is ${status} for this workspace at ${formatInterval(settings.intervalMs)}.`;
 }
 
+// Build the shared success payload for every heartbeat action so the get/set/unset branches
+// don't each re-assemble the same { action, configured, settings, summary } object. `configured`
+// is derived from settings: null only for unset and an unconfigured get, non-null otherwise.
+function buildSuccessResult(
+  action: HeartbeatToolArgs["action"],
+  settings: WorkspaceHeartbeatSettings | null
+): HeartbeatToolResult {
+  return {
+    success: true,
+    action,
+    configured: settings != null,
+    settings,
+    summary: summarize({ action, settings }),
+  };
+}
+
 export const createHeartbeatTool: ToolFactory = (config) =>
   tool({
     description: TOOL_DEFINITIONS.heartbeat.description,
@@ -66,13 +86,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
 
         if (args.action === "get") {
           const settings = heartbeatService.getHeartbeatSettings(workspaceId);
-          return {
-            success: true,
-            action: args.action,
-            configured: settings != null,
-            settings,
-            summary: summarize({ action: args.action, settings }),
-          };
+          return buildSuccessResult(args.action, settings);
         }
 
         if (args.action === "unset") {
@@ -80,13 +94,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
           if (!unsetResult.success) {
             return { success: false, error: unsetResult.error };
           }
-          return {
-            success: true,
-            action: args.action,
-            configured: false,
-            settings: null,
-            summary: summarize({ action: args.action, settings: null }),
-          };
+          return buildSuccessResult(args.action, null);
         }
 
         const settingsUpdate: WorkspaceHeartbeatSettingsUpdate = {};
@@ -109,13 +117,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
         }
 
         const settings = setResult.data;
-        return {
-          success: true,
-          action: args.action,
-          configured: true,
-          settings,
-          summary: summarize({ action: args.action, settings }),
-        };
+        return buildSuccessResult(args.action, settings);
       } catch (error) {
         return { success: false, error: getErrorMessage(error) };
       }
