@@ -136,6 +136,33 @@ Records lightweight progress/details.
 log("Selected lanes", { lanes });
 ```
 
+Keep `phase` and `log` events information-distinct. Use `phase()` for major workflow transitions and include the key details needed to understand that transition. Use `log()` only for additional information that is not already captured by the surrounding phase, such as a decision, result, warning, or intermediate finding.
+
+If a `log()` appears immediately before a `phase()` and both carry the same details object or equivalent data, delete the log or move any unique details into the phase.
+
+Prefer this:
+
+```js
+phase("lane-review", { lanes });
+```
+
+Over this:
+
+```js
+log("Selected lanes", { lanes });
+phase("lane-review", { lanes });
+```
+
+Only keep the log when it adds distinct context:
+
+```js
+log("Trimmed lanes to max fan-out", {
+  originalCount: allLanes.length,
+  selectedCount: lanes.length,
+});
+phase("lane-review", { lanes });
+```
+
 ### `agent(spec)`
 
 Runs one workflow-owned sub-agent and waits for its final report.
