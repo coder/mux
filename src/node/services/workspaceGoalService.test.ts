@@ -1619,22 +1619,23 @@ describe("WorkspaceGoalService", () => {
     const original = await setGoalOk(service, { workspaceId, objective: "Original" });
     await setGoalOk(service, { workspaceId, status: "paused" });
 
-    // Force the streaming-branch path so the next setGoal queues a
-    // pending mutation rather than applying immediately.
-    await extensionMetadata.setStreaming(workspaceId, true);
-    // Queue a no-op pause against an already-paused goal — drained from
-    // applyPendingAfterStreamEnd this would throw `WorkspaceGoalTransitionError`
-    // inside `validateStatusTransition("paused", "paused", null)`.
-    const queueResult = await service.setGoal({
-      workspaceId,
+    // Seed a queued no-op pause against an already-paused goal. Draining this
+    // throws `WorkspaceGoalTransitionError` inside
+    // `validateStatusTransition("paused", "paused", null)`, which is the
+    // stream-end failure mode this regression test cares about. Seeding the
+    // queue directly keeps this test focused on drain behavior instead of the
+    // streaming projection rules that now reject this invalid transition sooner.
+    const serviceAccess = service as unknown as {
+      pendingGoalMutations: Map<
+        string,
+        { objective: string; status: GoalStatus; projectedGoalId?: string | null }
+      >;
+    };
+    serviceAccess.pendingGoalMutations.set(workspaceId, {
       objective: "Original",
       status: "paused",
+      projectedGoalId: original.goalId,
     });
-    expect(queueResult.success).toBe(true);
-    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
-      goal: { objective: "Original", status: "paused" },
-    });
-    await extensionMetadata.setStreaming(workspaceId, false);
 
     // Without the fix, this rejection would propagate out of the async
     // function and crash. With the fix, it returns null and the goal
