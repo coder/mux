@@ -243,7 +243,15 @@ CHECK_PR_CHECKS_ONCE() {
       return 1
     fi
 
-    if [ "$merge_state" = "CLEAN" ] || { [ "$merge_state" = "UNSTABLE" ] && [ "$ignored_unready_count" -gt 0 ]; }; then
+    # If a Chromatic status is required in branch protection, GitHub reports
+    # the aggregate merge state as BLOCKED even though this repo's readiness
+    # policy ignores those UI statuses.
+    local merge_state_blocked_by_ignored_chromatic=0
+    if { [ "$merge_state" = "UNSTABLE" ] || [ "$merge_state" = "BLOCKED" ]; } && [ "$ignored_unready_count" -gt 0 ]; then
+      merge_state_blocked_by_ignored_chromatic=1
+    fi
+
+    if [ "$merge_state" = "CLEAN" ] || [ "$merge_state_blocked_by_ignored_chromatic" -eq 1 ]; then
       echo "✅ All non-Chromatic checks passed!"
       echo ""
       echo "$checks"
