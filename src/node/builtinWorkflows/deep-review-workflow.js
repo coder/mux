@@ -298,7 +298,13 @@ function autoFixSkipReason(input, gitContext) {
 
 function looksNonLocalTarget(target) {
   const textValue = String(target || "").trim();
-  return /^https?:\/\//i.test(textValue) || /^git@/i.test(textValue);
+  return (
+    /https?:\/\//i.test(textValue) ||
+    /^git@/i.test(textValue) ||
+    /\bPR\s*#?\d+\b/i.test(textValue) ||
+    /^#\d+\b/.test(textValue) ||
+    /github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(textValue)
+  );
 }
 
 function collectGitReviewContextAgent(agent, input, suffix) {
@@ -722,12 +728,12 @@ function mergeVerifiedIssues(candidates, verifications) {
 function selectFixableIssues(input, final, verified) {
   const selectedIds = stringList(input.fixIssueIds);
   const finalIds = stringList(final && final.fixCandidateIds);
+  if (selectedIds.length === 0 && finalIds.length === 0) return [];
   const wantedIds = selectedIds.length > 0 ? selectedIds : finalIds;
   return verified
     .filter(function (issue) {
       const verdict = issue.verification && issue.verification.verdict;
-      const isWanted = wantedIds.length === 0 || wantedIds.indexOf(issue.id) !== -1;
-      return verdict === "confirmed" && isWanted;
+      return verdict === "confirmed" && wantedIds.indexOf(issue.id) !== -1;
     })
     .slice(0, input.maxFixes);
 }
