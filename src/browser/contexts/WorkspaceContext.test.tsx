@@ -23,18 +23,9 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
-import type { APIClient } from "@/browser/contexts/API";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
 
-// Mock API
 let currentClientMock: RecursivePartial<APIClient> = {};
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: currentClientMock as APIClient,
-    status: "connected" as const,
-    error: null,
-  }),
-  APIProvider: ({ children }: { children: React.ReactNode }) => children,
-}));
 
 // Helper to create test workspace metadata with default runtime config
 const createWorkspaceMetadata = (
@@ -1490,13 +1481,15 @@ async function setupWithProjectContext() {
   }
 
   render(
-    <RouterProvider>
-      <ProjectProvider>
-        <WorkspaceProvider>
-          <ContextCapture />
-        </WorkspaceProvider>
-      </ProjectProvider>
-    </RouterProvider>
+    <APIProvider client={currentClientMock as APIClient}>
+      <RouterProvider>
+        <ProjectProvider>
+          <WorkspaceProvider>
+            <ContextCapture />
+          </WorkspaceProvider>
+        </ProjectProvider>
+      </RouterProvider>
+    </APIProvider>
   );
 
   // Inject client immediately to handle race conditions where effects run before store update.
