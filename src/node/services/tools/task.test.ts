@@ -1032,6 +1032,50 @@ describe("task tool", () => {
     }
   });
 
+  it("should reject workspace turns while in plan agent", async () => {
+    using tempDir = new TestTempDir("test-task-tool-plan-workspace");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const createWorkspaceTurn = mock(() =>
+      Ok({
+        taskId: "wst_child-turn",
+        kind: "workspace_turn" as const,
+        status: "running" as const,
+        workspaceId: "child-workspace",
+      })
+    );
+    const taskService = { createWorkspaceTurn } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      planFileOnly: true,
+      taskService,
+    });
+
+    let caught: unknown = null;
+    try {
+      await Promise.resolve(
+        tool.execute!(
+          {
+            kind: "workspace",
+            prompt: "implement it",
+            title: "Workspace turn",
+            run_in_background: true,
+          },
+          mockToolCallOptions
+        )
+      );
+    } catch (error: unknown) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    if (caught instanceof Error) {
+      expect(caught.message).toMatch(/plan agent/i);
+    }
+    expect(createWorkspaceTurn).not.toHaveBeenCalled();
+  });
+
   it('should reject spawning "exec" tasks while in plan agent', async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

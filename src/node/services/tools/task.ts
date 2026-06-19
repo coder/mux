@@ -379,6 +379,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
 
       const parentRuntimeAiSettings = buildParentRuntimeAiSettings(config);
 
+      if (config.planFileOnly && kind === "workspace") {
+        throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
+      }
+
       if (kind === "workspace") {
         const created = await taskService.createWorkspaceTurn({
           ownerWorkspaceId: workspaceId,
