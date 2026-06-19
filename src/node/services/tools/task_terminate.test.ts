@@ -87,6 +87,39 @@ describe("task_terminate tool", () => {
     });
   });
 
+  it("interrupts a workspace turn without deleting the workspace", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workspace-turn");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const interruptWorkspaceTurn = mock(
+      (): Promise<Result<{ workspaceId: string }, string>> =>
+        Promise.resolve(Ok({ workspaceId: "child-workspace" }))
+    );
+    const taskService = {
+      interruptWorkspaceTurn,
+      terminateDescendantAgentTask: mock(() => {
+        throw new Error("workspace turn IDs must not reach agent task termination");
+      }),
+    } as unknown as TaskService;
+
+    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wst_turn"] }, mockToolCallOptions)
+    );
+
+    expect(interruptWorkspaceTurn).toHaveBeenCalledWith("root-workspace", "wst_turn");
+    expect(result).toEqual({
+      results: [
+        {
+          status: "interrupted",
+          taskId: "wst_turn",
+          note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
+        },
+      ],
+    });
+  });
+
   const buildWorkflowRun = (status: string) => ({
     id: "wfr_run_1",
     workspaceId: "root-workspace",

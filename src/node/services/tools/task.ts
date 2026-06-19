@@ -356,6 +356,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       }
 
       const {
+        kind,
         agentId,
         subagent_type,
         prompt,
@@ -366,20 +367,107 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         model,
         thinking,
         isolation,
+        workspace,
       } = validatedArgs;
+
+      // Explicit per-launch model/thinking overrides. Omitted by default so delegated work
+      // inherits the parent's live settings unless the caller requests an override.
+      const aiOverrides = parseTaskAiOverrides({ model, thinking });
+
+      const workspaceId = requireWorkspaceId(config, "task");
+      const taskService = requireTaskService(config, "task");
+
+      const parentRuntimeAiSettings = buildParentRuntimeAiSettings(config);
+
+      if (kind === "workspace") {
+        const created = await taskService.createWorkspaceTurn({
+          ownerWorkspaceId: workspaceId,
+          prompt,
+          title,
+          experiments: config.experiments,
+          ...(aiOverrides.modelString != null ? { modelString: aiOverrides.modelString } : {}),
+          ...(aiOverrides.thinkingLevel != null
+            ? { thinkingLevel: aiOverrides.thinkingLevel }
+            : {}),
+          ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
+          workspace: {
+            mode: workspace?.mode ?? "new",
+            ...(workspace?.workspaceId != null ? { workspaceId: workspace.workspaceId } : {}),
+            ...(workspace?.branchName != null ? { branchName: workspace.branchName } : {}),
+            ...(workspace?.trunkBranch != null ? { trunkBranch: workspace.trunkBranch } : {}),
+            ...(workspace?.disposable != null ? { disposable: workspace.disposable } : {}),
+          },
+        });
+        if (!created.success) {
+          throw new Error(created.error);
+        }
+
+        const pendingResult = {
+          status: created.data.status,
+          taskId: created.data.taskId,
+          workspaceId: created.data.workspaceId,
+          handleKind: "workspace_turn" as const,
+          note: buildBackgroundStartNote(1),
+        };
+        if (run_in_background) {
+          return parseToolResult(TaskToolResultSchema, pendingResult, "task");
+        }
+
+        try {
+          const report = await taskService.waitForWorkspaceTurn(created.data.taskId, {
+            abortSignal,
+            requestingWorkspaceId: workspaceId,
+            backgroundOnMessageQueued: true,
+          });
+          return parseToolResult(
+            TaskToolResultSchema,
+            {
+              status: "completed" as const,
+              taskId: created.data.taskId,
+              workspaceId: report.workspaceId ?? created.data.workspaceId,
+              handleKind: "workspace_turn" as const,
+              reportMarkdown: report.reportMarkdown,
+              title: report.title,
+              messageId: report.messageId,
+              finalMessageRef: report.finalMessageRef,
+            },
+            "task"
+          );
+        } catch (error: unknown) {
+          if (abortSignal?.aborted) {
+            throw new Error("Interrupted");
+          }
+          if (error instanceof ForegroundWaitBackgroundedError) {
+            return parseToolResult(
+              TaskToolResultSchema,
+              {
+                ...pendingResult,
+                note: buildForegroundContinuationNote(1, "backgrounded"),
+              },
+              "task"
+            );
+          }
+          const errorMessage = getErrorMessage(error);
+          if (errorMessage === "Timed out waiting for workspace turn") {
+            return parseToolResult(
+              TaskToolResultSchema,
+              {
+                ...pendingResult,
+                note: buildForegroundContinuationNote(1, "timed_out"),
+              },
+              "task"
+            );
+          }
+          throw error;
+        }
+      }
+
       const requestedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0 ? agentId : subagent_type;
       if (!requestedAgentId) {
         throw new Error("task tool input validation failed: expected agent task args");
       }
 
-      // Explicit per-launch model/thinking overrides. Omitted by default so the
-      // sub-agent keeps inheriting the parent's live settings (see precedence in
-      // taskService.resolveTaskAISettings).
-      const aiOverrides = parseTaskAiOverrides({ model, thinking });
-
-      const workspaceId = requireWorkspaceId(config, "task");
-      const taskService = requireTaskService(config, "task");
       const taskGroupLaunches = buildTaskGroupLaunches({ prompt, n, variants });
       const taskGroupCount = taskGroupLaunches.length;
       const taskGroupId =
@@ -396,7 +484,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       // Parent runtime model and thinking are forwarded as a low-priority fallback so
       // unconfigured delegated runs still inherit the parent's live model. Do not
       // restore the previous top-priority forwarding through explicit task args.
-      const parentRuntimeAiSettings = buildParentRuntimeAiSettings(config);
       const createdTasks: SpawnedTaskInfo[] = [];
       for (const launch of taskGroupLaunches) {
         if (abortSignal?.aborted) {

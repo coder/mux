@@ -73,7 +73,7 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
-import type { ErrorEvent, StreamEndEvent } from "@/common/types/stream";
+import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import {
   isActiveWorkflowRunStatus,
   isTerminalWorkflowRunStatus,
@@ -114,6 +114,14 @@ import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import {
+  TaskHandleStore,
+  WORKSPACE_TURN_TASK_ID_PREFIX,
+  isWorkspaceTurnTaskId,
+  type WorkspaceTurnFinalMessageRef,
+  type WorkspaceTurnTaskHandleRecord,
+  type WorkspaceTurnTaskStatus,
+} from "@/node/services/taskHandleStore";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
 
@@ -338,6 +346,52 @@ function getTaskCompletionInstruction(params: {
   return "Call agent_report exactly once now with your final report. Base it only on the work already completed in this workspace.";
 }
 
+export interface WorkspaceTurnCreateArgs {
+  ownerWorkspaceId: string;
+  prompt: string;
+  title: string;
+  modelString?: string;
+  thinkingLevel?: ParsedThinkingInput;
+  parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
+  workspace?: {
+    mode?: "new" | "fork" | "existing";
+    workspaceId?: string;
+    branchName?: string;
+    trunkBranch?: string;
+    disposable?: boolean;
+  };
+  experiments?: TaskCreateArgs["experiments"];
+}
+
+export interface WorkspaceTurnCreateResult {
+  taskId: string;
+  kind: "workspace_turn";
+  status: "starting" | "running";
+  workspaceId: string;
+}
+
+export interface WorkspaceTurnWaitResult {
+  taskId: string;
+  workspaceId: string;
+  reportMarkdown: string;
+  title?: string;
+  messageId?: string;
+  finalMessageRef?: WorkspaceTurnFinalMessageRef;
+}
+
+interface BackgroundableForegroundWaiter {
+  taskId: string;
+  reject: (error: Error) => void;
+  cleanup: () => void;
+  requestingWorkspaceId?: string;
+  backgroundOnMessageQueued: boolean;
+}
+
+interface WorkspaceTurnWaiter extends BackgroundableForegroundWaiter {
+  handleId: string;
+  resolve: (result: WorkspaceTurnWaitResult) => void;
+}
+
 export interface TaskCreateResult {
   taskId: string;
   kind: TaskKind;
@@ -481,13 +535,8 @@ interface InactiveWorkflowTaskOwner {
 
 type InterruptedTaskStatusMutation = "interrupted" | "preserved-completed-report";
 
-interface PendingTaskWaiter {
-  taskId: string;
+interface PendingTaskWaiter extends BackgroundableForegroundWaiter {
   resolve: (report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }) => void;
-  reject: (error: Error) => void;
-  cleanup: () => void;
-  requestingWorkspaceId?: string;
-  backgroundOnMessageQueued: boolean;
 }
 
 interface PendingTaskStartWaiter {
@@ -523,6 +572,10 @@ function isTypedWorkspaceEvent(value: unknown, type: string): boolean {
 
 function isStreamEndEvent(value: unknown): value is StreamEndEvent {
   return isTypedWorkspaceEvent(value, "stream-end");
+}
+
+function isStreamAbortEvent(value: unknown): value is StreamAbortEvent {
+  return isTypedWorkspaceEvent(value, "stream-abort");
 }
 
 function isErrorEvent(value: unknown): value is ErrorEvent {
@@ -853,8 +906,14 @@ export class TaskService {
   private readonly foregroundAwaitCountByWorkspaceId = new Map<string, number>();
   private readonly backgroundableForegroundWaitersByWorkspaceId = new Map<
     string,
-    Set<PendingTaskWaiter>
+    Set<BackgroundableForegroundWaiter>
   >();
+  private readonly pendingWorkspaceTurnWaitersByHandleId = new Map<string, WorkspaceTurnWaiter[]>();
+  private readonly activeWorkspaceTurnHandleByWorkspaceId = new Map<
+    string,
+    { handleId: string; ownerWorkspaceId: string }
+  >();
+  private readonly taskHandleStore: TaskHandleStore;
   private readonly userBackgroundedTaskIds = new Set<string>();
 
   // Cache completed reports so callers can retrieve them without re-reading disk.
@@ -1234,6 +1293,7 @@ export class TaskService {
     private readonly sessionUsageService?: SessionUsageService,
     private readonly workspaceGoalService?: WorkspaceGoalService
   ) {
+    this.taskHandleStore = new TaskHandleStore(config);
     this.gitPatchArtifactService = new GitPatchArtifactService(config);
 
     this.aiService.on("stream-end", (payload: unknown) => {
@@ -1245,6 +1305,18 @@ export class TaskService {
         })
         .catch((error: unknown) => {
           log.error("TaskService.handleStreamEnd failed", { error });
+        });
+    });
+
+    this.aiService.on("stream-abort", (payload: unknown) => {
+      if (!isStreamAbortEvent(payload)) return;
+
+      void this.workspaceEventLocks
+        .withLock(payload.workspaceId, async () => {
+          await this.handleStreamAbort(payload);
+        })
+        .catch((error: unknown) => {
+          log.error("TaskService.handleStreamAbort failed", { error });
         });
     });
 
@@ -1877,7 +1949,8 @@ export class TaskService {
 
     const cfg = this.config.loadConfigOrDefault();
     const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
-    let reservedActiveCount = this.countActiveAgentTasks(cfg);
+    let reservedActiveCount =
+      this.countActiveAgentTasks(cfg) + (await this.countActiveWorkspaceTurns());
 
     for (const args of argsList) {
       const parentWorkspaceId = coerceNonEmptyString(args.parentWorkspaceId);
@@ -2587,6 +2660,194 @@ export class TaskService {
     this.scheduleMaybeStartQueuedTasks();
   }
 
+  async createWorkspaceTurn(
+    args: WorkspaceTurnCreateArgs
+  ): Promise<Result<WorkspaceTurnCreateResult, string>> {
+    const ownerWorkspaceId = coerceNonEmptyString(args.ownerWorkspaceId);
+    if (!ownerWorkspaceId) {
+      return Err("Task.createWorkspaceTurn: ownerWorkspaceId is required");
+    }
+    const prompt = coerceNonEmptyString(args.prompt);
+    if (!prompt) {
+      return Err("Task.createWorkspaceTurn: prompt is required");
+    }
+    const title = coerceNonEmptyString(args.title) ?? "Workspace task";
+    const mode = args.workspace?.mode ?? "new";
+    if (mode !== "new" && mode !== "fork" && mode !== "existing") {
+      return Err("Task.createWorkspaceTurn: unsupported workspace mode");
+    }
+
+    await using _lock = await this.mutex.acquire();
+
+    const parentMetaResult = await this.aiService.getWorkspaceMetadata(ownerWorkspaceId);
+    if (!parentMetaResult.success) {
+      return Err(`Task.createWorkspaceTurn: owner workspace not found (${parentMetaResult.error})`);
+    }
+    const parentMeta = parentMetaResult.data;
+    const cfg = this.config.loadConfigOrDefault();
+    const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+    if (!taskProjectConfig?.trusted) {
+      return Err(
+        "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
+      );
+    }
+
+    const allWorkspaceTurns = await this.taskHandleStore.listAllWorkspaceTurns();
+    const ownerWorkspaceTurns = allWorkspaceTurns.filter(
+      (record) => record.ownerWorkspaceId === ownerWorkspaceId
+    );
+    const activeWorkspaceTurnCount = await this.countActiveWorkspaceTurns(allWorkspaceTurns);
+    const activeAgentCount = this.countActiveAgentTasks(cfg);
+    if (activeAgentCount + activeWorkspaceTurnCount >= taskSettings.maxParallelAgentTasks) {
+      return Err(
+        `Task.createWorkspaceTurn: maxParallelAgentTasks exceeded (active=${activeAgentCount + activeWorkspaceTurnCount}, max=${taskSettings.maxParallelAgentTasks})`
+      );
+    }
+
+    const handleId = `${WORKSPACE_TURN_TASK_ID_PREFIX}${this.config.generateStableId()}`;
+    const turnId = this.config.generateStableId();
+    const createdAt = getIsoNow();
+    let targetWorkspaceId: string;
+    let createdWorkspace = false;
+
+    if (mode === "existing") {
+      const existingWorkspaceId = coerceNonEmptyString(args.workspace?.workspaceId);
+      if (!existingWorkspaceId) {
+        return Err("Task.createWorkspaceTurn: workspace.workspaceId is required for existing mode");
+      }
+      const ownsExistingWorkspace = ownerWorkspaceTurns.some(
+        (record) => record.createdWorkspace && record.workspaceId === existingWorkspaceId
+      );
+      if (!ownsExistingWorkspace) {
+        return Err("Task.createWorkspaceTurn: invalid_scope for existing workspace");
+      }
+      if (this.aiService.isStreaming(existingWorkspaceId)) {
+        return Err("Task.createWorkspaceTurn: existing workspace is busy; wait until it is idle");
+      }
+      targetWorkspaceId = existingWorkspaceId;
+    } else {
+      const tags = {
+        "mux.taskHandleId": handleId,
+        "mux.taskOwnerWorkspaceId": ownerWorkspaceId,
+        "mux.taskTurnId": turnId,
+      };
+      const createResult = await this.workspaceService.create(
+        parentMeta.projectPath,
+        args.workspace?.branchName,
+        args.workspace?.trunkBranch ?? parentMeta.name,
+        title,
+        parentMeta.runtimeConfig,
+        parentMeta.subProjectPath,
+        false,
+        tags
+      );
+      if (!createResult.success) {
+        return Err(`Task.createWorkspaceTurn: workspace create failed (${createResult.error})`);
+      }
+      targetWorkspaceId = createResult.data.metadata.id;
+      createdWorkspace = true;
+    }
+
+    const model =
+      coerceNonEmptyString(args.modelString) ??
+      coerceNonEmptyString(args.parentRuntimeAiSettings?.modelString) ??
+      coerceNonEmptyString(parentMeta.aiSettingsByAgent?.exec?.model) ??
+      coerceNonEmptyString(parentMeta.aiSettings?.model) ??
+      defaultModel;
+    const thinkingLevel =
+      args.thinkingLevel != null
+        ? resolveThinkingInput(args.thinkingLevel, normalizeToCanonical(model))
+        : (args.parentRuntimeAiSettings?.thinkingLevel ??
+          parentMeta.aiSettingsByAgent?.exec?.thinkingLevel ??
+          parentMeta.aiSettings?.thinkingLevel);
+
+    const record: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId,
+      workspaceId: targetWorkspaceId,
+      turnId,
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace,
+      disposableWorkspace: createdWorkspace && args.workspace?.disposable === true,
+      title,
+      prompt,
+      modelString: model,
+      ...(thinkingLevel != null ? { thinkingLevel } : {}),
+    };
+    await this.taskHandleStore.upsertWorkspaceTurn(record);
+    this.activeWorkspaceTurnHandleByWorkspaceId.set(targetWorkspaceId, {
+      handleId,
+      ownerWorkspaceId,
+    });
+
+    const sendResult = await this.workspaceService.sendMessage(
+      targetWorkspaceId,
+      prompt,
+      {
+        model,
+        agentId: "exec",
+        ...(thinkingLevel != null ? { thinkingLevel } : {}),
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: handleId,
+          ownerWorkspaceId,
+          turnId,
+        },
+        experiments: args.experiments,
+      },
+      {
+        startStreamInBackground: true,
+        requireIdle: true,
+        onAcceptedPreStreamFailure: async (sendError) => {
+          const error = formatSendMessageError(sendError).message;
+          const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+          if (current == null || (current.status !== "starting" && current.status !== "running")) {
+            return;
+          }
+          const next: WorkspaceTurnTaskHandleRecord = {
+            ...current,
+            status: "error",
+            updatedAt: getIsoNow(),
+            error,
+          };
+          await this.settleWorkspaceTurn({
+            record: current,
+            next,
+            waiterSettlement: { status: "error", error: new Error(error) },
+          });
+        },
+        agentInitiated: true,
+      }
+    );
+
+    if (!sendResult.success) {
+      const error = formatSendMessageError(sendResult.error).message;
+      const next: WorkspaceTurnTaskHandleRecord = {
+        ...record,
+        status: "error",
+        updatedAt: getIsoNow(),
+        error,
+      };
+      await this.settleWorkspaceTurn({
+        record,
+        next,
+        waiterSettlement: { status: "error", error: new Error(error) },
+      });
+      return Err(`Task.createWorkspaceTurn: send failed (${error})`);
+    }
+
+    return Ok({
+      taskId: handleId,
+      kind: "workspace_turn",
+      status: "running",
+      workspaceId: targetWorkspaceId,
+    });
+  }
+
   async create(args: TaskCreateArgs): Promise<Result<TaskCreateResult, string>> {
     const parentWorkspaceId = coerceNonEmptyString(args.parentWorkspaceId);
     if (!parentWorkspaceId) {
@@ -2689,7 +2950,7 @@ export class TaskService {
     }
 
     // Enforce parallelism (global).
-    const activeCount = this.countActiveAgentTasks(cfg);
+    const activeCount = this.countActiveAgentTasks(cfg) + (await this.countActiveWorkspaceTurns());
     const shouldQueue = activeCount >= taskSettings.maxParallelAgentTasks;
 
     const taskId = this.config.generateStableId();
@@ -3465,7 +3726,7 @@ export class TaskService {
 
   private registerBackgroundableForegroundWaiter(
     workspaceId: string,
-    waiter: PendingTaskWaiter
+    waiter: BackgroundableForegroundWaiter
   ): void {
     let set = this.backgroundableForegroundWaitersByWorkspaceId.get(workspaceId);
     if (!set) {
@@ -3477,7 +3738,7 @@ export class TaskService {
 
   private unregisterBackgroundableForegroundWaiter(
     workspaceId: string,
-    waiter: PendingTaskWaiter
+    waiter: BackgroundableForegroundWaiter
   ): void {
     const set = this.backgroundableForegroundWaitersByWorkspaceId.get(workspaceId);
     if (!set) return;
@@ -3508,6 +3769,207 @@ export class TaskService {
       }
     }
     return count;
+  }
+
+  private buildWorkspaceTurnWaitResult(
+    record: WorkspaceTurnTaskHandleRecord
+  ): WorkspaceTurnWaitResult {
+    assert(record.handleId.length > 0, "workspace turn record requires handleId");
+    assert(record.workspaceId.length > 0, "workspace turn record requires workspaceId");
+    return {
+      taskId: record.handleId,
+      workspaceId: record.workspaceId,
+      reportMarkdown:
+        record.reportMarkdown ?? "Workspace turn completed without final text output.",
+      title: record.title,
+      messageId: record.messageId,
+      finalMessageRef: record.finalMessageRef,
+    };
+  }
+
+  private settleWorkspaceTurnWaiters(
+    handleId: string,
+    settlement:
+      | { status: "completed"; result: WorkspaceTurnWaitResult }
+      | { status: "error"; error: Error }
+  ): void {
+    assert(handleId.length > 0, "settleWorkspaceTurnWaiters requires handleId");
+    const waiters = this.pendingWorkspaceTurnWaitersByHandleId.get(handleId) ?? [];
+    this.pendingWorkspaceTurnWaitersByHandleId.delete(handleId);
+    for (const waiter of waiters) {
+      if (settlement.status === "completed") {
+        waiter.resolve(settlement.result);
+      } else {
+        waiter.reject(settlement.error);
+      }
+    }
+  }
+
+  private async cleanupDisposableWorkspaceTurn(
+    record: WorkspaceTurnTaskHandleRecord
+  ): Promise<void> {
+    if (!record.disposableWorkspace) return;
+    try {
+      const removeResult = await this.workspaceService.remove(record.workspaceId, true);
+      if (!removeResult.success) {
+        log.error("Workspace turn cleanup: failed to remove disposable workspace", {
+          handleId: record.handleId,
+          workspaceId: record.workspaceId,
+          error: removeResult.error,
+        });
+      }
+    } catch (error: unknown) {
+      log.error("Workspace turn cleanup: workspaceService.remove threw", {
+        handleId: record.handleId,
+        workspaceId: record.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  private async settleWorkspaceTurn(params: {
+    record: WorkspaceTurnTaskHandleRecord;
+    next: WorkspaceTurnTaskHandleRecord;
+    waiterSettlement:
+      | { status: "completed"; result: WorkspaceTurnWaitResult }
+      | { status: "error"; error: Error };
+  }): Promise<void> {
+    assert(
+      params.next.handleId === params.record.handleId,
+      "settleWorkspaceTurn requires stable handleId"
+    );
+    assert(
+      params.next.workspaceId === params.record.workspaceId,
+      "settleWorkspaceTurn requires stable workspaceId"
+    );
+
+    await this.taskHandleStore.upsertWorkspaceTurn(params.next);
+    this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+    this.settleWorkspaceTurnWaiters(params.record.handleId, params.waiterSettlement);
+    this.markTaskForegroundRelevant(params.record.handleId);
+    await this.cleanupDisposableWorkspaceTurn(params.next);
+    this.scheduleMaybeStartQueuedTasks();
+  }
+
+  async waitForWorkspaceTurn(
+    handleId: string,
+    options: {
+      timeoutMs?: number;
+      abortSignal?: AbortSignal;
+      requestingWorkspaceId: string;
+      backgroundOnMessageQueued?: boolean;
+    }
+  ): Promise<WorkspaceTurnWaitResult> {
+    assert(handleId.length > 0, "waitForWorkspaceTurn: handleId must be non-empty");
+    assert(
+      options.requestingWorkspaceId.length > 0,
+      "waitForWorkspaceTurn: requestingWorkspaceId must be non-empty"
+    );
+    const timeoutMs = options.timeoutMs ?? 120_000;
+    assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForWorkspaceTurn: timeoutMs invalid");
+
+    this.markTaskForegroundRelevant(handleId);
+
+    return await new Promise<WorkspaceTurnWaitResult>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let abortListener: (() => void) | null = null;
+      let stopBlockingRequester: (() => void) | null = this.startForegroundAwait(
+        options.requestingWorkspaceId
+      );
+      const shouldBackgroundOnQueuedMessage = options.backgroundOnMessageQueued ?? true;
+
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        if (abortListener) {
+          options.abortSignal?.removeEventListener("abort", abortListener);
+          abortListener = null;
+        }
+        if (waiterEntry.backgroundOnMessageQueued && waiterEntry.requestingWorkspaceId) {
+          this.unregisterBackgroundableForegroundWaiter(
+            waiterEntry.requestingWorkspaceId,
+            waiterEntry
+          );
+        }
+        const waiters = this.pendingWorkspaceTurnWaitersByHandleId.get(handleId) ?? [];
+        const nextWaiters = waiters.filter((waiter) => waiter !== waiterEntry);
+        if (nextWaiters.length === 0) {
+          this.pendingWorkspaceTurnWaitersByHandleId.delete(handleId);
+        } else {
+          this.pendingWorkspaceTurnWaitersByHandleId.set(handleId, nextWaiters);
+        }
+        if (stopBlockingRequester) {
+          try {
+            stopBlockingRequester();
+          } finally {
+            stopBlockingRequester = null;
+          }
+        }
+      };
+      const waiterEntry: WorkspaceTurnWaiter = {
+        taskId: handleId,
+        handleId,
+        requestingWorkspaceId: options.requestingWorkspaceId,
+        backgroundOnMessageQueued: shouldBackgroundOnQueuedMessage,
+        resolve: (result) => {
+          cleanup();
+          resolve(result);
+        },
+        reject: (error) => {
+          cleanup();
+          reject(error);
+        },
+        cleanup,
+      };
+
+      const waiters = this.pendingWorkspaceTurnWaitersByHandleId.get(handleId) ?? [];
+      waiters.push(waiterEntry);
+      this.pendingWorkspaceTurnWaitersByHandleId.set(handleId, waiters);
+      if (shouldBackgroundOnQueuedMessage) {
+        this.registerBackgroundableForegroundWaiter(options.requestingWorkspaceId, waiterEntry);
+      }
+
+      if (options.abortSignal?.aborted) {
+        waiterEntry.reject(new Error("Interrupted"));
+        return;
+      }
+      abortListener = () => waiterEntry.reject(new Error("Interrupted"));
+      options.abortSignal?.addEventListener("abort", abortListener, { once: true });
+      timer = setTimeout(
+        () => waiterEntry.reject(new Error("Timed out waiting for workspace turn")),
+        timeoutMs
+      );
+
+      void (async () => {
+        const record = await this.taskHandleStore.getWorkspaceTurn(
+          options.requestingWorkspaceId,
+          handleId
+        );
+        if (settled) return;
+        if (record == null) {
+          waiterEntry.reject(new Error("Workspace turn not found or out of scope"));
+          return;
+        }
+        if (record.status === "completed") {
+          waiterEntry.resolve(this.buildWorkspaceTurnWaitResult(record));
+          return;
+        }
+        if (record.status === "error") {
+          waiterEntry.reject(new Error(record.error ?? "Workspace turn failed"));
+          return;
+        }
+        if (record.status === "interrupted") {
+          waiterEntry.reject(new Error("Workspace turn interrupted"));
+        }
+      })().catch((error: unknown) => {
+        waiterEntry.reject(error instanceof Error ? error : new Error(String(error)));
+      });
+    });
   }
 
   async waitForAgentReport(
@@ -3969,6 +4431,72 @@ export class TaskService {
     return result;
   }
 
+  async getWorkspaceTurnSnapshot(
+    ownerWorkspaceId: string,
+    handleId: string
+  ): Promise<WorkspaceTurnTaskHandleRecord | null> {
+    if (!isWorkspaceTurnTaskId(handleId)) {
+      return null;
+    }
+    return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+  }
+
+  async listWorkspaceTurnTasks(
+    ownerWorkspaceId: string,
+    options: { statuses?: readonly WorkspaceTurnTaskStatus[] } = {}
+  ): Promise<WorkspaceTurnTaskHandleRecord[]> {
+    const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId, options);
+    const statuses = options.statuses != null ? new Set(options.statuses) : null;
+    const result: WorkspaceTurnTaskHandleRecord[] = [];
+    for (const record of records) {
+      if (
+        (record.status === "starting" || record.status === "running") &&
+        !this.isLiveWorkspaceTurn(record)
+      ) {
+        await this.settleStaleWorkspaceTurn(record);
+        const latest = await this.taskHandleStore.getWorkspaceTurn(
+          record.ownerWorkspaceId,
+          record.handleId
+        );
+        if (latest != null && (statuses == null || statuses.has(latest.status))) {
+          result.push(latest);
+        }
+        continue;
+      }
+      result.push(record);
+    }
+    return result;
+  }
+
+  async interruptWorkspaceTurn(
+    ownerWorkspaceId: string,
+    handleId: string
+  ): Promise<Result<{ workspaceId: string }, string>> {
+    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    if (record == null) {
+      return Err("Workspace turn not found or out of scope");
+    }
+    if (record.status === "completed" || record.status === "error") {
+      return Err(`Workspace turn is already ${record.status} and cannot be interrupted.`);
+    }
+    try {
+      await this.aiService.stopStream(record.workspaceId, { abandonPartial: false });
+    } catch (error: unknown) {
+      log.debug("interruptWorkspaceTurn: stopStream threw", { handleId, error });
+    }
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: "interrupted",
+      updatedAt: getIsoNow(),
+    };
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: { status: "error", error: new Error("Workspace turn interrupted") },
+    });
+    return Ok({ workspaceId: record.workspaceId });
+  }
+
   listDescendantAgentTasks(
     workspaceId: string,
     options?: { statuses?: AgentTaskStatus[]; excludeWorkflowTasks?: boolean }
@@ -4338,6 +4866,84 @@ export class TaskService {
     return this.findWorkflowTaskOwnerInAncestry(index, taskId) != null;
   }
 
+  private isActiveWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): boolean {
+    if (record.status === "running" && this.isForegroundAwaiting(record.workspaceId)) {
+      return false;
+    }
+    return record.status === "starting" || record.status === "running";
+  }
+
+  private isLiveWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): boolean {
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
+    return (
+      (active?.handleId === record.handleId &&
+        active.ownerWorkspaceId === record.ownerWorkspaceId) ||
+      this.aiService.isStreaming(record.workspaceId)
+    );
+  }
+
+  private async settleStaleWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): Promise<void> {
+    if (record.status !== "starting" && record.status !== "running") {
+      return;
+    }
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: "interrupted",
+      updatedAt: getIsoNow(),
+      error: "Workspace turn interrupted after restart",
+    };
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: {
+        status: "error",
+        error: new Error("Workspace turn interrupted after restart"),
+      },
+    });
+  }
+
+  private async countActiveWorkspaceTurns(
+    records?: readonly WorkspaceTurnTaskHandleRecord[]
+  ): Promise<number> {
+    const candidateWorkspaceTurns =
+      records ??
+      (await this.taskHandleStore.listAllWorkspaceTurns({
+        statuses: ["starting", "running"],
+      }));
+    let count = 0;
+    for (const record of candidateWorkspaceTurns) {
+      if (!this.isActiveWorkspaceTurn(record)) {
+        continue;
+      }
+      if (!this.isLiveWorkspaceTurn(record)) {
+        await this.settleStaleWorkspaceTurn(record);
+        continue;
+      }
+      count += 1;
+    }
+    return count;
+  }
+
+  private async listActiveWorkspaceTurnTaskIdsForOwner(
+    ownerWorkspaceId: string
+  ): Promise<string[]> {
+    const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId, {
+      statuses: ["starting", "running"],
+    });
+    const taskIds: string[] = [];
+    for (const record of records) {
+      if (record.status !== "starting" && record.status !== "running") {
+        continue;
+      }
+      if (!this.isLiveWorkspaceTurn(record)) {
+        await this.settleStaleWorkspaceTurn(record);
+        continue;
+      }
+      taskIds.push(record.handleId);
+    }
+    return taskIds;
+  }
+
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
     let activeCount = 0;
     for (const task of this.listAgentTaskWorkspaces(config)) {
@@ -4526,7 +5132,8 @@ export class TaskService {
 
       const availableSlots = Math.max(
         0,
-        taskSettings.maxParallelAgentTasks - this.countActiveAgentTasks(config)
+        taskSettings.maxParallelAgentTasks -
+          (this.countActiveAgentTasks(config) + (await this.countActiveWorkspaceTurns()))
       );
       taskQueueDebug("TaskService.maybeStartQueuedTasks reservation summary", {
         maxParallelAgentTasks: taskSettings.maxParallelAgentTasks,
@@ -5046,6 +5653,125 @@ export class TaskService {
     return true;
   }
 
+  private getWorkspaceTurnMetadata(
+    event: StreamEndEvent
+  ): { taskHandleId: string; ownerWorkspaceId: string; turnId: string } | null {
+    const muxMetadata = event.metadata.muxMetadata;
+    if (typeof muxMetadata !== "object" || muxMetadata == null || Array.isArray(muxMetadata)) {
+      return null;
+    }
+    const data = muxMetadata as unknown as Record<string, unknown>;
+    if (data.type !== "workspace-turn-task") {
+      return null;
+    }
+    const taskHandleId = coerceNonEmptyString(data.taskHandleId);
+    const ownerWorkspaceId = coerceNonEmptyString(data.ownerWorkspaceId);
+    const turnId = coerceNonEmptyString(data.turnId);
+    if (!taskHandleId || !ownerWorkspaceId || !turnId) {
+      return null;
+    }
+    return { taskHandleId, ownerWorkspaceId, turnId };
+  }
+
+  private buildWorkspaceTurnReportMarkdown(event: StreamEndEvent): string {
+    const text = event.parts
+      .filter(
+        (part): part is Extract<(typeof event.parts)[number], { type: "text" }> =>
+          part.type === "text"
+      )
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+    return text.length > 0 ? text : "Workspace turn completed without final text output.";
+  }
+
+  private buildWorkspaceTurnFinalMessageRef(event: StreamEndEvent): WorkspaceTurnFinalMessageRef {
+    const textCharCount = event.parts
+      .filter(
+        (part): part is Extract<(typeof event.parts)[number], { type: "text" }> =>
+          part.type === "text"
+      )
+      .reduce((sum, part) => sum + part.text.length, 0);
+    const usage = event.metadata.usage;
+    return {
+      messageId: event.messageId,
+      model: event.metadata.model,
+      agentId: event.metadata.agentId,
+      finishReason: event.metadata.finishReason,
+      ...(usage != null
+        ? {
+            usageSummary: {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              totalTokens: usage.totalTokens,
+            },
+          }
+        : {}),
+      partCount: event.parts.length,
+      textCharCount,
+    };
+  }
+
+  private async finalizeWorkspaceTurnFromStreamEnd(event: StreamEndEvent): Promise<boolean> {
+    const metadataFromEvent = this.getWorkspaceTurnMetadata(event);
+    if (metadataFromEvent == null && event.metadata.muxMetadata != null) {
+      return false;
+    }
+    const active =
+      metadataFromEvent == null
+        ? this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId)
+        : null;
+    if (metadataFromEvent == null && active == null) {
+      return false;
+    }
+    const ownerWorkspaceId = metadataFromEvent?.ownerWorkspaceId ?? active?.ownerWorkspaceId;
+    const taskHandleId = metadataFromEvent?.taskHandleId ?? active?.handleId;
+    assert(ownerWorkspaceId != null, "workspace turn stream-end requires ownerWorkspaceId");
+    assert(taskHandleId != null, "workspace turn stream-end requires taskHandleId");
+    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskHandleId);
+    if (record == null) {
+      if (active != null) {
+        this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      }
+      log.warn("Ignoring missing workspace turn stream-end handle", {
+        workspaceId: event.workspaceId,
+        taskHandleId: metadataFromEvent?.taskHandleId ?? active?.handleId,
+      });
+      return true;
+    }
+    const metadata = metadataFromEvent ?? {
+      taskHandleId: record.handleId,
+      ownerWorkspaceId: record.ownerWorkspaceId,
+      turnId: record.turnId,
+    };
+    if (record.workspaceId !== event.workspaceId || record.turnId !== metadata.turnId) {
+      log.warn("Ignoring out-of-scope workspace turn stream-end", {
+        workspaceId: event.workspaceId,
+        taskHandleId: metadata.taskHandleId,
+      });
+      return true;
+    }
+
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: "completed",
+      updatedAt: getIsoNow(),
+      messageId: event.messageId,
+      reportMarkdown: this.buildWorkspaceTurnReportMarkdown(event),
+      finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
+      finalMessage: {
+        messageId: event.messageId,
+        metadata: event.metadata,
+      },
+    };
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: { status: "completed", result: this.buildWorkspaceTurnWaitResult(next) },
+    });
+    return true;
+  }
+
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const workspaceId = event.workspaceId;
 
@@ -5070,13 +5796,17 @@ export class TaskService {
         workspaceId,
         referencedWorkflowRunIds
       );
+      let activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
       if (!hasActiveDescendants) {
         // Foreground best-of children can finish while the parent task tool call is still pending,
         // which temporarily blocks their leaf cleanup and may defer synthetic fallback delivery.
         // Recheck both once the parent stream reaches a descendant-free stream-end.
         await this.deliverDeferredBestOfReportsForParent(workspaceId);
         await this.requestReportedChildCleanupRechecks(workspaceId);
-        if (activeWorkflowRunIds.length === 0) {
+        if (activeWorkflowRunIds.length === 0 && activeWorkspaceTurnIds.length === 0) {
+          if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
+            return;
+          }
           this.consecutiveAutoResumes.delete(workspaceId);
           return;
         }
@@ -5095,9 +5825,12 @@ export class TaskService {
       // bypass that journal/final-result path by asking the model to task_await those child tasks
       // directly. Instead, await the owning workflow run when one is still active.
       // Foreground waits can also be backgrounded at runtime when users queue another message.
-      let activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
-        excludeWorkflowTasks: true,
-      });
+      let activeTaskIds = [
+        ...this.listActiveDescendantAgentTaskIds(workspaceId, {
+          excludeWorkflowTasks: true,
+        }),
+        ...activeWorkspaceTurnIds,
+      ];
       const queueBackgroundedTaskIds = new Set(
         activeTaskIds.filter((id) => this.isTaskQueueBackgrounded(id))
       );
@@ -5111,6 +5844,9 @@ export class TaskService {
       let blockingTaskIds = getBlockingTaskIds(activeTaskIds);
 
       if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+        if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
+          return;
+        }
         this.consecutiveAutoResumes.delete(workspaceId);
         consumeQueueBackgroundedExemptions();
         log.debug("Skipping parent auto-resume: all active descendants were queue-backgrounded", {
@@ -5136,15 +5872,22 @@ export class TaskService {
         event.metadata
       );
 
-      activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
-        excludeWorkflowTasks: true,
-      });
+      activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
+      activeTaskIds = [
+        ...this.listActiveDescendantAgentTaskIds(workspaceId, {
+          excludeWorkflowTasks: true,
+        }),
+        ...activeWorkspaceTurnIds,
+      ];
       blockingTaskIds = getBlockingTaskIds(activeTaskIds);
       activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
         workspaceId,
         activeWorkflowRunIds
       );
       if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+        if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
+          return;
+        }
         this.consecutiveAutoResumes.delete(workspaceId);
         consumeQueueBackgroundedExemptions();
         return;
@@ -5191,15 +5934,22 @@ export class TaskService {
         { skipAutoResumeReset: true, synthetic: true, agentInitiated: true, requireIdle: true }
       );
       if (!sendResult.success && isWorkspaceBusyIdleOnlySend(sendResult.error)) {
-        activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId, {
-          excludeWorkflowTasks: true,
-        });
+        activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
+        activeTaskIds = [
+          ...this.listActiveDescendantAgentTaskIds(workspaceId, {
+            excludeWorkflowTasks: true,
+          }),
+          ...activeWorkspaceTurnIds,
+        ];
         blockingTaskIds = getBlockingTaskIds(activeTaskIds);
         activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
           workspaceId,
           activeWorkflowRunIds
         );
         if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
+          if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
+            return;
+          }
           this.consecutiveAutoResumes.delete(workspaceId);
           consumeQueueBackgroundedExemptions();
           return;
@@ -5248,6 +5998,10 @@ export class TaskService {
           error: sendResult.error,
         });
       }
+      return;
+    }
+
+    if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
       return;
     }
 
@@ -5345,7 +6099,76 @@ export class TaskService {
     await this.promptTaskForRequiredCompletionTool(workspaceId, { reason: "stream_end" });
   }
 
+  private async finalizeWorkspaceTurnFromStreamAbort(event: StreamAbortEvent): Promise<boolean> {
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
+    if (active == null) {
+      return false;
+    }
+    const record = await this.taskHandleStore.getWorkspaceTurn(
+      active.ownerWorkspaceId,
+      active.handleId
+    );
+    if (record == null) {
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      return true;
+    }
+    if (!this.isActiveWorkspaceTurn(record)) {
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      return true;
+    }
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: "interrupted",
+      updatedAt: getIsoNow(),
+    };
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: { status: "error", error: new Error("Workspace turn interrupted") },
+    });
+    return true;
+  }
+
+  private async handleStreamAbort(event: StreamAbortEvent): Promise<void> {
+    await this.finalizeWorkspaceTurnFromStreamAbort(event);
+  }
+
+  private async finalizeWorkspaceTurnFromStreamError(event: ErrorEvent): Promise<boolean> {
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
+    if (active == null) {
+      return false;
+    }
+    const record = await this.taskHandleStore.getWorkspaceTurn(
+      active.ownerWorkspaceId,
+      active.handleId
+    );
+    if (record == null) {
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      return true;
+    }
+    const settlesWorkspaceTurn =
+      event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
+    if (!settlesWorkspaceTurn) {
+      return true;
+    }
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: "error",
+      updatedAt: getIsoNow(),
+      error: event.error,
+    };
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: { status: "error", error: new Error(event.error) },
+    });
+    return true;
+  }
+
   private async handleTaskStreamError(event: ErrorEvent): Promise<void> {
+    if (await this.finalizeWorkspaceTurnFromStreamError(event)) {
+      return;
+    }
     const workspaceId = event.workspaceId;
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, workspaceId);

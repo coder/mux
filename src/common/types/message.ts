@@ -405,6 +405,15 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         runId: string;
       }
     | {
+        // Internal correlation marker for full-workspace turns launched through task(kind="workspace").
+        // The workspace remains a normal workspace; this metadata only lets TaskService correlate the
+        // final assistant stream-end/error back to the durable workspace-turn handle.
+        type: "workspace-turn-task";
+        taskHandleId: string;
+        ownerWorkspaceId: string;
+        turnId: string;
+      }
+    | {
         // /btw — user-side marker for a side question.
         //
         // The forked, single-turn, read-only side branch is created by the

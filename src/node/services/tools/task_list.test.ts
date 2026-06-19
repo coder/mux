@@ -91,6 +91,56 @@ describe("task_list tool", () => {
     });
   });
 
+  it("lists workspace-turn handles with workspace metadata", async () => {
+    using tempDir = new TestTempDir("test-task-list-workspace-turns");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const listDescendantAgentTasks = mock(() => []);
+    const listWorkspaceTurnTasks = mock(() => [
+      {
+        kind: "workspace_turn" as const,
+        handleId: "wst_turn",
+        ownerWorkspaceId: "root-workspace",
+        workspaceId: "child-workspace",
+        turnId: "turn-1",
+        status: "running" as const,
+        createdAt: "2026-06-19T00:00:00.000Z",
+        updatedAt: "2026-06-19T00:00:01.000Z",
+        createdWorkspace: true,
+        disposableWorkspace: false,
+        title: "Summary",
+      },
+    ]);
+    const taskService = {
+      listDescendantAgentTasks,
+      listWorkspaceTurnTasks,
+    } as unknown as TaskService;
+
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["running"] }, mockToolCallOptions)
+    );
+
+    expect(listWorkspaceTurnTasks).toHaveBeenCalledWith("root-workspace", {
+      statuses: ["running"],
+    });
+    expect(result).toEqual({
+      tasks: [
+        {
+          taskId: "wst_turn",
+          status: "running",
+          parentWorkspaceId: "root-workspace",
+          handleKind: "workspace_turn",
+          workspaceId: "child-workspace",
+          title: "Summary",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          depth: 1,
+        },
+      ],
+    });
+  });
+
   const buildWorkflowRun = (id: string, status: string) => ({
     id,
     workspaceId: "root-workspace",
