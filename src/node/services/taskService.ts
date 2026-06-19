@@ -5846,65 +5846,85 @@ export class TaskService {
     return null;
   }
 
-  private async resolveWorkspaceTurnMuxMetadataForStreamEnd(
+  private resolveWorkspaceTurnMuxMetadataForStreamEnd(
     event: StreamEndEvent
-  ): Promise<WorkspaceTurnMuxMetadata | undefined> {
+  ): WorkspaceTurnMuxMetadata | undefined {
     const metadata = this.getWorkspaceTurnMetadata(event);
-    if (metadata != null) {
-      return {
-        type: "workspace-turn-task",
-        ...metadata,
-      };
-    }
-    if (event.metadata.muxMetadata != null) {
+    if (metadata == null) {
       return undefined;
     }
+    return {
+      type: "workspace-turn-task",
+      ...metadata,
+    };
+  }
+
+  private async interruptWorkspaceTurnFromUncorrelatedStreamEnd(
+    event: StreamEndEvent
+  ): Promise<boolean> {
     const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
     if (active == null) {
-      return undefined;
+      return false;
     }
     const record = await this.taskHandleStore.getWorkspaceTurn(
       active.ownerWorkspaceId,
       active.handleId
     );
-    if (record == null || record.workspaceId !== event.workspaceId) {
-      return undefined;
-    }
-    return this.buildWorkspaceTurnMuxMetadata(record);
-  }
-
-  private async finalizeWorkspaceTurnFromStreamEnd(event: StreamEndEvent): Promise<boolean> {
-    const metadataFromEvent = this.getWorkspaceTurnMetadata(event);
-    if (metadataFromEvent == null && event.metadata.muxMetadata != null) {
-      return false;
-    }
-    const active =
-      metadataFromEvent == null
-        ? this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId)
-        : null;
-    if (metadataFromEvent == null && active == null) {
-      return false;
-    }
-    const ownerWorkspaceId = metadataFromEvent?.ownerWorkspaceId ?? active?.ownerWorkspaceId;
-    const taskHandleId = metadataFromEvent?.taskHandleId ?? active?.handleId;
-    assert(ownerWorkspaceId != null, "workspace turn stream-end requires ownerWorkspaceId");
-    assert(taskHandleId != null, "workspace turn stream-end requires taskHandleId");
-    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskHandleId);
     if (record == null) {
-      if (active != null) {
-        this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
-      }
-      log.warn("Ignoring missing workspace turn stream-end handle", {
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      log.warn("Ignoring missing uncorrelated workspace turn stream-end handle", {
         workspaceId: event.workspaceId,
-        taskHandleId: metadataFromEvent?.taskHandleId ?? active?.handleId,
+        taskHandleId: active.handleId,
       });
       return true;
     }
-    const metadata = metadataFromEvent ?? {
-      taskHandleId: record.handleId,
-      ownerWorkspaceId: record.ownerWorkspaceId,
-      turnId: record.turnId,
+    if (record.workspaceId !== event.workspaceId) {
+      log.warn("Ignoring out-of-scope uncorrelated workspace turn stream-end", {
+        workspaceId: event.workspaceId,
+        taskHandleId: record.handleId,
+      });
+      return false;
+    }
+    if (record.status !== "starting" && record.status !== "running") {
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      return true;
+    }
+
+    const error = "Workspace turn superseded by an uncorrelated workspace stream-end";
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: "interrupted",
+      updatedAt: getIsoNow(),
+      messageId: event.messageId,
+      error,
     };
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: { status: "error", error: new Error(error) },
+    });
+    return true;
+  }
+
+  private async finalizeWorkspaceTurnFromStreamEnd(event: StreamEndEvent): Promise<boolean> {
+    const metadata = this.getWorkspaceTurnMetadata(event);
+    if (metadata == null) {
+      if (event.metadata.muxMetadata != null) {
+        return false;
+      }
+      return await this.interruptWorkspaceTurnFromUncorrelatedStreamEnd(event);
+    }
+    const record = await this.taskHandleStore.getWorkspaceTurn(
+      metadata.ownerWorkspaceId,
+      metadata.taskHandleId
+    );
+    if (record == null) {
+      log.warn("Ignoring missing workspace turn stream-end handle", {
+        workspaceId: event.workspaceId,
+        taskHandleId: metadata.taskHandleId,
+      });
+      return true;
+    }
     if (record.workspaceId !== event.workspaceId || record.turnId !== metadata.turnId) {
       log.warn("Ignoring out-of-scope workspace turn stream-end", {
         workspaceId: event.workspaceId,
@@ -6074,8 +6094,7 @@ export class TaskService {
         taskIds: blockingTaskIds,
         workflowRunIds: activeWorkflowRunIds,
       });
-      const workspaceTurnMuxMetadata =
-        await this.resolveWorkspaceTurnMuxMetadataForStreamEnd(event);
+      const workspaceTurnMuxMetadata = this.resolveWorkspaceTurnMuxMetadataForStreamEnd(event);
       const sendOptions = {
         model: resumeOptions.model,
         agentId: resumeOptions.agentId,

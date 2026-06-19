@@ -1274,7 +1274,7 @@ describe("TaskService", () => {
     });
   });
 
-  test("workspace-turn stream-end ignores unrelated mux metadata before falling back", async () => {
+  test("workspace-turn stream-end ignores unrelated mux metadata", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -1297,7 +1297,7 @@ describe("TaskService", () => {
     expect(snapshot).toMatchObject({ status: "running", workspaceId: "childworkspace" });
   });
 
-  test("workspace-turn stream-end falls back to the active handle when event metadata is absent", async () => {
+  test("workspace-turn stream-end without correlation metadata interrupts the active handle", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["handle", "turn"]);
     const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
@@ -1353,11 +1353,12 @@ describe("TaskService", () => {
 
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({
-      status: "completed",
+      status: "interrupted",
       workspaceId: "childworkspace",
       messageId: "msg_1",
-      reportMarkdown: "Done without correlation metadata",
+      error: "Workspace turn superseded by an uncorrelated workspace stream-end",
     });
+    expect(snapshot?.reportMarkdown).toBeUndefined();
   });
 
   test("workspace-turn stream errors mark the handle failed", async () => {
