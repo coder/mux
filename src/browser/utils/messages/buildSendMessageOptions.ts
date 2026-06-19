@@ -40,6 +40,7 @@ export function buildSendMessageOptions(input: SendMessageOptionsInput): SendMes
     agentId: input.agentId,
     providerOptions: input.providerOptions,
     experiments: { ...input.experiments },
+    allowAgentSetGoal: true,
     disableWorkspaceAgents: input.disableWorkspaceAgents ? true : undefined,
   };
 }

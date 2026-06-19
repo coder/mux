@@ -272,6 +272,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   review_pane_get: ScanEye,
   analytics_query: Database,
   task_apply_git_patch: GitCommit,
+  set_goal: Target,
   get_goal: Target,
   complete_goal: CircleCheck,
 };

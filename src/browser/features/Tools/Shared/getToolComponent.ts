@@ -42,6 +42,7 @@ import {
   TaskTerminateToolCall,
 } from "../TaskToolCall";
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
+import { SetGoalToolCall } from "../SetGoalToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { WorkflowListToolCall, WorkflowReadToolCall } from "../WorkflowDefinitionToolCall";
@@ -194,6 +195,7 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     component: AgentReportToolCall,
     schema: TOOL_DEFINITIONS.agent_report.schema,
   },
+  set_goal: { component: SetGoalToolCall, schema: TOOL_DEFINITIONS.set_goal.schema },
   get_goal: { component: GetGoalToolCall, schema: TOOL_DEFINITIONS.get_goal.schema },
   complete_goal: {
     component: CompleteGoalToolCall,

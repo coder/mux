@@ -252,6 +252,29 @@ describe("TOOL_DEFINITIONS", () => {
     ).toBe(false);
   });
 
+  it("validates set_goal required and optional fields", () => {
+    const schema = TOOL_DEFINITIONS.set_goal.schema;
+
+    expect(schema.safeParse({ objective: "Ship it" }).success).toBe(true);
+    expect(schema.safeParse({ objective: "" }).success).toBe(false);
+    expect(schema.safeParse({ objective: "   " }).success).toBe(false);
+    expect(schema.safeParse({ objective: "Ship it", budgetCents: 1 }).success).toBe(true);
+    expect(schema.safeParse({ objective: "Ship it", budgetCents: 0 }).success).toBe(false);
+    expect(schema.safeParse({ objective: "Ship it", budgetCents: 1.5 }).success).toBe(false);
+    expect(schema.safeParse({ objective: "Ship it", turnCap: 1 }).success).toBe(true);
+    expect(schema.safeParse({ objective: "Ship it", turnCap: 0 }).success).toBe(false);
+    expect(
+      schema.safeParse({
+        objective: "Ship it",
+        expectedGoalId: "11111111-1111-4111-8111-111111111111",
+      }).success
+    ).toBe(true);
+    expect(schema.safeParse({ objective: "Ship it", expectedGoalId: "not-a-uuid" }).success).toBe(
+      false
+    );
+    expect(schema.safeParse({ objective: "Ship it", workspaceId: "other" }).success).toBe(false);
+  });
+
   it("requires complete_goal summary", () => {
     expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({}).success).toBe(false);
     expect(TOOL_DEFINITIONS.complete_goal.schema.safeParse({ summary: "Done." }).success).toBe(

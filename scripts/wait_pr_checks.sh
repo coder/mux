@@ -32,6 +32,7 @@ POLL_INTERVAL_SECS=30
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_REVIEWS_SCRIPT="$SCRIPT_DIR/check_pr_reviews.sh"
+CHECK_FILTERS_SCRIPT="$SCRIPT_DIR/lib/pr_check_filters.sh"
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
 # shellcheck source=./lib/branch_sync_guard.sh
 # shellcheck disable=SC1091
@@ -46,6 +47,15 @@ if [ ! -x "$CHECK_REVIEWS_SCRIPT" ]; then
   echo "❌ assertion failed: missing executable helper script: $CHECK_REVIEWS_SCRIPT" >&2
   exit 1
 fi
+
+if [ ! -f "$CHECK_FILTERS_SCRIPT" ]; then
+  echo "❌ assertion failed: missing helper script: $CHECK_FILTERS_SCRIPT" >&2
+  exit 1
+fi
+
+# shellcheck source=./lib/pr_check_filters.sh
+# shellcheck disable=SC1091
+source "$CHECK_FILTERS_SCRIPT"
 
 if [ "$SKIP_FETCH_SYNC" != "0" ] && [ "$SKIP_FETCH_SYNC" != "1" ]; then
   echo "❌ assertion failed: MUX_SKIP_FETCH_SYNC must be '0' or '1' (got '$SKIP_FETCH_SYNC')" >&2
@@ -73,11 +83,12 @@ CHECK_PR_CHECKS_ONCE() {
   local pr_state
   local mergeable
   local merge_state
+  local review_decision
   local checks
   local reviews_output
 
   # Get PR status
-  status=$(gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus,state 2>/dev/null || echo "error")
+  status=$(gh pr view "$PR_NUMBER" --json mergeable,mergeStateStatus,reviewDecision,state 2>/dev/null || echo "error")
 
   if [ "$status" = "error" ]; then
     echo "❌ Failed to get PR status. Does PR #$PR_NUMBER exist?"
@@ -106,6 +117,8 @@ CHECK_PR_CHECKS_ONCE() {
   merge_state=$(echo "$status" | jq -r '.mergeStateStatus')
   LAST_MERGE_STATE="$merge_state"
 
+  review_decision=$(echo "$status" | jq -r '.reviewDecision // ""')
+
   case "$mergeable" in
     MERGEABLE | CONFLICTING | UNKNOWN) ;;
     *)
@@ -118,6 +131,14 @@ CHECK_PR_CHECKS_ONCE() {
     BEHIND | BLOCKED | CLEAN | DIRTY | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE) ;;
     *)
       echo "❌ assertion failed: unexpected merge state '$merge_state' for PR #$PR_NUMBER" >&2
+      return 1
+      ;;
+  esac
+
+  case "$review_decision" in
+    "" | APPROVED | CHANGES_REQUESTED | REVIEW_REQUIRED) ;;
+    *)
+      echo "❌ assertion failed: unexpected review decision '$review_decision' for PR #$PR_NUMBER" >&2
       return 1
       ;;
   esac
@@ -143,36 +164,79 @@ CHECK_PR_CHECKS_ONCE() {
     return 1
   fi
 
-  # Get check status
-  checks=$(gh pr checks "$PR_NUMBER" 2>&1 || echo "pending")
+  if [ "$review_decision" = "CHANGES_REQUESTED" ]; then
+    echo "❌ PR has a blocking changes-requested review."
+    return 1
+  fi
+
+  if [ "$review_decision" = "REVIEW_REQUIRED" ]; then
+    echo "❌ PR requires an approving GitHub review before merge."
+    return 1
+  fi
+
+  # Get check status. Chromatic posts persistent UI Review/UI Tests statuses
+  # outside the PR workflow; they are useful visual-signal, but not a merge-readiness gate.
+  local checks_json
+  local jq_defs
+  local filtered_checks
+  local ignored_checks
+  local filtered_count
+  local ignored_unready_count
+  local ignored_unready_checks
+
+  checks_json=$(gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow,link,description 2>&1) || true
+  if ! echo "$checks_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "❌ Failed to get PR checks for PR #$PR_NUMBER" >&2
+    echo "$checks_json" >&2
+    return 1
+  fi
+
+  jq_defs=$(chromatic_check_jq_defs)
+  filtered_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check | not) ]")
+  ignored_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check) ]")
+  filtered_count=$(echo "$filtered_checks" | jq 'length')
+  checks=$(echo "$filtered_checks" | jq -r "$jq_defs if length == 0 then \"(no non-Chromatic checks reported)\" else .[] | check_line end")
+  ignored_unready_count=$(echo "$ignored_checks" | jq "$jq_defs [ .[] | select(is_unready_check) ] | length")
+  ignored_unready_checks=$(echo "$ignored_checks" | jq -r "$jq_defs [ .[] | select(is_unready_check) ] | .[]? | check_line")
 
   local has_fail=0
   local has_pending=0
   local has_pass=0
 
-  if echo "$checks" | grep -q "fail"; then
+  if echo "$filtered_checks" | jq -e "$jq_defs any(.[]; is_failed_check)" >/dev/null; then
     has_fail=1
   fi
 
-  if echo "$checks" | grep -q "pending"; then
+  if echo "$filtered_checks" | jq -e "$jq_defs any(.[]; is_pending_check)" >/dev/null; then
     has_pending=1
   fi
 
-  if echo "$checks" | grep -q "pass"; then
+  if echo "$filtered_checks" | jq -e "$jq_defs any(.[]; is_passing_check)" >/dev/null; then
     has_pass=1
   fi
 
+  # Immediately after a push, GitHub may report no checks yet. Treat that as
+  # pending, not as a terminal failure.
+  if [ "$filtered_count" -eq 0 ]; then
+    return 10
+  fi
+
+  # Sometimes the only early status is a skipped informational check; wait for
+  # at least one pass/fail/pending non-Chromatic signal before deciding.
   if [ "$has_fail" -eq 0 ] && [ "$has_pending" -eq 0 ] && [ "$has_pass" -eq 0 ]; then
-    echo "❌ assertion failed: unable to classify 'gh pr checks' output for PR #$PR_NUMBER" >&2
-    echo "$checks" >&2
-    return 1
+    return 10
   fi
 
   # Check for failures
   if [ "$has_fail" -eq 1 ]; then
-    echo "❌ Some checks failed:"
+    echo "❌ Some non-Chromatic checks failed:"
     echo ""
     echo "$checks"
+    if [ "$ignored_unready_count" -gt 0 ]; then
+      echo ""
+      echo "ℹ️ Ignoring Chromatic-related unready checks:"
+      echo "$ignored_unready_checks"
+    fi
     echo ""
     echo "💡 To extract detailed logs from the failed run:"
     echo "   ./scripts/extract_pr_logs.sh $PR_NUMBER"
@@ -201,16 +265,30 @@ CHECK_PR_CHECKS_ONCE() {
       return 1
     fi
 
-    if [ "$merge_state" = "CLEAN" ]; then
-      echo "✅ All checks passed!"
+    # If a Chromatic status is required in branch protection, GitHub reports
+    # the aggregate merge state as BLOCKED. At this point non-Chromatic checks,
+    # review-thread checks, and GitHub's reviewDecision gate have passed, so an
+    # ignored unready status is the only remaining blocker this script can see.
+    local merge_state_blocked_by_ignored_chromatic=0
+    if { [ "$merge_state" = "UNSTABLE" ] || [ "$merge_state" = "BLOCKED" ]; } && [ "$ignored_unready_count" -gt 0 ]; then
+      merge_state_blocked_by_ignored_chromatic=1
+    fi
+
+    if [ "$merge_state" = "CLEAN" ] || [ "$merge_state_blocked_by_ignored_chromatic" -eq 1 ]; then
+      echo "✅ All non-Chromatic checks passed!"
       echo ""
       echo "$checks"
+      if [ "$ignored_unready_count" -gt 0 ]; then
+        echo ""
+        echo "ℹ️ Ignoring Chromatic-related unready checks:"
+        echo "$ignored_unready_checks"
+      fi
       echo ""
       echo "✅ PR checks and mergeability gates passed."
       return 0
     fi
 
-    # GitHub can transiently report UNKNOWN/UNSTABLE/HAS_HOOKS even when checks have
+    # GitHub can transiently report UNKNOWN/HAS_HOOKS even when checks have
     # passed; treat these as still-pending rather than a terminal assertion failure.
     case "$merge_state" in
       BLOCKED | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE)

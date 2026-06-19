@@ -57,6 +57,7 @@ type PreservedSendOptions = Pick<
   | "providerOptions"
   | "experiments"
   | "disableWorkspaceAgents"
+  | "allowAgentSetGoal"
   | "skipAiSettingsPersistence"
 >;
 
@@ -71,6 +72,7 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
     providerOptions: options.providerOptions,
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
+    allowAgentSetGoal: options.allowAgentSetGoal,
     skipAiSettingsPersistence: options.skipAiSettingsPersistence,
   };
 }
@@ -86,6 +88,7 @@ export type StartupRetrySendOptions = Pick<
   | "providerOptions"
   | "experiments"
   | "disableWorkspaceAgents"
+  | "allowAgentSetGoal"
 > & {
   /** Internal-only Copilot billing override for startup auto-retry. */
   agentInitiated?: boolean;
@@ -112,6 +115,7 @@ export function pickStartupRetrySendOptions(
     providerOptions: options.providerOptions,
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
+    allowAgentSetGoal: options.allowAgentSetGoal,
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
     ...(goalKind != null ? { goalKind } : {}),
   };

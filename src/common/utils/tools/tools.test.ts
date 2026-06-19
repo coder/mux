@@ -163,6 +163,46 @@ describe("getToolsForModel", () => {
     expect(toolsWithHeartbeat.heartbeat).toBeDefined();
   });
 
+  test("only includes set_goal when goal service and setGoal gate are enabled", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+    // Registration-only test; goal tools capture the service but never execute it here.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const goalService = {} as never;
+
+    const disabled = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        goalService,
+        enableGoalTools: { setGoal: false, getGoal: true, completeGoal: true },
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(disabled.set_goal).toBeUndefined();
+    expect(disabled.get_goal).toBeDefined();
+    expect(disabled.complete_goal).toBeDefined();
+
+    const enabled = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        goalService,
+        enableGoalTools: { setGoal: true, getGoal: true, completeGoal: true },
+      },
+      "ws-1",
+      initStateManager
+    );
+    expect(enabled.set_goal).toBeDefined();
+  });
+
   test("withholds review_pane_* tools from sub-agents (enableAgentReport=true)", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = createInitStateManager();

@@ -60,6 +60,7 @@ import type { ModelFallbackOptions, StreamManager } from "./streamManager";
 import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import { TelemetryService } from "@/node/services/telemetryService";
+import type { WorkspaceGoalService } from "./workspaceGoalService";
 import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
@@ -1391,6 +1392,88 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
   afterEach(() => {
     mock.restore();
+  });
+
+  it("keeps set_goal disabled for one-shot streams that do not opt into agent-created goals", async () => {
+    using muxHome = new DisposableTempDir("ai-service-set-goal-disabled");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-set-goal-disabled";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    const goalService = {
+      getGoal: mock(() => Promise.resolve(null)),
+    } as unknown as WorkspaceGoalService;
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      workspaceGoalService: goalService,
+    });
+
+    expect(result.success).toBe(true);
+    expect(getToolConfigFromHarness(harness).enableGoalTools).toMatchObject({
+      setGoal: false,
+    });
+  });
+
+  it("enables set_goal for parent streams that opt into agent-created goals", async () => {
+    using muxHome = new DisposableTempDir("ai-service-set-goal-enabled");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-set-goal-enabled";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+    const goalService = {
+      getGoal: mock(() => Promise.resolve(null)),
+    } as unknown as WorkspaceGoalService;
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      workspaceGoalService: goalService,
+      allowAgentSetGoal: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(getToolConfigFromHarness(harness).enableGoalTools).toMatchObject({
+      setGoal: true,
+    });
+  });
+
+  it("keeps set_goal disabled for child workspaces even when the host opts in", async () => {
+    using muxHome = new DisposableTempDir("ai-service-set-goal-child-disabled");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-set-goal-child-disabled";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath, {
+      parentWorkspaceId: "parent-workspace",
+    });
+    const harness = createHarness(muxHome.path, metadata);
+    const goalService = {
+      getGoal: mock(() => Promise.resolve(null)),
+    } as unknown as WorkspaceGoalService;
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+      workspaceGoalService: goalService,
+      allowAgentSetGoal: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(getToolConfigFromHarness(harness).enableGoalTools).toMatchObject({
+      setGoal: false,
+    });
   });
 
   it("prepares fallback continuation from partial assistant output with one sentinel", async () => {

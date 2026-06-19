@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { SetGoalToolCall } from "@/browser/features/Tools/SetGoalToolCall";
 import { GetGoalToolCall } from "@/browser/features/Tools/GetGoalToolCall";
 import { CompleteGoalToolCall } from "@/browser/features/Tools/CompleteGoalToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
@@ -57,10 +58,50 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-// Gallery: every non-interactive GetGoalToolCall permutation in one snapshot.
+// Gallery: non-interactive set/read goal permutations in one snapshot.
 export const GetGoalGallery: Story = {
   render: () => (
     <Frame>
+      <Section label="Set goal (defaults)">
+        <SetGoalToolCall
+          args={{ objective: "Implement set_goal and verify targeted tests pass" }}
+          result={{
+            goal: goal({ objective: "Implement set_goal and verify targeted tests pass" }),
+          }}
+          status="completed"
+        />
+      </Section>
+      <Section label="Set goal (replacement, narrow-safe)">
+        <div className="max-w-[375px]">
+          <SetGoalToolCall
+            args={{
+              objective: "Replace the stale objective with a narrower verified fix",
+              budgetCents: 250,
+              turnCap: 6,
+              replaceExistingGoal: true,
+              expectedGoalId: "11111111-1111-4111-8111-111111111111",
+            }}
+            result={{
+              goal: goal({
+                objective: "Replace the stale objective with a narrower verified fix",
+                budgetCents: 250,
+                turnCap: 6,
+              }),
+            }}
+            status="completed"
+          />
+        </div>
+      </Section>
+      <Section label="Set goal failed">
+        <SetGoalToolCall
+          args={{ objective: "Replace current goal without confirmation" }}
+          result={{
+            success: false,
+            error: "set_goal would replace the current active goal. Call get_goal first.",
+          }}
+          status="failed"
+        />
+      </Section>
       <Section label="Active (budgeted)">
         <GetGoalToolCall args={{}} result={{ goal: goal() }} status="completed" />
       </Section>

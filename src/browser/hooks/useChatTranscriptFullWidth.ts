@@ -1,12 +1,15 @@
 import { useEffect, useRef } from "react";
 
-import { useAPI } from "@/browser/contexts/API";
+import { useOptionalAPI } from "@/browser/contexts/API";
 import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CHAT_TRANSCRIPT_FULL_WIDTH_KEY } from "@/common/constants/storage";
 
 /** Seeded from local cache to avoid a layout flash before the backend responds. */
 export function useChatTranscriptFullWidth(): boolean {
-  const { api } = useAPI();
+  // Optional so isolated test renders and pre-API startup keep the cached layout preference.
+  // Fall back to the injected ORPC client global because tests and Electron startup can have
+  // a constructed client before this hook is under the API context provider.
+  const api = useOptionalAPI()?.api ?? window.__ORPC_CLIENT__ ?? null;
   const fetchVersionRef = useRef(0);
   const [rawChatTranscriptFullWidth] = usePersistedState<unknown>(
     CHAT_TRANSCRIPT_FULL_WIDTH_KEY,

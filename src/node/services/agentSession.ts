@@ -1386,6 +1386,7 @@ export class AgentSession {
       typeof persistedRetrySendOptions?.maxOutputTokens === "number"
         ? persistedRetrySendOptions.maxOutputTokens
         : undefined;
+    const persistedAllowAgentSetGoal = persistedRetrySendOptions?.allowAgentSetGoal;
     const persistedProviderOptions = persistedRetrySendOptions?.providerOptions;
     const persistedExperiments = persistedRetrySendOptions?.experiments;
 
@@ -1405,6 +1406,7 @@ export class AgentSession {
             ? lastUserMuxMetadata.parsed.maxOutputTokens
             : persistedMaxOutputTokens,
         toolPolicy: [{ regex_match: ".*", action: "disable" }],
+        allowAgentSetGoal: persistedAllowAgentSetGoal,
         disableWorkspaceAgents: persistedDisableWorkspaceAgents,
       };
 
@@ -1451,6 +1453,9 @@ export class AgentSession {
     }
     if (persistedGoalKind != null) {
       retryRequest.goalKind = persistedGoalKind;
+    }
+    if (typeof persistedAllowAgentSetGoal === "boolean") {
+      retryRequest.allowAgentSetGoal = persistedAllowAgentSetGoal;
     }
     if (typeof persistedDisableWorkspaceAgents === "boolean") {
       retryRequest.disableWorkspaceAgents = persistedDisableWorkspaceAgents;
@@ -3569,6 +3574,7 @@ export class AgentSession {
       // already reset the segment cache, so this stream recomputes the context.
       resolveMemoryContext: (forModelString, memoryOptions) =>
         this.resolveMemoryContext(forModelString, memoryOptions),
+      allowAgentSetGoal: options?.allowAgentSetGoal === true,
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
@@ -5259,6 +5265,7 @@ export class AgentSession {
       additionalSystemInstructions: followUp.additionalSystemInstructions,
       providerOptions: followUp.providerOptions,
       experiments: followUp.experiments,
+      allowAgentSetGoal: followUp.allowAgentSetGoal,
       disableWorkspaceAgents: followUp.disableWorkspaceAgents,
       skipAiSettingsPersistence: followUp.skipAiSettingsPersistence,
     };

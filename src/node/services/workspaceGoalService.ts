@@ -57,6 +57,11 @@ const GOAL_FILE = "goal.json";
 const GOAL_BOARD_FILE = "goal-board.json";
 const PENDING_GOAL_EDIT_MESSAGE =
   "Goal is still being saved. Wait for the current stream to finish before editing it.";
+const REPLACE_GUARDED_STATUSES: ReadonlySet<GoalStatus> = new Set([
+  "active",
+  "budget_limited",
+  "paused",
+]);
 
 const GOAL_HISTORY_FILE = "goal-history.jsonl";
 // Cap the number of history entries returned to the renderer. Goal lifecycles
@@ -99,6 +104,11 @@ export interface GoalLifecycleAnalyticsSink {
   recordGoalLifecycleEvent(event: GoalLifecycleEvent, properties: GoalLifecycleProperties): void;
 }
 
+interface SetGoalReplacementGuard {
+  replaceExistingGoal?: boolean | null;
+  expectedGoalId?: string | null;
+}
+
 export interface SetGoalInput {
   workspaceId: string;
   objective?: string | null;
@@ -107,8 +117,18 @@ export interface SetGoalInput {
   turnCap?: number | null;
   completionSummary?: string | null;
   expectedGoalId?: string | null;
+  /**
+   * Internal model-tool guard for replacing active-like goals. It is checked
+   * under the goal file lock so stale pre-reads cannot authorize a replace.
+   */
+  replacementGuard?: SetGoalReplacementGuard | null;
   requireUserAcknowledgmentSinceMs?: number | null;
   initiator?: GoalLifecycleInitiator;
+  /**
+   * Internal model-tool path: treat an objective payload as "start a new goal"
+   * even when the objective text matches the current goal.
+   */
+  forceNewGoal?: boolean | null;
   /**
    * When true and a current goal already exists, an objective update mutates
    * the existing record in place (preserving goalId + accounting) instead of
@@ -198,7 +218,11 @@ interface PendingGoalMutation {
   status?: GoalStatus | null;
   completionSummary?: string | null;
   expectedGoalId?: string | null;
+  replacementGuard?: SetGoalReplacementGuard | null;
   initiator?: GoalLifecycleInitiator;
+  forceNewGoal?: boolean | null;
+  /** Stable id for the optimistic record returned before the deferred write drains. */
+  projectedGoalId?: string | null;
   /**
    * Carries the caller's `editInPlace` intent across mid-stream deferral so
    * a queued rename preserves goalId + accounting when it drains.
@@ -338,7 +362,11 @@ function completionSummaryPatch(
  * for crash-recovery retries, so reuse it here.
  */
 function continuationSendOptions(sendOptions: SendMessageOptions): SendMessageOptions {
-  return pickStartupRetrySendOptions(sendOptions) as SendMessageOptions;
+  const options: SendMessageOptions = {
+    ...pickStartupRetrySendOptions(sendOptions),
+    allowAgentSetGoal: undefined,
+  };
+  return options;
 }
 
 export interface WorkspaceGoalServiceOptions {
@@ -584,12 +612,13 @@ export class WorkspaceGoalService {
     turnCap: number | null;
     status?: GoalStatus | null;
     completionSummary?: string | null;
+    goalId?: string | null;
   }): GoalRecordV1 {
     const now = Date.now();
     const status = input.status ?? "active";
     const goal = GoalRecordV1Schema.parse({
       version: 1,
-      goalId: crypto.randomUUID(),
+      goalId: input.goalId ?? crypto.randomUUID(),
       objective: input.objective,
       status,
       budgetCents: normalizeGoalBudgetCents(input.budgetCents),
@@ -851,6 +880,25 @@ export class WorkspaceGoalService {
     );
     if (this.goalContinuationDispatcher == null) {
       return;
+    }
+
+    const existingCandidate = this.pendingContinuationCandidates.get(input.workspaceId);
+    if (existingCandidate?.source === "kickoff") {
+      const kickoffGoal = await this.normalizeGoalLimits(input.workspaceId, {
+        syncChatTail: false,
+      });
+      if (kickoffGoal?.goalId === existingCandidate.goalId && kickoffGoal.status === "active") {
+        // Model-created goals arm a kickoff candidate when the queued set_goal
+        // drains. The enclosing user stream also calls this stream-end hook; do
+        // not downgrade that kickoff into a stream_end candidate, because
+        // stream_end candidates reconcile against the pre-goal manual user row
+        // and would pause the new goal before it can continue.
+        await this.goalContinuationDispatcher.requestDispatch(
+          input.workspaceId,
+          GOAL_CONTINUATION_IDLE_CONSUMER_NAME
+        );
+        return;
+      }
     }
 
     const goal = await this.getGoal(input.workspaceId);
@@ -1478,6 +1526,32 @@ export class WorkspaceGoalService {
     return { type: "goal_conflict", expectedGoalId, actualGoalId };
   }
 
+  private conflictForReplacementGuard(
+    current: GoalRecordV1 | null,
+    replacementGuard: SetGoalReplacementGuard | null | undefined
+  ): GoalSetError | null {
+    if (!replacementGuard || !current || !REPLACE_GUARDED_STATUSES.has(current.status)) {
+      return null;
+    }
+
+    if (replacementGuard.replaceExistingGoal !== true) {
+      return {
+        type: "invalid_transition",
+        message:
+          "set_goal would replace the current active goal. Continue or complete the existing goal, or ask the user before replacing it. If the user explicitly asked to replace it, call get_goal and retry with replaceExistingGoal=true and expectedGoalId.",
+      };
+    }
+
+    if (replacementGuard.expectedGoalId !== current.goalId) {
+      return {
+        type: "invalid_transition",
+        message: `set_goal replacement requires expectedGoalId to match the current goalId from get_goal (${current.goalId}).`,
+      };
+    }
+
+    return null;
+  }
+
   private applyMutableFields(goal: GoalRecordV1, input: SetGoalInput): GoalRecordV1 {
     const completionSummary = input.completionSummary?.trim() ?? null;
     if (input.status != null) {
@@ -1821,19 +1895,22 @@ export class WorkspaceGoalService {
     // is a synthetic record for immediate UI rendering; it has NOT been
     // persisted yet.
     //
-    // ⚠️ DO NOT use `projected.goalId` as `expectedGoalId` on a follow-up
-    // mutation — the eventual persisted record gets a fresh `goalId` from
-    // `setGoalImmediately`/`createGoal` on stream-end, so the projected id is
-    // throwaway. Re-fetch via `getGoal` after the stream ends before issuing
-    // any optimistic-concurrency mutation. The `goalId` mismatch is a known
-    // footgun — current callers all
-    // re-fetch first so no bug manifests today, but new callers must respect
-    // this contract.
+    // The projected goalId is persisted through the queued mutation so model
+    // tool results remain valid optimistic-concurrency tokens after stream-end.
+    // Without carrying this id into the drain, a transcript-persisted set_goal
+    // result could point complete_goal at a throwaway pre-persistence id.
     // -----------------------------------------------------------------------
     if (objective && (await this.isWorkspaceStreaming(input.workspaceId))) {
-      return this.fileLocks.withLock(input.workspaceId, async () => {
+      const deferredResult = await this.fileLocks.withLock(input.workspaceId, async () => {
+        if (!(await this.isWorkspaceStreaming(input.workspaceId))) {
+          // The stream can end while this caller waits for the goal file lock.
+          // Persist immediately instead of queueing after stream-end already drained.
+          return null;
+        }
         const current = await this.readGoalFile(input.workspaceId);
-        const conflict = this.conflictForExpectedGoalId(current, input.expectedGoalId);
+        const conflict =
+          this.conflictForExpectedGoalId(current, input.expectedGoalId) ??
+          this.conflictForReplacementGuard(current, input.replacementGuard);
         if (conflict) {
           return Err(conflict);
         }
@@ -1849,6 +1926,14 @@ export class WorkspaceGoalService {
             updatedAtMs: Date.now(),
           });
           projected = this.applyMutableFields(renamed, input);
+        } else if (input.forceNewGoal !== true && current?.objective === objective) {
+          const hasMutableChange =
+            input.status != null ||
+            input.completionSummary != null ||
+            Object.hasOwn(input, "budgetCents") ||
+            Object.hasOwn(input, "turnCap") ||
+            Object.hasOwn(input, "requireUserAcknowledgmentSinceMs");
+          projected = hasMutableChange ? this.applyMutableFields(current, input) : current;
         } else {
           projected = this.createGoal({
             objective,
@@ -1867,6 +1952,11 @@ export class WorkspaceGoalService {
             message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
           });
         }
+        if (!(await this.isWorkspaceStreaming(input.workspaceId))) {
+          // Avoid queueing after the one stream-end drain has already observed no
+          // pending mutation.
+          return null;
+        }
         this.pendingGoalMutations.set(input.workspaceId, {
           objective,
           ...(Object.hasOwn(input, "budgetCents")
@@ -1880,7 +1970,10 @@ export class WorkspaceGoalService {
           ...(Object.hasOwn(input, "expectedGoalId")
             ? { expectedGoalId: input.expectedGoalId ?? null }
             : {}),
+          ...(input.replacementGuard != null ? { replacementGuard: input.replacementGuard } : {}),
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
+          ...(input.forceNewGoal != null ? { forceNewGoal: input.forceNewGoal } : {}),
+          projectedGoalId: projected.goalId,
           // Forward `editInPlace` so an inline rename submitted while the
           // agent is streaming still takes the rename branch when the
           // pending mutation drains.
@@ -1893,6 +1986,9 @@ export class WorkspaceGoalService {
         await this.publishPendingGoalSnapshot(input.workspaceId, projected);
         return Ok(projected);
       });
+      if (deferredResult != null) {
+        return deferredResult;
+      }
     }
 
     return this.setGoalImmediately({ ...input, objective });
@@ -1910,11 +2006,14 @@ export class WorkspaceGoalService {
   }
 
   private async setGoalImmediately(
-    input: SetGoalInput & { objective?: string }
+    input: SetGoalInput & { objective?: string },
+    options?: { replacementGoalId?: string | null }
   ): Promise<Result<GoalRecordV1, GoalSetError>> {
     const result = await this.fileLocks.withLock(input.workspaceId, async () => {
       const current = await this.readGoalFile(input.workspaceId);
-      const conflict = this.conflictForExpectedGoalId(current, input.expectedGoalId);
+      const conflict =
+        this.conflictForExpectedGoalId(current, input.expectedGoalId) ??
+        this.conflictForReplacementGuard(current, input.replacementGuard);
       if (conflict) {
         return Err(conflict);
       }
@@ -1997,7 +2096,7 @@ export class WorkspaceGoalService {
         return Ok(withEdits);
       }
 
-      if (current?.objective === objective) {
+      if (input.forceNewGoal !== true && current?.objective === objective) {
         const hasMutableChange =
           input.status != null ||
           input.completionSummary != null ||
@@ -2056,6 +2155,7 @@ export class WorkspaceGoalService {
         turnCap: input.turnCap ?? null,
         status: input.status,
         completionSummary: input.completionSummary,
+        goalId: options?.replacementGoalId ?? null,
       });
       if (
         (next.status === "active" || next.status === "budget_limited") &&
@@ -2083,7 +2183,7 @@ export class WorkspaceGoalService {
       await this.pushSnapshot(input.workspaceId, next);
       this.emitBudgetChanged(current, next, input);
       this.emitLifecycle(current ? "goal_replaced" : "goal_created", {
-        sameObjective: false,
+        sameObjective: current?.objective === objective,
         objectiveLengthBucket: lengthBucket(objective.length),
         hasBudget: next.budgetCents != null,
         hasTurnCap: next.turnCap != null,
@@ -2107,6 +2207,12 @@ export class WorkspaceGoalService {
 
     if (result.data.status === "active") {
       await this.armKickoffContinuationIfIdle(input.workspaceId, result.data);
+      if (input.initiator === "model") {
+        // A model-created set_goal starts from an ordinary user turn, not a
+        // goal-continuation row. Do not reconcile it against chat tail here or
+        // the new goal pauses itself before its kickoff continuation can run.
+        return result;
+      }
       const synced = await this.syncGoalStatusToChatTail(input.workspaceId);
       return Ok(synced ?? result.data);
     }
@@ -2657,7 +2763,11 @@ export class WorkspaceGoalService {
       // be logged and swallowed so the stream-end pipeline stays alive.
       // The caller already treats null as "no apply happened".
       try {
-        const result = await this.setGoalImmediately({ workspaceId, ...pending });
+        const { projectedGoalId, ...pendingInput } = pending;
+        const result = await this.setGoalImmediately(
+          { workspaceId, ...pendingInput },
+          { replacementGoalId: projectedGoalId ?? null }
+        );
         drained = result.success ? result.data : null;
       } catch (error) {
         log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {

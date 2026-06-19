@@ -673,6 +673,132 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
+  test("model-created goals stay active and arm kickoff after a normal user turn", async () => {
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-set-goal-request", "user", "Set yourself a goal and continue", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(async (input) => {
+        executed.push(input);
+        const continuationAppend = await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage("model-created-goal-continuation", "user", input.message, {
+            timestamp: Date.now(),
+            kind: GOAL_CONTINUATION_KIND,
+          })
+        );
+        expect(continuationAppend.success).toBe(true);
+        return true;
+      }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const goal = await setGoalOk(service, {
+      workspaceId,
+      objective: "Model-created auto goal",
+      status: "active",
+      initiator: "model",
+    });
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(goal.status).toBe("active");
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: goal.goalId,
+      status: "active",
+    });
+  });
+
+  test("preserves model-created kickoff candidate when stream-end continuation is requested", async () => {
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-set-goal-stream", "user", "Set yourself a goal and continue", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    let busy = true;
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(async (input) => {
+        executed.push(input);
+        const continuationAppend = await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage("preserved-kickoff-continuation", "user", input.message, {
+            timestamp: Date.now(),
+            kind: GOAL_CONTINUATION_KIND,
+          })
+        );
+        expect(continuationAppend.success).toBe(true);
+        return true;
+      }),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Queued model-created auto goal",
+      status: "active",
+      initiator: "model",
+    });
+    expect(queued.success).toBe(true);
+    await extensionMetadata.setStreaming(workspaceId, false);
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+    expect(drained).toMatchObject({ status: "active" });
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: Date.now(),
+    });
+    busy = false;
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(executed[0]?.startStreamInBackground).toBe(true);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: drained?.goalId,
+      status: "active",
+    });
+  });
+
+  test("strips set_goal capability from synthetic goal continuations", async () => {
+    const created = await setGoalOk(service, { workspaceId, objective: "Continue safely" });
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge((input) => {
+        executed.push(input);
+        return Promise.resolve(true);
+      })
+    );
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec", allowAgentSetGoal: true },
+      streamEndedAtMs: created.createdAtMs + 1,
+    });
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(executed[0]?.options.allowAgentSetGoal).toBeUndefined();
+  });
+
   test("replacing a goal while a stale continuation candidate exists arms the new goal", async () => {
     let busy = true;
     const dispatcher = new IdleDispatcher();
@@ -1619,22 +1745,23 @@ describe("WorkspaceGoalService", () => {
     const original = await setGoalOk(service, { workspaceId, objective: "Original" });
     await setGoalOk(service, { workspaceId, status: "paused" });
 
-    // Force the streaming-branch path so the next setGoal queues a
-    // pending mutation rather than applying immediately.
-    await extensionMetadata.setStreaming(workspaceId, true);
-    // Queue a no-op pause against an already-paused goal — drained from
-    // applyPendingAfterStreamEnd this would throw `WorkspaceGoalTransitionError`
-    // inside `validateStatusTransition("paused", "paused", null)`.
-    const queueResult = await service.setGoal({
-      workspaceId,
+    // Seed a queued no-op pause against an already-paused goal. Draining this
+    // throws `WorkspaceGoalTransitionError` inside
+    // `validateStatusTransition("paused", "paused", null)`, which is the
+    // stream-end failure mode this regression test cares about. Seeding the
+    // queue directly keeps this test focused on drain behavior instead of the
+    // streaming projection rules that now reject this invalid transition sooner.
+    const serviceAccess = service as unknown as {
+      pendingGoalMutations: Map<
+        string,
+        { objective: string; status: GoalStatus; projectedGoalId?: string | null }
+      >;
+    };
+    serviceAccess.pendingGoalMutations.set(workspaceId, {
       objective: "Original",
       status: "paused",
+      projectedGoalId: original.goalId,
     });
-    expect(queueResult.success).toBe(true);
-    expect(await extensionMetadata.getSnapshot(workspaceId)).toMatchObject({
-      goal: { objective: "Original", status: "paused" },
-    });
-    await extensionMetadata.setStreaming(workspaceId, false);
 
     // Without the fix, this rejection would propagate out of the async
     // function and crash. With the fix, it returns null and the goal
