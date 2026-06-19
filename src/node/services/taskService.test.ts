@@ -364,6 +364,7 @@ function createWorkspaceServiceMocks(
     resumeStream: ReturnType<typeof mock>;
     clearQueue: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+    waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
     emit: ReturnType<typeof mock>;
     getInfo: ReturnType<typeof mock>;
@@ -380,6 +381,7 @@ function createWorkspaceServiceMocks(
   resumeStream: ReturnType<typeof mock>;
   clearQueue: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+  waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
   emit: ReturnType<typeof mock>;
   getInfo: ReturnType<typeof mock>;
@@ -398,6 +400,9 @@ function createWorkspaceServiceMocks(
   const clearQueue = overrides?.clearQueue ?? mock((): Result<void> => Ok(undefined));
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
+  const waitForPendingStreamErrorRecoveryDecision =
+    overrides?.waitForPendingStreamErrorRecoveryDecision ??
+    mock((): Promise<void> => Promise.resolve());
   const remove =
     overrides?.remove ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const emit = overrides?.emit ?? mock(() => true);
@@ -425,6 +430,7 @@ function createWorkspaceServiceMocks(
       resumeStream,
       clearQueue,
       hasPendingQueuedOrPreparingTurn,
+      waitForPendingStreamErrorRecoveryDecision,
       remove,
       emit,
       getInfo,
@@ -439,6 +445,7 @@ function createWorkspaceServiceMocks(
     resumeStream,
     clearQueue,
     hasPendingQueuedOrPreparingTurn,
+    waitForPendingStreamErrorRecoveryDecision,
     remove,
     emit,
     getInfo,
@@ -515,6 +522,7 @@ describe("TaskService", () => {
       remove?: ReturnType<typeof mock>;
       isStreaming?: ReturnType<typeof mock>;
       hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
+      waitForPendingStreamErrorRecoveryDecision?: ReturnType<typeof mock>;
     } = {}
   ) {
     const config = await createTestConfig(rootDir);
@@ -547,6 +555,12 @@ describe("TaskService", () => {
       ...(options.remove != null ? { remove: options.remove } : {}),
       ...(options.hasPendingQueuedOrPreparingTurn != null
         ? { hasPendingQueuedOrPreparingTurn: options.hasPendingQueuedOrPreparingTurn }
+        : {}),
+      ...(options.waitForPendingStreamErrorRecoveryDecision != null
+        ? {
+            waitForPendingStreamErrorRecoveryDecision:
+              options.waitForPendingStreamErrorRecoveryDecision,
+          }
         : {}),
     });
     const aiMocks = createAIServiceMocks(config, {
@@ -1606,11 +1620,17 @@ describe("TaskService", () => {
   });
 
   test("workspace-turn recoverable stream errors stay running while retry is pending", async () => {
+    let retryDecisionAwaited = false;
     const hasPendingQueuedOrPreparingTurn = mock(
-      (workspaceId: string) => workspaceId === "childworkspace"
+      (workspaceId: string) => retryDecisionAwaited && workspaceId === "childworkspace"
     );
+    const waitForPendingStreamErrorRecoveryDecision = mock((): Promise<void> => {
+      retryDecisionAwaited = true;
+      return Promise.resolve();
+    });
     const { parentId, taskService } = await startWorkspaceTurnForTest({
       hasPendingQueuedOrPreparingTurn,
+      waitForPendingStreamErrorRecoveryDecision,
     });
     const internal = taskService as unknown as {
       handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
@@ -1624,6 +1644,7 @@ describe("TaskService", () => {
       errorType: "context_exceeded",
     });
 
+    expect(waitForPendingStreamErrorRecoveryDecision).toHaveBeenCalledWith("childworkspace");
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({
       status: "running",

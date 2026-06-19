@@ -6439,7 +6439,7 @@ export class TaskService {
   }
 
   private async hasRecoverableWorkspaceTurnRetryInFlight(workspaceId: string): Promise<boolean> {
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
     return (
       this.aiService.isStreaming(workspaceId) ||
       this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)

@@ -484,6 +484,9 @@ export class AgentSession {
    */
   private activeStreamFailureHandled = false;
 
+  private streamErrorRecoveryDecision: { promise: Promise<void>; resolve: () => void } | null =
+    null;
+
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
 
@@ -775,6 +778,24 @@ export class AgentSession {
       return;
     }
     this.emitChatEvent(event);
+  }
+
+  private beginStreamErrorRecoveryDecision(): void {
+    let resolveDecision!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      resolveDecision = resolve;
+    });
+    this.streamErrorRecoveryDecision = { promise, resolve: resolveDecision };
+  }
+
+  private resolveStreamErrorRecoveryDecision(): void {
+    const decision = this.streamErrorRecoveryDecision;
+    if (decision == null) {
+      return;
+    }
+
+    this.streamErrorRecoveryDecision = null;
+    decision.resolve();
   }
 
   private async handleStreamFailureForAutoRetry(error: RetryFailureError): Promise<void> {
@@ -3816,6 +3837,7 @@ export class AgentSession {
     await this.finalizeCompactionRetry(data.messageId);
     this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated, retryGoalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
+    this.resolveStreamErrorRecoveryDecision();
     let retryResult: Result<void, SendMessageError>;
     try {
       retryResult = await this.streamWithHistory(
@@ -3902,6 +3924,7 @@ export class AgentSession {
 
     // Retry the same request, but without post-compaction injection.
     this.setTurnPhase(TurnPhase.PREPARING);
+    this.resolveStreamErrorRecoveryDecision();
     let retryResult: Result<void, SendMessageError>;
     try {
       retryResult = await this.streamWithHistory(
@@ -4224,6 +4247,7 @@ export class AgentSession {
 
     this.setAutoRetryResumeState(retryOptions, context.agentInitiated, context.goalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
+    this.resolveStreamErrorRecoveryDecision();
     let retryResult: Result<void, SendMessageError>;
     try {
       retryResult = await this.streamWithHistory(
@@ -4405,6 +4429,7 @@ export class AgentSession {
       message: data.error,
     });
     await this.updateStartupAutoRetryAbandonFromFailure(failureType, failedUserMessageId);
+    this.resolveStreamErrorRecoveryDecision();
 
     this.emitChatEvent(streamErrorMessage);
     this.setTurnPhase(TurnPhase.IDLE);
@@ -4815,11 +4840,12 @@ export class AgentSession {
       }
       const data = raw as StreamErrorPayload & { workspaceId: string };
       this.activeStreamErrorEventReceived = true;
+      this.beginStreamErrorRecoveryDecision();
       void this.handleStreamError({
         messageId: data.messageId,
         error: data.error,
         errorType: data.errorType,
-      });
+      }).finally(() => this.resolveStreamErrorRecoveryDecision());
     };
 
     this.aiListeners.push({ event: "error", handler: errorHandler });
@@ -4998,6 +5024,10 @@ export class AgentSession {
 
   hasQueuedMessages(): boolean {
     return !this.messageQueue.isEmpty();
+  }
+
+  async waitForPendingStreamErrorRecoveryDecision(): Promise<void> {
+    await this.streamErrorRecoveryDecision?.promise;
   }
 
   hasPendingAutoRetry(): boolean {
