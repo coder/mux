@@ -728,11 +728,11 @@ function normalizeSecurityScanArgs(args) {
   const raw = args && typeof args === "object" && !Array.isArray(args) ? args : {};
   const parsed = Object.assign(
     {},
-    raw,
-    parseSecurityScanString(typeof args === "string" ? args : text(raw.input))
+    parseSecurityScanString(typeof args === "string" ? args : text(raw.input)),
+    raw
   );
   return {
-    target: firstText(parsed.target, parsed.input) || "current workspace",
+    target: firstText(parsed.target) || "current workspace",
     changedOnly: Boolean(parsed.changedOnly),
     full: Boolean(parsed.full),
     verify: parsed.verify !== false,

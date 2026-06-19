@@ -503,7 +503,7 @@ function parseArgs(args) {
   if (parsedText.error) {
     return { input: defaultInput(raw), error: parsedText.error };
   }
-  const merged = Object.assign({}, raw, parsedText.values);
+  const merged = Object.assign({}, parsedText.values, raw);
   const input = defaultInput(merged);
   if (!input.target) input.target = parsedText.target;
   return { input, error: "" };
