@@ -194,9 +194,9 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
   }
 
   phase("apply-fixes", { madeChanges: true });
-  const expectedHeadSha =
-    preflight.expectedHeadSha || (gitContext.status && gitContext.status.headSha);
-  if (!expectedHeadSha) {
+  // Patch artifacts were produced from the reviewed snapshot; fail closed if the parent moved.
+  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
+  if (!reviewedHeadSha) {
     return skipFixResult(
       synthesis.reportMarkdown,
       "Auto-fix requires a reviewed local Git HEAD snapshot.",
@@ -207,10 +207,21 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       preflight
     );
   }
+  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
+    return skipFixResult(
+      synthesis.reportMarkdown,
+      "Auto-fix preflight HEAD does not match the reviewed snapshot.",
+      "apply-preflight-skip",
+      gitContext,
+      reviewOutputs,
+      synthesized,
+      preflight
+    );
+  }
   const applied = await mux.patch.applySafely({
     id: "apply-simplify-fixes",
     source: fixer,
-    expectedHeadSha,
+    expectedHeadSha: reviewedHeadSha,
   });
 
   return {

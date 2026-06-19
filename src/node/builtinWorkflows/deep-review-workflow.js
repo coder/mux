@@ -275,19 +275,26 @@ async function runDeepReviewPass(context) {
     return appendFixNoChanges(result, fixer.reportMarkdown, fixerOutput);
 
   context.phase("apply-fixes", withIteration({ madeChanges: true }, context.iteration));
-  const expectedHeadSha =
-    preflight.expectedHeadSha || (gitContext.status && gitContext.status.headSha);
-  if (!expectedHeadSha) {
+  // Patch artifacts were produced from the reviewed snapshot; fail closed if the parent moved.
+  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
+  if (!reviewedHeadSha) {
     return appendFixSkipped(
       result,
       "Auto-fix requires a reviewed local Git HEAD snapshot.",
       preflight
     );
   }
+  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
+    return appendFixSkipped(
+      result,
+      "Auto-fix preflight HEAD does not match the reviewed snapshot.",
+      preflight
+    );
+  }
   const applySpec = {
     id: stepId("apply-review-fixes", suffix),
     source: fixer,
-    expectedHeadSha,
+    expectedHeadSha: reviewedHeadSha,
   };
   const applied = await mux.patch.applySafely(applySpec);
   return appendFixApplied(result, fixer.reportMarkdown, fixerOutput, applied);

@@ -245,18 +245,31 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
   }
 
   phase("persist-security-state", { findingCount: candidates.length });
-  const persistence = persistSecurityStateAgent(agent, {
-    input,
-    reportMarkdown: final.reportMarkdown,
-    structuredOutput,
-    threatModel: threatModelDraft.structuredOutput,
-    evidenceDrafts,
-  });
-  const applyResult = await mux.patch.applySafely({
-    id: "apply-security-state",
-    source: persistence,
-  });
-  structuredOutput.persistence = persistence.structuredOutput;
+  // Persisted scan artifacts describe the reviewed snapshot; fail closed if the parent moved.
+  const persistenceExpectedHeadSha = stateContext.gitContext && stateContext.gitContext.headSha;
+  let applyResult;
+  if (persistenceExpectedHeadSha) {
+    const persistence = persistSecurityStateAgent(agent, {
+      input,
+      reportMarkdown: final.reportMarkdown,
+      structuredOutput,
+      threatModel: threatModelDraft.structuredOutput,
+      evidenceDrafts,
+    });
+    applyResult = await mux.patch.applySafely({
+      id: "apply-security-state",
+      source: persistence,
+      expectedHeadSha: persistenceExpectedHeadSha,
+    });
+    structuredOutput.persistence = persistence.structuredOutput;
+  } else {
+    applyResult = {
+      success: false,
+      status: "failed",
+      error: "Security state persistence requires a reviewed local Git HEAD snapshot.",
+    };
+    structuredOutput.persistence = null;
+  }
   structuredOutput.persistenceApply = applyResult;
 
   return {
@@ -394,12 +407,20 @@ async function runSecurityFixPass(context) {
       applied: null,
     };
   }
-  const expectedHeadSha =
-    preflight.expectedHeadSha ||
-    (context.stateContext.gitContext && context.stateContext.gitContext.headSha);
-  if (!expectedHeadSha) {
+  // Patch artifacts were produced from the reviewed scan snapshot; fail closed if the parent moved.
+  const reviewedHeadSha =
+    context.stateContext.gitContext && context.stateContext.gitContext.headSha;
+  if (!reviewedHeadSha) {
     return {
       reportMarkdown: "Security auto-fix requires a reviewed local Git HEAD snapshot.",
+      preflight,
+      fixer: fixer.structuredOutput,
+      applied: null,
+    };
+  }
+  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
+    return {
+      reportMarkdown: "Security auto-fix preflight HEAD does not match the reviewed scan snapshot.",
       preflight,
       fixer: fixer.structuredOutput,
       applied: null,
@@ -408,7 +429,7 @@ async function runSecurityFixPass(context) {
   const applied = await mux.patch.applySafely({
     id: "apply-security-fixes",
     source: fixer,
-    expectedHeadSha,
+    expectedHeadSha: reviewedHeadSha,
   });
   return {
     reportMarkdown: fixer.reportMarkdown,

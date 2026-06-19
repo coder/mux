@@ -140,6 +140,154 @@ describe("actionless built-in workflows", () => {
     });
   });
 
+  test("deep-review skips auto-fix when preflight disagrees with reviewed HEAD", async () => {
+    const taskCalls: WorkflowAgentSpec[] = [];
+    const applyPatchSpecs: unknown[] = [];
+    const issue = {
+      id: "DR-1",
+      title: "Missing validation",
+      severity: "P2",
+      category: "correctness",
+      filePaths: ["file.ts"],
+      evidence: "file.ts accepts unchecked input.",
+      recommendation: "Validate input before use.",
+      confidence: "high",
+    };
+    const { result, run } = await runBuiltInWorkflowFixture({
+      name: "deep-review-workflow",
+      runId: "wfr_deep_review_head_fence",
+      args: { target: "current diff", fix: true, maxCandidates: 2 },
+      taskCalls,
+      runAgent(spec) {
+        switch (spec.id) {
+          case "git-review-context":
+            return {
+              taskId: "task_git_context",
+              reportMarkdown: "Collected Git review context.",
+              structuredOutput: {
+                baseRef: "main",
+                headRef: "HEAD",
+                status: {
+                  branch: "feature",
+                  upstream: "origin/feature",
+                  headSha: "reviewed123",
+                  ahead: 1,
+                  behind: 0,
+                  staged: [],
+                  unstaged: [],
+                  untracked: [],
+                  clean: true,
+                },
+                changedFiles: { branch: ["file.ts"], staged: [], unstaged: [], untracked: [] },
+                diffStat: "file.ts | 1 +",
+                diff: "diff --git a/file.ts b/file.ts",
+                commits: ["reviewed123 test"],
+                failures: [],
+                limitations: [],
+                hasReviewableChanges: true,
+              },
+            };
+          case "scope-review-surface":
+            return {
+              taskId: "task_scope",
+              reportMarkdown: "Scoped review surface.",
+              structuredOutput: {
+                summary: "One TypeScript file changed.",
+                intent: "Exercise reviewed HEAD fence.",
+                files: ["file.ts"],
+                risks: ["regression"],
+                lanes: ["correctness"],
+              },
+            };
+          case "review-correctness":
+          case "triage-candidate-issues":
+            return {
+              taskId: "task_" + spec.id,
+              reportMarkdown: "Found one issue.",
+              structuredOutput: { issues: [issue] },
+            };
+          case "verify-issue-0":
+            return {
+              taskId: "task_verify",
+              reportMarkdown: "Confirmed issue.",
+              structuredOutput: {
+                issueId: "DR-1",
+                verdict: "confirmed",
+                confidence: "high",
+                evidence: "The unchecked input path is reachable.",
+                notes: "Confirmed.",
+              },
+            };
+          case "synthesize-review":
+            return {
+              taskId: "task_synthesize",
+              reportMarkdown: "# Deep Review\n\nOne fixable issue.",
+              structuredOutput: {
+                summary: "One fixable issue.",
+                issues: [
+                  {
+                    id: "DR-1",
+                    title: "Missing validation",
+                    severity: "P2",
+                    verdict: "confirmed",
+                    filePaths: ["file.ts"],
+                    evidence: "The unchecked input path is reachable.",
+                    recommendation: "Validate input before use.",
+                  },
+                ],
+                questions: [],
+                fixCandidateIds: ["DR-1"],
+              },
+            };
+          case "git-preflight":
+            return {
+              taskId: "task_preflight",
+              reportMarkdown: "Preflight reported a moved HEAD.",
+              structuredOutput: {
+                ok: true,
+                reason: "",
+                branch: "feature",
+                headSha: "current999",
+                expectedHeadSha: "current999",
+                clean: true,
+                staged: [],
+                unstaged: [],
+                untracked: [],
+              },
+            };
+          case "fix-review-findings":
+            return {
+              taskId: "task_fix",
+              reportMarkdown: "Fixed issue in child workspace.",
+              structuredOutput: {
+                madeChanges: true,
+                fixedIssueIds: ["DR-1"],
+                skippedIssues: [],
+                validation: [],
+              },
+            };
+          default:
+            throw new Error(`Unexpected deep-review step: ${spec.id}`);
+        }
+      },
+      applyPatch(spec) {
+        applyPatchSpecs.push(spec);
+        return { success: true, status: "applied", taskId: "task_fix" };
+      },
+    });
+
+    expect(run.status).toBe("completed");
+    expect(applyPatchSpecs).toHaveLength(0);
+    expect(result).toMatchObject({
+      structuredOutput: {
+        mode: "fix-skipped",
+        fix: {
+          preflight: { expectedHeadSha: "current999" },
+        },
+      },
+    });
+  });
+
   test("security-scan delegates state, scan, persistence, and patching to sub-agents", async () => {
     const taskCalls: WorkflowAgentSpec[] = [];
     const applyPatchSpecs: unknown[] = [];
@@ -276,6 +424,7 @@ describe("actionless built-in workflows", () => {
     );
     expect(taskCalls.every((call) => call.outputSchema != null)).toBe(true);
     expect(applyPatchSpecs).toHaveLength(1);
+    expect(applyPatchSpecs[0]).toMatchObject({ expectedHeadSha: "abc123" });
     expect(result).toMatchObject({
       structuredOutput: {
         candidates: [],
