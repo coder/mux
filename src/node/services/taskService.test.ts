@@ -1225,6 +1225,55 @@ describe("TaskService", () => {
     expect(workspaceMocks.sendMessage.mock.calls[1]?.[0]).toBe("childworkspace");
   });
 
+  test("workspace-turn auto-resume preserves handle metadata", async () => {
+    const { config, parentId, projectPath, taskService, workspaceMocks } =
+      await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const project = Array.from(cfg.projects.values())[0];
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "descendant-task"),
+        id: "descendant-task",
+        name: "descendant-task",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+      });
+      return cfg;
+    });
+
+    await (
+      taskService as unknown as { handleStreamEnd: (event: StreamEndEvent) => Promise<void> }
+    ).handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_1",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Premature final text" }],
+    });
+
+    expect(workspaceMocks.sendMessage).toHaveBeenCalledTimes(2);
+    expect(workspaceMocks.sendMessage.mock.calls[1]?.[2]).toMatchObject({
+      muxMetadata: {
+        type: "workspace-turn-task",
+        taskHandleId: "wst_handle",
+        ownerWorkspaceId: parentId,
+        turnId: "turn",
+      },
+    });
+  });
+
   test("workspace-turn stream-end ignores unrelated mux metadata before falling back", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {

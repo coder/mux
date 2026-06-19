@@ -44,6 +44,32 @@ describe("TaskHandleStore", () => {
     expect(listed.map((item) => item.handleId)).toEqual([`${WORKSPACE_TURN_TASK_ID_PREFIX}abc`]);
   });
 
+  it("rejects unsafe handle IDs before composing paths", async () => {
+    const { config } = await createTempConfig("task-handle-store-unsafe-id");
+    const store = new TaskHandleStore(config);
+    const sessionDir = config.getSessionDir("owner");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(sessionDir, "chat.json"),
+      JSON.stringify({
+        kind: "workspace_turn",
+        handleId: `${WORKSPACE_TURN_TASK_ID_PREFIX}x/../../chat`,
+        ownerWorkspaceId: "owner",
+        workspaceId: "escaped",
+        turnId: "turn-1",
+        status: "completed",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        updatedAt: "2026-06-19T00:00:00.000Z",
+        createdWorkspace: true,
+        disposableWorkspace: false,
+      })
+    );
+
+    expect(
+      await store.getWorkspaceTurn("owner", `${WORKSPACE_TURN_TASK_ID_PREFIX}x/../../chat`)
+    ).toBeNull();
+  });
+
   it("self-heals corrupt handle records by ignoring them", async () => {
     const { config } = await createTempConfig("task-handle-store-corrupt");
     const store = new TaskHandleStore(config);

@@ -49,7 +49,7 @@ import {
   type TaskSettings,
 } from "@/common/types/tasks";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
   createTaskFailureMessageId,
@@ -378,6 +378,8 @@ export interface WorkspaceTurnWaitResult {
   messageId?: string;
   finalMessageRef?: WorkspaceTurnFinalMessageRef;
 }
+
+type WorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
 
 interface BackgroundableForegroundWaiter {
   taskId: string;
@@ -2800,12 +2802,7 @@ export class TaskService {
         model,
         agentId: "exec",
         ...(thinkingLevel != null ? { thinkingLevel } : {}),
-        muxMetadata: {
-          type: "workspace-turn-task",
-          taskHandleId: handleId,
-          ownerWorkspaceId,
-          turnId,
-        },
+        muxMetadata: this.buildWorkspaceTurnMuxMetadata(record),
         experiments: args.experiments,
       },
       {
@@ -5690,6 +5687,17 @@ export class TaskService {
     return true;
   }
 
+  private buildWorkspaceTurnMuxMetadata(
+    record: Pick<WorkspaceTurnTaskHandleRecord, "handleId" | "ownerWorkspaceId" | "turnId">
+  ): WorkspaceTurnMuxMetadata {
+    return {
+      type: "workspace-turn-task",
+      taskHandleId: record.handleId,
+      ownerWorkspaceId: record.ownerWorkspaceId,
+      turnId: record.turnId,
+    };
+  }
+
   private getWorkspaceTurnMetadataFromValue(
     muxMetadata: unknown
   ): { taskHandleId: string; ownerWorkspaceId: string; turnId: string } | null {
@@ -5836,6 +5844,33 @@ export class TaskService {
       }
     }
     return null;
+  }
+
+  private async resolveWorkspaceTurnMuxMetadataForStreamEnd(
+    event: StreamEndEvent
+  ): Promise<WorkspaceTurnMuxMetadata | undefined> {
+    const metadata = this.getWorkspaceTurnMetadata(event);
+    if (metadata != null) {
+      return {
+        type: "workspace-turn-task",
+        ...metadata,
+      };
+    }
+    if (event.metadata.muxMetadata != null) {
+      return undefined;
+    }
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
+    if (active == null) {
+      return undefined;
+    }
+    const record = await this.taskHandleStore.getWorkspaceTurn(
+      active.ownerWorkspaceId,
+      active.handleId
+    );
+    if (record == null || record.workspaceId !== event.workspaceId) {
+      return undefined;
+    }
+    return this.buildWorkspaceTurnMuxMetadata(record);
   }
 
   private async finalizeWorkspaceTurnFromStreamEnd(event: StreamEndEvent): Promise<boolean> {
@@ -6039,10 +6074,13 @@ export class TaskService {
         taskIds: blockingTaskIds,
         workflowRunIds: activeWorkflowRunIds,
       });
+      const workspaceTurnMuxMetadata =
+        await this.resolveWorkspaceTurnMuxMetadataForStreamEnd(event);
       const sendOptions = {
         model: resumeOptions.model,
         agentId: resumeOptions.agentId,
         thinkingLevel: resumeOptions.thinkingLevel,
+        ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
       };
       let sendResult = await this.workspaceService.sendMessage(
         workspaceId,

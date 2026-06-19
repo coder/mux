@@ -84,10 +84,19 @@ const WorkspaceTurnTaskHandleRecordSchema = z
   })
   .strict();
 
+const WORKSPACE_TURN_TASK_ID_PATTERN = /^wst_[a-z0-9][a-z0-9_-]*$/;
+
 export function isWorkspaceTurnTaskId(
   value: unknown
 ): value is `${typeof WORKSPACE_TURN_TASK_ID_PREFIX}${string}` {
-  return typeof value === "string" && value.startsWith(WORKSPACE_TURN_TASK_ID_PREFIX);
+  return typeof value === "string" && WORKSPACE_TURN_TASK_ID_PATTERN.test(value);
+}
+
+function assertValidWorkspaceTurnTaskId(handleId: string): void {
+  assert(
+    isWorkspaceTurnTaskId(handleId),
+    "workspace turn handle IDs must use the wst_ prefix and safe filename characters"
+  );
 }
 
 export class TaskHandleStore {
@@ -125,6 +134,9 @@ export class TaskHandleStore {
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
     assert(ownerWorkspaceId.trim().length > 0, "getWorkspaceTurn requires ownerWorkspaceId");
     assert(handleId.trim().length > 0, "getWorkspaceTurn requires handleId");
+    if (!isWorkspaceTurnTaskId(handleId)) {
+      return null;
+    }
     const record = await this.readWorkspaceTurnFile(ownerWorkspaceId, handleId);
     return record?.ownerWorkspaceId === ownerWorkspaceId ? record : null;
   }
@@ -147,9 +159,9 @@ export class TaskHandleStore {
     const records = await Promise.all(
       entries
         .filter((entry) => entry.endsWith(".json"))
-        .map((entry) =>
-          this.readWorkspaceTurnFile(ownerWorkspaceId, entry.slice(0, -".json".length))
-        )
+        .map((entry) => entry.slice(0, -".json".length))
+        .filter(isWorkspaceTurnTaskId)
+        .map((handleId) => this.readWorkspaceTurnFile(ownerWorkspaceId, handleId))
     );
     return records
       .filter((record): record is WorkspaceTurnTaskHandleRecord => {
@@ -192,6 +204,7 @@ export class TaskHandleStore {
 
   private getHandlePath(ownerWorkspaceId: string, handleId: string): string {
     assert(handleId.trim().length > 0, "handleId must be non-empty");
+    assertValidWorkspaceTurnTaskId(handleId);
     return path.join(this.getOwnerHandleDir(ownerWorkspaceId), `${handleId}.json`);
   }
 
@@ -201,10 +214,7 @@ export class TaskHandleStore {
       parsed.success,
       `Invalid workspace turn handle record: ${parsed.success ? "" : parsed.error.message}`
     );
-    assert(
-      record.handleId.startsWith(WORKSPACE_TURN_TASK_ID_PREFIX),
-      "workspace turn handle IDs must use the wst_ prefix"
-    );
+    assertValidWorkspaceTurnTaskId(record.handleId);
   }
 
   private async readWorkspaceTurnFile(
@@ -223,6 +233,19 @@ export class TaskHandleStore {
           ownerWorkspaceId,
           handleId,
           issues: parsed.error.issues,
+        });
+        return null;
+      }
+      if (
+        parsed.data.handleId !== handleId ||
+        parsed.data.ownerWorkspaceId !== ownerWorkspaceId ||
+        !isWorkspaceTurnTaskId(parsed.data.handleId)
+      ) {
+        log.warn("Ignoring mismatched workspace turn task handle", {
+          ownerWorkspaceId,
+          handleId,
+          recordOwnerWorkspaceId: parsed.data.ownerWorkspaceId,
+          recordHandleId: parsed.data.handleId,
         });
         return null;
       }
