@@ -362,7 +362,11 @@ function completionSummaryPatch(
  * for crash-recovery retries, so reuse it here.
  */
 function continuationSendOptions(sendOptions: SendMessageOptions): SendMessageOptions {
-  return pickStartupRetrySendOptions(sendOptions) as SendMessageOptions;
+  const options: SendMessageOptions = {
+    ...pickStartupRetrySendOptions(sendOptions),
+    allowAgentSetGoal: undefined,
+  };
+  return options;
 }
 
 export interface WorkspaceGoalServiceOptions {
