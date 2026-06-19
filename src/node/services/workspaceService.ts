@@ -7552,7 +7552,9 @@ export class WorkspaceService extends EventEmitter {
       return false;
     }
 
-    return session.hasQueuedMessages() || session.isPreparingTurn();
+    return (
+      session.hasQueuedMessages() || session.isPreparingTurn() || session.hasPendingAutoRetry()
+    );
   }
 
   /**

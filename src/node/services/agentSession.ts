@@ -5000,6 +5000,10 @@ export class AgentSession {
     return !this.messageQueue.isEmpty();
   }
 
+  hasPendingAutoRetry(): boolean {
+    return this.retryManager.isRetryPending;
+  }
+
   hasPendingManualFollowUp(): boolean {
     return !this.messageQueue.isEmpty() || this.pendingExternalManualFollowUps > 0;
   }

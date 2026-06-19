@@ -632,14 +632,14 @@ function buildBackgroundAwaitPrompt(params: {
   );
 
   const targetLabels = [
-    formatBackgroundAwaitTargetList("sub-agent task(s)", params.taskIds),
+    formatBackgroundAwaitTargetList("task handle(s)", params.taskIds),
     formatBackgroundAwaitTargetList("workflow run(s)", params.workflowRunIds),
   ].filter((label): label is string => label != null);
   const taskIds = [...params.taskIds, ...params.workflowRunIds];
 
   return (
     `You have active background ${targetLabels.join(" and ")}. ` +
-    "You MUST NOT end your turn while any listed sub-agent tasks are queued/starting/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
+    "You MUST NOT end your turn while any listed task handles are queued/starting/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
     `Call task_await now with task_ids: ${JSON.stringify(taskIds)} to wait for them. ` +
     "If any are still queued/starting/running/awaiting_report/backgrounded after that, call task_await again. " +
     "Only once all listed work is terminal should you write your final response, integrating any reports or workflow results."
@@ -5701,12 +5701,15 @@ export class TaskService {
     return true;
   }
 
-  private async promptTaskForBackgroundWorkflowAwait(
+  private async promptTaskForBackgroundAwait(
     workspaceId: string,
-    workflowRunIds: string[]
+    params: { taskIds: string[]; workflowRunIds: string[] }
   ): Promise<boolean> {
-    assert(workspaceId.length > 0, "promptTaskForBackgroundWorkflowAwait requires workspaceId");
-    assert(workflowRunIds.length > 0, "promptTaskForBackgroundWorkflowAwait requires run IDs");
+    assert(workspaceId.length > 0, "promptTaskForBackgroundAwait requires workspaceId");
+    assert(
+      params.taskIds.length > 0 || params.workflowRunIds.length > 0,
+      "promptTaskForBackgroundAwait requires at least one awaitable target"
+    );
 
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, workspaceId);
@@ -5718,7 +5721,7 @@ export class TaskService {
     const agentId = entry.workspace.agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
     const sendResult = await this.workspaceService.sendMessage(
       workspaceId,
-      buildBackgroundAwaitPrompt({ taskIds: [], workflowRunIds }),
+      buildBackgroundAwaitPrompt(params),
       {
         model,
         agentId,
@@ -5728,10 +5731,11 @@ export class TaskService {
       { synthetic: true, agentInitiated: true }
     );
     if (!sendResult.success) {
-      log.error("Failed to prompt task for active background workflow runs", {
+      log.error("Failed to prompt task for active background awaitables", {
         workspaceId,
         taskName: entry.workspace.name,
-        workflowRunIds,
+        taskIds: params.taskIds,
+        workflowRunIds: params.workflowRunIds,
         model,
         agentId,
         error: sendResult.error,
@@ -6328,11 +6332,16 @@ export class TaskService {
       taskReferencedWorkflowRunIds,
       event.parts
     );
-    if (taskActiveWorkflowRunIds.length > 0) {
+    const taskActiveWorkspaceTurnIds =
+      await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
+    if (taskActiveWorkflowRunIds.length > 0 || taskActiveWorkspaceTurnIds.length > 0) {
       if (status === "awaiting_report") {
         await this.setTaskStatus(workspaceId, "running");
       }
-      await this.promptTaskForBackgroundWorkflowAwait(workspaceId, taskActiveWorkflowRunIds);
+      await this.promptTaskForBackgroundAwait(workspaceId, {
+        taskIds: taskActiveWorkspaceTurnIds,
+        workflowRunIds: taskActiveWorkflowRunIds,
+      });
       return;
     }
 
@@ -6429,12 +6438,24 @@ export class TaskService {
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
   }
 
+  private async hasRecoverableWorkspaceTurnRetryInFlight(workspaceId: string): Promise<boolean> {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return (
+      this.aiService.isStreaming(workspaceId) ||
+      this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
+    );
+  }
+
   private async finalizeWorkspaceTurnFromStreamError(event: ErrorEvent): Promise<boolean> {
     const record = await this.getActiveWorkspaceTurnRecordForWorkspace(event.workspaceId);
     if (record == null) {
       return false;
     }
-    if (event.errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType)) {
+    if (
+      event.errorType != null &&
+      WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType) &&
+      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId))
+    ) {
       return true;
     }
     const next: WorkspaceTurnTaskHandleRecord = {
