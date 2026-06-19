@@ -50,6 +50,7 @@ export interface WorkspaceTurnTaskHandleRecord {
     parts?: CompletedMessagePart[];
     metadata: StreamEndEvent["metadata"];
   };
+  deferredMessageIds?: string[];
   error?: string;
 }
 
@@ -80,6 +81,7 @@ const WorkspaceTurnTaskHandleRecordSchema = z
       })
       .passthrough()
       .optional(),
+    deferredMessageIds: z.array(z.string().min(1)).optional(),
     error: z.string().optional(),
   })
   .strict();

@@ -5870,6 +5870,14 @@ export class TaskService {
     };
   }
 
+  private isDeferredWorkspaceTurnMessage(
+    record: WorkspaceTurnTaskHandleRecord,
+    messageId: string
+  ): boolean {
+    assert(messageId.length > 0, "isDeferredWorkspaceTurnMessage requires messageId");
+    return record.deferredMessageIds?.includes(messageId) === true;
+  }
+
   private async recoverTerminalWorkspaceTurnFromHistory(
     record: WorkspaceTurnTaskHandleRecord
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
@@ -5885,12 +5893,40 @@ export class TaskService {
       return null;
     }
     for (const message of historyResult.data.toReversed()) {
+      if (this.isDeferredWorkspaceTurnMessage(record, message.id)) {
+        continue;
+      }
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
       if (event != null) {
         return this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
       }
     }
     return null;
+  }
+
+  private async markWorkspaceTurnStreamEndDeferred(event: StreamEndEvent): Promise<void> {
+    const metadata = this.getWorkspaceTurnMetadata(event);
+    if (metadata == null) {
+      return;
+    }
+    const record = await this.taskHandleStore.getWorkspaceTurn(
+      metadata.ownerWorkspaceId,
+      metadata.taskHandleId
+    );
+    if (
+      record == null ||
+      record.workspaceId !== event.workspaceId ||
+      record.turnId !== metadata.turnId ||
+      !this.isActiveWorkspaceTurn(record) ||
+      this.isDeferredWorkspaceTurnMessage(record, event.messageId)
+    ) {
+      return;
+    }
+    await this.taskHandleStore.upsertWorkspaceTurn({
+      ...record,
+      updatedAt: getIsoNow(),
+      deferredMessageIds: [...(record.deferredMessageIds ?? []), event.messageId],
+    });
   }
 
   private resolveWorkspaceTurnMuxMetadataForStreamEnd(
@@ -6031,6 +6067,8 @@ export class TaskService {
           return;
         }
       }
+
+      await this.markWorkspaceTurnStreamEndDeferred(event);
 
       if (this.aiService.isStreaming(workspaceId)) {
         return;

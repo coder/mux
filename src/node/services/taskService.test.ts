@@ -1225,6 +1225,73 @@ describe("TaskService", () => {
     expect(workspaceMocks.sendMessage.mock.calls[1]?.[0]).toBe("childworkspace");
   });
 
+  test("workspace-turn stale recovery skips deferred pre-handoff stream-end history", async () => {
+    const { config, parentId, projectPath, taskService, historyService } =
+      await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const project = Array.from(cfg.projects.values())[0];
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "descendant-task"),
+        id: "descendant-task",
+        name: "descendant-task",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+      });
+      return cfg;
+    });
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    const appendResult = await historyService.appendToHistory(
+      "childworkspace",
+      createMuxMessage("msg_prehandoff", "assistant", "Premature final text", {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata,
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_prehandoff",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata,
+      },
+      parts: [{ type: "text", text: "Premature final text" }],
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+      deferredMessageIds: ["msg_prehandoff"],
+    });
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+    const recovered = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(recovered).toMatchObject({
+      status: "interrupted",
+      error: "Workspace turn interrupted after restart",
+    });
+    expect(recovered?.reportMarkdown).toBeUndefined();
+  });
+
   test("workspace-turn auto-resume preserves handle metadata", async () => {
     const { config, parentId, projectPath, taskService, workspaceMocks } =
       await startWorkspaceTurnForTest();
