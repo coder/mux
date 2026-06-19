@@ -564,7 +564,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           }
           try {
             const report = await taskService.waitForWorkspaceTurn(taskId, {
-              timeoutMs,
+              timeoutMs: timeoutMs ?? DEFAULT_TASK_AWAIT_TIMEOUT_MS,
               abortSignal: taskSignal,
               requestingWorkspaceId: workspaceId,
               backgroundOnMessageQueued: true,

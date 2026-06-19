@@ -2687,6 +2687,11 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
     const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+    if ((parentMeta.projects?.length ?? 0) > 1) {
+      // WorkspaceService.create only materializes one project checkout; fail loudly instead of
+      // silently dropping secondary repos from a multi-project caller's task context.
+      return Err("Task.createWorkspaceTurn: multi-project workspace turns are not supported yet");
+    }
     if (!taskProjectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
@@ -4438,7 +4443,16 @@ export class TaskService {
     if (!isWorkspaceTurnTaskId(handleId)) {
       return null;
     }
-    return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    if (
+      record != null &&
+      (record.status === "starting" || record.status === "running") &&
+      !this.isLiveWorkspaceTurn(record)
+    ) {
+      await this.settleStaleWorkspaceTurn(record);
+      return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    }
+    return record;
   }
 
   async listWorkspaceTurnTasks(
@@ -5748,6 +5762,29 @@ export class TaskService {
       log.warn("Ignoring out-of-scope workspace turn stream-end", {
         workspaceId: event.workspaceId,
         taskHandleId: metadata.taskHandleId,
+      });
+      return true;
+    }
+
+    // Truncated/non-stop provider finishes are partial output, not a completed delegated turn.
+    if (event.metadata.finishReason != null && event.metadata.finishReason !== "stop") {
+      const error = `Workspace turn ended before completion (finishReason: ${event.metadata.finishReason})`;
+      const next: WorkspaceTurnTaskHandleRecord = {
+        ...record,
+        status: "error",
+        updatedAt: getIsoNow(),
+        messageId: event.messageId,
+        error,
+        finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
+        finalMessage: {
+          messageId: event.messageId,
+          metadata: event.metadata,
+        },
+      };
+      await this.settleWorkspaceTurn({
+        record,
+        next,
+        waiterSettlement: { status: "error", error: new Error(error) },
       });
       return true;
     }

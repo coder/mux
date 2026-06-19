@@ -104,6 +104,26 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     expect(streamMessage.mock.calls).toHaveLength(1);
   });
 
+  it("passes muxMetadata through to the stream request", async () => {
+    const { session, streamMessage } = await createSessionHarness("ws-mux-metadata");
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: "owner-workspace",
+      turnId: "turn-id",
+    };
+
+    const result = await session.sendMessage("hello", {
+      model: TEST_MODEL,
+      agentId: "exec",
+      muxMetadata,
+    });
+
+    expect(result.success).toBe(true);
+    expect(streamMessage).toHaveBeenCalledTimes(1);
+    expect(streamMessage.mock.calls[0]?.[0]).toMatchObject({ muxMetadata });
+  });
+
   it("does not truncate history when edit validation fails", async () => {
     const workspaceId = "ws-edit-validation";
     const { session, historyService, streamMessage } = await createSessionHarness(workspaceId);

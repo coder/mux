@@ -175,6 +175,43 @@ describe("task_await tool", () => {
     ]);
   });
 
+  it("uses the documented default timeout for workspace-turn awaits when timeout is null", async () => {
+    using tempDir = new TestTempDir("test-task-await-workspace-turn-default-timeout");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const runningSnapshot = {
+      kind: "workspace_turn",
+      handleId: "wst_running",
+      ownerWorkspaceId: "parent-workspace",
+      workspaceId: "child-running",
+      turnId: "turn-running",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    } as const;
+    let observedTimeoutMs: number | undefined;
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      listWorkspaceTurnTasks: mock(() => Promise.resolve([runningSnapshot])),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses: mock(() => new Map()),
+      getWorkspaceTurnSnapshot: mock(() => Promise.resolve(runningSnapshot)),
+      waitForWorkspaceTurn: mock((_taskId: string, options: { timeoutMs?: number }) => {
+        observedTimeoutMs = options.timeoutMs;
+        return Promise.resolve({ workspaceId: "child-running", reportMarkdown: "Done" });
+      }),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    await Promise.resolve(
+      tool.execute!({ task_ids: ["wst_running"], timeout_secs: null }, mockToolCallOptions)
+    );
+
+    expect(observedTimeoutMs).toBe(600_000);
+  });
+
   it("includes gitFormatPatch artifacts written during waitForAgentReport", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-artifacts");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
