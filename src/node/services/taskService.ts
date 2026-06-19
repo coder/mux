@@ -499,6 +499,12 @@ const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
  */
 const MAX_TASK_RECOVERY_ATTEMPTS = 5;
 
+const WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS: ReadonlySet<StreamErrorType> = new Set([
+  "aborted",
+  "context_exceeded",
+  "runtime_start_failed",
+]);
+
 /**
  * Provider-terminal stream errors that settle a child task even while it is
  * still `running` (before it owes its completion tool). Subset of
@@ -6381,6 +6387,9 @@ export class TaskService {
       this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
       return true;
     }
+    if (event.abortReason !== "user") {
+      return true;
+    }
     const next: WorkspaceTurnTaskHandleRecord = {
       ...record,
       status: "interrupted",
@@ -6411,9 +6420,7 @@ export class TaskService {
       this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
       return true;
     }
-    const settlesWorkspaceTurn =
-      event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
-    if (!settlesWorkspaceTurn) {
+    if (event.errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType)) {
       return true;
     }
     const next: WorkspaceTurnTaskHandleRecord = {

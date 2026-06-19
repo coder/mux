@@ -1550,6 +1550,27 @@ describe("TaskService", () => {
     });
   });
 
+  test("workspace-turn terminal stream errors mark the handle failed", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: "childworkspace",
+      messageId: "msg_unknown_error",
+      error: "Provider returned no usable result",
+      errorType: "unknown",
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      workspaceId: "childworkspace",
+      error: "Provider returned no usable result",
+    });
+  });
+
   test("workspace-turn recoverable stream errors leave the handle running", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
@@ -1568,6 +1589,48 @@ describe("TaskService", () => {
     expect(snapshot).toMatchObject({
       status: "running",
       workspaceId: "childworkspace",
+    });
+  });
+
+  test("workspace-turn system stream aborts keep the handle running for resume", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      handleStreamAbort: (event: StreamAbortEvent) => Promise<void>;
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamAbort({
+      type: "stream-abort",
+      workspaceId: "childworkspace",
+      messageId: "msg_system_abort",
+      abortReason: "system",
+    });
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+      workspaceId: "childworkspace",
+    });
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_resumed",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Resumed done" }],
+    });
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "completed",
+      messageId: "msg_resumed",
+      reportMarkdown: "Resumed done",
     });
   });
 
