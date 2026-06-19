@@ -242,6 +242,9 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     );
     const violations = new Set<string>();
     for (const projectArtifact of projectArtifacts) {
+      if (projectArtifact.status === "skipped") {
+        continue;
+      }
       if (projectArtifact.status !== "ready") {
         return `Patch artifact for ${projectArtifact.projectName} is ${projectArtifact.status}; cannot validate allowedPathPrefixes.`;
       }

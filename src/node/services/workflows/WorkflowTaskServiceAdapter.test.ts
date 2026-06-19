@@ -440,6 +440,12 @@ describe("WorkflowTaskServiceAdapter", () => {
             status: "ready",
             projectArtifacts: [
               {
+                projectPath: "/other-repo",
+                projectName: "other-repo",
+                storageKey: "other-repo",
+                status: "skipped",
+              },
+              {
                 projectPath: "/repo",
                 projectName: "repo",
                 storageKey: "repo",
