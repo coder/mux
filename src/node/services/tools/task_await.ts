@@ -636,10 +636,38 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             if (/timed out/i.test(message)) {
               const latest = await taskService.getWorkspaceTurnSnapshot(workspaceId, taskId);
               if (latest == null) return { status: "not_found" as const, taskId };
+              if (latest.status === "completed") {
+                return {
+                  status: "completed" as const,
+                  taskId,
+                  handleKind: "workspace_turn" as const,
+                  workspaceId: latest.workspaceId,
+                  reportMarkdown:
+                    latest.reportMarkdown ?? "Workspace turn completed without final text output.",
+                  title: latest.title,
+                  messageId: latest.messageId,
+                  finalMessageRef: latest.finalMessageRef,
+                  note: COMPLETED_REPORT_REFETCH_NOTE,
+                };
+              }
+              if (latest.status === "error") {
+                return {
+                  status: "error" as const,
+                  taskId,
+                  error: latest.error ?? "Workspace turn failed",
+                };
+              }
+              if (latest.status === "interrupted") {
+                return {
+                  status: "interrupted" as const,
+                  taskId,
+                  handleKind: "workspace_turn" as const,
+                  workspaceId: latest.workspaceId,
+                  note: "Workspace turn was interrupted. The full workspace is preserved.",
+                };
+              }
               return {
-                status: isWorkspaceTurnActiveStatus(latest.status)
-                  ? (latest.status as "queued" | "starting" | "running")
-                  : "running",
+                status: latest.status,
                 taskId,
                 handleKind: "workspace_turn" as const,
                 workspaceId: latest.workspaceId,

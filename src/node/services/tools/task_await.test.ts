@@ -212,6 +212,59 @@ describe("task_await tool", () => {
     expect(observedTimeoutMs).toBe(600_000);
   });
 
+  it("returns terminal workspace-turn result when timeout races with completion", async () => {
+    using tempDir = new TestTempDir("test-task-await-workspace-turn-timeout-terminal");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const runningSnapshot = {
+      kind: "workspace_turn",
+      handleId: "wst_race",
+      ownerWorkspaceId: "parent-workspace",
+      workspaceId: "child-race",
+      turnId: "turn-race",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    } as const;
+    const completedSnapshot = {
+      ...runningSnapshot,
+      status: "completed",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      reportMarkdown: "Finished during timeout",
+      messageId: "msg_race",
+      finalMessageRef: { messageId: "msg_race", textCharCount: 23 },
+    } as const;
+    const snapshots = [runningSnapshot, completedSnapshot];
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      listWorkspaceTurnTasks: mock(() => Promise.resolve([runningSnapshot])),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses: mock(() => new Map()),
+      getWorkspaceTurnSnapshot: mock(() => Promise.resolve(snapshots.shift() ?? completedSnapshot)),
+      waitForWorkspaceTurn: mock(() => Promise.reject(new Error("timed out"))),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["wst_race"], timeout_secs: 1 }, mockToolCallOptions)
+    )) as { results: Array<Record<string, unknown>> };
+
+    expect(result.results).toEqual([
+      {
+        status: "completed",
+        taskId: "wst_race",
+        handleKind: "workspace_turn",
+        workspaceId: "child-race",
+        reportMarkdown: "Finished during timeout",
+        messageId: "msg_race",
+        finalMessageRef: { messageId: "msg_race", textCharCount: 23 },
+        note: COMPLETED_REPORT_REFETCH_NOTE,
+      },
+    ]);
+  });
+
   it("includes gitFormatPatch artifacts written during waitForAgentReport", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-artifacts");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

@@ -2716,6 +2716,10 @@ export class TaskService {
     let targetWorkspaceId: string;
     let createdWorkspace = false;
 
+    if (mode === "fork") {
+      return Err('Task.createWorkspaceTurn: workspace.mode="fork" is not supported yet');
+    }
+
     if (mode === "existing") {
       const existingWorkspaceId = coerceNonEmptyString(args.workspace?.workspaceId);
       if (!existingWorkspaceId) {

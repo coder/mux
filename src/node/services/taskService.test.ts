@@ -691,6 +691,32 @@ describe("TaskService", () => {
     expect(createWorkspace).not.toHaveBeenCalled();
   });
 
+  test("createWorkspaceTurn rejects fork mode until workspace turns support forking", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["handle", "turn"]);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const createWorkspace = mock(
+      (): Promise<Result<{ metadata: WorkspaceMetadata }>> =>
+        Promise.resolve(Err("should not create workspace"))
+    );
+    const workspaceMocks = createWorkspaceServiceMocks({ create: createWorkspace });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const result = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Summarize fork",
+      title: "Workspace turn",
+      workspace: { mode: "fork" },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain('workspace.mode="fork" is not supported');
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
   test("createWorkspaceTurn marks accepted pre-stream failures as handle errors", async () => {
     const sendMessage = mock(
       async (...args: unknown[]): Promise<Result<void, SendMessageError>> => {

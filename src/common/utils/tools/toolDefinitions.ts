@@ -378,6 +378,13 @@ function refineTaskToolAgentArgs(
         path: args.n != null ? ["n"] : ["variants"],
       });
     }
+    if ((args.workspace?.mode ?? "new") === "fork") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'workspace.mode="fork" is not supported for workspace tasks yet',
+        path: ["workspace", "mode"],
+      });
+    }
     if ((args.workspace?.mode ?? "new") === "existing" && args.workspace?.workspaceId == null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

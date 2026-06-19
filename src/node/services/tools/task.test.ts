@@ -93,6 +93,25 @@ describe("task tool", () => {
     expect(parseWithIsolation(tool).success).toBe(true);
   });
 
+  it("rejects unsupported workspace fork mode in the schema", () => {
+    using tempDir = new TestTempDir("test-task-tool-workspace-fork-schema");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "worktree" },
+    });
+
+    const parsed = (
+      tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } }
+    ).safeParse({
+      kind: "workspace",
+      prompt: "summarize the fork",
+      title: "Workspace fork",
+      workspace: { mode: "fork" },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("starts a background workspace turn without requiring a sub-agent id", async () => {
     using tempDir = new TestTempDir("test-task-tool-workspace-turn");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
