@@ -221,10 +221,10 @@ CHECK_PR_CHECKS_ONCE() {
     return 10
   fi
 
+  # Sometimes the only early status is a skipped informational check; wait for
+  # at least one pass/fail/pending non-Chromatic signal before deciding.
   if [ "$has_fail" -eq 0 ] && [ "$has_pending" -eq 0 ] && [ "$has_pass" -eq 0 ]; then
-    echo "❌ assertion failed: unable to classify non-Chromatic 'gh pr checks' output for PR #$PR_NUMBER" >&2
-    echo "$checks" >&2
-    return 1
+    return 10
   fi
 
   # Check for failures
