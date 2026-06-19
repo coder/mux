@@ -283,6 +283,16 @@ async function runDeepReviewPass(context) {
   if (!fixerOutput.madeChanges)
     return appendFixNoChanges(result, fixer.reportMarkdown, fixerOutput);
 
+  if (!fixerOutputFixesSelectedIssue(fixerOutput, fixableIssues)) {
+    return appendFixRejected(
+      result,
+      "The fixer did not report any selected issue IDs; skipped applying its patch.",
+      preflight,
+      fixer.reportMarkdown,
+      fixerOutput
+    );
+  }
+
   context.phase("apply-fixes", withIteration({ madeChanges: true }, context.iteration));
   const applySpec = {
     id: stepId("apply-review-fixes", suffix),
@@ -462,6 +472,13 @@ function appendFixNoChanges(result, fixerMarkdown, fixerOutput) {
     "\n\n---\n\n## Fix pass\n\nThe fixer did not make file changes.\n\n" + fixerMarkdown;
   result.structuredOutput.mode = "fixer-made-no-changes";
   result.structuredOutput.fix = { preflight: null, fixer: fixerOutput, applied: null };
+  return result;
+}
+
+function appendFixRejected(result, reason, preflight, fixerMarkdown, fixerOutput) {
+  result.reportMarkdown += "\n\n---\n\n## Fix pass\n\n" + reason + "\n\n" + fixerMarkdown;
+  result.structuredOutput.mode = "fix-skipped";
+  result.structuredOutput.fix = { preflight, fixer: fixerOutput, applied: null };
   return result;
 }
 
@@ -763,6 +780,15 @@ function matchingIssueVerification(issue, result) {
       (verification && verification.issueId ? verification.issueId : "none") +
       ".",
   };
+}
+
+function fixerOutputFixesSelectedIssue(fixerOutput, fixableIssues) {
+  const selectedIds = fixableIssues.map(function (issue) {
+    return issue.id;
+  });
+  return stringList(fixerOutput && fixerOutput.fixedIssueIds).some(function (issueId) {
+    return selectedIds.indexOf(issueId) !== -1;
+  });
 }
 
 function selectFixableIssues(input, final, verified) {

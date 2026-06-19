@@ -291,8 +291,9 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
       id: "apply-security-state",
       source: persistence,
       expectedHeadSha: persistenceExpectedHeadSha,
-      // Security state patches are constrained by prompt to .mux/security and
-      // should persist even when the scan target includes uncommitted work.
+      allowedPathPrefixes: [".mux/security"],
+      // Security state patches are path-fenced to .mux/security and should persist even when
+      // the scan target includes uncommitted work.
       force: true,
     });
     structuredOutput.persistence = persistence.structuredOutput;
@@ -415,6 +416,17 @@ function isSecurityFindingAutoFixable(verification) {
   return verification.proofState === "verified" || verification.proofState === "static_evidence";
 }
 
+function fixerOutputFixesSelectedFinding(fixerOutput, fixableFindings) {
+  const selectedIds = fixableFindings.map(function (finding) {
+    return finding.id;
+  });
+  return WORKFLOW_UTILS.stringList(fixerOutput && fixerOutput.fixedFindingIds).some(
+    function (findingId) {
+      return selectedIds.indexOf(findingId) !== -1;
+    }
+  );
+}
+
 function reviewedSecurityHeadPreflightSkipReason(preflight, reviewedHeadSha) {
   if (!reviewedHeadSha) return "Security auto-fix requires a reviewed local Git HEAD snapshot.";
   // The preflight agent observes the current parent checkout. Do not spawn a fixer from stale
@@ -498,6 +510,19 @@ function prepareSecurityFixPass(context) {
       shouldApply: false,
       fix: {
         reportMarkdown: fixer.reportMarkdown,
+        preflight,
+        fixer: fixer.structuredOutput,
+        applied: null,
+      },
+    };
+  }
+  if (!fixerOutputFixesSelectedFinding(fixer.structuredOutput, fixable)) {
+    return {
+      shouldApply: false,
+      fix: {
+        reportMarkdown:
+          "The fixer did not report any selected finding IDs; skipped applying its patch.\n\n" +
+          fixer.reportMarkdown,
         preflight,
         fixer: fixer.structuredOutput,
         applied: null,

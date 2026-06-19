@@ -64,6 +64,7 @@ export interface WorkflowApplyPatchSpec {
   threeWay: boolean;
   expectedHeadSha?: string;
   force: boolean;
+  allowedPathPrefixes?: string[];
 }
 
 export interface WorkflowApplyPatchResult {
@@ -1532,6 +1533,17 @@ function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
     parsed.projectPath = spec.projectPath;
   } else if (typeof spec.project_path === "string" && spec.project_path.length > 0) {
     parsed.projectPath = spec.project_path;
+  }
+  const allowedPathPrefixes = spec.allowedPathPrefixes ?? spec.allowed_path_prefixes;
+  if (allowedPathPrefixes !== undefined) {
+    assert(Array.isArray(allowedPathPrefixes), "applyPatch allowedPathPrefixes must be an array");
+    parsed.allowedPathPrefixes = allowedPathPrefixes.map((prefix) => {
+      assert(
+        typeof prefix === "string" && prefix.trim().length > 0,
+        "applyPatch allowedPathPrefixes entries must be non-empty strings"
+      );
+      return prefix.trim();
+    });
   }
   return parsed;
 }

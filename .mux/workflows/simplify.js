@@ -208,6 +208,22 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
     };
   }
 
+  if (!fixerOutputFixesSelectedFinding(fixerOutput, actionableFindings)) {
+    return {
+      reportMarkdown:
+        synthesis.reportMarkdown +
+        "\n\n---\n\n## Fix pass\n\nThe fixer did not report any selected finding IDs; skipped applying its patch.\n\n" +
+        fixer.reportMarkdown,
+      structuredOutput: {
+        mode: "fix-skipped",
+        gitContext,
+        reviews: reviewOutputs,
+        synthesis: fixSynthesis,
+        fix: { preflight, fixer: fixerOutput, applied: null },
+      },
+    };
+  }
+
   phase("apply-fixes", { madeChanges: true });
   const applied = await mux.patch.applySafely({
     id: "apply-simplify-fixes",
@@ -225,6 +241,15 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       fix: { preflight, fixer: fixerOutput, applied },
     },
   };
+}
+
+function fixerOutputFixesSelectedFinding(fixerOutput, actionableFindings) {
+  const selectedIds = actionableFindings.map(function (finding) {
+    return finding.id;
+  });
+  return WORKFLOW_UTILS.stringList(fixerOutput && fixerOutput.fixedFindingIds).some(function (findingId) {
+    return selectedIds.indexOf(findingId) !== -1;
+  });
 }
 
 function reviewedHeadPreflightSkipReason(preflight, reviewedHeadSha) {

@@ -1,3 +1,6 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import type { ParsedThinkingInput } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -9,6 +12,11 @@ import type {
   WorkflowApplyPatchSpec,
   WorkflowTaskAdapter,
 } from "./WorkflowRunner";
+import { isPathInsideDir } from "@/node/utils/pathUtils";
+import {
+  getSubagentGitPatchMboxPath,
+  readSubagentGitPatchArtifact,
+} from "@/node/services/subagentGitPatchArtifacts";
 import {
   applyTaskGitPatchArtifact,
   type TaskApplyGitPatchArgs,
@@ -159,6 +167,10 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     // Applying one patch mutates HEAD, so complete each dry-run + real apply pair before
     // checking the next patch. This preserves the old Orchestrator conflict model.
     await using _lock = await this.patchApplyMutex.acquire();
+    const pathViolation = await this.getAllowedPatchPathViolation(spec);
+    if (pathViolation != null) {
+      return { success: false, taskId: spec.sourceTaskId, error: pathViolation };
+    }
     const applyPatchArtifact = this.resolvePatchArtifactApplier();
     const baseArgs: TaskApplyGitPatchArgs = {
       task_id: spec.sourceTaskId,
@@ -205,6 +217,81 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
         args,
         { abortSignal: options?.abortSignal, allowAlreadyApplied: true }
       );
+  }
+
+  private async getAllowedPatchPathViolation(
+    spec: WorkflowApplyPatchSpec
+  ): Promise<string | undefined> {
+    if (spec.allowedPathPrefixes == null || spec.allowedPathPrefixes.length === 0) {
+      return undefined;
+    }
+    const workspaceSessionDir = this.patchToolConfig?.workspaceSessionDir;
+    if (workspaceSessionDir == null || workspaceSessionDir.length === 0) {
+      return "applyPatch allowedPathPrefixes requires patch artifact metadata";
+    }
+
+    const artifact = await readSubagentGitPatchArtifact(workspaceSessionDir, spec.sourceTaskId);
+    if (artifact == null) {
+      return `Patch artifact not found for task ${spec.sourceTaskId}`;
+    }
+
+    const projectArtifacts = artifact.projectArtifacts.filter(
+      (projectArtifact) =>
+        spec.projectPath == null || projectArtifact.projectPath === spec.projectPath
+    );
+    const violations = new Set<string>();
+    for (const projectArtifact of projectArtifacts) {
+      if (projectArtifact.status !== "ready") {
+        continue;
+      }
+      const patchPath = await this.getProjectPatchMboxPath(
+        workspaceSessionDir,
+        spec.sourceTaskId,
+        projectArtifact
+      );
+      if (patchPath == null) {
+        return `Patch file is missing for task ${spec.sourceTaskId}`;
+      }
+      const patchText = await fs.readFile(patchPath, "utf-8");
+      const patchPaths = extractGitPatchPaths(patchText);
+      for (const patchPath of patchPaths) {
+        if (!isPatchPathAllowed(patchPath, spec.allowedPathPrefixes)) {
+          violations.add(patchPath);
+        }
+      }
+    }
+
+    if (violations.size === 0) {
+      return undefined;
+    }
+    return `Patch touches paths outside allowed prefixes (${spec.allowedPathPrefixes.join(", ")}): ${Array.from(violations).join(", ")}`;
+  }
+
+  private async getProjectPatchMboxPath(
+    artifactSessionDir: string,
+    taskId: string,
+    projectArtifact: { storageKey: string; mboxPath?: string }
+  ): Promise<string | undefined> {
+    const expectedPatchPath = getSubagentGitPatchMboxPath(
+      artifactSessionDir,
+      taskId,
+      projectArtifact.storageKey
+    );
+    const candidates = [projectArtifact.mboxPath, expectedPatchPath].filter(
+      (candidate): candidate is string =>
+        typeof candidate === "string" && isPathInsideDir(artifactSessionDir, candidate)
+    );
+    for (const candidate of candidates) {
+      try {
+        const stat = await fs.stat(candidate);
+        if (stat.isFile()) {
+          return candidate;
+        }
+      } catch {
+        // Try the next candidate.
+      }
+    }
+    return undefined;
   }
 
   async interruptRun(): Promise<void> {
@@ -356,4 +443,108 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
         : {}),
     };
   }
+}
+
+function extractGitPatchPaths(patchText: string): string[] {
+  const paths = new Set<string>();
+  for (const line of patchText.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      const parts = splitGitPatchWords(line.slice("diff --git ".length));
+      if (parts.length >= 2) {
+        addPatchPath(paths, parts[0]);
+        addPatchPath(paths, parts[1]);
+      } else {
+        paths.add("<unparseable diff header>");
+      }
+    } else if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+      addPatchPath(paths, line.slice(4));
+    } else if (line.startsWith("rename from ")) {
+      addPatchPath(paths, line.slice("rename from ".length));
+    } else if (line.startsWith("rename to ")) {
+      addPatchPath(paths, line.slice("rename to ".length));
+    } else if (line.startsWith("copy from ")) {
+      addPatchPath(paths, line.slice("copy from ".length));
+    } else if (line.startsWith("copy to ")) {
+      addPatchPath(paths, line.slice("copy to ".length));
+    }
+  }
+  return Array.from(paths);
+}
+
+function splitGitPatchWords(value: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quoted = false;
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quoted) {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      current += char;
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && /\s/.test(char)) {
+      if (current.length > 0) {
+        words.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (current.length > 0) {
+    words.push(current);
+  }
+  return words;
+}
+
+function addPatchPath(paths: Set<string>, rawPath: string | undefined): void {
+  const normalized = normalizePatchPath(rawPath);
+  if (normalized != null) {
+    paths.add(normalized);
+  }
+}
+
+function normalizePatchPath(rawPath: string | undefined): string | undefined {
+  if (rawPath == null) {
+    return undefined;
+  }
+  let value = rawPath.trim();
+  if (value.length === 0 || value === "/dev/null") {
+    return undefined;
+  }
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      value = JSON.parse(value) as string;
+    } catch {
+      value = value.slice(1, -1);
+    }
+  }
+  if (value.startsWith("a/") || value.startsWith("b/")) {
+    value = value.slice(2);
+  }
+  const segments = value.split("/");
+  if (path.posix.isAbsolute(value) || segments.includes("..")) {
+    return value;
+  }
+  return segments.filter((segment) => segment.length > 0 && segment !== ".").join("/");
+}
+
+function isPatchPathAllowed(patchPath: string, allowedPrefixes: string[]): boolean {
+  return allowedPrefixes.some((prefix) => {
+    const normalizedPrefix = normalizePatchPath(prefix);
+    if (normalizedPrefix == null) {
+      return false;
+    }
+    return patchPath === normalizedPrefix || patchPath.startsWith(`${normalizedPrefix}/`);
+  });
 }
