@@ -1,4 +1,4 @@
-import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
+import { normalizeGoalDefaults, type GoalDefaults } from "@/constants/goals";
 import type { z } from "zod";
 import type { WorkspaceGoalDefaultsOverrideSchema } from "@/common/orpc/schemas";
 import { normalizeGoalBudgetCents } from "@/common/utils/goals/budgetPricing";
@@ -104,7 +104,7 @@ export function resolveGoalSetIntent(
  */
 export function resolveModelGoalSetIntent(
   input: GoalSetIntentInput,
-  defaults: GoalDefaults = DEFAULT_GOAL_DEFAULTS
+  defaults: GoalDefaults
 ): GoalSetIntent {
   const objective = input.objective.trim();
   const budgetCents =

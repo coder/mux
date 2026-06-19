@@ -64,7 +64,7 @@ export const GetGoalToolCall: React.FC<GetGoalToolCallProps> = ({ result, status
                 <div className="text-foreground">{goal.objective}</div>
               </div>
 
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+              <dl className="grid grid-cols-1 gap-x-4 gap-y-1 @sm:grid-cols-2">
                 <GoalToolStat label="Status" value={<GoalStatusBadge status={goal.status} />} />
                 <GoalToolStat
                   label="Cost"

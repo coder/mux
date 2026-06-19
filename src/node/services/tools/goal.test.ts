@@ -410,6 +410,47 @@ describe("goal tools", () => {
     expect(durable?.goalId).not.toBe(projectedGoalId);
   });
 
+  test("set_goal persists immediately if streaming ends before queueing under the lock", async () => {
+    interface StreamingOverride {
+      isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+    }
+    const serviceAccess = goalService as unknown as StreamingOverride;
+    const original = serviceAccess.isWorkspaceStreaming;
+    let streamingChecks = 0;
+    serviceAccess.isWorkspaceStreaming = () => {
+      streamingChecks += 1;
+      return Promise.resolve(streamingChecks < 3);
+    };
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 300,
+        defaultTurnCap: 2,
+        alwaysRequireExplicitBudget: true,
+      },
+    });
+
+    let result: unknown;
+    try {
+      result = await Promise.resolve(
+        tool.execute!({ objective: "Persist after stream settles" }, mockToolCallOptions)
+      );
+    } finally {
+      serviceAccess.isWorkspaceStreaming = original;
+    }
+    const durable = await goalService.getGoal(workspaceId);
+    const drained = await goalService.applyPendingAfterStreamEnd(workspaceId);
+
+    expect(streamingChecks).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({ goal: { objective: "Persist after stream settles" } });
+    expect(durable?.goalId).toBe((result as { goal: GoalRecordV1 }).goal.goalId);
+    expect(drained).toBeNull();
+  });
+
   test("complete_goal completes the goal, persists the summary, and emits model telemetry", async () => {
     const created = await setGoalOk(goalService, { workspaceId, objective: "Finish the goal" });
     const tool = createCompleteGoalTool({

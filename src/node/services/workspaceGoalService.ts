@@ -1873,7 +1873,12 @@ export class WorkspaceGoalService {
     // this contract.
     // -----------------------------------------------------------------------
     if (objective && (await this.isWorkspaceStreaming(input.workspaceId))) {
-      return this.fileLocks.withLock(input.workspaceId, async () => {
+      const deferredResult = await this.fileLocks.withLock(input.workspaceId, async () => {
+        if (!(await this.isWorkspaceStreaming(input.workspaceId))) {
+          // The stream can end while this caller waits for the goal file lock.
+          // Persist immediately instead of queueing after stream-end already drained.
+          return null;
+        }
         const current = await this.readGoalFile(input.workspaceId);
         const conflict =
           this.conflictForExpectedGoalId(current, input.expectedGoalId) ??
@@ -1911,6 +1916,11 @@ export class WorkspaceGoalService {
             message: UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
           });
         }
+        if (!(await this.isWorkspaceStreaming(input.workspaceId))) {
+          // Avoid queueing after the one stream-end drain has already observed no
+          // pending mutation.
+          return null;
+        }
         this.pendingGoalMutations.set(input.workspaceId, {
           objective,
           ...(Object.hasOwn(input, "budgetCents")
@@ -1938,6 +1948,9 @@ export class WorkspaceGoalService {
         await this.publishPendingGoalSnapshot(input.workspaceId, projected);
         return Ok(projected);
       });
+      if (deferredResult != null) {
+        return deferredResult;
+      }
     }
 
     return this.setGoalImmediately({ ...input, objective });
