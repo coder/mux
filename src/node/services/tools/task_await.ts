@@ -38,6 +38,9 @@ import {
 
 const DEFAULT_TASK_AWAIT_TIMEOUT_MS = 600_000;
 const WORKFLOW_AWAIT_POLL_INTERVAL_MS = 250;
+// Shared fallback used when a workspace-turn record errored without a specific message,
+// so every error-status await result path reports identical text.
+const WORKSPACE_TURN_DEFAULT_ERROR = "Workspace turn failed";
 
 // Status values for which task_await still treats an agent task as live and
 // should surface the live status (plus an `elapsed_ms` field) instead of
@@ -549,7 +552,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               return {
                 status: "error" as const,
                 taskId,
-                error: snapshot.error ?? "Workspace turn failed",
+                error: snapshot.error ?? WORKSPACE_TURN_DEFAULT_ERROR,
               };
             }
           }
@@ -620,7 +623,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 return {
                   status: "error" as const,
                   taskId,
-                  error: latest.error ?? "Workspace turn failed",
+                  error: latest.error ?? WORKSPACE_TURN_DEFAULT_ERROR,
                 };
               }
               return {
@@ -654,7 +657,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 return {
                   status: "error" as const,
                   taskId,
-                  error: latest.error ?? "Workspace turn failed",
+                  error: latest.error ?? WORKSPACE_TURN_DEFAULT_ERROR,
                 };
               }
               if (latest.status === "interrupted") {
