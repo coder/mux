@@ -370,7 +370,7 @@ describe("goal tools", () => {
     expect(error.message).toContain("child_workspace");
   });
 
-  test("set_goal queues mid-stream goals and requires durable goalId from a later get_goal", async () => {
+  test("set_goal queues mid-stream goals with a durable returned goalId", async () => {
     interface StreamingOverride {
       isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
     }
@@ -390,13 +390,13 @@ describe("goal tools", () => {
       },
     });
 
-    let projectedGoalId = "";
+    let returnedGoalId = "";
     try {
       const result: unknown = await Promise.resolve(
         tool.execute!({ objective: "Queued while streaming" }, mockToolCallOptions)
       );
       expect(result).toMatchObject({ goal: { objective: "Queued while streaming" } });
-      projectedGoalId = (result as { goal: GoalRecordV1 }).goal.goalId;
+      returnedGoalId = (result as { goal: GoalRecordV1 }).goal.goalId;
       expect(await goalService.getGoal(workspaceId)).toBeNull();
     } finally {
       serviceAccess.isWorkspaceStreaming = original;
@@ -404,10 +404,67 @@ describe("goal tools", () => {
 
     const drained = await goalService.applyPendingAfterStreamEnd(workspaceId);
     const durable = await goalService.getGoal(workspaceId);
+    const completeTool = createCompleteGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+    const completed: unknown = await Promise.resolve(
+      completeTool.execute!(
+        { summary: "Completed with the set_goal result id.", goalId: returnedGoalId },
+        mockToolCallOptions
+      )
+    );
 
     expect(drained?.objective).toBe("Queued while streaming");
-    expect(durable?.goalId).toBe(drained?.goalId);
-    expect(durable?.goalId).not.toBe(projectedGoalId);
+    expect(drained?.goalId).toBe(returnedGoalId);
+    expect(durable?.goalId).toBe(returnedGoalId);
+    expect(completed).toMatchObject({ goal: { goalId: returnedGoalId, status: "complete" } });
+  });
+
+  test("set_goal preserves the returned id for same-objective mid-stream updates", async () => {
+    const existing = await setGoalOk(goalService, { workspaceId, objective: "Same objective" });
+    await setGoalOk(goalService, { workspaceId, status: "paused" });
+    interface StreamingOverride {
+      isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+    }
+    const serviceAccess = goalService as unknown as StreamingOverride;
+    const original = serviceAccess.isWorkspaceStreaming;
+    serviceAccess.isWorkspaceStreaming = () => Promise.resolve(true);
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+    });
+
+    let returnedGoalId = "";
+    try {
+      const result: unknown = await Promise.resolve(
+        tool.execute!(
+          {
+            objective: "Same objective",
+            turnCap: 3,
+            replaceExistingGoal: true,
+            expectedGoalId: existing.goalId,
+          },
+          mockToolCallOptions
+        )
+      );
+      returnedGoalId = (result as { goal: GoalRecordV1 }).goal.goalId;
+    } finally {
+      serviceAccess.isWorkspaceStreaming = original;
+    }
+
+    const drained = await goalService.applyPendingAfterStreamEnd(workspaceId);
+    const durable = await goalService.getGoal(workspaceId);
+
+    expect(returnedGoalId).toBe(existing.goalId);
+    expect(drained?.goalId).toBe(existing.goalId);
+    expect(durable).toMatchObject({ goalId: existing.goalId, turnCap: 3 });
   });
 
   test("set_goal persists immediately if streaming ends before queueing under the lock", async () => {

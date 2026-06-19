@@ -215,6 +215,8 @@ interface PendingGoalMutation {
   expectedGoalId?: string | null;
   replacementGuard?: SetGoalReplacementGuard | null;
   initiator?: GoalLifecycleInitiator;
+  /** Stable id for the optimistic record returned before the deferred write drains. */
+  projectedGoalId?: string | null;
   /**
    * Carries the caller's `editInPlace` intent across mid-stream deferral so
    * a queued rename preserves goalId + accounting when it drains.
@@ -600,12 +602,13 @@ export class WorkspaceGoalService {
     turnCap: number | null;
     status?: GoalStatus | null;
     completionSummary?: string | null;
+    goalId?: string | null;
   }): GoalRecordV1 {
     const now = Date.now();
     const status = input.status ?? "active";
     const goal = GoalRecordV1Schema.parse({
       version: 1,
-      goalId: crypto.randomUUID(),
+      goalId: input.goalId ?? crypto.randomUUID(),
       objective: input.objective,
       status,
       budgetCents: normalizeGoalBudgetCents(input.budgetCents),
@@ -1863,14 +1866,10 @@ export class WorkspaceGoalService {
     // is a synthetic record for immediate UI rendering; it has NOT been
     // persisted yet.
     //
-    // ⚠️ DO NOT use `projected.goalId` as `expectedGoalId` on a follow-up
-    // mutation — the eventual persisted record gets a fresh `goalId` from
-    // `setGoalImmediately`/`createGoal` on stream-end, so the projected id is
-    // throwaway. Re-fetch via `getGoal` after the stream ends before issuing
-    // any optimistic-concurrency mutation. The `goalId` mismatch is a known
-    // footgun — current callers all
-    // re-fetch first so no bug manifests today, but new callers must respect
-    // this contract.
+    // The projected goalId is persisted through the queued mutation so model
+    // tool results remain valid optimistic-concurrency tokens after stream-end.
+    // Without carrying this id into the drain, a transcript-persisted set_goal
+    // result could point complete_goal at a throwaway pre-persistence id.
     // -----------------------------------------------------------------------
     if (objective && (await this.isWorkspaceStreaming(input.workspaceId))) {
       const deferredResult = await this.fileLocks.withLock(input.workspaceId, async () => {
@@ -1898,6 +1897,14 @@ export class WorkspaceGoalService {
             updatedAtMs: Date.now(),
           });
           projected = this.applyMutableFields(renamed, input);
+        } else if (current?.objective === objective) {
+          const hasMutableChange =
+            input.status != null ||
+            input.completionSummary != null ||
+            Object.hasOwn(input, "budgetCents") ||
+            Object.hasOwn(input, "turnCap") ||
+            Object.hasOwn(input, "requireUserAcknowledgmentSinceMs");
+          projected = hasMutableChange ? this.applyMutableFields(current, input) : current;
         } else {
           projected = this.createGoal({
             objective,
@@ -1936,6 +1943,7 @@ export class WorkspaceGoalService {
             : {}),
           ...(input.replacementGuard != null ? { replacementGuard: input.replacementGuard } : {}),
           ...(input.initiator != null ? { initiator: input.initiator } : {}),
+          projectedGoalId: projected.goalId,
           // Forward `editInPlace` so an inline rename submitted while the
           // agent is streaming still takes the rename branch when the
           // pending mutation drains.
@@ -1968,7 +1976,8 @@ export class WorkspaceGoalService {
   }
 
   private async setGoalImmediately(
-    input: SetGoalInput & { objective?: string }
+    input: SetGoalInput & { objective?: string },
+    options?: { replacementGoalId?: string | null }
   ): Promise<Result<GoalRecordV1, GoalSetError>> {
     const result = await this.fileLocks.withLock(input.workspaceId, async () => {
       const current = await this.readGoalFile(input.workspaceId);
@@ -2116,6 +2125,7 @@ export class WorkspaceGoalService {
         turnCap: input.turnCap ?? null,
         status: input.status,
         completionSummary: input.completionSummary,
+        goalId: options?.replacementGoalId ?? null,
       });
       if (
         (next.status === "active" || next.status === "budget_limited") &&
@@ -2717,7 +2727,11 @@ export class WorkspaceGoalService {
       // be logged and swallowed so the stream-end pipeline stays alive.
       // The caller already treats null as "no apply happened".
       try {
-        const result = await this.setGoalImmediately({ workspaceId, ...pending });
+        const { projectedGoalId, ...pendingInput } = pending;
+        const result = await this.setGoalImmediately(
+          { workspaceId, ...pendingInput },
+          { replacementGoalId: projectedGoalId ?? null }
+        );
         drained = result.success ? result.data : null;
       } catch (error) {
         log.warn("applyPendingAfterStreamEnd: dropped invalid queued goal mutation", {
