@@ -238,24 +238,46 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
     final: final.structuredOutput,
   };
 
-  let fix = null;
-  if (input.fix) {
-    fix = await runSecurityFixPass({ input, candidates, verifications, agent, stateContext });
+  const persistencePayload = {
+    input,
+    reportMarkdown: final.reportMarkdown,
+    structuredOutput,
+    threatModel: threatModelDraft.structuredOutput,
+    evidenceDrafts,
+  };
+  const preparedFix = input.fix
+    ? prepareSecurityFixPass({
+        input,
+        candidates,
+        verifications,
+        agent,
+        stateContext,
+        phase,
+        persistencePayload,
+      })
+    : null;
+  let fix = preparedFix ? preparedFix.fix : null;
+  if (fix) structuredOutput.fix = fix;
+
+  if (preparedFix && preparedFix.shouldApply) {
+    fix = await applyPreparedSecurityFix(preparedFix, phase);
     structuredOutput.fix = fix;
+    structuredOutput.persistence = bundledFixPersistence(fix.applied);
+    structuredOutput.persistenceApply = bundledFixPersistenceApply(fix.applied);
+    return securityScanResult(
+      final.reportMarkdown,
+      fix,
+      structuredOutput.persistenceApply,
+      structuredOutput
+    );
   }
 
   phase("persist-security-state", { findingCount: candidates.length });
-  // Persisted scan artifacts describe the reviewed snapshot; fail closed if the parent moved.
-  const persistenceExpectedHeadSha = stateContext.gitContext && stateContext.gitContext.headSha;
+  // Read-only scans, skipped fixes, and no-op fixers persist against the reviewed scan HEAD.
+  const persistenceExpectedHeadSha = securityPersistenceExpectedHeadSha(stateContext);
   let applyResult;
   if (persistenceExpectedHeadSha) {
-    const persistence = persistSecurityStateAgent(agent, {
-      input,
-      reportMarkdown: final.reportMarkdown,
-      structuredOutput,
-      threatModel: threatModelDraft.structuredOutput,
-      evidenceDrafts,
-    });
+    const persistence = persistSecurityStateAgent(agent, persistencePayload);
     applyResult = await mux.patch.applySafely({
       id: "apply-security-state",
       source: persistence,
@@ -272,16 +294,38 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
   }
   structuredOutput.persistenceApply = applyResult;
 
+  return securityScanResult(final.reportMarkdown, fix, applyResult, structuredOutput);
+}
+
+function securityScanResult(finalReportMarkdown, fix, persistenceApply, structuredOutput) {
   return {
     reportMarkdown:
-      final.reportMarkdown +
+      finalReportMarkdown +
       (fix ? "\n\n---\n\n## Fix pass\n\n" + fix.reportMarkdown : "") +
       "\n\n---\n\n## Security state persistence\n\n- Status: " +
-      (applyResult && applyResult.status ? applyResult.status : "unknown") +
+      (persistenceApply && persistenceApply.status ? persistenceApply.status : "unknown") +
       "\n- Success: " +
-      (applyResult && applyResult.success ? "yes" : "no"),
+      (persistenceApply && persistenceApply.success ? "yes" : "no"),
     structuredOutput,
   };
+}
+
+function bundledFixPersistence(applied) {
+  return {
+    wroteFiles: Boolean(applied && applied.success),
+    paths: [],
+    diagnostics: ["Security state persistence was bundled into the fix patch."],
+  };
+}
+
+function bundledFixPersistenceApply(applied) {
+  return Object.assign({}, applied, {
+    note: "Security state persistence was bundled into apply-security-fixes.",
+  });
+}
+
+function securityPersistenceExpectedHeadSha(stateContext) {
+  return text(stateContext && stateContext.gitContext && stateContext.gitContext.headSha);
 }
 
 function collectSecurityStateAgent(agent, input) {
@@ -359,7 +403,7 @@ function isSecurityFindingAutoFixable(verification) {
   return verification.proofState === "verified" || verification.proofState === "static_evidence";
 }
 
-async function runSecurityFixPass(context) {
+function prepareSecurityFixPass(context) {
   const fixable = context.candidates
     .filter(function (finding, index) {
       const requested = context.input.fixFindingIds;
@@ -371,12 +415,16 @@ async function runSecurityFixPass(context) {
     .slice(0, context.input.maxFixes);
   if (fixable.length === 0) {
     return {
-      reportMarkdown: "No verified findings were selected for fixing.",
-      preflight: null,
-      fixer: null,
-      applied: null,
+      shouldApply: false,
+      fix: {
+        reportMarkdown: "No verified findings were selected for fixing.",
+        preflight: null,
+        fixer: null,
+        applied: null,
+      },
     };
   }
+  context.phase("fix-preflight", { fixableCount: fixable.length });
   const preflight = collectSecurityFixPreflightAgent(
     context.agent,
     context.input,
@@ -384,27 +432,36 @@ async function runSecurityFixPass(context) {
   );
   if (!preflight.ok) {
     return {
-      reportMarkdown: preflight.reason || "Security auto-fix preflight failed.",
-      preflight,
-      fixer: null,
-      applied: null,
+      shouldApply: false,
+      fix: {
+        reportMarkdown: preflight.reason || "Security auto-fix preflight failed.",
+        preflight,
+        fixer: null,
+        applied: null,
+      },
     };
   }
+  context.phase("fix", { fixableCount: fixable.length });
   const fixer = context.agent({
     id: "fix-security-findings",
     title: "Fix selected security findings",
     agentId: EXEC_AGENT_ID,
     prompt:
-      "Fix the selected security findings with minimal surgical edits. Do not push or open a PR. Run relevant validation and commit your changes locally so the parent workflow can apply the patch artifact. Skip unsafe findings with reasons.\n\nFindings:\n" +
-      JSON.stringify(fixable, null, 2),
+      "Fix the selected security findings with minimal surgical edits. Also persist the security scan state in the same child workspace: write files under .mux/security only for threat-model, evidence, cache, runs, and latest-run state. Do not push or open a PR. Run relevant validation and commit both code fixes and security state locally so the parent workflow can apply one reviewed patch artifact. Skip unsafe findings with reasons.\n\nFindings:\n" +
+      JSON.stringify(fixable, null, 2) +
+      "\n\nSecurity state payload:\n" +
+      JSON.stringify(context.persistencePayload, null, 2),
     outputSchema: fixerSchema(),
   });
   if (!fixer.structuredOutput || !fixer.structuredOutput.madeChanges) {
     return {
-      reportMarkdown: fixer.reportMarkdown,
-      preflight,
-      fixer: fixer.structuredOutput,
-      applied: null,
+      shouldApply: false,
+      fix: {
+        reportMarkdown: fixer.reportMarkdown,
+        preflight,
+        fixer: fixer.structuredOutput,
+        applied: null,
+      },
     };
   }
   // Patch artifacts were produced from the reviewed scan snapshot; fail closed if the parent moved.
@@ -412,31 +469,49 @@ async function runSecurityFixPass(context) {
     context.stateContext.gitContext && context.stateContext.gitContext.headSha;
   if (!reviewedHeadSha) {
     return {
-      reportMarkdown: "Security auto-fix requires a reviewed local Git HEAD snapshot.",
-      preflight,
-      fixer: fixer.structuredOutput,
-      applied: null,
+      shouldApply: false,
+      fix: {
+        reportMarkdown: "Security auto-fix requires a reviewed local Git HEAD snapshot.",
+        preflight,
+        fixer: fixer.structuredOutput,
+        applied: null,
+      },
     };
   }
   if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
     return {
-      reportMarkdown: "Security auto-fix preflight HEAD does not match the reviewed scan snapshot.",
+      shouldApply: false,
+      fix: {
+        reportMarkdown:
+          "Security auto-fix preflight HEAD does not match the reviewed scan snapshot.",
+        preflight,
+        fixer: fixer.structuredOutput,
+        applied: null,
+      },
+    };
+  }
+  return {
+    shouldApply: true,
+    fixer,
+    expectedHeadSha: reviewedHeadSha,
+    fix: {
+      reportMarkdown: fixer.reportMarkdown,
       preflight,
       fixer: fixer.structuredOutput,
       applied: null,
-    };
-  }
+    },
+  };
+}
+
+async function applyPreparedSecurityFix(preparedFix, phase) {
+  if (!preparedFix.shouldApply) return preparedFix.fix;
+  phase("apply-fixes", { madeChanges: true });
   const applied = await mux.patch.applySafely({
     id: "apply-security-fixes",
-    source: fixer,
-    expectedHeadSha: reviewedHeadSha,
+    source: preparedFix.fixer,
+    expectedHeadSha: preparedFix.expectedHeadSha,
   });
-  return {
-    reportMarkdown: fixer.reportMarkdown,
-    preflight,
-    fixer: fixer.structuredOutput,
-    applied,
-  };
+  return Object.assign({}, preparedFix.fix, { applied });
 }
 
 function renderSecurityInput(input, stateContext) {
