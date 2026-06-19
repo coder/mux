@@ -9234,6 +9234,86 @@ describe("TaskService", () => {
     expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
   });
 
+  test("legacy workflow subagent with invalid old outputSchema can finalize markdown-only report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-legacy-invalid-schema";
+    const childId = "child-legacy-invalid-schema";
+    const workflowRunId = "wfr_legacy_invalid_schema";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: { type: "object", description: "pre-upgrade schema" },
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      definition: {
+        name: "legacy-invalid-schema",
+        description: "Legacy invalid schema",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: {
+            reportMarkdown: "Legacy report",
+            title: null,
+          },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.reportMarkdown).toBe("Legacy report");
+    expect(report?.structuredOutput).toBeUndefined();
+  });
+
   test("workflow subagent missing structuredOutput does not finalize even with empty schema", async () => {
     const config = await createTestConfig(rootDir);
 

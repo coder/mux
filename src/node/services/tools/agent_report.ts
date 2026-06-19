@@ -48,25 +48,39 @@ function zodValidationFailure(
   );
 }
 
+function getWorkflowAgentOutputSchema(
+  config: ToolConfiguration
+): Record<string, unknown> | undefined {
+  const outputSchema = config.workflowAgentOutputSchema;
+  if (outputSchema == null) {
+    return undefined;
+  }
+  const schemaValidation = validateJsonSchemaSubsetSchema(outputSchema);
+  if (schemaValidation.success) {
+    return outputSchema as Record<string, unknown>;
+  }
+  if (config.allowLegacyInvalidWorkflowAgentOutputSchema === true) {
+    return undefined;
+  }
+  throw new Error("Invalid workflow agent output schema for agent_report.");
+}
+
 function validateStructuredOutput(config: ToolConfiguration, structuredOutput: unknown) {
-  if (config.workflowAgentOutputSchema == null) {
+  const outputSchema = getWorkflowAgentOutputSchema(config);
+  if (outputSchema == null) {
     return null;
   }
 
-  const validation = validateJsonSchemaSubset(config.workflowAgentOutputSchema, structuredOutput);
+  const validation = validateJsonSchemaSubset(outputSchema, structuredOutput);
   return validation.success
     ? null
     : validationFailure("Structured output failed schema validation.", validation.errors);
 }
 
 function buildInlineInputSchema(config: ToolConfiguration) {
-  const outputSchema = config.workflowAgentOutputSchema;
+  const outputSchema = getWorkflowAgentOutputSchema(config);
   if (outputSchema == null) {
     return AgentReportInlineToolArgsSchema;
-  }
-  const schemaValidation = validateJsonSchemaSubsetSchema(outputSchema);
-  if (!schemaValidation.success) {
-    throw new Error("Invalid workflow agent output schema for agent_report.");
   }
 
   return jsonSchema(
@@ -98,7 +112,7 @@ function buildInlineInputSchema(config: ToolConfiguration) {
 
 function executeInlineReport(config: ToolConfiguration, rawArgs: unknown): AgentReportResult {
   const argsSchema =
-    config.workflowAgentOutputSchema == null
+    getWorkflowAgentOutputSchema(config) == null
       ? AgentReportInlineToolArgsSchema
       : AgentReportWorkflowInlineToolArgsSchema;
   const parsed = argsSchema.safeParse(rawArgs);

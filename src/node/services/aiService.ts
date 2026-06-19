@@ -136,6 +136,7 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
+import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
 import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
 import {
   WORKFLOW_RESULT_METADATA_TYPE,
@@ -786,6 +787,36 @@ export class AIService extends EventEmitter {
     }
 
     this.devToolsService?.clearPendingRunMetadata(workspaceId, metadataId);
+  }
+
+  private async shouldAllowLegacyInvalidWorkflowAgentOutputSchema(
+    metadata: WorkspaceMetadata
+  ): Promise<boolean> {
+    const workflowTask = metadata.workflowTask;
+    if (workflowTask?.outputSchema === undefined) {
+      return false;
+    }
+    if (validateJsonSchemaSubsetSchema(workflowTask.outputSchema).success) {
+      return false;
+    }
+    if (metadata.parentWorkspaceId == null) {
+      return false;
+    }
+
+    try {
+      const runStore = new WorkflowRunStore({
+        sessionDir: this.config.getSessionDir(metadata.parentWorkspaceId),
+      });
+      const run = await runStore.getRun(workflowTask.runId);
+      return run.agentOutputSchemaRequired !== true;
+    } catch (error) {
+      log.debug("Could not determine legacy workflow agent_report schema policy", {
+        workspaceId: metadata.id,
+        workflowRunId: workflowTask.runId,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
   }
 
   private async ensureSessionsDir(): Promise<void> {
@@ -1906,6 +1937,8 @@ export class AIService extends EventEmitter {
       // stay scoped to this specific assistant turn. The placeholder is appended to history below
       // (after the abort check).
       const assistantMessageId = createAssistantMessageId();
+      const allowLegacyInvalidWorkflowAgentOutputSchema =
+        await this.shouldAllowLegacyInvalidWorkflowAgentOutputSchema(metadata);
       // Hoisted so the refusal-fallback prepare() can rebuild the toolset for a
       // different model with identical context (only the model string varies).
       const toolsForModelConfig: ToolConfiguration = {
@@ -2004,6 +2037,7 @@ export class AIService extends EventEmitter {
         // Only child workspaces (tasks) can report to a parent.
         enableAgentReport: Boolean(metadata.parentWorkspaceId),
         workflowAgentOutputSchema: metadata.workflowTask?.outputSchema,
+        allowLegacyInvalidWorkflowAgentOutputSchema,
         // External edit detection callback
         recordFileState,
         reportModelUsage: (event) => {

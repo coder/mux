@@ -248,6 +248,8 @@ export interface ToolConfiguration {
   };
   /** Optional JSON Schema subset required by a workflow-spawned task report. */
   workflowAgentOutputSchema?: unknown;
+  /** Allow pre-upgrade workflow child tasks with schemas now rejected by strict validation. */
+  allowLegacyInvalidWorkflowAgentOutputSchema?: boolean;
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
   /** Experiments inherited from parent (for subagent spawning) */

@@ -69,6 +69,33 @@ describe("agent_report tool", () => {
     });
   });
 
+  it("treats legacy invalid workflow output schemas as markdown-only", async () => {
+    using tempDir = new TestTempDir("test-agent-report-tool-legacy-invalid-schema");
+    const taskService = {
+      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+    } as unknown as TaskService;
+    const tool = createAgentReportTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
+      taskService,
+      workflowAgentOutputSchema: { type: "object", description: "pre-upgrade schema" },
+      allowLegacyInvalidWorkflowAgentOutputSchema: true,
+    });
+
+    const inputSchema = tool.inputSchema as { safeParse(value: unknown): { success: boolean } };
+    expect(inputSchema.safeParse({ reportMarkdown: "done", title: null }).success).toBe(true);
+    expect(
+      inputSchema.safeParse({ reportMarkdown: "done", structuredOutput: {}, title: null }).success
+    ).toBe(false);
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ reportMarkdown: "done", title: null }, mockToolCallOptions)
+    );
+    expect(result).toEqual({
+      success: true,
+      message: "Report submitted successfully.",
+    });
+  });
+
   it("exposes workflow output schema directly in inline agent_report input", () => {
     using tempDir = new TestTempDir("test-agent-report-tool-schema");
     const outputSchema = {

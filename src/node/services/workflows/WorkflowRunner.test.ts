@@ -939,6 +939,171 @@ describe("WorkflowRunner", () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
+  test("replays completed legacy agent steps before validating old outputSchema keywords", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-completed-invalid-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_completed_invalid_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({
+    id: "summarize-topic",
+    prompt: "Summarize durable workflows",
+    outputSchema: { type: "object", description: "pre-upgrade schema" },
+  });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const legacySpec = {
+      id: "summarize-topic",
+      prompt: "Summarize durable workflows",
+      outputSchema: { type: "object", description: "pre-upgrade schema" },
+    };
+    await store.recordStepCompleted("wfr_legacy_completed_invalid_schema", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_completed",
+      result: { taskId: "task_legacy_completed", reportMarkdown: "summary" },
+      startedAt: "2026-05-29T00:00:00.500Z",
+      completedAt: "2026-05-29T00:00:00.750Z",
+    });
+    const runAgent = mock(async () => {
+      throw new Error("agent should replay");
+    });
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_legacy_completed_invalid_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  test("resumes started legacy agent steps before validating old outputSchema keywords", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-started-invalid-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_started_invalid_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({
+    id: "summarize-topic",
+    prompt: "Summarize durable workflows",
+    outputSchema: { type: "object", description: "pre-upgrade schema" },
+  });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus(
+      "wfr_legacy_started_invalid_schema",
+      "running",
+      "2026-05-29T00:00:00.250Z"
+    );
+    const legacySpec = {
+      id: "summarize-topic",
+      prompt: "Summarize durable workflows",
+      outputSchema: { type: "object", description: "pre-upgrade schema" },
+    };
+    await store.recordStepStarted("wfr_legacy_started_invalid_schema", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_started",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    const runAgent = mock(async () => {
+      throw new Error("agent should resume existing task");
+    });
+    const waitedFor: string[] = [];
+    const runner = createRunner(store, {
+      runAgent,
+      async waitForAgentTask(taskId) {
+        waitedFor.push(taskId);
+        return { taskId, reportMarkdown: "summary" };
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_started_invalid_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(waitedFor).toEqual(["task_legacy_started"]);
+  });
+
+  test("resumes started legacy parallelAgents before validating old outputSchema keywords", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-parallel-started-invalid-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_parallel_started_invalid_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ parallelAgents }) {
+  const summaries = parallelAgents([
+    {
+      id: "source-a",
+      prompt: "Read source A",
+      outputSchema: { type: "object", description: "pre-upgrade schema" },
+    },
+  ]);
+  return { reportMarkdown: "Final: " + summaries[0].reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus(
+      "wfr_legacy_parallel_started_invalid_schema",
+      "running",
+      "2026-05-29T00:00:00.250Z"
+    );
+    const legacySpec = {
+      id: "source-a",
+      prompt: "Read source A",
+      outputSchema: { type: "object", description: "pre-upgrade schema" },
+    };
+    await store.recordStepStarted("wfr_legacy_parallel_started_invalid_schema", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_parallel_started",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    const runAgent = mock(async () => {
+      throw new Error("parallelAgents should resume existing task");
+    });
+    const waitedFor: string[] = [];
+    const runner = createRunner(store, {
+      runAgent,
+      async waitForAgentTask(taskId) {
+        waitedFor.push(taskId);
+        return { taskId, reportMarkdown: "summary" };
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_parallel_started_invalid_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(waitedFor).toEqual(["task_legacy_parallel_started"]);
+  });
+
   test("resumes started legacy agent steps that omitted outputSchema", async () => {
     using tmp = new DisposableTempDir("workflow-runner-legacy-started-missing-schema");
     const store = new WorkflowRunStore({
@@ -974,7 +1139,7 @@ describe("WorkflowRunner", () => {
       runAgent,
       async waitForAgentTask(taskId) {
         waitedFor.push(taskId);
-        return { taskId, reportMarkdown: "summary", structuredOutput: {} };
+        return { taskId, reportMarkdown: "summary" };
       },
     });
 
@@ -983,6 +1148,46 @@ describe("WorkflowRunner", () => {
     });
     expect(runAgent).not.toHaveBeenCalled();
     expect(waitedFor).toEqual(["task_legacy_started"]);
+  });
+
+  test("omits invalid outputSchema for unstarted legacy workflow runs", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-unstarted-invalid-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_unstarted_invalid_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({
+    id: "summarize-topic",
+    prompt: "Summarize durable workflows",
+    outputSchema: { type: "object", description: "pre-upgrade schema" },
+  });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus(
+      "wfr_legacy_unstarted_invalid_schema",
+      "running",
+      "2026-05-29T00:00:00.250Z"
+    );
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        expect(spec.outputSchema).toBeUndefined();
+        return { taskId: "task_legacy_unstarted", reportMarkdown: "summary" };
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_unstarted_invalid_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
   });
 
   test("defaults missing outputSchema for unstarted legacy workflow runs only", async () => {
@@ -1221,6 +1426,63 @@ describe("WorkflowRunner", () => {
         }),
       ])
     );
+  });
+
+  test("omits invalid outputSchema when respawning stale started legacy steps", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-stale-started-invalid-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_stale_started_invalid_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({
+    id: "summarize-topic",
+    prompt: "Summarize durable workflows",
+    outputSchema: { type: "object", description: "pre-upgrade schema" },
+  });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus(
+      "wfr_legacy_stale_started_invalid_schema",
+      "running",
+      "2026-05-29T00:00:00.250Z"
+    );
+    const legacySpec = {
+      id: "summarize-topic",
+      prompt: "Summarize durable workflows",
+      outputSchema: { type: "object", description: "pre-upgrade schema" },
+    };
+    await store.recordStepStarted("wfr_legacy_stale_started_invalid_schema", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_missing",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    const waitedFor: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        expect(spec.outputSchema).toBeUndefined();
+        return { taskId: "task_legacy_recovered", reportMarkdown: "summary" };
+      },
+      async waitForAgentTask(taskId) {
+        waitedFor.push(taskId);
+        throw new Error("Task not found");
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_stale_started_invalid_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(waitedFor).toEqual(["task_legacy_missing"]);
   });
 
   test("recovers stale started legacy agent steps that omitted outputSchema", async () => {

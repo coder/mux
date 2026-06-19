@@ -120,6 +120,7 @@ import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
 import {
   formatJsonSchemaValidationErrors,
   validateJsonSchemaSubset,
+  validateJsonSchemaSubsetSchema,
 } from "@/common/utils/jsonSchemaSubset";
 
 export type TaskKind = "agent";
@@ -322,10 +323,18 @@ function formatStructuredOutputValidationMessage(params: {
 function validateWorkflowAgentReportStructuredOutput(params: {
   workflowTask?: WorkspaceConfigEntry["workflowTask"];
   reportArgs: { structuredOutput?: unknown };
+  allowLegacyInvalidOutputSchema: boolean;
 }): string | null {
   const workflowTask = params.workflowTask;
   if (workflowTask?.outputSchema === undefined) {
     return null;
+  }
+
+  if (params.allowLegacyInvalidOutputSchema) {
+    const schemaValidation = validateJsonSchemaSubsetSchema(workflowTask.outputSchema);
+    if (!schemaValidation.success) {
+      return null;
+    }
   }
 
   if (
@@ -6197,6 +6206,38 @@ export class TaskService {
     });
   }
 
+  private async shouldAllowLegacyInvalidWorkflowOutputSchema(
+    childWorkspaceId: string,
+    childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined
+  ): Promise<boolean> {
+    const workflowTask = childEntry?.workspace.workflowTask;
+    if (workflowTask?.outputSchema === undefined) {
+      return false;
+    }
+    if (validateJsonSchemaSubsetSchema(workflowTask.outputSchema).success) {
+      return false;
+    }
+    const parentWorkspaceId = childEntry?.workspace.parentWorkspaceId;
+    if (parentWorkspaceId == null) {
+      return false;
+    }
+
+    try {
+      const runStore = new WorkflowRunStore({
+        sessionDir: this.config.getSessionDir(parentWorkspaceId),
+      });
+      const run = await runStore.getRun(workflowTask.runId);
+      return run.agentOutputSchemaRequired !== true;
+    } catch (error) {
+      log.debug("Could not determine legacy workflow schema validation policy", {
+        childWorkspaceId,
+        workflowRunId: workflowTask.runId,
+        error: getErrorMessage(error),
+      });
+      return false;
+    }
+  }
+
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
@@ -6221,9 +6262,14 @@ export class TaskService {
       return { finalized: true };
     }
 
+    const allowLegacyInvalidOutputSchema = await this.shouldAllowLegacyInvalidWorkflowOutputSchema(
+      childWorkspaceId,
+      latestEntryBeforeReport
+    );
     const validationMessage = validateWorkflowAgentReportStructuredOutput({
       workflowTask: latestEntryBeforeReport?.workspace.workflowTask,
       reportArgs,
+      allowLegacyInvalidOutputSchema,
     });
     if (validationMessage != null) {
       log.warn("Rejecting invalid workflow agent_report structured output", {
