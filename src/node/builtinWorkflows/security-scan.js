@@ -21,6 +21,8 @@ export const metadata = {
       s.integer({ default: 3, minimum: 1, maximum: 1000, aliases: ["--max-fixes"] })
     ),
     fixFindingIds: s.optional(s.array(s.string())),
+    finding: s.optional(s.string({ aliases: ["--finding"] })),
+    findingId: s.optional(s.string({ aliases: ["--finding-id"] })),
     runDirId: s.optional(s.string({ aliases: ["--run-dir"] })),
   }),
 };
@@ -739,7 +741,10 @@ function normalizeSecurityScanArgs(args) {
     fix: Boolean(parsed.fix),
     maxFindings: mux.utils.boundedInt(parsed.maxFindings, 20, 1, 1000),
     maxFixes: mux.utils.boundedInt(parsed.maxFixes, 3, 1, 1000),
-    fixFindingIds: stringList(parsed.fixFindingIds),
+    fixFindingIds: mergeStringLists(stringList(parsed.fixFindingIds), [
+      parsed.finding,
+      parsed.findingId,
+    ]),
     runDirId: text(parsed.runDirId),
   };
 }
@@ -772,6 +777,15 @@ function parseSecurityScanString(value) {
     } else target.push(token);
   }
   if (target.length > 0) result.target = target.join(" ");
+  return result;
+}
+
+function mergeStringLists(first, second) {
+  const result = [];
+  for (const value of WORKFLOW_UTILS.asArray(first).concat(WORKFLOW_UTILS.asArray(second))) {
+    const valueText = text(value);
+    if (valueText && result.indexOf(valueText) === -1) result.push(valueText);
+  }
   return result;
 }
 
