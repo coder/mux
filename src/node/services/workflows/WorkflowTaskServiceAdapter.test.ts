@@ -105,7 +105,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
-  test("passes onRefusal through to task creation so refusal policy persists on the child", async () => {
+  test("passes onRefusal and isolation through to task creation", async () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
       createArgs = args;
@@ -124,16 +124,26 @@ describe("WorkflowTaskServiceAdapter", () => {
       defaultAgentId: "explore",
     });
 
-    await adapter.runAgent({ id: "verify", prompt: "Verify claims", onRefusal: "fail" });
-    expect(createArgs).toMatchObject({ onRefusal: "fail" });
+    await adapter.runAgent({
+      id: "verify",
+      prompt: "Verify claims",
+      onRefusal: "fail",
+      isolation: "none",
+    });
+    expect(createArgs).toMatchObject({ onRefusal: "fail", isolation: "none" });
 
     // The parallel path must preserve the refusal policy too: a verifier step
     // marked onRefusal: "fail" must fail honestly instead of silently
     // continuing on a configured fallback model.
     await adapter.createAgentTasks([
-      { id: "verify-parallel", prompt: "Verify claims in parallel", onRefusal: "fail" },
+      {
+        id: "verify-parallel",
+        prompt: "Verify claims in parallel",
+        onRefusal: "fail",
+        isolation: "none",
+      },
     ]);
-    expect(createManyArgs).toMatchObject([{ onRefusal: "fail" }]);
+    expect(createManyArgs).toMatchObject([{ onRefusal: "fail", isolation: "none" }]);
   });
 
   test("passes CLI-selected model and thinking level to workflow child task creation", async () => {

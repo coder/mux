@@ -35,6 +35,7 @@ export interface WorkflowAgentSpec {
   prompt: string;
   title?: string;
   agentId?: string;
+  isolation?: "fork" | "none";
   outputSchema?: unknown;
   /**
    * Model-refusal policy for this step's child task. "fail" opts out of
@@ -1664,6 +1665,13 @@ function parseWorkflowAgentSpec(rawSpec: unknown): WorkflowAgentSpec {
   }
   if (typeof spec.agentId === "string" && spec.agentId.length > 0) {
     parsed.agentId = spec.agentId;
+  }
+  if (spec.isolation !== undefined) {
+    assert(
+      spec.isolation === "fork" || spec.isolation === "none",
+      'agent isolation must be "fork" or "none"'
+    );
+    parsed.isolation = spec.isolation;
   }
   if (spec.outputSchema !== undefined) {
     parsed.outputSchema = spec.outputSchema;

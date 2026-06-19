@@ -215,6 +215,7 @@ function collectGitContextAgent(agent, input) {
     id: "git-review-context",
     title: "Collect simplify Git context",
     agentId: REVIEW_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_PROMPT +
       "\n\nUse bash/git to collect status, changed files, diff stat, bounded diff text, and commits for the current changes. Return the result as structuredOutput. If refs are omitted, compare against origin/HEAD, main, master, or trunk when available; include staged and unstaged changes. Keep diff text bounded and explain truncation in failures.\n\nInput:\n" +
@@ -228,6 +229,7 @@ function collectApplyPreflightAgent(agent, input, gitContext) {
     id: "apply-git-preflight",
     title: "Simplify: Git apply preflight",
     agentId: REVIEW_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_PROMPT +
       "\n\nUse bash/git to check that the current branch/head still match the reviewed snapshot and that the worktree is clean enough for applying the child patch. Return ok=false with a clear reason instead of hiding problems.\n\nInput and reviewed context:\n" +

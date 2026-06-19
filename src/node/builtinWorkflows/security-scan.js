@@ -274,6 +274,7 @@ function collectSecurityStateAgent(agent, input) {
     id: "security-load-state-and-git-context",
     title: "Load security state and Git context",
     agentId: EXPLORE_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_SECURITY_PROMPT +
       "Read .mux/security/cache.json, .mux/security/threat-model.index.json, and .mux/security/overrides/overrides.json when present. Also collect a bounded Git summary for the scan: branch, HEAD SHA, changed files, diff stat, and recent relevant commits. Return diagnostics instead of failing on missing security files.\n\n" +
@@ -288,6 +289,7 @@ function hashFilesAgent(agent, scope) {
     id: "security-hash-scope-files",
     title: "Hash scoped security files",
     agentId: EXPLORE_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_SECURITY_PROMPT +
       "Compute SHA-256 hashes for up to 100 workspace-relative files listed in the security scope. For JS/TS files, also include a simple semantic hash with comments/whitespace stripped when practical. Return diagnostics instead of failing for missing files.\n\nFiles:\n" +
@@ -328,6 +330,7 @@ function collectSecurityFixPreflightAgent(agent, input, stateContext) {
     id: "security-fix-git-status",
     title: "Security fix Git preflight",
     agentId: EXPLORE_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_SECURITY_PROMPT +
       "Use bash/git to check whether the current checkout is clean and still matches the reviewed security scan snapshot. Return ok=false with a clear reason when auto-fix should be skipped.\n\nInput and reviewed state:\n" +

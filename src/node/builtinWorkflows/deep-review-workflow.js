@@ -278,6 +278,7 @@ function collectGitReviewContextAgent(agent, input, suffix) {
     id: stepId("git-review-context", suffix),
     title: "Collect Git review context",
     agentId: EXPLORE_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_REVIEW_PROMPT +
       "Use bash/git in your workspace to collect a bounded review snapshot. Return branch/status metadata, changed files, diff stat, bounded diff text, relevant commits, failures, and limitations as structuredOutput.\n\n" +
@@ -303,6 +304,7 @@ function collectGitPreflightAgent(agent, input, gitContext, suffix) {
     id: stepId("git-preflight", suffix),
     title: "Check Git apply preflight",
     agentId: EXPLORE_AGENT_ID,
+    isolation: "none",
     prompt:
       READ_ONLY_REVIEW_PROMPT +
       "Use bash/git to decide whether applying a child patch is safe. Return ok=false with a clear reason when the worktree is dirty, HEAD changed from the reviewed snapshot, or the requested head is not current.\n\n" +

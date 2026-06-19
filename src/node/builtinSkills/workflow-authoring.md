@@ -41,14 +41,7 @@ export const metadata = {
   description: "Short workflow description",
 };
 
-export default function workflow({
-  args,
-  phase,
-  log,
-  agent,
-  parallelAgents,
-  applyPatch,
-}) {
+export default function workflow({ args, phase, log, agent, parallelAgents, applyPatch }) {
   phase("scope", { input: args.input });
   return { reportMarkdown: "Done" };
 }
@@ -79,14 +72,7 @@ Runs are durable, so stopping one is non-destructive:
 A workflow default export receives one object:
 
 ```js
-export default function workflow({
-  args,
-  phase,
-  log,
-  agent,
-  parallelAgents,
-  applyPatch,
-}) {}
+export default function workflow({ args, phase, log, agent, parallelAgents, applyPatch }) {}
 ```
 
 ### `args`
@@ -170,6 +156,7 @@ Optional fields:
 
 - `title`: UI title; used as the spawned child workspace title and the run-card task row label, falling back to `id` when omitted. Prefer human numbering (e.g. 1-based "Verify claim 1") over raw 0-based step ids.
 - `agentId`: sub-agent type/id; defaults to the workflow adapter default (usually `explore`).
+- `isolation`: `"fork" | "none"` (default `"fork"`). Use `"none"` only for read-only context-gathering agents that must inspect the parent checkout's uncommitted/staged state; mutating/fixer agents should stay forked.
 - `onRefusal`: `"fail" | "fallback"` (default `"fallback"`). With `"fail"`, the step opts out of user-configured model-fallback chains so a model refusal fails the step honestly instead of silently retrying on a different model — recommended for verifier steps whose verdicts must come from the intended model.
 
 Returns:

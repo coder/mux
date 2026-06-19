@@ -129,6 +129,7 @@ describe("actionless built-in workflows", () => {
       "scope-review-surface",
       "review-correctness",
     ]);
+    expect(taskCalls.find((call) => call.id === "git-review-context")?.isolation).toBe("none");
     expect(taskCalls.every((call) => call.outputSchema != null)).toBe(true);
     expect(result).toMatchObject({
       structuredOutput: {
@@ -267,6 +268,12 @@ describe("actionless built-in workflows", () => {
       "synthesize-security-scan",
       "security-write-state",
     ]);
+    expect(
+      taskCalls.find((call) => call.id === "security-load-state-and-git-context")?.isolation
+    ).toBe("none");
+    expect(taskCalls.find((call) => call.id === "security-hash-scope-files")?.isolation).toBe(
+      "none"
+    );
     expect(taskCalls.every((call) => call.outputSchema != null)).toBe(true);
     expect(applyPatchSpecs).toHaveLength(1);
     expect(result).toMatchObject({

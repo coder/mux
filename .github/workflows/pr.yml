@@ -205,6 +205,7 @@ jobs:
           done
 
           isolated_unit_tests=(
+            src/node/services/workflows/subAgentWorkflowDefinitions.test.ts
             src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx
             src/browser/features/Messages/InlineSkillMarkdown.test.tsx
             src/browser/hooks/useChatTranscriptFullWidth.test.tsx
@@ -215,6 +216,7 @@ jobs:
           mapfile -d '' unit_files < <(
             find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) \
               ! -path 'src/node/services/workflows/builtInWorkflowDefinitions.test.ts' \
+              ! -path 'src/node/services/workflows/subAgentWorkflowDefinitions.test.ts' \
               ! -path 'src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx' \
               ! -path 'src/browser/features/Messages/InlineSkillMarkdown.test.tsx' \
               ! -path 'src/browser/hooks/useChatTranscriptFullWidth.test.tsx' \
@@ -252,13 +254,13 @@ jobs:
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
             exit 0
           fi
-          
+
           # Skip if no relevant changes
           if [[ "$BACKEND" != "true" && "$BROWSER" != "true" ]]; then
             echo "No backend or browser changes - skipping integration tests"
             exit 0
           fi
-          
+
           # Backend changed: run ALL integration tests (includes tests/ui)
           if [[ "$BACKEND" == "true" ]]; then
             echo "Backend changes detected - running all integration tests"
