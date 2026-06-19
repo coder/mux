@@ -6407,18 +6407,31 @@ export class TaskService {
     await this.finalizeWorkspaceTurnFromStreamAbort(event);
   }
 
-  private async finalizeWorkspaceTurnFromStreamError(event: ErrorEvent): Promise<boolean> {
-    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
-    if (active == null) {
-      return false;
+  private async getActiveWorkspaceTurnRecordForWorkspace(
+    workspaceId: string
+  ): Promise<WorkspaceTurnTaskHandleRecord | null> {
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(workspaceId);
+    if (active != null) {
+      const record = await this.taskHandleStore.getWorkspaceTurn(
+        active.ownerWorkspaceId,
+        active.handleId
+      );
+      if (record != null) {
+        return record;
+      }
+      this.activeWorkspaceTurnHandleByWorkspaceId.delete(workspaceId);
     }
-    const record = await this.taskHandleStore.getWorkspaceTurn(
-      active.ownerWorkspaceId,
-      active.handleId
-    );
+
+    const records = await this.taskHandleStore.listAllWorkspaceTurns({
+      statuses: ["starting", "running"],
+    });
+    return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
+  }
+
+  private async finalizeWorkspaceTurnFromStreamError(event: ErrorEvent): Promise<boolean> {
+    const record = await this.getActiveWorkspaceTurnRecordForWorkspace(event.workspaceId);
     if (record == null) {
-      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
-      return true;
+      return false;
     }
     if (event.errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType)) {
       return true;

@@ -1553,9 +1553,14 @@ describe("TaskService", () => {
   test("workspace-turn terminal stream errors mark the handle failed", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
       handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
     };
 
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
     await internal.handleTaskStreamError({
       type: "error",
       workspaceId: "childworkspace",
