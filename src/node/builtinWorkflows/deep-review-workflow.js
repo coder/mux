@@ -640,8 +640,7 @@ function normalizeDeepReviewArgs(args) {
     raw,
     parseFlagText(typeof args === "string" ? args : text(raw.input))
   );
-  const target =
-    firstText(parsed.target, parsed.input, parsed.pr, parsed.branch) || "current workspace changes";
+  const target = firstText(parsed.target, parsed.pr, parsed.branch) || "current workspace changes";
   return {
     target,
     baseRef: firstText(parsed.baseRef, parsed.base) || "",
