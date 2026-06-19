@@ -1257,12 +1257,15 @@ export class WorkflowRunner {
         title: step.spec.title,
       });
       try {
+        const resultSpec = step.allowMissingOutputSchema
+          ? omitWorkflowAgentOutputSchema(step.spec)
+          : step.spec;
         const rawResult = await this.taskAdapter.waitForAgentTask(
           step.taskId,
-          omitWorkflowAgentOutputSchema(step.spec),
+          resultSpec,
           step.waitOptions
         );
-        return { rawResult, resultSpec: omitWorkflowAgentOutputSchema(step.spec) };
+        return { rawResult, resultSpec };
       } catch (error) {
         if (!isForegroundWaitBackgroundedError(error)) {
           step.leaseGuard.throwIfLost();
