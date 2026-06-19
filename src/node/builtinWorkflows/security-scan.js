@@ -587,9 +587,22 @@ function mergeVerificationResults(candidates, results) {
   return candidates.map(function (finding, index) {
     return {
       findingId: finding.id,
-      verification: results[index] && results[index].structuredOutput,
+      verification: matchingFindingVerification(finding, results[index]),
     };
   });
+}
+
+function matchingFindingVerification(finding, result) {
+  const verification = result && result.structuredOutput;
+  if (verification && verification.findingId === finding.id) return verification;
+  return {
+    findingId: finding.id,
+    proofState: "needs_human_review",
+    confidence: "low",
+    evidence: "Verifier result did not match the candidate finding id.",
+    safeToFix: false,
+    recommendedValidation: [],
+  };
 }
 
 function countVerified(verifications) {

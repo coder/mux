@@ -738,9 +738,27 @@ function selectReviewLanes(rawLanes) {
 
 function mergeVerifiedIssues(candidates, verifications) {
   return candidates.map(function (issue, index) {
-    const verification = verifications[index] && verifications[index].structuredOutput;
-    return Object.assign({}, issue, { verification });
+    return Object.assign({}, issue, {
+      verification: matchingIssueVerification(issue, verifications[index]),
+    });
   });
+}
+
+function matchingIssueVerification(issue, result) {
+  const verification = result && result.structuredOutput;
+  if (verification && verification.issueId === issue.id) return verification;
+  return {
+    issueId: issue.id,
+    verdict: "unclear",
+    confidence: "low",
+    evidence: "Verifier result did not match the candidate issue id.",
+    notes:
+      "Expected " +
+      issue.id +
+      ", got " +
+      (verification && verification.issueId ? verification.issueId : "none") +
+      ".",
+  };
 }
 
 function selectFixableIssues(input, final, verified) {
