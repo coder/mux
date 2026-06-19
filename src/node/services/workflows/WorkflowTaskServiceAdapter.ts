@@ -30,6 +30,7 @@ interface WorkflowTaskExperiments {
   advisorTool?: boolean;
   execSubagentHardRestart?: boolean;
   workspaceHeartbeats?: boolean;
+  subagentFileReports?: boolean;
   dynamicWorkflows?: boolean;
 }
 
