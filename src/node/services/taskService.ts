@@ -4952,7 +4952,8 @@ export class TaskService {
     return (
       (active?.handleId === record.handleId &&
         active.ownerWorkspaceId === record.ownerWorkspaceId) ||
-      this.aiService.isStreaming(record.workspaceId)
+      this.aiService.isStreaming(record.workspaceId) ||
+      this.workspaceService.hasPendingQueuedOrPreparingTurn(record.workspaceId)
     );
   }
 

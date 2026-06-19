@@ -513,6 +513,7 @@ describe("TaskService", () => {
       sendMessage?: ReturnType<typeof mock>;
       remove?: ReturnType<typeof mock>;
       isStreaming?: ReturnType<typeof mock>;
+      hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
     } = {}
   ) {
     const config = await createTestConfig(rootDir);
@@ -543,6 +544,9 @@ describe("TaskService", () => {
       create: createWorkspace,
       ...(options.sendMessage != null ? { sendMessage: options.sendMessage } : {}),
       ...(options.remove != null ? { remove: options.remove } : {}),
+      ...(options.hasPendingQueuedOrPreparingTurn != null
+        ? { hasPendingQueuedOrPreparingTurn: options.hasPendingQueuedOrPreparingTurn }
+        : {}),
     });
     const aiMocks = createAIServiceMocks(config, {
       ...(options.isStreaming != null ? { isStreaming: options.isStreaming } : {}),
@@ -942,6 +946,30 @@ describe("TaskService", () => {
       error: "Workspace turn interrupted after restart",
       workspaceId: "childworkspace",
     });
+  });
+
+  test("active workspace turn count keeps startup-retrying handles live", async () => {
+    const hasPendingQueuedOrPreparingTurn = mock(
+      (workspaceId: string) => workspaceId === "childworkspace"
+    );
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+      countActiveWorkspaceTurns: () => Promise<number>;
+    };
+
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+    expect(await internal.countActiveWorkspaceTurns()).toBe(1);
+    expect(hasPendingQueuedOrPreparingTurn).toHaveBeenCalledWith("childworkspace");
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({ status: "running", workspaceId: "childworkspace" });
+    expect(snapshot?.error).toBeUndefined();
   });
 
   test("getWorkspaceTurnSnapshot settles stale active handles before returning", async () => {
