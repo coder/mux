@@ -20,6 +20,7 @@ import {
   extractGoalFromResult,
   formatGoalCents,
   formatGoalTurns,
+  pluralizeTurns,
 } from "./Goal/goalToolUtils";
 
 interface SetGoalToolCallProps {
@@ -43,7 +44,7 @@ function formatAppliedBudget(budgetCents: number | null): string {
 }
 
 function formatOptionalTurnCap(turnCap: number | null | undefined): string {
-  return turnCap == null ? "Workspace default" : `${turnCap} turn${turnCap === 1 ? "" : "s"}`;
+  return turnCap == null ? "Workspace default" : pluralizeTurns(turnCap);
 }
 
 export const SetGoalToolCall: React.FC<SetGoalToolCallProps> = ({
