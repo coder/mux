@@ -259,25 +259,34 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
   let fix = preparedFix ? preparedFix.fix : null;
   if (fix) structuredOutput.fix = fix;
 
-  if (preparedFix && preparedFix.shouldApply) {
+  const attemptedFixPatch = Boolean(preparedFix && preparedFix.shouldApply);
+  if (attemptedFixPatch) {
     fix = await applyPreparedSecurityFix(preparedFix, phase);
     structuredOutput.fix = fix;
-    structuredOutput.persistence = bundledFixPersistence(fix.applied);
-    structuredOutput.persistenceApply = bundledFixPersistenceApply(fix.applied);
-    return securityScanResult(
-      final.reportMarkdown,
-      fix,
-      structuredOutput.persistenceApply,
-      structuredOutput
-    );
+    if (fix.applied && fix.applied.success) {
+      structuredOutput.persistence = bundledFixPersistence(fix.applied);
+      structuredOutput.persistenceApply = bundledFixPersistenceApply(fix.applied);
+      return securityScanResult(
+        final.reportMarkdown,
+        fix,
+        structuredOutput.persistenceApply,
+        structuredOutput
+      );
+    }
   }
 
-  phase("persist-security-state", { findingCount: candidates.length });
-  // Read-only scans, skipped fixes, and no-op fixers persist against the reviewed scan HEAD.
+  if (attemptedFixPatch) {
+    await phase("persist-security-state", { findingCount: candidates.length });
+  } else {
+    phase("persist-security-state", { findingCount: candidates.length });
+  }
+  // Read-only scans, skipped fixes, no-op fixers, and failed fix patches persist against the reviewed scan HEAD.
   const persistenceExpectedHeadSha = securityPersistenceExpectedHeadSha(stateContext);
   let applyResult;
   if (persistenceExpectedHeadSha) {
-    const persistence = persistSecurityStateAgent(agent, persistencePayload);
+    const persistence = attemptedFixPatch
+      ? await persistSecurityStateAgent(agent, persistencePayload)
+      : persistSecurityStateAgent(agent, persistencePayload);
     applyResult = await mux.patch.applySafely({
       id: "apply-security-state",
       source: persistence,
