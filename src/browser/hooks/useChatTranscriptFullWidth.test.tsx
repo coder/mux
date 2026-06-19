@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type React from "react";
 import { installDom } from "../../../tests/ui/dom";
 
-import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import type { APIClient } from "@/browser/contexts/API";
 import { createControllableAsyncIterable } from "@/browser/testUtils";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CHAT_TRANSCRIPT_FULL_WIDTH_KEY } from "@/common/constants/storage";
@@ -29,7 +29,8 @@ function createConfigEventStream() {
 
 function createWrapper(client: APIClient): React.FC<{ children: React.ReactNode }> {
   return function Wrapper(props) {
-    return <APIProvider client={client}>{props.children}</APIProvider>;
+    window.__ORPC_CLIENT__ = client;
+    return <>{props.children}</>;
   };
 }
 
