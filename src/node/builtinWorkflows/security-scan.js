@@ -236,6 +236,12 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
     final: final.structuredOutput,
   };
 
+  let fix = null;
+  if (input.fix) {
+    fix = await runSecurityFixPass({ input, candidates, verifications, agent, stateContext });
+    structuredOutput.fix = fix;
+  }
+
   phase("persist-security-state", { findingCount: candidates.length });
   const persistence = persistSecurityStateAgent(agent, {
     input,
@@ -251,20 +257,14 @@ export default async function securityScanWorkflow({ args, phase, log, agent }) 
   structuredOutput.persistence = persistence.structuredOutput;
   structuredOutput.persistenceApply = applyResult;
 
-  let fix = null;
-  if (input.fix) {
-    fix = await runSecurityFixPass({ input, candidates, verifications, agent, stateContext });
-    structuredOutput.fix = fix;
-  }
-
   return {
     reportMarkdown:
       final.reportMarkdown +
+      (fix ? "\n\n---\n\n## Fix pass\n\n" + fix.reportMarkdown : "") +
       "\n\n---\n\n## Security state persistence\n\n- Status: " +
       (applyResult && applyResult.status ? applyResult.status : "unknown") +
       "\n- Success: " +
-      (applyResult && applyResult.success ? "yes" : "no") +
-      (fix ? "\n\n---\n\n## Fix pass\n\n" + fix.reportMarkdown : ""),
+      (applyResult && applyResult.success ? "yes" : "no"),
     structuredOutput,
   };
 }
@@ -339,6 +339,11 @@ function collectSecurityFixPreflightAgent(agent, input, stateContext) {
   }).structuredOutput;
 }
 
+function isSecurityFindingAutoFixable(verification) {
+  if (!verification || verification.safeToFix !== true) return false;
+  return verification.proofState === "verified" || verification.proofState === "static_evidence";
+}
+
 async function runSecurityFixPass(context) {
   const fixable = context.candidates
     .filter(function (finding, index) {
@@ -346,7 +351,7 @@ async function runSecurityFixPass(context) {
       const byRequest = requested.length === 0 || requested.indexOf(finding.id) !== -1;
       const verification =
         context.verifications[index] && context.verifications[index].verification;
-      return byRequest && verification && verification.proofState !== "unverified";
+      return byRequest && isSecurityFindingAutoFixable(verification);
     })
     .slice(0, context.input.maxFixes);
   if (fixable.length === 0) {

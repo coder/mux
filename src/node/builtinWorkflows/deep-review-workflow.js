@@ -711,8 +711,10 @@ function countConfirmed(verified) {
 }
 
 function countFixedIssues(pass) {
-  const fixed =
-    pass && pass.structuredOutput && pass.structuredOutput.fix && pass.structuredOutput.fix.fixer;
+  const fix = pass && pass.structuredOutput && pass.structuredOutput.fix;
+  const applied = fix && fix.applied;
+  if (!applied || applied.success !== true || applied.status !== "applied") return 0;
+  const fixed = fix.fixer;
   return fixed ? WORKFLOW_UTILS.asArray(fixed.fixedIssueIds).length : 0;
 }
 
