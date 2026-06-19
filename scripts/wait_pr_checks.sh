@@ -32,6 +32,7 @@ POLL_INTERVAL_SECS=30
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CHECK_REVIEWS_SCRIPT="$SCRIPT_DIR/check_pr_reviews.sh"
+CHECK_FILTERS_SCRIPT="$SCRIPT_DIR/lib/pr_check_filters.sh"
 SKIP_FETCH_SYNC="${MUX_SKIP_FETCH_SYNC:-0}"
 # shellcheck source=./lib/branch_sync_guard.sh
 # shellcheck disable=SC1091
@@ -46,6 +47,15 @@ if [ ! -x "$CHECK_REVIEWS_SCRIPT" ]; then
   echo "❌ assertion failed: missing executable helper script: $CHECK_REVIEWS_SCRIPT" >&2
   exit 1
 fi
+
+if [ ! -f "$CHECK_FILTERS_SCRIPT" ]; then
+  echo "❌ assertion failed: missing helper script: $CHECK_FILTERS_SCRIPT" >&2
+  exit 1
+fi
+
+# shellcheck source=./lib/pr_check_filters.sh
+# shellcheck disable=SC1091
+source "$CHECK_FILTERS_SCRIPT"
 
 if [ "$SKIP_FETCH_SYNC" != "0" ] && [ "$SKIP_FETCH_SYNC" != "1" ]; then
   echo "❌ assertion failed: MUX_SKIP_FETCH_SYNC must be '0' or '1' (got '$SKIP_FETCH_SYNC')" >&2
@@ -143,36 +153,68 @@ CHECK_PR_CHECKS_ONCE() {
     return 1
   fi
 
-  # Get check status
-  checks=$(gh pr checks "$PR_NUMBER" 2>&1 || echo "pending")
+  # Get check status. Chromatic posts persistent UI Review/UI Tests statuses
+  # outside the PR workflow; they are useful visual-signal, but not a merge-readiness gate.
+  local checks_json
+  local jq_defs
+  local filtered_checks
+  local ignored_checks
+  local ignored_unready_count
+  local ignored_unready_checks
+
+  checks_json=$(gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow,link,description 2>&1) || true
+  if ! echo "$checks_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "❌ Failed to get PR checks for PR #$PR_NUMBER" >&2
+    echo "$checks_json" >&2
+    return 1
+  fi
+
+  jq_defs=$(chromatic_check_jq_defs)
+  filtered_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check | not) ]")
+  ignored_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check) ]")
+  checks=$(echo "$filtered_checks" | jq -r "$jq_defs if length == 0 then \"(no non-Chromatic checks reported)\" else .[] | check_line end")
+  ignored_unready_count=$(echo "$ignored_checks" | jq "$jq_defs [ .[] | select(is_unready_check) ] | length")
+  ignored_unready_checks=$(echo "$ignored_checks" | jq -r "$jq_defs [ .[] | select(is_unready_check) ] | .[]? | check_line")
 
   local has_fail=0
   local has_pending=0
   local has_pass=0
 
-  if echo "$checks" | grep -q "fail"; then
+  if echo "$filtered_checks" | jq -e "$jq_defs any(.[]; is_failed_check)" >/dev/null; then
     has_fail=1
   fi
 
-  if echo "$checks" | grep -q "pending"; then
+  if echo "$filtered_checks" | jq -e "$jq_defs any(.[]; is_pending_check)" >/dev/null; then
     has_pending=1
   fi
 
-  if echo "$checks" | grep -q "pass"; then
+  if echo "$filtered_checks" | jq -e "$jq_defs any(.[]; is_passing_check)" >/dev/null; then
     has_pass=1
   fi
 
+  if [ "$(echo "$filtered_checks" | jq 'length')" -eq 0 ]; then
+    echo "❌ assertion failed: no non-Chromatic checks were reported for PR #$PR_NUMBER" >&2
+    echo "Ignored Chromatic-related checks:" >&2
+    echo "$ignored_checks" | jq -r "$jq_defs .[]? | check_line" >&2
+    return 1
+  fi
+
   if [ "$has_fail" -eq 0 ] && [ "$has_pending" -eq 0 ] && [ "$has_pass" -eq 0 ]; then
-    echo "❌ assertion failed: unable to classify 'gh pr checks' output for PR #$PR_NUMBER" >&2
+    echo "❌ assertion failed: unable to classify non-Chromatic 'gh pr checks' output for PR #$PR_NUMBER" >&2
     echo "$checks" >&2
     return 1
   fi
 
   # Check for failures
   if [ "$has_fail" -eq 1 ]; then
-    echo "❌ Some checks failed:"
+    echo "❌ Some non-Chromatic checks failed:"
     echo ""
     echo "$checks"
+    if [ "$ignored_unready_count" -gt 0 ]; then
+      echo ""
+      echo "ℹ️ Ignoring Chromatic-related unready checks:"
+      echo "$ignored_unready_checks"
+    fi
     echo ""
     echo "💡 To extract detailed logs from the failed run:"
     echo "   ./scripts/extract_pr_logs.sh $PR_NUMBER"
@@ -201,16 +243,21 @@ CHECK_PR_CHECKS_ONCE() {
       return 1
     fi
 
-    if [ "$merge_state" = "CLEAN" ]; then
-      echo "✅ All checks passed!"
+    if [ "$merge_state" = "CLEAN" ] || { [ "$merge_state" = "UNSTABLE" ] && [ "$ignored_unready_count" -gt 0 ]; }; then
+      echo "✅ All non-Chromatic checks passed!"
       echo ""
       echo "$checks"
+      if [ "$ignored_unready_count" -gt 0 ]; then
+        echo ""
+        echo "ℹ️ Ignoring Chromatic-related unready checks:"
+        echo "$ignored_unready_checks"
+      fi
       echo ""
       echo "✅ PR checks and mergeability gates passed."
       return 0
     fi
 
-    # GitHub can transiently report UNKNOWN/UNSTABLE/HAS_HOOKS even when checks have
+    # GitHub can transiently report UNKNOWN/HAS_HOOKS even when checks have
     # passed; treat these as still-pending rather than a terminal assertion failure.
     case "$merge_state" in
       BLOCKED | DRAFT | HAS_HOOKS | UNKNOWN | UNSTABLE)

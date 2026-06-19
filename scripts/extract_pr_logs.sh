@@ -10,6 +10,16 @@
 
 set -euo pipefail
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+CHECK_FILTERS_SCRIPT="$SCRIPT_DIR/lib/pr_check_filters.sh"
+if [ ! -f "$CHECK_FILTERS_SCRIPT" ]; then
+  echo "❌ assertion failed: missing helper script: $CHECK_FILTERS_SCRIPT" >&2
+  exit 1
+fi
+# shellcheck source=./lib/pr_check_filters.sh
+# shellcheck disable=SC1091
+source "$CHECK_FILTERS_SCRIPT"
+
 INPUT="${1:-}"
 JOB_PATTERN="${2:-}"
 WAIT_FOR_LOGS=false
@@ -37,14 +47,16 @@ if [[ "$INPUT" =~ ^[0-9]{1,5}$ ]]; then
   PR_NUMBER="$INPUT"
   echo "🔍 Finding latest failed run for PR #$PR_NUMBER..." >&2
 
-  # Get the latest failed run for this PR
-  RUN_ID=$(gh pr checks "$PR_NUMBER" --json name,link,state --jq '.[] | select(.state == "FAILURE") | .link' | head -1 | sed -E 's|.*/runs/([0-9]+).*|\1|' || echo "")
+  # Get the latest failed non-Chromatic run for this PR. Chromatic UI statuses are
+  # intentionally ignored for merge readiness, so they should not drive log extraction.
+  JQ_DEFS=$(chromatic_check_jq_defs)
+  RUN_ID=$(gh pr checks "$PR_NUMBER" --json name,link,state,bucket,workflow,description --jq "$JQ_DEFS .[] | select((is_chromatic_related_check | not) and is_failed_check) | .link" | sed -nE 's|.*/runs/([0-9]+).*|\1|p' | head -1 || echo "")
 
   if [[ -z "$RUN_ID" ]]; then
-    echo "❌ No failed runs found for PR #$PR_NUMBER" >&2
+    echo "❌ No failed non-Chromatic runs found for PR #$PR_NUMBER" >&2
     echo "" >&2
-    echo "Current check status:" >&2
-    gh pr checks "$PR_NUMBER" 2>&1 || true
+    echo "Current non-Chromatic check status:" >&2
+    gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow,link,description --jq "$JQ_DEFS .[] | select(is_chromatic_related_check | not) | check_line" 2>&1 || true
     exit 1
   fi
 
