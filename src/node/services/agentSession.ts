@@ -3543,14 +3543,19 @@ export class AgentSession {
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
-    const typedMuxMetadata =
-      (options?.muxMetadata as MuxMessageMetadata | undefined) ??
-      lastUserMessage?.metadata?.muxMetadata;
+    const optionsMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    const retryMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
+    const streamMuxMetadata =
+      optionsMuxMetadata?.type === "workspace-turn-task"
+        ? optionsMuxMetadata
+        : retryMuxMetadata?.type === "workspace-turn-task"
+          ? retryMuxMetadata
+          : undefined;
     const acpPromptId =
-      normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(typedMuxMetadata);
+      normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(optionsMuxMetadata);
     const delegatedToolNames =
       normalizeDelegatedToolNames(options?.delegatedToolNames) ??
-      extractAcpDelegatedTools(typedMuxMetadata);
+      extractAcpDelegatedTools(optionsMuxMetadata);
 
     const streamResult = await this.aiService.streamMessage({
       messages: historyResult.data,
@@ -3567,7 +3572,7 @@ export class AgentSession {
       agentId: options?.agentId,
       acpPromptId,
       delegatedToolNames,
-      muxMetadata: typedMuxMetadata,
+      muxMetadata: streamMuxMetadata,
       recordFileState,
       changedFileAttachments:
         changedFileAttachments.length > 0 ? changedFileAttachments : undefined,

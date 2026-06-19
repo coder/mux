@@ -165,6 +165,42 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("startup auto-retry does not stamp workflow-result metadata on assistant streams", async () => {
+    const workspaceId = "startup-retry-workflow-result-metadata";
+    const { session, historyService, aiService, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "Use the workflow result", {
+        timestamp: Date.now(),
+        retrySendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+        muxMetadata: {
+          type: "workflow-result",
+          rawCommand: "/deep-research mux",
+          runId: "wfr_1",
+        },
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    const streamMessageMock = mock((_payload: Parameters<AIService["streamMessage"]>[0]) =>
+      Promise.resolve(Ok(undefined))
+    );
+    aiService.streamMessage = streamMessageMock as unknown as AIService["streamMessage"];
+    const privateSession = session as unknown as {
+      retryActiveStream: () => Promise<void>;
+      startupAutoRetryCheckPromise: Promise<void> | null;
+    };
+
+    session.ensureStartupAutoRetryCheck();
+    await privateSession.startupAutoRetryCheckPromise;
+    await privateSession.retryActiveStream();
+
+    expect(streamMessageMock).toHaveBeenCalledTimes(1);
+    expect(streamMessageMock.mock.calls[0]?.[0].muxMetadata).toBeUndefined();
+
+    session.dispose();
+  });
+
   test("re-runs startup auto-retry check after busy startup state clears", async () => {
     const workspaceId = "startup-retry-busy-rerun";
     const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
