@@ -93,13 +93,14 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
   });
 
   if (!hasReviewableContext(input, gitContext)) {
+    const summary = noReviewableChangesSummary(input, gitContext);
     return {
-      reportMarkdown: "## Simplify workflow result\n\n" + NO_REVIEWABLE_CHANGES_SUMMARY,
+      reportMarkdown: "## Simplify workflow result\n\n" + summary,
       structuredOutput: {
         mode: "no-reviewable-changes",
         gitContext,
         reviews: [],
-        synthesis: emptySynthesis(NO_REVIEWABLE_CHANGES_SUMMARY),
+        synthesis: emptySynthesis(summary),
       },
     };
   }
@@ -341,7 +342,27 @@ function renderInput(input) {
   );
 }
 
+function noReviewableChangesSummary(input, gitContext) {
+  if (isUntrackedOnlyWithoutDiff(input, gitContext)) {
+    return "Only untracked files were found, but their contents are not present in the Git diff. Run `git add -N <files>` or stage the files so simplify can review their contents.";
+  }
+  return NO_REVIEWABLE_CHANGES_SUMMARY;
+}
+
+function isUntrackedOnlyWithoutDiff(input, gitContext) {
+  const status = (gitContext && gitContext.status) || {};
+  return Boolean(
+    !input.target &&
+      !text(gitContext && gitContext.diff) &&
+      WORKFLOW_UTILS.asArray(gitContext && gitContext.commits).length === 0 &&
+      WORKFLOW_UTILS.asArray(status.untracked).length > 0 &&
+      WORKFLOW_UTILS.asArray(status.staged).length === 0 &&
+      WORKFLOW_UTILS.asArray(status.unstaged).length === 0
+  );
+}
+
 function hasReviewableContext(input, gitContext) {
+  if (isUntrackedOnlyWithoutDiff(input, gitContext)) return false;
   return Boolean(
     input.target ||
     gitContext.hasReviewableChanges ||
@@ -561,27 +582,33 @@ function parseTextArgs(value) {
   const target = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (token === "--help" || token === "-h") values.help = true;
-    else if (token === "--review-only" || token === "--no-fix") values.fix = false;
-    else if (token === "--fix") values.fix = true;
+    const equalsIndex = token.indexOf("=");
+    const flag = equalsIndex === -1 ? token : token.slice(0, equalsIndex);
+    let inlineValue = equalsIndex === -1 ? "" : token.slice(equalsIndex + 1);
+    if (flag === "--help" || flag === "-h") values.help = true;
+    else if (flag === "--review-only" || flag === "--no-fix") values.fix = false;
+    else if (flag === "--fix") values.fix = true;
     else if (
-      token === "--base" ||
-      token === "--trunk" ||
-      token === "--head" ||
-      token === "--max-findings"
+      flag === "--base" ||
+      flag === "--trunk" ||
+      flag === "--head" ||
+      flag === "--max-findings"
     ) {
-      index += 1;
-      if (index >= tokens.length)
-        return { values, target: target.join(" "), error: token + " requires a value" };
+      if (!inlineValue) {
+        index += 1;
+        if (index >= tokens.length)
+          return { values, target: target.join(" "), error: flag + " requires a value" };
+        inlineValue = tokens[index];
+      }
       const key =
-        token === "--base"
+        flag === "--base"
           ? "baseRef"
-          : token === "--trunk"
+          : flag === "--trunk"
             ? "trunkRef"
-            : token === "--head"
+            : flag === "--head"
               ? "headRef"
               : "maxFindings";
-      values[key] = tokens[index];
+      values[key] = inlineValue;
     } else target.push(token);
   }
   return { values, target: target.join(" "), error: "" };
