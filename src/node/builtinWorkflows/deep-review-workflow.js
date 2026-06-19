@@ -261,6 +261,15 @@ async function runDeepReviewPass(context) {
   if (!preflight.ok) {
     return appendFixSkipped(result, preflight.reason || "Auto-fix preflight failed.", preflight);
   }
+  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
+  const preflightHeadSkipReason = reviewedHeadPreflightSkipReason(
+    preflight,
+    reviewedHeadSha,
+    "Auto-fix"
+  );
+  if (preflightHeadSkipReason) {
+    return appendFixSkipped(result, preflightHeadSkipReason, preflight);
+  }
 
   context.phase("fix", withIteration({ fixableCount: fixableIssues.length }, context.iteration));
   const fixer = context.agent({
@@ -275,22 +284,6 @@ async function runDeepReviewPass(context) {
     return appendFixNoChanges(result, fixer.reportMarkdown, fixerOutput);
 
   context.phase("apply-fixes", withIteration({ madeChanges: true }, context.iteration));
-  // Patch artifacts were produced from the reviewed snapshot; fail closed if the parent moved.
-  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
-  if (!reviewedHeadSha) {
-    return appendFixSkipped(
-      result,
-      "Auto-fix requires a reviewed local Git HEAD snapshot.",
-      preflight
-    );
-  }
-  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
-    return appendFixSkipped(
-      result,
-      "Auto-fix preflight HEAD does not match the reviewed snapshot.",
-      preflight
-    );
-  }
   const applySpec = {
     id: stepId("apply-review-fixes", suffix),
     source: fixer,
@@ -324,6 +317,17 @@ function looksNonLocalTarget(target) {
     /^#\d+\b/.test(textValue) ||
     /github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(textValue)
   );
+}
+
+function reviewedHeadPreflightSkipReason(preflight, reviewedHeadSha, label) {
+  if (!reviewedHeadSha) return label + " requires a reviewed local Git HEAD snapshot.";
+  // The preflight agent observes the current parent checkout. Do not spawn a fixer from stale
+  // review context when the parent moved; applySafely still fences later movement before apply.
+  if (preflight.headSha !== reviewedHeadSha)
+    return label + " preflight current HEAD does not match the reviewed snapshot.";
+  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha)
+    return label + " preflight expected HEAD does not match the reviewed snapshot.";
+  return "";
 }
 
 function collectGitReviewContextAgent(agent, input, suffix) {

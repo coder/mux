@@ -415,6 +415,17 @@ function isSecurityFindingAutoFixable(verification) {
   return verification.proofState === "verified" || verification.proofState === "static_evidence";
 }
 
+function reviewedSecurityHeadPreflightSkipReason(preflight, reviewedHeadSha) {
+  if (!reviewedHeadSha) return "Security auto-fix requires a reviewed local Git HEAD snapshot.";
+  // The preflight agent observes the current parent checkout. Do not spawn a fixer from stale
+  // scan context when the parent moved; applySafely still fences later movement before apply.
+  if (preflight.headSha !== reviewedHeadSha)
+    return "Security auto-fix preflight current HEAD does not match the reviewed scan snapshot.";
+  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha)
+    return "Security auto-fix preflight expected HEAD does not match the reviewed scan snapshot.";
+  return "";
+}
+
 function prepareSecurityFixPass(context) {
   const fixable = context.candidates
     .filter(function (finding, index) {
@@ -453,6 +464,23 @@ function prepareSecurityFixPass(context) {
       },
     };
   }
+  const reviewedHeadSha =
+    context.stateContext.gitContext && context.stateContext.gitContext.headSha;
+  const preflightHeadSkipReason = reviewedSecurityHeadPreflightSkipReason(
+    preflight,
+    reviewedHeadSha
+  );
+  if (preflightHeadSkipReason) {
+    return {
+      shouldApply: false,
+      fix: {
+        reportMarkdown: preflightHeadSkipReason,
+        preflight,
+        fixer: null,
+        applied: null,
+      },
+    };
+  }
   context.phase("fix", { fixableCount: fixable.length });
   const fixer = context.agent({
     id: "fix-security-findings",
@@ -470,32 +498,6 @@ function prepareSecurityFixPass(context) {
       shouldApply: false,
       fix: {
         reportMarkdown: fixer.reportMarkdown,
-        preflight,
-        fixer: fixer.structuredOutput,
-        applied: null,
-      },
-    };
-  }
-  // Patch artifacts were produced from the reviewed scan snapshot; fail closed if the parent moved.
-  const reviewedHeadSha =
-    context.stateContext.gitContext && context.stateContext.gitContext.headSha;
-  if (!reviewedHeadSha) {
-    return {
-      shouldApply: false,
-      fix: {
-        reportMarkdown: "Security auto-fix requires a reviewed local Git HEAD snapshot.",
-        preflight,
-        fixer: fixer.structuredOutput,
-        applied: null,
-      },
-    };
-  }
-  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
-    return {
-      shouldApply: false,
-      fix: {
-        reportMarkdown:
-          "Security auto-fix preflight HEAD does not match the reviewed scan snapshot.",
         preflight,
         fixer: fixer.structuredOutput,
         applied: null,

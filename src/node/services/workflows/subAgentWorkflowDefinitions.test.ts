@@ -140,7 +140,7 @@ describe("actionless built-in workflows", () => {
     });
   });
 
-  test("deep-review skips auto-fix when preflight disagrees with reviewed HEAD", async () => {
+  test("deep-review skips auto-fix when preflight current HEAD disagrees with reviewed HEAD", async () => {
     const taskCalls: WorkflowAgentSpec[] = [];
     const applyPatchSpecs: unknown[] = [];
     const issue = {
@@ -248,7 +248,7 @@ describe("actionless built-in workflows", () => {
                 reason: "",
                 branch: "feature",
                 headSha: "current999",
-                expectedHeadSha: "current999",
+                expectedHeadSha: "reviewed123",
                 clean: true,
                 staged: [],
                 unstaged: [],
@@ -277,12 +277,13 @@ describe("actionless built-in workflows", () => {
     });
 
     expect(run.status).toBe("completed");
+    expect(taskCalls.map((call) => call.id)).not.toContain("fix-review-findings");
     expect(applyPatchSpecs).toHaveLength(0);
     expect(result).toMatchObject({
       structuredOutput: {
         mode: "fix-skipped",
         fix: {
-          preflight: { expectedHeadSha: "current999" },
+          preflight: { headSha: "current999", expectedHeadSha: "reviewed123" },
         },
       },
     });

@@ -169,6 +169,19 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       preflight
     );
   }
+  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
+  const preflightHeadSkipReason = reviewedHeadPreflightSkipReason(preflight, reviewedHeadSha);
+  if (preflightHeadSkipReason) {
+    return skipFixResult(
+      synthesis.reportMarkdown,
+      preflightHeadSkipReason,
+      "apply-preflight-skip",
+      gitContext,
+      reviewOutputs,
+      fixSynthesis,
+      preflight
+    );
+  }
 
   phase("fix", { actionableFindingCount: actionableFindings.length });
   const fixer = agent({
@@ -196,30 +209,6 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
   }
 
   phase("apply-fixes", { madeChanges: true });
-  // Patch artifacts were produced from the reviewed snapshot; fail closed if the parent moved.
-  const reviewedHeadSha = gitContext.status && gitContext.status.headSha;
-  if (!reviewedHeadSha) {
-    return skipFixResult(
-      synthesis.reportMarkdown,
-      "Auto-fix requires a reviewed local Git HEAD snapshot.",
-      "apply-preflight-skip",
-      gitContext,
-      reviewOutputs,
-      fixSynthesis,
-      preflight
-    );
-  }
-  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha) {
-    return skipFixResult(
-      synthesis.reportMarkdown,
-      "Auto-fix preflight HEAD does not match the reviewed snapshot.",
-      "apply-preflight-skip",
-      gitContext,
-      reviewOutputs,
-      fixSynthesis,
-      preflight
-    );
-  }
   const applied = await mux.patch.applySafely({
     id: "apply-simplify-fixes",
     source: fixer,
@@ -236,6 +225,17 @@ export default async function simplifyWorkflow({ args, phase, log, agent }) {
       fix: { preflight, fixer: fixerOutput, applied },
     },
   };
+}
+
+function reviewedHeadPreflightSkipReason(preflight, reviewedHeadSha) {
+  if (!reviewedHeadSha) return "Auto-fix requires a reviewed local Git HEAD snapshot.";
+  // The preflight agent observes the current parent checkout. Do not spawn a fixer from stale
+  // review context when the parent moved; applySafely still fences later movement before apply.
+  if (preflight.headSha !== reviewedHeadSha)
+    return "Auto-fix preflight current HEAD does not match the reviewed snapshot.";
+  if (preflight.expectedHeadSha && preflight.expectedHeadSha !== reviewedHeadSha)
+    return "Auto-fix preflight expected HEAD does not match the reviewed snapshot.";
+  return "";
 }
 
 function collectGitContextAgent(agent, input) {
