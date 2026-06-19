@@ -637,8 +637,8 @@ function normalizeDeepReviewArgs(args) {
   const raw = args && typeof args === "object" && !Array.isArray(args) ? args : {};
   const parsed = Object.assign(
     {},
-    raw,
-    parseFlagText(typeof args === "string" ? args : text(raw.input))
+    parseFlagText(typeof args === "string" ? args : text(raw.input)),
+    raw
   );
   const target = firstText(parsed.target, parsed.pr, parsed.branch) || "current workspace changes";
   return {
