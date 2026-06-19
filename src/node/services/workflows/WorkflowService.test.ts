@@ -2,7 +2,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
@@ -127,6 +127,72 @@ export default function workflow({ args, agent }) {
     ]);
     expect(run.definitionSource).toBe(source);
     expect(run.definition.scope).toBe("global");
+  });
+
+  test("listRuns only loads root runs for the requested workspace", async () => {
+    using tmp = new DisposableTempDir("workflow-service-list-runs");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const definition = {
+      name: "demo",
+      description: "Demo",
+      scope: "built-in",
+      executable: true,
+    } as const;
+    await runStore.createRun({
+      id: "wfr_workspace_1",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.createRun({
+      id: "wfr_workspace_2",
+      workspaceId: "workspace-2",
+      definition,
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:01.000Z",
+    });
+    await runStore.createRun({
+      id: "wfr_workspace_1_child",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      parentWorkflow: {
+        runId: "wfr_workspace_1",
+        stepId: "child-step",
+        inputHash: "child-input",
+        depth: 0,
+      },
+      now: "2026-05-29T00:00:02.000Z",
+    });
+    const getRunSpy = spyOn(runStore, "getRun");
+    const service = new WorkflowService({
+      definitionStore: new WorkflowDefinitionStore({
+        projectRoot: path.join(tmp.path, "project"),
+        globalRoot: path.join(tmp.path, "global"),
+        builtIns: [],
+      }),
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("agent should not run");
+        },
+      },
+      runnerId: "runner-a",
+    });
+
+    try {
+      const runs = await service.listRuns({ workspaceId: "workspace-1" });
+
+      expect(runs.map((run) => run.id)).toEqual(["wfr_workspace_1"]);
+      expect(getRunSpy.mock.calls.map((call) => call[0])).toEqual(["wfr_workspace_1"]);
+    } finally {
+      getRunSpy.mockRestore();
+    }
   });
 
   test("normalizes workflow args from static metadata and exposes mux helpers", async () => {

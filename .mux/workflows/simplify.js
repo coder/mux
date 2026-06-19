@@ -1,4 +1,3 @@
-const mux = globalThis.mux || { schema: workflowSchema(), utils: workflowUtils() };
 const s = mux.schema;
 
 export const metadata = {
@@ -29,7 +28,7 @@ export const metadata = {
 // Git context and apply preflight run as structured-output agent steps. Fixes
 // are made in an exec child and integrated only through mux.patch.applySafely.
 const SCHEMA = s;
-const WORKFLOW_UTILS = workflowUtils();
+const WORKFLOW_UTILS = mux.utils;
 const DEFAULT_MAX_FINDINGS = 20;
 const REVIEW_DIFF_CHAR_BUDGET = 70000;
 const REVIEW_AGENT_ID = "explore";
@@ -516,7 +515,12 @@ function defaultInput(raw) {
     baseRef: text(raw.baseRef || raw.base),
     trunkRef: text(raw.trunkRef || raw.trunk),
     headRef: text(raw.headRef || raw.head),
-    maxFindings: boundedInt(raw.maxFindings, DEFAULT_MAX_FINDINGS, 1, Number.MAX_SAFE_INTEGER),
+    maxFindings: mux.utils.boundedInt(
+      raw.maxFindings,
+      DEFAULT_MAX_FINDINGS,
+      1,
+      Number.MAX_SAFE_INTEGER
+    ),
   };
 }
 
@@ -554,13 +558,6 @@ function parseTextArgs(value) {
   return { values, target: target.join(" "), error: "" };
 }
 
-function boundedInt(value, fallback, min, max) {
-  const number =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isInteger(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
-}
-
 function compactText(value, limit) {
   const textValue = typeof value === "string" ? value : "";
   if (textValue.length <= limit) return textValue;
@@ -577,64 +574,4 @@ function property(name) {
 
 function text(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
-}
-
-function workflowSchema() {
-  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
-  function withOptions(schema, options) {
-    return options && typeof options === "object" && !Array.isArray(options)
-      ? Object.assign(schema, options)
-      : schema;
-  }
-  function optional(schema) {
-    const clone = Object.assign({}, schema || {});
-    Object.defineProperty(clone, "__muxOptional", { value: true });
-    return clone;
-  }
-  function isOptional(schema) {
-    return Boolean(schema && schema.__muxOptional === true);
-  }
-  return {
-    string: function (options) {
-      return withOptions({ type: "string" }, options);
-    },
-    integer: function (options) {
-      return withOptions({ type: "integer" }, options);
-    },
-    boolean: function (options) {
-      return withOptions({ type: "boolean" }, options);
-    },
-    array: function (items, options) {
-      return withOptions({ type: "array", items }, options);
-    },
-    enum: function (values, options) {
-      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
-    },
-    optional,
-    object: function (properties, options) {
-      const sourceProperties = properties || {};
-      const keys = Object.keys(sourceProperties);
-      const cleanProperties = {};
-      const required = [];
-      for (const key of keys) {
-        const schema = sourceProperties[key];
-        cleanProperties[key] = isOptional(schema) ? Object.assign({}, schema) : schema;
-        if (!isOptional(schema)) required.push(key);
-      }
-      const objectSchema = { type: "object", required, properties: cleanProperties };
-      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
-        objectSchema.additionalProperties = options.additionalProperties;
-      }
-      return objectSchema;
-    },
-  };
-}
-
-function workflowUtils() {
-  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
-  return {
-    asArray: function (value) {
-      return Array.isArray(value) ? value : [];
-    },
-  };
 }

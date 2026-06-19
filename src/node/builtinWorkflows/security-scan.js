@@ -1,4 +1,3 @@
-const mux = globalThis.mux || { schema: workflowSchema(), utils: workflowUtils() };
 const s = mux.schema;
 
 export const metadata = {
@@ -30,7 +29,7 @@ export const metadata = {
 // by explicit sub-agent calls with structured outputs. Mutating security state
 // is written in an exec child workspace and applied through the patch boundary.
 const SCHEMA = s;
-const WORKFLOW_UTILS = workflowUtils();
+const WORKFLOW_UTILS = mux.utils;
 const EXPLORE_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
 const MAX_PARALLEL_AGENTS = 12;
@@ -54,7 +53,7 @@ const PROOF_STATES = [
   "needs_human_review",
 ];
 
-export default async function securityScanWorkflow({ args, phase, log, agent, parallelAgents }) {
+export default async function securityScanWorkflow({ args, phase, log, agent }) {
   const input = normalizeSecurityScanArgs(args);
 
   phase("state-and-git-context", {
@@ -104,31 +103,28 @@ export default async function securityScanWorkflow({ args, phase, log, agent, pa
 
   const lanes = selectSecurityLanes(scope.structuredOutput && scope.structuredOutput.lanes);
   phase("lane-discovery", { lanes });
-  const laneReviews = parallelMap(
-    {
-      items: lanes,
-      stepId: function (lane) {
-        return "discover-" + lane;
-      },
-      title: function (lane) {
-        return "Security discovery lane: " + lane;
-      },
-      agentId: EXEC_AGENT_ID,
-      prompt: function (lane) {
-        return (
-          READ_ONLY_SECURITY_PROMPT +
-          laneSecurityPrompt(lane) +
-          "\n\nReturn concrete, actionable security findings with rule IDs, severity, CWE/OWASP tags when known, locations, source/sink summary, proof hypothesis, and candidate fingerprints. Prefer an empty findings array over speculation.\n\n" +
-          renderSecurityInput(input, stateContext) +
-          "\n\nSecurity scope:\n" +
-          JSON.stringify(scope.structuredOutput, null, 2)
-        );
-      },
-      outputSchema: findingListSchema(),
-      maxParallel: Math.min(MAX_PARALLEL_AGENTS, lanes.length),
+  const laneReviews = mux.parallelMap({
+    items: lanes,
+    stepId: function (lane) {
+      return "discover-" + lane;
     },
-    parallelAgents
-  );
+    title: function (lane) {
+      return "Security discovery lane: " + lane;
+    },
+    agentId: EXEC_AGENT_ID,
+    prompt: function (lane) {
+      return (
+        READ_ONLY_SECURITY_PROMPT +
+        laneSecurityPrompt(lane) +
+        "\n\nReturn concrete, actionable security findings with rule IDs, severity, CWE/OWASP tags when known, locations, source/sink summary, proof hypothesis, and candidate fingerprints. Prefer an empty findings array over speculation.\n\n" +
+        renderSecurityInput(input, stateContext) +
+        "\n\nSecurity scope:\n" +
+        JSON.stringify(scope.structuredOutput, null, 2)
+      );
+    },
+    outputSchema: findingListSchema(),
+    maxParallel: Math.min(MAX_PARALLEL_AGENTS, lanes.length),
+  });
   const laneFindings = flatten(
     laneReviews.map(function (review) {
       return WORKFLOW_UTILS.asArray(review.structuredOutput && review.structuredOutput.findings);
@@ -179,30 +175,27 @@ export default async function securityScanWorkflow({ args, phase, log, agent, pa
 
   phase("verification", { candidateCount: candidates.length, verify: input.verify });
   const verificationResults = input.verify
-    ? parallelMap(
-        {
-          items: candidates,
-          stepId: function (_finding, index) {
-            return "verify-security-finding-" + index;
-          },
-          title: function (_finding, index) {
-            return "Verify security finding " + (index + 1);
-          },
-          agentId: EXEC_AGENT_ID,
-          prompt: function (finding) {
-            return (
-              READ_ONLY_SECURITY_PROMPT +
-              "Adversarially verify this security finding. Try to disprove it first. Report whether evidence is verified, static_evidence, unverified, inconclusive, or needs_human_review. Do not execute risky PoCs unless safe sandbox constraints are satisfied.\n\nFinding:\n" +
-              JSON.stringify(finding, null, 2) +
-              "\n\nScan context:\n" +
-              renderSecurityInput(input, stateContext)
-            );
-          },
-          outputSchema: verificationSchema(),
-          maxParallel: Math.min(MAX_PARALLEL_AGENTS, candidates.length),
+    ? mux.parallelMap({
+        items: candidates,
+        stepId: function (_finding, index) {
+          return "verify-security-finding-" + index;
         },
-        parallelAgents
-      )
+        title: function (_finding, index) {
+          return "Verify security finding " + (index + 1);
+        },
+        agentId: EXEC_AGENT_ID,
+        prompt: function (finding) {
+          return (
+            READ_ONLY_SECURITY_PROMPT +
+            "Adversarially verify this security finding. Try to disprove it first. Report whether evidence is verified, static_evidence, unverified, inconclusive, or needs_human_review. Do not execute risky PoCs unless safe sandbox constraints are satisfied.\n\nFinding:\n" +
+            JSON.stringify(finding, null, 2) +
+            "\n\nScan context:\n" +
+            renderSecurityInput(input, stateContext)
+          );
+        },
+        outputSchema: verificationSchema(),
+        maxParallel: Math.min(MAX_PARALLEL_AGENTS, candidates.length),
+      })
     : [];
   const verifications = mergeVerificationResults(candidates, verificationResults);
 
@@ -736,8 +729,8 @@ function normalizeSecurityScanArgs(args) {
     full: Boolean(parsed.full),
     verify: parsed.verify !== false,
     fix: Boolean(parsed.fix),
-    maxFindings: boundedInt(parsed.maxFindings, 20, 1, 1000),
-    maxFixes: boundedInt(parsed.maxFixes, 3, 1, 1000),
+    maxFindings: mux.utils.boundedInt(parsed.maxFindings, 20, 1, 1000),
+    maxFixes: mux.utils.boundedInt(parsed.maxFixes, 3, 1, 1000),
     fixFindingIds: stringList(parsed.fixFindingIds),
     runDirId: text(parsed.runDirId),
   };
@@ -796,13 +789,6 @@ function stringList(value) {
   return result;
 }
 
-function boundedInt(value, fallback, min, max) {
-  const number =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isInteger(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
-}
-
 function tokenize(input) {
   return String(input || "")
     .split(/\s+/)
@@ -813,90 +799,4 @@ function flatten(items) {
   return items.reduce(function (result, item) {
     return result.concat(WORKFLOW_UTILS.asArray(item));
   }, []);
-}
-
-function parallelMap(options, parallelAgents) {
-  if (globalThis.mux && typeof globalThis.mux.parallelMap === "function")
-    return globalThis.mux.parallelMap(options);
-  const items = WORKFLOW_UTILS.asArray(options.items);
-  if (items.length === 0) return [];
-  return parallelAgents(
-    items.map(function (item, index) {
-      return {
-        id:
-          typeof options.stepId === "function"
-            ? options.stepId(item, index)
-            : options.id + "-" + index,
-        title: typeof options.title === "function" ? options.title(item, index) : options.title,
-        agentId:
-          typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
-        prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
-        outputSchema:
-          typeof options.outputSchema === "function"
-            ? options.outputSchema(item, index)
-            : options.outputSchema,
-      };
-    }),
-    { maxParallel: options.maxParallel || items.length }
-  );
-}
-
-function workflowSchema() {
-  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
-  function withOptions(schema, options) {
-    return options && typeof options === "object" && !Array.isArray(options)
-      ? Object.assign(schema, options)
-      : schema;
-  }
-  function optional(schema) {
-    const clone = Object.assign({}, schema || {});
-    Object.defineProperty(clone, "__muxOptional", { value: true });
-    return clone;
-  }
-  function isOptional(schema) {
-    return Boolean(schema && schema.__muxOptional === true);
-  }
-  return {
-    string: function (options) {
-      return withOptions({ type: "string" }, options);
-    },
-    integer: function (options) {
-      return withOptions({ type: "integer" }, options);
-    },
-    boolean: function (options) {
-      return withOptions({ type: "boolean" }, options);
-    },
-    array: function (items, options) {
-      return withOptions({ type: "array", items }, options);
-    },
-    enum: function (values, options) {
-      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
-    },
-    optional,
-    object: function (properties, options) {
-      const sourceProperties = properties || {};
-      const keys = Object.keys(sourceProperties);
-      const cleanProperties = {};
-      const required = [];
-      for (const key of keys) {
-        const schema = sourceProperties[key];
-        cleanProperties[key] = isOptional(schema) ? Object.assign({}, schema) : schema;
-        if (!isOptional(schema)) required.push(key);
-      }
-      const objectSchema = { type: "object", required, properties: cleanProperties };
-      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
-        objectSchema.additionalProperties = options.additionalProperties;
-      }
-      return objectSchema;
-    },
-  };
-}
-
-function workflowUtils() {
-  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
-  return {
-    asArray: function (value) {
-      return Array.isArray(value) ? value : [];
-    },
-  };
 }

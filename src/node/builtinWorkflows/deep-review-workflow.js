@@ -1,4 +1,3 @@
-const mux = globalThis.mux || { schema: workflowSchema(), utils: workflowUtils() };
 const s = mux.schema;
 
 export const metadata = {
@@ -41,7 +40,7 @@ export const metadata = {
 // structuredOutput; optional fixes are made by an exec child and integrated
 // through the workflow patch boundary.
 const SCHEMA = s;
-const WORKFLOW_UTILS = workflowUtils();
+const WORKFLOW_UTILS = mux.utils;
 const EXPLORE_AGENT_ID = "explore";
 const EXEC_AGENT_ID = "exec";
 const MAX_PARALLEL_AGENTS = 12;
@@ -51,7 +50,7 @@ const REVIEW_LANES = ["correctness", "tests", "architecture", "security", "ux", 
 const SEVERITIES = ["P0", "P1", "P2", "P3", "P4"];
 const VERDICTS = ["confirmed", "refuted", "unclear"];
 
-export default async function deepReviewWorkflow({ args, phase, log, agent, parallelAgents }) {
+export default async function deepReviewWorkflow({ args, phase, log, agent }) {
   const input = normalizeDeepReviewArgs(args);
   if (input.loop && !input.fix) {
     throw new Error("--loop requires --fix for deep-review-workflow");
@@ -68,7 +67,6 @@ export default async function deepReviewWorkflow({ args, phase, log, agent, para
       phase,
       log,
       agent,
-      parallelAgents,
     });
     passes.push(pass);
 
@@ -125,32 +123,29 @@ async function runDeepReviewPass(context) {
   context.log("Selected deep-review lanes", withIteration({ lanes }, context.iteration));
 
   context.phase("lane-review", withIteration({ lanes }, context.iteration));
-  const laneReviews = parallelMap(
-    {
-      items: lanes,
-      stepId: function (lane) {
-        return stepId("review-" + lane, suffix);
-      },
-      title: function (lane) {
-        return "Review lane: " + lane;
-      },
-      agentId: EXEC_AGENT_ID,
-      prompt: function (lane) {
-        return (
-          READ_ONLY_REVIEW_PROMPT +
-          lanePrompt(lane) +
-          "\n\nReview input:\n" +
-          renderReviewInput(reviewInput) +
-          "\n\nScoped review surface:\n" +
-          JSON.stringify(scope.structuredOutput, null, 2) +
-          "\n\nReturn concrete, actionable findings only. Prefer an empty issues array over speculative feedback."
-        );
-      },
-      outputSchema: issueListSchema(),
-      maxParallel: Math.min(MAX_PARALLEL_AGENTS, lanes.length),
+  const laneReviews = mux.parallelMap({
+    items: lanes,
+    stepId: function (lane) {
+      return stepId("review-" + lane, suffix);
     },
-    context.parallelAgents
-  );
+    title: function (lane) {
+      return "Review lane: " + lane;
+    },
+    agentId: EXEC_AGENT_ID,
+    prompt: function (lane) {
+      return (
+        READ_ONLY_REVIEW_PROMPT +
+        lanePrompt(lane) +
+        "\n\nReview input:\n" +
+        renderReviewInput(reviewInput) +
+        "\n\nScoped review surface:\n" +
+        JSON.stringify(scope.structuredOutput, null, 2) +
+        "\n\nReturn concrete, actionable findings only. Prefer an empty issues array over speculative feedback."
+      );
+    },
+    outputSchema: issueListSchema(),
+    maxParallel: Math.min(MAX_PARALLEL_AGENTS, lanes.length),
+  });
   const rawIssues = flatten(
     laneReviews.map(function (review) {
       return WORKFLOW_UTILS.asArray(review.structuredOutput && review.structuredOutput.issues);
@@ -186,31 +181,28 @@ async function runDeepReviewPass(context) {
     "adversarial-verification",
     withIteration({ candidateCount: candidates.length }, context.iteration)
   );
-  const verifications = parallelMap(
-    {
-      items: candidates,
-      stepId: function (_issue, index) {
-        return stepId("verify-issue-" + index, suffix);
-      },
-      title: function (_issue, index) {
-        return "Verify review issue " + (index + 1);
-      },
-      agentId: EXEC_AGENT_ID,
-      prompt: function (issue) {
-        return (
-          READ_ONLY_REVIEW_PROMPT +
-          "Adversarially verify this code review finding. Try to disprove it first using repository evidence. Return confirmed only when the issue is reproducible or strongly evidenced.\n\n" +
-          "Issue:\n" +
-          JSON.stringify(issue, null, 2) +
-          "\n\nReview input:\n" +
-          renderReviewInput(reviewInput)
-        );
-      },
-      outputSchema: verificationSchema(),
-      maxParallel: Math.min(MAX_PARALLEL_AGENTS, candidates.length),
+  const verifications = mux.parallelMap({
+    items: candidates,
+    stepId: function (_issue, index) {
+      return stepId("verify-issue-" + index, suffix);
     },
-    context.parallelAgents
-  );
+    title: function (_issue, index) {
+      return "Verify review issue " + (index + 1);
+    },
+    agentId: EXEC_AGENT_ID,
+    prompt: function (issue) {
+      return (
+        READ_ONLY_REVIEW_PROMPT +
+        "Adversarially verify this code review finding. Try to disprove it first using repository evidence. Return confirmed only when the issue is reproducible or strongly evidenced.\n\n" +
+        "Issue:\n" +
+        JSON.stringify(issue, null, 2) +
+        "\n\nReview input:\n" +
+        renderReviewInput(reviewInput)
+      );
+    },
+    outputSchema: verificationSchema(),
+    maxParallel: Math.min(MAX_PARALLEL_AGENTS, candidates.length),
+  });
 
   const verified = mergeVerifiedIssues(candidates, verifications);
   context.phase(
@@ -622,11 +614,11 @@ function normalizeDeepReviewArgs(args) {
     files: stringList(parsed.files),
     instructions: firstText(parsed.instructions, parsed.notes) || "",
     includeGitContext: Boolean(parsed.includeGitContext),
-    maxCandidates: boundedInt(parsed.maxCandidates, 12, 1, 20),
+    maxCandidates: mux.utils.boundedInt(parsed.maxCandidates, 12, 1, 20),
     fix: Boolean(parsed.fix),
     loop: Boolean(parsed.loop),
-    maxFixes: boundedInt(parsed.maxFixes, 5, 1, 20),
-    maxLoopIterations: boundedInt(parsed.maxLoopIterations, 5, 1, 10),
+    maxFixes: mux.utils.boundedInt(parsed.maxFixes, 5, 1, 20),
+    maxLoopIterations: mux.utils.boundedInt(parsed.maxLoopIterations, 5, 1, 10),
     fixIssueIds: stringList(parsed.fixIssueIds),
   };
 }
@@ -784,13 +776,6 @@ function mergeUniqueStrings(values) {
   return result;
 }
 
-function boundedInt(value, fallback, min, max) {
-  const number =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isInteger(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
-}
-
 function tokenize(input) {
   return String(input || "")
     .split(/\s+/)
@@ -812,90 +797,4 @@ function compactText(value, limit) {
     limit +
     " characters]"
   );
-}
-
-function parallelMap(options, parallelAgents) {
-  if (globalThis.mux && typeof globalThis.mux.parallelMap === "function")
-    return globalThis.mux.parallelMap(options);
-  const items = WORKFLOW_UTILS.asArray(options.items);
-  if (items.length === 0) return [];
-  return parallelAgents(
-    items.map(function (item, index) {
-      return {
-        id:
-          typeof options.stepId === "function"
-            ? options.stepId(item, index)
-            : options.id + "-" + index,
-        title: typeof options.title === "function" ? options.title(item, index) : options.title,
-        agentId:
-          typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
-        prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
-        outputSchema:
-          typeof options.outputSchema === "function"
-            ? options.outputSchema(item, index)
-            : options.outputSchema,
-      };
-    }),
-    { maxParallel: options.maxParallel || items.length }
-  );
-}
-
-function workflowSchema() {
-  if (globalThis.mux && globalThis.mux.schema) return globalThis.mux.schema;
-  function withOptions(schema, options) {
-    return options && typeof options === "object" && !Array.isArray(options)
-      ? Object.assign(schema, options)
-      : schema;
-  }
-  function optional(schema) {
-    const clone = Object.assign({}, schema || {});
-    Object.defineProperty(clone, "__muxOptional", { value: true });
-    return clone;
-  }
-  function isOptional(schema) {
-    return Boolean(schema && schema.__muxOptional === true);
-  }
-  return {
-    string: function (options) {
-      return withOptions({ type: "string" }, options);
-    },
-    integer: function (options) {
-      return withOptions({ type: "integer" }, options);
-    },
-    boolean: function (options) {
-      return withOptions({ type: "boolean" }, options);
-    },
-    array: function (items, options) {
-      return withOptions({ type: "array", items }, options);
-    },
-    enum: function (values, options) {
-      return withOptions({ type: "string", enum: Array.isArray(values) ? values : [] }, options);
-    },
-    optional,
-    object: function (properties, options) {
-      const sourceProperties = properties || {};
-      const keys = Object.keys(sourceProperties);
-      const cleanProperties = {};
-      const required = [];
-      for (const key of keys) {
-        const schema = sourceProperties[key];
-        cleanProperties[key] = isOptional(schema) ? Object.assign({}, schema) : schema;
-        if (!isOptional(schema)) required.push(key);
-      }
-      const objectSchema = { type: "object", required, properties: cleanProperties };
-      if (options && Object.prototype.hasOwnProperty.call(options, "additionalProperties")) {
-        objectSchema.additionalProperties = options.additionalProperties;
-      }
-      return objectSchema;
-    },
-  };
-}
-
-function workflowUtils() {
-  if (globalThis.mux && globalThis.mux.utils) return globalThis.mux.utils;
-  return {
-    asArray: function (value) {
-      return Array.isArray(value) ? value : [];
-    },
-  };
 }

@@ -7,7 +7,9 @@ import {
   type WorkflowRunStatus,
 } from "@/common/types/workflow";
 import assert from "@/common/utils/assert";
+import { getErrorMessage } from "@/common/utils/errors";
 import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
+import { log } from "@/node/services/log";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { WORKFLOW_RUN_TASK_ID_PREFIX } from "@/node/services/tools/taskId";
 import type {
@@ -189,10 +191,26 @@ export class WorkflowService {
 
   async listRuns(input: { workspaceId: string }): Promise<WorkflowRunRecord[]> {
     assert(input.workspaceId.length > 0, "WorkflowService.listRuns: workspaceId is required");
-    const runs = await this.runStore.listRuns();
-    return runs.filter(
-      (run) => run.workspaceId === input.workspaceId && run.parentWorkflow == null
+    const snapshots = await this.runStore.listRunStatusSnapshots();
+    const runs = await Promise.all(
+      snapshots
+        .filter(
+          (snapshot) =>
+            snapshot.workspaceId === input.workspaceId && snapshot.parentWorkflow == null
+        )
+        .map(async (snapshot): Promise<WorkflowRunRecord | null> => {
+          try {
+            const run = await this.runStore.getRun(snapshot.id);
+            return run.workspaceId === input.workspaceId && run.parentWorkflow == null ? run : null;
+          } catch (error) {
+            log.warn(
+              `Skipping unreadable workflow run '${snapshot.id}': ${getErrorMessage(error)}`
+            );
+            return null;
+          }
+        })
     );
+    return runs.filter((run): run is WorkflowRunRecord => run != null);
   }
 
   async resumeCrashedRuns(input: {
