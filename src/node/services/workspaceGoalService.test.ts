@@ -716,6 +716,64 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
+  test("preserves model-created kickoff candidate when stream-end continuation is requested", async () => {
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-set-goal-stream", "user", "Set yourself a goal and continue", {
+        timestamp: Date.now(),
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    let busy = true;
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(async (input) => {
+        executed.push(input);
+        const continuationAppend = await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage("preserved-kickoff-continuation", "user", input.message, {
+            timestamp: Date.now(),
+            kind: GOAL_CONTINUATION_KIND,
+          })
+        );
+        expect(continuationAppend.success).toBe(true);
+        return true;
+      }),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    await extensionMetadata.setStreaming(workspaceId, true);
+    const queued = await service.setGoal({
+      workspaceId,
+      objective: "Queued model-created auto goal",
+      status: "active",
+      initiator: "model",
+    });
+    expect(queued.success).toBe(true);
+    await extensionMetadata.setStreaming(workspaceId, false);
+    const drained = await service.applyPendingAfterStreamEnd(workspaceId);
+    expect(drained).toMatchObject({ status: "active" });
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: Date.now(),
+    });
+    busy = false;
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(executed[0]?.startStreamInBackground).toBe(true);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: drained?.goalId,
+      status: "active",
+    });
+  });
+
   test("strips set_goal capability from synthetic goal continuations", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Continue safely" });
     const dispatcher = new IdleDispatcher();

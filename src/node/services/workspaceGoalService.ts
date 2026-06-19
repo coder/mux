@@ -882,6 +882,25 @@ export class WorkspaceGoalService {
       return;
     }
 
+    const existingCandidate = this.pendingContinuationCandidates.get(input.workspaceId);
+    if (existingCandidate?.source === "kickoff") {
+      const kickoffGoal = await this.normalizeGoalLimits(input.workspaceId, {
+        syncChatTail: false,
+      });
+      if (kickoffGoal?.goalId === existingCandidate.goalId && kickoffGoal.status === "active") {
+        // Model-created goals arm a kickoff candidate when the queued set_goal
+        // drains. The enclosing user stream also calls this stream-end hook; do
+        // not downgrade that kickoff into a stream_end candidate, because
+        // stream_end candidates reconcile against the pre-goal manual user row
+        // and would pause the new goal before it can continue.
+        await this.goalContinuationDispatcher.requestDispatch(
+          input.workspaceId,
+          GOAL_CONTINUATION_IDLE_CONSUMER_NAME
+        );
+        return;
+      }
+    }
+
     const goal = await this.getGoal(input.workspaceId);
     if (goal?.status !== "active" && goal?.status !== "budget_limited") {
       this.pendingContinuationCandidates.delete(input.workspaceId);
