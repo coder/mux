@@ -23,7 +23,6 @@ interface WorkflowTaskExperiments {
   execSubagentHardRestart?: boolean;
   workspaceHeartbeats?: boolean;
   dynamicWorkflows?: boolean;
-  subagentFileReports?: boolean;
 }
 
 interface WorkflowTaskServiceLike {
@@ -282,7 +281,6 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     }
 
     const agentId = spec.agentId ?? this.defaultAgentId;
-    const experiments = this.getExperimentsForAgent(agentId);
     return {
       parentWorkspaceId: this.parentWorkspaceId,
       kind: "agent",
@@ -290,7 +288,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       prompt: spec.prompt,
       title: spec.title ?? spec.id,
       workflowTask,
-      ...(experiments !== undefined ? { experiments } : {}),
+      ...(this.experiments !== undefined ? { experiments: this.experiments } : {}),
       ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
       ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
       // Refusal policy must survive both the single-step and parallel
@@ -316,21 +314,6 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     await lifecycle?.onTaskCreated?.(createResult.data.taskId);
 
     return await this.waitForAgentTask(createResult.data.taskId, spec, waitOptions);
-  }
-
-  private getExperimentsForAgent(agentId: string): WorkflowTaskExperiments | undefined {
-    const experiments = this.experiments;
-    if (experiments == null) {
-      return undefined;
-    }
-
-    if (agentId.trim().toLowerCase() !== "explore" || experiments.subagentFileReports !== true) {
-      return experiments;
-    }
-
-    // Explore is intentionally read-only and cannot create report.md/structured-output.json.
-    // Keep workflow Explore steps compatible when file-backed reporting is enabled globally.
-    return { ...experiments, subagentFileReports: false };
   }
 
   async waitForAgentTask(

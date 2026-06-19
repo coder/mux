@@ -2003,107 +2003,6 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("medium");
   }, 20_000);
 
-  test("appends file-backed report instructions to ordinary subagent prompts", async () => {
-    const config = await createTestConfig(rootDir);
-    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
-
-    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
-    const parentId = "1111111111";
-    await saveWorkspaces(
-      config,
-      projectPath,
-      [
-        {
-          path: projectPath,
-          id: parentId,
-          name: "parent",
-          createdAt: new Date().toISOString(),
-          runtimeConfig: { type: "local" },
-          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-        },
-      ],
-      testTaskSettings()
-    );
-    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
-
-    const created = await createAgentTask(taskService, parentId, "do the thing", {
-      experiments: { subagentFileReports: true },
-    });
-
-    expect(created.success).toBe(true);
-    expect(sendMessage).toHaveBeenCalledWith(
-      "aaaaaaaaaa",
-      expect.any(String),
-      expect.objectContaining({ experiments: { subagentFileReports: true } }),
-      expect.anything()
-    );
-    const sentPrompt = (sendMessage as unknown as { mock: { calls: Array<[string, string]> } }).mock
-      .calls[0]?.[1];
-    assert(typeof sentPrompt === "string", "sendMessage prompt is required");
-    expect(sentPrompt.startsWith("do the thing")).toBe(true);
-    expect(sentPrompt).toContain("report.md");
-    expect(sentPrompt).toContain("agent_report");
-    expect(sentPrompt).toContain("reportMarkdownPath");
-    expect(sentPrompt).toContain("structuredOutputPath");
-    expect(sentPrompt).toContain("title");
-    expect(sentPrompt).not.toContain("structured-output.json");
-  }, 20_000);
-
-  test("passes workflow output schema through file-backed report instructions", async () => {
-    const config = await createTestConfig(rootDir);
-    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
-
-    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
-    const parentId = "1111111111";
-    await saveWorkspaces(
-      config,
-      projectPath,
-      [
-        {
-          path: projectPath,
-          id: parentId,
-          name: "parent",
-          createdAt: new Date().toISOString(),
-          runtimeConfig: { type: "local" },
-          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
-        },
-      ],
-      testTaskSettings()
-    );
-    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
-    const outputSchema = {
-      type: "object",
-      required: ["claims"],
-      properties: {
-        claims: { type: "array", items: { type: "string" } },
-      },
-    };
-
-    const created = await createAgentTask(taskService, parentId, "collect claims", {
-      experiments: { subagentFileReports: true },
-      workflowTask: {
-        runId: "wfr_123",
-        stepId: "collect-claims",
-        outputSchema,
-      },
-    });
-
-    expect(created.success).toBe(true);
-    const sentPrompt = (sendMessage as unknown as { mock: { calls: Array<[string, string]> } }).mock
-      .calls[0]?.[1];
-    assert(typeof sentPrompt === "string", "sendMessage prompt is required");
-    const schemaStart = sentPrompt.indexOf("{");
-    const schemaEnd = sentPrompt.lastIndexOf("}");
-    assert(
-      schemaStart >= 0 && schemaEnd > schemaStart,
-      "file-report prompt must include a JSON schema"
-    );
-    expect(JSON.parse(sentPrompt.slice(schemaStart, schemaEnd + 1))).toEqual(outputSchema);
-    expect(sentPrompt).toContain("structured-output.json");
-  }, 20_000);
-
   test("inherits parent model + thinking when target agent has no global defaults", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
@@ -2899,7 +2798,7 @@ describe("TaskService", () => {
     });
   });
 
-  test("TaskService extracts file-backed agent_report payloads from tool output", async () => {
+  test("TaskService extracts persisted agent_report payloads from tool output", async () => {
     const config = await createTestConfig(rootDir);
     const { taskService } = createTaskServiceHarness(config);
     const reportReader = taskService as unknown as {
@@ -2915,7 +2814,7 @@ describe("TaskService", () => {
         type: "dynamic-tool",
         toolName: "agent_report",
         state: "output-available",
-        input: { reportMarkdownPath: "report.md", structuredOutputPath: "structured-output.json" },
+        input: { reportMarkdown: "ignored because output report is authoritative", title: null },
         output: {
           success: true,
           report: {
@@ -9166,6 +9065,261 @@ describe("TaskService", () => {
       const msg = call[1] as string;
       expect(msg).not.toContain("agent_report");
     }
+  });
+
+  test("workflow subagent stream-end with final assistant text still requires structured agent_report", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-structured-text";
+    const childId = "child-structured-text";
+    const workflowRunId = "wfr_structured_text";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: {
+              type: "object",
+              required: ["claims"],
+              properties: { claims: { type: "array", items: { type: "string" } } },
+              additionalProperties: false,
+            },
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      definition: {
+        name: "structured-text",
+        description: "Structured text",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [{ type: "text", text: "## Final answer\n\nThis prose is not structured output." }],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Your stream ended without calling agent_report"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
+    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+  });
+
+  test("workflow subagent invalid structured agent_report does not finalize", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-invalid-structured";
+    const childId = "child-invalid-structured";
+    const workflowRunId = "wfr_invalid_structured";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: {
+              type: "object",
+              required: ["claims"],
+              properties: { claims: { type: "array", items: { type: "string" } } },
+              additionalProperties: false,
+            },
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      definition: {
+        name: "invalid-structured",
+        description: "Invalid structured",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: {
+            reportMarkdown: "Done",
+            structuredOutput: { claims: [1] },
+            title: null,
+          },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("The previous agent_report attempt failed"),
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
+    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+  });
+
+  test("workflow subagent missing structuredOutput does not finalize even with empty schema", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-missing-structured";
+    const childId = "child-missing-structured";
+    const workflowRunId = "wfr_missing_structured";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: {},
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      definition: {
+        name: "missing-structured",
+        description: "Missing structured",
+        scope: "built-in",
+        executable: true,
+      },
+      definitionSource: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: {
+            reportMarkdown: "Done",
+            title: null,
+          },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(sendCalls).toHaveLength(1);
+    expect(sendCalls[0]?.[0]).toBe(childId);
+    expect(String(sendCalls[0]?.[1])).toContain("agent_report");
+    expect(sendCalls[0]?.[2]).toEqual(
+      expect.objectContaining({
+        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+      })
+    );
+    expect(sendCalls[0]?.[3]).toEqual(
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
+    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
   });
 
   test("length-truncated final assistant text still requires explicit agent_report", async () => {

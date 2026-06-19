@@ -1,6 +1,4 @@
 import { describe, it, expect, mock } from "bun:test";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import type { ToolExecutionOptions } from "ai";
 
 import { createAgentReportTool } from "./agent_report";
@@ -36,6 +34,39 @@ describe("agent_report tool", () => {
     if (caught instanceof Error) {
       expect(caught.message).toMatch(/still has running\/queued/i);
     }
+  });
+
+  it("omits structuredOutput from non-workflow agent_report input", async () => {
+    using tempDir = new TestTempDir("test-agent-report-tool-no-structured-schema");
+    const taskService = {
+      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+    } as unknown as TaskService;
+    const tool = createAgentReportTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
+      taskService,
+    });
+
+    const inputSchema = tool.inputSchema as { safeParse(value: unknown): { success: boolean } };
+    expect(inputSchema.safeParse({ reportMarkdown: "done", title: null }).success).toBe(true);
+    expect(
+      inputSchema.safeParse({
+        reportMarkdown: "done",
+        structuredOutput: { claims: [] },
+        title: null,
+      }).success
+    ).toBe(false);
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { reportMarkdown: "done", structuredOutput: { claims: [] }, title: null },
+        mockToolCallOptions
+      )
+    );
+    expect(result).toEqual({
+      success: false,
+      message: "Report arguments failed validation.",
+      errors: [{ path: "$", message: 'Unrecognized key: "structuredOutput"' }],
+    });
   });
 
   it("exposes workflow output schema directly in inline agent_report input", () => {
@@ -133,98 +164,6 @@ describe("agent_report tool", () => {
     expect(result).toEqual({
       success: true,
       message: "Report submitted successfully.",
-    });
-  });
-
-  it("submits a subagent file-backed report from report.md and structured-output.json", async () => {
-    using tempDir = new TestTempDir("test-agent-report-tool-file-backed");
-    await fs.writeFile(path.join(tempDir.path, "report.md"), "# Done\n\nFindings.", "utf-8");
-    await fs.writeFile(
-      path.join(tempDir.path, "structured-output.json"),
-      JSON.stringify({ claims: ["durable"] }),
-      "utf-8"
-    );
-    const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
-    } as unknown as TaskService;
-    const tool = createAgentReportTool({
-      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
-      taskService,
-      subagentReportFiles: true,
-      workflowAgentOutputSchema: {
-        type: "object",
-        required: ["claims"],
-        properties: { claims: { type: "array", items: { type: "string" } } },
-        additionalProperties: false,
-      },
-    });
-
-    const inputSchema = tool.inputSchema as { jsonSchema?: unknown };
-    expect(inputSchema.jsonSchema).toEqual(
-      expect.objectContaining({
-        required: ["reportMarkdownPath", "structuredOutputPath", "title"],
-      })
-    );
-
-    const result: unknown = await Promise.resolve(tool.execute!(undefined, mockToolCallOptions));
-
-    expect(result).toEqual({
-      success: true,
-      message: "Report submitted successfully.",
-      report: {
-        reportMarkdown: "# Done\n\nFindings.",
-        structuredOutput: { claims: ["durable"] },
-      },
-    });
-  });
-
-  it("submits a subagent file-backed markdown report with empty arguments", async () => {
-    using tempDir = new TestTempDir("test-agent-report-tool-file-backed-empty-args");
-    await fs.writeFile(path.join(tempDir.path, "report.md"), "# Done", "utf-8");
-    const tool = createAgentReportTool({
-      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
-      taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
-      } as unknown as TaskService,
-      subagentReportFiles: true,
-    });
-
-    const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
-
-    expect(result).toEqual({
-      success: true,
-      message: "Report submitted successfully.",
-      report: { reportMarkdown: "# Done" },
-    });
-  });
-
-  it("rejects file-backed structured output that fails workflow schema validation", async () => {
-    using tempDir = new TestTempDir("test-agent-report-tool-file-backed-invalid");
-    await fs.writeFile(path.join(tempDir.path, "report.md"), "done", "utf-8");
-    await fs.writeFile(
-      path.join(tempDir.path, "structured-output.json"),
-      '{"claims":[1]}',
-      "utf-8"
-    );
-    const tool = createAgentReportTool({
-      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
-      taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
-      } as unknown as TaskService,
-      subagentReportFiles: true,
-      workflowAgentOutputSchema: {
-        type: "object",
-        required: ["claims"],
-        properties: { claims: { type: "array", items: { type: "string" } } },
-      },
-    });
-
-    const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
-
-    expect(result).toEqual({
-      success: false,
-      message: "Structured output failed schema validation.",
-      errors: [{ path: "$.claims[0]", message: "Expected string, got number" }],
     });
   });
 

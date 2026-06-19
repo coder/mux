@@ -285,7 +285,6 @@ function buildExperimentsObject(experimentIds: string[]): SendMessageOptions["ex
     programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
     execSubagentHardRestart: experimentIds.includes("exec-subagent-hard-restart"),
     dynamicWorkflows: experimentIds.includes("dynamic-workflows"),
-    subagentFileReports: experimentIds.includes("subagent-file-reports"),
     workspaceHeartbeats: experimentIds.includes(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS),
   };
 }

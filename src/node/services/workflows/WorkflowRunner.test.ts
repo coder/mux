@@ -36,7 +36,11 @@ const definition = {
 const source = `export default function workflow({ args, phase, log, agent }) {
   phase("scope", { topic: args.topic });
   log("delegating", { topic: args.topic });
-  const summary = agent({ id: "summarize-topic", prompt: "Summarize " + args.topic });
+  const summary = agent({
+    id: "summarize-topic",
+    prompt: "Summarize " + args.topic,
+    outputSchema: {},
+  });
   return { reportMarkdown: "Final: " + summary.reportMarkdown };
 }
 `;
@@ -88,7 +92,7 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         lifecycle.push("agent");
-        return { taskId: "task_1", reportMarkdown: "summary" };
+        return { taskId: "task_1", reportMarkdown: "summary", structuredOutput: {} };
       },
       onRunEnded() {
         lifecycle.push("ended");
@@ -98,6 +102,66 @@ describe("WorkflowRunner", () => {
     await runner.run("wfr_123");
 
     expect(lifecycle).toEqual(["agent", "ended"]);
+  });
+
+  test("fails before spawning when workflow agent step is missing outputSchema", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-missing-output-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_missing_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  return agent({ id: "missing-schema", prompt: "Missing schema" });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runAgent = mock(async () => ({
+      taskId: "task_1",
+      reportMarkdown: "summary",
+      structuredOutput: {},
+    }));
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_missing_schema")).rejects.toThrow(
+      "Workflow agent step missing-schema must declare outputSchema"
+    );
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  test("fails before spawning when workflow agent outputSchema is invalid", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-invalid-output-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_invalid_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  return agent({ id: "invalid-schema", prompt: "Invalid schema", outputSchema: { type: "definitely-not-json-schema" } });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runAgent = mock(async () => ({
+      taskId: "task_1",
+      reportMarkdown: "summary",
+      structuredOutput: {},
+    }));
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_invalid_schema")).rejects.toThrow(
+      "Workflow agent step invalid-schema has invalid outputSchema"
+    );
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   test("runs the terminal lifecycle callback when the workflow fails", async () => {
@@ -128,7 +192,7 @@ describe("WorkflowRunner", () => {
     const lifecycle: string[] = [];
     const runner = createRunner(store, {
       async runAgent() {
-        return { taskId: "task_1", reportMarkdown: "summary" };
+        return { taskId: "task_1", reportMarkdown: "summary", structuredOutput: {} };
       },
       onRunEnded() {
         lifecycle.push("ended");
@@ -164,7 +228,9 @@ describe("WorkflowRunner", () => {
     const run = await store.getRun("wfr_123");
 
     expect(result).toEqual({ reportMarkdown: "Final: summary" });
-    expect(taskCalls).toEqual([{ id: "summarize-topic", prompt: "Summarize durable workflows" }]);
+    expect(taskCalls).toEqual([
+      { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} },
+    ]);
     expect(runTimeoutMs).toBeGreaterThan(5 * 60 * 1000);
     expect(runAbortSignalWasAbortedDuringAgent).toBe(false);
     expect(run.status).toBe("completed");
@@ -245,8 +311,8 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent }) {
-        agent({ id: "verify-claim-0-vote-2", title: "Verify claim 1 vote 3", prompt: "Verify" });
-        agent({ id: "untitled-step", prompt: "No title" });
+        agent({ id: "verify-claim-0-vote-2", title: "Verify claim 1 vote 3", prompt: "Verify", outputSchema: {} });
+        agent({ id: "untitled-step", prompt: "No title", outputSchema: {} });
         return { reportMarkdown: "done" };
       }`,
       args: {},
@@ -261,7 +327,7 @@ describe("WorkflowRunner", () => {
         // does, so the started-event title is pinned on the lifecycle path rather
         // than the post-hoc fallback.
         await lifecycle?.onTaskCreated?.(taskId);
-        return { taskId, reportMarkdown: "ok" };
+        return { taskId, reportMarkdown: "ok", structuredOutput: {} };
       },
     });
 
@@ -303,7 +369,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent }) {
-        const result = agent({ id: "implement", prompt: "Implement" });
+        const result = agent({ id: "implement", prompt: "Implement", outputSchema: {} });
         return { reportMarkdown: result.taskId };
       }`,
       args: {},
@@ -311,7 +377,7 @@ describe("WorkflowRunner", () => {
     });
     const runner = createRunner(store, {
       async runAgent() {
-        return { taskId: "task_impl", reportMarkdown: "implemented" };
+        return { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} };
       },
     });
 
@@ -332,7 +398,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent, applyPatch }) {
-        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const implementation = agent({ id: "implement", prompt: "Implement", outputSchema: {} });
         const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
         return { reportMarkdown: applied.status + ":" + applied.taskId };
       }`,
@@ -342,7 +408,7 @@ describe("WorkflowRunner", () => {
     const applyCalls: unknown[] = [];
     const runner = createRunner(store, {
       async runAgent() {
-        return { taskId: "task_impl", reportMarkdown: "implemented" };
+        return { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} };
       },
       async applyPatch(spec) {
         applyCalls.push(spec);
@@ -392,7 +458,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent, applyPatch }) {
-        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const implementation = agent({ id: "implement", prompt: "Implement", outputSchema: {} });
         const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
         return { reportMarkdown: applied.status };
       }`,
@@ -401,7 +467,7 @@ describe("WorkflowRunner", () => {
     });
     const runner = createRunner(store, {
       async runAgent() {
-        return { taskId: "task_impl", reportMarkdown: "implemented" };
+        return { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} };
       },
       async applyPatch(spec) {
         return {
@@ -446,7 +512,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent, applyPatch }) {
-        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const implementation = agent({ id: "implement", prompt: "Implement", outputSchema: {} });
         const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
         return { reportMarkdown: applied.status + ":" + applied.failedPatchSubject };
       }`,
@@ -455,7 +521,7 @@ describe("WorkflowRunner", () => {
     });
     const runner = createRunner(store, {
       async runAgent() {
-        return { taskId: "task_impl", reportMarkdown: "implemented" };
+        return { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} };
       },
       async applyPatch(spec) {
         return {
@@ -497,7 +563,7 @@ describe("WorkflowRunner", () => {
       sessionDir: tmp.path,
       staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
     });
-    const agentSpec = { id: "implement", prompt: "Implement" };
+    const agentSpec = { id: "implement", prompt: "Implement", outputSchema: {} };
     const applySpec = {
       id: "apply-implement",
       sourceTaskId: "task_impl",
@@ -510,7 +576,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent, applyPatch }) {
-        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const implementation = agent({ id: "implement", prompt: "Implement", outputSchema: {} });
         const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
         return { reportMarkdown: applied.status + ":" + applied.taskId };
       }`,
@@ -521,7 +587,7 @@ describe("WorkflowRunner", () => {
       stepId: agentSpec.id,
       inputHash: hashWorkflowStepInput(agentSpec.id, agentSpec),
       taskId: "task_impl",
-      result: { taskId: "task_impl", reportMarkdown: "implemented" },
+      result: { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} },
       startedAt: "2026-05-29T00:00:01.000Z",
       completedAt: "2026-05-29T00:00:02.000Z",
     });
@@ -569,7 +635,7 @@ describe("WorkflowRunner", () => {
       sessionDir: tmp.path,
       staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
     });
-    const agentSpec = { id: "implement", prompt: "Implement" };
+    const agentSpec = { id: "implement", prompt: "Implement", outputSchema: {} };
     const applySpec = {
       id: "apply-implement",
       sourceTaskId: "task_impl",
@@ -582,7 +648,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ agent, applyPatch }) {
-        const implementation = agent({ id: "implement", prompt: "Implement" });
+        const implementation = agent({ id: "implement", prompt: "Implement", outputSchema: {} });
         const applied = applyPatch({ id: "apply-implement", source: implementation, target: "parent" });
         return { reportMarkdown: applied.status + ":" + applied.taskId };
       }`,
@@ -593,7 +659,7 @@ describe("WorkflowRunner", () => {
       stepId: agentSpec.id,
       inputHash: hashWorkflowStepInput(agentSpec.id, agentSpec),
       taskId: "task_impl",
-      result: { taskId: "task_impl", reportMarkdown: "implemented" },
+      result: { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} },
       startedAt: "2026-05-29T00:00:01.000Z",
       completedAt: "2026-05-29T00:00:02.000Z",
     });
@@ -703,7 +769,7 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         taskCalls += 1;
-        return { taskId: "task_1", reportMarkdown: "summary" };
+        return { taskId: "task_1", reportMarkdown: "summary", structuredOutput: {} };
       },
     });
 
@@ -721,7 +787,7 @@ describe("WorkflowRunner", () => {
   test("requires explicit checkpoint retry permission to restart failed runs", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await store.recordStepStarted("wfr_123", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -741,11 +807,11 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         runAgentCalls += 1;
-        return { taskId: "task_duplicate", reportMarkdown: "duplicate" };
+        return { taskId: "task_duplicate", reportMarkdown: "duplicate", structuredOutput: {} };
       },
       async waitForAgentTask(taskId) {
         waitedFor.push(taskId);
-        return { taskId, reportMarkdown: "summary" };
+        return { taskId, reportMarkdown: "summary", structuredOutput: {} };
       },
     });
 
@@ -824,7 +890,7 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         taskCalls += 1;
-        return { taskId: "task_1", reportMarkdown: "summary" };
+        return { taskId: "task_1", reportMarkdown: "summary", structuredOutput: {} };
       },
     });
 
@@ -834,15 +900,170 @@ describe("WorkflowRunner", () => {
     expect(taskCalls).toBe(1);
   });
 
+  test("replays completed legacy agent steps that omitted outputSchema", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-completed-missing-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_completed_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({ id: "summarize-topic", prompt: "Summarize durable workflows" });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const legacySpec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepCompleted("wfr_legacy_completed_schema", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_completed",
+      result: { taskId: "task_legacy_completed", reportMarkdown: "summary", structuredOutput: {} },
+      startedAt: "2026-05-29T00:00:00.500Z",
+      completedAt: "2026-05-29T00:00:00.750Z",
+    });
+    const runAgent = mock(async () => {
+      throw new Error("agent should replay");
+    });
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_legacy_completed_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  test("resumes started legacy agent steps that omitted outputSchema", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-started-missing-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_started_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({ id: "summarize-topic", prompt: "Summarize durable workflows" });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus("wfr_legacy_started_schema", "running", "2026-05-29T00:00:00.250Z");
+    const legacySpec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepStarted("wfr_legacy_started_schema", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_started",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    const runAgent = mock(async () => {
+      throw new Error("agent should resume existing task");
+    });
+    const waitedFor: string[] = [];
+    const runner = createRunner(store, {
+      runAgent,
+      async waitForAgentTask(taskId) {
+        waitedFor.push(taskId);
+        return { taskId, reportMarkdown: "summary", structuredOutput: {} };
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_started_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(waitedFor).toEqual(["task_legacy_started"]);
+  });
+
+  test("defaults missing outputSchema for unstarted legacy workflow runs only", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-unstarted-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_unstarted_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({ id: "summarize-topic", prompt: "Summarize durable workflows" });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus("wfr_legacy_unstarted_schema", "running", "2026-05-29T00:00:00.250Z");
+    let runAgentCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        runAgentCalls += 1;
+        expect(spec.outputSchema).toEqual({});
+        return { taskId: "task_legacy_unstarted", reportMarkdown: "summary", structuredOutput: {} };
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_unstarted_schema")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+    expect(runAgentCalls).toBe(1);
+  });
+
+  test("does not default missing outputSchema for new non-pending workflow runs", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-new-nonpending-missing-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_new_nonpending_schema",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  return agent({ id: "missing-schema", prompt: "Missing schema" });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus("wfr_new_nonpending_schema", "running", "2026-05-29T00:00:00.250Z");
+    const runAgent = mock(async () => ({
+      taskId: "task_1",
+      reportMarkdown: "summary",
+      structuredOutput: {},
+    }));
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_new_nonpending_schema")).rejects.toThrow(
+      "Workflow agent step missing-schema must declare outputSchema"
+    );
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   test("backfills completed task events when replaying completed agent steps", async () => {
     using tmp = new DisposableTempDir("workflow-runner-completed-task-event-backfill");
     const store = await createRunStore(tmp.path);
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await store.recordStepCompleted("wfr_123", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
       taskId: "task_completed_missing_event",
-      result: { taskId: "task_completed_missing_event", reportMarkdown: "summary" },
+      result: {
+        taskId: "task_completed_missing_event",
+        reportMarkdown: "summary",
+        structuredOutput: {},
+      },
       startedAt: "2026-05-29T00:00:00.500Z",
       completedAt: "2026-05-29T00:00:00.750Z",
     });
@@ -877,7 +1098,7 @@ describe("WorkflowRunner", () => {
   test("reuses a recorded started task id instead of respawning on resume", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await store.recordStepStarted("wfr_123", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -899,14 +1120,14 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         runAgentCalls += 1;
-        return { taskId: "task_duplicate", reportMarkdown: "duplicate" };
+        return { taskId: "task_duplicate", reportMarkdown: "duplicate", structuredOutput: {} };
       },
       async waitForAgentTask(taskId, _spec, waitOptions) {
         waitedFor.push(taskId);
         waitTimeoutMs = waitOptions?.timeoutMs;
         waitAbortSignal = waitOptions?.abortSignal;
         expect(waitAbortSignal?.aborted).toBe(false);
-        return { taskId, reportMarkdown: "summary" };
+        return { taskId, reportMarkdown: "summary", structuredOutput: {} };
       },
     });
 
@@ -926,7 +1147,7 @@ describe("WorkflowRunner", () => {
   test("adds one started task event when resuming legacy started steps", async () => {
     using tmp = new DisposableTempDir("workflow-runner-legacy-started-event");
     const store = await createRunStore(tmp.path);
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await store.recordStepStarted("wfr_123", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -938,7 +1159,7 @@ describe("WorkflowRunner", () => {
         throw new Error("agent should not respawn");
       },
       async waitForAgentTask(taskId) {
-        return { taskId, reportMarkdown: "summary" };
+        return { taskId, reportMarkdown: "summary", structuredOutput: {} };
       },
     });
 
@@ -954,7 +1175,7 @@ describe("WorkflowRunner", () => {
   test("reruns stale started task ids that no longer have recoverable reports", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await store.recordStepStarted("wfr_123", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -966,7 +1187,7 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         runAgentCalls += 1;
-        return { taskId: "task_recovered", reportMarkdown: "summary" };
+        return { taskId: "task_recovered", reportMarkdown: "summary", structuredOutput: {} };
       },
       async waitForAgentTask(taskId) {
         waitedFor.push(taskId);
@@ -1002,6 +1223,55 @@ describe("WorkflowRunner", () => {
     );
   });
 
+  test("recovers stale started legacy agent steps that omitted outputSchema", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-stale-started");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_stale_started",
+      workspaceId: "workspace-1",
+      definition,
+      definitionSource: `export default function workflow({ agent }) {
+  const summary = agent({ id: "summarize-topic", prompt: "Summarize durable workflows" });
+  return { reportMarkdown: "Final: " + summary.reportMarkdown };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await store.appendStatus("wfr_legacy_stale_started", "running", "2026-05-29T00:00:00.250Z");
+    const legacySpec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    await store.recordStepStarted("wfr_legacy_stale_started", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_missing",
+      startedAt: "2026-05-29T00:00:00.500Z",
+    });
+    const waitedFor: string[] = [];
+    let runAgentCalls = 0;
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        runAgentCalls += 1;
+        expect(spec.outputSchema).toEqual({});
+        return { taskId: "task_legacy_recovered", reportMarkdown: "summary", structuredOutput: {} };
+      },
+      async waitForAgentTask(taskId) {
+        waitedFor.push(taskId);
+        throw new Error("Task not found");
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_stale_started")).resolves.toEqual({
+      reportMarkdown: "Final: summary",
+    });
+
+    expect(waitedFor).toEqual(["task_legacy_missing"]);
+    expect(runAgentCalls).toBe(1);
+  });
+
   test("records failed task events when an agent task fails after creation", async () => {
     using tmp = new DisposableTempDir("workflow-runner-child-failure");
     const store = await createRunStore(tmp.path);
@@ -1026,7 +1296,7 @@ describe("WorkflowRunner", () => {
   test("restarts started task records when resuming a user-interrupted run", async () => {
     using tmp = new DisposableTempDir("workflow-runner");
     const store = await createRunStore(tmp.path);
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await store.recordStepStarted("wfr_123", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -1039,7 +1309,7 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         runAgentCalls += 1;
-        return { taskId: "task_restarted", reportMarkdown: "summary" };
+        return { taskId: "task_restarted", reportMarkdown: "summary", structuredOutput: {} };
       },
       async waitForAgentTask(taskId) {
         waitedFor.push(taskId);
@@ -1067,8 +1337,8 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
         const results = parallelAgents([
-          { id: "source-a", prompt: "Read source A" },
-          { id: "source-b", prompt: "Read source B" },
+          { id: "source-a", prompt: "Read source A", outputSchema: {} },
+          { id: "source-b", prompt: "Read source B", outputSchema: {} },
         ]);
         return { reportMarkdown: results.map((result) => result.reportMarkdown).join(" + ") };
       }`,
@@ -1086,7 +1356,7 @@ describe("WorkflowRunner", () => {
         await lifecycle?.onTaskCreated?.(`task_${spec.id}`);
         await new Promise((resolve) => setTimeout(resolve, 10));
         active -= 1;
-        return { taskId: `task_${spec.id}`, reportMarkdown: spec.id };
+        return { taskId: `task_${spec.id}`, reportMarkdown: spec.id, structuredOutput: {} };
       },
     });
 
@@ -1132,8 +1402,8 @@ describe("WorkflowRunner", () => {
       definitionSource: `export default function workflow({ parallelAgents }) {
         const results = parallelAgents(
           [
-            { id: "source-a", title: "Read source 1", prompt: "Read source A" },
-            { id: "source-b", title: "Read source 2", prompt: "Read source B" },
+            { id: "source-a", title: "Read source 1", prompt: "Read source A", outputSchema: {} },
+            { id: "source-b", title: "Read source 2", prompt: "Read source B", outputSchema: {} },
           ],
           { maxParallel: 2 }
         );
@@ -1158,6 +1428,7 @@ describe("WorkflowRunner", () => {
     });
     const waitForAgentTask = mock(async (taskId: string) => ({
       taskId,
+      structuredOutput: {},
       reportMarkdown: taskId.replace("task_", ""),
     }));
     const runner = createRunner(store, { runAgent, createAgentTasks, waitForAgentTask });
@@ -1204,8 +1475,8 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
         const results = parallelAgents([
-          { id: "source-a", prompt: "Read source A" },
-          { id: "source-b", prompt: "Read source B" },
+          { id: "source-a", prompt: "Read source A", outputSchema: {} },
+          { id: "source-b", prompt: "Read source B", outputSchema: {} },
         ]);
         return { reportMarkdown: results.map((result) => result.reportMarkdown).join(" + ") };
       }`,
@@ -1242,10 +1513,10 @@ describe("WorkflowRunner", () => {
         await lifecycle?.onTaskCreated?.(`task_${spec.id}`);
         if (spec.id === "source-a") {
           sourceAReturned();
-          return { taskId: "task_source-a", reportMarkdown: "source-a" };
+          return { taskId: "task_source-a", reportMarkdown: "source-a", structuredOutput: {} };
         }
         await sourceBBlocked;
-        return { taskId: "task_source-b", reportMarkdown: "source-b" };
+        return { taskId: "task_source-b", reportMarkdown: "source-b", structuredOutput: {} };
       },
     });
 
@@ -1295,9 +1566,9 @@ describe("WorkflowRunner", () => {
       definitionSource: `export default function workflow({ parallelAgents }) {
         const results = parallelAgents(
           [
-            { id: "verify-a", prompt: "Verify A" },
-            { id: "verify-b", prompt: "Verify B" },
-            { id: "verify-c", prompt: "Verify C" },
+            { id: "verify-a", prompt: "Verify A", outputSchema: {} },
+            { id: "verify-b", prompt: "Verify B", outputSchema: {} },
+            { id: "verify-c", prompt: "Verify C", outputSchema: {} },
           ],
           { maxParallel: 2 }
         );
@@ -1330,7 +1601,7 @@ describe("WorkflowRunner", () => {
         }
         await blocks.get(spec.id)?.promise;
         active -= 1;
-        return { taskId: `task_${spec.id}`, reportMarkdown: spec.id };
+        return { taskId: `task_${spec.id}`, reportMarkdown: spec.id, structuredOutput: {} };
       },
       async createAgentTasks() {
         throw new Error("maxParallel must not bulk-create the whole wave up front");
@@ -1372,7 +1643,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
-        parallelAgents([{ id: "verify-a", prompt: "Verify A" }], { maxParallel: 0 });
+        parallelAgents([{ id: "verify-a", prompt: "Verify A", outputSchema: {} }], { maxParallel: 0 });
         return { reportMarkdown: "unreachable" };
       }`,
       args: {},
@@ -1401,8 +1672,8 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
         parallelAgents([
-          { id: "source-a", prompt: "Read source A" },
-          { id: "source-b", prompt: "Read source B" },
+          { id: "source-a", prompt: "Read source A", outputSchema: {} },
+          { id: "source-b", prompt: "Read source B", outputSchema: {} },
         ]);
         return { reportMarkdown: "unreachable" };
       }`,
@@ -1449,9 +1720,9 @@ describe("WorkflowRunner", () => {
       definitionSource: `export default function workflow({ parallelAgents }) {
         parallelAgents(
           [
-            { id: "source-a", prompt: "Read source A" },
-            { id: "source-b", prompt: "Read source B" },
-            { id: "source-c", prompt: "Read source C" },
+            { id: "source-a", prompt: "Read source A", outputSchema: {} },
+            { id: "source-b", prompt: "Read source B", outputSchema: {} },
+            { id: "source-c", prompt: "Read source C", outputSchema: {} },
           ],
           { maxParallel: 2 }
         );
@@ -1468,7 +1739,7 @@ describe("WorkflowRunner", () => {
         calls.push(spec.id);
         if (spec.id === "source-a") {
           await releaseSourceA.promise;
-          return { taskId: "task_source-a", reportMarkdown: "source-a" };
+          return { taskId: "task_source-a", reportMarkdown: "source-a", structuredOutput: {} };
         }
         if (spec.id === "source-b") {
           throw new Error("source-b failed");
@@ -1499,8 +1770,8 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
         parallelAgents([
-          { id: "source-a", prompt: "Read source A" },
-          { id: "source-b", prompt: "Read source B" },
+          { id: "source-a", prompt: "Read source A", outputSchema: {} },
+          { id: "source-b", prompt: "Read source B", outputSchema: {} },
         ]);
         return { reportMarkdown: "unreachable" };
       }`,
@@ -1553,8 +1824,8 @@ describe("WorkflowRunner", () => {
       definition,
       definitionSource: `export default function workflow({ parallelAgents }) {
         parallelAgents([
-          { id: "source-a", prompt: "Read source A" },
-          { id: "source-b", prompt: "Read source B" },
+          { id: "source-a", prompt: "Read source A", outputSchema: {} },
+          { id: "source-b", prompt: "Read source B", outputSchema: {} },
         ]);
         return { reportMarkdown: "must not complete" };
       }`,
@@ -1791,7 +2062,7 @@ describe("WorkflowRunner", () => {
         }
         if (spec.id === "source-b" && entered.filter((id) => id === "source-b").length === 1) {
           await lifecycle?.onTaskCreated?.("task_source-b_bad");
-          return { taskId: "task_source-b_bad", reportMarkdown: "bad" };
+          return { taskId: "task_source-b_bad", reportMarkdown: "bad", structuredOutput: {} };
         }
         if (spec.id === "source-b") {
           await lifecycle?.onTaskCreated?.("task_source-b_retry");
@@ -1862,7 +2133,7 @@ describe("WorkflowRunner", () => {
       async runAgent(spec) {
         calls.push(spec.id);
         if (spec.id === "source-b" && calls.filter((id) => id === "source-b").length === 1) {
-          return { taskId: "task_source_b_bad", reportMarkdown: "bad" };
+          return { taskId: "task_source_b_bad", reportMarkdown: "bad", structuredOutput: {} };
         }
         return {
           taskId: `task_${spec.id}_${calls.length}`,
@@ -1925,7 +2196,7 @@ describe("WorkflowRunner", () => {
       async runAgent(spec) {
         prompts.push(spec.prompt);
         if (prompts.length === 1) {
-          return { taskId: "task_bad", reportMarkdown: "bad" };
+          return { taskId: "task_bad", reportMarkdown: "bad", structuredOutput: {} };
         }
         return {
           taskId: "task_good",
@@ -1993,7 +2264,7 @@ describe("WorkflowRunner", () => {
     const runner = createRunner(store, {
       async runAgent() {
         calls += 1;
-        return { taskId: `task_bad_${calls}`, reportMarkdown: "bad" };
+        return { taskId: `task_bad_${calls}`, reportMarkdown: "bad", structuredOutput: {} };
       },
     });
 
@@ -2252,7 +2523,7 @@ describe("WorkflowRunner", () => {
           await new Promise<void>((release) => {
             releaseAgent = release;
           });
-          return { taskId: "task_1", reportMarkdown: "late summary" };
+          return { taskId: "task_1", reportMarkdown: "late summary", structuredOutput: {} };
         },
       });
       runPromise = runner.run("wfr_123");

@@ -230,7 +230,6 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
     // Invoking `mux workflow` is an explicit opt-in, so the dynamic-workflows
     // experiment is enabled implicitly for this invocation (never persisted).
     dynamicWorkflows: true,
-    subagentFileReports: experimentIds.includes(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS),
     workspaceHeartbeats: experimentIds.includes(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS),
   };
 }

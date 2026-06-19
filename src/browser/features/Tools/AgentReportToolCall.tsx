@@ -20,14 +20,22 @@ import {
 } from "./Shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
+interface LegacyAgentReportFileArgs {
+  reportMarkdownPath?: string | null;
+  structuredOutputPath?: string | null;
+  title?: string | null;
+}
+
+type AgentReportRenderableArgs = AgentReportToolArgs | LegacyAgentReportFileArgs;
+
 interface AgentReportToolCallProps {
-  args: AgentReportToolArgs;
+  args: AgentReportRenderableArgs;
   result?: AgentReportToolResult;
   status?: ToolStatus;
 }
 
 function getSubmittedReportMarkdown(
-  args: AgentReportToolArgs,
+  args: AgentReportRenderableArgs,
   result: AgentReportToolResult | undefined
 ): string {
   if (result && "success" in result && result.success === true && result.report?.reportMarkdown) {
@@ -67,9 +75,7 @@ export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
-          <div className="text-[11px]">
-            <MarkdownRenderer content={reportMarkdown} />
-          </div>
+          <MarkdownRenderer content={reportMarkdown} className="text-[11px]" />
           {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
         </ToolDetails>
       )}

@@ -947,7 +947,7 @@ export default function workflow() { return { reportMarkdown: "should not run" }
   test("waits for foreground slash invocation persistence before terminal continuation", async () => {
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "backgroundable.js"),
-      "export const metadata = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {

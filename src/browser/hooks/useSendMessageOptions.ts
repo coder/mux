@@ -62,7 +62,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
   );
   const dynamicWorkflows = useExperimentOverrideValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
-  const subagentFileReports = useExperimentOverrideValue(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS);
   const memory = useExperimentOverrideValue(EXPERIMENT_IDS.MEMORY);
 
   // Prefer metadata over the global default until workspace localStorage seeding catches up.
@@ -86,7 +85,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
       advisorTool,
       execSubagentHardRestart,
       dynamicWorkflows,
-      subagentFileReports,
       memory,
     },
     disableWorkspaceAgents,

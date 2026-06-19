@@ -267,6 +267,7 @@ export const WorkflowRunRecordSchema = z.object({
   definitionSource: z.string().min(1),
   definitionHash: z.string().min(1),
   args: JsonValueSchema,
+  agentOutputSchemaRequired: z.boolean().optional(),
   defaultActionCwd: z.string().min(1).optional(),
   parentWorkflow: WorkflowRunParentSchema.optional(),
   status: WorkflowRunStatusSchema,

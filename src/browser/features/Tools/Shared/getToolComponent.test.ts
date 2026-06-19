@@ -35,6 +35,19 @@ describe("getToolComponent", () => {
     expect(component).toBe(AgentReportToolCall);
   });
 
+  test("returns AgentReportToolCall for legacy file-backed agent_report transcripts", () => {
+    const component = getToolComponent("agent_report", {
+      reportMarkdownPath: "report.md",
+      structuredOutputPath: "structured-output.json",
+      title: null,
+    });
+    expect(component).toBe(AgentReportToolCall);
+  });
+
+  test("returns AgentReportToolCall for empty legacy file-backed agent_report input", () => {
+    expect(getToolComponent("agent_report", {})).toBe(AgentReportToolCall);
+  });
+
   test("returns AgentSkillReadToolCall for agent_skill_read", () => {
     const component = getToolComponent("agent_skill_read", { name: "react-effects" });
     expect(component).toBe(AgentSkillReadToolCall);

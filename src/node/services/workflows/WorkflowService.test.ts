@@ -107,7 +107,7 @@ describe("WorkflowService", () => {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent() {
-          return { taskId: "task_1", reportMarkdown: "unused" };
+          return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -163,7 +163,7 @@ describe("WorkflowService", () => {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent() {
-          return { taskId: "task_1", reportMarkdown: "unused" };
+          return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -205,7 +205,7 @@ describe("WorkflowService", () => {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent() {
-          return { taskId: "task_1", reportMarkdown: "unused" };
+          return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -229,7 +229,7 @@ describe("WorkflowService", () => {
     const globalRoot = path.join(tmp.path, "mux-home", "workflows");
     const source = `export const metadata = { description: "Demo workflow" };
 export default function workflow({ args, agent }) {
-  const child = agent({ id: "summarize", prompt: "Summarize " + args.topic });
+  const child = agent({ id: "summarize", prompt: "Summarize " + args.topic, outputSchema: {} });
   return { reportMarkdown: "Final " + child.reportMarkdown };
 }
 `;
@@ -237,7 +237,7 @@ export default function workflow({ args, agent }) {
 
     const taskAdapter: WorkflowTaskAdapter = {
       async runAgent() {
-        return { taskId: "task_1", reportMarkdown: "child summary" };
+        return { taskId: "task_1", reportMarkdown: "child summary", structuredOutput: {} };
       },
     };
     const statusEvents: Array<{ workspaceId: string; runId: string; status: string }> = [];
@@ -1015,10 +1015,12 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "scheduled-scan",
-      "export const metadata = { description: \"Scheduled scan\" };\nexport default function workflow({ agent }) { return agent({ id: 'scope', prompt: 'scope security surface' }); }\n"
+      "export const metadata = { description: \"Scheduled scan\" };\nexport default function workflow({ agent }) { return agent({ id: 'scope', prompt: 'scope security surface', outputSchema: {} }); }\n"
     );
 
-    let releaseAgent: ((value: { taskId: string; reportMarkdown: string }) => void) | undefined;
+    let releaseAgent:
+      | ((value: { taskId: string; reportMarkdown: string; structuredOutput: unknown }) => void)
+      | undefined;
     const runCreatedGate = Promise.withResolvers<void>();
     const lifecycleEvents: string[] = [];
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
@@ -1029,7 +1031,11 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent() {
           lifecycleEvents.push("agent-started");
-          return await new Promise<{ taskId: string; reportMarkdown: string }>((resolve) => {
+          return await new Promise<{
+            taskId: string;
+            reportMarkdown: string;
+            structuredOutput: unknown;
+          }>((resolve) => {
             releaseAgent = resolve;
           });
         },
@@ -1071,11 +1077,11 @@ export default function workflow({ action }) {
     await waitForCondition("foreground agent to start", () => releaseAgent != null);
     expect(lifecycleEvents).toEqual(["run-created", "agent-started"]);
 
-    releaseAgent?.({ taskId: "task_scope", reportMarkdown: "scoped" });
+    releaseAgent?.({ taskId: "task_scope", reportMarkdown: "scoped", structuredOutput: {} });
     await expect(resultPromise).resolves.toEqual({
       runId: "wfr_scheduled_scan",
       status: "completed",
-      result: { reportMarkdown: "scoped", structuredOutput: undefined },
+      result: { reportMarkdown: "scoped", structuredOutput: {} },
     });
     await expect(runStore.getRun("wfr_scheduled_scan")).resolves.toMatchObject({
       status: "completed",
@@ -1153,7 +1159,7 @@ export default function workflow({ action }) {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent() {
-          return { taskId: "task_1", reportMarkdown: "unused" };
+          return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
         },
       },
       generateRunId: () => "wfr_demo",
@@ -1234,7 +1240,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "abortable",
-      "export const metadata = { description: \"Abortable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Abortable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let agentWaitStarted = false;
@@ -1295,10 +1301,12 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "workspace-owned",
-      "export const metadata = { description: \"Workspace-owned workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Workspace-owned workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
-    let releaseAgent: ((value: { taskId: string; reportMarkdown: string }) => void) | undefined;
+    let releaseAgent:
+      | ((value: { taskId: string; reportMarkdown: string; structuredOutput: unknown }) => void)
+      | undefined;
     let agentAbortObserved = false;
     const service = new WorkflowService({
       definitionStore: new WorkflowDefinitionStore({ projectRoot, globalRoot, builtIns: [] }),
@@ -1306,19 +1314,21 @@ export default function workflow({ action }) {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent(_spec, _lifecycle, waitOptions) {
-          return await new Promise<{ taskId: string; reportMarkdown: string }>(
-            (resolve, reject) => {
-              releaseAgent = resolve;
-              waitOptions?.abortSignal?.addEventListener(
-                "abort",
-                () => {
-                  agentAbortObserved = true;
-                  reject(new Error("Task interrupted"));
-                },
-                { once: true }
-              );
-            }
-          );
+          return await new Promise<{
+            taskId: string;
+            reportMarkdown: string;
+            structuredOutput: unknown;
+          }>((resolve, reject) => {
+            releaseAgent = resolve;
+            waitOptions?.abortSignal?.addEventListener(
+              "abort",
+              () => {
+                agentAbortObserved = true;
+                reject(new Error("Task interrupted"));
+              },
+              { once: true }
+            );
+          });
         },
       },
       generateRunId: () => "wfr_workspace_owned",
@@ -1337,7 +1347,7 @@ export default function workflow({ action }) {
     ).rejects.toThrow("Workflow run not found: wfr_workspace_owned");
 
     expect(agentAbortObserved).toBe(false);
-    releaseAgent?.({ taskId: "task_slow", reportMarkdown: "done" });
+    releaseAgent?.({ taskId: "task_slow", reportMarkdown: "done", structuredOutput: {} });
     await expect(runPromise).resolves.toMatchObject({
       runId: "wfr_workspace_owned",
       status: "completed",
@@ -1351,7 +1361,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "interrupt-active",
-      "export const metadata = { description: \"Interrupt active\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Interrupt active\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let agentWaitStarted = false;
@@ -1432,7 +1442,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "child-interruptible",
-      "export const metadata = { description: \"Child interruptible\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-child', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Child interruptible\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-child', prompt: 'slow', outputSchema: {} }); }\n"
     );
     await writeWorkflow(
       globalRoot,
@@ -1608,7 +1618,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "child-direct-interruptible",
-      "export const metadata = { description: \"Child direct interruptible\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-child', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Child direct interruptible\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-child', prompt: 'slow', outputSchema: {} }); }\n"
     );
     await writeWorkflow(
       globalRoot,
@@ -1710,7 +1720,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "child-backgroundable",
-      "export const metadata = { description: \"Child backgroundable\" };\nexport default function workflow({ agent }) { const result = agent({ id: 'slow-child', prompt: 'slow' }); return { reportMarkdown: 'Child ' + result.reportMarkdown }; }\n"
+      "export const metadata = { description: \"Child backgroundable\" };\nexport default function workflow({ agent }) { const result = agent({ id: 'slow-child', prompt: 'slow', outputSchema: {} }); return { reportMarkdown: 'Child ' + result.reportMarkdown }; }\n"
     );
     await writeWorkflow(
       globalRoot,
@@ -1742,7 +1752,7 @@ export default function workflow({ action }) {
           if (calls === 1) {
             throw new ForegroundWaitBackgroundedError();
           }
-          return { taskId: "task_slow_child", reportMarkdown: "done" };
+          return { taskId: "task_slow_child", reportMarkdown: "done", structuredOutput: {} };
         },
       },
       generateRunId: () => "wfr_nested_background_parent",
@@ -1788,7 +1798,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "backgroundable",
-      "export const metadata = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let calls = 0;
@@ -1808,7 +1818,7 @@ export default function workflow({ action }) {
           if (calls === 1) {
             throw new ForegroundWaitBackgroundedError();
           }
-          return { taskId: "task_slow", reportMarkdown: "done" };
+          return { taskId: "task_slow", reportMarkdown: "done", structuredOutput: {} };
         },
       },
       generateRunId: () => "wfr_backgrounded",
@@ -1842,7 +1852,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "foreground-only",
-      "export const metadata = { description: \"Foreground-only workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Foreground-only workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const backgroundFlags: Array<boolean | undefined> = [];
     const service = new WorkflowService({
@@ -1852,7 +1862,7 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(_spec, _lifecycle, waitOptions) {
           backgroundFlags.push(waitOptions?.backgroundOnMessageQueued);
-          return { taskId: "task_slow", reportMarkdown: "done" };
+          return { taskId: "task_slow", reportMarkdown: "done", structuredOutput: {} };
         },
       },
       generateRunId: () => "wfr_foreground_only",
@@ -1879,8 +1889,8 @@ export default function workflow({ action }) {
     using tmp = new DisposableTempDir("workflow-service");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     const source = `export default function workflow({ agent }) {
-  const first = agent({ id: "first", prompt: "first" });
-  const second = agent({ id: "second", prompt: "second" });
+  const first = agent({ id: "first", prompt: "first", outputSchema: {} });
+  const second = agent({ id: "second", prompt: "second", outputSchema: {} });
   return { reportMarkdown: first.reportMarkdown + " + " + second.reportMarkdown };
 }
 `;
@@ -1894,7 +1904,7 @@ export default function workflow({ action }) {
     });
     await runStore.recordStepCompleted("wfr_resume", {
       stepId: "first",
-      inputHash: hashWorkflowStepInput("first", { id: "first", prompt: "first" }),
+      inputHash: hashWorkflowStepInput("first", { id: "first", prompt: "first", outputSchema: {} }),
       taskId: "task_first",
       result: { reportMarkdown: "first done" },
       startedAt: "2026-05-29T00:00:01.000Z",
@@ -1919,7 +1929,11 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec.id);
-          return { taskId: `task_${spec.id}`, reportMarkdown: `${spec.id} done` };
+          return {
+            taskId: `task_${spec.id}`,
+            reportMarkdown: `${spec.id} done`,
+            structuredOutput: {},
+          };
         },
       },
       runnerId: "runner-a",
@@ -1951,7 +1965,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'orphaned-step', prompt: 'resume' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'orphaned-step', prompt: 'resume', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -1969,7 +1983,7 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec.id);
-          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed" };
+          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -1984,7 +1998,7 @@ export default function workflow({ action }) {
     ).resolves.toEqual({
       runId: "wfr_resume_running_orphan",
       status: "completed",
-      result: { reportMarkdown: "resumed" },
+      result: { reportMarkdown: "resumed", structuredOutput: {} },
     });
     expect(taskCalls).toEqual(["orphaned-step"]);
   });
@@ -1997,7 +2011,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'backgrounded-step', prompt: 'resume' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'backgrounded-step', prompt: 'resume', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2019,7 +2033,7 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec.id);
-          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed" };
+          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -2048,7 +2062,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2075,7 +2089,7 @@ export default function workflow({ action }) {
           if (calls === 1) {
             throw new ForegroundWaitBackgroundedError();
           }
-          return { taskId: "task_slow", reportMarkdown: "done" };
+          return { taskId: "task_slow", reportMarkdown: "done", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -2105,7 +2119,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2153,7 +2167,7 @@ export default function workflow({ action }) {
           if (agentCalls === 1) {
             throw new ForegroundWaitBackgroundedError();
           }
-          return { taskId: "task_slow", reportMarkdown: "done" };
+          return { taskId: "task_slow", reportMarkdown: "done", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -2193,7 +2207,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'step', prompt: 'p' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'step', prompt: 'p', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2300,7 +2314,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2364,11 +2378,11 @@ export default function workflow({ action }) {
         executable: true,
       },
       definitionSource:
-        "export default function workflow({ agent }) { const child = agent({ id: 'summarize-topic', prompt: 'Summarize durable workflows' }); return { reportMarkdown: 'Final: ' + child.reportMarkdown }; }\n",
+        "export default function workflow({ agent }) { const child = agent({ id: 'summarize-topic', prompt: 'Summarize durable workflows', outputSchema: {} }); return { reportMarkdown: 'Final: ' + child.reportMarkdown }; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await runStore.recordStepStarted("wfr_retry_checkpoint_fg", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -2398,7 +2412,7 @@ export default function workflow({ action }) {
         },
         async waitForAgentTask(taskId) {
           waitedFor.push(taskId);
-          return { taskId, reportMarkdown: "summary" };
+          return { taskId, reportMarkdown: "summary", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -2489,11 +2503,11 @@ export default function workflow({ action }) {
         executable: true,
       },
       definitionSource:
-        "export default function workflow({ agent }) { const child = agent({ id: 'summarize-topic', prompt: 'Summarize durable workflows' }); return { reportMarkdown: 'Final: ' + child.reportMarkdown }; }\n",
+        "export default function workflow({ agent }) { const child = agent({ id: 'summarize-topic', prompt: 'Summarize durable workflows', outputSchema: {} }); return { reportMarkdown: 'Final: ' + child.reportMarkdown }; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
-    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows" };
+    const spec = { id: "summarize-topic", prompt: "Summarize durable workflows", outputSchema: {} };
     await runStore.recordStepStarted("wfr_retry_checkpoint", {
       stepId: spec.id,
       inputHash: hashWorkflowStepInput(spec.id, spec),
@@ -2528,7 +2542,7 @@ export default function workflow({ action }) {
         async waitForAgentTask(taskId) {
           waitedFor.push(taskId);
           await existingTaskReleased;
-          return { taskId, reportMarkdown: "summary" };
+          return { taskId, reportMarkdown: "summary", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -2565,16 +2579,16 @@ export default function workflow({ action }) {
         executable: true,
       },
       definitionSource:
-        "export default function workflow({ agent, applyPatch }) { const child = agent({ id: 'implement', prompt: 'Implement change' }); const patch = applyPatch({ id: 'apply-implement', source: child, target: 'parent' }); return { reportMarkdown: 'Patch ' + patch.status }; }\n",
+        "export default function workflow({ agent, applyPatch }) { const child = agent({ id: 'implement', prompt: 'Implement change', outputSchema: {} }); const patch = applyPatch({ id: 'apply-implement', source: child, target: 'parent' }); return { reportMarkdown: 'Patch ' + patch.status }; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
-    const agentSpec = { id: "implement", prompt: "Implement change" };
+    const agentSpec = { id: "implement", prompt: "Implement change", outputSchema: {} };
     await runStore.recordStepCompleted("wfr_retry_completed_patch", {
       stepId: agentSpec.id,
       inputHash: hashWorkflowStepInput(agentSpec.id, agentSpec),
       taskId: "task_impl",
-      result: { taskId: "task_impl", reportMarkdown: "implemented" },
+      result: { taskId: "task_impl", reportMarkdown: "implemented", structuredOutput: {} },
       startedAt: "2026-05-29T00:00:00.100Z",
       completedAt: "2026-05-29T00:00:00.200Z",
     });
@@ -2736,7 +2750,7 @@ export default function workflow({ action }) {
         runtimeFactory: new QuickJSRuntimeFactory(),
         taskAdapter: {
           async runAgent() {
-            return { taskId: "task_1", reportMarkdown: "unused" };
+            return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
           },
         },
         runnerId: "runner-a",
@@ -2779,7 +2793,7 @@ export default function workflow({ action }) {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent() {
-          return { taskId: "task_1", reportMarkdown: "unused" };
+          return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -2868,10 +2882,12 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "background-research",
-      "export const metadata = { description: \"Background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
-    let releaseAgent: ((value: { taskId: string; reportMarkdown: string }) => void) | undefined;
+    let releaseAgent:
+      | ((value: { taskId: string; reportMarkdown: string; structuredOutput: unknown }) => void)
+      | undefined;
     const terminalEvents: Array<{ runId: string; status: string; result: unknown }> = [];
     const lifecycleEvents: string[] = [];
     const service = new WorkflowService({
@@ -2881,7 +2897,11 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent() {
           lifecycleEvents.push("agent-started");
-          return await new Promise<{ taskId: string; reportMarkdown: string }>((resolve) => {
+          return await new Promise<{
+            taskId: string;
+            reportMarkdown: string;
+            structuredOutput: unknown;
+          }>((resolve) => {
             releaseAgent = resolve;
           });
         },
@@ -2918,7 +2938,7 @@ export default function workflow({ action }) {
     expect(lifecycleEvents).toEqual(["run-created"]);
     await waitForCondition("background agent to start", () => releaseAgent != null);
     expect(lifecycleEvents).toEqual(["run-created", "agent-started"]);
-    releaseAgent?.({ taskId: "task_slow", reportMarkdown: "done" });
+    releaseAgent?.({ taskId: "task_slow", reportMarkdown: "done", structuredOutput: {} });
     await waitForWorkflowStatus(runStore, "wfr_background", "completed");
     await waitForCondition("background terminal callback", () => terminalEvents.length === 1);
     await expect(runStore.getRun("wfr_background")).resolves.toMatchObject({ status: "completed" });
@@ -2926,7 +2946,7 @@ export default function workflow({ action }) {
       {
         runId: "wfr_background",
         status: "completed",
-        result: { reportMarkdown: "done", structuredOutput: undefined },
+        result: { reportMarkdown: "done", structuredOutput: {} },
       },
     ]);
   });
@@ -2938,7 +2958,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "interruptable-background",
-      "export const metadata = { description: \"Interruptable background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Interruptable background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let agentStarted = false;
@@ -3002,7 +3022,7 @@ export default function workflow({ action }) {
     await writeWorkflow(
       globalRoot,
       "logged-interrupt-background",
-      "export const metadata = { description: \"Logged interrupt background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow' }); }\n"
+      "export const metadata = { description: \"Logged interrupt background workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
     );
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
     let agentStarted = false;
@@ -3078,7 +3098,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'after-crash', prompt: 'resume' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'after-crash', prompt: 'resume', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3088,7 +3108,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'should-not-run', prompt: 'blocked' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'should-not-run', prompt: 'blocked', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3105,7 +3125,7 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec.id);
-          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed" };
+          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -3131,7 +3151,7 @@ export default function workflow({ action }) {
       workspaceId: "workspace-1",
       definition: { name: "demo", description: "Demo", scope: "built-in", executable: true },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'after-lease', prompt: 'resume' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'after-lease', prompt: 'resume', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3149,7 +3169,7 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec.id);
-          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed" };
+          return { taskId: `task_${spec.id}`, reportMarkdown: "resumed", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -3179,7 +3199,7 @@ export default function workflow({ action }) {
         executable: true,
       },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'after-trust-revoked', prompt: 'blocked' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'after-trust-revoked', prompt: 'blocked', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3205,7 +3225,11 @@ export default function workflow({ action }) {
       taskAdapter: {
         async runAgent(spec) {
           taskCalls.push(spec.id);
-          return { taskId: `task_${spec.id}`, reportMarkdown: "should not run" };
+          return {
+            taskId: `task_${spec.id}`,
+            reportMarkdown: "should not run",
+            structuredOutput: {},
+          };
         },
       },
       getCurrentProjectTrusted: () => {
@@ -3303,7 +3327,7 @@ export default function workflow() {
         executable: true,
       },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'trusted-step', prompt: 'run' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'trusted-step', prompt: 'run', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3320,7 +3344,7 @@ export default function workflow() {
       taskAdapter: {
         async runAgent() {
           taskCalls += 1;
-          return { taskId: "task_trusted", reportMarkdown: "should not run" };
+          return { taskId: "task_trusted", reportMarkdown: "should not run", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -3356,7 +3380,7 @@ export default function workflow() {
         executable: true,
       },
       definitionSource:
-        "export default function workflow({ agent }) { return agent({ id: 'scratch-step', prompt: 'run' }); }\n",
+        "export default function workflow({ agent }) { return agent({ id: 'scratch-step', prompt: 'run', outputSchema: {} }); }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -3373,7 +3397,7 @@ export default function workflow() {
       taskAdapter: {
         async runAgent() {
           taskCalls += 1;
-          return { taskId: "task_scratch", reportMarkdown: "should not run" };
+          return { taskId: "task_scratch", reportMarkdown: "should not run", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",
@@ -3415,7 +3439,7 @@ export default function workflow() {
       runtimeFactory: new QuickJSRuntimeFactory(),
       taskAdapter: {
         async runAgent() {
-          return { taskId: "task_1", reportMarkdown: "unused" };
+          return { taskId: "task_1", reportMarkdown: "unused", structuredOutput: {} };
         },
       },
       runnerId: "runner-a",

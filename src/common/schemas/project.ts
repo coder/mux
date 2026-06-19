@@ -172,7 +172,6 @@ export const WorkspaceConfigSchema = z.object({
       programmaticToolCallingExclusive: z.boolean().optional(),
       advisorTool: z.boolean().optional(),
       dynamicWorkflows: z.boolean().optional(),
-      subagentFileReports: z.boolean().optional(),
       execSubagentHardRestart: z.boolean().optional(),
     })
     .optional()

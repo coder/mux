@@ -9,7 +9,6 @@ export interface ExperimentValues {
   advisorTool: boolean | undefined;
   execSubagentHardRestart: boolean | undefined;
   dynamicWorkflows: boolean | undefined;
-  subagentFileReports: boolean | undefined;
   memory: boolean | undefined;
 }
 

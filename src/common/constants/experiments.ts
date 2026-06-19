@@ -17,7 +17,6 @@ export const EXPERIMENT_IDS = {
   WORKSPACE_HEARTBEATS: "workspace-heartbeats",
   PORTABLE_DESKTOP: "portable-desktop",
   DYNAMIC_WORKFLOWS: "dynamic-workflows",
-  SUBAGENT_FILE_REPORTS: "subagent-file-reports",
   MEMORY: "memory",
   MEMORY_HOT_SET: "memory-hot-set",
   MEMORY_CONSOLIDATION: "memory-consolidation",
@@ -140,15 +139,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
     name: "Dynamic Workflows",
     description: "Enable durable JavaScript workflow orchestration for delegated agent tasks",
-    enabledByDefault: false,
-    userOverridable: true,
-    showInSettings: true,
-  },
-  [EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS]: {
-    id: EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS,
-    name: "Subagent File Reports",
-    description:
-      "Submit subagent task reports through workspace files (`report.md` and `structured-output.json`)",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

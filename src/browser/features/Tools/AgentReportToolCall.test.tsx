@@ -45,29 +45,30 @@ describe("AgentReportToolCall", () => {
     expect(view.getByText(/World/)).toBeTruthy();
   });
 
-  test("renders file-backed report payload from tool output", () => {
+  test("renders legacy file-backed report payload from successful tool output", () => {
     const view = render(
       <TooltipProvider>
         <AgentReportToolCall
           args={{
             reportMarkdownPath: "report.md",
             structuredOutputPath: "structured-output.json",
+            title: null,
           }}
           result={{
             success: true,
             message: "Report submitted successfully.",
-            report: { reportMarkdown: "# File Report\n\nFrom disk" },
+            report: { reportMarkdown: "# Legacy Report\n\nFrom disk" },
           }}
           status="completed"
         />
       </TooltipProvider>
     );
 
-    expect(view.getByText(/File Report/)).toBeTruthy();
+    expect(view.getByText(/Legacy Report/)).toBeTruthy();
     expect(view.getByText(/From disk/)).toBeTruthy();
   });
 
-  test("renders default file-backed report placeholder before tool output", () => {
+  test("renders default legacy file-backed report placeholder for empty input", () => {
     const view = render(
       <TooltipProvider>
         <AgentReportToolCall args={{}} status="executing" />

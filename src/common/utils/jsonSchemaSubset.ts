@@ -7,6 +7,15 @@ export type JsonSchemaSubsetValidationResult =
   | { success: true }
   | { success: false; errors: JsonSchemaValidationError[] };
 
+export function formatJsonSchemaValidationErrors(
+  errors: readonly JsonSchemaValidationError[],
+  options?: { maxErrors?: number }
+): string {
+  const visibleErrors =
+    options?.maxErrors === undefined ? errors : errors.slice(0, options.maxErrors);
+  return visibleErrors.map((error) => `${error.path}: ${error.message}`).join("; ");
+}
+
 const SUPPORTED_SCHEMA_KEYWORDS = new Set([
   "type",
   "properties",

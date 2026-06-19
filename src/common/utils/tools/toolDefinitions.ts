@@ -1099,32 +1099,23 @@ export const WorkflowResumeToolResultSchema = z
 export const AgentReportInlineToolArgsSchema = z
   .object({
     reportMarkdown: z.string().min(1),
-    structuredOutput: z.unknown().nullish(),
     title: z.string().nullish(),
   })
   .strict();
 
-export const AgentReportFileToolArgsSchema = z
+export const AgentReportWorkflowInlineToolArgsSchema = z
   .object({
-    reportMarkdownPath: z
-      .string()
-      .min(1)
-      .nullish()
-      .describe("Path to the markdown report file, usually report.md in the workspace root"),
-    structuredOutputPath: z
-      .string()
-      .min(1)
-      .nullish()
-      .describe(
-        "Path to a JSON file containing the structured output, usually structured-output.json"
-      ),
+    reportMarkdown: z.string().min(1),
+    structuredOutput: z
+      .unknown()
+      .refine((value) => value !== undefined, "structuredOutput is required"),
     title: z.string().nullish(),
   })
   .strict();
 
 export const AgentReportToolArgsSchema = z.union([
   AgentReportInlineToolArgsSchema,
-  AgentReportFileToolArgsSchema,
+  AgentReportWorkflowInlineToolArgsSchema,
 ]);
 
 export const AgentReportSubmittedReportSchema = z

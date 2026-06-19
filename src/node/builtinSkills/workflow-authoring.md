@@ -171,12 +171,12 @@ Required fields:
 
 - `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
 - `prompt`: child task prompt.
+- `outputSchema`: JSON Schema subset used to validate the required `structuredOutput` submitted through `agent_report`.
 
 Optional fields:
 
 - `title`: UI title; used as the spawned child workspace title and the run-card task row label, falling back to `id` when omitted. Prefer human numbering (e.g. 1-based "Verify claim 1") over raw 0-based step ids.
 - `agentId`: sub-agent type/id; defaults to the workflow adapter default (usually `explore`).
-- `outputSchema`: JSON Schema subset used to validate `structuredOutput`.
 - `onRefusal`: `"fail" | "fallback"` (default `"fallback"`). With `"fail"`, the step opts out of user-configured model-fallback chains so a model refusal fails the step honestly instead of silently retrying on a different model — recommended for verifier steps whose verdicts must come from the intended model.
 
 Returns:
@@ -190,6 +190,8 @@ Returns:
 }
 ```
 
+Workflow agent steps fail before child task creation when `outputSchema` is missing or uses unsupported schema keywords. If you only need prose, use a schema such as `s.object({ summary: s.string() })` and have the child put the prose under a structured field.
+
 `taskId` is a host-issued patch artifact handle for workflow-owned child tasks. Pass the whole agent result as `applyPatch({ source: result })` instead of inventing task IDs.
 
 Agent steps can fail terminally instead of returning a report. In particular, a model can refuse to answer (`model_refusal`): the child task is interrupted immediately and `agent(...)` throws with a descriptive message (e.g. `The model refused to continue (finishReason: content-filter): ...`) rather than retrying the same refusing request in a loop. Wrap agent steps in `try/catch` when the workflow should continue past a failed step — for example by recording an "abstain" outcome for verifier quorums (a refusal is not a verdict):
@@ -197,7 +199,7 @@ Agent steps can fail terminally instead of returning a report. In particular, a 
 ```js
 let verdict;
 try {
-  const result = agent({ id: "verify", prompt, agentId: "explore" });
+  const result = agent({ id: "verify", prompt, agentId: "explore", outputSchema: verdictSchema });
   verdict = result.structuredOutput;
 } catch (error) {
   if (String(error).includes("refused to continue")) {
@@ -417,6 +419,7 @@ const implementation = agent({
   id: "implement-auth-fix",
   agentId: "exec",
   prompt: execBrief,
+  outputSchema: {},
 });
 
 let applied = applyPatch({
@@ -431,6 +434,7 @@ if (applied.status === "conflict") {
     id: "resolve-auth-fix-conflict",
     agentId: "exec",
     prompt: buildResolverBrief(applied),
+    outputSchema: {},
   });
   applied = applyPatch({ id: "apply-resolved-auth-fix", source: resolver });
 }
@@ -546,6 +550,7 @@ export default function workflow({ args, phase, log, agent, parallelAgents }) {
     id: "synthesize",
     title: "Synthesize result",
     prompt: "Synthesize these structured review outputs: " + JSON.stringify(reviews),
+    outputSchema: {},
   });
 
   return { reportMarkdown: final.reportMarkdown };

@@ -78,6 +78,19 @@ const legacyStatusSetSchema = z.object({
   url: z.string().url().optional().nullable(),
 });
 
+const legacyAgentReportFileArgsSchema = z
+  .object({
+    reportMarkdownPath: z.string().min(1).nullish(),
+    structuredOutputPath: z.string().min(1).nullish(),
+    title: z.string().nullish(),
+  })
+  .strict();
+
+const agentReportRenderSchema = z.union([
+  TOOL_DEFINITIONS.agent_report.schema,
+  legacyAgentReportFileArgsSchema,
+]);
+
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
@@ -193,7 +206,7 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   },
   agent_report: {
     component: AgentReportToolCall,
-    schema: TOOL_DEFINITIONS.agent_report.schema,
+    schema: agentReportRenderSchema,
   },
   set_goal: { component: SetGoalToolCall, schema: TOOL_DEFINITIONS.set_goal.schema },
   get_goal: { component: GetGoalToolCall, schema: TOOL_DEFINITIONS.get_goal.schema },

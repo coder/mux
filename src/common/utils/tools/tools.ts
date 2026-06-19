@@ -248,8 +248,6 @@ export interface ToolConfiguration {
   };
   /** Optional JSON Schema subset required by a workflow-spawned task report. */
   workflowAgentOutputSchema?: unknown;
-  /** When true, subagent reports are submitted by paths to report.md/structured-output.json. */
-  subagentReportFiles?: boolean;
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
   /** Experiments inherited from parent (for subagent spawning) */
@@ -259,7 +257,6 @@ export interface ToolConfiguration {
     advisorTool?: boolean;
     execSubagentHardRestart?: boolean;
     dynamicWorkflows?: boolean;
-    subagentFileReports?: boolean;
     memory?: boolean;
     workspaceHeartbeats?: boolean;
   };

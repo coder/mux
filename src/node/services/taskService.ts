@@ -87,6 +87,7 @@ import {
 import {
   AgentReportInlineToolArgsSchema,
   AgentReportSubmittedReportSchema,
+  AgentReportWorkflowInlineToolArgsSchema,
   TaskToolResultSchema,
   TaskToolArgsSchema,
   type TaskIsolation,
@@ -116,6 +117,10 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
+import {
+  formatJsonSchemaValidationErrors,
+  validateJsonSchemaSubset,
+} from "@/common/utils/jsonSchemaSubset";
 
 export type TaskKind = "agent";
 
@@ -193,42 +198,7 @@ export interface TaskCreateArgs {
     advisorTool?: boolean;
     execSubagentHardRestart?: boolean;
     dynamicWorkflows?: boolean;
-    subagentFileReports?: boolean;
   };
-}
-
-function appendSubagentFileReportInstructions(
-  prompt: string,
-  workflowTask: TaskCreateArgs["workflowTask"]
-): string {
-  assert(prompt.trim().length > 0, "appendSubagentFileReportInstructions requires prompt");
-  const outputSchema = workflowTask?.outputSchema;
-  let schemaInstruction = "";
-  if (outputSchema !== undefined) {
-    const schemaJson = JSON.stringify(outputSchema, null, 2);
-    assert(
-      schemaJson !== undefined,
-      "appendSubagentFileReportInstructions requires JSON output schema"
-    );
-    schemaInstruction = [
-      "Write the required structured output as valid JSON to `structured-output.json`.",
-      // File-backed report mode only exposes file paths in the tool schema, so the prompt must carry
-      // the workflow output contract that inline `agent_report` arguments would otherwise describe.
-      "The structured output must match this JSON Schema:",
-      "```json",
-      schemaJson,
-      "```",
-    ].join("\n");
-  }
-
-  return [
-    prompt,
-    "Subagent file-backed report mode is enabled for this task. Before reporting, create or update `report.md` in the workspace root with your final markdown report.",
-    schemaInstruction,
-    "When complete, call agent_report with `reportMarkdownPath: null`, `structuredOutputPath: null`, and `title: null` so Mux uses the default report files.",
-  ]
-    .filter((instruction) => instruction.length > 0)
-    .join("\n\n");
 }
 
 function stringifyStructuredOutputForSubagentReport(structuredOutput: unknown): string {
@@ -322,20 +292,64 @@ const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
 
 function getTaskCompletionInstruction(params: {
   completionToolName: "agent_report" | "propose_plan";
-  subagentFileReports: boolean;
 }): string {
   if (params.completionToolName === "propose_plan") {
     return "Call propose_plan exactly once now. Base it only on the planning work already completed in this workspace.";
   }
 
-  if (params.subagentFileReports) {
-    return (
-      "Create or update report.md with your final report, then call agent_report exactly once now with reportMarkdownPath, structuredOutputPath, and title all set to null. " +
-      "Base it only on the work already completed in this workspace."
-    );
+  return "Call agent_report exactly once now with your final report. Base it only on the work already completed in this workspace.";
+}
+
+type AgentReportFinalizationResult =
+  | { finalized: true }
+  | {
+      finalized: false;
+      reason: "invalid_structured_output" | "terminal_interrupted";
+      message: string;
+    };
+
+function formatStructuredOutputValidationMessage(params: {
+  workflowTask: NonNullable<WorkspaceConfigEntry["workflowTask"]>;
+  errors: Array<{ path: string; message: string }>;
+}): string {
+  const stepLabel = params.workflowTask.stepId
+    ? ` for workflow step ${params.workflowTask.stepId}`
+    : "";
+  const errorSummary = formatJsonSchemaValidationErrors(params.errors, { maxErrors: 5 });
+  return `agent_report structuredOutput failed schema validation${stepLabel}: ${errorSummary}`;
+}
+
+function validateWorkflowAgentReportStructuredOutput(params: {
+  workflowTask?: WorkspaceConfigEntry["workflowTask"];
+  reportArgs: { structuredOutput?: unknown };
+}): string | null {
+  const workflowTask = params.workflowTask;
+  if (workflowTask?.outputSchema === undefined) {
+    return null;
   }
 
-  return "Call agent_report exactly once now with your final report. Base it only on the work already completed in this workspace.";
+  if (
+    !Object.hasOwn(params.reportArgs, "structuredOutput") ||
+    params.reportArgs.structuredOutput === undefined
+  ) {
+    return formatStructuredOutputValidationMessage({
+      workflowTask,
+      errors: [{ path: "$.structuredOutput", message: "Required property is missing" }],
+    });
+  }
+
+  const validation = validateJsonSchemaSubset(
+    workflowTask.outputSchema,
+    params.reportArgs.structuredOutput
+  );
+  if (validation.success) {
+    return null;
+  }
+
+  return formatStructuredOutputValidationMessage({
+    workflowTask,
+    errors: validation.errors,
+  });
 }
 
 export interface TaskCreateResult {
@@ -1704,9 +1718,7 @@ export class TaskService {
       const resumeStartedAt = Date.now();
       const restartCompletionInstruction = isPlanLike
         ? "When you have a final plan, call propose_plan exactly once."
-        : task.taskExperiments?.subagentFileReports === true
-          ? "When you have a final answer, create or update report.md, then call agent_report with reportMarkdownPath, structuredOutputPath, and title all set to null."
-          : "When you have a final answer, call agent_report exactly once.";
+        : "When you have a final answer, call agent_report exactly once.";
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
         "Mux restarted while this task was running. Continue where you left off. " +
@@ -1884,12 +1896,8 @@ export class TaskService {
       if (!parentWorkspaceId) return Err("Task.createMany: parentWorkspaceId is required");
       if (args.kind !== "agent") return Err("Task.createMany: unsupported kind");
 
-      const basePrompt = coerceNonEmptyString(args.prompt);
-      if (!basePrompt) return Err("Task.createMany: prompt is required");
-      const prompt =
-        args.experiments?.subagentFileReports === true
-          ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
-          : basePrompt;
+      const prompt = coerceNonEmptyString(args.prompt);
+      if (!prompt) return Err("Task.createMany: prompt is required");
 
       const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
       if (!normalizedAgentId) return Err("Task.createMany: agentId is required");
@@ -2596,14 +2604,10 @@ export class TaskService {
       return Err("Task.create: unsupported kind");
     }
 
-    const basePrompt = coerceNonEmptyString(args.prompt);
-    if (!basePrompt) {
+    const prompt = coerceNonEmptyString(args.prompt);
+    if (!prompt) {
       return Err("Task.create: prompt is required");
     }
-    const prompt =
-      args.experiments?.subagentFileReports === true
-        ? appendSubagentFileReportInstructions(basePrompt, args.workflowTask)
-        : basePrompt;
 
     const normalizedAgentId = normalizeAgentId(args.agentId ?? args.agentType, "");
     if (!normalizedAgentId) {
@@ -4852,15 +4856,11 @@ export class TaskService {
     options?: {
       reason?: "startup" | "stream_end" | "error";
       error?: Pick<ErrorEvent, "error" | "errorType">;
-      subagentFileReports?: boolean;
     }
   ): string {
     const completionToolLabel =
       completionToolName === "propose_plan" ? "propose_plan" : "agent_report";
-    const completionInstruction = getTaskCompletionInstruction({
-      completionToolName,
-      subagentFileReports: options?.subagentFileReports === true,
-    });
+    const completionInstruction = getTaskCompletionInstruction({ completionToolName });
     const noExtraWorkInstruction =
       completionToolName === "propose_plan"
         ? "Do not continue planning or call other tools."
@@ -4962,10 +4962,7 @@ export class TaskService {
     const startedAt = Date.now();
     const sendResult = await this.workspaceService.sendMessage(
       workspaceId,
-      this.buildCompletionToolRecoveryMessage(completionToolName, {
-        ...options,
-        subagentFileReports: entry.workspace.taskExperiments?.subagentFileReports === true,
-      }),
+      this.buildCompletionToolRecoveryMessage(completionToolName, options),
       {
         model,
         agentId,
@@ -5311,8 +5308,10 @@ export class TaskService {
     }
 
     if (reportArgs) {
-      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
-      await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+      const finalization = await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      if (finalization.finalized) {
+        await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+      }
       return;
     }
 
@@ -5329,11 +5328,23 @@ export class TaskService {
     // Only infer an implicit report from a clean natural stop. Length-truncated or other
     // provider finish reasons still go through explicit completion-tool recovery so partial
     // assistant text cannot prematurely finalize the task.
-    if (!isPlanLike && status !== "awaiting_report" && event.metadata.finishReason === "stop") {
+    const requiresStructuredOutput = entry.workspace.workflowTask?.outputSchema !== undefined;
+    if (
+      !requiresStructuredOutput &&
+      !isPlanLike &&
+      status !== "awaiting_report" &&
+      event.metadata.finishReason === "stop"
+    ) {
       const implicitReportArgs = this.findImplicitAgentReportArgsInParts(event.parts);
       if (implicitReportArgs) {
-        await this.finalizeAgentTaskReport(workspaceId, entry, implicitReportArgs);
-        await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+        const finalization = await this.finalizeAgentTaskReport(
+          workspaceId,
+          entry,
+          implicitReportArgs
+        );
+        if (finalization.finalized) {
+          await this.finalizeTerminationPhaseForReportedTask(workspaceId);
+        }
         return;
       }
     }
@@ -5644,7 +5655,10 @@ export class TaskService {
     options?: { rejectionError?: Error }
   ): Promise<void> {
     if (reportArgs) {
-      await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      const finalization = await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
+      if (!finalization.finalized) {
+        this.rejectWaiters(workspaceId, new Error(finalization.message));
+      }
       return;
     }
 
@@ -6187,7 +6201,7 @@ export class TaskService {
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
     reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
-  ): Promise<void> {
+  ): Promise<AgentReportFinalizationResult> {
     this.markTaskForegroundRelevant(childWorkspaceId);
 
     assert(
@@ -6200,10 +6214,49 @@ export class TaskService {
     );
 
     const cfgBeforeReport = this.config.loadConfigOrDefault();
-    const statusBefore = findWorkspaceEntry(cfgBeforeReport, childWorkspaceId)?.workspace
-      .taskStatus;
+    const latestEntryBeforeReport =
+      findWorkspaceEntry(cfgBeforeReport, childWorkspaceId) ?? childEntry;
+    const statusBefore = latestEntryBeforeReport?.workspace.taskStatus;
     if (statusBefore === "reported") {
-      return;
+      return { finalized: true };
+    }
+
+    const validationMessage = validateWorkflowAgentReportStructuredOutput({
+      workflowTask: latestEntryBeforeReport?.workspace.workflowTask,
+      reportArgs,
+    });
+    if (validationMessage != null) {
+      log.warn("Rejecting invalid workflow agent_report structured output", {
+        childWorkspaceId,
+        workflowTask: latestEntryBeforeReport?.workspace.workflowTask,
+        message: validationMessage,
+      });
+      if (statusBefore === "interrupted") {
+        return {
+          finalized: false,
+          reason: "terminal_interrupted",
+          message: validationMessage,
+        };
+      }
+
+      await this.editWorkspaceEntry(
+        childWorkspaceId,
+        (ws) => {
+          ws.taskStatus = "awaiting_report";
+          ws.reportedAt = undefined;
+        },
+        { allowMissing: true }
+      );
+      await this.emitWorkspaceMetadata(childWorkspaceId);
+      await this.promptTaskForRequiredCompletionTool(childWorkspaceId, {
+        reason: "error",
+        error: { error: validationMessage, errorType: "unknown" },
+      });
+      return {
+        finalized: false,
+        reason: "invalid_structured_output",
+        message: validationMessage,
+      };
     }
 
     // Notify clients immediately even if we can't delete the workspace yet.
@@ -6240,7 +6293,7 @@ export class TaskService {
       // Best-effort: resolve any foreground waiters even if we can't deliver to a parent.
       this.resolveWaiters(childWorkspaceId, reportArgs);
       void this.maybeStartQueuedTasks();
-      return;
+      return { finalized: true };
     }
 
     const isWorkflowOwnedChildReport = latestChildEntry?.workspace.workflowTask != null;
@@ -6324,7 +6377,7 @@ export class TaskService {
     const parentEntry = findWorkspaceEntry(postCfg, parentWorkspaceId);
     if (!parentEntry) {
       // Parent may have been cleaned up (e.g. it already reported and this was its last descendant).
-      return;
+      return { finalized: true };
     }
     const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
     if (!hasActiveDescendants) {
@@ -6336,7 +6389,7 @@ export class TaskService {
         parentWorkspaceId,
         childWorkspaceId,
       });
-      return;
+      return { finalized: true };
     }
 
     if (hadForegroundWaiters) {
@@ -6353,7 +6406,7 @@ export class TaskService {
         parentWorkspaceId,
         childWorkspaceId,
       });
-      return;
+      return { finalized: true };
     }
 
     if (
@@ -6384,6 +6437,8 @@ export class TaskService {
         });
       }
     }
+
+    return { finalized: true };
   }
 
   private enforceCompletedReportCacheLimit(): void {
@@ -6515,18 +6570,23 @@ export class TaskService {
         return outputReport.data;
       }
 
-      const parsed = AgentReportInlineToolArgsSchema.safeParse(part.input);
-      if (!parsed.success) continue;
+      const parsedWorkflowArgs = AgentReportWorkflowInlineToolArgsSchema.safeParse(part.input);
+      if (parsedWorkflowArgs.success) {
+        return {
+          reportMarkdown: parsedWorkflowArgs.data.reportMarkdown,
+          title: parsedWorkflowArgs.data.title ?? undefined,
+          structuredOutput: parsedWorkflowArgs.data.structuredOutput,
+        };
+      }
+
+      const parsedInlineArgs = AgentReportInlineToolArgsSchema.safeParse(part.input);
+      if (!parsedInlineArgs.success) continue;
       // Normalize null → undefined at the schema boundary so downstream
       // code that expects `title?: string` doesn't need to handle null.
-      const report: { reportMarkdown: string; title?: string; structuredOutput?: unknown } = {
-        reportMarkdown: parsed.data.reportMarkdown,
-        title: parsed.data.title ?? undefined,
+      return {
+        reportMarkdown: parsedInlineArgs.data.reportMarkdown,
+        title: parsedInlineArgs.data.title ?? undefined,
       };
-      if (Object.prototype.hasOwnProperty.call(parsed.data, "structuredOutput")) {
-        report.structuredOutput = parsed.data.structuredOutput;
-      }
-      return report;
     }
     return null;
   }

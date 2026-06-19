@@ -398,10 +398,6 @@ export async function resolveWorkflowContext(
     normalizePath: runtime.normalizePath.bind(runtime),
   });
 
-  const subagentFileReportsExperimentEnabled = context.experimentsService.isExperimentEnabled(
-    EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS
-  );
-
   const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
 
   return {
@@ -453,7 +449,6 @@ export async function resolveWorkflowContext(
           getProjectTrusted: () => isTrustedProjectPath(context, workflowProjectPath),
           experiments: {
             dynamicWorkflows: true,
-            subagentFileReports: subagentFileReportsExperimentEnabled,
           },
         }),
       onRunStatusChanged: (event) => context.workspaceService.emitWorkflowRunActivity(event),

@@ -1351,9 +1351,6 @@ export class AIService extends EventEmitter {
       const dynamicWorkflowsExperimentEnabled =
         experiments?.dynamicWorkflows ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS) === true;
-      const subagentFileReportsExperimentEnabled =
-        experiments?.subagentFileReports ??
-        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.SUBAGENT_FILE_REPORTS) === true;
       const memoryExperimentEnabled =
         experiments?.memory ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
@@ -1814,7 +1811,6 @@ export class AIService extends EventEmitter {
                   experiments: {
                     ...experiments,
                     dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
-                    subagentFileReports: subagentFileReportsExperimentEnabled,
                     workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
                   },
                 }),
@@ -1868,7 +1864,6 @@ export class AIService extends EventEmitter {
                       experiments: {
                         ...experiments,
                         dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
-                        subagentFileReports: subagentFileReportsExperimentEnabled,
                         workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
                       },
                       skipAiSettingsPersistence: true,
@@ -2009,8 +2004,6 @@ export class AIService extends EventEmitter {
         // Only child workspaces (tasks) can report to a parent.
         enableAgentReport: Boolean(metadata.parentWorkspaceId),
         workflowAgentOutputSchema: metadata.workflowTask?.outputSchema,
-        subagentReportFiles:
-          subagentFileReportsExperimentEnabled && metadata.parentWorkspaceId != null,
         // External edit detection callback
         recordFileState,
         reportModelUsage: (event) => {
@@ -2097,7 +2090,6 @@ export class AIService extends EventEmitter {
         experiments: {
           ...experiments,
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
-          subagentFileReports: subagentFileReportsExperimentEnabled,
           memory: memoryExperimentEnabled,
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
         },
