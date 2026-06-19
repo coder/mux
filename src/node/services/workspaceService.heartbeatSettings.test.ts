@@ -228,6 +228,24 @@ describe("WorkspaceService heartbeat settings", () => {
     });
   });
 
+  test("defaults sparse persisted heartbeat intervals to the global default on read", () => {
+    currentProjectsConfig.heartbeatDefaultIntervalMs = 45 * 60 * 1000;
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat as { intervalMs?: number } | undefined;
+    if (!persistedHeartbeat) {
+      throw new Error("Expected persisted heartbeat settings");
+    }
+    delete persistedHeartbeat.intervalMs;
+
+    expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toEqual({
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      message: "Keep this custom heartbeat message.",
+      contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+    });
+  });
+
   test("persists an explicit heartbeat context mode", async () => {
     const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
       enabled: true,

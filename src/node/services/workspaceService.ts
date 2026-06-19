@@ -428,8 +428,29 @@ function sanitizeHeartbeatContextMode(value: unknown): HeartbeatContextMode {
   return isHeartbeatContextMode(value) ? value : HEARTBEAT_DEFAULT_CONTEXT_MODE;
 }
 
+function sanitizeHeartbeatIntervalMs(intervalMs: unknown, defaultIntervalMs: number): number {
+  assert(
+    Number.isInteger(defaultIntervalMs) &&
+      defaultIntervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+      defaultIntervalMs <= HEARTBEAT_MAX_INTERVAL_MS,
+    "sanitizeHeartbeatIntervalMs requires a supported default interval"
+  );
+
+  if (
+    typeof intervalMs === "number" &&
+    Number.isInteger(intervalMs) &&
+    intervalMs >= HEARTBEAT_MIN_INTERVAL_MS &&
+    intervalMs <= HEARTBEAT_MAX_INTERVAL_MS
+  ) {
+    return intervalMs;
+  }
+
+  return defaultIntervalMs;
+}
+
 function normalizeHeartbeatSettings(
-  settings: WorkspaceHeartbeatSettings | null | undefined
+  settings: Partial<WorkspaceHeartbeatSettings> | null | undefined,
+  defaultIntervalMs: number
 ): WorkspaceHeartbeatSettings | null {
   if (!settings) {
     return null;
@@ -437,8 +458,8 @@ function normalizeHeartbeatSettings(
 
   const message = sanitizeHeartbeatMessage(settings.message);
   return {
-    enabled: settings.enabled,
-    intervalMs: settings.intervalMs,
+    enabled: settings.enabled === true,
+    intervalMs: sanitizeHeartbeatIntervalMs(settings.intervalMs, defaultIntervalMs),
     contextMode: sanitizeHeartbeatContextMode(settings.contextMode),
     ...(message != null ? { message } : {}),
   };
@@ -4031,7 +4052,8 @@ export class WorkspaceService extends EventEmitter {
       return null;
     }
 
-    return normalizeHeartbeatSettings(resolved.data.workspaceEntry.heartbeat);
+    const defaultIntervalMs = this.getHeartbeatDefaultIntervalMsFromConfig(resolved.data.config);
+    return normalizeHeartbeatSettings(resolved.data.workspaceEntry.heartbeat, defaultIntervalMs);
   }
 
   private getHeartbeatDefaultIntervalMsFromConfig(config: ProjectsConfig): number {
@@ -4121,8 +4143,11 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const { normalizedWorkspaceId, config, workspaceEntry } = resolved.data;
-      const currentSettings = normalizeHeartbeatSettings(workspaceEntry.heartbeat);
       const defaultIntervalMs = this.getHeartbeatDefaultIntervalMsFromConfig(config);
+      const currentSettings = normalizeHeartbeatSettings(
+        workspaceEntry.heartbeat,
+        defaultIntervalMs
+      );
       const nextMessage = hasMessageUpdate
         ? sanitizeHeartbeatMessage(settings.message)
         : currentSettings?.message;
