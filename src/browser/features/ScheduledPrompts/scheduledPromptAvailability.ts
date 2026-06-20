@@ -7,6 +7,9 @@ export function canUseScheduledPromptsInWorkspace(
     return false;
   }
 
-  // Queued delegated task workspaces have no active composer/dispatcher yet.
-  return !(Boolean(meta.parentWorkspaceId) && meta.taskStatus === "queued");
+  // Queued/starting delegated task workspaces have no active composer/dispatcher yet.
+  return !(
+    Boolean(meta.parentWorkspaceId) &&
+    (meta.taskStatus === "queued" || meta.taskStatus === "starting")
+  );
 }
