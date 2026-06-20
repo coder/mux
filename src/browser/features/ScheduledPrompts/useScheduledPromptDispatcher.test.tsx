@@ -48,6 +48,7 @@ function writePrompts(prompts: ScheduledPrompt[]) {
 async function waitForDispatcherTick() {
   await act(async () => {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     await Promise.resolve();
   });
 }
@@ -78,6 +79,27 @@ describe("useScheduledPromptDispatcher", () => {
     globalThis.window.clearTimeout = globalThis.clearTimeout.bind(
       globalThis
     ) as typeof window.clearTimeout;
+    let lockHeld = false;
+    Object.defineProperty(globalThis.window.navigator, "locks", {
+      configurable: true,
+      value: {
+        request: async (
+          _name: string,
+          _options: { ifAvailable: true; mode: "exclusive" },
+          callback: (lock: object | null) => unknown
+        ) => {
+          if (lockHeld) {
+            return callback(null);
+          }
+          lockHeld = true;
+          try {
+            return await callback({ name: _name });
+          } finally {
+            lockHeld = false;
+          }
+        },
+      },
+    });
   });
 
   afterEach(() => {

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { APIClient } from "@/browser/contexts/API";
-import { readPersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { getScheduledPromptsKey } from "@/common/constants/storage";
 import { prepareUserMessageForSend, type MuxMessageMetadata } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -11,7 +15,6 @@ import {
   getDueScheduledPrompts,
   getNextScheduledPromptRunAt,
   markScheduledPromptFailed,
-  markScheduledPromptSending,
   markScheduledPromptSent,
   normalizeScheduledPrompts,
   type ScheduledPrompt,
@@ -37,6 +40,14 @@ const SEND_MESSAGE_ERROR_TYPES = new Set<string>([
 interface ScheduledDispatchLock {
   ownerId: string;
   expiresAt: number;
+}
+
+interface LockManagerLike {
+  request<T>(
+    name: string,
+    options: { ifAvailable: true; mode: "exclusive" },
+    callback: (lock: object | null) => T | Promise<T>
+  ): Promise<T>;
 }
 
 interface ScheduledPromptDispatcherOptions {
@@ -120,6 +131,46 @@ function releaseDispatchLock(lockKey: string, ownerId: string): void {
   }
 }
 
+function getBrowserLockManager(): LockManagerLike | undefined {
+  if (typeof window === "undefined" || !window.navigator) {
+    return undefined;
+  }
+
+  const maybeNavigator = window.navigator as Navigator & { locks?: LockManagerLike };
+  if (typeof maybeNavigator.locks?.request !== "function") {
+    return undefined;
+  }
+  return maybeNavigator.locks;
+}
+
+async function runWithDispatchLock(
+  lockKey: string,
+  ownerId: string,
+  callback: () => Promise<void>
+): Promise<boolean> {
+  const lockManager = getBrowserLockManager();
+  if (lockManager) {
+    return lockManager.request(lockKey, { ifAvailable: true, mode: "exclusive" }, async (lock) => {
+      if (!lock) {
+        return false;
+      }
+      await callback();
+      return true;
+    });
+  }
+
+  if (!tryAcquireDispatchLock(lockKey, ownerId)) {
+    return false;
+  }
+
+  try {
+    await callback();
+    return true;
+  } finally {
+    releaseDispatchLock(lockKey, ownerId);
+  }
+}
+
 function isSendMessageError(error: unknown): error is SendMessageError {
   if (typeof error !== "object" || error === null || !("type" in error)) {
     return false;
@@ -152,11 +203,44 @@ function getErrorMessage(error: unknown): string {
   return "Failed to send scheduled prompt";
 }
 
-function getCurrentRunnablePrompt(storageKey: string, promptId: string): ScheduledPrompt | null {
-  const currentPrompts = normalizeScheduledPrompts(
-    readPersistedState<ScheduledPrompt[]>(storageKey, [])
+function claimCurrentRunnablePrompt(storageKey: string, promptId: string): ScheduledPrompt | null {
+  const claimedAt = Date.now();
+  let claimedPrompt: ScheduledPrompt | null = null;
+
+  updatePersistedState<ScheduledPrompt[]>(
+    storageKey,
+    (current) => {
+      const prompts = normalizeScheduledPrompts(current);
+      const prompt = getDueScheduledPrompts(prompts).find((candidate) => candidate.id === promptId);
+      if (!prompt) {
+        return prompts;
+      }
+
+      const nextPrompt: ScheduledPrompt = {
+        ...prompt,
+        status: "sending",
+        updatedAt: claimedAt,
+        error: undefined,
+      };
+      claimedPrompt = nextPrompt;
+      return prompts.map((candidate) => (candidate.id === promptId ? nextPrompt : candidate));
+    },
+    []
   );
-  return getDueScheduledPrompts(currentPrompts).find((prompt) => prompt.id === promptId) ?? null;
+
+  if (!claimedPrompt) {
+    return null;
+  }
+
+  const storedPrompt = normalizeScheduledPrompts(
+    readPersistedState<ScheduledPrompt[]>(storageKey, [])
+  ).find((prompt) => prompt.id === promptId);
+
+  if (storedPrompt?.status !== "sending" || storedPrompt.updatedAt !== claimedAt) {
+    return null;
+  }
+
+  return claimedPrompt;
 }
 
 export function useScheduledPromptDispatcher(options: ScheduledPromptDispatcherOptions) {
@@ -210,79 +294,79 @@ export function useScheduledPromptDispatcher(options: ScheduledPromptDispatcherO
         return;
       }
 
-      if (!tryAcquireDispatchLock(lockKey, ownerId)) {
-        window.setTimeout(
-          () => setTimerNonce((current) => current + 1),
-          DISPATCH_LOCK_RETRY_DELAY_MS
-        );
-        return;
-      }
-
-      isDispatchingRef.current = true;
-
       void (async () => {
-        for (const queuedPrompt of runnablePrompts) {
-          if (inFlightIdsRef.current.has(queuedPrompt.id)) {
-            continue;
-          }
-
-          const prompt = getCurrentRunnablePrompt(storageKey, queuedPrompt.id);
-          if (!prompt) {
-            continue;
-          }
-
-          inFlightIdsRef.current.add(prompt.id);
-          setStoredPrompts((current) =>
-            markScheduledPromptSending(normalizeScheduledPrompts(current), prompt.id)
-          );
-
-          const dispatchMode = prompt.queueDispatchMode;
-          const muxMetadata: MuxMessageMetadata = {
-            type: "normal",
-            requestedModel: sendMessageOptions.model,
-          };
-          const prepared = prepareUserMessageForSend({ text: prompt.content }, muxMetadata);
-
+        const acquired = await runWithDispatchLock(lockKey, ownerId, async () => {
+          isDispatchingRef.current = true;
           try {
-            onMessageSendStarted?.(dispatchMode);
-            const result = await api.workspace.sendMessage({
-              workspaceId,
-              message: prepared.finalText,
-              options: {
-                ...sendMessageOptions,
-                ...(additionalSystemContext !== undefined ? { additionalSystemContext } : {}),
-                queueDispatchMode: dispatchMode,
-                muxMetadata: prepared.metadata,
-              },
-            });
+            for (const queuedPrompt of runnablePrompts) {
+              if (inFlightIdsRef.current.has(queuedPrompt.id)) {
+                continue;
+              }
 
-            if (!result?.success) {
-              const error = result?.error ? getErrorMessage(result.error) : "API not connected";
-              setStoredPrompts((current) =>
-                markScheduledPromptFailed(normalizeScheduledPrompts(current), prompt.id, error)
-              );
-              continue;
+              const prompt = claimCurrentRunnablePrompt(storageKey, queuedPrompt.id);
+              if (!prompt) {
+                continue;
+              }
+
+              inFlightIdsRef.current.add(prompt.id);
+
+              const dispatchMode = prompt.queueDispatchMode;
+              const muxMetadata: MuxMessageMetadata = {
+                type: "normal",
+                requestedModel: sendMessageOptions.model,
+              };
+              const prepared = prepareUserMessageForSend({ text: prompt.content }, muxMetadata);
+
+              try {
+                onMessageSendStarted?.(dispatchMode);
+                const result = await api.workspace.sendMessage({
+                  workspaceId,
+                  message: prepared.finalText,
+                  options: {
+                    ...sendMessageOptions,
+                    ...(additionalSystemContext !== undefined ? { additionalSystemContext } : {}),
+                    queueDispatchMode: dispatchMode,
+                    muxMetadata: prepared.metadata,
+                  },
+                });
+
+                if (!result?.success) {
+                  const error = result?.error ? getErrorMessage(result.error) : "API not connected";
+                  setStoredPrompts((current) =>
+                    markScheduledPromptFailed(normalizeScheduledPrompts(current), prompt.id, error)
+                  );
+                  continue;
+                }
+
+                setStoredPrompts((current) =>
+                  markScheduledPromptSent(normalizeScheduledPrompts(current), prompt.id)
+                );
+                onMessageSent?.(dispatchMode);
+              } catch (error) {
+                setStoredPrompts((current) =>
+                  markScheduledPromptFailed(
+                    normalizeScheduledPrompts(current),
+                    prompt.id,
+                    getErrorMessage(error)
+                  )
+                );
+              } finally {
+                inFlightIdsRef.current.delete(prompt.id);
+              }
             }
-
-            setStoredPrompts((current) =>
-              markScheduledPromptSent(normalizeScheduledPrompts(current), prompt.id)
-            );
-            onMessageSent?.(dispatchMode);
-          } catch (error) {
-            setStoredPrompts((current) =>
-              markScheduledPromptFailed(
-                normalizeScheduledPrompts(current),
-                prompt.id,
-                getErrorMessage(error)
-              )
-            );
           } finally {
-            inFlightIdsRef.current.delete(prompt.id);
+            isDispatchingRef.current = false;
           }
+        });
+
+        if (!acquired) {
+          window.setTimeout(
+            () => setTimerNonce((current) => current + 1),
+            DISPATCH_LOCK_RETRY_DELAY_MS
+          );
         }
-      })().finally(() => {
-        isDispatchingRef.current = false;
-        releaseDispatchLock(lockKey, ownerId);
+      })().catch((error) => {
+        console.error("scheduled prompt dispatcher failed", error);
       });
     }, delay);
 
