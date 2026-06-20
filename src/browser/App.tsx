@@ -14,6 +14,7 @@ import {
   usePersistedState,
   updatePersistedState,
   readPersistedState,
+  subscribePersistedStateWrites,
 } from "./hooks/usePersistedState";
 import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
@@ -125,7 +126,10 @@ import { LoadingScreen } from "@/browser/components/LoadingScreen/LoadingScreen"
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { canUseScheduledPromptsInWorkspace } from "@/browser/features/ScheduledPrompts/scheduledPromptAvailability";
+import {
+  getScheduledPromptDispatcherTargets,
+  isScheduledPromptsStorageKey,
+} from "@/browser/features/ScheduledPrompts/scheduledPromptDispatcherTargets";
 import { useScheduledPromptDispatcher } from "@/browser/features/ScheduledPrompts/useScheduledPromptDispatcher";
 import {
   useAdditionalSystemContextHydrated,
@@ -304,16 +308,19 @@ function AppInner() {
   }, [sidebarCollapsed]);
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
-  const scheduledPromptWorkspaceId = selectedWorkspace?.workspaceId ?? currentWorkspaceId;
-  const scheduledPromptWorkspaceMeta = scheduledPromptWorkspaceId
-    ? workspaceMetadata.get(scheduledPromptWorkspaceId)
-    : undefined;
-  const scheduledPromptProjectPath =
-    selectedWorkspace?.workspaceId === scheduledPromptWorkspaceId
-      ? selectedWorkspace.projectPath
-      : scheduledPromptWorkspaceMeta?.projectPath;
-  const scheduledPromptDispatcherEnabled = canUseScheduledPromptsInWorkspace(
-    scheduledPromptWorkspaceMeta
+  const [, bumpScheduledPromptStorageVersion] = useState(0);
+  useEffect(
+    () =>
+      subscribePersistedStateWrites((event) => {
+        if (isScheduledPromptsStorageKey(event.key)) {
+          bumpScheduledPromptStorageVersion((version) => version + 1);
+        }
+      }),
+    []
+  );
+  const scheduledPromptDispatcherTargets = getScheduledPromptDispatcherTargets(
+    workspaceMetadata,
+    (storageKey) => readPersistedState(storageKey, [])
   );
 
   // History navigation (back/forward)
@@ -1321,13 +1328,14 @@ function AppInner() {
 
   return (
     <>
-      {scheduledPromptWorkspaceId && scheduledPromptProjectPath ? (
+      {scheduledPromptDispatcherTargets.map((target) => (
         <ActiveWorkspaceScheduledPromptDispatcher
-          workspaceId={scheduledPromptWorkspaceId}
-          projectPath={scheduledPromptProjectPath}
-          enabled={scheduledPromptDispatcherEnabled}
+          key={target.workspaceId}
+          workspaceId={target.workspaceId}
+          projectPath={target.projectPath}
+          enabled={true}
         />
-      ) : null}
+      ))}
       <div className="bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
         <LeftSidebar
           collapsed={sidebarCollapsed}
