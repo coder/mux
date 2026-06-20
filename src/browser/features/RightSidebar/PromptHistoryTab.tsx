@@ -74,6 +74,7 @@ export function createPromptHistoryInsertPayload(
     mode: "replace",
     fileParts: entry.fileParts ?? [],
     reviews: entry.reviews ?? [],
+    muxMetadata: entry.muxMetadata,
   };
 }
 

@@ -7,6 +7,7 @@ import {
 import type {
   CompactionFollowUpRequest,
   DisplayedUserMessage,
+  MuxMessageMetadata,
   QueuedMessage,
   ReviewNoteDataForDisplay,
 } from "@/common/types/message";
@@ -20,6 +21,7 @@ export interface PendingUserMessage extends Omit<
   fileParts: FilePart[];
   stagedAttachments: StagedChatAttachment[];
   reviews: ReviewNoteDataForDisplay[];
+  muxMetadata?: MuxMessageMetadata;
 }
 
 export interface EditingMessageState {
@@ -56,6 +58,7 @@ export function buildPendingFromRestoredInput(params: {
   fileParts: FilePart[];
   reviews: ReviewNoteDataForDisplay[];
   idPrefix: string;
+  muxMetadata?: MuxMessageMetadata;
 }): PendingUserMessage {
   const parsed = parseStagedAttachmentNotice(params.content);
   return {
@@ -66,6 +69,7 @@ export function buildPendingFromRestoredInput(params: {
       params.idPrefix
     ),
     reviews: params.reviews,
+    muxMetadata: params.muxMetadata,
   };
 }
 
@@ -119,5 +123,6 @@ export const buildEditingStateFromCompaction = (
     fileParts: followUp?.fileParts ?? [],
     stagedAttachments: stagedAttachmentsFromText(followUp?.text, `compaction-${messageId}`),
     reviews: followUp?.reviews ?? [],
+    muxMetadata: followUp?.muxMetadata,
   },
 });

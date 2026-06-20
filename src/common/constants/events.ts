@@ -6,7 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ReviewNoteDataForDisplay } from "@/common/types/message";
+import type { MuxMessageMetadata, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -157,6 +157,7 @@ export interface CustomEventPayloads {
     /** In replace mode, presence means replace the whole draft, even when empty. */
     fileParts?: FilePart[];
     reviews?: ReviewNoteDataForDisplay[];
+    muxMetadata?: MuxMessageMetadata;
   };
   [CUSTOM_EVENTS.NAVIGATE_TO_TRANSCRIPT_MESSAGE]: {
     workspaceId: string;
