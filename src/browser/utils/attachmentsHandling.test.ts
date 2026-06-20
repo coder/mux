@@ -108,6 +108,20 @@ describe("attachmentsHandling", () => {
       expect(attachment.mediaType).toBe("image/jpeg");
       expect(attachment.url).toContain("data:image/jpeg;base64,");
     });
+
+    test("handles JSON files", async () => {
+      const blob = new Blob(['{"ok":true}'], { type: "application/json" });
+      const file = new File([blob], "config.json", { type: "application/json" });
+
+      const attachment = await fileToChatAttachment(file);
+
+      expect(attachment.kind).toBe("provider");
+      if (attachment.kind !== "provider") throw new Error("Expected provider attachment");
+      expect(attachment.mediaType).toBe("application/json");
+      expect(attachment.filename).toBe("config.json");
+      expect(attachment.url).toContain("data:application/json");
+      expect(attachment.url).toContain(";base64,");
+    });
   });
 
   describe("extractAttachmentsFromClipboard", () => {
@@ -206,19 +220,21 @@ describe("attachmentsHandling", () => {
       const mockFile1 = new File(["image"], "photo.png", { type: "" }); // Empty type
       const mockFile2 = new File(["image"], "picture.jpg", { type: "" }); // Empty type
       const mockFile3 = new File(["pdf"], "doc.pdf", { type: "" }); // Empty type
-      const mockFile4 = new File(["text"], "document.txt", { type: "" }); // Empty type, unsupported
+      const mockFile4 = new File(['{"ok":true}'], "config.json", { type: "" }); // Empty type
+      const mockFile5 = new File(["text"], "document.txt", { type: "" }); // Empty type, unsupported
 
       const mockDataTransfer = {
-        files: [mockFile1, mockFile2, mockFile3, mockFile4],
+        files: [mockFile1, mockFile2, mockFile3, mockFile4, mockFile5],
       };
 
       const files = extractAttachmentsFromDrop(mockDataTransfer as unknown as DataTransfer);
 
-      expect(files).toHaveLength(3);
+      expect(files).toHaveLength(4);
       expect(files).toContain(mockFile1);
       expect(files).toContain(mockFile2);
       expect(files).toContain(mockFile3);
-      expect(files).not.toContain(mockFile4);
+      expect(files).toContain(mockFile4);
+      expect(files).not.toContain(mockFile5);
     });
   });
 
