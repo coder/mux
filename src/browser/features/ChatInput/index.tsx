@@ -684,6 +684,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
+  const preEditMuxMetadataOverrideRef = useRef<MuxMessageMetadata | undefined>(undefined);
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
@@ -1267,6 +1268,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const restorePreEditDraft = useCallback(() => {
     setDraft(preEditDraftRef.current);
     setDraftReviews(preEditReviewsRef.current);
+    setDraftMuxMetadataOverride(preEditMuxMetadataOverrideRef.current);
   }, [setDraft, setDraftReviews]);
 
   // Method to restore text to input (used by compaction cancel)
@@ -1357,8 +1359,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
       preEditReviewsRef.current = draftReviews;
+      preEditMuxMetadataOverrideRef.current = draftMuxMetadataOverride;
       applyDraftFromPending(editingMessage.pending, `edit-${editingMessage.id}`);
       setDraftReviews(editingMessage.pending.reviews);
+      setDraftMuxMetadataOverride(editingMessage.pending.muxMetadata);
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -1809,6 +1813,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           restoreDraft(restoredPending);
         } else {
+          setDraftMuxMetadataOverride(undefined);
           restoreText(restoredPending.content);
         }
       } else if (hasFileParts || hasStagedAttachments || hasReviews) {
