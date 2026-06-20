@@ -41,8 +41,9 @@ export function getPromptHistoryEntries(
       return message.content.trim().length > 0 || (message.fileParts?.length ?? 0) > 0;
     })
     .map((message) => {
-      const fileParts = message.fileParts ?? [];
-      const reviews = message.reviews ?? [];
+      const followUpContent = message.compactionRequest?.parsed.followUpContent;
+      const fileParts = followUpContent?.fileParts ?? message.fileParts ?? [];
+      const reviews = followUpContent?.reviews ?? message.reviews ?? [];
       const content = getEditableUserMessageText(message);
       return {
         historyId: message.historyId,

@@ -151,4 +151,48 @@ const marker = '</review>';
       reviews,
     });
   });
+
+  test("insert payload preserves compaction follow-up attachments and reviews", () => {
+    const fileParts = [
+      {
+        url: "data:text/plain;base64,SGVsbG8=",
+        mediaType: "text/plain",
+        filename: "follow-up.txt",
+      },
+    ];
+    const reviews: ReviewNoteData[] = [
+      {
+        filePath: "src/follow-up.ts",
+        lineRange: "+3-5",
+        selectedCode: "const retry = true;",
+        userNote: "Keep this context when retrying.",
+      },
+    ];
+    const [entry] = getPromptHistoryEntries([
+      userMessage("compact", "/compact\nContinue after compaction", 1, {
+        compactionRequest: {
+          parsed: {
+            followUpContent: {
+              text: "Continue after compaction",
+              model: "openai:gpt-5",
+              agentId: "exec",
+              fileParts,
+              reviews,
+            },
+          },
+        },
+      }),
+    ]);
+
+    if (!entry) throw new Error("expected prompt history entry");
+    expect(entry.fileCount).toBe(1);
+    expect(entry.fileParts).toEqual(fileParts);
+    expect(entry.reviews).toEqual(reviews);
+    expect(createPromptHistoryInsertPayload(entry)).toEqual({
+      text: "/compact\nContinue after compaction",
+      mode: "replace",
+      fileParts,
+      reviews,
+    });
+  });
 });
