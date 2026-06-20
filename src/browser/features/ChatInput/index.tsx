@@ -1853,6 +1853,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput("");
       setAttachments([]);
       setDraftReviews(null);
+      setDraftMuxMetadataOverride(undefined);
       onDetachAllReviewsForComposerClear?.();
       if (inputRef.current) {
         inputRef.current.style.height = "";
