@@ -309,15 +309,26 @@ function AppInner() {
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
   const [, bumpScheduledPromptStorageVersion] = useState(0);
-  useEffect(
-    () =>
-      subscribePersistedStateWrites((event) => {
+  useEffect(() => {
+    const bumpVersion = () => {
+      bumpScheduledPromptStorageVersion((version) => version + 1);
+    };
+    const unsubscribe = subscribePersistedStateWrites((event) => {
         if (isScheduledPromptsStorageKey(event.key)) {
-          bumpScheduledPromptStorageVersion((version) => version + 1);
+          bumpVersion();
         }
-      }),
-    []
-  );
+      });
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key && isScheduledPromptsStorageKey(event.key)) {
+        bumpVersion();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      unsubscribe();
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
   const scheduledPromptDispatcherTargets = getScheduledPromptDispatcherTargets(
     workspaceMetadata,
     (storageKey) => readPersistedState(storageKey, [])
