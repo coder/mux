@@ -1,4 +1,4 @@
-import type { DisplayedMessage } from "@/common/types/message";
+import type { DisplayedMessage, MuxMessageMetadata } from "@/common/types/message";
 import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
 
 type UserMessage = Extract<DisplayedMessage, { type: "user" }>;
@@ -15,6 +15,7 @@ export interface PromptHistoryEntry {
   fileCount: number;
   fileParts?: UserMessage["fileParts"];
   reviews?: UserMessage["reviews"];
+  muxMetadata?: MuxMessageMetadata;
 }
 
 function isCompletedLocalCommandOutput(message: UserMessage): boolean {
@@ -55,6 +56,7 @@ export function getPromptHistoryEntries(
         fileCount: fileParts.length,
         ...(fileParts.length > 0 ? { fileParts } : {}),
         ...(reviews.length > 0 ? { reviews } : {}),
+        ...(followUpContent?.muxMetadata ? { muxMetadata: followUpContent.muxMetadata } : {}),
       };
     })
     .sort((left, right) => left.historySequence - right.historySequence);

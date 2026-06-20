@@ -6,7 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ReviewNoteDataForDisplay } from "@/common/types/message";
+import type { MuxMessageMetadata, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -159,6 +159,7 @@ export interface CustomEventPayloads {
     reviews?: ReviewNoteDataForDisplay[];
     /** When set, only the matching workspace composer may apply this update. */
     workspaceId?: string;
+    muxMetadata?: MuxMessageMetadata;
   };
   [CUSTOM_EVENTS.NAVIGATE_TO_TRANSCRIPT_MESSAGE]: {
     workspaceId: string;

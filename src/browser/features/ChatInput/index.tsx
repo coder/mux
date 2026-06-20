@@ -511,6 +511,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
+  const [draftMuxMetadataOverride, setDraftMuxMetadataOverride] = useState<
+    MuxMessageMetadata | undefined
+  >(undefined);
   const attachedReviewIdsSignature = attachedReviews.map((review) => review.id).join("\u0000");
   const clearedAttachedReviewIdsRef = useRef<string | typeof AWAITING_NEW_ATTACHED_REVIEWS | null>(
     null
@@ -1273,6 +1276,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (pending: PendingUserMessage) => {
       applyDraftFromPending(pending, `restored-${Date.now()}`);
       setDraftReviews(pending.reviews);
+      setDraftMuxMetadataOverride(pending.muxMetadata);
       focusMessageInput();
     },
     [applyDraftFromPending, focusMessageInput, setDraftReviews]
@@ -1791,6 +1795,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         fileParts?: FilePart[];
         reviews?: ReviewNoteDataForDisplay[];
         workspaceId?: string;
+        muxMetadata?: MuxMessageMetadata;
       }>;
 
       if (
@@ -1800,18 +1805,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      const { text, mode = "append", fileParts, reviews } = customEvent.detail;
+      const { text, mode = "append", fileParts, reviews, muxMetadata } = customEvent.detail;
       const restoredIdPrefix = `restored-${Date.now()}`;
       const restoredPending = buildPendingFromRestoredInput({
         content: text,
         fileParts: fileParts ?? [],
         reviews: reviews ?? [],
         idPrefix: restoredIdPrefix,
+        muxMetadata,
       });
       const hasFileParts = restoredPending.fileParts.length > 0;
       const hasStagedAttachments = restoredPending.stagedAttachments.length > 0;
       const hasReviews = restoredPending.reviews.length > 0;
-      const hasDraftReplacementPayload = fileParts !== undefined || reviews !== undefined;
+      const hasDraftReplacementPayload =
+        fileParts !== undefined || reviews !== undefined || muxMetadata !== undefined;
 
       if (mode === "replace") {
         if (editingMessageForUi) {
@@ -2286,6 +2293,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       onCancelEdit: commandOnCancelEdit,
       reviews: reviewsData,
       attachments,
+      followUpMuxMetadata: draftMuxMetadataOverride,
       fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
       onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
       onDetachAllReviews: variant === "workspace" ? props.onDetachAllReviews : undefined,
@@ -2299,6 +2307,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput(restoreInput);
     } else {
       setDraftReviews(null);
+      setDraftMuxMetadataOverride(undefined);
       if (variant === "workspace" && parsed.type === "compact") {
         if (reviewIdsForCheck.length > 0) {
           props.onCheckReviews?.(reviewIdsForCheck);
@@ -2702,6 +2711,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
+      const preSendMuxMetadataOverride = draftMuxMetadataOverride;
       const editMessageForSend = editingMessageForUi;
 
       try {
@@ -2747,6 +2757,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       text: appendStagedAttachmentNotice(parsed.continueMessage ?? "", attachments),
                       fileParts: sendFileParts,
                       reviews: reviewsData,
+                      muxMetadata: draftMuxMetadataOverride,
                     }
                   : undefined,
               model: parsed.model,
@@ -2814,6 +2825,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // so they'll reappear naturally on failure (we only call onCheckReviews on success)
         setInput("");
         setDraftReviews(null);
+        setDraftMuxMetadataOverride(undefined);
         setAttachments([]);
         setHideReviewsDuringSend(true);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
@@ -2873,6 +2885,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setOptimisticallyDismissedEditId(null);
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
+          setDraftMuxMetadataOverride(preSendMuxMetadataOverride);
         } else {
           // Track telemetry for successful message send
           telemetry.messageSent(
@@ -2920,6 +2933,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setOptimisticallyDismissedEditId(null);
         setDraft(preSendDraft);
         setDraftReviews(preSendReviews);
+        setDraftMuxMetadataOverride(preSendMuxMetadataOverride);
       } finally {
         setSendingCount((c) => c - 1);
         setHideReviewsDuringSend(false);

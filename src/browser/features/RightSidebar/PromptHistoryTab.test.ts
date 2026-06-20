@@ -152,7 +152,7 @@ const marker = '</review>';
     });
   });
 
-  test("insert payload preserves compaction follow-up attachments and reviews", () => {
+  test("insert payload preserves compaction follow-up payloads", () => {
     const fileParts = [
       {
         url: "data:text/plain;base64,SGVsbG8=",
@@ -178,6 +178,13 @@ const marker = '</review>';
               agentId: "exec",
               fileParts,
               reviews,
+              muxMetadata: {
+                type: "agent-skill",
+                skillName: "tests",
+                scope: "global",
+                rawCommand: "/tests run focused tests",
+                commandPrefix: "/tests",
+              },
             },
           },
         },
@@ -188,11 +195,25 @@ const marker = '</review>';
     expect(entry.fileCount).toBe(1);
     expect(entry.fileParts).toEqual(fileParts);
     expect(entry.reviews).toEqual(reviews);
+    expect(entry.muxMetadata).toEqual({
+      type: "agent-skill",
+      skillName: "tests",
+      scope: "global",
+      rawCommand: "/tests run focused tests",
+      commandPrefix: "/tests",
+    });
     expect(createPromptHistoryInsertPayload(entry)).toEqual({
       text: "/compact\nContinue after compaction",
       mode: "replace",
       fileParts,
       reviews,
+      muxMetadata: {
+        type: "agent-skill",
+        skillName: "tests",
+        scope: "global",
+        rawCommand: "/tests run focused tests",
+        commandPrefix: "/tests",
+      },
     });
   });
 });
