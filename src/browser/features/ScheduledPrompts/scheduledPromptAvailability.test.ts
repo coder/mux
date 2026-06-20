@@ -31,5 +31,10 @@ describe("canUseScheduledPromptsInWorkspace", () => {
         workspace({ parentWorkspaceId: "parent", taskStatus: "queued" })
       )
     ).toBe(false);
+    expect(
+      canUseScheduledPromptsInWorkspace(
+        workspace({ parentWorkspaceId: "parent", taskStatus: "starting" })
+      )
+    ).toBe(false);
   });
 });
