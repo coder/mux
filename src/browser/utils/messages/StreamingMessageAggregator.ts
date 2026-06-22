@@ -80,10 +80,7 @@ import {
   isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage,
   isSideQuestionUserMessage as isSideQuestionUserMuxMessage,
 } from "@/common/utils/messages/sideQuestion";
-import {
-  isWorkflowResultMessage,
-  isWorkflowRunEmittingToolName,
-} from "@/common/utils/workflowRunMessages";
+import { isWorkflowResultMessage } from "@/common/utils/workflowRunMessages";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats

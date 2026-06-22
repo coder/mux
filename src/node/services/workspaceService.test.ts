@@ -248,7 +248,7 @@ describe("WorkspaceService workflow activity", () => {
       await runStore.createRun({
         id: "wfr_active",
         workspaceId,
-        definition,
+        workflow: definition,
         source: "export default function workflow() { return {}; }",
         args: {},
         now: "2026-06-17T00:00:00.000Z",
@@ -256,7 +256,7 @@ describe("WorkspaceService workflow activity", () => {
       await runStore.createRun({
         id: "wfr_nested",
         workspaceId,
-        definition,
+        workflow: definition,
         source: "export default function workflow() { return {}; }",
         args: {},
         parentWorkflow: { runId: "wfr_active", stepId: "child", inputHash: "hash", depth: 0 },

@@ -2481,9 +2481,27 @@ function __muxApplyPatch(spec) {
   }
   return __workflowApplyPatch(spec);
 }
-function __muxNestedWorkflow(spec) {
-  if (spec === null || typeof spec !== "object") {
-    throw new Error("workflow requires a spec object");
+function __muxNestedWorkflow(scriptPathOrSpec, options) {
+  let spec;
+  if (typeof scriptPathOrSpec === "string") {
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      throw new Error("workflow replay boundary requires a stable id");
+    }
+    spec = { ...options, scriptPath: scriptPathOrSpec };
+  } else if (
+    scriptPathOrSpec !== null &&
+    typeof scriptPathOrSpec === "object" &&
+    !Array.isArray(scriptPathOrSpec)
+  ) {
+    if (options !== undefined) {
+      throw new Error("workflow object form does not accept a second argument");
+    }
+    spec = scriptPathOrSpec;
+  } else {
+    throw new Error("workflow requires a script path string or spec object");
+  }
+  if (typeof spec.id !== "string" || spec.id.length === 0) {
+    throw new Error("workflow replay boundary requires a stable id");
   }
   return __workflowNestedWorkflow(spec);
 }

@@ -116,7 +116,7 @@ export function findProjectedWorkflowRunCardMessage(
 
 export function hasWorkflowRunToolCallMessage(
   messages: readonly MuxMessage[],
-  run: Pick<WorkflowRunRecord, "id" | "definition" | "args">
+  run: Pick<WorkflowRunRecord, "id" | "workflow" | "args">
 ): boolean {
   assert(run.id.length > 0, "hasWorkflowRunToolCallMessage: run id is required");
   return messages.some((message) =>
@@ -141,7 +141,7 @@ export function hasWorkflowRunToolCallMessage(
 
 export function getWorkflowRunCardProjection(
   messages: readonly MuxMessage[],
-  run: Pick<WorkflowRunRecord, "id" | "definition" | "args" | "status">
+  run: Pick<WorkflowRunRecord, "id" | "workflow" | "args" | "status">
 ): { shouldProject: boolean; existingMessage: MuxMessage | null } {
   assert(run.id.length > 0, "getWorkflowRunCardProjection: run id is required");
   const existingMessage = findProjectedWorkflowRunCardMessage(messages, run.id);

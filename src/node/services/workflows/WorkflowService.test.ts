@@ -230,7 +230,7 @@ export default function workflow({ args }) {
 
     const result = await service.startWorkflow({
       script: createScript(`export default function workflow({ workflow }) {
-  const child = workflow({ id: "child-step", script_path: "./workflows/child.js", args: { topic: "nested" } });
+  const child = workflow("./workflows/child.js", { id: "child-step", args: { topic: "nested" } });
   return { reportMarkdown: "Parent saw " + child.reportMarkdown };
 }
 `),

@@ -340,6 +340,52 @@ describe("WorkflowRunner", () => {
     );
   });
 
+  test("workflow primitive accepts script path shorthand", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-nested-workflow-shorthand");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_nested_shorthand",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ workflow }) {
+  const child = workflow("./child.js", { id: "child", args: { topic: "shorthand" } });
+  return { reportMarkdown: child.reportMarkdown };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const seenSpecs: Array<{ scriptPath: string; args: unknown }> = [];
+    const createRun = mock(async (input: { spec: { scriptPath: string; args: unknown } }) => {
+      seenSpecs.push({ scriptPath: input.spec.scriptPath, args: input.spec.args });
+      return { runId: "wfr_child_shorthand", name: "child" };
+    });
+    const runChild = mock(async () => ({ reportMarkdown: "child-result" }));
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("workflow primitive should not spawn agent tasks");
+        },
+      },
+      nestedWorkflowAdapter: { createRun, run: runChild },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    await expect(runner.run("wfr_nested_shorthand")).resolves.toEqual({
+      reportMarkdown: "child-result",
+    });
+    expect(seenSpecs).toEqual([{ scriptPath: "./child.js", args: { topic: "shorthand" } }]);
+  });
+
   test("workflow primitive replays a completed child step with the same script path and args", async () => {
     using tmp = new DisposableTempDir("workflow-runner-nested-workflow-replay");
     const store = new WorkflowRunStore({

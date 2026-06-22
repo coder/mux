@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/await-thenable */
 import { describe, expect, test } from "bun:test";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import {

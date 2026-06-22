@@ -95,10 +95,7 @@ export class WorkflowRunStore {
   async createRun(input: CreateWorkflowRunInput): Promise<WorkflowRunRecord> {
     assert(input.id.length > 0, "WorkflowRunStore.createRun: id is required");
     assert(input.workspaceId.length > 0, "WorkflowRunStore.createRun: workspaceId is required");
-    assert(
-      input.source.length > 0,
-      "WorkflowRunStore.createRun: source is required"
-    );
+    assert(input.source.length > 0, "WorkflowRunStore.createRun: source is required");
 
     const runDir = this.runDir(input.id);
     await fs.mkdir(runDir, { recursive: true });
@@ -132,10 +129,7 @@ export class WorkflowRunStore {
       input.workspaceId.length > 0,
       "WorkflowRunStore.createRunIfAbsent: workspaceId is required"
     );
-    assert(
-      input.source.length > 0,
-      "WorkflowRunStore.createRunIfAbsent: source is required"
-    );
+    assert(input.source.length > 0, "WorkflowRunStore.createRunIfAbsent: source is required");
 
     const runDir = this.runDir(input.id);
     await fs.mkdir(this.workflowsDir(), { recursive: true });
@@ -785,10 +779,7 @@ export class WorkflowRunStore {
   private async getRunFileSnapshot(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
     const run = WorkflowRunRecordSchema.parse(rawRun);
-    const source = await fs.readFile(
-      path.join(this.runDir(runId), "definition.js"),
-      "utf-8"
-    );
+    const source = await fs.readFile(path.join(this.runDir(runId), "definition.js"), "utf-8");
     return WorkflowRunRecordSchema.parse({
       ...run,
       source,
@@ -799,10 +790,7 @@ export class WorkflowRunStore {
   private async getRunUnlocked(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
     const partial = WorkflowRunRecordSchema.omit({ events: true, steps: true }).parse(rawRun);
-    const source = await fs.readFile(
-      path.join(this.runDir(runId), "definition.js"),
-      "utf-8"
-    );
+    const source = await fs.readFile(path.join(this.runDir(runId), "definition.js"), "utf-8");
     const events = await this.readEvents(runId);
     const steps = await this.readSteps(runId);
 

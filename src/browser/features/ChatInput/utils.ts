@@ -132,7 +132,7 @@ export async function parseCommandWithSkillInvocation(options: {
   });
 
   return {
-    parsed: skillInvocation ? skillInvocation : parsed,
+    parsed: skillInvocation == null ? parsed : null,
     skillInvocation,
   };
 }
