@@ -1,7 +1,10 @@
 import { describe, it, expect, mock } from "bun:test";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 
-import { createTaskTool } from "./task";
+import { tool } from "ai";
+import { z } from "zod";
+
+import { createTaskTool, markBuiltInTaskTool, isBuiltInTaskTool } from "./task";
 import { createTestToolConfig, mockToolCallOptions, TestTempDir } from "./testHelpers";
 import { Ok, Err } from "@/common/types/result";
 import { ForegroundWaitBackgroundedError, type TaskService } from "@/node/services/taskService";
@@ -1115,5 +1118,22 @@ describe("task tool", () => {
     }
     expect(create).not.toHaveBeenCalled();
     expect(waitForAgentReport).not.toHaveBeenCalled();
+  });
+});
+
+describe("built-in task marker", () => {
+  function makeTool() {
+    return tool({
+      description: "task",
+      inputSchema: z.object({ prompt: z.string() }),
+      execute: () => Promise.resolve("ok"),
+    });
+  }
+
+  it("marks and recognizes the built-in task tool", () => {
+    const t = makeTool();
+    expect(isBuiltInTaskTool(t)).toBe(false);
+    markBuiltInTaskTool(t);
+    expect(isBuiltInTaskTool(t)).toBe(true);
   });
 });

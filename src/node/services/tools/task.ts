@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import type { z } from "zod";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -35,6 +35,28 @@ import {
 } from "@/common/types/thinking";
 import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { coerceNonEmptyString } from "@/node/services/taskUtils";
+
+const BUILT_IN_TASK_TOOL_MARKER = Symbol("muxBuiltInTaskTool");
+
+export function markBuiltInTaskTool<TParameters, TResult>(
+  taskTool: Tool<TParameters, TResult>
+): Tool<TParameters, TResult> {
+  Object.defineProperty(taskTool, BUILT_IN_TASK_TOOL_MARKER, {
+    value: true,
+    // enumerable so object spread (wrapWithInitWait) and descriptor clones (withHooks,
+    // cloneToolPreservingDescriptors, cache control) carry the marker forward to every wrapper —
+    // that is what lets sibling explore task calls share the parallel reader lock downstream.
+    enumerable: true,
+    configurable: true,
+  });
+  return taskTool;
+}
+
+export function isBuiltInTaskTool(tool: Tool | undefined): boolean {
+  return Boolean(
+    (tool as (Tool & Record<symbol, unknown>) | undefined)?.[BUILT_IN_TASK_TOOL_MARKER] === true
+  );
+}
 
 /** Resolve the parent workspace's runtime mode from the injected MUX_RUNTIME env. */
 function resolveRuntimeMode(config: ToolConfiguration): RuntimeMode | undefined {
@@ -331,7 +353,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
   const inputSchema = buildTaskToolAgentArgsSchema({
     includeIsolation: runtimeModeSupportsSharedTaskWorkspace(runtimeMode),
   });
-  return tool({
+  const taskTool = tool({
     description: buildTaskDescription(config),
     inputSchema,
     execute: async (args, { abortSignal, toolCallId }): Promise<unknown> => {
@@ -663,4 +685,5 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       throw new Error("Task foreground wait ended without a terminal result");
     },
   });
+  return markBuiltInTaskTool(taskTool);
 };
