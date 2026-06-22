@@ -327,6 +327,27 @@ describe("router workflow routes", () => {
     ]);
   });
 
+  test("starts relative workflow scripts from the active subproject", async () => {
+    const subProjectPath = path.join(projectPath, "packages", "app");
+    fs.mkdirSync(path.join(subProjectPath, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(subProjectPath, "workflows", "demo.js"),
+      `export const meta = { description: "Subproject workflow" };\nexport default function workflow({ args }) { return { reportMarkdown: "subproject:" + args.topic }; }\n`
+    );
+    const client = createRouterClient(router(), {
+      context: createContext({ enabled: true, subProjectPath }),
+    });
+
+    const result = await client.workflows.start({
+      workspaceId: "workspace-1",
+      scriptPath: "./workflows/demo.js",
+      args: { topic: "workflow routes" },
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.result).toEqual({ reportMarkdown: "subproject:workflow routes" });
+  });
+
   test("persists workflow slash invocations before returning", async () => {
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {

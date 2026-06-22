@@ -377,9 +377,7 @@ export async function resolveWorkflowContext(
         workspaceRootPath
       )
     : appendSubProjectRelativePath(metadata, runtime, workspaceRootPath);
-  const workspacePath = hasRequestedWorkflowProjectPath
-    ? workflowExecutionProjectPath
-    : workspaceRootPath;
+  const workspacePath = workflowExecutionProjectPath;
   const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
 
   return {
