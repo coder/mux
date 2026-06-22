@@ -187,28 +187,34 @@ async function readSkillDescriptorFromDir(
 ): Promise<AgentSkillDescriptor | null> {
   const skillFilePath = runtime.normalizePath("SKILL.md", skillDir);
 
+  // Every invalid-skill diagnostic for this directory shares the same identity
+  // (directoryName / scope / displayPath); only message + hint vary per failure.
+  const pushInvalidSkill = (message: string, hint: string): void => {
+    options?.invalidSkills?.push({
+      directoryName,
+      scope,
+      displayPath: skillFilePath,
+      message,
+      hint,
+    });
+  };
+
   let stat;
   try {
     stat = await runtime.stat(skillFilePath);
   } catch {
-    options?.invalidSkills?.push({
-      directoryName,
-      scope,
-      displayPath: skillFilePath,
-      message: "SKILL.md is missing or unreadable.",
-      hint: "Create a SKILL.md file with YAML frontmatter (--- ... ---).",
-    });
+    pushInvalidSkill(
+      "SKILL.md is missing or unreadable.",
+      "Create a SKILL.md file with YAML frontmatter (--- ... ---)."
+    );
     return null;
   }
 
   if (stat.isDirectory) {
-    options?.invalidSkills?.push({
-      directoryName,
-      scope,
-      displayPath: skillFilePath,
-      message: "SKILL.md is a directory (expected a file).",
-      hint: "Replace SKILL.md with a regular file.",
-    });
+    pushInvalidSkill(
+      "SKILL.md is a directory (expected a file).",
+      "Replace SKILL.md with a regular file."
+    );
     return null;
   }
 
@@ -216,13 +222,7 @@ async function readSkillDescriptorFromDir(
   const sizeValidation = validateFileSize(stat);
   if (sizeValidation) {
     log.warn(`Skipping skill '${directoryName}' (${scope}): ${sizeValidation.error}`);
-    options?.invalidSkills?.push({
-      directoryName,
-      scope,
-      displayPath: skillFilePath,
-      message: sizeValidation.error,
-      hint: "Reduce SKILL.md size below 1MB.",
-    });
+    pushInvalidSkill(sizeValidation.error, "Reduce SKILL.md size below 1MB.");
     return null;
   }
 
@@ -232,13 +232,10 @@ async function readSkillDescriptorFromDir(
   } catch (err) {
     const message = getErrorMessage(err);
     log.warn(`Failed to read SKILL.md for ${directoryName}: ${message}`);
-    options?.invalidSkills?.push({
-      directoryName,
-      scope,
-      displayPath: skillFilePath,
-      message: `Failed to read SKILL.md: ${message}`,
-      hint: "Check file permissions and ensure the file is UTF-8 text.",
-    });
+    pushInvalidSkill(
+      `Failed to read SKILL.md: ${message}`,
+      "Check file permissions and ensure the file is UTF-8 text."
+    );
     return null;
   }
 
@@ -259,13 +256,10 @@ async function readSkillDescriptorFromDir(
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
     if (!validated.success) {
       log.warn(`Invalid agent skill descriptor for ${directoryName}: ${validated.error.message}`);
-      options?.invalidSkills?.push({
-        directoryName,
-        scope,
-        displayPath: skillFilePath,
-        message: `Invalid agent skill descriptor: ${validated.error.message}`,
-        hint: "Fix SKILL.md frontmatter fields to satisfy the skill schema.",
-      });
+      pushInvalidSkill(
+        `Invalid agent skill descriptor: ${validated.error.message}`,
+        "Fix SKILL.md frontmatter fields to satisfy the skill schema."
+      );
       return null;
     }
 
@@ -273,13 +267,10 @@ async function readSkillDescriptorFromDir(
   } catch (err) {
     const message = err instanceof AgentSkillParseError ? err.message : getErrorMessage(err);
     log.warn(`Skipping invalid skill '${directoryName}' (${scope}): ${message}`);
-    options?.invalidSkills?.push({
-      directoryName,
-      scope,
-      displayPath: skillFilePath,
+    pushInvalidSkill(
       message,
-      hint: "Fix SKILL.md frontmatter (name + description) and ensure it matches the directory name.",
-    });
+      "Fix SKILL.md frontmatter (name + description) and ensure it matches the directory name."
+    );
     return null;
   }
 }
