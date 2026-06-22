@@ -207,7 +207,7 @@ export class AttachmentService {
       entries.push({
         id: run.id,
         kind: "workflow",
-        title: run.definition.name,
+        title: run.workflow.name,
         completedAtMs,
         ...(resultEvent !== undefined
           ? {

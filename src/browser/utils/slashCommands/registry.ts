@@ -672,32 +672,17 @@ const workflowCommandDefinition: SlashCommandDefinition = {
   description: "Run an explicit workflow by script path",
   experimentGate: EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
   inputHint: WORKFLOW_COMMAND_USAGE,
-  suggestions: ({ partialToken, context }) => {
-    const workflows: SuggestionDefinition[] = (context.workflows ?? [])
-      .filter((workflow) => workflow.executable)
-      .map((workflow) => ({
-        key: workflow.name,
-        description: `${workflow.description} (${workflow.scope} workflow)`,
-      }));
-    return filterAndMapSuggestions(workflows, partialToken, (workflow) => ({
-      id: `workflow-explicit:${workflow.key}`,
-      display: workflow.key,
-      description: workflow.description,
-      replacement: `/workflow ${workflow.key} `,
-      kind: "workflow",
-    }));
-  },
   handler: ({ rawInput }): ParsedCommand => {
     const trimmed = rawInput.trim();
     if (!trimmed) {
       return { type: "command-missing-args", command: "workflow", usage: WORKFLOW_COMMAND_USAGE };
     }
     const firstWhitespace = trimmed.search(/\s/u);
-    const name = firstWhitespace === -1 ? trimmed : trimmed.slice(0, firstWhitespace);
+    const scriptPath = firstWhitespace === -1 ? trimmed : trimmed.slice(0, firstWhitespace);
     const argsText = firstWhitespace === -1 ? undefined : trimmed.slice(firstWhitespace).trim();
     return {
       type: "workflow-run",
-      name,
+      scriptPath,
       ...(argsText ? { argsText } : {}),
     };
   },

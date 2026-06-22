@@ -5,10 +5,7 @@ import type {
 import { WorkflowDefinitionArgSummarySchema } from "@/common/orpc/schemas";
 import assert from "@/common/utils/assert";
 import { isPlainObject } from "@/common/utils/isPlainObject";
-import {
-  parseLegacyWorkflowDescription,
-  parseWorkflowMetadataDescription,
-} from "./workflowDescription";
+import { parseWorkflowMetadataDescription } from "./workflowDescription";
 import { parseStaticWorkflowMetadataLiteral } from "./staticWorkflowMetadata";
 
 export interface WorkflowDefinitionSourceStats {
@@ -51,8 +48,7 @@ export function summarizeWorkflowDefinitionSource(
   const parsedMetadata = parseWorkflowDefinitionMetadata(source);
   const metadataDescription =
     parsedMetadata == null ? null : parseWorkflowMetadataDescription(parsedMetadata);
-  const description =
-    metadataDescription ?? parseLegacyWorkflowDescription(source) ?? fallbackDescription ?? null;
+  const description = metadataDescription ?? fallbackDescription ?? null;
   const metadata =
     description == null
       ? null

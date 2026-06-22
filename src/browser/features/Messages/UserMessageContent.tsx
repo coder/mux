@@ -1,12 +1,7 @@
 import React from "react";
 import { FileText } from "lucide-react";
-import type {
-  InlineSkillSnapshotMap,
-  ReviewNoteDataForDisplay,
-  WorkflowDefinitionPreviewForDisplay,
-} from "@/common/types/message";
+import type { InlineSkillSnapshotMap, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
-import { SCHEDULED_WORKFLOW_TRIGGER_LABEL } from "@/common/utils/workflowRunMessages";
 import { ReviewBlockFromData } from "../Shared/ReviewBlock";
 import {
   HoverCard,
@@ -16,51 +11,8 @@ import {
 } from "@/browser/components/HoverCard/HoverCard";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-import { HoverClickPopover } from "@/browser/components/HoverClickPopover/HoverClickPopover";
 import { AgentSkillBadge } from "./AgentSkillBadge";
 import { buildAgentSkillSnapshotMarkdown } from "./agentSkillSnapshotMarkdown";
-
-export function WorkflowDefinitionPreviewCard(props: {
-  preview: WorkflowDefinitionPreviewForDisplay;
-}) {
-  const descriptor = props.preview.descriptor;
-  const source = props.preview.source?.trimEnd();
-
-  return (
-    <div data-component="WorkflowDefinitionPreviewCard" className="space-y-3 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-foreground font-mono text-[13px] font-semibold">
-          {descriptor.name}
-        </span>
-        <span className="border-border-light text-plan-mode shrink-0 rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase">
-          {descriptor.scope} workflow
-        </span>
-        {!descriptor.executable && (
-          <span className="border-warning/30 text-warning shrink-0 rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase">
-            blocked
-          </span>
-        )}
-      </div>
-      <div className="text-muted text-[12px] leading-relaxed">{descriptor.description}</div>
-      {descriptor.sourcePath && (
-        <div className="text-muted truncate font-mono text-[10px]">{descriptor.sourcePath}</div>
-      )}
-      {descriptor.blockedReason && (
-        <div className="text-warning text-[11px]">{descriptor.blockedReason}</div>
-      )}
-      {source && (
-        <pre
-          aria-label={`Source for workflow ${descriptor.name}`}
-          className="border-border bg-code-bg focus-visible:ring-accent max-h-[260px] overflow-auto rounded border p-2 text-[11px] leading-relaxed focus-visible:ring-1 focus-visible:outline-none"
-          role="region"
-          tabIndex={0}
-        >
-          <code>{source}</code>
-        </pre>
-      )}
-    </div>
-  );
-}
 
 interface UserMessageContentProps {
   content: string;
@@ -70,7 +22,6 @@ interface UserMessageContentProps {
    * When present, the command prefix badge shows a hover preview.
    */
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
-  workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   reviews?: ReviewNoteDataForDisplay[];
   fileParts?: FilePart[];
@@ -101,55 +52,6 @@ const imageContainerStyles = {
 } as const;
 
 const markdownClassName = "user-message-markdown";
-
-interface ScheduledWorkflowTriggerDisplay {
-  label: string;
-  workflowName: string;
-  remainingContent: string;
-}
-
-function getScheduledWorkflowTriggerDisplay(options: {
-  textContent: string;
-  commandPrefix?: string;
-  workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
-}): ScheduledWorkflowTriggerDisplay | null {
-  if (
-    options.commandPrefix !== SCHEDULED_WORKFLOW_TRIGGER_LABEL ||
-    !options.textContent.startsWith(SCHEDULED_WORKFLOW_TRIGGER_LABEL)
-  ) {
-    return null;
-  }
-
-  const contentAfterLabel = options.textContent
-    .slice(SCHEDULED_WORKFLOW_TRIGGER_LABEL.length)
-    .trimStart();
-  if (contentAfterLabel.length === 0) {
-    return null;
-  }
-
-  const previewName = options.workflowDefinitionPreview?.descriptor.name;
-  if (previewName && contentAfterLabel.startsWith(previewName)) {
-    const nextChar = contentAfterLabel.charAt(previewName.length);
-    if (nextChar === "" || /\s/u.test(nextChar)) {
-      return {
-        label: SCHEDULED_WORKFLOW_TRIGGER_LABEL,
-        workflowName: previewName,
-        remainingContent: contentAfterLabel.slice(previewName.length),
-      };
-    }
-  }
-
-  const workflowName = contentAfterLabel.trim();
-  if (workflowName.length === 0 || workflowName.includes("\n")) {
-    return null;
-  }
-
-  return {
-    label: SCHEDULED_WORKFLOW_TRIGGER_LABEL,
-    workflowName,
-    remainingContent: "",
-  };
-}
 
 function dataUrlToBlob(dataUrl: string): Blob | null {
   if (!dataUrl.startsWith("data:")) return null;
@@ -238,63 +140,6 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const hasNewlineAfterPrefix = charAfterPrefix === "\n";
 
     const snapshotMarkdown = buildAgentSkillSnapshotMarkdown(props.agentSkillSnapshot);
-    const workflowDefinitionPreview = props.workflowDefinitionPreview;
-
-    const renderWorkflowDefinitionBadge = (label: string) => {
-      if (!workflowDefinitionPreview) {
-        return <AgentSkillBadge>{label}</AgentSkillBadge>;
-      }
-
-      return (
-        <HoverClickPopover
-          align="start"
-          content={<WorkflowDefinitionPreviewCard preview={workflowDefinitionPreview} />}
-          contentClassName="border-border-medium bg-modal-bg z-[1600] max-h-[360px] w-[560px] max-w-[80vw] overflow-auto border-2 p-3"
-          interactiveContent
-          side="top"
-        >
-          {/* Workflow previews use the run record snapshot so old invocations show what actually ran. */}
-          <AgentSkillBadge
-            as="button"
-            aria-label={`Show workflow definition preview for ${workflowDefinitionPreview.descriptor.name}`}
-            className="cursor-help"
-          >
-            {label}
-          </AgentSkillBadge>
-        </HoverClickPopover>
-      );
-    };
-
-    const scheduledWorkflowDisplay = getScheduledWorkflowTriggerDisplay({
-      textContent,
-      commandPrefix: shouldHighlightPrefix,
-      workflowDefinitionPreview,
-    });
-    if (scheduledWorkflowDisplay) {
-      const charAfterWorkflow = scheduledWorkflowDisplay.remainingContent.charAt(0);
-      const hasSpaceAfterWorkflow = charAfterWorkflow === " ";
-      const hasNewlineAfterWorkflow = charAfterWorkflow === "\n";
-
-      return (
-        <div className={hasNewlineAfterWorkflow ? "" : "flex flex-wrap items-baseline"}>
-          {/* Scheduled triggers start with an automation label; color the workflow name instead. */}
-          <span className="font-mono text-[13px] font-medium" style={markdownStyles[props.variant]}>
-            {scheduledWorkflowDisplay.label}&nbsp;
-          </span>
-          {renderWorkflowDefinitionBadge(scheduledWorkflowDisplay.workflowName)}
-          {hasSpaceAfterWorkflow && <span>&nbsp;</span>}
-          {scheduledWorkflowDisplay.remainingContent.trim() && (
-            <MarkdownRenderer
-              content={scheduledWorkflowDisplay.remainingContent.trim()}
-              className={markdownClassName}
-              style={markdownStyles[props.variant]}
-              inlineSkillSnapshots={props.inlineSkillSnapshots}
-              preserveLineBreaks
-            />
-          )}
-        </div>
-      );
-    }
 
     const badge = snapshotMarkdown ? (
       <HoverCard openDelay={150}>
@@ -318,8 +163,6 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
           </HoverCardContent>
         </HoverCardPortal>
       </HoverCard>
-    ) : workflowDefinitionPreview ? (
-      renderWorkflowDefinitionBadge(shouldHighlightPrefix)
     ) : (
       <AgentSkillBadge>{shouldHighlightPrefix}</AgentSkillBadge>
     );

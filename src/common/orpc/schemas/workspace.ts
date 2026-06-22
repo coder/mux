@@ -95,7 +95,7 @@ export const WorkflowTaskMetadataSchema = z.object({
   stepId: z.string().min(1).meta({ description: "Workflow step that spawned this task." }),
   workflowName: z.string().min(1).optional().meta({
     description:
-      "Human-readable workflow definition name stamped at spawn time for sidebar grouping. Optional: absent on tasks created before this field existed.",
+      "Human-readable workflow display name stamped at spawn time for sidebar grouping. Optional: absent on tasks created before this field existed.",
   }),
   outputSchema: z.unknown().optional().meta({
     description: "Optional JSON Schema subset required for this task's structured output.",

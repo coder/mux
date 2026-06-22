@@ -87,7 +87,6 @@ import {
 import {
   AgentReportInlineToolArgsSchema,
   AgentReportSubmittedReportSchema,
-  AgentReportWorkflowInlineToolArgsSchema,
   TaskToolResultSchema,
   TaskToolArgsSchema,
   type TaskIsolation,
@@ -6290,7 +6289,13 @@ export class TaskService {
     }
 
     const status = entry.workspace.taskStatus;
-    const reportArgs = this.findAgentReportArgsInParts(event.parts);
+    const workflowOutputSchema = entry.workspace.workflowTask?.outputSchema;
+    const acceptsSchemaShapedWorkflowReport =
+      workflowOutputSchema !== undefined &&
+      validateJsonSchemaSubsetSchema(workflowOutputSchema, { requireObjectSchema: true }).success;
+    const reportArgs = this.findAgentReportArgsInParts(event.parts, {
+      acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
+    });
 
     // Stream-end settlement: interrupted tasks must settle all pending waiters.
     // Report present → finalize (resolve waiters). No report → reject waiters promptly.
@@ -7734,7 +7739,8 @@ export class TaskService {
   }
 
   private findAgentReportArgsInParts(
-    parts: readonly unknown[]
+    parts: readonly unknown[],
+    options: { acceptSchemaShapedWorkflowReport?: boolean } = {}
   ): { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null {
     for (let i = parts.length - 1; i >= 0; i--) {
       const part = parts[i];
@@ -7751,12 +7757,15 @@ export class TaskService {
         return outputReport.data;
       }
 
-      const parsedWorkflowArgs = AgentReportWorkflowInlineToolArgsSchema.safeParse(part.input);
-      if (parsedWorkflowArgs.success) {
+      if (
+        options.acceptSchemaShapedWorkflowReport === true &&
+        part.input != null &&
+        typeof part.input === "object" &&
+        !Array.isArray(part.input)
+      ) {
         return {
-          reportMarkdown: parsedWorkflowArgs.data.reportMarkdown,
-          title: parsedWorkflowArgs.data.title ?? undefined,
-          structuredOutput: parsedWorkflowArgs.data.structuredOutput,
+          reportMarkdown: "Structured workflow report submitted.",
+          structuredOutput: part.input,
         };
       }
 
@@ -7767,13 +7776,6 @@ export class TaskService {
         return {
           reportMarkdown: parsedInlineArgs.data.reportMarkdown,
           title: parsedInlineArgs.data.title ?? undefined,
-        };
-      }
-
-      if (part.input != null && typeof part.input === "object") {
-        return {
-          reportMarkdown: "Structured workflow report submitted.",
-          structuredOutput: part.input,
         };
       }
     }

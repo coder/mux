@@ -14,7 +14,6 @@ import {
   createUserMessage,
 } from "@/browser/stories/mocks/messages";
 import {
-  SCHEDULED_WORKFLOW_TRIGGER_LABEL,
   WORKFLOW_RESULT_METADATA_TYPE,
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
@@ -216,15 +215,15 @@ export const WorkflowTriggeredCommand: AppStory = {
         const workflowRun = {
           id: runId,
           workspaceId: "ws-workflow-trigger",
-          definition: {
+          workflow: {
             name: "shallow-review",
             description: "Quick workflow review",
             scope: "scratch" as const,
             sourcePath: "/tmp/mux/sessions/workspace/workflows/shallow-review.js",
             executable: true,
           },
-          definitionSource: "export default function workflow() { return null; }",
-          definitionHash: "sha256:workflow-trigger-story",
+          source: "export default function workflow() { return null; }",
+          sourceHash: "sha256:workflow-trigger-story",
           args: { input: "what do you think of workflows" },
           status: "running" as const,
           createdAt: "2026-05-29T00:00:00.000Z",
@@ -282,76 +281,6 @@ export const WorkflowTriggeredCommand: AppStory = {
                 },
               }
             ),
-          ],
-        });
-      }}
-    />
-  ),
-};
-
-export const ScheduledWorkflowTrigger: AppStory = {
-  parameters: { chromatic: { disableSnapshot: true } },
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        collapseLeftSidebar();
-        const rawCommand = `${SCHEDULED_WORKFLOW_TRIGGER_LABEL} github-issue-triage`;
-        const workflowName = "github-issue-triage";
-        const runId = "wfr_scheduled_workflow_trigger_story";
-        const workflowRun = {
-          id: runId,
-          workspaceId: "ws-scheduled-workflow-trigger",
-          definition: {
-            name: workflowName,
-            description: "Triage GitHub issues",
-            scope: "project" as const,
-            sourcePath: "/tmp/mux/project/.mux/workflows/github-issue-triage.js",
-            executable: true,
-          },
-          definitionSource: "export default function workflow() { return null; }",
-          definitionHash: "sha256:scheduled-workflow-trigger-story",
-          args: {},
-          status: "running" as const,
-          createdAt: "2026-05-29T00:00:00.000Z",
-          updatedAt: "2026-05-29T00:00:01.000Z",
-          events: [
-            {
-              sequence: 1,
-              type: "status" as const,
-              at: "2026-05-29T00:00:00.000Z",
-              status: "running" as const,
-            },
-          ],
-          steps: [],
-        };
-        const workflowCard = buildWorkflowRunCardMessage(
-          { name: workflowName, args: workflowRun.args },
-          { runId, status: workflowRun.status, result: null, run: workflowRun },
-          STABLE_TIMESTAMP - 295000
-        ) as ChatMuxMessage;
-        workflowCard.type = "message";
-        workflowCard.metadata = {
-          historySequence: 2,
-          timestamp: STABLE_TIMESTAMP - 295000,
-          synthetic: true,
-          uiVisible: true,
-          muxMetadata: { type: WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE, runId },
-        };
-
-        return setupSimpleChatStory({
-          workspaceId: "ws-scheduled-workflow-trigger",
-          messages: [
-            createUserMessage("scheduled-workflow-command", rawCommand, {
-              historySequence: 1,
-              timestamp: STABLE_TIMESTAMP - 300000,
-              muxMetadata: {
-                type: WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
-                rawCommand,
-                commandPrefix: SCHEDULED_WORKFLOW_TRIGGER_LABEL,
-                runId,
-              },
-            }),
-            workflowCard,
           ],
         });
       }}

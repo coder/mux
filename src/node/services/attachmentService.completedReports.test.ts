@@ -57,14 +57,14 @@ async function writeWorkflowRun(
   await store.createRun({
     id: params.runId,
     workspaceId: params.workspaceId ?? WORKSPACE_ID,
-    definition: {
+    workflow: {
       name: "deep-research",
       description: "Research a topic",
       scope: "built-in" as const,
       executable: true,
     },
     ...(params.parentWorkflow !== undefined ? { parentWorkflow: params.parentWorkflow } : {}),
-    definitionSource: "export default async function workflow() { return 'ok'; }\n",
+    source: "export default async function workflow() { return 'ok'; }\n",
     args: {},
     now: "2026-06-01T00:00:00.000Z",
   });

@@ -249,7 +249,7 @@ describe("WorkspaceService workflow activity", () => {
         id: "wfr_active",
         workspaceId,
         definition,
-        definitionSource: "export default function workflow() { return {}; }",
+        source: "export default function workflow() { return {}; }",
         args: {},
         now: "2026-06-17T00:00:00.000Z",
       });
@@ -257,7 +257,7 @@ describe("WorkspaceService workflow activity", () => {
         id: "wfr_nested",
         workspaceId,
         definition,
-        definitionSource: "export default function workflow() { return {}; }",
+        source: "export default function workflow() { return {}; }",
         args: {},
         parentWorkflow: { runId: "wfr_active", stepId: "child", inputHash: "hash", depth: 0 },
         now: "2026-06-17T00:00:01.000Z",

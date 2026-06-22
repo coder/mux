@@ -1916,8 +1916,8 @@ export const router = (authToken?: string) => {
                 sendWorkflowRunTerminalContinuation({
                   context,
                   workspaceId: input.workspaceId,
-                  rawCommand: `workflow_run ${event.run.definition.sourcePath ?? event.run.definition.name}`,
-                  name: event.run.definition.sourcePath ?? event.run.definition.name,
+                  rawCommand: `workflow_run ${event.run.workflow.sourcePath ?? event.run.workflow.name}`,
+                  name: event.run.workflow.sourcePath ?? event.run.workflow.name,
                   event,
                 }),
             }

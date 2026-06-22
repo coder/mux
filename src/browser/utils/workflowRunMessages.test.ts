@@ -15,15 +15,15 @@ describe("buildWorkflowRunCardMessage", () => {
     const run: WorkflowRunRecord = {
       id: "wfr_reload",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in",
         sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
-      definitionSource: "export default function workflow() { return null; }",
-      definitionHash: "sha256:test",
+      source: "export default function workflow() { return null; }",
+      sourceHash: "sha256:test",
       args: { topic: "reload" },
       status: "completed",
       createdAt: "2026-05-29T00:00:00.000Z",
@@ -33,7 +33,7 @@ describe("buildWorkflowRunCardMessage", () => {
     };
 
     const message = buildWorkflowRunCardMessage(
-      { scriptPath: run.definition.sourcePath, args: run.args },
+      { scriptPath: run.workflow.sourcePath, args: run.args },
       { runId: run.id, status: run.status, result: { reportMarkdown: "done" }, run },
       123
     );
@@ -55,15 +55,15 @@ describe("buildWorkflowRunCardMessage", () => {
     const run: WorkflowRunRecord = {
       id: "wfr_retried",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in",
         sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
-      definitionSource: "export default function workflow() { return null; }",
-      definitionHash: "sha256:test",
+      source: "export default function workflow() { return null; }",
+      sourceHash: "sha256:test",
       args: { topic: "retry" },
       status: "completed",
       createdAt: "2026-05-29T00:00:00.000Z",
@@ -156,7 +156,7 @@ describe("buildWorkflowRunCardMessage", () => {
   test("detects existing persisted workflow_run tool calls by run id or in-flight input", () => {
     const run = {
       id: "wfr_existing",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
@@ -166,7 +166,7 @@ describe("buildWorkflowRunCardMessage", () => {
       args: { topic: "reload" },
     };
     const completedMessage = buildWorkflowRunCardMessage(
-      { scriptPath: run.definition.sourcePath, args: run.args },
+      { scriptPath: run.workflow.sourcePath, args: run.args },
       { runId: run.id, status: "completed", result: { reportMarkdown: "done" } },
       123
     );
@@ -194,7 +194,7 @@ describe("buildWorkflowRunCardMessage", () => {
   test("does not project workflow runs that are no longer anchored in the transcript", () => {
     const run = {
       id: "wfr_discarded",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
@@ -214,7 +214,7 @@ describe("buildWorkflowRunCardMessage", () => {
   test("uses workflow card metadata as a repairable transcript anchor", () => {
     const run = {
       id: "wfr_metadata_anchor",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
@@ -225,7 +225,7 @@ describe("buildWorkflowRunCardMessage", () => {
       status: "completed" as const,
     };
     const malformedCard = buildWorkflowRunCardMessage(
-      { scriptPath: run.definition.sourcePath, args: run.args },
+      { scriptPath: run.workflow.sourcePath, args: run.args },
       { runId: run.id, status: "running", result: null },
       123
     );
@@ -248,7 +248,7 @@ describe("buildWorkflowRunCardMessage", () => {
   test("uses workflow trigger rows as anchors to repair missing cards", () => {
     const run = {
       id: "wfr_trigger_anchor",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
@@ -281,7 +281,7 @@ describe("buildWorkflowRunCardMessage", () => {
   test("projects updated terminal workflow cards while preserving the existing card slot", () => {
     const run = {
       id: "wfr_refresh",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
@@ -292,7 +292,7 @@ describe("buildWorkflowRunCardMessage", () => {
       status: "completed" as const,
     };
     const staleMessage = buildWorkflowRunCardMessage(
-      { scriptPath: run.definition.sourcePath, args: run.args },
+      { scriptPath: run.workflow.sourcePath, args: run.args },
       { runId: run.id, status: "running", result: null },
       123
     );
@@ -309,7 +309,7 @@ describe("buildWorkflowRunCardMessage", () => {
   test("does not project cards already owned by assistant workflow tool calls", () => {
     const run = {
       id: "wfr_running",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,

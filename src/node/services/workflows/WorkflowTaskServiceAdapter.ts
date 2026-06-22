@@ -100,7 +100,7 @@ export interface WorkflowTaskServiceAdapterOptions {
   parentWorkspaceId: string;
   workflowRunId: string;
   /**
-   * Human-readable workflow definition name, stamped onto spawned tasks so the
+   * Human-readable workflow display name, stamped onto spawned tasks so the
    * sidebar can label workflow run groups. Optional: interrupt-only adapters
    * and legacy call sites may not know the name.
    */

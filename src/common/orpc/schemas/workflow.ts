@@ -6,7 +6,7 @@ export const WorkflowNameSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 
-export const WorkflowDefinitionScopeSchema = z.enum(["project", "global", "built-in", "scratch"]);
+export const WorkflowScriptScopeSchema = z.enum(["project", "global", "built-in", "scratch"]);
 
 export const WorkflowRunIdSchema = z
   .string()
@@ -55,11 +55,11 @@ export const WorkflowDefinitionArgSummarySchema = z
   })
   .strict();
 
-export const WorkflowDefinitionDescriptorSchema = z
+export const WorkflowScriptDescriptorSchema = z
   .object({
     name: WorkflowNameSchema,
     description: z.string().min(1).max(1024),
-    scope: WorkflowDefinitionScopeSchema,
+    scope: WorkflowScriptScopeSchema,
     sourcePath: z.string().min(1).optional(),
     requestedScriptPath: z.string().min(1).optional(),
     canonicalScriptPath: z.string().min(1).optional(),
@@ -233,9 +233,9 @@ export const WorkflowRunParentSchema = z
 export const WorkflowRunRecordSchema = z.object({
   id: WorkflowRunIdSchema,
   workspaceId: z.string().min(1),
-  definition: WorkflowDefinitionDescriptorSchema,
-  definitionSource: z.string().min(1),
-  definitionHash: z.string().min(1),
+  workflow: WorkflowScriptDescriptorSchema,
+  source: z.string().min(1),
+  sourceHash: z.string().min(1),
   args: JsonValueSchema,
   agentOutputSchemaRequired: z.boolean().optional(),
   parentWorkflow: WorkflowRunParentSchema.optional(),

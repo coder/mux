@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 import {
   isTerminalWorkflowRunStatus,
-  type WorkflowDefinitionDescriptor,
+  type WorkflowScriptDescriptor,
   type WorkflowRunRecord,
   type WorkflowRunStatus,
 } from "@/common/types/workflow";
@@ -44,7 +44,7 @@ export interface WorkflowServiceOptions {
   runStore: WorkflowRunStore;
   runtimeFactory: IJSRuntimeFactory;
   taskAdapter?: WorkflowTaskAdapter;
-  /** workflowName is the human-readable definition name, used to label spawned tasks. */
+  /** workflowName is the human-readable display name, used to label spawned tasks. */
   taskAdapterFactory?: (runId: string, workflowName?: string) => WorkflowTaskAdapter;
   resolveWorkflowScript?: (scriptPath: string) => Promise<ResolvedWorkflowScript>;
   onBackgroundRunTerminal?: (event: WorkflowBackgroundRunTerminalEvent) => Promise<void> | void;
@@ -296,7 +296,7 @@ export class WorkflowService {
         !isTerminalWorkflowRunStatus(snapshot.status)
     );
     for (const childRun of childRuns) {
-      // Child workflow runs from older workflow definitions are still persisted separately;
+      // Child workflow runs from older workflow scripts are still persisted separately;
       // interrupting the parent must also stop their run-scoped agents before returning.
       await this.interruptRunTree(
         { workspaceId: input.workspaceId, runId: childRun.id },
@@ -674,8 +674,8 @@ export class WorkflowService {
     return await this.runStore.createRun({
       id: runId,
       workspaceId: input.workspaceId,
-      definition: buildWorkflowDefinitionDescriptor(input.script),
-      definitionSource: input.script.source,
+      workflow: buildWorkflowScriptDescriptor(input.script),
+      source: input.script.source,
       args: normalized.args,
       now: this.clock?.nowIso() ?? new Date().toISOString(),
     });
@@ -830,8 +830,8 @@ export class WorkflowService {
     return await this.runStore.createRunIfAbsent({
       id: childRunId,
       workspaceId: parentRun.workspaceId,
-      definition: buildWorkflowDefinitionDescriptor(script),
-      definitionSource: script.source,
+      workflow: buildWorkflowScriptDescriptor(script),
+      source: script.source,
       args: normalized.args,
       parentWorkflow: {
         runId: input.parentRunId,
@@ -845,10 +845,10 @@ export class WorkflowService {
 
   private async createRunner(runId: string): Promise<WorkflowRunner> {
     // The run record always exists by the time a runner is created (create/resume/retry
-    // paths persist it first), so resolve the definition name for task labeling here.
+    // paths persist it first), so resolve the display name for task labeling here.
     const workflowName =
       this.taskAdapterFactory != null
-        ? (await this.runStore.getRun(runId)).definition.name
+        ? (await this.runStore.getRun(runId)).workflow.name
         : undefined;
     return new WorkflowRunner({
       runStore: this.runStore,
@@ -857,7 +857,7 @@ export class WorkflowService {
       nestedWorkflowAdapter: {
         createRun: async (input) => {
           const run = await this.createNestedWorkflowRun(input);
-          return { runId: run.id, name: run.definition.name };
+          return { runId: run.id, name: run.workflow.name };
         },
         run: async (childRunId, options) => {
           const childRunner = await this.createRunner(childRunId);
@@ -888,9 +888,7 @@ export class WorkflowService {
   }
 }
 
-function buildWorkflowDefinitionDescriptor(
-  script: ResolvedWorkflowScript
-): WorkflowDefinitionDescriptor {
+function buildWorkflowScriptDescriptor(script: ResolvedWorkflowScript): WorkflowScriptDescriptor {
   return {
     name: getWorkflowScriptDefinitionName(script),
     description:
@@ -907,7 +905,7 @@ function buildWorkflowDefinitionDescriptor(
 
 function getWorkflowScriptDefinitionName(
   script: ResolvedWorkflowScript
-): WorkflowDefinitionDescriptor["name"] {
+): WorkflowScriptDescriptor["name"] {
   const displayName = parseWorkflowName(script.source);
   const fallbackSource = script.relativePath ?? script.resolvedPath ?? script.canonicalScriptPath;
   const basename = displayName ?? path.basename(fallbackSource, ".js");
@@ -938,9 +936,7 @@ function isAbortSignalAborted(abortSignal?: AbortSignal): boolean {
 }
 
 function canResumeRunWithCurrentTrust(run: WorkflowRunRecord, projectTrusted: boolean): boolean {
-  return (
-    (run.definition.scope !== "project" && run.definition.scope !== "scratch") || projectTrusted
-  );
+  return (run.workflow.scope !== "project" && run.workflow.scope !== "scratch") || projectTrusted;
 }
 
 function assertRunCanResumeWithCurrentTrust(run: WorkflowRunRecord, projectTrusted: boolean): void {

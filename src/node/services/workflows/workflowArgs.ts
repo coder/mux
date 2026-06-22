@@ -46,11 +46,11 @@ const ARGS_SCHEMA_PROPERTIES_ERROR_MESSAGE =
   "Workflow meta.argsSchema.properties must be an object";
 
 export function normalizeWorkflowArgsForSource(
-  definitionSource: string,
+  source: string,
   rawArgs: unknown,
   options: WorkflowArgsNormalizationOptions = {}
 ): WorkflowArgsNormalizationResult {
-  const meta = parseWorkflowMetadata(definitionSource);
+  const meta = parseWorkflowMetadata(source);
   if (meta?.argsSchema == null) {
     return { args: rawArgs, metadata: meta };
   }

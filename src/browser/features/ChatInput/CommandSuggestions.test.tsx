@@ -43,19 +43,6 @@ describe("CommandSuggestions", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  it("renders workflow suggestions with a distinct badge", () => {
-    const { getByText } = render(
-      <CommandSuggestions
-        suggestions={[{ ...makeSuggestion("deep-research"), kind: "workflow" }]}
-        onSelectSuggestion={() => undefined}
-        onDismiss={() => undefined}
-        isVisible
-      />
-    );
-
-    expect(getByText("Workflow")).toBeTruthy();
-  });
-
   it("preserves the selected suggestion by id when suggestions reorder", () => {
     const initialSuggestions = [makeSuggestion("a"), makeSuggestion("b"), makeSuggestion("c")];
     const nextSuggestions = [makeSuggestion("c"), makeSuggestion("a"), makeSuggestion("b")];

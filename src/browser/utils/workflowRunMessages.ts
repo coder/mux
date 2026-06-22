@@ -133,7 +133,7 @@ export function hasWorkflowRunToolCallMessage(
         return false;
       }
       const input = getWorkflowInput(part.input);
-      const scriptPath = run.definition.sourcePath ?? run.definition.name;
+      const scriptPath = run.workflow.sourcePath ?? run.workflow.name;
       return input?.scriptPath === scriptPath && jsonEqual(input.args, run.args);
     })
   );
@@ -187,7 +187,7 @@ export function addWorkflowRunCardMessageForRun(
 ): void {
   addWorkflowRunCardMessage(
     workspaceId,
-    { scriptPath: run.definition.sourcePath ?? run.definition.name, args: run.args },
+    { scriptPath: run.workflow.sourcePath ?? run.workflow.name, args: run.args },
     { runId: run.id, status: run.status, result: getLatestWorkflowResult(run), run },
     options
   );

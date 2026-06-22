@@ -859,14 +859,14 @@ describe("useCreationWorkspace", () => {
         Promise.resolve({
           id: "wfr_creation",
           workspaceId: TEST_WORKSPACE_ID,
-          definition: {
+          workflow: {
             name: "deep-research",
             description: "Deep research",
             scope: "built-in",
             executable: true,
           },
-          definitionSource: "export default function workflow() { return null; }",
-          definitionHash: "sha256:test",
+          source: "export default function workflow() { return null; }",
+          sourceHash: "sha256:test",
           args: { input: "mux workflows" },
           status: "completed",
           createdAt: "2026-05-29T00:00:00.000Z",
@@ -910,7 +910,7 @@ describe("useCreationWorkspace", () => {
         undefined,
         {
           type: "workflow-run",
-          name: "deep-research",
+          scriptPath: "skill://deep-research/workflow.js",
           argsText: "mux workflows",
         }
       );
@@ -922,7 +922,7 @@ describe("useCreationWorkspace", () => {
     const workflowStartInput = workflowsApi.start.mock.calls[0]?.[0];
     expect(workflowStartInput).toMatchObject({
       workspaceId: TEST_WORKSPACE_ID,
-      name: "deep-research",
+      scriptPath: "skill://deep-research/workflow.js",
       runInBackground: true,
       rawCommand: "/deep-research mux workflows",
       args: { input: "mux workflows" },

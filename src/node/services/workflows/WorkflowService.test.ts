@@ -63,9 +63,9 @@ describe("WorkflowService", () => {
       status: "completed",
       result: { reportMarkdown: "Hello script paths" },
     });
-    expect(run.definitionSource).toBe(source);
-    expect(run.definitionHash).not.toBe("sha256:test");
-    expect(run.definition).toMatchObject({
+    expect(run.source).toBe(source);
+    expect(run.sourceHash).not.toBe("sha256:test");
+    expect(run.workflow).toMatchObject({
       name: "demo",
       description: "Workflow script ./workflows/demo.js",
       scope: "project",
@@ -104,7 +104,7 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     });
 
     const run = await runStore.getRun("wfr_meta_descriptor");
-    expect(run.definition).toMatchObject({
+    expect(run.workflow).toMatchObject({
       name: "deep-research",
       description: "Research deeply",
     });
@@ -137,7 +137,7 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     });
 
     const run = await runStore.getRun("wfr_legacy_metadata_descriptor");
-    expect(run.definition).toMatchObject({
+    expect(run.workflow).toMatchObject({
       name: "demo",
       description: "Workflow script ./workflows/demo.js",
     });
@@ -252,7 +252,7 @@ export default function workflow({ args }) {
       workspaceId: "workspace-1",
       status: "completed",
       args: { topic: "nested" },
-      definition: { name: "child-workflow", sourcePath: "./workflows/child.js" },
+      workflow: { name: "child-workflow", sourcePath: "./workflows/child.js" },
       parentWorkflow: { runId: "wfr_parent_nested", stepId: "child-step" },
     });
     expect(
@@ -280,16 +280,16 @@ export default function workflow({ args }) {
     await runStore.createRun({
       id: "wfr_parent_interrupt",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: "export default function workflow() { return {}; }\n",
+      workflow: definition,
+      source: "export default function workflow() { return {}; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
     await runStore.createRun({
       id: "wfr_child_interrupt",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: "export default function workflow() { return {}; }\n",
+      workflow: definition,
+      source: "export default function workflow() { return {}; }\n",
       args: {},
       parentWorkflow: {
         runId: "wfr_parent_interrupt",
@@ -344,24 +344,24 @@ export default function workflow({ args }) {
     await runStore.createRun({
       id: "wfr_workspace_1",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: "export default function workflow() { return {}; }\n",
+      workflow: definition,
+      source: "export default function workflow() { return {}; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
     await runStore.createRun({
       id: "wfr_workspace_2",
       workspaceId: "workspace-2",
-      definition,
-      definitionSource: "export default function workflow() { return {}; }\n",
+      workflow: definition,
+      source: "export default function workflow() { return {}; }\n",
       args: {},
       now: "2026-05-29T00:00:01.000Z",
     });
     await runStore.createRun({
       id: "wfr_workspace_1_child",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: "export default function workflow() { return {}; }\n",
+      workflow: definition,
+      source: "export default function workflow() { return {}; }\n",
       args: {},
       parentWorkflow: {
         runId: "wfr_workspace_1",
@@ -393,14 +393,14 @@ export default function workflow({ args }) {
     await runStore.createRun({
       id: "wfr_untrusted",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "demo",
         description: "Demo",
         scope: "project",
         sourcePath: "./workflows/demo.js",
         executable: true,
       },
-      definitionSource: "export default function workflow() { return {}; }\n",
+      source: "export default function workflow() { return {}; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });

@@ -3,7 +3,6 @@ import type {
   DisplayedMessage,
   InlineSkillSnapshotMap,
   MuxFilePart,
-  WorkflowDefinitionPreviewForDisplay,
   MuxMessage,
   SideQuestionDisplayBranch,
 } from "@/common/types/message";
@@ -192,7 +191,6 @@ function createCompactionBoundaryRow(
 export interface BuildDisplayedMessagesForMessageOptions {
   message: MuxMessage;
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
-  workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   hasActiveStream: boolean;
   streamIsReplay?: boolean;
@@ -226,19 +224,12 @@ function buildPlanDisplayMessages(
 function buildUserDisplayedMessages(options: {
   message: MuxMessage;
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
-  workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay;
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   baseTimestamp?: number;
   historySequence: number;
 }): DisplayedMessage[] {
-  const {
-    message,
-    agentSkillSnapshot,
-    inlineSkillSnapshots,
-    workflowDefinitionPreview,
-    baseTimestamp,
-    historySequence,
-  } = options;
+  const { message, agentSkillSnapshot, inlineSkillSnapshots, baseTimestamp, historySequence } =
+    options;
   const muxMeta = message.metadata?.muxMetadata;
   const partsContent = getTextPartContent(message.parts);
 
@@ -295,7 +286,6 @@ function buildUserDisplayedMessages(options: {
       timestamp: baseTimestamp,
       agentSkill,
       inlineSkillSnapshots,
-      workflowDefinitionPreview,
       compactionRequest,
       reviews: muxMeta?.reviews,
       sideQuestionBranch: getStandaloneSideQuestionBranch(message),
@@ -689,13 +679,7 @@ function buildAssistantDisplayedMessages(options: {
 export function buildDisplayedMessagesForMessage(
   options: BuildDisplayedMessagesForMessageOptions
 ): DisplayedMessage[] {
-  const {
-    message,
-    agentSkillSnapshot,
-    inlineSkillSnapshots,
-    workflowDefinitionPreview,
-    hasActiveStream,
-  } = options;
+  const { message, agentSkillSnapshot, inlineSkillSnapshots, hasActiveStream } = options;
   const baseTimestamp = message.metadata?.timestamp;
   const historySequence = message.metadata?.historySequence ?? 0;
   const planRows = buildPlanDisplayMessages(message, historySequence);
@@ -707,7 +691,6 @@ export function buildDisplayedMessagesForMessage(
     return buildUserDisplayedMessages({
       message,
       agentSkillSnapshot,
-      workflowDefinitionPreview,
       inlineSkillSnapshots,
       baseTimestamp,
       historySequence,

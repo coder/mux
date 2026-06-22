@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EXPERIMENTS, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { WorkflowTaskMetadataSchema } from "./workspace";
 import {
-  WorkflowDefinitionDescriptorSchema,
+  WorkflowScriptDescriptorSchema,
   WorkflowEventSequenceSchema,
   WorkflowNameSchema,
   WorkflowRunIdSchema,
@@ -15,14 +15,14 @@ describe("workflow domain schemas", () => {
     const run = WorkflowRunRecordSchema.parse({
       id: "wfr_123",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "deep-research",
         description: "Research a topic",
         scope: "built-in",
         executable: true,
       },
-      definitionSource: "export default async function workflow() { return null; }",
-      definitionHash: "sha256:abc123",
+      source: "export default async function workflow() { return null; }",
+      sourceHash: "sha256:abc123",
       args: { topic: "workflow replay" },
       status: "running",
       createdAt: "2026-05-29T00:00:00.000Z",
@@ -53,7 +53,7 @@ describe("workflow domain schemas", () => {
       steps: [],
     });
 
-    expect(run.definition.name).toBe("deep-research");
+    expect(run.workflow.name).toBe("deep-research");
     expect(run.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
   });
 
@@ -68,7 +68,7 @@ describe("workflow domain schemas", () => {
     expect(WorkflowNameSchema.safeParse("bad--name").success).toBe(false);
     expect(WorkflowNameSchema.safeParse("DeepResearch").success).toBe(false);
 
-    const result = WorkflowDefinitionDescriptorSchema.safeParse({
+    const result = WorkflowScriptDescriptorSchema.safeParse({
       name: "local-workflow",
       description: "Project local workflow",
       scope: "project",

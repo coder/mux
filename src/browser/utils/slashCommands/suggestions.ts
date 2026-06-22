@@ -80,31 +80,6 @@ function buildTopLevelSuggestions(
     };
   });
 
-  const skillNames = new Set((context.agentSkills ?? []).map((skill) => skill.name));
-  const workflowDefinitions: SuggestionDefinition[] = (context.workflows ?? [])
-    .filter((workflow) => workflow.executable)
-    // Known commands, skills, and model one-shot aliases must not execute workflow code through
-    // ambiguous top-level slash shortcuts. The explicit /workflow command remains available.
-    .filter((workflow) => !SLASH_COMMAND_DEFINITION_MAP.has(workflow.name))
-    .filter((workflow) => !skillNames.has(workflow.name))
-    .filter((workflow) => !Object.hasOwn(MODEL_ABBREVIATIONS, workflow.name))
-    .map((workflow) => ({
-      key: workflow.name,
-      description: `${workflow.description} (${workflow.scope} workflow)`,
-    }));
-
-  const workflowSuggestions = filterAndMapSuggestions(
-    workflowDefinitions,
-    partial,
-    (definition) => ({
-      id: `workflow:${definition.key}`,
-      display: `/${definition.key}`,
-      description: definition.description,
-      kind: "workflow",
-      replacement: `/${definition.key} `,
-    })
-  );
-
   // Model alias one-shot suggestions (e.g., /haiku, /sonnet, /opus+high).
   // The build callback below hardcodes the trailing space, so `appendSpace`
   // is intentionally omitted here.
@@ -126,12 +101,7 @@ function buildTopLevelSuggestions(
     })
   );
 
-  return [
-    ...commandSuggestions,
-    ...skillSuggestions,
-    ...workflowSuggestions,
-    ...modelAliasSuggestions,
-  ];
+  return [...commandSuggestions, ...skillSuggestions, ...modelAliasSuggestions];
 }
 
 function buildSubcommandSuggestions(

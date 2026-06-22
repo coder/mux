@@ -13,7 +13,6 @@ import {
   validateJsonSchemaSubset,
   validateJsonSchemaSubsetSchema,
 } from "@/common/utils/jsonSchemaSubset";
-import { removeCommonJsWorkflowMetadataDeclaration } from "./staticWorkflowMetadata";
 import { WORKFLOW_RUNTIME_STDLIB_SOURCE } from "./workflowRuntimeSources.generated";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -604,7 +603,7 @@ export class WorkflowRunner {
 
       let compiledSource: string;
       try {
-        compiledSource = compileWorkflowSource(run.definitionSource);
+        compiledSource = compileWorkflowSource(run.source);
       } catch (error) {
         leaseGuard.throwIfLost();
         await this.appendEvent(runId, {
@@ -2356,7 +2355,7 @@ function normalizeWorkflowResultForEvent(result: unknown): WorkflowResult {
 }
 
 function compileWorkflowSource(source: string): string {
-  // Workflow definitions are evaluated as a script (not a module), so export
+  // Workflow scripts are evaluated as a script (not a module), so export
   // syntax must be rewritten away. Top-level named export declarations are
   // allowed so built-in workflows can expose pure helpers for direct unit
   // tests; only the declaration forms below are supported (no `export {...}`
@@ -2364,8 +2363,7 @@ function compileWorkflowSource(source: string): string {
   // template-literal line inside the workflow that starts with `export ` would
   // also be rewritten, so authors must keep flush-left `export ` lines out of
   // template literals.
-  const withoutCommonJsMetadata = removeCommonJsWorkflowMetadataDeclaration(source);
-  const withoutNamedExports = withoutCommonJsMetadata.replace(
+  const withoutNamedExports = source.replace(
     /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu,
     ""
   );
@@ -2373,7 +2371,7 @@ function compileWorkflowSource(source: string): string {
     /export\s+default\s+(async\s+)?function(?:\s+[A-Za-z_$][\w$]*)?\s*\(/u,
     (_match, asyncKeyword: string | undefined) => `${asyncKeyword ?? ""}function __muxWorkflow(`
   );
-  assert(compiled !== withoutNamedExports, "Workflow definition must export a default function");
+  assert(compiled !== withoutNamedExports, "Workflow script must export a default function");
 
   return `
 Date = undefined;

@@ -68,14 +68,13 @@ function HighlightedText({
 }
 
 const SUGGESTION_KIND_BADGES = {
-  workflow: { label: "Workflow", className: "text-plan-mode" },
   skill: { label: "Skill", className: "text-medium" },
 } satisfies Partial<
   Record<NonNullable<SlashSuggestion["kind"]>, { label: string; className: string }>
 >;
 
 function SuggestionKindBadge(props: { kind: SlashSuggestion["kind"] }) {
-  if (props.kind !== "workflow" && props.kind !== "skill") {
+  if (props.kind !== "skill") {
     return null;
   }
   const badge = SUGGESTION_KIND_BADGES[props.kind];

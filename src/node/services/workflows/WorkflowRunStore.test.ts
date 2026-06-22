@@ -20,8 +20,8 @@ async function createStore(sessionDir: string, staleLeaseMs = 10) {
   await store.createRun({
     id: "wfr_123",
     workspaceId: "workspace-1",
-    definition,
-    definitionSource: source,
+    workflow: definition,
+    source: source,
     args: { topic: "durable runs" },
     now: "2026-05-29T00:00:00.000Z",
   });
@@ -29,7 +29,7 @@ async function createStore(sessionDir: string, staleLeaseMs = 10) {
 }
 
 describe("WorkflowRunStore", () => {
-  test("persists captured definition source and reloads run state", async () => {
+  test("persists captured workflow source and reloads run state", async () => {
     using tmp = new DisposableTempDir("workflow-runs");
     const store = await createStore(tmp.path);
 
@@ -43,8 +43,8 @@ describe("WorkflowRunStore", () => {
     const reloadedStore = new WorkflowRunStore({ sessionDir: tmp.path, staleLeaseMs: 10 });
     const run = await reloadedStore.getRun("wfr_123");
 
-    expect(run.definitionSource).toBe(source);
-    expect(run.definitionHash).toMatch(/^sha256:/);
+    expect(run.source).toBe(source);
+    expect(run.sourceHash).toMatch(/^sha256:/);
     expect(run.events.map((event) => event.sequence)).toEqual([1]);
   });
 
@@ -54,8 +54,8 @@ describe("WorkflowRunStore", () => {
     await store.createRun({
       id: "wfr_child",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: source,
+      workflow: definition,
+      source: source,
       args: {},
       parentWorkflow: { runId: "wfr_123", stepId: "child", inputHash: "hash", depth: 0 },
       now: "2026-05-29T00:00:01.000Z",
@@ -69,7 +69,7 @@ describe("WorkflowRunStore", () => {
       "utf-8"
     );
 
-    await expect(store.getRun("wfr_123")).resolves.toMatchObject({ definitionSource: "broken" });
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({ source: "broken" });
     const snapshots = await store.listRunStatusSnapshots();
 
     expect(snapshots).toHaveLength(2);
@@ -140,8 +140,8 @@ describe("WorkflowRunStore", () => {
       store.createRun({
         id: "task_123",
         workspaceId: "workspace-1",
-        definition,
-        definitionSource: source,
+        workflow: definition,
+        source: source,
         args: {},
         now: "2026-05-29T00:00:00.000Z",
       })
@@ -156,8 +156,8 @@ describe("WorkflowRunStore", () => {
     const run = await store.createRunIfAbsent({
       id: "wfr_child_partial",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: source,
+      workflow: definition,
+      source: source,
       args: { topic: "nested" },
       parentWorkflow: {
         runId: "wfr_parent",
@@ -175,13 +175,13 @@ describe("WorkflowRunStore", () => {
     });
   });
 
-  test("createRunIfAbsent reuses a snapshotted child run after definition source changes", async () => {
+  test("createRunIfAbsent reuses a snapshotted child run after workflow source changes", async () => {
     using tmp = new DisposableTempDir("workflow-runs-child-source-change");
     const store = new WorkflowRunStore({ sessionDir: tmp.path });
     const input = {
       id: "wfr_child_source_change",
       workspaceId: "workspace-1",
-      definition,
+      workflow: definition,
       args: { topic: "nested" },
       parentWorkflow: {
         runId: "wfr_parent",
@@ -191,16 +191,15 @@ describe("WorkflowRunStore", () => {
       },
       now: "2026-05-29T00:00:00.000Z",
     };
-    const created = await store.createRunIfAbsent({ ...input, definitionSource: source });
+    const created = await store.createRunIfAbsent({ ...input, source: source });
 
     const reused = await store.createRunIfAbsent({
       ...input,
-      definitionSource:
-        "export default function workflow() { return { reportMarkdown: 'new' }; }\n",
+      source: "export default function workflow() { return { reportMarkdown: 'new' }; }\n",
     });
 
     expect(reused.id).toBe(created.id);
-    expect(reused.definitionSource).toBe(source);
+    expect(reused.source).toBe(source);
   });
 
   test("ignores malformed journal lines while preserving valid events and steps", async () => {

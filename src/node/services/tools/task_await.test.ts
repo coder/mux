@@ -27,9 +27,9 @@ function createWorkflowRun(
   return {
     id: "wfr_demo",
     workspaceId: "parent-workspace",
-    definition: { name: "demo", description: "Demo workflow", scope: "built-in", executable: true },
-    definitionSource: "export default function workflow() { return null; }\n",
-    definitionHash: "sha256:demo",
+    workflow: { name: "demo", description: "Demo workflow", scope: "built-in", executable: true },
+    source: "export default function workflow() { return null; }\n",
+    sourceHash: "sha256:demo",
     args: {},
     status,
     createdAt: "2026-01-01T00:00:00.000Z",

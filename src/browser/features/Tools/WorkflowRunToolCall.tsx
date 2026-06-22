@@ -46,7 +46,7 @@ import {
 } from "./Shared/toolUtils";
 import { HighlightedCode } from "./Shared/HighlightedCode";
 import {
-  WorkflowDefinitionCard,
+  WorkflowScriptCard,
   WorkflowJsonBlock,
   WorkflowKindBadge,
   WorkflowSection,
@@ -877,7 +877,7 @@ function findForegroundWorkflowRun(input: {
   const invocationArgs = input.args.args ?? {};
   const candidates = input.runs.filter(
     (run) =>
-      run.definition.sourcePath === scriptPath &&
+      run.workflow.sourcePath === scriptPath &&
       DISCOVERABLE_FOREGROUND_WORKFLOW_STATUSES.has(run.status) &&
       workflowArgsEqual(run.args ?? {}, invocationArgs) &&
       isFreshEnoughForToolCall(run, input.startedAt)
@@ -1009,10 +1009,10 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
   const resumeOrRetryPendingForRun =
     runId != null && (resumingRunId === runId || workflowControlInFlightRunId === runId);
-  const displayDefinition = run?.definition;
+  const displayWorkflow = run?.workflow;
   // workflow_resume cards only know the run ID until a snapshot loads; prefer the real
   // workflow name once available.
-  const displayName = displayDefinition?.name ?? getWorkflowRunScriptPath(args);
+  const displayName = displayWorkflow?.name ?? getWorkflowRunScriptPath(args);
   // A uniquely discovered foreground run is actionable before the blocking tool call returns.
   const discoveredForegroundRunConfirmed =
     status === "executing" &&
@@ -1288,12 +1288,12 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
           <div className="text-muted mb-2 flex flex-wrap items-center gap-2 text-[10px]">
             {runId && <span className="font-mono">{runId}</span>}
             <span>{displayStatus}</span>
-            {displayDefinition?.scope && <span>{displayDefinition.scope}</span>}
+            {displayWorkflow?.scope && <span>{displayWorkflow.scope}</span>}
           </div>
 
-          {displayDefinition && (
-            <WorkflowSection title="Definition">
-              <WorkflowDefinitionCard descriptor={displayDefinition} compact />
+          {displayWorkflow && (
+            <WorkflowSection title="Script">
+              <WorkflowScriptCard descriptor={displayWorkflow} compact />
             </WorkflowSection>
           )}
 
@@ -1302,12 +1302,12 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
             <WorkflowJsonBlock value={invocationArgs} className="max-h-[180px]" />
           </WorkflowDisclosureSection>
 
-          {run?.definitionSource && (
-            <WorkflowDisclosureSection title="Definition source">
+          {run?.source && (
+            <WorkflowDisclosureSection title="Script source">
               <div className="border-border bg-code-bg max-h-[260px] overflow-auto rounded border p-2">
                 <HighlightedCode
                   language="javascript"
-                  code={run.definitionSource.trimEnd()}
+                  code={run.source.trimEnd()}
                   showLineNumbers
                 />
               </div>

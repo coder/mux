@@ -6,14 +6,14 @@ import { buildWorkflowRunToolPart, stripWorkflowRunRecordForModel } from "./work
 const run: WorkflowRunRecord = {
   id: "wfr_test",
   workspaceId: "workspace-1",
-  definition: {
+  workflow: {
     name: "nested-parent-simple",
     description: "Nested parent",
     scope: "scratch",
     executable: true,
   },
-  definitionSource: "export default function workflow() { return { reportMarkdown: 'done' }; }",
-  definitionHash: "sha256:test",
+  source: "export default function workflow() { return { reportMarkdown: 'done' }; }",
+  sourceHash: "sha256:test",
   args: {},
   status: "completed",
   createdAt: "2026-05-29T00:00:00.000Z",

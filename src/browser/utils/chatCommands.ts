@@ -425,7 +425,7 @@ export async function processSlashCommand(
     }
 
     const workspaceId = context.workspaceId;
-    const scriptPath = parsed.name;
+    const scriptPath = parsed.scriptPath;
     const rawInput = context.rawInput?.trim();
     const rawCommand = rawInput && rawInput.length > 0 ? rawInput : `/${scriptPath}`;
     const commandPrefix = rawCommand.split(/\s+/u)[0] ?? `/${scriptPath}`;

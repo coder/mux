@@ -307,7 +307,7 @@ describe("init command", () => {
   it("parses explicit workflow script path invocation", () => {
     expect(parseCommand('/workflow skill://deep-research/workflow.js {"topic":"mux"}')).toEqual({
       type: "workflow-run",
-      name: "skill://deep-research/workflow.js",
+      scriptPath: "skill://deep-research/workflow.js",
       argsText: '{"topic":"mux"}',
     });
   });

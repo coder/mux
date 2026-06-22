@@ -37,7 +37,7 @@ export const CompletedDeepResearch: Story = {
       run: {
         id: "wfr_story",
         workspaceId: "workspace-1",
-        definition: {
+        workflow: {
           name: "deep-research",
           description: "Deep research",
           scope: "built-in",
@@ -47,8 +47,8 @@ export const CompletedDeepResearch: Story = {
           sourceHash: "sha256:story",
           executable: true,
         },
-        definitionSource: "export default function workflow() { return null; }",
-        definitionHash: "sha256:story",
+        source: "export default function workflow() { return null; }",
+        sourceHash: "sha256:story",
         args: { topic: "workflow run cards" },
         status: "completed",
         createdAt: "2026-05-29T00:00:00.000Z",
@@ -105,14 +105,14 @@ export const CompletedDeepResearch: Story = {
 const foregroundDiscoveryRun: WorkflowRunRecord = {
   id: "wfr_story_foreground",
   workspaceId: "workspace-1",
-  definition: {
+  workflow: {
     name: "deep-research",
     description: "Deep research",
     scope: "built-in" as const,
     executable: true,
   },
-  definitionSource: "export default function workflow() { return null; }",
-  definitionHash: "sha256:story-foreground",
+  source: "export default function workflow() { return null; }",
+  sourceHash: "sha256:story-foreground",
   args: { topic: "workflow run cards" },
   status: "running" as const,
   createdAt: "2026-05-29T00:00:01.000Z",
@@ -174,14 +174,14 @@ function createTaskWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMeta
 const taskActionsRun: WorkflowRunRecord = {
   id: "wfr_story_task_actions",
   workspaceId: "workspace-1",
-  definition: {
+  workflow: {
     name: "implementation",
     description: "Implementation workflow",
     scope: "built-in" as const,
     executable: true,
   },
-  definitionSource: "export default function workflow() { return null; }",
-  definitionHash: "sha256:story-task-actions",
+  source: "export default function workflow() { return null; }",
+  sourceHash: "sha256:story-task-actions",
   args: { topic: "workflow task actions" },
   status: "running" as const,
   createdAt: "2026-05-29T00:00:00.000Z",
@@ -389,7 +389,7 @@ export const WorkspaceFileCompleted: Story = {
       run: {
         id: "wfr_workspace_file_story",
         workspaceId: "workspace-1",
-        definition: {
+        workflow: {
           name: "local-report",
           description: "Workspace file workflow",
           scope: "project",
@@ -399,8 +399,8 @@ export const WorkspaceFileCompleted: Story = {
           sourceHash: "sha256:workspace-file-story",
           executable: true,
         },
-        definitionSource: "export default function workflow() { return null; }",
-        definitionHash: "sha256:workspace-file-story",
+        source: "export default function workflow() { return null; }",
+        sourceHash: "sha256:workspace-file-story",
         args: { topic: "local workflow" },
         status: "completed",
         createdAt: "2026-05-29T00:00:00.000Z",

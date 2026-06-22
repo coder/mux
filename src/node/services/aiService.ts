@@ -1809,7 +1809,7 @@ export class AIService extends EventEmitter {
                   return;
                 }
 
-                const scriptPath = run.definition.sourcePath ?? run.definition.name;
+                const scriptPath = run.workflow.sourcePath ?? run.workflow.name;
                 const rawCommand = `workflow_run ${scriptPath}`;
                 const workflowResultMessage = buildWorkflowResultContextMessage({
                   rawCommand,

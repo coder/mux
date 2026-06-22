@@ -161,14 +161,14 @@ describe("router workflow routes", () => {
     await runStore.createRun({
       id: "wfr_api_resume",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "demo",
         description: "Demo",
         scope: "built-in",
         sourcePath: "./workflows/demo.js",
         executable: true,
       },
-      definitionSource:
+      source:
         "export default function workflow() { return { reportMarkdown: 'resumed via api' }; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
@@ -194,14 +194,14 @@ describe("router workflow routes", () => {
     await runStore.createRun({
       id: "wfr_api_retry",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "demo",
         description: "Demo",
         scope: "built-in",
         sourcePath: "./workflows/demo.js",
         executable: true,
       },
-      definitionSource:
+      source:
         "export default function workflow() { return { reportMarkdown: 'retried via api' }; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
@@ -230,14 +230,14 @@ describe("router workflow routes", () => {
     await runStore.createRun({
       id: "wfr_api_retry_continue",
       workspaceId: "workspace-1",
-      definition: {
+      workflow: {
         name: "demo",
         description: "Demo",
         scope: "built-in",
         sourcePath: "./workflows/demo.js",
         executable: true,
       },
-      definitionSource:
+      source:
         "export default function workflow() { return { reportMarkdown: 'continued after retry' }; }\n",
       args: {},
       now: "2026-05-29T00:00:00.000Z",
@@ -319,7 +319,7 @@ describe("router workflow routes", () => {
     ).resolves.toMatchObject({
       id: result.runId,
       workspaceId: "workspace-1",
-      definition: expect.objectContaining({ name: "demo" }),
+      workflow: expect.objectContaining({ name: "demo" }),
       status: "completed",
     });
     await expect(client.workflows.listRuns({ workspaceId: "workspace-1" })).resolves.toEqual([

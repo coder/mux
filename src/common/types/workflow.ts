@@ -2,9 +2,9 @@ import type { z } from "zod";
 import type {
   StructuredTaskOutputSchema,
   WorkflowDefinitionArgSummarySchema,
-  WorkflowDefinitionDescriptorSchema,
+  WorkflowScriptDescriptorSchema,
   WorkflowDefinitionMetadataSchema,
-  WorkflowDefinitionScopeSchema,
+  WorkflowScriptScopeSchema,
   WorkflowNameSchema,
   WorkflowResultSchema,
   WorkflowRunEventSchema,
@@ -21,11 +21,11 @@ import assert from "@/common/utils/assert";
 export type WorkflowDefinitionArgSummary = z.infer<typeof WorkflowDefinitionArgSummarySchema>;
 export type WorkflowDefinitionMetadata = z.infer<typeof WorkflowDefinitionMetadataSchema>;
 export type WorkflowName = z.infer<typeof WorkflowNameSchema>;
-export type WorkflowDefinitionScope = z.infer<typeof WorkflowDefinitionScopeSchema>;
+export type WorkflowScriptScope = z.infer<typeof WorkflowScriptScopeSchema>;
 export type WorkflowRunId = z.infer<typeof WorkflowRunIdSchema>;
 export type WorkflowRunStatus = z.infer<typeof WorkflowRunStatusSchema>;
 export type WorkflowStepStatus = z.infer<typeof WorkflowStepStatusSchema>;
-export type WorkflowDefinitionDescriptor = z.infer<typeof WorkflowDefinitionDescriptorSchema>;
+export type WorkflowScriptDescriptor = z.infer<typeof WorkflowScriptDescriptorSchema>;
 export type WorkflowResult = z.infer<typeof WorkflowResultSchema>;
 export type StructuredTaskOutput = z.infer<typeof StructuredTaskOutputSchema>;
 export type WorkflowRunEvent = z.infer<typeof WorkflowRunEventSchema>;

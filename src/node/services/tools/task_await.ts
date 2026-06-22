@@ -124,13 +124,13 @@ function getWorkflowRunReport(run: WorkflowRunRecord): {
   if (result != null) {
     return result;
   }
-  return { reportMarkdown: `Workflow ${run.definition.name} completed without a final report.` };
+  return { reportMarkdown: `Workflow ${run.workflow.name} completed without a final report.` };
 }
 
 function getWorkflowRunError(run: WorkflowRunRecord): string {
   const message =
     run.events.findLast((event) => event.type === "error")?.message ??
-    `Workflow ${run.definition.name} failed.`;
+    `Workflow ${run.workflow.name} failed.`;
   // Surface the recovery affordance exactly where the agent sees the failure.
   if (canRetryWorkflowFromCheckpoint(run)) {
     return `${message} The run can be retried from its last durable checkpoint with workflow_resume (mode 'retry_from_checkpoint').`;
@@ -144,7 +144,7 @@ function getWorkflowRunError(run: WorkflowRunRecord): string {
 // task_await without re-running anything.
 function buildWorkflowFailureState(run: WorkflowRunRecord) {
   return {
-    name: run.definition.name,
+    name: run.workflow.name,
     steps: run.steps.map((step) => ({
       stepId: step.stepId,
       status: step.status,
@@ -173,7 +173,7 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
         ...(result.structuredOutput !== undefined
           ? { structuredOutput: result.structuredOutput }
           : {}),
-        title: run.definition.name,
+        title: run.workflow.name,
         note: COMPLETED_REPORT_REFETCH_NOTE,
       };
     }
@@ -188,25 +188,25 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
       return {
         status: "interrupted" as const,
         ...base,
-        note: `Workflow ${run.definition.name} was interrupted. Durable state is preserved; resume it with workflow_resume.`,
+        note: `Workflow ${run.workflow.name} was interrupted. Durable state is preserved; resume it with workflow_resume.`,
       };
     case "pending":
       return {
         status: "queued" as const,
         ...base,
-        note: `Workflow ${run.definition.name} is queued.`,
+        note: `Workflow ${run.workflow.name} is queued.`,
       };
     case "backgrounded":
       return {
         status: "backgrounded" as const,
         ...base,
-        note: `Workflow ${run.definition.name} is backgrounded. Use task_await to monitor progress.`,
+        note: `Workflow ${run.workflow.name} is backgrounded. Use task_await to monitor progress.`,
       };
     case "running":
       return {
         status: "running" as const,
         ...base,
-        note: `Workflow ${run.definition.name} is still running.`,
+        note: `Workflow ${run.workflow.name} is still running.`,
       };
   }
 }

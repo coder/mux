@@ -75,7 +75,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
             taskId: parsed.data.id,
             status: parsed.data.status,
             parentWorkspaceId: workspaceId,
-            title: parsed.data.definition.name,
+            title: parsed.data.workflow.name,
             createdAt: parsed.data.createdAt,
             depth: 1,
           });

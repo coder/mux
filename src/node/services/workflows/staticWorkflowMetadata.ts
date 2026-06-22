@@ -27,7 +27,6 @@ const SUPPORTED_SCHEMA_OPTION_KEYS = new Set([
 ]);
 
 interface MetadataLiteralRange {
-  declarationKind: "namedExport" | "commonJs";
   declarationStart: number;
   declarationEnd: number;
   start: number;
@@ -51,12 +50,6 @@ export function parseStaticWorkflowMetadataLiteral(source: string): unknown {
 export function removeStaticWorkflowMetadataDeclaration(source: string): string {
   const metadata = findStaticMetadataLiteral(source);
   if (metadata == null) return source;
-  return source.slice(0, metadata.declarationStart) + source.slice(metadata.declarationEnd);
-}
-
-export function removeCommonJsWorkflowMetadataDeclaration(source: string): string {
-  const metadata = findStaticMetadataLiteral(source);
-  if (metadata?.declarationKind !== "commonJs") return source;
   return source.slice(0, metadata.declarationStart) + source.slice(metadata.declarationEnd);
 }
 
@@ -85,19 +78,9 @@ function findRequiredStaticMetadataLiteral(source: string): MetadataLiteralRange
 
 function findStaticMetadataLiteral(source: string): MetadataLiteralRange | null {
   const maskedSource = maskStaticJavaScriptSource(source);
-  const assignments = [
-    {
-      declarationKind: "namedExport" as const,
-      pattern: /(^|[;\n])\s*export\s+(?:const|let|var)\s+meta\s*=/mu,
-    },
-    {
-      declarationKind: "commonJs" as const,
-      pattern: /(^|[;\n])\s*(?:module\.)?exports\.meta\s*=/mu,
-    },
-  ];
-  for (const assignment of assignments) {
-    const match = assignment.pattern.exec(maskedSource);
-    if (match == null || !isTopLevelStaticMatch(maskedSource, match.index)) continue;
+  const matchPattern = /(^|[;\n])\s*export\s+(?:const|let|var)\s+meta\s*=/mu;
+  const match = matchPattern.exec(maskedSource);
+  if (match != null && isTopLevelStaticMatch(maskedSource, match.index)) {
     const declarationStart = match.index + (match[1]?.length ?? 0);
     const start = skipStaticWhitespace(source, match.index + match[0].length);
     const end = readObjectLiteralEnd(source, start);
@@ -106,7 +89,6 @@ function findStaticMetadataLiteral(source: string): MetadataLiteralRange | null 
       declarationEnd = skipStaticTrailingNewline(source, declarationEnd + 1);
     }
     return {
-      declarationKind: assignment.declarationKind,
       declarationStart,
       declarationEnd,
       start,

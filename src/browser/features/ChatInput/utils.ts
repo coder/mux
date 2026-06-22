@@ -6,7 +6,6 @@ import {
   resolveInlineSkillReferences,
 } from "@/browser/utils/agentSkills/inlineSkillReferences";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
-import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import {
   buildAgentSkillMetadata,
@@ -23,9 +22,6 @@ export type CreationRuntimeValidationError =
   | { mode: "ssh"; kind: "missingCoderWorkspace" }
   | { mode: "ssh"; kind: "missingCoderTemplate" }
   | { mode: "ssh"; kind: "missingCoderPreset" };
-
-const WORKFLOW_SKILL_COLLISION_USAGE = (name: string) =>
-  `Skill and workflow names collide. Use /workflow ${name} to run the workflow.`;
 
 export interface SkillInvocation {
   descriptor: AgentSkillDescriptor;
@@ -120,48 +116,9 @@ async function resolveSkillInvocation(options: {
   };
 }
 
-function resolveLocalWorkflowInvocation(options: {
-  messageText: string;
-  parsed: ParsedCommand;
-  workflowDefinitions: WorkflowDefinitionDescriptor[];
-  hasSkill: boolean;
-}): ParsedCommand | null {
-  if (!isUnknownSlashCommand(options.parsed)) {
-    return null;
-  }
-
-  const command = options.parsed.command;
-  const prefix = `/${command}`;
-  const afterPrefix = options.messageText.slice(prefix.length);
-  const hasSeparator = afterPrefix.length === 0 || /^\s/u.test(afterPrefix);
-  if (!hasSeparator) {
-    return null;
-  }
-
-  const workflow = options.workflowDefinitions.find(
-    (definition) => definition.name === command && definition.executable
-  );
-  if (!workflow) {
-    return null;
-  }
-
-  if (options.hasSkill) {
-    return {
-      type: "command-invalid-args",
-      command,
-      input: command,
-      usage: WORKFLOW_SKILL_COLLISION_USAGE(command),
-    };
-  }
-
-  const argsText = afterPrefix.trimStart();
-  return { type: "workflow-run", name: workflow.name, ...(argsText ? { argsText } : {}) };
-}
-
 export async function parseCommandWithSkillInvocation(options: {
   messageText: string;
   agentSkillDescriptors: AgentSkillDescriptor[];
-  workflowDefinitions?: WorkflowDefinitionDescriptor[];
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
 }): Promise<{ parsed: ParsedCommand; skillInvocation: SkillInvocation | null }> {
@@ -174,19 +131,8 @@ export async function parseCommandWithSkillInvocation(options: {
     discovery: options.discovery,
   });
 
-  const workflowInvocation = resolveLocalWorkflowInvocation({
-    messageText: options.messageText,
-    parsed,
-    workflowDefinitions: options.workflowDefinitions ?? [],
-    hasSkill: skillInvocation != null,
-  });
-
-  if (workflowInvocation?.type === "command-invalid-args") {
-    return { parsed: workflowInvocation, skillInvocation: null };
-  }
-
   return {
-    parsed: skillInvocation || workflowInvocation ? workflowInvocation : parsed,
+    parsed: skillInvocation ? skillInvocation : parsed,
     skillInvocation,
   };
 }

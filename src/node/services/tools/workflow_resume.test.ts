@@ -17,14 +17,14 @@ function buildRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord
   return {
     id: "wfr_resume_me",
     workspaceId: "workspace-1",
-    definition: {
+    workflow: {
       name: "deep-research",
       description: "Deep research",
       scope: "built-in",
       executable: true,
     },
-    definitionSource: "export default function workflow() { return null; }",
-    definitionHash: "sha256:test",
+    source: "export default function workflow() { return null; }",
+    sourceHash: "sha256:test",
     args: {},
     status: "interrupted",
     createdAt: "2026-05-29T00:00:00.000Z",

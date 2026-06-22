@@ -37,8 +37,8 @@ async function createRunStore(sessionDir: string) {
   await store.createRun({
     id: "wfr_123",
     workspaceId: "workspace-1",
-    definition,
-    definitionSource: source,
+    workflow: definition,
+    source: source,
     args: { topic: "durable workflows" },
     now: "2026-05-29T00:00:00.000Z",
   });
@@ -97,8 +97,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_agent_api",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const structured = agent("Return structured output", {
     id: "structured",
     schema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] },
@@ -147,8 +147,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_parallel_api",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ parallel, agent }) {
+      workflow: definition,
+      source: `export default function workflow({ parallel, agent }) {
   const results = parallel([
     () => agent("First", { id: "first", schema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] } }),
     () => agent("Second", { id: "second", schema: { type: "object", properties: { value: { type: "string" } }, required: ["value"] } }),
@@ -195,8 +195,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_parallel_thunks",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent, parallel }) {
+      workflow: definition,
+      source: `export default function workflow({ agent, parallel }) {
   const schema = { type: "object", properties: { label: { type: "string" } }, required: ["label"] };
   const results = parallel([
     () => agent("Read source A", { id: "source-a", schema }),
@@ -254,8 +254,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_pipeline_nonbarrier",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent, pipeline }) {
+      workflow: definition,
+      source: `export default function workflow({ agent, pipeline }) {
   const schema = { type: "object", properties: { label: { type: "string" } }, required: ["label"] };
   const results = pipeline(
     ["a", "b"],
@@ -321,8 +321,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_nested_missing_id",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ workflow }) {
+      workflow: definition,
+      source: `export default function workflow({ workflow }) {
   return workflow({ script_path: "./child.js", args: {} });
 }
 `,
@@ -349,8 +349,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_nested_replay",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ workflow }) {
+      workflow: definition,
+      source: `export default function workflow({ workflow }) {
   const first = workflow({ id: "child", script_path: "./child.js", args: { topic: "same" } });
   const second = workflow({ id: "child", script_path: "./child.js", args: { topic: "same" } });
   return { reportMarkdown: first.reportMarkdown + ":" + second.reportMarkdown };
@@ -393,8 +393,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_nested_changed_args",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ workflow }) {
+      workflow: definition,
+      source: `export default function workflow({ workflow }) {
   const first = workflow({ id: "child", script_path: "./child.js", args: { topic: "a" } });
   const second = workflow({ id: "child", script_path: "./child.js", args: { topic: "b" } });
   return { reportMarkdown: first.reportMarkdown + ":" + second.reportMarkdown };
@@ -442,8 +442,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_nested_changed_script_path",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ workflow }) {
+      workflow: definition,
+      source: `export default function workflow({ workflow }) {
   const first = workflow({ id: "child", script_path: "./child-a.js", args: { topic: "same" } });
   const second = workflow({ id: "child", script_path: "./child-b.js", args: { topic: "same" } });
   return { reportMarkdown: first.reportMarkdown + ":" + second.reportMarkdown };
@@ -494,8 +494,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_object_form_agent",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   return agent({ id: "old-shape", prompt: "Old object shape" });
 }
 `,
@@ -524,8 +524,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_invalid_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   return agent("Invalid schema", { id: "invalid-schema", schema: { type: "definitely-not-json-schema" } });
 }
 `,
@@ -554,8 +554,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_scalar_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   return agent("Return a scalar", { id: "scalar", schema: { type: "string" } });
 }
 `,
@@ -720,8 +720,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_titled",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
         agent("Verify", { id: "verify-claim-0-vote-2", title: "Verify claim 1 vote 3", schema: {} });
         agent("No title", { id: "untitled-step", schema: {} });
         return { reportMarkdown: "done" };
@@ -778,8 +778,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_markdown_agent_result",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
         const result = agent("Implement", { id: "implement" });
         return { reportMarkdown: result };
       }`,
@@ -809,8 +809,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_apply_patch_agent_id",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent, applyPatch }) {
+      workflow: definition,
+      source: `export default function workflow({ agent, applyPatch }) {
   agent("Implement the change", { id: "implement", agentType: "exec" });
   const patch = applyPatch({ id: "apply-implement", agentId: "implement" });
   return { reportMarkdown: patch.status + ":" + patch.taskId };
@@ -867,8 +867,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_apply_patch_missing_agent_id",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ applyPatch }) {
+      workflow: definition,
+      source: `export default function workflow({ applyPatch }) {
   return applyPatch({ id: "apply-missing", agentId: "missing" });
 }
 `,
@@ -1077,8 +1077,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_completed_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1120,8 +1120,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_completed_invalid_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1163,8 +1163,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_started_invalid_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1217,8 +1217,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_started_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1267,8 +1267,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_unstarted_invalid_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1303,8 +1303,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_unstarted_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1339,8 +1339,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_new_nonpending_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Missing schema", { id: "missing-schema" });
   return { reportMarkdown: summary };
 }
@@ -1565,8 +1565,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_stale_started_invalid_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1618,8 +1618,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_legacy_stale_started",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
   const summary = agent("Summarize durable workflows", { id: "summarize-topic" });
   return { reportMarkdown: "Final: " + summary };
 }
@@ -1729,8 +1729,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_retry_validation",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
         const result = agent("Extract claims", {
           id: "claims",
           schema: {
@@ -1803,8 +1803,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_retry_exhausted",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
         return agent("Extract claims", {
           id: "claims",
           schema: { type: "object", required: ["claims"], properties: { claims: { type: "array" } } },
@@ -1845,8 +1845,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_schema",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) {
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
         return agent("Extract claims", {
           id: "claims",
           schema: {
@@ -1897,8 +1897,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_limits",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow() { return { reportMarkdown: "limited" }; }`,
+      workflow: definition,
+      source: `export default function workflow() { return { reportMarkdown: "limited" }; }`,
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -1963,8 +1963,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_async",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default async function workflow() { return { reportMarkdown: "async ok" }; }`,
+      workflow: definition,
+      source: `export default async function workflow() { return { reportMarkdown: "async ok" }; }`,
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -1986,10 +1986,10 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_named_exports",
       workspaceId: "workspace-1",
-      definition,
+      workflow: definition,
       // Built-in workflows export pure helpers for direct unit testing; the
       // compiler must strip those export modifiers before script evaluation.
-      definitionSource: [
+      source: [
         `export const GREETING = "named";`,
         `export class Exclaimer {`,
         `  render(value) { return value + "!"; }`,
@@ -2021,8 +2021,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_normalized_return",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow() { return { summary: "done" }; }`,
+      workflow: definition,
+      source: `export default function workflow() { return { summary: "done" }; }`,
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2046,8 +2046,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_empty_return",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow() {}`,
+      workflow: definition,
+      source: `export default function workflow() {}`,
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2100,8 +2100,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_compile_error",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default () => ({ reportMarkdown: "bad shape" });`,
+      workflow: definition,
+      source: `export default () => ({ reportMarkdown: "bad shape" });`,
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2126,8 +2126,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_missing_id",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow({ agent }) { return agent("no id", {}); }`,
+      workflow: definition,
+      source: `export default function workflow({ agent }) { return agent("no id", {}); }`,
       args: {},
       now: "2026-05-29T00:00:00.000Z",
     });
@@ -2149,8 +2149,8 @@ describe("WorkflowRunner", () => {
     await store.createRun({
       id: "wfr_forbidden",
       workspaceId: "workspace-1",
-      definition,
-      definitionSource: `export default function workflow() {
+      workflow: definition,
+      source: `export default function workflow() {
         return {
           mux: typeof mux,
           require: typeof require,

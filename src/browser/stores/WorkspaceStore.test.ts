@@ -550,14 +550,14 @@ function createWorkflowRunRecord(overrides: Partial<WorkflowRunRecord> = {}): Wo
   return {
     id: "wfr_live",
     workspaceId: "workspace-1",
-    definition: {
+    workflow: {
       name: "deep-research",
       description: "Deep research",
       scope: "built-in",
       executable: true,
     },
-    definitionSource: "export default function workflow() { return null; }",
-    definitionHash: "sha256:test",
+    source: "export default function workflow() { return null; }",
+    sourceHash: "sha256:test",
     args: {},
     status: "running",
     createdAt: "2026-05-29T00:00:00.000Z",

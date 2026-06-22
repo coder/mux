@@ -1126,20 +1126,7 @@ export const AgentReportInlineToolArgsSchema = z
   })
   .strict();
 
-export const AgentReportWorkflowInlineToolArgsSchema = z
-  .object({
-    reportMarkdown: z.string().min(1),
-    structuredOutput: z
-      .unknown()
-      .refine((value) => value !== undefined, "structuredOutput is required"),
-    title: z.string().nullish(),
-  })
-  .strict();
-
-export const AgentReportToolArgsSchema = z.union([
-  AgentReportInlineToolArgsSchema,
-  AgentReportWorkflowInlineToolArgsSchema,
-]);
+export const AgentReportToolArgsSchema = AgentReportInlineToolArgsSchema;
 
 export const AgentReportSubmittedReportSchema = z
   .object({

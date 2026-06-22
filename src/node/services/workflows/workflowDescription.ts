@@ -13,15 +13,11 @@ import {
 } from "./staticWorkflowMetadata";
 
 export function parseWorkflowDescription(source: string): string | null {
-  let rawMetadata: unknown;
   try {
-    rawMetadata = parseStaticWorkflowMetadataLiteral(source);
+    return parseWorkflowMetadataDescription(parseStaticWorkflowMetadataLiteral(source));
   } catch {
-    return parseLegacyWorkflowDescription(source);
+    return null;
   }
-  const description = parseWorkflowMetadataDescription(rawMetadata);
-  if (description != null) return description;
-  return parseLegacyWorkflowDescription(source);
 }
 
 export function parseWorkflowName(source: string): string | null {
@@ -47,29 +43,7 @@ export function parseWorkflowMetadataDescription(rawMetadata: unknown): string |
 }
 
 export function replaceWorkflowDescription(source: string, description: string): string | null {
-  return (
-    replaceStaticMetadataStringProperty(source, "description", description) ??
-    replaceLegacyWorkflowDescription(source, description)
-  );
-}
-
-const LEGACY_DESCRIPTION_HEADER_PATTERN =
-  /^(\uFEFF?(?:[ \t]*(?:\r?\n))*[ \t]*)\/\/[ \t]*description:[ \t]*(.*)(?=\r?\n|$)/u;
-
-export function parseLegacyWorkflowDescription(source: string): string | null {
-  const match = LEGACY_DESCRIPTION_HEADER_PATTERN.exec(source);
-  return normalizeDescription(match?.[2]);
-}
-
-function replaceLegacyWorkflowDescription(source: string, description: string): string | null {
-  const match = LEGACY_DESCRIPTION_HEADER_PATTERN.exec(source);
-  if (match == null) return null;
-  const prefix = match[1] ?? "";
-  return (
-    source.slice(0, prefix.length) +
-    `// description: ${description}` +
-    source.slice(match[0].length)
-  );
+  return replaceStaticMetadataStringProperty(source, "description", description);
 }
 
 function normalizeDescription(value: unknown): string | null {

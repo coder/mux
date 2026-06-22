@@ -14,7 +14,7 @@ import { GetGoalToolCall } from "../GetGoalToolCall";
 import { getToolComponent } from "./getToolComponent";
 
 describe("getToolComponent", () => {
-  test("falls back to generic rendering for removed workflow definition tools", () => {
+  test("falls back to generic rendering for removed workflow discovery tools", () => {
     expect(getToolComponent("workflow_list", {})).toBe(GenericToolCall);
     expect(getToolComponent("workflow_read", { name: "deep-research" })).toBe(GenericToolCall);
   });

@@ -20,7 +20,6 @@ import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
-import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
 import type { ProjectConfig } from "@/node/config";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
@@ -132,8 +131,6 @@ export interface MockORPCClientOptions {
   taskSettings?: Partial<TaskSettings>;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
   agentAiDefaults?: AgentAiDefaults;
-  /** Workflow definitions to expose via workflows.listDefinitions */
-  workflowDefinitions?: WorkflowDefinitionDescriptor[];
   /** Agent definitions to expose via agents.list */
   agentDefinitions?: AgentDefinitionDescriptor[];
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
@@ -380,7 +377,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     userPreferences: initialUserPreferences,
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
-    workflowDefinitions = [],
     agentAiDefaults: initialAgentAiDefaults,
     coderWorkspaceArchiveBehavior: initialCoderWorkspaceArchiveBehavior = "stop",
     worktreeArchiveBehavior: initialWorktreeArchiveBehavior = "keep",
@@ -1275,9 +1271,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
         return Promise.resolve({ success: true as const, data: undefined });
       },
-    },
-    workflows: {
-      listDefinitions: () => Promise.resolve(workflowDefinitions),
     },
     projects: {
       list: () => Promise.resolve(Array.from(projects.entries())),

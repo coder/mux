@@ -28,14 +28,14 @@ function createWorkflowRunRecord(overrides: Partial<WorkflowRunRecord> = {}): Wo
   return {
     id: "wfr_123",
     workspaceId: "workspace-1",
-    definition: {
+    workflow: {
       name: "deep-research",
       description: "Deep research",
       scope: "project",
       executable: true,
     },
-    definitionSource: "export default function workflow() { return null; }",
-    definitionHash: "sha256:test",
+    source: "export default function workflow() { return null; }",
+    sourceHash: "sha256:test",
     args: { topic: "workflow tools" },
     status: "pending",
     createdAt: "2026-05-29T00:00:00.000Z",

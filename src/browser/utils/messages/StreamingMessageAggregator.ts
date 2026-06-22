@@ -6,7 +6,6 @@ import type {
   InlineSkillSnapshotMap,
   AgentSkillReference,
   SideQuestionDisplayBranch,
-  WorkflowDefinitionPreviewForDisplay,
 } from "@/common/types/message";
 import { createMuxMessage, isCompactionSummaryMetadata } from "@/common/types/message";
 
@@ -63,7 +62,6 @@ import {
 } from "./displayedMessageBuilder";
 import { showBrowserNotification } from "@/browser/utils/ui/showBrowserNotification";
 import type { DynamicToolPart, DynamicToolPartPending } from "@/common/types/toolParts";
-import { WorkflowDefinitionDescriptorSchema, WorkflowRunIdSchema } from "@/common/orpc/schemas";
 import type { AgentSkillDescriptor, AgentSkillScope } from "@/common/types/agentSkill";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
@@ -333,71 +331,6 @@ interface AgentSkillSnapshotContent {
   body?: string;
 }
 
-const WorkflowDefinitionPreviewRunSchema = z
-  .object({
-    id: WorkflowRunIdSchema,
-    definition: WorkflowDefinitionDescriptorSchema,
-    definitionSource: z.string().min(1),
-    definitionHash: z.string().min(1).optional(),
-  })
-  .passthrough();
-
-function getWorkflowDefinitionPreviewCacheKey(
-  preview: WorkflowDefinitionPreviewForDisplay
-): string {
-  return JSON.stringify({
-    descriptor: preview.descriptor,
-    sourceKey: preview.definitionHash ?? preview.source ?? "",
-  });
-}
-
-function getWorkflowDefinitionPreviewFromToolOutput(
-  output: unknown
-): { runId: string; preview: WorkflowDefinitionPreviewForDisplay } | null {
-  if (output == null || typeof output !== "object") {
-    return null;
-  }
-
-  const run = (output as Record<string, unknown>).run;
-  const parsed = WorkflowDefinitionPreviewRunSchema.safeParse(run);
-  if (!parsed.success) {
-    return null;
-  }
-
-  return {
-    runId: parsed.data.id,
-    preview: {
-      descriptor: parsed.data.definition,
-      source: parsed.data.definitionSource,
-      definitionHash: parsed.data.definitionHash,
-    },
-  };
-}
-
-function maybeCollectWorkflowDefinitionPreview(
-  message: MuxMessage,
-  previews: Map<string, WorkflowDefinitionPreviewForDisplay>
-): void {
-  for (const part of message.parts) {
-    if (
-      !isDynamicToolPart(part) ||
-      // workflow_resume outputs embed the same run record shape, so they can seed
-      // definition previews for synthetic continuation messages too.
-      !isWorkflowRunEmittingToolName(part.toolName) ||
-      part.state !== "output-available"
-    ) {
-      continue;
-    }
-
-    const preview = getWorkflowDefinitionPreviewFromToolOutput(part.output);
-    if (preview == null) {
-      continue;
-    }
-
-    previews.set(preview.runId, preview.preview);
-  }
-}
-
 interface InlineSkillSnapshotDisplayState {
   snapshots?: InlineSkillSnapshotMap;
   cacheKey?: string;
@@ -536,7 +469,6 @@ export class StreamingMessageAggregator {
       version: number;
       agentSkillSnapshotCacheKey?: string;
       inlineSkillSnapshotsCacheKey?: string;
-      workflowDefinitionPreviewCacheKey?: string;
       messages: DisplayedMessage[];
     }
   >();
@@ -3096,13 +3028,11 @@ export class StreamingMessageAggregator {
   private buildDisplayedMessagesForMessage(
     message: MuxMessage,
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
-    inlineSkillSnapshots?: InlineSkillSnapshotMap,
-    workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay
+    inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
     return buildDisplayedMessagesForMessage({
       message,
       agentSkillSnapshot,
-      workflowDefinitionPreview,
       inlineSkillSnapshots,
       hasActiveStream: this.activeStreams.has(message.id),
       streamIsReplay: this.activeStreams.get(message.id)?.isReplay,
@@ -3379,8 +3309,7 @@ export class StreamingMessageAggregator {
     message: MuxMessage,
     interrupts: readonly SideQuestionInterrupt[],
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string },
-    inlineSkillSnapshots?: InlineSkillSnapshotMap,
-    workflowDefinitionPreview?: WorkflowDefinitionPreviewForDisplay
+    inlineSkillSnapshots?: InlineSkillSnapshotMap
   ): DisplayedMessage[] {
     const sorted = [...interrupts].sort((left, right) =>
       this.compareSideQuestionInterrupts(left, right)
@@ -3415,8 +3344,7 @@ export class StreamingMessageAggregator {
         const segRows = this.buildDisplayedMessagesForMessage(
           segMessage,
           agentSkillSnapshot,
-          inlineSkillSnapshots,
-          workflowDefinitionPreview
+          inlineSkillSnapshots
         );
 
         // Rewrite `historyId` on each emitted row back to the original
@@ -3510,15 +3438,7 @@ export class StreamingMessageAggregator {
       // debugLlmRequest is enabled. We still want to surface their content in the UI by
       // attaching the resolved snapshot (frontmatterYaml + body) to subsequent user
       // messages that reference skills via /{skillName} or inline $skillName tokens.
-      const latestWorkflowDefinitionPreviewByRunId = new Map<
-        string,
-        WorkflowDefinitionPreviewForDisplay
-      >();
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
-
-      for (const message of allMessages) {
-        maybeCollectWorkflowDefinitionPreview(message, latestWorkflowDefinitionPreviewByRunId);
-      }
 
       // ---------------------------------------------------------------
       // /btw side-question splitting:
@@ -3552,15 +3472,6 @@ export class StreamingMessageAggregator {
         }
 
         const muxMeta = message.metadata?.muxMetadata;
-        const workflowDefinitionPreview =
-          message.role === "user" && muxMeta?.type === "workflow-trigger-display"
-            ? latestWorkflowDefinitionPreviewByRunId.get(muxMeta.runId)
-            : undefined;
-
-        const workflowDefinitionPreviewCacheKey = workflowDefinitionPreview
-          ? getWorkflowDefinitionPreviewCacheKey(workflowDefinitionPreview)
-          : undefined;
-
         const agentSkillSnapshotKey =
           message.role === "user" && muxMeta?.type === "agent-skill"
             ? getAgentSkillSnapshotKey(muxMeta.scope, muxMeta.skillName)
@@ -3607,8 +3518,7 @@ export class StreamingMessageAggregator {
             message,
             interrupts,
             agentSkillSnapshotForDisplay,
-            inlineSkillSnapshotState?.snapshots,
-            workflowDefinitionPreview
+            inlineSkillSnapshotState?.snapshots
           );
           if (splitRows.length > 0) {
             displayedMessages.push(...splitRows);
@@ -3621,23 +3531,20 @@ export class StreamingMessageAggregator {
         const canReuse =
           cached?.version === version &&
           cached.agentSkillSnapshotCacheKey === agentSkillSnapshotCacheKey &&
-          cached.inlineSkillSnapshotsCacheKey === inlineSkillSnapshotsCacheKey &&
-          cached.workflowDefinitionPreviewCacheKey === workflowDefinitionPreviewCacheKey;
+          cached.inlineSkillSnapshotsCacheKey === inlineSkillSnapshotsCacheKey;
 
         const messageDisplay = canReuse
           ? cached.messages
           : this.buildDisplayedMessagesForMessage(
               message,
               agentSkillSnapshotForDisplay,
-              inlineSkillSnapshotState?.snapshots,
-              workflowDefinitionPreview
+              inlineSkillSnapshotState?.snapshots
             );
 
         if (!canReuse) {
           this.displayedMessageCache.set(message.id, {
             version,
             agentSkillSnapshotCacheKey,
-            workflowDefinitionPreviewCacheKey,
             inlineSkillSnapshotsCacheKey,
             messages: messageDisplay,
           });

@@ -48,7 +48,7 @@ export interface CompletedReportEntry {
   /** task_await-compatible ID: sub-agent taskId or workflow runId (wfr_...). */
   id: string;
   kind: "task" | "workflow";
-  /** Sub-agent task title or workflow definition name. */
+  /** Sub-agent task title or workflow display name. */
   title?: string;
   completedAtMs: number;
   /** Estimated token count of the persisted report markdown (~4 chars/token). */

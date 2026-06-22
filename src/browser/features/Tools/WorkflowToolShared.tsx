@@ -1,7 +1,7 @@
 import React from "react";
 
 import { cn } from "@/common/lib/utils";
-import type { WorkflowDefinitionDescriptor } from "@/common/types/workflow";
+import type { WorkflowScriptDescriptor } from "@/common/types/workflow";
 import { DetailSection } from "./Shared/ToolPrimitives";
 import { HighlightedCode, JsonHighlight } from "./Shared/HighlightedCode";
 
@@ -95,8 +95,8 @@ export function WorkflowSourceBlock(props: {
   );
 }
 
-export function WorkflowDefinitionCard(props: {
-  descriptor: WorkflowDefinitionDescriptor;
+export function WorkflowScriptCard(props: {
+  descriptor: WorkflowScriptDescriptor;
   compact?: boolean;
 }) {
   const descriptor = props.descriptor;

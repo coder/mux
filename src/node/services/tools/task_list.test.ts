@@ -144,14 +144,14 @@ describe("task_list tool", () => {
   const buildWorkflowRun = (id: string, status: string) => ({
     id,
     workspaceId: "root-workspace",
-    definition: {
+    workflow: {
       name: "deep-research",
       description: "Deep research",
       scope: "built-in" as const,
       executable: true,
     },
-    definitionSource: "export default function workflow() { return null; }",
-    definitionHash: "sha256:test",
+    source: "export default function workflow() { return null; }",
+    sourceHash: "sha256:test",
     args: {},
     status,
     createdAt: "2026-05-29T00:00:00.000Z",
