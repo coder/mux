@@ -199,6 +199,15 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
           execute: existingTool.execute,
           providerOptions: cacheOpts,
         });
+        // createTool() returns a fresh object that drops any extra own symbol markers attached
+        // to the original (e.g. the built-in task-tool marker that lets sibling explore tasks run
+        // in parallel). Copy them over so downstream wrappers still recognize the recreated tool.
+        for (const marker of Object.getOwnPropertySymbols(existingTool)) {
+          const descriptor = Object.getOwnPropertyDescriptor(existingTool, marker);
+          if (descriptor) {
+            Object.defineProperty(cachedTool, marker, descriptor);
+          }
+        }
         cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
       }
     } else {
