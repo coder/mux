@@ -583,14 +583,21 @@ export class WorkspaceGoalService {
     return true;
   }
 
-  private getFilePath(workspaceId: string): string {
+  // Shared resolver for the goal service's per-workspace session files
+  // (goal.json / goal-history.jsonl / goal-board.json). Centralizes the
+  // non-empty workspaceId guard and session-dir join so each file accessor
+  // doesn't re-assert and re-join the same way.
+  private resolveSessionFilePath(workspaceId: string, fileName: string): string {
     assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
-    return path.join(this.config.getSessionDir(workspaceId), GOAL_FILE);
+    return path.join(this.config.getSessionDir(workspaceId), fileName);
+  }
+
+  private getFilePath(workspaceId: string): string {
+    return this.resolveSessionFilePath(workspaceId, GOAL_FILE);
   }
 
   private getHistoryFilePath(workspaceId: string): string {
-    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
-    return path.join(this.config.getSessionDir(workspaceId), GOAL_HISTORY_FILE);
+    return this.resolveSessionFilePath(workspaceId, GOAL_HISTORY_FILE);
   }
 
   /**
@@ -2928,8 +2935,7 @@ export class WorkspaceGoalService {
   // ───────────────────────────────────────────────────────────────────────
 
   private getBoardFilePath(workspaceId: string): string {
-    assert(workspaceId.trim().length > 0, "WorkspaceGoalService requires non-empty workspaceId");
-    return path.join(this.config.getSessionDir(workspaceId), GOAL_BOARD_FILE);
+    return this.resolveSessionFilePath(workspaceId, GOAL_BOARD_FILE);
   }
 
   private async readBoard(workspaceId: string): Promise<GoalBoardV1> {
