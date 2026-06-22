@@ -1,30 +1,27 @@
-import type {
-  WorkflowDefinitionArgSummary,
-  WorkflowDefinitionMetadata,
-} from "@/common/types/workflow";
-import { WorkflowDefinitionArgSummarySchema } from "@/common/orpc/schemas";
+import type { WorkflowArgSummary, WorkflowMetadata } from "@/common/types/workflow";
+import { WorkflowArgSummarySchema } from "@/common/orpc/schemas";
 import assert from "@/common/utils/assert";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { parseWorkflowMetadataDescription } from "./workflowDescription";
 import { parseStaticWorkflowMetadataLiteral } from "./staticWorkflowMetadata";
 
-export interface WorkflowDefinitionSourceStats {
+export interface WorkflowSourceStats {
   chars: number;
   lines: number;
 }
 
-export interface WorkflowDefinitionMetadataSummary {
-  metadata: WorkflowDefinitionMetadata;
-  args?: WorkflowDefinitionArgSummary[];
-  sourceStats: WorkflowDefinitionSourceStats;
+export interface WorkflowMetadataSummary {
+  metadata: WorkflowMetadata;
+  args?: WorkflowArgSummary[];
+  sourceStats: WorkflowSourceStats;
 }
 
-export interface WorkflowDefinitionSourceSummary {
+export interface WorkflowSourceSummary {
   description: string | null;
-  metadataSummary: WorkflowDefinitionMetadataSummary | null;
+  metadataSummary: WorkflowMetadataSummary | null;
 }
 
-export function parseWorkflowDefinitionMetadata(source: string): WorkflowDefinitionMetadata | null {
+export function parseWorkflowMetadata(source: string): WorkflowMetadata | null {
   let rawMetadata: unknown;
   try {
     rawMetadata = parseStaticWorkflowMetadataLiteral(source);
@@ -37,15 +34,15 @@ export function parseWorkflowDefinitionMetadata(source: string): WorkflowDefinit
   return rawMetadata;
 }
 
-export function summarizeWorkflowDefinitionSource(
+export function summarizeWorkflowSource(
   source: string,
   fallbackDescription?: string
-): WorkflowDefinitionSourceSummary {
+): WorkflowSourceSummary {
   assert(
     fallbackDescription == null || fallbackDescription.trim().length > 0,
     "Workflow metadata fallback description must be non-empty when provided"
   );
-  const parsedMetadata = parseWorkflowDefinitionMetadata(source);
+  const parsedMetadata = parseWorkflowMetadata(source);
   const metadataDescription =
     parsedMetadata == null ? null : parseWorkflowMetadataDescription(parsedMetadata);
   const description = metadataDescription ?? fallbackDescription ?? null;
@@ -61,8 +58,8 @@ export function summarizeWorkflowDefinitionSource(
 }
 
 export function summarizeWorkflowArgs(
-  metadata: WorkflowDefinitionMetadata | null
-): WorkflowDefinitionArgSummary[] | undefined {
+  metadata: WorkflowMetadata | null
+): WorkflowArgSummary[] | undefined {
   const argsSchema = metadata?.argsSchema;
   if (!isPlainObject(argsSchema) || argsSchema.type !== "object") {
     return undefined;
@@ -75,15 +72,15 @@ export function summarizeWorkflowArgs(
   const required = new Set(nonEmptyStringArray(argsSchema.required));
   const summaries = Object.entries(rawProperties)
     .map(([name, rawProperty]) => summarizeWorkflowArg(name, rawProperty, required))
-    .filter((summary): summary is WorkflowDefinitionArgSummary => summary != null);
+    .filter((summary): summary is WorkflowArgSummary => summary != null);
   return summaries.length > 0 ? summaries : undefined;
 }
 
 function metadataForDescription(
-  parsedMetadata: WorkflowDefinitionMetadata | null,
+  parsedMetadata: WorkflowMetadata | null,
   description: string,
   metadataHasDescription: boolean
-): WorkflowDefinitionMetadata {
+): WorkflowMetadata {
   if (parsedMetadata != null) {
     return !metadataHasDescription ? { ...parsedMetadata, description } : parsedMetadata;
   }
@@ -92,8 +89,8 @@ function metadataForDescription(
 
 function metadataSummaryForSource(
   source: string,
-  metadata: WorkflowDefinitionMetadata
-): WorkflowDefinitionMetadataSummary {
+  metadata: WorkflowMetadata
+): WorkflowMetadataSummary {
   const args = summarizeWorkflowArgs(metadata);
   return {
     metadata,
@@ -102,7 +99,7 @@ function metadataSummaryForSource(
   };
 }
 
-function workflowSourceStats(source: string): WorkflowDefinitionSourceStats {
+function workflowSourceStats(source: string): WorkflowSourceStats {
   return {
     chars: source.length,
     lines: source.length === 0 ? 0 : source.split(/\r\n|\r|\n/u).length,
@@ -113,11 +110,11 @@ function summarizeWorkflowArg(
   name: string,
   rawProperty: unknown,
   required: ReadonlySet<string>
-): WorkflowDefinitionArgSummary | null {
+): WorkflowArgSummary | null {
   if (!isPlainObject(rawProperty)) {
     return null;
   }
-  const summary: WorkflowDefinitionArgSummary = {
+  const summary: WorkflowArgSummary = {
     name,
     types: schemaTypes(rawProperty.type),
     required: required.has(name),
@@ -144,7 +141,7 @@ function summarizeWorkflowArg(
     summary.maximum = rawProperty.maximum;
   }
 
-  return WorkflowDefinitionArgSummarySchema.parse(summary);
+  return WorkflowArgSummarySchema.parse(summary);
 }
 
 function schemaTypes(value: unknown): string[] {

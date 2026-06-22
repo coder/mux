@@ -787,7 +787,7 @@ export const TaskAwaitToolInvalidScopeResultSchema = z
 
 // Failure is the one case where workflow state must reach the model: it has to decide between
 // workflow_resume (retry_from_checkpoint) and a fresh workflow_run. Surface per-step outcomes
-// compactly — never the full run record (definition source / event log).
+// compactly — never the full run record (script source / event log).
 export const TaskAwaitWorkflowFailureStateSchema = z
   .object({
     name: z.string().min(1),

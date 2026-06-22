@@ -22,7 +22,7 @@ function stripToolResultPart<P extends { type: string }>(part: P, onChange: () =
  * applyToolOutputRedaction strips workflow run records when building a request from persisted
  * history, but within a single streamText turn the SDK feeds tool results straight back into
  * the next step. Without this, the model step immediately after a workflow_run/workflow_resume
- * call still sees the full run record (definition source + event log) this redaction exists to
+ * call still sees the full run record (script source + event log) this redaction exists to
  * keep out of context.
  *
  * Returns the original array when nothing changed so prepareStep can skip the rewrite.

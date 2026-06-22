@@ -1,9 +1,9 @@
 import type { z } from "zod";
 import type {
   StructuredTaskOutputSchema,
-  WorkflowDefinitionArgSummarySchema,
+  WorkflowArgSummarySchema,
   WorkflowScriptDescriptorSchema,
-  WorkflowDefinitionMetadataSchema,
+  WorkflowMetadataSchema,
   WorkflowScriptScopeSchema,
   WorkflowNameSchema,
   WorkflowResultSchema,
@@ -18,8 +18,8 @@ import type {
 import { WorkflowRunStatusTransitionSchema } from "@/common/orpc/schemas";
 import assert from "@/common/utils/assert";
 
-export type WorkflowDefinitionArgSummary = z.infer<typeof WorkflowDefinitionArgSummarySchema>;
-export type WorkflowDefinitionMetadata = z.infer<typeof WorkflowDefinitionMetadataSchema>;
+export type WorkflowArgSummary = z.infer<typeof WorkflowArgSummarySchema>;
+export type WorkflowMetadata = z.infer<typeof WorkflowMetadataSchema>;
 export type WorkflowName = z.infer<typeof WorkflowNameSchema>;
 export type WorkflowScriptScope = z.infer<typeof WorkflowScriptScopeSchema>;
 export type WorkflowRunId = z.infer<typeof WorkflowRunIdSchema>;

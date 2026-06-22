@@ -26,7 +26,7 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * workflow_run / workflow_resume outputs embed the full run record (definition source, event
+ * workflow_run / workflow_resume outputs embed the full run record (script source, event
  * log, step snapshots) solely for the UI run card. The model only needs status/runId/result —
  * in-progress events may never materialize in the final outcome — so drop the record from
  * model-bound copies (persisted-history requests and internal stream steps alike) while the

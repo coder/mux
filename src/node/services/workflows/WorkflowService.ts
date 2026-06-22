@@ -936,12 +936,12 @@ function isAbortSignalAborted(abortSignal?: AbortSignal): boolean {
 }
 
 function canResumeRunWithCurrentTrust(run: WorkflowRunRecord, projectTrusted: boolean): boolean {
-  return (run.workflow.scope !== "project" && run.workflow.scope !== "scratch") || projectTrusted;
+  return run.workflow.scope !== "project" || projectTrusted;
 }
 
 function assertRunCanResumeWithCurrentTrust(run: WorkflowRunRecord, projectTrusted: boolean): void {
   if (!canResumeRunWithCurrentTrust(run, projectTrusted)) {
-    throw new Error("Project trust is required to resume project-local or scratch workflow runs");
+    throw new Error("Project trust is required to resume project-local workflow runs");
   }
 }
 

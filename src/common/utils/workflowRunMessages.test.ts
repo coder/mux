@@ -9,7 +9,7 @@ const run: WorkflowRunRecord = {
   workflow: {
     name: "nested-parent-simple",
     description: "Nested parent",
-    scope: "scratch",
+    scope: "project",
     executable: true,
   },
   source: "export default function workflow() { return { reportMarkdown: 'done' }; }",

@@ -6,7 +6,13 @@ export const WorkflowNameSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 
-export const WorkflowScriptScopeSchema = z.enum(["project", "global", "built-in", "scratch"]);
+const WorkflowScriptScopeValues = ["project", "global", "built-in"] as const;
+const LegacyWorkflowScriptScopeValue = "scratch";
+
+export const WorkflowScriptScopeSchema = z.preprocess(
+  (value) => (value === LegacyWorkflowScriptScopeValue ? "project" : value),
+  z.enum(WorkflowScriptScopeValues)
+);
 
 export const WorkflowRunIdSchema = z
   .string()
@@ -38,9 +44,9 @@ export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
 // Kept only so older workflow run records with legacy host-step events remain parseable.
 const LegacyWorkflowHostStepEffectSchema = z.enum(["read", "workspace", "external"]);
 
-export const WorkflowDefinitionMetadataSchema = z.record(z.string(), JsonValueSchema);
+export const WorkflowMetadataSchema = z.record(z.string(), JsonValueSchema);
 
-export const WorkflowDefinitionArgSummarySchema = z
+export const WorkflowArgSummarySchema = z
   .object({
     name: z.string().min(1),
     types: z.array(z.string().min(1)).min(1),
@@ -69,7 +75,7 @@ export const WorkflowScriptDescriptorSchema = z
     blockedReason: z.string().min(1).optional(),
   })
   .refine((value) => value.executable || value.blockedReason != null, {
-    message: "Non-executable workflow definitions must include a blocked reason",
+    message: "Non-executable workflow scripts must include a blocked reason",
     path: ["blockedReason"],
   });
 

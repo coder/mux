@@ -72,6 +72,9 @@ type WorkflowRunEventDraft = WorkflowRunEvent extends infer Event
     : never
   : never;
 
+const WORKFLOW_SOURCE_FILENAME = "source.js";
+const LEGACY_WORKFLOW_SOURCE_FILENAME = "definition.js";
+
 interface LeaseRecord {
   ownerId: string;
   acquiredAtMs: number;
@@ -99,7 +102,7 @@ export class WorkflowRunStore {
 
     const runDir = this.runDir(input.id);
     await fs.mkdir(runDir, { recursive: true });
-    await fs.writeFile(path.join(runDir, "definition.js"), input.source, "utf-8");
+    await fs.writeFile(path.join(runDir, WORKFLOW_SOURCE_FILENAME), input.source, "utf-8");
     await fs.writeFile(path.join(runDir, "events.jsonl"), "", { flag: "a" });
     await fs.writeFile(path.join(runDir, "steps.jsonl"), "", { flag: "a" });
 
@@ -151,7 +154,7 @@ export class WorkflowRunStore {
       await fs.rm(runDir, { recursive: true, force: true });
       await fs.mkdir(runDir, { recursive: false });
       try {
-        await fs.writeFile(path.join(runDir, "definition.js"), input.source, "utf-8");
+        await fs.writeFile(path.join(runDir, WORKFLOW_SOURCE_FILENAME), input.source, "utf-8");
         await fs.writeFile(path.join(runDir, "events.jsonl"), "", { flag: "a" });
         await fs.writeFile(path.join(runDir, "steps.jsonl"), "", { flag: "a" });
 
@@ -776,10 +779,22 @@ export class WorkflowRunStore {
     }
   }
 
+  private async readWorkflowSource(runId: string): Promise<string> {
+    const runDir = this.runDir(runId);
+    try {
+      return await fs.readFile(path.join(runDir, WORKFLOW_SOURCE_FILENAME), "utf-8");
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) {
+        throw error;
+      }
+      return await fs.readFile(path.join(runDir, LEGACY_WORKFLOW_SOURCE_FILENAME), "utf-8");
+    }
+  }
+
   private async getRunFileSnapshot(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
     const run = WorkflowRunRecordSchema.parse(rawRun);
-    const source = await fs.readFile(path.join(this.runDir(runId), "definition.js"), "utf-8");
+    const source = await this.readWorkflowSource(runId);
     return WorkflowRunRecordSchema.parse({
       ...run,
       source,
@@ -790,7 +805,7 @@ export class WorkflowRunStore {
   private async getRunUnlocked(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
     const partial = WorkflowRunRecordSchema.omit({ events: true, steps: true }).parse(rawRun);
-    const source = await fs.readFile(path.join(this.runDir(runId), "definition.js"), "utf-8");
+    const source = await this.readWorkflowSource(runId);
     const events = await this.readEvents(runId);
     const steps = await this.readSteps(runId);
 

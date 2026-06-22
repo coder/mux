@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `mux workflow` - Headless CLI runner for durable workflow definitions.
+ * `mux workflow` - Headless CLI runner for durable workflow scripts.
  */
 
 import * as fs from "node:fs/promises";

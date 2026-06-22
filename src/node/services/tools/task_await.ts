@@ -155,7 +155,7 @@ function buildWorkflowFailureState(run: WorkflowRunRecord) {
 }
 
 function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
-  // Deliberately omit the full run record (definition source, event log, step snapshots):
+  // Deliberately omit the full run record (script source, event log, step snapshots):
   // it is huge and model-facing only. In-progress events may never materialize in the final
   // result, so the model only needs the status plus the final report/error.
   const base = {

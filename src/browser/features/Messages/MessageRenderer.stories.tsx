@@ -218,7 +218,7 @@ export const WorkflowTriggeredCommand: AppStory = {
           workflow: {
             name: "shallow-review",
             description: "Quick workflow review",
-            scope: "scratch" as const,
+            scope: "project" as const,
             sourcePath: "/tmp/mux/sessions/workspace/workflows/shallow-review.js",
             executable: true,
           },

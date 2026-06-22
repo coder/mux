@@ -48,6 +48,15 @@ describe("WorkflowRunStore", () => {
     expect(run.events.map((event) => event.sequence)).toEqual([1]);
   });
 
+  test("loads legacy workflow source snapshot filenames", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-legacy-source-filename");
+    const store = await createStore(tmp.path);
+    const runDir = path.join(tmp.path, "workflows", "wfr_123");
+    await fs.rename(path.join(runDir, "source.js"), path.join(runDir, "definition.js"));
+
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({ source });
+  });
+
   test("lists lightweight run status snapshots without hydrating journals or source", async () => {
     using tmp = new DisposableTempDir("workflow-runs-status-snapshots");
     const store = await createStore(tmp.path);
@@ -62,7 +71,7 @@ describe("WorkflowRunStore", () => {
     });
     await store.appendStatus("wfr_123", "running", "2026-05-29T00:00:02.000Z");
 
-    await fs.writeFile(path.join(tmp.path, "workflows", "wfr_123", "definition.js"), "broken");
+    await fs.writeFile(path.join(tmp.path, "workflows", "wfr_123", "source.js"), "broken");
     await fs.writeFile(
       path.join(tmp.path, "workflows", "wfr_123", "events.jsonl"),
       "{not-json}\n",

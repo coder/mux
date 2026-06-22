@@ -6949,7 +6949,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "# Workflow Authoring",
       "",
-      "Use this skill **before writing or editing a workflow definition**. Workflows are durable JavaScript conductors that coordinate sub-agent tasks, validate structured reports, and preserve run state for replay/resume.",
+      "Use this skill **before writing or editing a workflow script**. Workflows are durable JavaScript conductors that coordinate sub-agent tasks, validate structured reports, and preserve run state for replay/resume.",
       "",
       "## When to use a workflow",
       "",

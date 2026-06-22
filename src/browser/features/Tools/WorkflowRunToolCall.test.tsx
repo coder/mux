@@ -735,7 +735,7 @@ describe("WorkflowRunToolCall", () => {
                 workflow: {
                   name: "parent-simple",
                   description: "Parent",
-                  scope: "scratch",
+                  scope: "project",
                   executable: true,
                 },
                 source: "export default function workflow() { return null; }",
