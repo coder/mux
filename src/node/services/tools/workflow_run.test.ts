@@ -132,6 +132,52 @@ describe("workflow_run tool", () => {
     });
   });
 
+  test("starts a built-in skill workflow by explicit skill script_path", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-built-in-skill");
+    const startWorkflow = mock(async () => ({
+      runId: "wfr_builtin_skill",
+      status: "completed" as const,
+      result: { reportMarkdown: "done" },
+    }));
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: false,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => null),
+      },
+    });
+
+    const result = await tool.execute!(
+      {
+        script_path: "skill://workflow-smoke/workflow.js",
+        args: { message: "from tool" },
+        run_in_background: false,
+      },
+      mockToolCallOptions
+    );
+
+    expect(startWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        script: expect.objectContaining({
+          requestedScriptPath: "skill://workflow-smoke/workflow.js",
+          canonicalScriptPath: "skill://workflow-smoke/workflow.js",
+          sourceKind: "skill",
+          scope: "built-in",
+          source: expect.stringContaining("Workflow Smoke"),
+        }),
+        projectTrusted: false,
+        args: { message: "from tool" },
+      })
+    );
+    expect(result).toEqual({
+      status: "completed",
+      runId: "wfr_builtin_skill",
+      result: { reportMarkdown: "done" },
+      note: COMPLETED_REPORT_REFETCH_NOTE,
+    });
+  });
+
   test("emits a workflow run attachment when the durable run is created", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool-attached");
     const scriptPath = await writeWorkflowScript(tempDir.path);

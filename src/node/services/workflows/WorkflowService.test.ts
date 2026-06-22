@@ -110,6 +110,39 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     });
   });
 
+  test("ignores legacy metadata export names when building the run descriptor", async () => {
+    using tmp = new DisposableTempDir("workflow-service-legacy-metadata-descriptor");
+    const legacyMetaIdentifier = "metadata";
+    const source = `export const ${legacyMetaIdentifier} = { name: "Legacy Name", description: "Legacy description" };
+export default function workflow() { return { reportMarkdown: "done" }; }
+`;
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      generateRunId: () => "wfr_legacy_metadata_descriptor",
+      runnerId: "runner-a",
+    });
+
+    await service.startWorkflow({
+      script: createScript(source),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    const run = await runStore.getRun("wfr_legacy_metadata_descriptor");
+    expect(run.definition).toMatchObject({
+      name: "demo",
+      description: "Workflow script ./workflows/demo.js",
+    });
+  });
+
   test("notifies run status changes around a foreground script run", async () => {
     using tmp = new DisposableTempDir("workflow-service-status");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });

@@ -105,7 +105,7 @@ describe("router workflow routes", () => {
     fs.mkdirSync(path.join(projectPath, "workflows"), { recursive: true });
     fs.writeFileSync(
       path.join(projectPath, "workflows", "demo.js"),
-      `export const metadata = { description: "Demo workflow" };\nexport default function workflow({ args }) { return { reportMarkdown: args.topic }; }\n`
+      `export const meta = { description: "Demo workflow" };\nexport default function workflow({ args }) { return { reportMarkdown: args.topic }; }\n`
     );
     await config.editConfig((current) => {
       current.projects.set(projectPath, { workspaces: [], trusted: true });
@@ -363,7 +363,7 @@ describe("router workflow routes", () => {
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "needs-project-path.js"),
       `const s = mux.schema;
-export const metadata = {
+export const meta = {
   description: "Needs project path",
   argsSchema: s.object({
     projectPath: s.string(),
@@ -405,7 +405,7 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
     fs.writeFileSync(
       path.join(workspacePath, ".mux", "workflows", "needs-active-project.js"),
       `const s = mux.schema;
-export const metadata = {
+export const meta = {
   description: "Needs active project",
   argsSchema: s.object({ projectPath: s.string() }),
 };
@@ -432,7 +432,7 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "needs-topic.js"),
       `const s = mux.schema;
-export const metadata = {
+export const meta = {
   description: "Needs topic",
   argsSchema: s.object({ topic: s.string() }),
 };
@@ -460,7 +460,7 @@ export default function workflow({ args }) { return { reportMarkdown: args.topic
   test("reports malformed workflow argument schemas as a bad request", async () => {
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "bad-args-schema.js"),
-      `export const metadata = {
+      `export const meta = {
   description: "Bad args schema",
   argsSchema: { type: "object", properties: { topic: "bad" } },
 };
@@ -543,7 +543,7 @@ export default function workflow() { return { reportMarkdown: "should not run" }
   test("waits for foreground slash invocation persistence before terminal continuation", async () => {
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "backgroundable.js"),
-      "export const metadata = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent({ id: 'slow-step', prompt: 'slow', outputSchema: {} }); }\n"
+      "export const meta = { description: \"Backgroundable workflow\" };\nexport default function workflow({ agent }) { return agent('slow', { id: 'slow-step' }); }\n"
     );
     const context = createContext({ enabled: true });
     const workspaceService = context.workspaceService as unknown as {

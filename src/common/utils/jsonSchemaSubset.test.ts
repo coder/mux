@@ -92,6 +92,36 @@ describe("validateJsonSchemaSubset", () => {
     ).toEqual({ success: true });
   });
 
+  test("supports anyOf and allOf composition", () => {
+    expect(
+      validateJsonSchemaSubset(
+        {
+          type: "object",
+          required: ["id", "label"],
+          properties: {
+            id: { anyOf: [{ type: "string", minLength: 2 }, { const: 0 }] },
+            label: { allOf: [{ type: "string" }, { minLength: 3 }, { maxLength: 8 }] },
+          },
+        },
+        { id: "ok", label: "valid" }
+      )
+    ).toEqual({ success: true });
+
+    const result = validateJsonSchemaSubset(
+      {
+        type: "object",
+        required: ["id", "label"],
+        properties: {
+          id: { anyOf: [{ type: "string", minLength: 2 }, { const: 0 }] },
+          label: { allOf: [{ type: "string" }, { minLength: 3 }, { maxLength: 8 }] },
+        },
+      },
+      { id: false, label: "xy" }
+    );
+
+    expect(result.success).toBe(false);
+  });
+
   test("supports JSON Schema type unions", () => {
     expect(validateJsonSchemaSubset({ type: ["string", "null"] }, null)).toEqual({
       success: true,

@@ -1,5 +1,5 @@
 export const STATIC_METADATA_ERROR =
-  "Workflow metadata must be a static object literal using JSON-compatible values and mux.schema helpers or aliases";
+  "Workflow meta must be a static object literal using JSON-compatible values and mux.schema helpers or aliases";
 const SCHEMA_ROOT_PREFIX = "mux.schema.";
 const OPTIONAL_SCHEMA_MARKER = Symbol("mux.schema.optional");
 const SUPPORTED_SCHEMA_CALLS = new Set([
@@ -88,11 +88,11 @@ function findStaticMetadataLiteral(source: string): MetadataLiteralRange | null 
   const assignments = [
     {
       declarationKind: "namedExport" as const,
-      pattern: /(^|[;\n])\s*export\s+(?:const|let|var)\s+(?:meta|metadata)\s*=/mu,
+      pattern: /(^|[;\n])\s*export\s+(?:const|let|var)\s+meta\s*=/mu,
     },
     {
       declarationKind: "commonJs" as const,
-      pattern: /(^|[;\n])\s*(?:module\.)?exports\.(?:meta|metadata)\s*=/mu,
+      pattern: /(^|[;\n])\s*(?:module\.)?exports\.meta\s*=/mu,
     },
   ];
   for (const assignment of assignments) {

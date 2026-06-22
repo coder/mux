@@ -578,7 +578,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("attaches workflow definition source preview to the persisted slash invocation", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const workflowSource = `export const metadata = { description: "Review deeply" };\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const workflowSource = `export const meta = { description: "Review deeply" };\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
       const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
         timestamp: 1,
         historySequence: 1,
@@ -642,7 +642,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("keeps workflow preview when unrelated run telemetry is malformed", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const workflowSource = `export const metadata = { description: "Review deeply" };\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const workflowSource = `export const meta = { description: "Review deeply" };\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
       const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
         timestamp: 1,
         historySequence: 1,
@@ -722,7 +722,7 @@ describe("StreamingMessageAggregator", () => {
 
     test("seeds workflow definition preview from workflow_resume tool parts", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      const workflowSource = `export const metadata = { description: "Review deeply" };\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
+      const workflowSource = `export const meta = { description: "Review deeply" };\nexport default function deepReviewWorkflow() {\n  return { reportMarkdown: "done" };\n}`;
       const command = createMuxMessage("workflow-command", "user", "/deep-review-workflow mux", {
         timestamp: 1,
         historySequence: 1,

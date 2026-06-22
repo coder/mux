@@ -1,5 +1,5 @@
 /**
- * Shared parser for workflow `export const metadata = { description: "..." }` declarations.
+ * Shared parser for workflow `export const meta = { description: "..." }` declarations.
  *
  * Workflow display helpers consume this so the description convention cannot drift.
  * Metadata is parsed

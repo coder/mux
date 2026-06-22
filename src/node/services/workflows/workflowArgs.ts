@@ -43,21 +43,21 @@ const RAW_INPUT_FIELD = "input";
 // Shared by assertObjectSchema and propertySchemas so the two `properties`
 // validators can't drift to differing messages for the same failure.
 const ARGS_SCHEMA_PROPERTIES_ERROR_MESSAGE =
-  "Workflow metadata.argsSchema.properties must be an object";
+  "Workflow meta.argsSchema.properties must be an object";
 
 export function normalizeWorkflowArgsForSource(
   definitionSource: string,
   rawArgs: unknown,
   options: WorkflowArgsNormalizationOptions = {}
 ): WorkflowArgsNormalizationResult {
-  const metadata = parseWorkflowMetadata(definitionSource);
-  if (metadata?.argsSchema == null) {
-    return { args: rawArgs, metadata };
+  const meta = parseWorkflowMetadata(definitionSource);
+  if (meta?.argsSchema == null) {
+    return { args: rawArgs, metadata: meta };
   }
 
   return {
-    args: normalizeWorkflowArgs(metadata.argsSchema, rawArgs, options.defaultArgs ?? {}),
-    metadata,
+    args: normalizeWorkflowArgs(meta.argsSchema, rawArgs, options.defaultArgs ?? {}),
+    metadata: meta,
   };
 }
 
@@ -69,16 +69,16 @@ function parseWorkflowMetadata(source: string): WorkflowMetadata | null {
     return null;
   }
   if (!isPlainObject(rawMetadata)) {
-    throw validationError("Workflow metadata must be a static object literal");
+    throw validationError("Workflow meta must be a static object literal");
   }
-  const metadata: WorkflowMetadata = {};
+  const meta: WorkflowMetadata = {};
   if (rawMetadata.argsSchema !== undefined) {
     if (!isPlainObject(rawMetadata.argsSchema)) {
-      throw validationError("Workflow metadata.argsSchema must be an object schema");
+      throw validationError("Workflow meta.argsSchema must be an object schema");
     }
-    metadata.argsSchema = rawMetadata.argsSchema;
+    meta.argsSchema = rawMetadata.argsSchema;
   }
-  return metadata;
+  return meta;
 }
 
 function validationError(message: string): WorkflowArgsValidationError {
@@ -148,7 +148,7 @@ function normalizeWorkflowArgs(
 
 function assertObjectSchema(schema: Record<string, unknown>): void {
   if (schema.type !== "object") {
-    throw validationError('Workflow metadata.argsSchema must have type "object"');
+    throw validationError('Workflow meta.argsSchema must have type "object"');
   }
   if (!isPlainObject(schema.properties)) {
     throw validationError(ARGS_SCHEMA_PROPERTIES_ERROR_MESSAGE);
@@ -462,7 +462,7 @@ function validateRequired(schema: Record<string, unknown>, value: Record<string,
   const required = Array.isArray(schema.required) ? schema.required : [];
   for (const property of required) {
     if (typeof property !== "string") {
-      throw validationError("Workflow metadata.argsSchema.required entries must be strings");
+      throw validationError("Workflow meta.argsSchema.required entries must be strings");
     }
     if (!(property in value)) {
       throw validationError(`Workflow argument ${property} is required`);

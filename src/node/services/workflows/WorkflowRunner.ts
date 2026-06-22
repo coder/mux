@@ -2242,7 +2242,7 @@ function normalizeWorkflowAgentSpecForExecution(
     return spec;
   }
   if (spec.outputSchema === undefined) {
-    return { ...spec, outputSchema: {} };
+    return spec.markdownOnly === true ? spec : { ...spec, outputSchema: {} };
   }
   const outputSchemaValidation = validateJsonSchemaSubsetSchema(spec.outputSchema, {
     requireObjectSchema: true,
@@ -2490,9 +2490,6 @@ function __muxNestedWorkflow(spec) {
   return __workflowNestedWorkflow(spec);
 }
 function __muxAgent(prompt, options) {
-  if (prompt !== null && typeof prompt === "object" && options === undefined) {
-    return __workflowAgent(prompt);
-  }
   if (typeof prompt !== "string" || prompt.length === 0) {
     throw new Error("agent requires a non-empty prompt");
   }

@@ -95,12 +95,12 @@ The invocation payload from `workflow_run`. Plain-text slash args are passed as 
 /workflow ./workflows/my-workflow.js review PR #123
 ```
 
-If the workflow declares `metadata.argsSchema`, Mux normalizes slash/CLI text against that schema before `args` reaches the workflow. Slash-friendly workflows that accept free-form prose should declare either an `input` string field or one `positional: true` string field:
+If the workflow declares `meta.argsSchema`, Mux normalizes slash/CLI text against that schema before `args` reaches the workflow. Slash-friendly workflows that accept free-form prose should declare either an `input` string field or one `positional: true` string field:
 
 ```js
 const s = mux.schema;
 
-export const metadata = {
+export const meta = {
   description: "Review a topic",
   argsSchema: s.object({
     input: s.optional(s.string()),
@@ -248,7 +248,7 @@ return { reportMarkdown: summary };
 
 Workflow agent schemas must be top-level object schemas. Wrap scalar or array results in an object field, for example `{ type: "object", properties: { value: { type: "string" } } }`. `$ref` and remote schemas are not supported.
 
-Prefer `mux.schema` helpers over handwritten schema objects. For concise schemas, declare `const s = mux.schema;` at top level and use `s.*` in metadata/schema builders. Object fields are required by default; wrap optional fields with `s.optional(...)`, nullable values with `s.nullable(...)`, and use `additionalProperties: false` for deterministic outputs.
+Prefer `mux.schema` helpers over handwritten schema objects. For concise schemas, declare `const s = mux.schema;` at top level and use `s.*` in meta/schema builders. Object fields are required by default; wrap optional fields with `s.optional(...)`, nullable values with `s.nullable(...)`, and use `additionalProperties: false` for deterministic outputs.
 
 ```js
 const s = mux.schema;

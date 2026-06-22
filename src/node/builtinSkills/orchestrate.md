@@ -129,7 +129,7 @@ The same loop applies whether you orchestrate interactively or from a workflow:
 
 Implementation sub-agents may _suggest_ additional gates in their reports (they know what they touched), but the orchestrator owns the gate list and suggestions are only ever additive — an implementer must not narrow its own acceptance criteria. A self-reported "tests pass" from an implementer is evidence, not a gate result.
 
-In a workflow, the verifier becomes `agent({ outputSchema, onRefusal: "fail" })` returning a structured verdict the conductor branches on, and the fix/gate loop is a bounded `while` in code.
+In a workflow, the verifier becomes `agent(prompt, { id, schema, onRefusal: "fail" })` returning a structured verdict the conductor branches on, and the fix/gate loop is a bounded `while` in code.
 
 ## Sequential protocol (only for dependency chains)
 
