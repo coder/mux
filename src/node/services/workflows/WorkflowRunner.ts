@@ -1233,6 +1233,16 @@ export class WorkflowRunner {
       );
     }
 
+    let interruptPromise: Promise<void> | undefined;
+    const interruptRemainingTasks = async (): Promise<void> => {
+      interruptPromise ??= this.taskAdapter.interruptRun?.() ?? Promise.resolve();
+      try {
+        await interruptPromise;
+      } catch {
+        // Preserve the original child failure; workflow failure handling will surface that cause.
+      }
+    };
+
     const settled = await Promise.race(
       states.map(async (state) => {
         assert(state.rawResultPromise != null, `pipeline agent ${state.spec.id} is not waiting`);
@@ -1245,14 +1255,18 @@ export class WorkflowRunner {
     );
 
     if ("error" in settled) {
-      if (!isForegroundWaitBackgroundedError(settled.error) && settled.state.taskId != null) {
-        options.leaseGuard.throwIfLost();
-        await this.recordTaskTerminalEventIfMissing(runId, sequence, {
-          stepId: settled.state.spec.id,
-          taskId: settled.state.taskId,
-          title: settled.state.spec.title,
-          status: getTaskTerminalStatusForError(settled.error, options.waitOptions?.abortSignal),
-        });
+      if (!isForegroundWaitBackgroundedError(settled.error)) {
+        if (settled.state.taskId != null) {
+          options.leaseGuard.throwIfLost();
+          await this.recordTaskTerminalEventIfMissing(runId, sequence, {
+            stepId: settled.state.spec.id,
+            taskId: settled.state.taskId,
+            title: settled.state.spec.title,
+            status: getTaskTerminalStatusForError(settled.error, options.waitOptions?.abortSignal),
+          });
+        }
+        // A pipeline can have several active child waits; stop siblings when fail-fast throws.
+        await interruptRemainingTasks();
       }
       throw settled.error;
     }

@@ -793,7 +793,7 @@ export class WorkflowRunStore {
 
   private async getRunFileSnapshot(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
-    const run = WorkflowRunRecordSchema.parse(rawRun);
+    const run = WorkflowRunRecordSchema.parse(normalizeWorkflowRunRecord(rawRun));
     const source = await this.readWorkflowSource(runId);
     return WorkflowRunRecordSchema.parse({
       ...run,
@@ -804,7 +804,9 @@ export class WorkflowRunStore {
 
   private async getRunUnlocked(runId: string): Promise<WorkflowRunRecord> {
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
-    const partial = WorkflowRunRecordSchema.omit({ events: true, steps: true }).parse(rawRun);
+    const partial = WorkflowRunRecordSchema.omit({ events: true, steps: true }).parse(
+      normalizeWorkflowRunRecord(rawRun)
+    );
     const source = await this.readWorkflowSource(runId);
     const events = await this.readEvents(runId);
     const steps = await this.readSteps(runId);
@@ -980,6 +982,35 @@ export class WorkflowRunStore {
   private leaseFile(runId: string): string {
     return path.join(this.runDir(runId), "lease.json");
   }
+}
+
+function normalizeWorkflowRunRecord(rawRun: unknown): unknown {
+  if (!isRecord(rawRun)) {
+    return rawRun;
+  }
+  if (rawRun.workflow != null && rawRun.source != null && rawRun.sourceHash != null) {
+    return rawRun;
+  }
+  if (
+    rawRun.definition == null &&
+    rawRun.definitionSource == null &&
+    rawRun.definitionHash == null
+  ) {
+    return rawRun;
+  }
+
+  // Older run.json snapshots used definition* fields. Normalize before schema parsing so
+  // existing durable runs stay visible/resumable long enough to hydrate source from disk.
+  return {
+    ...rawRun,
+    workflow: rawRun.workflow ?? rawRun.definition,
+    source: rawRun.source ?? rawRun.definitionSource,
+    sourceHash: rawRun.sourceHash ?? rawRun.definitionHash,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 // API callers provide run IDs when reading/resuming; validate before path joins so a malformed

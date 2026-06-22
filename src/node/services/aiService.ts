@@ -149,6 +149,7 @@ import {
   type WorkflowRunStatusChangedEvent,
 } from "@/node/services/workflows/WorkflowService";
 import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
@@ -1763,6 +1764,7 @@ export class AIService extends EventEmitter {
         thinkingLevel: thinkingLevel ?? "off",
         costsUsd: sessionCostsUsd,
       });
+      const getWorkflowProjectTrusted = () => isProjectTrusted(this.config, metadata.projectPath);
 
       const workflowService =
         dynamicWorkflowsExperimentEnabled && this.taskService != null
@@ -1787,14 +1789,21 @@ export class AIService extends EventEmitter {
                     runtime,
                     runtimeTempDir,
                     workspaceSessionDir: this.config.getSessionDir(workspaceId),
-                    trusted: isProjectTrusted(this.config, metadata.projectPath),
+                    trusted: getWorkflowProjectTrusted(),
                   },
-                  getProjectTrusted: () => isProjectTrusted(this.config, metadata.projectPath),
+                  getProjectTrusted: getWorkflowProjectTrusted,
                   experiments: {
                     ...experiments,
                     dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
                     workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
                   },
+                }),
+              resolveWorkflowScript: (scriptPath) =>
+                resolveWorkflowScript({
+                  scriptPath,
+                  runtime,
+                  workspacePath,
+                  projectTrusted: getWorkflowProjectTrusted(),
                 }),
               // Background workflow tools outlive the model turn that started them. Feed the
               // terminal result back as a hidden user turn so the parent agent continues

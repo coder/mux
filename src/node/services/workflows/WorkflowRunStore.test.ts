@@ -57,6 +57,30 @@ describe("WorkflowRunStore", () => {
     await expect(store.getRun("wfr_123")).resolves.toMatchObject({ source });
   });
 
+  test("normalizes legacy workflow run record fields before parsing", async () => {
+    using tmp = new DisposableTempDir("workflow-runs-legacy-record-fields");
+    const store = await createStore(tmp.path);
+    const runDir = path.join(tmp.path, "workflows", "wfr_123");
+    const runFile = path.join(runDir, "run.json");
+    const currentRun = JSON.parse(await fs.readFile(runFile, "utf-8")) as Record<string, unknown>;
+    const legacyRun: Record<string, unknown> = {
+      ...currentRun,
+      definition: currentRun.workflow,
+      definitionSource: currentRun.source,
+      definitionHash: currentRun.sourceHash,
+    };
+    delete legacyRun.workflow;
+    delete legacyRun.source;
+    delete legacyRun.sourceHash;
+    await fs.writeFile(runFile, JSON.stringify(legacyRun, null, 2), "utf-8");
+    await fs.rename(path.join(runDir, "source.js"), path.join(runDir, "definition.js"));
+
+    await expect(store.getRun("wfr_123")).resolves.toMatchObject({
+      workflow: definition,
+      source,
+    });
+  });
+
   test("lists lightweight run status snapshots without hydrating journals or source", async () => {
     using tmp = new DisposableTempDir("workflow-runs-status-snapshots");
     const store = await createStore(tmp.path);
