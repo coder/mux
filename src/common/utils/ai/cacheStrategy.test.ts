@@ -10,6 +10,7 @@ import {
   createCachedSystemMessage,
   applyCacheControlToTools,
 } from "./cacheStrategy";
+import { markBuiltInTaskTool, isBuiltInTaskTool } from "@/node/services/tools/task";
 
 describe("cacheStrategy", () => {
   describe("supportsAnthropicCache", () => {
@@ -384,6 +385,29 @@ describe("cacheStrategy", () => {
         anthropic: { cacheControl: { type: "ephemeral" } },
       });
       expect(result.readFile).toEqual(toolsWithDynamicTool.readFile);
+    });
+
+    it("preserves the built-in task marker when recreating the last function tool", () => {
+      // Cache control recreates the last function tool via createTool(). Built-in explore-task
+      // parallelism depends on a symbol marker surviving that recreation; if it were dropped the
+      // task tool would silently fall back to serialized execution.
+      const taskTool = markBuiltInTaskTool(
+        tool({
+          description: "task",
+          inputSchema: z.object({ prompt: z.string() }),
+          execute: () => Promise.resolve("ok"),
+        })
+      );
+      const tools: Record<string, Tool> = {
+        readFile: mockTools.readFile,
+        task: taskTool,
+      };
+
+      const result = applyCacheControlToTools(tools, "anthropic:claude-3-5-sonnet");
+
+      expect(isBuiltInTaskTool(result.task)).toBe(true);
+      // A recreated tool is a different object; sanity-check the marker rode along on the copy.
+      expect(result.task).not.toBe(taskTool);
     });
   });
 });
