@@ -16,10 +16,7 @@ import {
   ensureRuntimePathWithinWorkspace,
   resolveContainedSkillFilePathOnRuntime,
 } from "@/node/services/tools/runtimeSkillPathUtils";
-import {
-  isAbsolutePathAny,
-  resolveContainedSkillFilePath,
-} from "@/node/services/tools/skillFileUtils";
+import { isAbsolutePathAny } from "@/node/services/tools/skillFileUtils";
 import { readFileString } from "@/node/utils/runtime/helpers";
 
 export type WorkflowScriptSourceKind = "skill" | "workspace-file";
@@ -68,7 +65,7 @@ async function resolveSkillWorkflowScript(
 
   const resolvedSkill = await readAgentSkill(input.runtime, input.workspacePath, parsed.skillName, {
     ...(input.roots != null ? { roots: input.roots } : {}),
-    projectContainmentRoot: input.workspacePath,
+    containment: { kind: "runtime", root: input.workspacePath },
   });
 
   if (resolvedSkill.package.scope === "project" && !input.projectTrusted) {
@@ -91,17 +88,13 @@ async function resolveSkillWorkflowScript(
   const skillRuntime = resolvedSkill.sourceRuntime;
   assert(skillRuntime != null, "resolveWorkflowScript: non-built-in skill runtime is required");
 
-  const shouldUseRuntimeContainment = skillRuntime !== input.runtime;
-  const resolvedPath = shouldUseRuntimeContainment
-    ? (
-        await resolveContainedSkillFilePathOnRuntime(
-          skillRuntime,
-          resolvedSkill.skillDir,
-          parsed.relativePath
-        )
-      ).resolvedPath
-    : (await resolveContainedSkillFilePath(resolvedSkill.skillDir, parsed.relativePath))
-        .resolvedPath;
+  const resolvedPath = (
+    await resolveContainedSkillFilePathOnRuntime(
+      skillRuntime,
+      resolvedSkill.skillDir,
+      parsed.relativePath
+    )
+  ).resolvedPath;
 
   const stat = await skillRuntime.stat(resolvedPath);
   assertRegularJavaScriptFile(stat.isDirectory, parsed.relativePath);

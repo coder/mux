@@ -132,6 +132,60 @@ describe("workflow_run tool", () => {
     });
   });
 
+  test("resolves relative workflow script paths from the active tool cwd", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-active-cwd");
+    const activeRoot = path.join(tempDir.path, "active-worktree");
+    const staleRoot = path.join(tempDir.path, "source-project");
+    await fs.mkdir(path.join(activeRoot, "workflows"), { recursive: true });
+    await fs.mkdir(path.join(staleRoot, "workflows"), { recursive: true });
+    await fs.writeFile(
+      path.join(activeRoot, "workflows", "deep-research.js"),
+      "export default function workflow() { return 'active'; }\n",
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(staleRoot, "workflows", "deep-research.js"),
+      "export default function workflow() { return 'stale'; }\n",
+      "utf-8"
+    );
+    let capturedSource = "";
+    const startWorkflow = mock(async (input: { script: { source: string } }) => {
+      capturedSource = input.script.source;
+      return {
+        runId: "wfr_active_cwd",
+        status: "completed" as const,
+        result: { reportMarkdown: "done" },
+      };
+    });
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(activeRoot, { workspaceId: "workspace-1" }),
+      workspaceExecutionRootPath: staleRoot,
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => null),
+      },
+    });
+
+    await tool.execute!(
+      {
+        script_path: "./workflows/deep-research.js",
+        args: {},
+        run_in_background: false,
+      },
+      mockToolCallOptions
+    );
+
+    expect(startWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        script: expect.objectContaining({
+          source: expect.stringContaining("active"),
+        }),
+      })
+    );
+    expect(capturedSource).not.toContain("stale");
+  });
+
   test("starts a built-in skill workflow by explicit skill script_path", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool-built-in-skill");
     const startWorkflow = mock(async () => ({

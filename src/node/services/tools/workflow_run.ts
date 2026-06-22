@@ -58,7 +58,7 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
       const script = await resolveWorkflowScript({
         scriptPath: args.script_path,
         runtime: config.runtime,
-        workspacePath: config.workspaceExecutionRootPath ?? config.cwd,
+        workspacePath: config.cwd,
         projectTrusted: config.trusted === true,
       });
       const startInput = {

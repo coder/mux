@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import {
   TestTempDir,
+  TrueRemotePathMappedRuntime,
   writeGlobalSkill,
   writeProjectSkill,
 } from "@/node/services/tools/testHelpers";
@@ -43,6 +44,25 @@ describe("resolveWorkflowScript", () => {
     expect(resolved.scope).toBe("project");
     expect(resolved.relativePath).toBe("workflow.js");
     expect(resolved.canonicalScriptPath).toBe("skill://research/workflow.js");
+  });
+
+  test("resolves project skill workflow files through remote runtime containment", async () => {
+    using tempDir = new TestTempDir("workflow-script-remote-project-skill");
+    const remoteWorkspacePath = "/remote/workspace";
+    await writeProjectSkill(tempDir.path, "research", {
+      files: { "workflow.js": "export const meta = { name: 'RemoteResearch' };" },
+    });
+
+    const resolved = await resolveWorkflowScript({
+      scriptPath: "skill://research/workflow.js",
+      runtime: new TrueRemotePathMappedRuntime(tempDir.path, remoteWorkspacePath),
+      workspacePath: remoteWorkspacePath,
+      projectTrusted: true,
+    });
+
+    expect(resolved.source).toContain("RemoteResearch");
+    expect(resolved.scope).toBe("project");
+    expect(resolved.resolvedPath).toBe(`${remoteWorkspacePath}/.mux/skills/research/workflow.js`);
   });
 
   test("blocks project skill workflow scripts when the project is untrusted", async () => {
