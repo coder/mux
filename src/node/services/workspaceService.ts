@@ -7992,7 +7992,16 @@ export class WorkspaceService extends EventEmitter {
             }
             return [
               workspaceId,
-              mergeActiveWorkflowRunCount(snapshot, activeWorkflowRunCount),
+              // Overlay the optimistic mid-stream goal here too: the renderer
+              // bootstraps via this list (the subscription does not replay
+              // historical snapshots), and `getAllSnapshots()` returns the
+              // still-pre-stream persisted goal. Without this, a reconnect/reload
+              // during a mid-stream goal set would seed the UI with the stale
+              // goal until the next live emit or goal read.
+              mergeActiveWorkflowRunCount(
+                this.overlayPendingGoal(workspaceId, snapshot),
+                activeWorkflowRunCount
+              ),
             ] as const;
           }
         )

@@ -1691,6 +1691,14 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
           pendingPersistence: true,
         });
 
+        // The bootstrap path (renderer reconnect/reload) builds straight from
+        // persisted metadata, so it must apply the same overlay.
+        const listed = await workspaceService.getActivityList();
+        expect(listed[workspaceId]?.goal).toMatchObject({
+          objective: "Optimistic mid-stream goal",
+          pendingPersistence: true,
+        });
+
         // User aborts: the goal service drops the queued mutation and reverts the
         // panel to the persisted goal. Subsequent activity emits must show that
         // reverted goal, not the discarded optimistic one.
