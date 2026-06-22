@@ -253,6 +253,7 @@ describe("agentSkillsService", () => {
       "bar",
       "foo",
       "init",
+      "loop",
       "mux-diagram",
       "mux-docs",
       "orchestrate",
@@ -661,6 +662,7 @@ describe("agentSkillsService", () => {
     expect(diagnostics.skills.map((s) => s.name)).toEqual([
       "foo",
       "init",
+      "loop",
       "mux-diagram",
       "mux-docs",
       "orchestrate",
