@@ -439,6 +439,24 @@ export class WorkspaceGoalService {
     this.onActivityChange = listener;
   }
 
+  /**
+   * The optimistic goal published while a goal is set mid-stream, before
+   * stream-end persistence writes goal.json. Returns null when no mutation is
+   * queued for the workspace.
+   *
+   * Consumed by `WorkspaceService.emitWorkspaceActivity` to overlay the
+   * optimistic goal onto activity snapshots that are built from (still
+   * pre-stream) persisted metadata — e.g. `status_set`/`todo_write`/recency
+   * emits during the same stream. Without the overlay those snapshots replay
+   * the stale pre-stream goal and the Goal tab flickers back to it until the
+   * next goal read re-emits the optimistic one. This service clears the pending
+   * snapshot before emitting authoritative reverts (abort) or durable
+   * persistence (stream-end), so those transitions naturally win.
+   */
+  getPendingGoalSnapshot(workspaceId: string): GoalSnapshot | null {
+    return this.pendingGoalSnapshots.get(workspaceId) ?? null;
+  }
+
   setStreamInterrupter(interrupter: (workspaceId: string) => Promise<void>): void {
     this.streamInterrupter = interrupter;
   }

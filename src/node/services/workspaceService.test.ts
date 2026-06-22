@@ -1624,6 +1624,91 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  // A goal set mid-stream is held as optimistic state until stream-end
+  // persistence, so goal.json keeps the pre-stream goal. Non-goal activity
+  // emits (status_set/todo_write/recency) read that persisted goal and, before
+  // this overlay, replaced the activity snapshot with the stale goal — the Goal
+  // tab flickered back to the old goal until the next goal read. The overlay
+  // keeps the optimistic goal visible, and clears once the goal service drops
+  // the pending mutation (abort / stream-end).
+  test("mid-stream activity emits surface the optimistic goal, then revert on user abort", async () => {
+    const aiEmitter = new EventEmitter();
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock(() => false),
+    }) as unknown as AIService;
+    const { config, workspaceService, goalService, cleanup } = await createServices(aiService);
+    const workspaceId = "midstream-goal-overlay";
+    try {
+      await config.addWorkspace("/tmp/midstream-goal-overlay-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath: "/tmp/midstream-goal-overlay-project",
+        runtimeConfig: { type: "local" },
+      });
+
+      const created = await setWorkspaceGoalOk(goalService, {
+        workspaceId,
+        objective: "Pre-stream goal",
+      });
+
+      // Queue a goal set mid-stream (publishes an optimistic, pendingPersistence
+      // snapshot without persisting goal.json).
+      const goalServiceAccess = goalService as unknown as {
+        isWorkspaceStreaming: (workspaceId: string) => Promise<boolean>;
+      };
+      const isStreamingOriginal = goalServiceAccess.isWorkspaceStreaming;
+      goalServiceAccess.isWorkspaceStreaming = () => Promise.resolve(true);
+      try {
+        const queued = await goalService.setGoal({
+          workspaceId,
+          objective: "Optimistic mid-stream goal",
+          expectedGoalId: created.goalId,
+        });
+        expect(queued.success).toBe(true);
+      } finally {
+        goalServiceAccess.isWorkspaceStreaming = isStreamingOriginal;
+      }
+
+      // The durable goal.json still holds the pre-stream goal.
+      expect((await goalService.getGoal(workspaceId))?.objective).toBe("Pre-stream goal");
+
+      const activityEvents: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      const listener = (event: {
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }) => activityEvents.push(event);
+      workspaceService.on("activity", listener);
+      try {
+        // A non-goal activity emit reads persisted metadata (still the pre-stream
+        // goal) but must surface the optimistic goal so the Goal tab is stable.
+        await workspaceService.updateAgentStatus(workspaceId, { emoji: "🛠️", message: "Working" });
+        expect(activityEvents.at(-1)?.activity?.goal).toMatchObject({
+          objective: "Optimistic mid-stream goal",
+          pendingPersistence: true,
+        });
+
+        // User aborts: the goal service drops the queued mutation and reverts the
+        // panel to the persisted goal. Subsequent activity emits must show that
+        // reverted goal, not the discarded optimistic one.
+        await goalService.recordUserStoppedStream(workspaceId);
+        await workspaceService.updateAgentStatus(workspaceId, { emoji: "💤", message: "Idle" });
+        expect(activityEvents.at(-1)?.activity?.goal).toMatchObject({
+          goalId: created.goalId,
+          objective: "Pre-stream goal",
+        });
+        expect(activityEvents.at(-1)?.activity?.goal?.pendingPersistence).toBeUndefined();
+      } finally {
+        workspaceService.off("activity", listener);
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("WorkspaceService stream-abort listener leaves queued goal mutations for AgentSession", async () => {
     // Non-user abort goal mutation drains happen in AgentSession after abort
     // accounting. WorkspaceService must not drain here, or the aborted

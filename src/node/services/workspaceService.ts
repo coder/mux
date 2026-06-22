@@ -2076,8 +2076,40 @@ export class WorkspaceService extends EventEmitter {
   ): void {
     this.emit("activity", {
       workspaceId,
-      activity: this.mergeCachedActiveWorkflowRunCount(workspaceId, snapshot),
+      activity: this.mergeCachedActiveWorkflowRunCount(
+        workspaceId,
+        this.overlayPendingGoal(workspaceId, snapshot)
+      ),
     });
+  }
+
+  /**
+   * Overlay the optimistic mid-stream goal onto an activity snapshot.
+   *
+   * A goal set while the agent is streaming is held as optimistic state in the
+   * goal service until stream-end persistence; goal.json keeps the pre-stream
+   * goal. Activity snapshots built from persisted metadata (status_set,
+   * todo_write, recency, streaming) therefore still carry the pre-stream goal,
+   * and emitting them as-is makes the Goal tab flicker back to the stale goal
+   * mid-stream until the next goal read re-emits the optimistic one. Overlaying
+   * the pending snapshot here keeps the displayed goal stable across those
+   * emits. Authoritative goal emits authored by the goal service are left
+   * untouched: transient goal pushes already carry the optimistic goal
+   * (`transientGoalOnly`), and abort reverts / durable persistence clear the
+   * pending snapshot before emitting, so they win naturally.
+   */
+  private overlayPendingGoal(
+    workspaceId: string,
+    snapshot: WorkspaceActivitySnapshot | null
+  ): WorkspaceActivitySnapshot | null {
+    if (!snapshot || snapshot.transientGoalOnly === true) {
+      return snapshot;
+    }
+    const pending = this.workspaceGoalService?.getPendingGoalSnapshot(workspaceId);
+    if (!pending) {
+      return snapshot;
+    }
+    return { ...snapshot, goal: pending };
   }
 
   private async emitWorkspaceActivityUpdate(
