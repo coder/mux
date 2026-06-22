@@ -36,6 +36,11 @@ import {
 import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { coerceNonEmptyString } from "@/node/services/taskUtils";
 
+// Plan agent is read-only: only `explore` sub-agent tasks may be spawned. Shared by both the
+// workspace-turn guard and the per-launch agent-id guard so the message can't drift between them.
+const PLAN_AGENT_EXPLORE_ONLY_ERROR =
+  'In the plan agent you may only spawn agentId: "explore" tasks.';
+
 const BUILT_IN_TASK_TOOL_MARKER = Symbol("muxBuiltInTaskTool");
 
 export function markBuiltInTaskTool<TParameters, TResult>(
@@ -402,7 +407,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const parentRuntimeAiSettings = buildParentRuntimeAiSettings(config);
 
       if (config.planFileOnly && kind === "workspace") {
-        throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
+        throw new Error(PLAN_AGENT_EXPLORE_ONLY_ERROR);
       }
 
       if (kind === "workspace") {
@@ -504,7 +509,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Plan agent is explicitly non-executing. Allow only read-only exploration tasks.
       if (config.planFileOnly && requestedAgentId !== "explore") {
-        throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
+        throw new Error(PLAN_AGENT_EXPLORE_ONLY_ERROR);
       }
 
       // Parent runtime model and thinking are forwarded as a low-priority fallback so
