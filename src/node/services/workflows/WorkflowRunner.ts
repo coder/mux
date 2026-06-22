@@ -1271,13 +1271,20 @@ export class WorkflowRunner {
       throw settled.error;
     }
 
-    const result = await this.recordAgentResult(runId, sequence, {
-      spec: settled.state.resultSpec,
-      inputHash: settled.state.inputHash,
-      startedAt: settled.state.startedAt,
-      leaseGuard: options.leaseGuard,
-      rawResult: settled.rawResult,
-    });
+    let result: StructuredTaskOutput;
+    try {
+      result = await this.recordAgentResult(runId, sequence, {
+        spec: settled.state.resultSpec,
+        inputHash: settled.state.inputHash,
+        startedAt: settled.state.startedAt,
+        leaseGuard: options.leaseGuard,
+        rawResult: settled.rawResult,
+      });
+    } catch (error) {
+      // Validation can fail after one child completes while sibling waits are still active.
+      await interruptRemainingTasks();
+      throw error;
+    }
     settled.state.terminalResult = result;
     return { handleId: settled.state.handleId, result };
   }

@@ -367,6 +367,61 @@ describe("WorkflowRunner", () => {
     expect(interruptRun).toHaveBeenCalledTimes(1);
   });
 
+  test("pipeline interrupts sibling agents when result validation fails", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-pipeline-validation-interrupt");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_pipeline_validation_interrupt",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent, pipeline }) {
+  const schema = { type: "object", properties: { label: { type: "string" } }, required: ["label"] };
+  return pipeline(["slow", "invalid"], (item) => agent("Stage " + item, { id: item, schema }));
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const releaseSlowTask = createDeferred();
+    const createAgentTasks = mock(
+      async (
+        specs: WorkflowAgentSpec[],
+        lifecycle?: { onTaskCreated?: (index: number, taskId: string) => Promise<void> | void }
+      ) => {
+        for (const [index, spec] of specs.entries()) {
+          await lifecycle?.onTaskCreated?.(index, `task_${spec.id}`);
+        }
+        return specs.map((spec) => ({ taskId: `task_${spec.id}`, status: "starting" as const }));
+      }
+    );
+    const waitForAgentTask = mock(async (taskId: string) => {
+      if (taskId === "task_invalid") {
+        return { taskId, reportMarkdown: "invalid", structuredOutput: {} };
+      }
+      await releaseSlowTask.promise;
+      return { taskId, reportMarkdown: "slow", structuredOutput: { label: "slow" } };
+    });
+    const interruptRun = mock(async () => {
+      releaseSlowTask.resolve();
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("pipeline should start agent tasks without using runAgent");
+      },
+      createAgentTasks,
+      waitForAgentTask,
+      interruptRun,
+    });
+
+    await expect(runner.run("wfr_pipeline_validation_interrupt")).rejects.toThrow(
+      "structured output failed schema validation"
+    );
+    expect(interruptRun).toHaveBeenCalledTimes(1);
+  });
+
   test("workflow primitive requires a stable id before creating child runs", async () => {
     using tmp = new DisposableTempDir("workflow-runner-nested-workflow-missing-id");
     const store = new WorkflowRunStore({

@@ -575,6 +575,21 @@ function normalizeProjectKind(value: unknown): "user" | "system" | undefined {
   return undefined;
 }
 
+function stripLegacyWorkspaceWorkflowSchedule(
+  workspace: ProjectConfig["workspaces"][number]
+): ProjectConfig["workspaces"][number] {
+  const workspaceWithLegacySchedule = workspace as ProjectConfig["workspaces"][number] & {
+    workflowSchedule?: unknown;
+  };
+  if (!Object.hasOwn(workspaceWithLegacySchedule, "workflowSchedule")) {
+    return workspace;
+  }
+
+  const nextWorkspace = { ...workspaceWithLegacySchedule };
+  delete nextWorkspace.workflowSchedule;
+  return nextWorkspace;
+}
+
 function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectConfig {
   // Per-project runtime overrides are optional; keep config.json sparse by persisting only explicit
   // overrides (false enablement + explicit default runtime selections).
@@ -611,6 +626,9 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
   } else {
     delete next.defaultRuntime;
   }
+
+  const workspaces = Array.isArray(record.workspaces) ? record.workspaces : [];
+  next.workspaces = workspaces.map(stripLegacyWorkspaceWorkflowSchedule);
 
   const projectKind = normalizeProjectKind(record.projectKind);
   if (projectKind !== undefined) {
