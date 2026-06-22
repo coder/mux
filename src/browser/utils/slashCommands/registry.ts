@@ -665,11 +665,11 @@ const btwCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const WORKFLOW_COMMAND_USAGE = "/workflow <name> [args]";
+const WORKFLOW_COMMAND_USAGE = "/workflow <script_path> [args]";
 
 const workflowCommandDefinition: SlashCommandDefinition = {
   key: "workflow",
-  description: "Run an explicit workflow by name",
+  description: "Run an explicit workflow by script path",
   experimentGate: EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
   inputHint: WORKFLOW_COMMAND_USAGE,
   suggestions: ({ partialToken, context }) => {

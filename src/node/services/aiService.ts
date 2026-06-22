@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import * as fs from "fs/promises";
 import { EventEmitter } from "events";
 
@@ -144,17 +143,12 @@ import {
   filterWorkflowDisplayOnlyMessages,
 } from "@/common/utils/workflowRunMessages";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
-import {
-  shouldUseRuntimeWorkflowProjectIO,
-  WorkflowDefinitionStore,
-} from "@/node/services/workflows/WorkflowDefinitionStore";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import {
   WorkflowService,
   type WorkflowRunStatusChangedEvent,
 } from "@/node/services/workflows/WorkflowService";
 import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
-import { resolveWorkflowScratchRoots } from "@/node/services/workflows/workflowScratchRoots";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
@@ -776,7 +770,10 @@ export class AIService extends EventEmitter {
     if (workflowTask?.outputSchema === undefined) {
       return false;
     }
-    if (validateJsonSchemaSubsetSchema(workflowTask.outputSchema).success) {
+    if (
+      validateJsonSchemaSubsetSchema(workflowTask.outputSchema, { requireObjectSchema: true })
+        .success
+    ) {
       return false;
     }
     if (metadata.parentWorkspaceId == null) {
@@ -1760,11 +1757,6 @@ export class AIService extends EventEmitter {
         cfg.advisorThinkingLevel ?? THINKING_LEVEL_OFF
       );
       const runtimeType = getRuntimeType(metadata.runtimeConfig);
-      const useRuntimeProjectWorkflowIO = shouldUseRuntimeWorkflowProjectIO(runtimeType);
-      const workflowScratchRoots = resolveWorkflowScratchRoots(this.config, workspaceId, {
-        workspaceRootPath: workspacePath,
-        normalizePath: runtime.normalizePath.bind(runtime),
-      });
       const muxEnv = getMuxEnv(metadata.projectPath, runtimeType, metadata.name, {
         workspaceId,
         modelString,
@@ -1775,13 +1767,6 @@ export class AIService extends EventEmitter {
       const workflowService =
         dynamicWorkflowsExperimentEnabled && this.taskService != null
           ? new WorkflowService({
-              definitionStore: new WorkflowDefinitionStore({
-                projectRoot: runtime.normalizePath(".mux/workflows", workspacePath),
-                globalRoot: path.join(this.config.rootDir, "workflows"),
-                scratchRoot: workflowScratchRoots.scratchRoot,
-                projectRuntime: useRuntimeProjectWorkflowIO ? runtime : undefined,
-                projectCwd: useRuntimeProjectWorkflowIO ? workspacePath : undefined,
-              }),
               runStore: new WorkflowRunStore({
                 sessionDir: this.config.getSessionDir(workspaceId),
               }),
@@ -1824,10 +1809,11 @@ export class AIService extends EventEmitter {
                   return;
                 }
 
-                const rawCommand = `workflow_run ${run.definition.name}`;
+                const scriptPath = run.definition.sourcePath ?? run.definition.name;
+                const rawCommand = `workflow_run ${scriptPath}`;
                 const workflowResultMessage = buildWorkflowResultContextMessage({
                   rawCommand,
-                  name: run.definition.name,
+                  name: scriptPath,
                   runId,
                   status,
                   result,

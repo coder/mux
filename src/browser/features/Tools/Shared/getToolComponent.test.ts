@@ -10,18 +10,19 @@ import { GenericToolCall } from "../GenericToolCall";
 import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
 import { SetGoalToolCall } from "../SetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
-import { WorkflowListToolCall, WorkflowReadToolCall } from "../WorkflowDefinitionToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { getToolComponent } from "./getToolComponent";
 
 describe("getToolComponent", () => {
-  test("returns workflow definition tool components", () => {
-    expect(getToolComponent("workflow_list", {})).toBe(WorkflowListToolCall);
-    expect(getToolComponent("workflow_read", { name: "deep-research" })).toBe(WorkflowReadToolCall);
+  test("falls back to generic rendering for removed workflow definition tools", () => {
+    expect(getToolComponent("workflow_list", {})).toBe(GenericToolCall);
+    expect(getToolComponent("workflow_read", { name: "deep-research" })).toBe(GenericToolCall);
   });
 
   test("returns WorkflowRunToolCall for workflow_run", () => {
-    const component = getToolComponent("workflow_run", { name: "deep-research" });
+    const component = getToolComponent("workflow_run", {
+      script_path: "skill://deep-research/workflow.js",
+    });
     expect(component).toBe(WorkflowRunToolCall);
   });
 

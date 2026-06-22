@@ -197,10 +197,6 @@ function installAgentListItemTestDoubles() {
     WorkspaceHeartbeatModal: () => null,
   }));
 
-  void mock.module("../AutomationModal", () => ({
-    AutomationModal: () => null,
-  }));
-
   void mock.module("@/browser/hooks/useContextMenuPosition", () => ({
     ...actualContextMenuPosition,
     useContextMenuPosition: () => ({

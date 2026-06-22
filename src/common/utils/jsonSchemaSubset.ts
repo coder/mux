@@ -1,3 +1,5 @@
+import Ajv, { type AnySchema, type ErrorObject, type ValidateFunction } from "ajv";
+
 export interface JsonSchemaValidationError {
   path: string;
   message: string;
@@ -16,23 +18,53 @@ export function formatJsonSchemaValidationErrors(
   return visibleErrors.map((error) => `${error.path}: ${error.message}`).join("; ");
 }
 
-const SUPPORTED_SCHEMA_KEYWORDS = new Set([
-  "type",
-  "properties",
-  "required",
-  "items",
-  "additionalProperties",
-  "enum",
-]);
+const ajv = new Ajv({ allErrors: true, strict: false, validateSchema: true });
+const validatorCache = new Map<string, ValidateFunction>();
 
-export function validateJsonSchemaSubsetSchema(schema: unknown): JsonSchemaSubsetValidationResult {
+export function validateJsonSchemaSubsetSchema(
+  schema: unknown,
+  options?: { requireObjectSchema?: boolean }
+): JsonSchemaSubsetValidationResult {
   if (!isPlainRecord(schema)) {
     return { success: false, errors: [{ path: "$", message: "Schema must be an object" }] };
   }
+  if (
+    options?.requireObjectSchema === true &&
+    schema.type !== undefined &&
+    schema.type !== "object"
+  ) {
+    return {
+      success: false,
+      errors: [
+        {
+          path: "$.type",
+          message:
+            "Workflow agent schemas must be object schemas; wrap scalar or array results in an object field",
+        },
+      ],
+    };
+  }
+  const refError = findRefKeyword(schema, "$", 0);
+  if (refError != null) {
+    return { success: false, errors: [refError] };
+  }
 
-  const errors: JsonSchemaValidationError[] = [];
-  collectUnsupportedKeywordErrors(schema, "$", errors);
-  return errors.length === 0 ? { success: true } : { success: false, errors };
+  if (!ajv.validateSchema(schema)) {
+    return {
+      success: false,
+      errors: normalizeAjvErrors(ajv.errors ?? [], undefined, schema, { schemaErrors: true }),
+    };
+  }
+
+  try {
+    compileSchema(schema);
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      errors: [{ path: "$", message: error instanceof Error ? error.message : "Invalid schema" }],
+    };
+  }
 }
 
 export function validateJsonSchemaSubset(
@@ -44,202 +76,155 @@ export function validateJsonSchemaSubset(
     return schemaValidation;
   }
 
-  const errors: JsonSchemaValidationError[] = [];
-  validateValue(schema, value, "$", errors);
-  return errors.length === 0 ? { success: true } : { success: false, errors };
+  const validate = compileSchema(schema);
+  if (validate(value)) {
+    return { success: true };
+  }
+
+  return { success: false, errors: normalizeAjvErrors(validate.errors ?? [], value, schema) };
 }
 
-function validateValue(
-  schema: unknown,
-  value: unknown,
-  path: string,
-  errors: JsonSchemaValidationError[]
-): void {
-  if (!isPlainRecord(schema)) {
-    errors.push({ path, message: "Schema must be an object" });
-    return;
+function compileSchema(schema: unknown): ValidateFunction {
+  const key = JSON.stringify(schema);
+  const cached = validatorCache.get(key);
+  if (cached != null) {
+    return cached;
   }
+  const validate = ajv.compile(schema as AnySchema);
+  validatorCache.set(key, validate);
+  return validate;
+}
 
-  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => Object.is(candidate, value))) {
-    errors.push({ path, message: `Expected one of: ${schema.enum.map(String).join(", ")}` });
+function normalizeAjvErrors(
+  errors: readonly ErrorObject[],
+  rootValue?: unknown,
+  rootSchema?: unknown,
+  options?: { schemaErrors?: boolean }
+): JsonSchemaValidationError[] {
+  return errors
+    .map((error) => ({
+      path: getErrorPath(error, options),
+      message: getErrorMessage(error, rootValue, rootSchema),
+      keyword: error.keyword,
+    }))
+    .sort((a, b) => getErrorSortWeight(a.keyword) - getErrorSortWeight(b.keyword))
+    .map(({ path, message }) => ({ path, message }));
+}
+
+function getErrorSortWeight(keyword: string): number {
+  if (keyword === "required") return 0;
+  if (keyword === "enum") return 1;
+  if (keyword === "type") return 2;
+  if (keyword === "additionalProperties") return 99;
+  return 10;
+}
+
+function getErrorPath(error: ErrorObject, options?: { schemaErrors?: boolean }): string {
+  if (error.keyword === "required" && typeof error.params.missingProperty === "string") {
+    return `${toDollarPath(error.instancePath)}.${error.params.missingProperty}`;
   }
-
-  if (typeof schema.type === "string" || Array.isArray(schema.type)) {
-    validateType(schema.type, value, path, errors);
+  if (
+    error.keyword === "additionalProperties" &&
+    typeof error.params.additionalProperty === "string"
+  ) {
+    return `${toDollarPath(error.instancePath)}.${error.params.additionalProperty}`;
   }
-
-  if (schemaAllowsType(schema, "object") && isPlainRecord(value)) {
-    validateObject(schema, value, path, errors);
+  if (error.instancePath.length > 0) {
+    return toDollarPath(error.instancePath);
   }
+  if (options?.schemaErrors === true && error.schemaPath.length > 0) {
+    return toDollarPath(error.schemaPath.replace(/^#\/?/u, "/"));
+  }
+  return "$";
+}
 
-  if (schemaAllowsType(schema, "array") && Array.isArray(value)) {
-    validateArray(schema, value, path, errors);
+function getErrorMessage(error: ErrorObject, rootValue?: unknown, rootSchema?: unknown): string {
+  switch (error.keyword) {
+    case "required":
+      return "Required property is missing";
+    case "type": {
+      const expected = Array.isArray(error.params.type)
+        ? error.params.type.join(" or ")
+        : String(error.params.type);
+      return `Expected ${expected}, got ${getJsonType(getValueAtPointer(rootValue, error.instancePath))}`;
+    }
+    case "enum": {
+      const enumSchema =
+        (error as ErrorObject & { schema?: unknown; parentSchema?: { enum?: unknown } }).schema ??
+        (error as ErrorObject & { parentSchema?: { enum?: unknown } }).parentSchema?.enum ??
+        getValueAtPointer(rootSchema, error.schemaPath.replace(/^#\/?/u, "/"));
+      const allowedValues = Array.isArray(enumSchema)
+        ? enumSchema.map(String).join(", ")
+        : "the allowed values";
+      return `Expected one of: ${allowedValues}`;
+    }
+    case "additionalProperties":
+      return "Additional property is not allowed";
+    default:
+      return error.message ?? `JSON Schema validation failed: ${error.keyword}`;
   }
 }
 
-function validateObject(
-  schema: Record<string, unknown>,
-  value: Record<string, unknown>,
-  path: string,
-  errors: JsonSchemaValidationError[]
-): void {
-  const properties = isPlainRecord(schema.properties) ? schema.properties : {};
-  const required = Array.isArray(schema.required) ? schema.required : [];
-
-  for (const property of required) {
-    if (typeof property !== "string") {
-      errors.push({ path, message: "Required property names must be strings" });
+function getValueAtPointer(rootValue: unknown, pointer: string): unknown {
+  let current = rootValue;
+  for (const part of pointer.split("/").filter(Boolean).map(unescapePointer)) {
+    if (Array.isArray(current) && /^\d+$/u.test(part)) {
+      current = current[Number(part)];
       continue;
     }
-    if (!(property in value)) {
-      errors.push({ path: `${path}.${property}`, message: "Required property is missing" });
+    if (current != null && typeof current === "object") {
+      current = (current as Record<string, unknown>)[part];
+      continue;
     }
+    return undefined;
   }
-
-  for (const [property, propertySchema] of Object.entries(properties)) {
-    if (property in value) {
-      validateValue(propertySchema, value[property], `${path}.${property}`, errors);
-    }
-  }
-
-  if (schema.additionalProperties === false) {
-    const allowedProperties = new Set(Object.keys(properties));
-    for (const property of Object.keys(value)) {
-      if (!allowedProperties.has(property)) {
-        errors.push({ path: `${path}.${property}`, message: "Additional property is not allowed" });
-      }
-    }
-  }
+  return current;
 }
 
-function validateArray(
-  schema: Record<string, unknown>,
-  value: unknown[],
-  path: string,
-  errors: JsonSchemaValidationError[]
-): void {
-  if (schema.items == null) {
-    return;
+function toDollarPath(pointer: string): string {
+  if (pointer === "" || pointer === "/") {
+    return "$";
   }
-
-  for (const [index, item] of value.entries()) {
-    validateValue(schema.items, item, `${path}[${index}]`, errors);
-  }
-}
-
-function validateType(
-  type: string | unknown[],
-  value: unknown,
-  path: string,
-  errors: JsonSchemaValidationError[]
-): void {
-  const types = Array.isArray(type) ? type : [type];
-  const unsupported = types.filter((candidate) => !isSupportedJsonSchemaType(candidate));
-  if (unsupported.length > 0) {
-    errors.push({
-      path,
-      message: `Unsupported JSON Schema type: ${unsupported.map(String).join(", ")}`,
-    });
-    return;
-  }
-  const supportedTypes = types.filter(isSupportedJsonSchemaType);
-  if (supportedTypes.some((candidate) => valueMatchesType(candidate, value))) {
-    return;
-  }
-  errors.push({
-    path,
-    message: `Expected ${supportedTypes.join(" or ")}, got ${getJsonType(value)}`,
-  });
-}
-
-function valueMatchesType(type: string, value: unknown): boolean {
-  switch (type) {
-    case "object":
-      return isPlainRecord(value);
-    case "array":
-      return Array.isArray(value);
-    case "string":
-      return typeof value === "string";
-    case "number":
-      return typeof value === "number" && Number.isFinite(value);
-    case "integer":
-      return typeof value === "number" && Number.isInteger(value);
-    case "boolean":
-      return typeof value === "boolean";
-    case "null":
-      return value === null;
-    default:
-      return false;
-  }
-}
-
-function isSupportedJsonSchemaType(value: unknown): value is string {
   return (
-    value === "object" ||
-    value === "array" ||
-    value === "string" ||
-    value === "number" ||
-    value === "integer" ||
-    value === "boolean" ||
-    value === "null"
+    "$" +
+    pointer
+      .split("/")
+      .filter(Boolean)
+      .map((part) => (/^\d+$/u.test(part) ? `[${part}]` : `.${unescapePointer(part)}`))
+      .join("")
   );
 }
 
-function schemaAllowsType(schema: Record<string, unknown>, type: string): boolean {
-  const schemaType = schema.type;
-  return schemaType === type || (Array.isArray(schemaType) && schemaType.includes(type));
+function unescapePointer(part: string): string {
+  return part.replaceAll("~1", "/").replaceAll("~0", "~");
 }
 
-function collectUnsupportedKeywordErrors(
+function findRefKeyword(
   schema: unknown,
   path: string,
-  errors: JsonSchemaValidationError[]
-): void {
+  depth: number
+): JsonSchemaValidationError | null {
+  if (depth > 64) {
+    return { path, message: "Schema is too deeply nested" };
+  }
+  if (Array.isArray(schema)) {
+    for (const [index, item] of schema.entries()) {
+      const error = findRefKeyword(item, `${path}[${index}]`, depth + 1);
+      if (error != null) return error;
+    }
+    return null;
+  }
   if (!isPlainRecord(schema)) {
-    return;
+    return null;
   }
-
-  for (const key of Object.keys(schema)) {
-    if (!SUPPORTED_SCHEMA_KEYWORDS.has(key)) {
-      errors.push({ path, message: `Unsupported JSON Schema keyword: ${key}` });
-    }
+  if (Object.hasOwn(schema, "$ref")) {
+    return { path, message: "$ref is not supported in workflow schemas" };
   }
-
-  if (Array.isArray(schema.type)) {
-    const invalidTypes = schema.type.filter((type) => !isSupportedJsonSchemaType(type));
-    if (invalidTypes.length > 0) {
-      errors.push({
-        path: `${path}.type`,
-        message: `Unsupported JSON Schema type: ${invalidTypes.map(String).join(", ")}`,
-      });
-    }
-  } else if (schema.type !== undefined && !isSupportedJsonSchemaType(schema.type)) {
-    errors.push({
-      path: `${path}.type`,
-      message: `Unsupported JSON Schema type: ${getJsonType(schema.type)}`,
-    });
+  for (const [key, value] of Object.entries(schema)) {
+    const error = findRefKeyword(value, `${path}.${key}`, depth + 1);
+    if (error != null) return error;
   }
-
-  if (
-    schema.additionalProperties != null &&
-    schema.additionalProperties !== true &&
-    schema.additionalProperties !== false
-  ) {
-    errors.push({
-      path: `${path}.additionalProperties`,
-      message: "Unsupported JSON Schema additionalProperties schema",
-    });
-  }
-
-  if (isPlainRecord(schema.properties)) {
-    for (const [property, propertySchema] of Object.entries(schema.properties)) {
-      collectUnsupportedKeywordErrors(propertySchema, `${path}.${property}`, errors);
-    }
-  }
-
-  if (schema.items != null) {
-    collectUnsupportedKeywordErrors(schema.items, `${path}[]`, errors);
-  }
+  return null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

@@ -32,8 +32,9 @@ function getOutputRunId(output: unknown): string | null {
 function getWorkflowInput(input: unknown): WorkflowRunCardInput | null {
   if (input != null && typeof input === "object") {
     const record = input as Record<string, unknown>;
-    if (typeof record.name === "string" && record.name.length > 0) {
-      return { name: record.name, args: record.args ?? {} };
+    const scriptPath = record.script_path ?? record.name;
+    if (typeof scriptPath === "string" && scriptPath.length > 0) {
+      return { scriptPath, args: record.args ?? {} };
     }
   }
   return null;
@@ -126,13 +127,14 @@ export function hasWorkflowRunToolCallMessage(
       if (part.state === "output-available") {
         return getOutputRunId(part.output) === run.id;
       }
-      // The name+args heuristic deliberately stays workflow_run-only: workflow_resume
-      // inputs carry a run_id, not a workflow name/args pair.
+      // The scriptPath+args heuristic deliberately stays workflow_run-only: workflow_resume
+      // inputs carry a run_id, not a workflow script path/args pair.
       if (part.toolName !== "workflow_run") {
         return false;
       }
       const input = getWorkflowInput(part.input);
-      return input?.name === run.definition.name && jsonEqual(input.args, run.args);
+      const scriptPath = run.definition.sourcePath ?? run.definition.name;
+      return input?.scriptPath === scriptPath && jsonEqual(input.args, run.args);
     })
   );
 }
@@ -185,7 +187,7 @@ export function addWorkflowRunCardMessageForRun(
 ): void {
   addWorkflowRunCardMessage(
     workspaceId,
-    { name: run.definition.name, args: run.args },
+    { scriptPath: run.definition.sourcePath ?? run.definition.name, args: run.args },
     { runId: run.id, status: run.status, result: getLatestWorkflowResult(run), run },
     options
   );

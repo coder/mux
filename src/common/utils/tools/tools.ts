@@ -42,10 +42,6 @@ import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
 import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
 import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
-import {
-  createWorkflowListTool,
-  createWorkflowReadTool,
-} from "@/node/services/tools/workflow_definitions";
 import { createWorkflowRunTool } from "@/node/services/tools/workflow_run";
 import { createWorkflowResumeTool } from "@/node/services/tools/workflow_resume";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
@@ -118,6 +114,14 @@ export interface WorkspaceHeartbeatToolService {
 /**
  * Configuration for tools that need runtime context
  */
+export interface WorkflowServiceScriptInput {
+  requestedScriptPath: string;
+  canonicalScriptPath: string;
+  source: string;
+  sourceHash: string;
+  sourceKind: "skill" | "workspace-file";
+}
+
 export interface ToolConfiguration {
   /** Working directory for command execution - actual path in runtime's context (local or remote) */
   cwd: string;
@@ -172,19 +176,10 @@ export interface ToolConfiguration {
   taskService?: TaskService;
   /** Durable workflow lifecycle service for dynamic workflow tools. */
   workflowService?: {
-    listDefinitions(options: { projectTrusted: boolean }): Promise<unknown[]>;
-    listDefinitionsWithMetadata?(options: { projectTrusted: boolean }): Promise<unknown[]>;
-    readDefinition(input: { name: string; projectTrusted: boolean }): Promise<{
-      descriptor: unknown;
-      source: string;
-      metadata?: unknown;
-      args?: unknown[];
-      sourceStats?: { chars: number; lines: number };
-    }>;
     getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
     listRuns?(input: { workspaceId: string }): Promise<unknown[]>;
-    startNamedWorkflowInBackground?(input: {
-      name: string;
+    startWorkflowInBackground?(input: {
+      script: WorkflowServiceScriptInput;
       workspaceId: string;
       projectTrusted: boolean;
       args: unknown;
@@ -195,8 +190,8 @@ export interface ToolConfiguration {
         run: unknown;
       }) => Promise<void> | void;
     }): Promise<{ runId: string; status: string; result: unknown }>;
-    startNamedWorkflow(input: {
-      name: string;
+    startWorkflow?(input: {
+      script: WorkflowServiceScriptInput;
       workspaceId: string;
       projectTrusted: boolean;
       args: unknown;
@@ -582,8 +577,6 @@ export async function getToolsForModel(
     // "call me immediately" descriptions.
     ...(config.workflowService && config.experiments?.dynamicWorkflows
       ? {
-          workflow_list: createWorkflowListTool(config),
-          workflow_read: createWorkflowReadTool(config),
           workflow_run: createWorkflowRunTool(config),
           workflow_resume: createWorkflowResumeTool(config),
         }

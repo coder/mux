@@ -1,14 +1,6 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
-import {
-  CalendarClock,
-  GitBranch,
-  HeartPulse,
-  Maximize2,
-  Pencil,
-  Server,
-  Square,
-} from "lucide-react";
+import { GitBranch, HeartPulse, Maximize2, Pencil, Server, Square } from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -48,8 +40,6 @@ interface WorkspaceActionsMenuContentProps {
   onConfigureMcp?: (() => void) | null;
   /** Experiment-gated workspace heartbeat settings action. */
   onConfigureHeartbeat?: (() => void) | null;
-  /** Experiment-gated workspace automation settings action. */
-  onConfigureAutomation?: (() => void) | null;
   /** Mobile workspace-header action: open immersive review in full-screen touch mode. */
   onOpenTouchFullscreenReview?: (() => void) | null;
   onEnterImmersiveReview?: (() => void) | null;
@@ -105,19 +95,6 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             e.stopPropagation();
             props.onCloseMenu();
             props.onConfigureHeartbeat?.();
-          }}
-        />
-      )}
-      {props.onConfigureAutomation && (
-        <WorkspaceActionButton
-          label="Automations..."
-          shortcut={formatKeybind(KEYBINDS.CONFIGURE_SCHEDULED_WORKFLOW)}
-          shortcutClassName={props.shortcutClassName}
-          icon={<CalendarClock className="h-3 w-3 shrink-0" />}
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onCloseMenu();
-            props.onConfigureAutomation?.();
           }}
         />
       )}

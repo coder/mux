@@ -742,7 +742,6 @@ export default defineConfig([
     // cannot apply. Lint them with core untyped rules so typos and dead helpers
     // fail loudly instead of becoming silent sandbox globals.
     files: [
-      "src/node/builtinWorkflows/*.js",
       "src/node/builtinWorkflowActions/**/*.js",
       "src/node/workflowRuntime/*.js",
     ],

@@ -378,14 +378,6 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+H, Win/Linux: Ctrl+Shift+H
   CONFIGURE_HEARTBEAT: { key: "H", ctrl: true, shift: true },
 
-  /** Configure automations for current workspace */
-  // macOS: Cmd+Shift+K, Win/Linux: Ctrl+Shift+K
-  CONFIGURE_SCHEDULED_WORKFLOW: { key: "K", ctrl: true, shift: true },
-
-  /** Configure automations for current project */
-  // macOS: Cmd+Option+K, Win/Linux: Ctrl+Alt+K
-  CONFIGURE_PROJECT_AUTOMATIONS: { key: "K", ctrl: true, alt: true },
-
   /** Open Command Palette */
   // VS Code-style palette
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P

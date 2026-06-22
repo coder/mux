@@ -24,8 +24,6 @@ export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
-export type ProjectWorkflowSchedule = NonNullable<ProjectConfig["workflowSchedules"]>[number];
-
 export type { UpdateChannel };
 
 export interface ProjectsConfig {

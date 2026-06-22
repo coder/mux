@@ -63,17 +63,7 @@ interface WorkflowServiceMockOverrides {
 
 function buildWorkflowService(overrides: WorkflowServiceMockOverrides = {}) {
   return {
-    listDefinitions: mock(async () => []),
-    readDefinition: mock(async () => ({
-      descriptor: {
-        name: "deep-research",
-        description: "Deep research",
-        scope: "built-in",
-        executable: true,
-      },
-      source: "export default function workflow() { return null; }",
-    })),
-    startNamedWorkflow: mock(async () => {
+    startWorkflow: mock(async () => {
       throw new Error("workflow_resume must not start new workflows");
     }),
     getRun: overrides.getRun ?? mock(async () => buildRun()),

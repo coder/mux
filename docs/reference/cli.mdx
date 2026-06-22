@@ -135,7 +135,7 @@ mux run --budget 2.00 "Refactor the authentication module"
 
 ## `mux workflow`
 
-Run durable workflow definitions from the command line without opening the desktop app. Workflows are JavaScript files discovered from built-in definitions, global mux workflow directories, and trusted project `.mux/workflows` directories. `mux wf` is a shorthand alias for `mux workflow`.
+Run a durable workflow JavaScript file from the command line without opening the desktop app. Workflows are addressed by explicit `script_path` values; there is no workflow discovery, `list`, or `show` command. Skill-packaged workflows use `skill://<skill-name>/<file.js>`, and local workflow files use an explicit workspace-contained `.js` path. `mux wf` is a shorthand alias for `mux workflow`.
 
 <Note>
   `mux workflow` is experimental. Invoking the command implicitly enables the `dynamic-workflows`
@@ -145,29 +145,21 @@ Run durable workflow definitions from the command line without opening the deskt
 </Note>
 
 ```bash
-# List discovered workflows
-mux workflow list
+# Run a packaged workflow script from a skill
+mux workflow run skill://workflow-smoke/workflow.js --args-json '{"message":"hello"}' --json
 
-# Inspect a workflow and include its source
-mux workflow show deep-research --source
-
-# Run with positional text, mapped to { "input": "research workflow runners" }
-mux workflow run deep-research "research workflow runners"
-
-# Run with structured JSON args and machine-readable output
-mux workflow run deep-research --args-json '{"input":"workflow runners"}' --json
+# Run a trusted local workflow file with positional text, mapped to { "input": "research workflow runners" }
+mux workflow run ./workflows/research.js "research workflow runners"
 
 # Same as above, using the alias
-mux wf run deep-research "research workflow runners"
+mux wf run ./workflows/research.js --args-json '{"input":"workflow runners"}' --json
 ```
 
 ### Workflow commands
 
-| Command                    | Description                                         |
-| -------------------------- | --------------------------------------------------- |
-| `mux workflow list`        | List built-in, global, and trusted workflows        |
-| `mux workflow show <name>` | Show descriptor metadata; add `--source` for source |
-| `mux workflow run <name>`  | Run a workflow in the foreground                    |
+| Command                          | Description                                       |
+| -------------------------------- | ------------------------------------------------- |
+| `mux workflow run <script_path>` | Run an explicit workflow script in the foreground |
 
 ### Workflow options
 
@@ -196,7 +188,7 @@ Only one argument mode can be used per run:
 | `--args-file args.json`         | Exact JSON value read from a file         |
 | `--args-stdin`                  | Exact JSON value read from stdin          |
 
-Project-local workflows are executable only after the project is trusted. If a matching `.mux/workflows/<name>.js` exists in an untrusted project, `mux workflow run` fails before executing repo-controlled workflow code, and `mux workflow list`/`show` print a warning on stderr when project workflows are skipped for missing trust. Linked git worktrees inherit trust from the main repository path, so workflows in mux workspace checkouts of a trusted project are discovered. Grant trust headlessly with [`mux trust`](#mux-trust).
+Workspace-file workflow scripts are executable only after the project is trusted. If an explicit local `.js` script path points into an untrusted project, `mux workflow run` fails before executing repo-controlled workflow code. Linked git worktrees inherit trust from the main repository path. Grant trust headlessly with [`mux trust`](#mux-trust).
 
 ## `mux trust`
 

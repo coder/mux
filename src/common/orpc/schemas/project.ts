@@ -1,5 +1,1 @@
-export {
-  ProjectConfigSchema,
-  ProjectWorkflowScheduleSchema,
-  WorkspaceConfigSchema,
-} from "@/common/schemas/project";
+export { ProjectConfigSchema, WorkspaceConfigSchema } from "@/common/schemas/project";

@@ -41,6 +41,8 @@ export interface WorkflowAgentSpec {
   agentId?: string;
   isolation?: "fork" | "none";
   outputSchema?: unknown;
+  /** Internal marker for new `agent(prompt, { id })` prose-only steps. */
+  markdownOnly?: boolean;
   /**
    * Model-refusal policy for this step's child task. "fail" opts out of
    * configured model-fallback chains so a refusal fails the step terminally
@@ -63,17 +65,43 @@ interface WorkflowAgentRunResult {
   resultSpec: WorkflowAgentSpec;
 }
 
+interface StartedWorkflowAgentHandle {
+  handleId: string;
+}
+
+interface StartedWorkflowAgentState {
+  handleId: string;
+  spec: WorkflowAgentSpec;
+  resultSpec: WorkflowAgentSpec;
+  inputHash: string;
+  startedAt: string;
+  taskId?: string;
+  rawResultPromise?: Promise<WorkflowAgentResult>;
+  terminalResult?: StructuredTaskOutput;
+}
+
+interface StartedWorkflowAgentCompletion {
+  handleId: string;
+  result: StructuredTaskOutput;
+}
+
 export type WorkflowApplyPatchStatus = "applied" | "conflict" | "failed";
 
 export interface WorkflowApplyPatchSpec {
   id: string;
   sourceTaskId: string;
+  /** Public workflow authors pass the stable `agent(..., { id })` value as `agentId`. */
+  agentId?: string;
   target: "parent";
   projectPath?: string;
   threeWay: boolean;
   expectedHeadSha?: string;
   force: boolean;
   allowedPathPrefixes?: string[];
+}
+
+interface ParsedWorkflowApplyPatchSpec extends Omit<WorkflowApplyPatchSpec, "sourceTaskId"> {
+  sourceTaskId?: string;
 }
 
 export interface WorkflowApplyPatchResult {
@@ -88,6 +116,36 @@ export interface WorkflowApplyPatchResult {
   failedPatchSubject?: string;
   error?: string;
   note?: string;
+}
+
+export interface WorkflowNestedWorkflowSpec {
+  id: string;
+  scriptPath: string;
+  args: unknown;
+}
+
+export interface WorkflowNestedWorkflowRun {
+  runId: string;
+  name: string;
+}
+
+export interface WorkflowNestedWorkflowAdapter {
+  createRun(input: {
+    parentRunId: string;
+    stepId: string;
+    inputHash: string;
+    spec: WorkflowNestedWorkflowSpec;
+  }): Promise<WorkflowNestedWorkflowRun>;
+  run(
+    runId: string,
+    options?: Pick<
+      WorkflowRunnerRunOptions,
+      | "abortSignal"
+      | "backgroundOnMessageQueued"
+      | "allowResumeFromInterrupted"
+      | "allowRetryFromFailedCheckpoint"
+    >
+  ): Promise<WorkflowResult>;
 }
 
 export interface WorkflowTaskAdapter {
@@ -139,6 +197,7 @@ export interface WorkflowRunnerOptions {
   runStore: WorkflowRunStore;
   runtimeFactory: IJSRuntimeFactory;
   taskAdapter: WorkflowTaskAdapter;
+  nestedWorkflowAdapter?: WorkflowNestedWorkflowAdapter;
   runnerId: string;
   clock?: WorkflowRunnerClock;
 }
@@ -162,7 +221,7 @@ function createForegroundWaitBackgroundedError(): Error {
 // ones finish (sliding window) instead of all launching up front.
 function parseWorkflowParallelOptions(
   raw: unknown,
-  primitiveName: "parallelAgents"
+  primitiveName: "parallel"
 ): { maxParallel?: number } {
   if (raw == null) {
     return {};
@@ -183,7 +242,7 @@ function parseWorkflowParallelOptions(
 }
 
 function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
-  return parseWorkflowParallelOptions(raw, "parallelAgents");
+  return parseWorkflowParallelOptions(raw, "parallel");
 }
 
 function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
@@ -263,6 +322,7 @@ export class WorkflowRunner {
   private readonly runStore: WorkflowRunStore;
   private readonly runtimeFactory: IJSRuntimeFactory;
   private readonly taskAdapter: WorkflowTaskAdapter;
+  private readonly nestedWorkflowAdapter?: WorkflowNestedWorkflowAdapter;
   private readonly runnerId: string;
   private readonly clock: WorkflowRunnerClock;
   private readonly taskEventMutex = new AsyncMutex();
@@ -272,6 +332,7 @@ export class WorkflowRunner {
     this.runStore = options.runStore;
     this.runtimeFactory = options.runtimeFactory;
     this.taskAdapter = options.taskAdapter;
+    this.nestedWorkflowAdapter = options.nestedWorkflowAdapter;
     this.runnerId = options.runnerId;
     this.clock = options.clock ?? DEFAULT_CLOCK;
   }
@@ -378,6 +439,14 @@ export class WorkflowRunner {
         await backgrounded;
       };
 
+      const startedWorkflowAgentSteps = new Map<string, StartedWorkflowAgentState>();
+      let nextStartedWorkflowAgentHandleIndex = 0;
+      const createStartedWorkflowAgentHandleId = (stepId: string): string => {
+        assert(stepId.length > 0, "WorkflowRunner: started agent stepId is required");
+        nextStartedWorkflowAgentHandleIndex += 1;
+        return `agent:${nextStartedWorkflowAgentHandleIndex}:${stepId}`;
+      };
+
       leaseGuard.throwIfLost();
       await this.appendEvent(
         runId,
@@ -467,6 +536,52 @@ export class WorkflowRunner {
               waitOptions: getWorkflowAgentWaitOptions(setupRuntime, options),
               leaseGuard,
               rawOptions,
+            });
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              await markBackgrounded();
+            }
+            throw error;
+          }
+        });
+        setupRuntime.registerFunction("__workflowAgentStart", async (rawSpec) => {
+          try {
+            return await this.startAgentStepWithoutWaiting(runId, sequence, rawSpec, {
+              ignoreStartedTaskIds,
+              allowLegacyMissingOutputSchema,
+              waitOptions: getWorkflowAgentWaitOptions(setupRuntime, options),
+              leaseGuard,
+              startedAgentSteps: startedWorkflowAgentSteps,
+              createHandleId: createStartedWorkflowAgentHandleId,
+            });
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              await markBackgrounded();
+            }
+            throw error;
+          }
+        });
+        setupRuntime.registerFunction("__workflowAgentWaitAny", async (rawHandles) => {
+          try {
+            return await this.waitForAnyStartedAgentStep(runId, sequence, rawHandles, {
+              waitOptions: getWorkflowAgentWaitOptions(setupRuntime, options),
+              leaseGuard,
+              startedAgentSteps: startedWorkflowAgentSteps,
+            });
+          } catch (error) {
+            if (isForegroundWaitBackgroundedError(error)) {
+              await markBackgrounded();
+            }
+            throw error;
+          }
+        });
+        setupRuntime.registerFunction("__workflowNestedWorkflow", async (rawSpec) => {
+          try {
+            return await this.runNestedWorkflowStep(runId, sequence, rawSpec, {
+              abortSignal: setupRuntime.getAbortSignal(),
+              leaseGuard,
+              allowResumeFromInterrupted: resumingInterruptedRun,
+              allowRetryFromFailedCheckpoint: retryingFailedRun,
             });
           } catch (error) {
             if (isForegroundWaitBackgroundedError(error)) {
@@ -649,7 +764,8 @@ export class WorkflowRunner {
       leaseGuard: WorkflowRunnerLeaseGuard;
     }
   ): Promise<WorkflowApplyPatchResult> {
-    const spec = parseWorkflowApplyPatchSpec(rawSpec);
+    const parsedSpec = parseWorkflowApplyPatchSpec(rawSpec);
+    const spec = await this.resolveWorkflowApplyPatchSpec(runId, parsedSpec);
     assertWorkflowStepId(spec.id, "applyPatch");
     const inputHash = hashWorkflowStepInput(spec.id, spec);
     options.leaseGuard.throwIfLost();
@@ -757,6 +873,130 @@ export class WorkflowRunner {
     }
   }
 
+  private async runNestedWorkflowStep(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    rawSpec: unknown,
+    options: {
+      abortSignal?: AbortSignal;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+      allowResumeFromInterrupted: boolean;
+      allowRetryFromFailedCheckpoint: boolean;
+    }
+  ): Promise<WorkflowResult> {
+    const spec = parseWorkflowNestedWorkflowSpec(rawSpec);
+    assertWorkflowStepId(spec.id, "workflow");
+    const inputHash = hashWorkflowStepInput(spec.id, spec);
+    options.leaseGuard.throwIfLost();
+
+    const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
+    if (existingStep?.status === "completed" && existingStep.result != null) {
+      const cached = getNestedWorkflowStepOutput(existingStep.result);
+      if (cached != null) {
+        await this.recordWorkflowEventIfMissing(runId, sequence, {
+          stepId: spec.id,
+          runId: cached.runId,
+          name: cached.name,
+          status: "completed",
+          details: cached.result,
+        });
+        return cached.result;
+      }
+    }
+
+    const nestedWorkflowAdapter = this.nestedWorkflowAdapter;
+    assert(nestedWorkflowAdapter != null, "Nested workflows are not supported by this runner");
+    const child = await nestedWorkflowAdapter.createRun({
+      parentRunId: runId,
+      stepId: spec.id,
+      inputHash,
+      spec,
+    });
+    const startedAt = existingStep?.startedAt ?? this.clock.nowIso();
+    await this.recordStepStarted(runId, { stepId: spec.id, inputHash, startedAt });
+    await this.recordWorkflowEventIfMissing(runId, sequence, {
+      stepId: spec.id,
+      runId: child.runId,
+      name: child.name,
+      status: "started",
+      details: { scriptPath: spec.scriptPath },
+    });
+
+    try {
+      const result = await nestedWorkflowAdapter.run(child.runId, {
+        abortSignal: options.abortSignal,
+        backgroundOnMessageQueued: false,
+        allowResumeFromInterrupted: options.allowResumeFromInterrupted,
+        allowRetryFromFailedCheckpoint: options.allowRetryFromFailedCheckpoint,
+      });
+      const stepResult = buildNestedWorkflowStepResult(child, result);
+      await this.recordStepCompleted(runId, {
+        stepId: spec.id,
+        inputHash,
+        result: stepResult,
+        startedAt,
+        completedAt: this.clock.nowIso(),
+      });
+      await this.recordWorkflowEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        runId: child.runId,
+        name: child.name,
+        status: "completed",
+        details: getJsonWorkflowResult(result),
+      });
+      return result;
+    } catch (error) {
+      const message = getErrorMessage(error);
+      await this.recordStepFailed(runId, {
+        stepId: spec.id,
+        inputHash,
+        error: message,
+        startedAt,
+        completedAt: this.clock.nowIso(),
+      });
+      await this.recordWorkflowEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        runId: child.runId,
+        name: child.name,
+        status: options.abortSignal?.aborted === true ? "interrupted" : "failed",
+        details: { error: message },
+      });
+      throw error;
+    }
+  }
+
+  private async resolveWorkflowApplyPatchSpec(
+    runId: string,
+    spec: ParsedWorkflowApplyPatchSpec
+  ): Promise<WorkflowApplyPatchSpec> {
+    if (spec.sourceTaskId != null) {
+      return { ...spec, sourceTaskId: spec.sourceTaskId };
+    }
+    assert(
+      spec.agentId != null && spec.agentId.length > 0,
+      "applyPatch requires agentId or a source taskId"
+    );
+    const sourceTaskId = await this.getCompletedAgentTaskIdForPatch(runId, spec.agentId);
+    return { ...spec, sourceTaskId };
+  }
+
+  private async getCompletedAgentTaskIdForPatch(runId: string, agentId: string): Promise<string> {
+    const run = await this.runStore.getRun(runId);
+    for (let index = run.steps.length - 1; index >= 0; index -= 1) {
+      const step = run.steps[index];
+      if (step?.stepId !== agentId || step.status !== "completed") {
+        continue;
+      }
+      const taskId = step.taskId ?? step.result?.taskId;
+      if (taskId != null && taskId.length > 0 && step.result?.taskId === taskId) {
+        return taskId;
+      }
+    }
+    throw new Error(
+      `applyPatch agentId ${agentId} was not produced by a completed workflow agent step`
+    );
+  }
+
   private async assertTaskBelongsToCompletedWorkflowStep(
     runId: string,
     taskId: string
@@ -819,6 +1059,216 @@ export class WorkflowRunner {
     });
   }
 
+  private async startAgentStepWithoutWaiting(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    rawSpec: unknown,
+    options: {
+      ignoreStartedTaskIds: boolean;
+      allowLegacyMissingOutputSchema: boolean;
+      waitOptions?: WorkflowAgentWaitOptions;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+      startedAgentSteps: Map<string, StartedWorkflowAgentState>;
+      createHandleId: (stepId: string) => string;
+    }
+  ): Promise<StartedWorkflowAgentHandle> {
+    const spec = parseWorkflowAgentSpec(rawSpec, {
+      allowMissingOutputSchema: options.allowLegacyMissingOutputSchema,
+    });
+    assertWorkflowStepId(spec.id, "agent");
+    const inputHash = hashWorkflowStepInput(spec.id, spec);
+    options.leaseGuard.throwIfLost();
+    const existingStep = await this.runStore.getStep(runId, spec.id, inputHash);
+    const handleId = options.createHandleId(spec.id);
+
+    if (existingStep?.status === "completed" && existingStep.result != null) {
+      if (existingStep.taskId != null) {
+        options.leaseGuard.throwIfLost();
+        await this.recordTaskCompletedEventIfMissing(runId, sequence, {
+          stepId: spec.id,
+          taskId: existingStep.taskId,
+          title: spec.title,
+        });
+      }
+      options.startedAgentSteps.set(handleId, {
+        handleId,
+        spec,
+        resultSpec: spec,
+        inputHash,
+        startedAt: existingStep.startedAt,
+        taskId: existingStep.taskId,
+        terminalResult: existingStep.result,
+      });
+      return { handleId };
+    }
+
+    const taskId =
+      !options.ignoreStartedTaskIds && existingStep?.status === "started"
+        ? existingStep.taskId
+        : undefined;
+    if (taskId != null) {
+      assert(existingStep != null, "started pipeline step must have an existing step record");
+      assert(
+        this.taskAdapter.waitForAgentTask != null,
+        "pipeline requires workflow task adapter support for waiting on started agents"
+      );
+      await this.recordTaskStartedEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        taskId,
+        title: spec.title,
+      });
+      const resultSpec = options.allowLegacyMissingOutputSchema
+        ? omitWorkflowAgentOutputSchema(spec)
+        : spec;
+      options.startedAgentSteps.set(handleId, {
+        handleId,
+        spec,
+        resultSpec,
+        inputHash,
+        startedAt: existingStep.startedAt,
+        taskId,
+      });
+      return { handleId };
+    }
+
+    assert(
+      this.taskAdapter.createAgentTasks != null && this.taskAdapter.waitForAgentTask != null,
+      "pipeline requires workflow task adapter support for nonblocking agent starts"
+    );
+    const resultSpec = normalizeWorkflowAgentSpecForExecution(spec, {
+      allowMissingOutputSchema: options.allowLegacyMissingOutputSchema,
+    });
+    const startedAt = existingStep?.startedAt ?? this.clock.nowIso();
+    let recordedTaskId: string | undefined;
+    const createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
+      onTaskCreated: async (index, createdTaskId) => {
+        assert(index === 0, "WorkflowRunner.pipeline agent start lifecycle index mismatch");
+        assert(createdTaskId.length > 0, "WorkflowRunner.pipeline created taskId is required");
+        options.leaseGuard.throwIfLost();
+        recordedTaskId = createdTaskId;
+        await this.recordStepStarted(runId, {
+          stepId: spec.id,
+          inputHash,
+          taskId: createdTaskId,
+          startedAt,
+        });
+        await this.recordTaskStartedEventIfMissing(runId, sequence, {
+          stepId: spec.id,
+          taskId: createdTaskId,
+          title: spec.title,
+        });
+      },
+    });
+    assert(createdTasks.length === 1, "pipeline agent start returned the wrong number of tasks");
+    const createdTask = createdTasks[0];
+    assert(createdTask != null, "pipeline agent start must return a task");
+    assert(createdTask.taskId.length > 0, "WorkflowRunner.pipeline created taskId is required");
+    if (recordedTaskId == null) {
+      await this.recordStepStarted(runId, {
+        stepId: spec.id,
+        inputHash,
+        taskId: createdTask.taskId,
+        startedAt,
+      });
+      await this.recordTaskStartedEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        taskId: createdTask.taskId,
+        title: spec.title,
+      });
+    } else {
+      assert(
+        recordedTaskId === createdTask.taskId,
+        "WorkflowRunner.pipeline lifecycle taskId must match created taskId"
+      );
+    }
+
+    options.startedAgentSteps.set(handleId, {
+      handleId,
+      spec,
+      resultSpec,
+      inputHash,
+      startedAt,
+      taskId: createdTask.taskId,
+    });
+    return { handleId };
+  }
+
+  private async waitForAnyStartedAgentStep(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    rawHandles: unknown,
+    options: {
+      waitOptions?: WorkflowAgentWaitOptions;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+      startedAgentSteps: Map<string, StartedWorkflowAgentState>;
+    }
+  ): Promise<StartedWorkflowAgentCompletion> {
+    assert(Array.isArray(rawHandles), "pipeline wait requires an array of started agent handles");
+    assert(rawHandles.length > 0, "pipeline wait requires at least one started agent handle");
+    const states = rawHandles.map((rawHandle) => {
+      const handleId = parseStartedWorkflowAgentHandle(rawHandle).handleId;
+      const state = options.startedAgentSteps.get(handleId);
+      assert(state != null, `pipeline wait received unknown agent handle ${handleId}`);
+      return state;
+    });
+
+    const alreadyCompleted = states.find((state) => state.terminalResult != null);
+    if (alreadyCompleted?.terminalResult != null) {
+      return { handleId: alreadyCompleted.handleId, result: alreadyCompleted.terminalResult };
+    }
+
+    assert(
+      this.taskAdapter.waitForAgentTask != null,
+      "pipeline requires workflow task adapter support for waiting on started agents"
+    );
+    for (const state of states) {
+      if (state.rawResultPromise != null) {
+        continue;
+      }
+      assert(state.taskId != null, `pipeline agent ${state.spec.id} has no taskId to wait for`);
+      const taskId = state.taskId;
+      state.rawResultPromise = this.taskAdapter.waitForAgentTask(
+        taskId,
+        state.resultSpec,
+        options.waitOptions
+      );
+    }
+
+    const settled = await Promise.race(
+      states.map(async (state) => {
+        assert(state.rawResultPromise != null, `pipeline agent ${state.spec.id} is not waiting`);
+        try {
+          return { state, rawResult: await state.rawResultPromise };
+        } catch (error) {
+          return { state, error };
+        }
+      })
+    );
+
+    if ("error" in settled) {
+      if (!isForegroundWaitBackgroundedError(settled.error) && settled.state.taskId != null) {
+        options.leaseGuard.throwIfLost();
+        await this.recordTaskTerminalEventIfMissing(runId, sequence, {
+          stepId: settled.state.spec.id,
+          taskId: settled.state.taskId,
+          title: settled.state.spec.title,
+          status: getTaskTerminalStatusForError(settled.error, options.waitOptions?.abortSignal),
+        });
+      }
+      throw settled.error;
+    }
+
+    const result = await this.recordAgentResult(runId, sequence, {
+      spec: settled.state.resultSpec,
+      inputHash: settled.state.inputHash,
+      startedAt: settled.state.startedAt,
+      leaseGuard: options.leaseGuard,
+      rawResult: settled.rawResult,
+    });
+    settled.state.terminalResult = result;
+    return { handleId: settled.state.handleId, result };
+  }
+
   private async runAgentStep(
     runId: string,
     sequence: WorkflowEventSequence,
@@ -876,8 +1326,8 @@ export class WorkflowRunner {
       rawOptions?: unknown;
     }
   ): Promise<StructuredTaskOutput[]> {
-    assert(Array.isArray(rawSpecs), "parallelAgents requires an array of agent specs");
-    assert(rawSpecs.length > 0, "parallelAgents requires at least one agent spec");
+    assert(Array.isArray(rawSpecs), "parallel requires an array of agent specs");
+    assert(rawSpecs.length > 0, "parallel requires at least one agent spec");
     const { maxParallel } = parseParallelAgentsOptions(options.rawOptions);
 
     const results = new Array<StructuredTaskOutput>(rawSpecs.length);
@@ -885,7 +1335,7 @@ export class WorkflowRunner {
       const spec = parseWorkflowAgentSpec(rawSpec, {
         allowMissingOutputSchema: options.allowLegacyMissingOutputSchema,
       });
-      assertWorkflowStepId(spec.id, "parallelAgents");
+      assertWorkflowStepId(spec.id, "parallel");
       return { spec, inputHash: hashWorkflowStepInput(spec.id, spec) };
     });
     options.leaseGuard.throwIfLost();
@@ -961,7 +1411,7 @@ export class WorkflowRunner {
       // requeued at the front so a schema-only failure immediately uses the
       // freed slot instead of waiting for unrelated slow siblings to drain.
       const maxActive = maxParallel ?? queued.length;
-      assert(maxActive > 0, "WorkflowRunner.parallelAgents maxActive must be positive");
+      assert(maxActive > 0, "WorkflowRunner.parallel maxActive must be positive");
       const usesWindow = maxParallel != null && maxParallel < queued.length;
 
       let batchFailed = false;
@@ -973,7 +1423,7 @@ export class WorkflowRunner {
           throw createForegroundWaitBackgroundedError();
         }
         await interruptRemainingTasks();
-        throw new Error(`parallelAgents aborted before launching ${queued.length} queued step(s)`);
+        throw new Error(`parallel aborted before launching ${queued.length} queued step(s)`);
       };
 
       // Under a window, tasks must be created lazily when a slot frees;
@@ -1014,7 +1464,7 @@ export class WorkflowRunner {
           try {
             if (batchFailed || batchAbortController.signal.aborted) {
               throw new Error(
-                `parallelAgents step ${step.spec.id} canceled before it started: a sibling task failed or the batch was aborted`
+                `parallel step ${step.spec.id} canceled before it started: a sibling task failed or the batch was aborted`
               );
             }
             const runResult = await this.runOrResumeAgentStep(runId, sequence, {
@@ -1049,7 +1499,7 @@ export class WorkflowRunner {
           queued.length > 0
         ) {
           const step = queued.shift();
-          assert(step != null, "WorkflowRunner.parallelAgents queued step is required");
+          assert(step != null, "WorkflowRunner.parallel queued step is required");
           startRun(step);
         }
       };
@@ -1063,14 +1513,8 @@ export class WorkflowRunner {
               {
                 onTaskCreated: async (index, taskId) => {
                   const step = bulkCreatableSteps[index];
-                  assert(
-                    step != null,
-                    "WorkflowRunner.parallelAgents bulk lifecycle index mismatch"
-                  );
-                  assert(
-                    taskId.length > 0,
-                    "WorkflowRunner.parallelAgents bulk taskId is required"
-                  );
+                  assert(step != null, "WorkflowRunner.parallel bulk lifecycle index mismatch");
+                  assert(taskId.length > 0, "WorkflowRunner.parallel bulk taskId is required");
                   options.leaseGuard.throwIfLost();
                   await this.recordStepStarted(runId, {
                     stepId: step.spec.id,
@@ -1087,14 +1531,12 @@ export class WorkflowRunner {
               }
             );
             if (createdTasks.length !== bulkCreatableSteps.length) {
-              throw new Error(
-                "parallelAgents bulk task creation returned the wrong number of tasks"
-              );
+              throw new Error("parallel bulk task creation returned the wrong number of tasks");
             }
             for (const [index, createdTask] of createdTasks.entries()) {
               assert(
                 createdTask.taskId.length > 0,
-                "WorkflowRunner.parallelAgents created taskId is required"
+                "WorkflowRunner.parallel created taskId is required"
               );
               bulkCreatableSteps[index].taskId = createdTask.taskId;
             }
@@ -1388,6 +1830,46 @@ export class WorkflowRunner {
     );
   }
 
+  private async recordWorkflowEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    workflow: {
+      stepId: string;
+      runId: string;
+      name: string;
+      status: Extract<WorkflowRunEvent, { type: "workflow" }>["status"];
+      details?: unknown;
+    }
+  ): Promise<void> {
+    assert(runId.length > 0, "WorkflowRunner.recordWorkflowEventIfMissing: runId is required");
+    assert(workflow.stepId.length > 0, "WorkflowRunner: workflow event stepId is required");
+    assert(workflow.runId.length > 0, "WorkflowRunner: workflow event runId is required");
+    assert(workflow.name.length > 0, "WorkflowRunner: workflow event name is required");
+
+    await using _lock = await this.taskEventMutex.acquire();
+    const run = await this.runStore.getRun(runId);
+    const alreadyRecorded = run.events.some(
+      (event) =>
+        event.type === "workflow" &&
+        event.status === workflow.status &&
+        event.stepId === workflow.stepId &&
+        event.runId === workflow.runId
+    );
+    if (alreadyRecorded) {
+      return;
+    }
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "workflow",
+      at: this.clock.nowIso(),
+      stepId: workflow.stepId,
+      runId: workflow.runId,
+      name: workflow.name,
+      status: workflow.status,
+      details: workflow.details,
+    });
+  }
+
   private async recordPatchTerminalEventIfMissing(
     runId: string,
     sequence: WorkflowEventSequence,
@@ -1528,7 +2010,58 @@ class WorkflowEventSequence {
   }
 }
 
-function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
+function parseWorkflowNestedWorkflowSpec(rawSpec: unknown): WorkflowNestedWorkflowSpec {
+  assert(rawSpec != null && typeof rawSpec === "object", "workflow requires a spec object");
+  const spec = rawSpec as Record<string, unknown>;
+  assert(typeof spec.id === "string", "workflow replay boundary requires a stable id");
+  const scriptPath = spec.script_path ?? spec.scriptPath;
+  assert(
+    typeof scriptPath === "string" && scriptPath.length > 0,
+    "workflow requires a non-empty script_path"
+  );
+  return {
+    id: spec.id,
+    scriptPath,
+    args: spec.args ?? {},
+  };
+}
+
+function buildNestedWorkflowStepResult(
+  child: WorkflowNestedWorkflowRun,
+  result: WorkflowResult
+): StructuredTaskOutput {
+  return {
+    reportMarkdown: result.reportMarkdown,
+    structuredOutput: {
+      runId: child.runId,
+      name: child.name,
+      result: getJsonWorkflowResult(result),
+    },
+  };
+}
+
+function getJsonWorkflowResult(result: WorkflowResult): WorkflowResult {
+  return result.structuredOutput === undefined ? { reportMarkdown: result.reportMarkdown } : result;
+}
+
+function getNestedWorkflowStepOutput(
+  output: StructuredTaskOutput
+): { runId: string; name: string; result: WorkflowResult } | null {
+  const structuredOutput = output.structuredOutput;
+  if (structuredOutput == null || typeof structuredOutput !== "object") {
+    return null;
+  }
+  const record = structuredOutput as Record<string, unknown>;
+  const runId = record.runId;
+  const name = record.name;
+  const result = WorkflowResultSchema.safeParse(record.result);
+  if (typeof runId !== "string" || typeof name !== "string" || !result.success) {
+    return null;
+  }
+  return { runId, name, result: result.data };
+}
+
+function parseWorkflowApplyPatchSpec(rawSpec: unknown): ParsedWorkflowApplyPatchSpec {
   assert(rawSpec != null && typeof rawSpec === "object", "applyPatch requires a spec object");
   const spec = rawSpec as Record<string, unknown>;
   assert(typeof spec.id === "string", "applyPatch replay boundary requires a stable id");
@@ -1536,9 +2069,10 @@ function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
   const sourceTaskId = getApplyPatchSourceTaskId(
     spec.source ?? spec.from ?? spec.task ?? spec.taskId
   );
+  const agentId = spec.agentId;
   assert(
-    typeof sourceTaskId === "string" && sourceTaskId.length > 0,
-    "applyPatch requires a source taskId or an agent result with taskId"
+    sourceTaskId != null || (typeof agentId === "string" && agentId.length > 0),
+    "applyPatch requires agentId or a source taskId"
   );
 
   const target = spec.target ?? "parent";
@@ -1553,9 +2087,10 @@ function parseWorkflowApplyPatchSpec(rawSpec: unknown): WorkflowApplyPatchSpec {
     );
   }
 
-  const parsed: WorkflowApplyPatchSpec = {
+  const parsed: ParsedWorkflowApplyPatchSpec = {
     id: spec.id,
-    sourceTaskId,
+    ...(sourceTaskId != null ? { sourceTaskId } : {}),
+    ...(typeof agentId === "string" && agentId.length > 0 ? { agentId } : {}),
     target,
     threeWay: spec.threeWay !== false && spec.three_way !== false,
     force: spec.force === true,
@@ -1709,7 +2244,9 @@ function normalizeWorkflowAgentSpecForExecution(
   if (spec.outputSchema === undefined) {
     return { ...spec, outputSchema: {} };
   }
-  const outputSchemaValidation = validateJsonSchemaSubsetSchema(spec.outputSchema);
+  const outputSchemaValidation = validateJsonSchemaSubsetSchema(spec.outputSchema, {
+    requireObjectSchema: true,
+  });
   return outputSchemaValidation.success ? spec : omitWorkflowAgentOutputSchema(spec);
 }
 
@@ -1719,7 +2256,9 @@ function omitWorkflowAgentOutputSchema(spec: WorkflowAgentSpec): WorkflowAgentSp
 }
 
 function validateWorkflowAgentOutputSchema(stepId: string, outputSchema: unknown): void {
-  const outputSchemaValidation = validateJsonSchemaSubsetSchema(outputSchema);
+  const outputSchemaValidation = validateJsonSchemaSubsetSchema(outputSchema, {
+    requireObjectSchema: true,
+  });
   if (!outputSchemaValidation.success) {
     throw new Error(
       `Workflow agent step ${stepId} has invalid outputSchema: ${formatJsonSchemaValidationErrors(
@@ -1727,6 +2266,16 @@ function validateWorkflowAgentOutputSchema(stepId: string, outputSchema: unknown
       )}`
     );
   }
+}
+
+function parseStartedWorkflowAgentHandle(rawHandle: unknown): StartedWorkflowAgentHandle {
+  assert(
+    rawHandle != null && typeof rawHandle === "object",
+    "pipeline wait requires agent handles"
+  );
+  const handleId = (rawHandle as Record<string, unknown>).handleId;
+  assert(typeof handleId === "string" && handleId.length > 0, "pipeline agent handle is invalid");
+  return { handleId };
 }
 
 function parseWorkflowAgentSpec(
@@ -1757,9 +2306,13 @@ function parseWorkflowAgentSpec(
     );
     parsed.isolation = spec.isolation;
   }
+  if (spec.markdownOnly !== undefined) {
+    assert(spec.markdownOnly === true, "agent markdownOnly must be true when provided");
+    parsed.markdownOnly = true;
+  }
   if (spec.outputSchema === undefined) {
     assert(
-      options.allowMissingOutputSchema,
+      options.allowMissingOutputSchema || parsed.markdownOnly === true,
       `Workflow agent step ${parsed.id} must declare outputSchema`
     );
   } else {
@@ -1809,9 +2362,8 @@ function compileWorkflowSource(source: string): string {
   // tests; only the declaration forms below are supported (no `export {...}`
   // lists). Like the default-export rewrite, this is a lexical transform: a
   // template-literal line inside the workflow that starts with `export ` would
-  // also be rewritten. scripts/gen_builtin_workflows.ts guards built-in
-  // sources against that corruption at generation time; scratch/project
-  // authors must keep flush-left `export ` lines out of template literals.
+  // also be rewritten, so authors must keep flush-left `export ` lines out of
+  // template literals.
   const withoutCommonJsMetadata = removeCommonJsWorkflowMetadataDeclaration(source);
   const withoutNamedExports = withoutCommonJsMetadata.replace(
     /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu,
@@ -1827,14 +2379,179 @@ function compileWorkflowSource(source: string): string {
 Date = undefined;
 Math.random = undefined;
 ${WORKFLOW_RUNTIME_STDLIB_SOURCE}
+let __muxParallelCollectingAgents = null;
+let __muxPipelineCollectingAgents = null;
+const __MUX_PARALLEL_AGENT_MARKER = "__muxParallelAgentMarker";
+function __muxParallel(thunks, options) {
+  if (!Array.isArray(thunks)) {
+    throw new Error("parallel requires an array of thunks");
+  }
+  const collected = [];
+  const previous = __muxParallelCollectingAgents;
+  __muxParallelCollectingAgents = collected;
+  let branchResults;
+  try {
+    branchResults = thunks.map((thunk, index) => {
+      if (typeof thunk !== "function") {
+        throw new Error("parallel entries must be functions");
+      }
+      return thunk(index);
+    });
+  } finally {
+    __muxParallelCollectingAgents = previous;
+  }
+  if (collected.length === 0) {
+    return branchResults;
+  }
+  const taskResults = __workflowParallelAgents(collected.map((entry) => entry.spec), options);
+  return branchResults.map((branchResult) => {
+    if (
+      branchResult === null ||
+      typeof branchResult !== "object" ||
+      branchResult[__MUX_PARALLEL_AGENT_MARKER] !== true
+    ) {
+      return branchResult;
+    }
+    const taskResult = taskResults[branchResult.index];
+    if (branchResult.hasSchema) {
+      return taskResult.structuredOutput;
+    }
+    return taskResult.reportMarkdown;
+  });
+}
+function __muxPipeline(items, ...stages) {
+  if (!Array.isArray(items)) {
+    throw new Error("pipeline requires an array of items");
+  }
+  for (const stage of stages) {
+    if (typeof stage !== "function") {
+      throw new Error("pipeline stages must be functions");
+    }
+  }
+  const states = items.map((item, index) => ({ index, stageIndex: 0, value: item, done: false }));
+  const pending = new Map();
+  function startNextStage(state) {
+    while (state.stageIndex < stages.length) {
+      const stage = stages[state.stageIndex];
+      const previous = __muxPipelineCollectingAgents;
+      const collected = [];
+      __muxPipelineCollectingAgents = collected;
+      let stageResult;
+      try {
+        stageResult = stage(state.value, state.index);
+      } finally {
+        __muxPipelineCollectingAgents = previous;
+      }
+      if (collected.length > 0) {
+        if (collected.length !== 1) {
+          throw new Error("pipeline stages must start exactly one agent task");
+        }
+        const collectedAgent = collected[0];
+        const handle = collectedAgent.handle;
+        pending.set(handle.handleId, { state, collectedAgent, handle });
+        return;
+      }
+      state.value = stageResult;
+      state.stageIndex += 1;
+    }
+    state.done = true;
+  }
+  for (const state of states) {
+    startNextStage(state);
+  }
+  while (pending.size > 0) {
+    const completion = __workflowAgentWaitAny(
+      Array.from(pending.values()).map((entry) => entry.handle)
+    );
+    const pendingEntry = pending.get(completion.handleId);
+    if (pendingEntry === undefined) {
+      throw new Error("pipeline wait returned an unknown agent handle");
+    }
+    pending.delete(completion.handleId);
+    const taskResult = completion.result;
+    pendingEntry.state.value = pendingEntry.collectedAgent.hasSchema
+      ? taskResult.structuredOutput
+      : taskResult.reportMarkdown;
+    pendingEntry.state.stageIndex += 1;
+    startNextStage(pendingEntry.state);
+  }
+  return states.map((state) => state.value);
+}
+function __muxApplyPatch(spec) {
+  if (spec === null || typeof spec !== "object") {
+    throw new Error("applyPatch requires a spec object");
+  }
+  return __workflowApplyPatch(spec);
+}
+function __muxNestedWorkflow(spec) {
+  if (spec === null || typeof spec !== "object") {
+    throw new Error("workflow requires a spec object");
+  }
+  return __workflowNestedWorkflow(spec);
+}
+function __muxAgent(prompt, options) {
+  if (prompt !== null && typeof prompt === "object" && options === undefined) {
+    return __workflowAgent(prompt);
+  }
+  if (typeof prompt !== "string" || prompt.length === 0) {
+    throw new Error("agent requires a non-empty prompt");
+  }
+  if (options === null || typeof options !== "object") {
+    throw new Error("agent replay boundary requires a stable id");
+  }
+  if (typeof options.id !== "string" || options.id.length === 0) {
+    throw new Error("agent replay boundary requires a stable id");
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "model")) {
+    throw new Error("agent options.model is not supported yet");
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "effort")) {
+    throw new Error("agent options.effort is not supported yet");
+  }
+  const spec = { ...options, prompt };
+  if (Object.prototype.hasOwnProperty.call(spec, "schema")) {
+    spec.outputSchema = spec.schema;
+    delete spec.schema;
+  }
+  if (Object.prototype.hasOwnProperty.call(spec, "agentType")) {
+    spec.agentId = spec.agentType;
+    delete spec.agentType;
+  }
+  if (!Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
+    spec.markdownOnly = true;
+  }
+  if (__muxParallelCollectingAgents !== null) {
+    const index = __muxParallelCollectingAgents.length;
+    __muxParallelCollectingAgents.push({ spec });
+    return {
+      [__MUX_PARALLEL_AGENT_MARKER]: true,
+      index,
+      hasSchema: Object.prototype.hasOwnProperty.call(spec, "outputSchema"),
+    };
+  }
+  if (__muxPipelineCollectingAgents !== null) {
+    __muxPipelineCollectingAgents.push({
+      handle: __workflowAgentStart(spec),
+      hasSchema: Object.prototype.hasOwnProperty.call(spec, "outputSchema"),
+    });
+    return null;
+  }
+  const result = __workflowAgent(spec);
+  if (Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
+    return result.structuredOutput;
+  }
+  return result.reportMarkdown;
+}
 ${compiled}
 return (async () => await __muxWorkflow({
   args: __workflowArgs(),
   phase: __workflowPhase,
   log: __workflowLog,
-  agent: __workflowAgent,
-  applyPatch: __workflowApplyPatch,
-  parallelAgents: __workflowParallelAgents,
+  agent: __muxAgent,
+  parallel: __muxParallel,
+  pipeline: __muxPipeline,
+  applyPatch: __muxApplyPatch,
+  workflow: __muxNestedWorkflow,
 }))();
 `;
 }

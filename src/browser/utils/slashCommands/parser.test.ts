@@ -304,10 +304,10 @@ describe("plan commands", () => {
 });
 
 describe("init command", () => {
-  it("parses explicit workflow invocation", () => {
-    expect(parseCommand('/workflow deep-research {"topic":"mux"}')).toEqual({
+  it("parses explicit workflow script path invocation", () => {
+    expect(parseCommand('/workflow skill://deep-research/workflow.js {"topic":"mux"}')).toEqual({
       type: "workflow-run",
-      name: "deep-research",
+      name: "skill://deep-research/workflow.js",
       argsText: '{"topic":"mux"}',
     });
   });

@@ -240,7 +240,7 @@ describe("WorkflowRunToolCall", () => {
     const completedView = renderWithStickyToolProviders(
       <WorkflowRunToolCall
         args={{
-          name: "deep-research",
+          script_path: "skill://deep-research/workflow.js",
           args: { topic: "workflow cards" },
           run_in_background: false,
         }}
@@ -262,7 +262,11 @@ describe("WorkflowRunToolCall", () => {
     const runningRun = createWorkflowRunForExpansionTest({ id: "wfr_running", status: "running" });
     const executingView = renderWithStickyToolProviders(
       <WorkflowRunToolCall
-        args={{ name: "deep-research", args: { topic: "workflow cards" }, run_in_background: true }}
+        args={{
+          script_path: "skill://deep-research/workflow.js",
+          args: { topic: "workflow cards" },
+          run_in_background: true,
+        }}
         status="executing"
         result={{ status: "running", runId: runningRun.id, result: null, run: runningRun }}
       />
@@ -278,7 +282,7 @@ describe("WorkflowRunToolCall", () => {
     const view = renderWithStickyToolProviders(
       <WorkflowRunToolCall
         args={{
-          name: "deep-research",
+          script_path: "skill://deep-research/workflow.js",
           args: { topic: "workflow cards" },
           run_in_background: false,
         }}
@@ -301,7 +305,7 @@ describe("WorkflowRunToolCall", () => {
       withStickyToolProviders(
         <WorkflowRunToolCall
           args={{
-            name: "deep-research",
+            script_path: "skill://deep-research/workflow.js",
             args: { topic: "workflow cards" },
             run_in_background: false,
           }}
@@ -346,6 +350,10 @@ describe("WorkflowRunToolCall", () => {
                   name: "deep-research",
                   description: "Deep research",
                   scope: "built-in",
+                  requestedScriptPath: "skill://deep-research/workflow.js",
+                  canonicalScriptPath: "skill://deep-research/workflow.js",
+                  sourceKind: "skill",
+                  sourceHash: "sha256:abc123",
                   executable: true,
                 },
                 definitionSource: "export default function workflow() { return null; }",
@@ -436,6 +444,8 @@ describe("WorkflowRunToolCall", () => {
     expect(getDisclosureForTitle("Definition source")?.hasAttribute("open")).toBe(false);
     expect(getDisclosureForTitle("Structured output")?.hasAttribute("open")).toBe(false);
     expect(view.container.textContent).toContain("workflow cards");
+    expect(view.container.textContent).toContain("skill://deep-research/workflow.js");
+    expect(view.container.textContent).toContain("sha256:abc123");
     expect(view.container.textContent).toContain("scope");
     expect(view.container.textContent).toContain("adversarial-verification");
     expect(view.container.textContent).toContain("task_scope");
@@ -644,7 +654,11 @@ describe("WorkflowRunToolCall", () => {
       <ThemeProvider forcedTheme="dark">
         <TooltipProvider>
           <WorkflowRunToolCall
-            args={{ name: "deep-research", args: {}, run_in_background: true }}
+            args={{
+              script_path: "skill://deep-research/workflow.js",
+              args: {},
+              run_in_background: true,
+            }}
             status="executing"
             result={{
               status: "running",
@@ -1145,7 +1159,7 @@ describe("WorkflowRunToolCall", () => {
     const view = renderWithStickyToolProviders(
       <WorkflowRunToolCall
         args={{
-          name: "deep-research",
+          script_path: "skill://deep-research/workflow.js",
           args: { topic: "workflow cards" },
           run_in_background: false,
         }}
@@ -1310,6 +1324,7 @@ describe("WorkflowRunToolCall", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "deep-research",
         executable: true,
       },
       definitionSource: "export default function workflow() { return null; }",
@@ -2780,7 +2795,11 @@ describe("WorkflowRunToolCall", () => {
           <ThemeProvider forcedTheme="dark">
             <TooltipProvider>
               <WorkflowRunToolCall
-                args={{ name: "deep-research", args: {}, run_in_background: true }}
+                args={{
+                  script_path: "skill://deep-research/workflow.js",
+                  args: {},
+                  run_in_background: true,
+                }}
                 status="completed"
                 result={{ status: "failed", runId: failedRun.id, result: null, run: failedRun }}
               />
@@ -2891,7 +2910,11 @@ describe("WorkflowRunToolCall", () => {
           <ThemeProvider forcedTheme="dark">
             <TooltipProvider>
               <WorkflowRunToolCall
-                args={{ name: "deep-research", args: {}, run_in_background: true }}
+                args={{
+                  script_path: "skill://deep-research/workflow.js",
+                  args: {},
+                  run_in_background: true,
+                }}
                 status="completed"
                 result={{
                   status: "interrupted",
@@ -2992,7 +3015,11 @@ describe("WorkflowRunToolCall", () => {
         <ThemeProvider forcedTheme="dark">
           <TooltipProvider>
             <WorkflowRunToolCall
-              args={{ name: "deep-research", args: {}, run_in_background: true }}
+              args={{
+                script_path: "skill://deep-research/workflow.js",
+                args: {},
+                run_in_background: true,
+              }}
               status="completed"
               result={{ status: "failed", runId: failedRun.id, result: null, run: failedRun }}
             />
@@ -3017,7 +3044,11 @@ describe("WorkflowRunToolCall", () => {
         <ThemeProvider forcedTheme="dark">
           <TooltipProvider>
             <WorkflowRunToolCall
-              args={{ name: "deep-research", args: {}, run_in_background: true }}
+              args={{
+                script_path: "skill://deep-research/workflow.js",
+                args: {},
+                run_in_background: true,
+              }}
               status="completed"
               result={{
                 status: "failed",
@@ -3071,7 +3102,11 @@ describe("WorkflowRunToolCall", () => {
         <ThemeProvider forcedTheme="dark">
           <TooltipProvider>
             <WorkflowRunToolCall
-              args={{ name: "deep-research", args: {}, run_in_background: true }}
+              args={{
+                script_path: "skill://deep-research/workflow.js",
+                args: {},
+                run_in_background: true,
+              }}
               status="completed"
               result={{
                 status: "failed",
@@ -3232,153 +3267,6 @@ describe("WorkflowRunToolCall", () => {
     expect(view.getByRole("button", { name: "Resume workflow" })).toBeTruthy();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(getRunCalls).toBe(1);
-  });
-
-  test("saves scratch workflow runs directly to project workflows", async () => {
-    const promotions: unknown[] = [];
-    const api = {
-      workflows: {
-        promoteScratch: async (input: unknown) => {
-          promotions.push(input);
-          return {
-            name: "scratch",
-            description: "Scratch workflow",
-            scope: "project",
-            sourcePath: "/repo/.mux/workflows/scratch.js",
-            executable: true,
-          };
-        },
-      },
-    };
-
-    const view = render(
-      <APIHarness client={api}>
-        <ThemeProvider forcedTheme="dark">
-          <TooltipProvider>
-            <WorkflowRunToolCall
-              args={{ name: "scratch", args: {}, run_in_background: true }}
-              status="completed"
-              result={{
-                status: "completed",
-                runId: "wfr_scratch",
-                result: { reportMarkdown: "scratch done" },
-                run: {
-                  id: "wfr_scratch",
-                  workspaceId: "workspace-1",
-                  definition: {
-                    name: "scratch",
-                    description: "Scratch workflow",
-                    scope: "scratch",
-                    executable: true,
-                  },
-                  definitionSource: "export default function workflow() { return null; }",
-                  definitionHash: "sha256:test",
-                  args: {},
-                  status: "completed",
-                  createdAt: "2026-05-29T00:00:00.000Z",
-                  updatedAt: "2026-05-29T00:00:01.000Z",
-                  events: [],
-                  steps: [],
-                },
-              }}
-            />
-          </TooltipProvider>
-        </ThemeProvider>
-      </APIHarness>
-    );
-
-    fireEvent.click(getWorkflowHeader(view));
-
-    expect(view.queryByRole("button", { name: "Promote workflow" })).toBeNull();
-    expect(view.getByRole("button", { name: "Save to global workflows" })).toBeTruthy();
-
-    fireEvent.click(view.getByRole("button", { name: "Save to project workflows" }));
-
-    await waitFor(() => expect(promotions).toHaveLength(1));
-    expect(promotions[0]).toEqual({
-      workspaceId: "workspace-1",
-      runId: "wfr_scratch",
-      name: "scratch",
-      description: "Scratch workflow",
-      location: "project",
-      overwrite: false,
-    });
-    await waitFor(() => expect(view.getByText("Saved to project workflows")).toBeTruthy());
-    expect(view.container.textContent).toContain("/repo/.mux/workflows/scratch.js");
-    expect(view.queryByRole("button", { name: "Save to project workflows" })).toBeNull();
-    expect(view.queryByRole("button", { name: "Save to global workflows" })).toBeNull();
-  });
-
-  test("saves scratch workflow runs directly to global workflows", async () => {
-    const promotions: unknown[] = [];
-    const api = {
-      workflows: {
-        promoteScratch: async (input: unknown) => {
-          promotions.push(input);
-          return {
-            name: "scratch",
-            description: "Scratch workflow",
-            scope: "global",
-            sourcePath: "/home/user/.mux/workflows/scratch.js",
-            executable: true,
-          };
-        },
-      },
-    };
-
-    const view = render(
-      <APIHarness client={api}>
-        <ThemeProvider forcedTheme="dark">
-          <TooltipProvider>
-            <WorkflowRunToolCall
-              args={{ name: "scratch", args: {}, run_in_background: true }}
-              status="completed"
-              result={{
-                status: "completed",
-                runId: "wfr_scratch",
-                result: { reportMarkdown: "scratch done" },
-                run: {
-                  id: "wfr_scratch",
-                  workspaceId: "workspace-1",
-                  definition: {
-                    name: "scratch",
-                    description: "Scratch workflow",
-                    scope: "scratch",
-                    executable: true,
-                  },
-                  definitionSource: "export default function workflow() { return null; }",
-                  definitionHash: "sha256:test",
-                  args: {},
-                  status: "completed",
-                  createdAt: "2026-05-29T00:00:00.000Z",
-                  updatedAt: "2026-05-29T00:00:01.000Z",
-                  events: [],
-                  steps: [],
-                },
-              }}
-            />
-          </TooltipProvider>
-        </ThemeProvider>
-      </APIHarness>
-    );
-
-    fireEvent.click(getWorkflowHeader(view));
-
-    fireEvent.click(view.getByRole("button", { name: "Save to global workflows" }));
-
-    await waitFor(() => expect(promotions).toHaveLength(1));
-    expect(promotions[0]).toEqual({
-      workspaceId: "workspace-1",
-      runId: "wfr_scratch",
-      name: "scratch",
-      description: "Scratch workflow",
-      location: "global",
-      overwrite: false,
-    });
-    await waitFor(() => expect(view.getByText("Saved to global workflows")).toBeTruthy());
-    expect(view.container.textContent).toContain("/home/user/.mux/workflows/scratch.js");
-    expect(view.queryByRole("button", { name: "Save to project workflows" })).toBeNull();
-    expect(view.queryByRole("button", { name: "Save to global workflows" })).toBeNull();
   });
 
   test("uses live workflow run status for the header instead of stale tool completion state", () => {

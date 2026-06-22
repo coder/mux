@@ -23,14 +23,14 @@ Coordinate implementation by delegating investigation + coding to sub-agents, th
 
 ## Long-horizon work: prefer a durable workflow
 
-If the `workflow_run` / `workflow_list` tools are unavailable in this session, skip this section and use the interactive task loop below.
+If the `workflow_run` tool is unavailable in this session, skip this section and use the interactive task loop below.
 
 For long-horizon orchestration — many phases, a dependency DAG known up front, or repeated implement → gate → fixup → re-gate loops — encode the orchestration as a durable workflow instead of driving it turn-by-turn from the transcript:
 
-- Reuse existing workflows before authoring one: run `workflow_list` and invoke a fitting workflow with `workflow_run`. For example, when a subtask needs deep multi-source investigation before implementation briefs can be written, run the built-in `deep-research` workflow instead of hand-rolling parallel `explore` fan-out.
+- Reuse packaged workflows before authoring one: read relevant workflow skills with `agent_skill_read`, inspect workflow scripts with `agent_skill_read_file` when needed, and invoke a fitting workflow with `workflow_run({ script_path: "skill://<skill>/workflow.js", args: {} })`.
 - Read the built-in `workflow-authoring` skill first (`agent_skill_read({ name: "workflow-authoring" })`).
-- Author a scratch workflow at `.mux/workflows/.scratch/<name>.js` that encodes the DAG in code: `agent(...)` for sub-agent steps, `applyPatch(...)` for patch integration (the host dry-runs automatically and returns structured conflict results), `phase`/`log` for progress, and plain control flow for gate/fixup loops.
-- Run it with `workflow_run`; resume interrupted runs with `workflow_resume`. Durable runs survive restarts and context compaction — completed steps are never re-executed.
+- Author a local workflow at an explicit workspace path such as `./workflows/<name>.js` that encodes the DAG in code: `agent(...)` for sub-agent steps, `phase`/`log` for progress, and plain control flow for gate/fixup loops.
+- Run it with `workflow_run({ script_path: "./workflows/<name>.js", args: {} })`; resume interrupted runs with `workflow_resume`. Durable runs survive restarts and context compaction — completed steps are never re-executed.
 
 Stay with the interactive task loop below when the work is exploratory, the user wants to steer between batches, or the batch is small (a handful of tasks) — there, workflow authoring overhead outweighs the durability benefit.
 

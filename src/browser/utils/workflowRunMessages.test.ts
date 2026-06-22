@@ -19,6 +19,7 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in",
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       definitionSource: "export default function workflow() { return null; }",
@@ -32,7 +33,7 @@ describe("buildWorkflowRunCardMessage", () => {
     };
 
     const message = buildWorkflowRunCardMessage(
-      { name: run.definition.name, args: run.args },
+      { scriptPath: run.definition.sourcePath, args: run.args },
       { runId: run.id, status: run.status, result: { reportMarkdown: "done" }, run },
       123
     );
@@ -41,7 +42,11 @@ describe("buildWorkflowRunCardMessage", () => {
     expect(message.parts[0]).toMatchObject({
       type: "dynamic-tool",
       toolName: "workflow_run",
-      input: { name: "deep-research", args: { topic: "reload" }, run_in_background: true },
+      input: {
+        script_path: "skill://deep-research/workflow.js",
+        args: { topic: "reload" },
+        run_in_background: true,
+      },
       output: { status: "completed", runId: "wfr_reload", result: { reportMarkdown: "done" }, run },
     });
   });
@@ -54,6 +59,7 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in",
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       definitionSource: "export default function workflow() { return null; }",
@@ -126,7 +132,7 @@ describe("buildWorkflowRunCardMessage", () => {
       },
     };
     const card = buildWorkflowRunCardMessage(
-      { name: "deep-research", args: { input: "mux" } },
+      { scriptPath: "skill://deep-research/workflow.js", args: { input: "mux" } },
       { runId: "wfr_1", status: "running", result: null },
       2
     );
@@ -154,12 +160,13 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "reload" },
     };
     const completedMessage = buildWorkflowRunCardMessage(
-      { name: run.definition.name, args: run.args },
+      { scriptPath: run.definition.sourcePath, args: run.args },
       { runId: run.id, status: "completed", result: { reportMarkdown: "done" } },
       123
     );
@@ -172,7 +179,7 @@ describe("buildWorkflowRunCardMessage", () => {
           toolCallId: "call_1",
           toolName: "workflow_run",
           state: "input-available",
-          input: { name: "deep-research", args: { topic: "reload" } },
+          input: { script_path: "skill://deep-research/workflow.js", args: { topic: "reload" } },
         },
       ],
     };
@@ -191,6 +198,7 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "discarded" },
@@ -210,13 +218,14 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "metadata" },
       status: "completed" as const,
     };
     const malformedCard = buildWorkflowRunCardMessage(
-      { name: run.definition.name, args: run.args },
+      { scriptPath: run.definition.sourcePath, args: run.args },
       { runId: run.id, status: "running", result: null },
       123
     );
@@ -243,6 +252,7 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "trigger" },
@@ -275,13 +285,14 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "reload" },
       status: "completed" as const,
     };
     const staleMessage = buildWorkflowRunCardMessage(
-      { name: run.definition.name, args: run.args },
+      { scriptPath: run.definition.sourcePath, args: run.args },
       { runId: run.id, status: "running", result: null },
       123
     );
@@ -302,6 +313,7 @@ describe("buildWorkflowRunCardMessage", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "reload" },
@@ -316,7 +328,7 @@ describe("buildWorkflowRunCardMessage", () => {
           toolCallId: "call_1",
           toolName: "workflow_run",
           state: "input-available",
-          input: { name: "deep-research", args: { topic: "reload" } },
+          input: { script_path: "skill://deep-research/workflow.js", args: { topic: "reload" } },
         },
       ],
     };
@@ -329,7 +341,7 @@ describe("buildWorkflowRunCardMessage", () => {
           toolCallId: "call_2",
           toolName: "workflow_run",
           state: "output-available",
-          input: { name: "deep-research", args: { topic: "reload" } },
+          input: { script_path: "skill://deep-research/workflow.js", args: { topic: "reload" } },
           output: { runId: run.id, status: "completed", result: { reportMarkdown: "done" } },
         },
       ],

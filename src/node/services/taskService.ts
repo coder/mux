@@ -339,7 +339,9 @@ function validateWorkflowAgentReportStructuredOutput(params: {
   }
 
   if (params.allowLegacyInvalidOutputSchema) {
-    const schemaValidation = validateJsonSchemaSubsetSchema(workflowTask.outputSchema);
+    const schemaValidation = validateJsonSchemaSubsetSchema(workflowTask.outputSchema, {
+      requireObjectSchema: true,
+    });
     if (!schemaValidation.success) {
       return null;
     }
@@ -7344,7 +7346,10 @@ export class TaskService {
     if (workflowTask?.outputSchema === undefined) {
       return false;
     }
-    if (validateJsonSchemaSubsetSchema(workflowTask.outputSchema).success) {
+    if (
+      validateJsonSchemaSubsetSchema(workflowTask.outputSchema, { requireObjectSchema: true })
+        .success
+    ) {
       return false;
     }
     const parentWorkspaceId = childEntry?.workspace.parentWorkspaceId;
@@ -7756,13 +7761,21 @@ export class TaskService {
       }
 
       const parsedInlineArgs = AgentReportInlineToolArgsSchema.safeParse(part.input);
-      if (!parsedInlineArgs.success) continue;
-      // Normalize null → undefined at the schema boundary so downstream
-      // code that expects `title?: string` doesn't need to handle null.
-      return {
-        reportMarkdown: parsedInlineArgs.data.reportMarkdown,
-        title: parsedInlineArgs.data.title ?? undefined,
-      };
+      if (parsedInlineArgs.success) {
+        // Normalize null → undefined at the schema boundary so downstream
+        // code that expects `title?: string` doesn't need to handle null.
+        return {
+          reportMarkdown: parsedInlineArgs.data.reportMarkdown,
+          title: parsedInlineArgs.data.title ?? undefined,
+        };
+      }
+
+      if (part.input != null && typeof part.input === "object") {
+        return {
+          reportMarkdown: "Structured workflow report submitted.",
+          structuredOutput: part.input,
+        };
+      }
     }
     return null;
   }

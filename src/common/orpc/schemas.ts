@@ -50,9 +50,6 @@ export {
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
   WorkspaceMetadataSchema,
-  WorkspaceWorkflowScheduleSchema,
-  WorkspaceWorkflowScheduleTargetSchema,
-  WorkflowScheduleContextModeSchema,
 } from "./schemas/workspace";
 
 // Workspace stats schemas

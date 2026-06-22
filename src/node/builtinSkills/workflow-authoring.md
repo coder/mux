@@ -23,25 +23,28 @@ Do **not** create a workflow for a small one-off edit or a single simple investi
 
 ## Before authoring
 
-1. Run `workflow_list` to see existing workflows.
-2. If an existing workflow is close, run `workflow_read({ name, view: "source" })` and adapt the pattern.
-3. For one-off drafts, write a scratch workflow:
+1. Use skills to discover packaged workflows. Read a workflow skill with `agent_skill_read({ name: "<skill>" })`, then inspect its script with `agent_skill_read_file({ name: "<skill>", filePath: "workflow.js" })` when needed.
+2. For local one-off workflow drafts, write an explicit workspace-contained JavaScript file, for example `./workflows/<name>.js`.
+3. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) to author the JavaScript.
+4. Run it by explicit path with `workflow_run({ script_path: "./workflows/<name>.js", args: {} })`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
 
-   ```text
-   .mux/workflows/.scratch/<name>.js
-   ```
-
-4. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) to author the JavaScript.
-5. Run it by name with `workflow_run`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
-
-Scratch workflows must include workflow metadata with a description and a default exported function:
+Workflow scripts should include `meta` with a description and a default exported function:
 
 ```js
-export const metadata = {
+export const meta = {
   description: "Short workflow description",
 };
 
-export default function workflow({ args, phase, log, agent, parallelAgents, applyPatch }) {
+export default function workflow({
+  args,
+  phase,
+  log,
+  agent,
+  parallel,
+  pipeline,
+  workflow,
+  applyPatch,
+}) {
   phase("scope", { input: args.input });
   return { reportMarkdown: "Done" };
 }
@@ -52,7 +55,7 @@ also allowed; `export {...}` lists are not. The export keywords are stripped lex
 sandbox evaluation, so never start a line inside a template literal with `export ` — it would be
 silently rewritten.
 
-Reusable project workflows live in `.mux/workflows/<name>.js`; global workflows live in `~/.mux/workflows/<name>.js`. Project and scratch workflows require Project Trust.
+Packaged reusable workflows should live inside skill directories and be invoked with `skill://<skill-name>/<file.js>`. Explicit workspace workflow files require Project Trust.
 
 ## Running workflows
 
@@ -72,7 +75,16 @@ Runs are durable, so stopping one is non-destructive:
 A workflow default export receives one object:
 
 ```js
-export default function workflow({ args, phase, log, agent, parallelAgents, applyPatch }) {}
+export default function workflow({
+  args,
+  phase,
+  log,
+  agent,
+  parallel,
+  pipeline,
+  workflow,
+  applyPatch,
+}) {}
 ```
 
 ### `args`
@@ -80,7 +92,7 @@ export default function workflow({ args, phase, log, agent, parallelAgents, appl
 The invocation payload from `workflow_run`. Plain-text slash args are passed as `{ input: "..." }`, so normalize `args.input` for commands like:
 
 ```text
-/workflow my-workflow review PR #123
+/workflow ./workflows/my-workflow.js review PR #123
 ```
 
 If the workflow declares `metadata.argsSchema`, Mux normalizes slash/CLI text against that schema before `args` reaches the workflow. Slash-friendly workflows that accept free-form prose should declare either an `input` string field or one `positional: true` string field:
@@ -97,7 +109,7 @@ export const metadata = {
 };
 ```
 
-Without an `input` or positional field, free-form text such as `/workflow my-workflow review PR #123` has nowhere to go and can fail validation as an unexpected positional argument. Recognized aliases are parsed out of `input` text; use structured JSON args (for example `{ "topic": "review --quick literally" }`) when you need to preserve flag-like text verbatim or target named fields directly.
+Without an `input` or positional field, free-form text such as `/workflow ./workflows/my-workflow.js review PR #123` has nowhere to go and can fail validation as an unexpected positional argument. Recognized aliases are parsed out of `input` text; use structured JSON args (for example `{ "topic": "review --quick literally" }`) when you need to preserve flag-like text verbatim or target named fields directly.
 
 ### `phase(name, details?)`
 
@@ -142,144 +154,99 @@ log("Trimmed lanes to max fan-out", {
 phase("lane-review", { lanes });
 ```
 
-### `agent(spec)`
+### `agent(prompt, options)`
 
 Runs one workflow-owned sub-agent and waits for its final report.
 
-Required fields:
+Required options:
 
 - `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
-- `prompt`: child task prompt.
-- `outputSchema`: JSON Schema subset used to validate the required `structuredOutput` submitted through `agent_report`.
+- `schema`: optional JSON object schema. When present, the child reports schema-shaped data through `agent_report` and `agent()` returns that structured object directly. When omitted, `agent()` returns the child report markdown string.
 
-Optional fields:
-
-- `title`: UI title; used as the spawned child workspace title and the run-card task row label, falling back to `id` when omitted. Prefer human numbering (e.g. 1-based "Verify claim 1") over raw 0-based step ids.
-- `agentId`: sub-agent type/id; defaults to the workflow adapter default (usually `explore`).
-- `isolation`: `"fork" | "none"` (default `"fork"`). Use `"none"` only for read-only context-gathering agents that must inspect the parent checkout's uncommitted/staged state; mutating/fixer agents should stay forked.
-- `onRefusal`: `"fail" | "fallback"` (default `"fallback"`). With `"fail"`, the step opts out of user-configured model-fallback chains so a model refusal fails the step honestly instead of silently retrying on a different model — recommended for verifier steps whose verdicts must come from the intended model.
-
-Returns:
-
-```ts
-{
-  taskId: string,
-  reportMarkdown: string,
-  title?: string,
-  structuredOutput?: unknown
-}
-```
-
-Workflow agent steps fail before child task creation when `outputSchema` is missing or uses unsupported schema keywords. If you only need prose, use a schema such as `s.object({ summary: s.string() })` and have the child put the prose under a structured field.
-
-`taskId` is a host-issued patch artifact handle for workflow-owned child tasks. Pass the whole agent result as `applyPatch({ source: result })` instead of inventing task IDs.
-
-Agent steps can fail terminally instead of returning a report. In particular, a model can refuse to answer (`model_refusal`): the child task is interrupted immediately and `agent(...)` throws with a descriptive message (e.g. `The model refused to continue (finishReason: content-filter): ...`) rather than retrying the same refusing request in a loop. Wrap agent steps in `try/catch` when the workflow should continue past a failed step — for example by recording an "abstain" outcome for verifier quorums (a refusal is not a verdict):
+Optional fields include `title`, `agentType`, `isolation`, and `onRefusal`. `model` and `effort` are rejected for now instead of being silently ignored.
 
 ```js
-let verdict;
-try {
-  const result = agent({ id: "verify", prompt, agentId: "explore", outputSchema: verdictSchema });
-  verdict = result.structuredOutput;
-} catch (error) {
-  if (String(error).includes("refused to continue")) {
-    // Treat the verifier as abstaining instead of failing the whole run.
-    verdict = { outcome: "abstain", reason: String(error) };
-  } else {
-    throw error;
-  }
-}
-```
-
-### `applyPatch(spec)`
-
-Applies a workflow-owned child task's git patch artifact to the current parent workspace. The host always dry-runs first in a temporary worktree and only performs the real apply when the dry-run succeeds. The conductor never receives raw patch text and cannot apply arbitrary patches.
-
-Required fields:
-
-- `id`: stable replay ID for this mutation step.
-- `source` (or `from`): an `agent(...)` result, a `parallelAgents(...)` item, or a workflow-owned `taskId` string.
-
-Optional fields:
-
-- `target`: currently only `"parent"`; this is where the existing task patch artifact is applied.
-- `projectPath` / `project_path`: limit a multi-project patch artifact to one project.
-- `threeWay` / `three_way`: defaults to `true` and maps to `git am --3way`.
-- `force`: allow re-apply / dirty-tree behavior exactly like `task_apply_git_patch`.
-- `onConflict`: currently only `"return"`.
-
-Returns structured status instead of throwing on ordinary patch conflicts:
-
-```ts
-{
-  success: boolean,
-  status: "applied" | "conflict" | "failed",
-  taskId: string,
-  projectResults?: unknown,
-  conflictPaths?: string[],
-  failedPatchSubject?: string,
-  error?: string,
-  note?: string
-}
-```
-
-On conflict, spawn a dedicated `exec` resolver: include the failing `taskId`, tell it to call `task_apply_git_patch` in its own workspace, resolve `git am` conflicts, commit the resolved result, and report; then call `applyPatch` on the resolver result.
-
-```js
-const implementation = agent({
-  id: "implement-auth-fix",
-  agentId: "exec",
-  prompt: execBrief,
-  outputSchema: {},
+const scope = agent("Scope this topic", {
+  id: "scope",
+  schema: {
+    type: "object",
+    required: ["lanes"],
+    properties: { lanes: { type: "array", items: { type: "string" } } },
+  },
 });
 
-let applied = applyPatch({
-  id: "apply-auth-fix",
-  source: implementation,
-  target: "parent",
-  onConflict: "return",
-});
-
-if (applied.status === "conflict") {
-  const resolver = agent({
-    id: "resolve-auth-fix-conflict",
-    agentId: "exec",
-    prompt: buildResolverBrief(applied),
-    outputSchema: {},
-  });
-  applied = applyPatch({ id: "apply-resolved-auth-fix", source: resolver });
-}
+const summaryMarkdown = agent("Write a concise markdown summary", { id: "summary" });
 ```
 
-### `parallelAgents(specs, options?)`
+### `parallel(thunks, options?)`
 
-Runs multiple `agent` specs concurrently and returns results in input order. Use this for review lanes, source summarization, claim verification, or other independent slices.
-
-Pass `options.maxParallel` (positive integer) to cap how many sub-agents run at once. Queued specs start as running ones finish (a sliding window), so one slow agent delays only its own slot. Prefer it over manually slicing specs into sequential `parallelAgents` batches, which stall on each batch's slowest agent.
+Runs independent workflow agent branches concurrently and returns results in input order. Each thunk should call `agent(...)` once. `options.maxParallel` may cap live child tasks.
 
 ```js
-const laneResults = parallelAgents(
-  lanes.map((lane) => ({
-    id: `review-${lane}`,
-    title: `Review ${lane}`,
-    prompt: lanePrompt(lane),
-    outputSchema: issueListSchema(),
-  }))
+const reviews = parallel(
+  lanes.map(
+    (lane) => () =>
+      agent(`Review ${lane}`, {
+        id: `review-${lane}`,
+        schema: issueListSchema(),
+      })
+  ),
+  { maxParallel: 6 }
 );
+```
 
-const verifications = parallelAgents(verifySpecs, { maxParallel: 10 });
+### `pipeline(items, ...stages)`
+
+Runs items through stage functions without a full-stage barrier. An item can advance to the next stage as soon as its current stage finishes, even while other items are still in earlier stages. Each stage may return a value or call `agent(...)` once.
+
+```js
+const results = pipeline(
+  lanes,
+  (lane) => agent(`Review ${lane}`, { id: `review-${lane}`, schema: reviewSchema }),
+  (review) =>
+    agent(`Verify ${JSON.stringify(review)}`, { id: `verify-${review.id}`, schema: verifySchema })
+);
+```
+
+### `workflow({ id, script_path, args })`
+
+Runs a nested durable workflow by explicit script path. `id` is required and participates in replay identity together with `script_path` and `args`; completed child runs are replayed from their source snapshot instead of re-resolving the file.
+
+```js
+const child = workflow({
+  id: "child-research",
+  script_path: "skill://workflow-smoke/workflow.js",
+  args: { message: "from parent" },
+});
+```
+
+### `applyPatch({ id, agentId, ... })`
+
+Applies the patch artifact produced by a completed workflow-owned agent step into the parent workspace. Prefer `agentId`, matching a prior `agent(..., { id })`; only use raw task IDs when integrating legacy steps. Patch application requires Project Trust and runs a dry-run before applying.
+
+```js
+const summary = agent("Implement the requested change", { id: "implement" });
+const patch = applyPatch({ id: "apply-implement", agentId: "implement" });
+if (!patch.success)
+  return { reportMarkdown: `Patch did not apply: ${patch.error ?? patch.status}` };
+return { reportMarkdown: summary };
 ```
 
 ## Structured output schemas
 
-`outputSchema` supports this JSON Schema subset:
+`schema` supports this JSON Schema subset:
 
 - `type` (including type arrays such as `["string", "null"]`)
 - `properties`
 - `required`
 - `items`
 - `additionalProperties`
-- `enum`
+- `enum` and `const`
+- `oneOf`, `anyOf`, and `allOf`
+- `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, and `pattern`
+- annotations such as `description`
+
+Workflow agent schemas must be top-level object schemas. Wrap scalar or array results in an object field, for example `{ type: "object", properties: { value: { type: "string" } } }`. `$ref` and remote schemas are not supported.
 
 Prefer `mux.schema` helpers over handwritten schema objects. For concise schemas, declare `const s = mux.schema;` at top level and use `s.*` in metadata/schema builders. Object fields are required by default; wrap optional fields with `s.optional(...)`, nullable values with `s.nullable(...)`, and use `additionalProperties: false` for deterministic outputs.
 
@@ -309,30 +276,29 @@ function issueListSchema() {
 
 ## Replay rules and gotchas
 
-- Every `agent` / `parallelAgents` item and every `applyPatch` call must have a stable `id`.
-- The replay key includes the step ID and normalized spec, so changing prompts, schemas, patch source IDs, or apply options creates new work.
-- `applyPatch` is a durable mutation effect: completed apply/conflict/failed results are replayed from the journal and are not re-applied on resume.
+- Every `agent(...)`, nested `workflow(...)`, and `applyPatch(...)` call must have a stable `id`; every `parallel(...)` thunk should call one `agent(...)` with a stable `id`.
+- The replay key includes the step ID and normalized spec, so changing prompts, schemas, script paths, args, or patch options creates new work.
 - The workflow conductor cannot call general tools, import modules, access Node, run shell, read files, use timers, or rely on `Date`/`Math.random`; put that work in delegated sub-agent prompts.
 - Put open-ended shell/filesystem/web investigation inside delegated sub-agent prompts.
-- Cap model-produced fan-out before calling `parallelAgents`.
+- Cap model-produced fan-out before calling `parallel(...)`.
 - Return `{ reportMarkdown, structuredOutput }` so the parent agent and UI both get useful output.
 
 ## Minimal pattern
 
 ```js
-export const metadata = {
+export const meta = {
+  name: "Deep Review",
   description: "Review a change with parallel lanes and verification",
 };
 
-export default function workflow({ args, phase, log, agent, parallelAgents }) {
+export default function workflow({ args, phase, log, agent, parallel }) {
   const target = normalizeTarget(args);
 
   phase("scope", { target });
-  const scope = agent({
+  const scope = agent("Identify review lanes for: " + target, {
     id: "scope",
     title: "Scope work",
-    prompt: "Identify review lanes for: " + target,
-    outputSchema: {
+    schema: {
       type: "object",
       required: ["lanes"],
       additionalProperties: false,
@@ -340,30 +306,27 @@ export default function workflow({ args, phase, log, agent, parallelAgents }) {
     },
   });
 
-  const lanes = scope.structuredOutput.lanes.slice(0, 6);
+  const lanes = scope.lanes.slice(0, 6);
   log("Running lanes", { lanes });
 
   phase("lane-review", { lanes });
-  const reviews = parallelAgents(
-    lanes.map(function (lane) {
-      return {
-        id: "review-" + lane,
-        title: "Review " + lane,
-        prompt: "Review " + target + " for " + lane + " issues.",
-        outputSchema: issueListSchema(),
-      };
-    })
+  const reviews = parallel(
+    lanes.map(
+      (lane) => () =>
+        agent("Review " + target + " for " + lane + " issues.", {
+          id: "review-" + lane,
+          title: "Review " + lane,
+          schema: issueListSchema(),
+        })
+    )
   );
 
   phase("final-synthesis", { reviewCount: reviews.length });
-  const final = agent({
+  const finalMarkdown = agent("Synthesize these review outputs: " + JSON.stringify(reviews), {
     id: "synthesize",
-    title: "Synthesize result",
-    prompt: "Synthesize these structured review outputs: " + JSON.stringify(reviews),
-    outputSchema: {},
   });
 
-  return { reportMarkdown: final.reportMarkdown };
+  return { reportMarkdown: finalMarkdown };
 }
 
 function normalizeTarget(args) {

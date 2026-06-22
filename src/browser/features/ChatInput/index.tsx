@@ -1560,14 +1560,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const requestId = ++workflowsRequestIdRef.current;
 
     const loadWorkflows = async () => {
-      const discoveryInput =
-        variant === "workspace" && workspaceId
-          ? { workspaceId }
-          : variant === "creation" && atMentionProjectPath
-            ? { projectPath: atMentionProjectPath }
-            : null;
-
-      if (!api || !discoveryInput || !dynamicWorkflowsExperimentEnabled) {
+      if (!api || !dynamicWorkflowsExperimentEnabled) {
         if (isMounted && workflowsRequestIdRef.current === requestId) {
           setWorkflowDefinitionDescriptors([]);
         }
@@ -1575,7 +1568,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       try {
-        const workflows = await api.workflows.listDefinitions(discoveryInput);
         const discoveryWorkspaceId = variant === "workspace" && workspaceId ? workspaceId : null;
         const runs =
           discoveryWorkspaceId != null && isTranscriptCaughtUp
@@ -1584,7 +1576,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (!isMounted || workflowsRequestIdRef.current !== requestId) {
           return;
         }
-        setWorkflowDefinitionDescriptors(Array.isArray(workflows) ? workflows : []);
+        setWorkflowDefinitionDescriptors([]);
         if (discoveryWorkspaceId == null) {
           return;
         }

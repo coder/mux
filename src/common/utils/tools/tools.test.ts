@@ -250,12 +250,7 @@ describe("getToolsForModel", () => {
         runtimeTempDir: "/tmp",
         workspaceId: "ws-1",
         workflowService: {
-          listDefinitions: mock(async () => []),
-          readDefinition: mock(async () => ({
-            descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
-            source: "export default function workflow() { return null; }",
-          })),
-          startNamedWorkflow: mock(async () => ({
+          startWorkflow: mock(async () => ({
             runId: "wfr_1",
             status: "completed" as const,
             result: null,
@@ -279,12 +274,7 @@ describe("getToolsForModel", () => {
         workspaceId: "ws-1",
         experiments: { dynamicWorkflows: true },
         workflowService: {
-          listDefinitions: mock(async () => []),
-          readDefinition: mock(async () => ({
-            descriptor: { name: "demo", description: "Demo", scope: "built-in", executable: true },
-            source: "export default function workflow() { return null; }",
-          })),
-          startNamedWorkflow: mock(async () => ({
+          startWorkflow: mock(async () => ({
             runId: "wfr_1",
             status: "completed" as const,
             result: null,
@@ -294,8 +284,8 @@ describe("getToolsForModel", () => {
       "ws-1",
       initStateManager
     );
-    expect(withExperiment.workflow_list).toBeDefined();
-    expect(withExperiment.workflow_read).toBeDefined();
+    expect(withExperiment.workflow_list).toBeUndefined();
+    expect(withExperiment.workflow_read).toBeUndefined();
     expect(withExperiment.workflow_run).toBeDefined();
     expect(withExperiment.workflow_resume).toBeDefined();
   });

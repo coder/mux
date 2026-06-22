@@ -8,42 +8,6 @@ import { WorkflowRunToolCall } from "@/browser/features/Tools/WorkflowRunToolCal
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 
-const storyApi = {
-  workflows: {
-    promoteScratch: (input: {
-      name: string;
-      description: string;
-      location: "project" | "global";
-    }) =>
-      Promise.resolve({
-        name: input.name,
-        description: input.description,
-        scope: input.location,
-        sourcePath:
-          input.location === "project"
-            ? `/repo/.mux/workflows/${input.name}.js`
-            : `~/.mux/workflows/${input.name}.js`,
-        executable: true,
-      }),
-  },
-};
-
-function StoryAPIProvider(props: { children: ReactNode }) {
-  return (
-    <APIContext.Provider
-      value={{
-        status: "connected",
-        api: storyApi as never,
-        error: null,
-        authenticate: () => undefined,
-        retry: () => undefined,
-      }}
-    >
-      {props.children}
-    </APIContext.Provider>
-  );
-}
-
 const meta = {
   ...lightweightMeta,
   title: "App/Chat/Tools/WorkflowRun",
@@ -57,7 +21,7 @@ type Story = StoryObj<typeof meta>;
 export const CompletedDeepResearch: Story = {
   args: {
     args: {
-      name: "deep-research",
+      script_path: "skill://deep-research/workflow.js",
       args: { topic: "workflow run cards" },
       run_in_background: false,
     },
@@ -77,6 +41,10 @@ export const CompletedDeepResearch: Story = {
           name: "deep-research",
           description: "Deep research",
           scope: "built-in",
+          requestedScriptPath: "skill://deep-research/workflow.js",
+          canonicalScriptPath: "skill://deep-research/workflow.js",
+          sourceKind: "skill",
+          sourceHash: "sha256:story",
           executable: true,
         },
         definitionSource: "export default function workflow() { return null; }",
@@ -376,7 +344,7 @@ export const RunningForegroundDiscovered: Story = {
   ),
   args: {
     args: {
-      name: "deep-research",
+      script_path: "skill://deep-research/workflow.js",
       args: { topic: "workflow run cards" },
       run_in_background: false,
     },
@@ -392,7 +360,7 @@ export const RunningBackgroundWithRun: Story = {
   ),
   args: {
     args: {
-      name: "deep-research",
+      script_path: "skill://deep-research/workflow.js",
       args: { topic: "workflow run cards" },
       run_in_background: true,
     },
@@ -406,35 +374,34 @@ export const RunningBackgroundWithRun: Story = {
   },
 };
 
-export const ScratchPromotable: Story = {
-  render: (args) => (
-    <StoryAPIProvider>
-      <WorkflowRunToolCall {...args} />
-    </StoryAPIProvider>
-  ),
+export const WorkspaceFileCompleted: Story = {
   args: {
     args: {
-      name: "scratch",
-      args: { topic: "promote this workflow" },
+      script_path: "./workflows/local-report.js",
+      args: { topic: "local workflow" },
       run_in_background: true,
     },
     status: "completed",
     result: {
       status: "completed",
-      runId: "wfr_scratch_story",
-      result: { reportMarkdown: "# Scratch workflow\n\nThis one-off workflow can be promoted." },
+      runId: "wfr_workspace_file_story",
+      result: { reportMarkdown: "# Local workflow\n\nExplicit workspace-file workflow completed." },
       run: {
-        id: "wfr_scratch_story",
+        id: "wfr_workspace_file_story",
         workspaceId: "workspace-1",
         definition: {
-          name: "scratch",
-          description: "Scratch workflow",
-          scope: "scratch",
+          name: "local-report",
+          description: "Workspace file workflow",
+          scope: "project",
+          requestedScriptPath: "./workflows/local-report.js",
+          canonicalScriptPath: "./workflows/local-report.js",
+          sourceKind: "workspace-file",
+          sourceHash: "sha256:workspace-file-story",
           executable: true,
         },
         definitionSource: "export default function workflow() { return null; }",
-        definitionHash: "sha256:scratch-story",
-        args: { topic: "promote this workflow" },
+        definitionHash: "sha256:workspace-file-story",
+        args: { topic: "local workflow" },
         status: "completed",
         createdAt: "2026-05-29T00:00:00.000Z",
         updatedAt: "2026-05-29T00:00:02.000Z",

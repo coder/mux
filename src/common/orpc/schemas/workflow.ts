@@ -61,6 +61,10 @@ export const WorkflowDefinitionDescriptorSchema = z
     description: z.string().min(1).max(1024),
     scope: WorkflowDefinitionScopeSchema,
     sourcePath: z.string().min(1).optional(),
+    requestedScriptPath: z.string().min(1).optional(),
+    canonicalScriptPath: z.string().min(1).optional(),
+    sourceKind: z.enum(["skill", "workspace-file"]).optional(),
+    sourceHash: z.string().min(1).optional(),
     executable: z.boolean(),
     blockedReason: z.string().min(1).optional(),
   })

@@ -66,13 +66,30 @@ describe("validateJsonSchemaSubset", () => {
     });
   });
 
-  test("rejects unsupported schema keywords instead of ignoring them", () => {
-    const result = validateJsonSchemaSubset({ type: "string", pattern: "^ok$" }, "ok");
-
-    expect(result).toEqual({
-      success: false,
-      errors: [{ path: "$", message: "Unsupported JSON Schema keyword: pattern" }],
+  test("supports richer JSON Schema keywords", () => {
+    expect(validateJsonSchemaSubset({ type: "string", pattern: "^ok$" }, "ok")).toEqual({
+      success: true,
     });
+
+    expect(
+      validateJsonSchemaSubset(
+        {
+          type: "object",
+          required: ["kind", "value", "tags"],
+          properties: {
+            kind: { const: "answer" },
+            value: {
+              oneOf: [
+                { type: "string", minLength: 3 },
+                { type: "number", minimum: 10 },
+              ],
+            },
+            tags: { type: "array", minItems: 1, maxItems: 2, items: { type: "string" } },
+          },
+        },
+        { kind: "answer", value: "yes", tags: ["a"] }
+      )
+    ).toEqual({ success: true });
   });
 
   test("supports JSON Schema type unions", () => {
@@ -92,21 +109,66 @@ describe("validateJsonSchemaSubset", () => {
     ).toEqual({ success: true });
   });
 
-  test("rejects schema-valued additionalProperties instead of ignoring extra values", () => {
+  test("supports schema-valued additionalProperties", () => {
+    expect(
+      validateJsonSchemaSubset(
+        { type: "object", additionalProperties: { type: "string" } },
+        { extra: "ok" }
+      )
+    ).toEqual({ success: true });
+
     const result = validateJsonSchemaSubset(
       { type: "object", additionalProperties: { type: "string" } },
       { extra: 42 }
     );
 
-    expect(result).toEqual({
+    expect(result.success).toBe(false);
+  });
+
+  test("can require workflow tool schemas to be top-level objects", () => {
+    expect(
+      validateJsonSchemaSubsetSchema(
+        { type: "object", properties: { summary: { type: "string" } } },
+        {
+          requireObjectSchema: true,
+        }
+      )
+    ).toEqual({ success: true });
+
+    expect(validateJsonSchemaSubsetSchema({}, { requireObjectSchema: true })).toEqual({
+      success: true,
+    });
+
+    expect(
+      validateJsonSchemaSubsetSchema({ type: "string" }, { requireObjectSchema: true })
+    ).toEqual({
       success: false,
       errors: [
         {
-          path: "$.additionalProperties",
-          message: "Unsupported JSON Schema additionalProperties schema",
+          path: "$.type",
+          message:
+            "Workflow agent schemas must be object schemas; wrap scalar or array results in an object field",
         },
       ],
     });
+  });
+
+  test("rejects $ref and overly deep schemas", () => {
+    expect(validateJsonSchemaSubsetSchema({ $ref: "#/defs/value" })).toEqual({
+      success: false,
+      errors: [{ path: "$", message: "$ref is not supported in workflow schemas" }],
+    });
+
+    let schema: Record<string, unknown> = { type: "string" };
+    for (let i = 0; i < 66; i += 1) {
+      schema = { type: "object", properties: { nested: schema } };
+    }
+
+    const result = validateJsonSchemaSubsetSchema(schema);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors[0]?.message).toBe("Schema is too deeply nested");
+    }
   });
 
   test("supports enum, integer, and additionalProperties false", () => {

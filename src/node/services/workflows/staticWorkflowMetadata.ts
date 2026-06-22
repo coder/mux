@@ -88,11 +88,11 @@ function findStaticMetadataLiteral(source: string): MetadataLiteralRange | null 
   const assignments = [
     {
       declarationKind: "namedExport" as const,
-      pattern: /(^|[;\n])\s*export\s+(?:const|let|var)\s+metadata\s*=/mu,
+      pattern: /(^|[;\n])\s*export\s+(?:const|let|var)\s+(?:meta|metadata)\s*=/mu,
     },
     {
       declarationKind: "commonJs" as const,
-      pattern: /(^|[;\n])\s*(?:module\.)?exports\.metadata\s*=/mu,
+      pattern: /(^|[;\n])\s*(?:module\.)?exports\.(?:meta|metadata)\s*=/mu,
     },
   ];
   for (const assignment of assignments) {

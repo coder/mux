@@ -31,10 +31,6 @@ import {
   AgentIdSchema,
   AgentSkillPackageSchema,
   SkillNameSchema,
-  WorkflowDefinitionArgSummarySchema,
-  WorkflowDefinitionDescriptorSchema,
-  WorkflowDefinitionMetadataSchema,
-  WorkflowNameSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
   WorkflowStepStatusSchema,
@@ -1052,53 +1048,14 @@ export const TaskListToolResultSchema = z
 // workflow_run (durable workflow orchestration)
 // -----------------------------------------------------------------------------
 
-export const WorkflowListToolArgsSchema = z.object({}).strict();
-
-export const WorkflowDefinitionToolDescriptorSchema = z.intersection(
-  WorkflowDefinitionDescriptorSchema,
-  z
-    .object({
-      args: z.array(WorkflowDefinitionArgSummarySchema).optional(),
-    })
-    .passthrough()
-);
-
-export const WorkflowListToolResultSchema = z
-  .object({
-    workflows: z.array(WorkflowDefinitionToolDescriptorSchema),
-  })
-  .strict();
-
-export const WorkflowReadToolViewSchema = z.enum(["metadata", "source"]);
-
-export const WorkflowReadToolArgsSchema = z
-  .object({
-    name: WorkflowNameSchema,
-    view: WorkflowReadToolViewSchema.nullish(),
-  })
-  .strict();
-
-export const WorkflowReadToolSourceStatsSchema = z
-  .object({
-    chars: z.number().int().nonnegative(),
-    lines: z.number().int().nonnegative(),
-  })
-  .strict();
-
-export const WorkflowReadToolResultSchema = z
-  .object({
-    view: WorkflowReadToolViewSchema,
-    descriptor: WorkflowDefinitionDescriptorSchema,
-    metadata: WorkflowDefinitionMetadataSchema.nullable(),
-    args: z.array(WorkflowDefinitionArgSummarySchema).optional(),
-    sourceStats: WorkflowReadToolSourceStatsSchema,
-    source: z.string().min(1).optional(),
-  })
-  .strict();
-
 export const WorkflowRunToolArgsSchema = z
   .object({
-    name: WorkflowNameSchema,
+    script_path: z
+      .string()
+      .min(1)
+      .describe(
+        'Explicit workflow script path, such as "skill://deep-research/workflow.js" or "./workflows/research.js".'
+      ),
     args: z.unknown().nullish(),
     run_in_background: z
       .boolean()
@@ -1942,24 +1899,14 @@ export const TOOL_DEFINITIONS = {
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
   },
-  workflow_list: {
-    description:
-      "List durable workflow definitions available in this workspace. Use this before workflow_run when you do not already know the workflow name. Returns descriptors plus compact argument hints when a workflow declares metadata.argsSchema, so many workflows can be run without a follow-up read. Before writing or editing workflow JS, read the built-in workflow-authoring skill. Scratch workflows are workspace files at .mux/workflows/.scratch/<name>.js and should be authored with file_read/file_edit_* tools.",
-    schema: WorkflowListToolArgsSchema,
-  },
-  workflow_read: {
-    description:
-      "Read a durable workflow definition by name. Defaults to metadata view, returning descriptor, parsed metadata, compact argument hints, and source size without the implementation source to avoid context pollution. Pass view='source' only when you truly need the full workflow JavaScript. Before authoring new workflow JS, read the built-in workflow-authoring skill for available globals, schema limits, and replay rules.",
-    schema: WorkflowReadToolArgsSchema,
-  },
   workflow_run: {
     // Prefer foreground workflows so callers do not waste a turn polling when no other work can proceed.
     description:
-      "Start a durable workflow run by workflow name. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
+      "Start a durable workflow run from an explicit JavaScript script_path, such as skill://deep-research/workflow.js or ./workflows/research.js. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
+      "Use agent_skill_read / agent_skill_read_file to discover and inspect skill-packaged workflows; non-skill workflow files must be addressed by an explicit known path and can be inspected with normal file tools. " +
       "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
       "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +
-      "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs. " +
-      "To create a scratch workflow, first read the built-in workflow-authoring skill, then write .mux/workflows/.scratch/<name>.js with an export const metadata description and default exported function, then run it by name.",
+      "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs.",
     schema: WorkflowRunToolArgsSchema,
   },
   workflow_resume: {
@@ -2857,9 +2804,7 @@ export function getAvailableTools(
     "task_apply_git_patch",
     "task_terminate",
     "task_list",
-    ...(enableDynamicWorkflows
-      ? ["workflow_list", "workflow_read", "workflow_run", "workflow_resume"]
-      : []),
+    ...(enableDynamicWorkflows ? ["workflow_run", "workflow_resume"] : []),
     ...(enableAgentReport ? ["agent_report"] : []),
     "set_goal",
     "get_goal",

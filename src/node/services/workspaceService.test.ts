@@ -476,7 +476,7 @@ describe("WorkspaceService workflow invocation events", () => {
         const persisted = await workspaceService.appendWorkflowRunInvocation({
           workspaceId,
           rawCommand: "/demo investigate live events",
-          name: "demo",
+          scriptPath: "./workflows/demo.js",
           args: { input: "investigate live events" },
           runId: "wfr_live_events",
           status: "running",
@@ -543,7 +543,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])
@@ -608,7 +608,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])
@@ -698,7 +698,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])
@@ -767,7 +767,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])
@@ -824,7 +824,7 @@ describe("WorkspaceService workflow invocation events", () => {
       const persisted = await workspaceService.appendWorkflowRunInvocation({
         workspaceId,
         rawCommand: "/demo currentness boundary",
-        name: "demo",
+        scriptPath: "./workflows/demo.js",
         args: { input: "currentness boundary" },
         runId,
         status: "running",
@@ -882,7 +882,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])
@@ -940,7 +940,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])
@@ -1048,7 +1048,7 @@ describe("WorkspaceService workflow invocation events", () => {
             toolCallId: "workflow-call-1",
             toolName: "workflow_run",
             state: "output-available",
-            input: { name: "demo", args: {}, run_in_background: true },
+            input: { script_path: "./workflows/demo.js", args: {}, run_in_background: true },
             output: { status: "running", runId, result: null },
           },
         ])

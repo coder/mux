@@ -1,4 +1,7 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/require-await */
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import { COMPLETED_REPORT_REFETCH_NOTE } from "@/common/utils/tools/toolDefinitions";
@@ -13,6 +16,14 @@ const mockToolCallOptions: ToolExecutionOptions = {
   messages: [],
 };
 
+async function writeWorkflowScript(root: string): Promise<string> {
+  const relativePath = "workflows/deep-research.js";
+  const target = path.join(root, relativePath);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, "export default function workflow() { return null; }\n", "utf-8");
+  return `./${relativePath}`;
+}
+
 function createWorkflowRunRecord(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {
   return {
     id: "wfr_123",
@@ -20,7 +31,7 @@ function createWorkflowRunRecord(overrides: Partial<WorkflowRunRecord> = {}): Wo
     definition: {
       name: "deep-research",
       description: "Deep research",
-      scope: "built-in",
+      scope: "project",
       executable: true,
     },
     definitionSource: "export default function workflow() { return null; }",
@@ -43,79 +54,63 @@ function createWorkflowRunRecord(overrides: Partial<WorkflowRunRecord> = {}): Wo
 }
 
 describe("workflow_run tool", () => {
-  test("starts a named workflow through WorkflowService", async () => {
+  test("starts an explicit script_path workflow through WorkflowService", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool");
-    const startNamedWorkflow = mock(async () => ({
+    const scriptPath = await writeWorkflowScript(tempDir.path);
+    const startWorkflow = mock(async () => ({
       runId: "wfr_123",
       status: "completed" as const,
       result: { reportMarkdown: "done" },
     }));
-    const getRun = mock(async () => ({
-      id: "wfr_123",
-      workspaceId: "workspace-1",
-      definition: {
-        name: "deep-research",
-        description: "Deep research",
-        scope: "built-in" as const,
-        executable: true,
-      },
-      definitionSource: "export default function workflow() { return null; }",
-      definitionHash: "sha256:test",
-      args: { topic: "workflow tools" },
-      status: "completed" as const,
-      createdAt: "2026-05-29T00:00:00.000Z",
-      updatedAt: "2026-05-29T00:00:01.000Z",
-      events: [
-        {
-          sequence: 1,
-          type: "status" as const,
-          at: "2026-05-29T00:00:00.000Z",
-          status: "running" as const,
-        },
-        { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:00.000Z", name: "scope" },
-        {
-          sequence: 3,
-          type: "result" as const,
-          at: "2026-05-29T00:00:01.000Z",
-          result: { reportMarkdown: "done" },
-        },
-        {
-          sequence: 4,
-          type: "status" as const,
-          at: "2026-05-29T00:00:01.000Z",
-          status: "completed" as const,
-        },
-      ],
-      steps: [],
-    }));
+    const getRun = mock(async () =>
+      createWorkflowRunRecord({
+        status: "completed",
+        updatedAt: "2026-05-29T00:00:01.000Z",
+        events: [
+          {
+            sequence: 1,
+            type: "status" as const,
+            at: "2026-05-29T00:00:00.000Z",
+            status: "running" as const,
+          },
+          { sequence: 2, type: "phase" as const, at: "2026-05-29T00:00:00.000Z", name: "scope" },
+          {
+            sequence: 3,
+            type: "result" as const,
+            at: "2026-05-29T00:00:01.000Z",
+            result: { reportMarkdown: "done" },
+          },
+          {
+            sequence: 4,
+            type: "status" as const,
+            at: "2026-05-29T00:00:01.000Z",
+            status: "completed" as const,
+          },
+        ],
+      })
+    );
     const abortController = new AbortController();
     const tool = createWorkflowRunTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
       trusted: true,
       workflowService: {
-        listDefinitions: mock(async () => []),
-        readDefinition: mock(async () => ({
-          descriptor: {
-            name: "deep-research",
-            description: "Deep research",
-            scope: "built-in",
-            executable: true,
-          },
-          source: "export default function workflow() { return null; }",
-        })),
-        startNamedWorkflow,
+        startWorkflow,
         getRun,
       },
     });
 
     const result = await tool.execute!(
-      { name: "deep-research", args: { topic: "workflow tools" }, run_in_background: false },
+      { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: false },
       { ...mockToolCallOptions, abortSignal: abortController.signal }
     );
 
-    expect(startNamedWorkflow).toHaveBeenCalledWith(
+    expect(startWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "deep-research",
+        script: expect.objectContaining({
+          requestedScriptPath: scriptPath,
+          sourceKind: "workspace-file",
+          source: expect.stringContaining("export default"),
+        }),
         workspaceId: "workspace-1",
         projectTrusted: true,
         args: { topic: "workflow tools" },
@@ -139,17 +134,13 @@ describe("workflow_run tool", () => {
 
   test("emits a workflow run attachment when the durable run is created", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool-attached");
+    const scriptPath = await writeWorkflowScript(tempDir.path);
     const attachedRun = createWorkflowRunRecord({ id: "wfr_attached" });
     const emittedEvents: WorkflowRunAttachedEvent[] = [];
     let emitChatEventSettled = false;
     let onRunCreatedWaitedForEmission = false;
-    const startNamedWorkflow = mock(
+    const startWorkflow = mock(
       async (input: {
-        name: string;
-        workspaceId: string;
-        projectTrusted: boolean;
-        args: unknown;
-        abortSignal?: AbortSignal;
         onRunCreated?: (event: {
           runId: string;
           status: "pending";
@@ -178,23 +169,13 @@ describe("workflow_run tool", () => {
         }
       },
       workflowService: {
-        listDefinitions: mock(async () => []),
-        readDefinition: mock(async () => ({
-          descriptor: {
-            name: "deep-research",
-            description: "Deep research",
-            scope: "built-in",
-            executable: true,
-          },
-          source: "export default function workflow() { return null; }",
-        })),
-        startNamedWorkflow,
+        startWorkflow,
         getRun: mock(async () => attachedRun),
       },
     });
 
     await tool.execute!(
-      { name: "deep-research", args: { topic: "workflow tools" }, run_in_background: false },
+      { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: false },
       mockToolCallOptions
     );
 
@@ -210,12 +191,13 @@ describe("workflow_run tool", () => {
     expect(typeof emittedEvents[0]?.timestamp).toBe("number");
   });
 
-  test("starts a workflow in background mode", async () => {
+  test("starts an explicit script_path workflow in background mode", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool-background");
-    const startNamedWorkflow = mock(async () => {
+    const scriptPath = await writeWorkflowScript(tempDir.path);
+    const startWorkflow = mock(async () => {
       throw new Error("foreground start should not be used");
     });
-    const startNamedWorkflowInBackground = mock(async () => ({
+    const startWorkflowInBackground = mock(async () => ({
       runId: "wfr_background",
       status: "running" as const,
       result: null,
@@ -223,54 +205,49 @@ describe("workflow_run tool", () => {
     const getRun = mock(async () => null);
     const tool = createWorkflowRunTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
-      trusted: false,
+      trusted: true,
       workflowService: {
-        listDefinitions: mock(async () => []),
-        readDefinition: mock(async () => ({
-          descriptor: {
-            name: "deep-research",
-            description: "Deep research",
-            scope: "built-in",
-            executable: true,
-          },
-          source: "export default function workflow() { return null; }",
-        })),
-        startNamedWorkflow,
-        startNamedWorkflowInBackground,
+        startWorkflow,
+        startWorkflowInBackground,
         getRun,
       },
     });
 
     const result = await tool.execute!(
-      { name: "deep-research", args: { topic: "workflow tools" }, run_in_background: true },
+      { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: true },
       mockToolCallOptions
     );
 
     const references = await readAgentWorkflowRunReferences(tempDir.path);
     expect(references.map((reference) => reference.runId)).toContain("wfr_background");
 
-    expect(startNamedWorkflowInBackground).toHaveBeenCalledWith(
+    expect(startWorkflowInBackground).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "deep-research",
+        script: expect.objectContaining({ requestedScriptPath: scriptPath }),
         workspaceId: "workspace-1",
-        projectTrusted: false,
+        projectTrusted: true,
         args: { topic: "workflow tools" },
         onRunCreated: expect.any(Function),
       })
     );
-    expect(startNamedWorkflow).not.toHaveBeenCalled();
+    expect(startWorkflow).not.toHaveBeenCalled();
     expect(result).toEqual({ status: "running", runId: "wfr_background", result: null });
   });
 
   test("requires the workflow service", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool-missing");
+    const scriptPath = await writeWorkflowScript(tempDir.path);
     const tool = createWorkflowRunTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
     });
 
     await expect(
       Promise.resolve(
-        tool.execute!({ name: "demo", args: {}, run_in_background: false }, mockToolCallOptions)
+        tool.execute!(
+          { script_path: scriptPath, args: {}, run_in_background: false },
+          mockToolCallOptions
+        )
       )
     ).rejects.toThrow(/workflowService/);
   });

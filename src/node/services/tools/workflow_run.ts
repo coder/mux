@@ -12,6 +12,7 @@ import {
   recordBackgroundWorkflowRunReference,
   requireWorkspaceId,
 } from "./toolUtils";
+import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 
 function requireWorkflowService(config: ToolConfiguration) {
   if (!config.workflowService) {
@@ -20,13 +21,22 @@ function requireWorkflowService(config: ToolConfiguration) {
   return config.workflowService;
 }
 
+function requireForegroundWorkflowStart(
+  workflowService: NonNullable<ToolConfiguration["workflowService"]>
+) {
+  if (workflowService.startWorkflow == null) {
+    throw new Error("workflow_run requires startWorkflow");
+  }
+  return workflowService.startWorkflow.bind(workflowService);
+}
+
 function requireBackgroundWorkflowStart(
   workflowService: NonNullable<ToolConfiguration["workflowService"]>
 ) {
-  if (workflowService.startNamedWorkflowInBackground == null) {
-    throw new Error("workflow_run background mode requires startNamedWorkflowInBackground");
+  if (workflowService.startWorkflowInBackground == null) {
+    throw new Error("workflow_run background mode requires startWorkflowInBackground");
   }
-  return workflowService.startNamedWorkflowInBackground.bind(workflowService);
+  return workflowService.startWorkflowInBackground.bind(workflowService);
 }
 
 function isBackgroundWorkflowResult(
@@ -45,8 +55,14 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
       const workflowService = requireWorkflowService(config);
       const toolCallId = options.toolCallId;
 
+      const script = await resolveWorkflowScript({
+        scriptPath: args.script_path,
+        runtime: config.runtime,
+        workspacePath: config.workspaceExecutionRootPath ?? config.cwd,
+        projectTrusted: config.trusted === true,
+      });
       const startInput = {
-        name: args.name,
+        script,
         workspaceId,
         projectTrusted: config.trusted === true,
         args: args.args ?? {},
@@ -64,7 +80,7 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
       const result =
         args.run_in_background === true
           ? await requireBackgroundWorkflowStart(workflowService)(startInput)
-          : await workflowService.startNamedWorkflow({
+          : await requireForegroundWorkflowStart(workflowService)({
               ...startInput,
               ...(options.abortSignal != null ? { abortSignal: options.abortSignal } : {}),
             });

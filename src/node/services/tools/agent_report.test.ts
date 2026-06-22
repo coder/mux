@@ -77,7 +77,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService,
-      workflowAgentOutputSchema: { type: "object", description: "pre-upgrade schema" },
+      workflowAgentOutputSchema: { $ref: "#/defs/legacy" },
       allowLegacyInvalidWorkflowAgentOutputSchema: true,
     });
 
@@ -113,15 +113,31 @@ describe("agent_report tool", () => {
     });
 
     const inputSchema = tool.inputSchema as { jsonSchema?: unknown };
-    expect(inputSchema.jsonSchema).toEqual({
-      type: "object",
-      properties: {
-        reportMarkdown: { type: "string", minLength: 1 },
-        structuredOutput: outputSchema,
-        title: { anyOf: [{ type: "string" }, { type: "null" }] },
+    expect(inputSchema.jsonSchema).toEqual(outputSchema);
+  });
+
+  it("accepts schema-shaped workflow output without markdown wrapper", async () => {
+    using tempDir = new TestTempDir("test-agent-report-tool-direct-structured");
+    const tool = createAgentReportTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
+      taskService: {
+        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      } as unknown as TaskService,
+      workflowAgentOutputSchema: {
+        type: "object",
+        required: ["claims"],
+        properties: { claims: { type: "array", items: { type: "string" } } },
+        additionalProperties: false,
       },
-      required: ["reportMarkdown", "structuredOutput", "title"],
-      additionalProperties: false,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ claims: ["claim"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      success: true,
+      message: "Report submitted successfully.",
     });
   });
 
@@ -147,10 +163,7 @@ describe("agent_report tool", () => {
     });
 
     const result: unknown = await Promise.resolve(
-      tool.execute!(
-        { reportMarkdown: "done", structuredOutput: { claims: [1] } },
-        mockToolCallOptions
-      )
+      tool.execute!({ claims: [1] }, mockToolCallOptions)
     );
 
     expect(result).toEqual({
@@ -182,10 +195,7 @@ describe("agent_report tool", () => {
     });
 
     const result: unknown = await Promise.resolve(
-      tool.execute!(
-        { reportMarkdown: "done", structuredOutput: { claims: ["a"] } },
-        mockToolCallOptions
-      )
+      tool.execute!({ claims: ["a"] }, mockToolCallOptions)
     );
 
     expect(result).toEqual({

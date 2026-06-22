@@ -72,11 +72,8 @@ import {
 } from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
-import { AutomationModal } from "../AutomationModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
-import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { getExistingWorkspaceProjectWorkflowScheduleMatch } from "@/browser/utils/projectWorkflowSchedules";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -459,7 +456,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath } = metadata;
-  const dynamicWorkflowsEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
@@ -513,28 +509,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       ? `${groupLabel} · ${workspaceTitle}`
       : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
-  const { getProjectConfig, userProjects } = useProjectContext();
-  const metadataSubProjectConfig =
-    metadata.subProjectPath != null ? getProjectConfig(metadata.subProjectPath) : undefined;
-  const sectionProjectConfig = sectionId != null ? getProjectConfig(sectionId) : undefined;
-  const automationProjectPath =
-    metadata.subProjectPath != null && metadataSubProjectConfig?.parentProjectPath != null
-      ? metadata.subProjectPath
-      : sectionId != null && sectionProjectConfig?.parentProjectPath != null
-        ? sectionId
-        : projectPath;
-  const projectConfig = getProjectConfig(automationProjectPath);
-  const projectWorkflowScheduleMatch = getExistingWorkspaceProjectWorkflowScheduleMatch({
-    projectPath: automationProjectPath,
-    projectConfig,
-    userProjects,
-    workspaceId,
-  });
-  const projectWorkflowSchedule = projectWorkflowScheduleMatch?.schedule;
-  const automationScheduleProjectPath =
-    projectWorkflowScheduleMatch?.projectPath ?? automationProjectPath;
-
-  const [automationModalOpen, setAutomationModalOpen] = useState(false);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuFrameRef = useRef<number | null>(null);
@@ -998,9 +972,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     onConfigureHeartbeat={
                       workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
                     }
-                    onConfigureAutomation={
-                      dynamicWorkflowsEnabled ? () => setAutomationModalOpen(true) : null
-                    }
                     onStopRuntime={
                       isRuntimeRunning && onStopRuntime
                         ? () =>
@@ -1064,17 +1035,6 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                   />
                 </PopoverContent>
               </Popover>
-              {dynamicWorkflowsEnabled && automationModalOpen && (
-                <AutomationModal
-                  projectPath={automationScheduleProjectPath}
-                  workspaceId={workspaceId}
-                  workspaceName={displayTitle}
-                  workspaceWorkflowSchedule={metadata.workflowSchedule}
-                  projectWorkflowSchedule={projectWorkflowSchedule}
-                  open={automationModalOpen}
-                  onOpenChange={setAutomationModalOpen}
-                />
-              )}
               {workspaceHeartbeatsEnabled && (
                 <WorkspaceHeartbeatModal
                   workspaceId={workspaceId}

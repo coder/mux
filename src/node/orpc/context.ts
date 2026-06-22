@@ -1,4 +1,3 @@
-import type { WorkflowSchedulerService } from "@/node/services/workflows/WorkflowSchedulerService";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { IncomingHttpHeaders } from "http";
 import type { Config } from "@/node/config";
@@ -95,7 +94,6 @@ export interface ORPCContext {
   desktopSessionManager: DesktopSessionManager;
   desktopTokenManager: DesktopTokenManager;
   desktopBridgeServer: DesktopBridgeServer;
-  workflowSchedulerService: WorkflowSchedulerService;
   workflowRuntimeFactory: IJSRuntimeFactory;
   headers?: IncomingHttpHeaders;
 }

@@ -238,8 +238,6 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   bash_output: Wrench,
   bash_background_terminate: Square,
   bash_background_list: List,
-  workflow_list: List,
-  workflow_read: BookOpen,
   workflow_run: Sparkles,
   workflow_resume: RotateCcw,
   agent_report: FileText,

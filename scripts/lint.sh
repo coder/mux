@@ -26,7 +26,6 @@ fi
 # alongside the TS sources (they get dedicated non-type-aware config blocks).
 ESLINT_PATTERNS=(
   'src/**/*.{ts,tsx}'
-  'src/node/builtinWorkflows/*.js'
   'src/node/workflowRuntime/*.js'
 )
 

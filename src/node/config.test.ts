@@ -56,6 +56,55 @@ describe("Config", () => {
     });
   });
 
+  describe("legacy workflow schedule cleanup", () => {
+    it("drops named workflow schedule config while loading", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              "/repo",
+              {
+                workflowSchedules: [
+                  {
+                    id: "legacy-project-schedule",
+                    enabled: true,
+                    workflowName: "old-workflow",
+                    intervalMs: 300_000,
+                    target: { type: "new-workspace", trunkBranch: "main" },
+                  },
+                ],
+                workspaces: [
+                  {
+                    path: "/repo/workspace",
+                    id: "workspace-1",
+                    name: "workspace",
+                    workflowSchedule: {
+                      enabled: true,
+                      workflowName: "old-workflow",
+                      intervalMs: 300_000,
+                    },
+                  },
+                ],
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      const project = loaded.projects.get("/repo") as Record<string, unknown> | undefined;
+      const workspaces = project?.workspaces;
+      const workspace = Array.isArray(workspaces)
+        ? (workspaces[0] as Record<string, unknown> | undefined)
+        : undefined;
+
+      expect(project?.workflowSchedules).toBeUndefined();
+      expect(workspace?.workflowSchedule).toBeUndefined();
+    });
+  });
+
   describe("editConfig", () => {
     it("serializes concurrent edits so no update is lost", async () => {
       // Regression: editConfig used to be a non-serialized read-modify-write

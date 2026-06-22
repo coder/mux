@@ -133,7 +133,9 @@ export function buildWorkflowResultContextMessage(input: {
 }
 
 export interface WorkflowRunCardInput {
-  name: string;
+  scriptPath?: string;
+  /** Legacy persisted/test fixtures may still identify old named workflow invocations. */
+  name?: string;
   args: unknown;
 }
 
@@ -174,7 +176,11 @@ export function buildWorkflowRunToolPart(
   result: WorkflowRunCardResult,
   now = Date.now()
 ): WorkflowRunToolPart {
-  assert(input.name.length > 0, "buildWorkflowRunToolPart: workflow name is required");
+  const scriptPath = input.scriptPath ?? input.name;
+  assert(
+    scriptPath != null && scriptPath.length > 0,
+    "buildWorkflowRunToolPart: workflow scriptPath is required"
+  );
   assert(result.runId.length > 0, "buildWorkflowRunToolPart: runId is required");
 
   return {
@@ -183,7 +189,7 @@ export function buildWorkflowRunToolPart(
     toolName: "workflow_run",
     state: "output-available",
     input: {
-      name: input.name,
+      script_path: scriptPath,
       args: input.args,
       run_in_background: true,
     },

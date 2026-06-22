@@ -111,7 +111,6 @@ import type {
   ProjectRef,
   WorkspaceActivitySnapshot,
   WorkspaceMetadata,
-  WorkspaceWorkflowSchedule,
 } from "@/common/types/workspace";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
@@ -172,12 +171,6 @@ import {
   HEARTBEAT_RESET_BOUNDARY_MESSAGE,
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
-import {
-  WORKFLOW_SCHEDULE_CONTEXT_PREPARATION_TIMEOUT_MS,
-  WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE,
-  type WorkflowScheduleContextMode,
-} from "@/constants/workflowSchedule";
-import { getWorkflowScheduleNewWorkspaceTargetUnavailableReason } from "@/common/utils/workflowScheduleTarget";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   GOAL_BUDGET_LIMIT_KIND,
@@ -865,20 +858,6 @@ interface WorkspaceHistoryLoadMoreResult {
 
 function isCompactedSummaryMessage(message: MuxMessage): boolean {
   return isDurableCompactedMarker(message.metadata?.compacted);
-}
-
-function getLatestCompactionBoundaryEpoch(messages: MuxMessage[]): number {
-  let latestEpoch = 0;
-  for (const message of messages) {
-    if (
-      isDurableCompactedMarker(message.metadata?.compacted) &&
-      message.metadata?.compactionBoundary === true &&
-      isPositiveInteger(message.metadata.compactionEpoch)
-    ) {
-      latestEpoch = Math.max(latestEpoch, message.metadata.compactionEpoch);
-    }
-  }
-  return latestEpoch;
 }
 
 function getNextCompactionEpochForAppendBoundary(
@@ -4222,140 +4201,6 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private normalizeWorkflowScheduleForPersist(
-    schedule: Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt">,
-    source: { sourceProjectPath: string; sourceWorkspace: Workspace }
-  ): Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt"> {
-    const workflowName = schedule.workflowName.trim();
-    assert(workflowName.length > 0, "Workflow schedule requires a non-empty workflowName");
-
-    const contextMode = schedule.contextMode ?? WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE;
-    assert(
-      contextMode === "normal" || contextMode === "compact" || contextMode === "reset",
-      `Unsupported workflow schedule context mode: ${String(contextMode)}`
-    );
-
-    const target = schedule.target;
-    let normalizedTarget: WorkspaceWorkflowSchedule["target"] | undefined;
-    if (target?.type === "new-workspace") {
-      const unsupportedReason = getWorkflowScheduleNewWorkspaceTargetUnavailableReason({
-        sourceProjectPath: source.sourceProjectPath,
-        projects: source.sourceWorkspace.projects,
-        runtimeConfig: source.sourceWorkspace.runtimeConfig,
-      });
-      assert(
-        unsupportedReason == null,
-        unsupportedReason ?? "Unsupported workflow schedule target"
-      );
-      const trunkBranch = target.trunkBranch.trim();
-      assert(
-        trunkBranch.length > 0,
-        "New-workspace workflow schedules require a non-empty trunkBranch"
-      );
-      const branchName = target.branchName?.trim();
-      if (branchName) {
-        const branchNameValidation = validateWorkspaceName(branchName);
-        assert(
-          branchNameValidation.valid,
-          branchNameValidation.error ?? "Invalid scheduled workflow target branch name"
-        );
-      }
-      const title = target.title?.trim();
-      normalizedTarget = {
-        type: "new-workspace",
-        trunkBranch,
-        ...(branchName ? { branchName } : {}),
-        ...(title ? { title } : {}),
-      };
-    } else if (target?.type === "current-workspace") {
-      normalizedTarget = undefined;
-    } else {
-      assert(target == null, "Unsupported workflow schedule target");
-    }
-
-    return {
-      enabled: schedule.enabled,
-      workflowName,
-      ...(schedule.args != null ? { args: schedule.args } : {}),
-      intervalMs: schedule.intervalMs,
-      ...(contextMode !== WORKFLOW_SCHEDULE_DEFAULT_CONTEXT_MODE ? { contextMode } : {}),
-      ...(normalizedTarget != null ? { target: normalizedTarget } : {}),
-    };
-  }
-
-  /**
-   * Set (or clear, with null) the workspace's scheduled workflow run.
-   * Input shape/bounds are enforced at the oRPC schema boundary
-   * (WorkspaceWorkflowScheduleSchema); this persists and emits metadata.
-   * Setting a schedule resets lastRunStartedAt so the new schedule is
-   * immediately due (at-least-once bootstrap).
-   */
-  async setWorkflowSchedule(
-    workspaceId: string,
-    schedule: Omit<WorkspaceWorkflowSchedule, "lastRunStartedAt"> | null
-  ): Promise<Result<void, string>> {
-    try {
-      const normalizedWorkspaceId = workspaceId.trim();
-      assert(
-        normalizedWorkspaceId.length > 0,
-        "setWorkflowSchedule requires a non-empty workspaceId"
-      );
-
-      let applied = false;
-      await this.config.editConfig((config) => {
-        for (const [sourceProjectPath, projectConfig] of config.projects) {
-          const workspaceEntry = projectConfig.workspaces.find(
-            (entry) => entry.id === normalizedWorkspaceId
-          );
-          if (!workspaceEntry) {
-            continue;
-          }
-          if (schedule == null) {
-            delete workspaceEntry.workflowSchedule;
-          } else {
-            const conflictingProjectSchedule = Array.from(config.projects.entries()).find(
-              ([candidateProjectPath, candidateProject]) => {
-                const candidateOwnerPath =
-                  candidateProject.parentProjectPath ?? candidateProjectPath;
-                if (candidateOwnerPath !== sourceProjectPath) {
-                  return false;
-                }
-                return (candidateProject.workflowSchedules ?? []).some(
-                  (projectSchedule) =>
-                    projectSchedule.target.type === "existing-workspace" &&
-                    projectSchedule.target.workspaceId === normalizedWorkspaceId
-                );
-              }
-            );
-            assert(
-              conflictingProjectSchedule == null,
-              "Workspace already has a project automation"
-            );
-            workspaceEntry.workflowSchedule = this.normalizeWorkflowScheduleForPersist(schedule, {
-              sourceProjectPath,
-              sourceWorkspace: workspaceEntry,
-            });
-          }
-          applied = true;
-          break;
-        }
-        return config;
-      });
-      if (!applied) {
-        return Err("Workspace not found");
-      }
-
-      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
-      return Ok(undefined);
-    } catch (error) {
-      return Err(`Failed to set workflow schedule: ${getErrorMessage(error)}`);
-    }
-  }
-
-  async emitCurrentWorkflowScheduleMetadata(workspaceId: string): Promise<void> {
-    await this.emitCurrentWorkspaceMetadata(workspaceId);
-  }
-
   /**
    * Read the per-workspace goal-defaults override.
    *
@@ -6636,7 +6481,7 @@ export class WorkspaceService extends EventEmitter {
   async appendWorkflowRunInvocation(input: {
     workspaceId: string;
     rawCommand: string;
-    name: string;
+    scriptPath: string;
     args: unknown;
     runId: string;
     status: string;
@@ -6646,12 +6491,12 @@ export class WorkspaceService extends EventEmitter {
   }): Promise<boolean> {
     assert(input.workspaceId.length > 0, "appendWorkflowRunInvocation requires workspaceId");
     assert(input.rawCommand.trim().length > 0, "appendWorkflowRunInvocation requires rawCommand");
-    assert(input.name.length > 0, "appendWorkflowRunInvocation requires workflow name");
+    assert(input.scriptPath.length > 0, "appendWorkflowRunInvocation requires workflow scriptPath");
     assert(input.runId.length > 0, "appendWorkflowRunInvocation requires runId");
 
     const now = Date.now();
     void this.updateRecencyTimestamp(input.workspaceId, now);
-    const commandPrefix = input.rawCommand.trim().split(/\s+/u)[0] ?? `/${input.name}`;
+    const commandPrefix = input.rawCommand.trim().split(/\s+/u)[0] ?? "/workflow";
     const userMessage = createMuxMessage(
       `workflow-run-command-${input.runId}`,
       "user",
@@ -6668,7 +6513,7 @@ export class WorkspaceService extends EventEmitter {
       }
     );
     const workflowMessage = buildWorkflowRunCardMessage(
-      { name: input.name, args: input.args },
+      { scriptPath: input.scriptPath, args: input.args },
       {
         runId: input.runId,
         status: input.status,
@@ -7776,56 +7621,6 @@ export class WorkspaceService extends EventEmitter {
       return Ok("reset");
     } finally {
       this.resettingContextWorkspaces.delete(workspaceId);
-    }
-  }
-
-  async prepareScheduledWorkflowContext(
-    workspaceId: string,
-    contextMode: WorkflowScheduleContextMode
-  ): Promise<Result<"normal" | "reset" | "noop" | "compact", string>> {
-    switch (contextMode) {
-      case "normal":
-        return Ok("normal");
-      case "reset":
-        return this.resetContext(workspaceId);
-      case "compact": {
-        const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
-        if (!historyResult.success) {
-          return Err(`Failed to read active context before compaction: ${historyResult.error}`);
-        }
-
-        const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
-          historyResult.data
-        );
-        if (!hasProviderEligibleMessages(activeContextMessages)) {
-          return Ok("noop");
-        }
-
-        const previousCompactionEpoch = getLatestCompactionBoundaryEpoch(historyResult.data);
-
-        try {
-          await this.executeIdleCompaction(workspaceId);
-          await this.waitForWorkspaceIdle(workspaceId, {
-            signal: AbortSignal.timeout(WORKFLOW_SCHEDULE_CONTEXT_PREPARATION_TIMEOUT_MS),
-          });
-          const compactedHistoryResult =
-            await this.historyService.getHistoryFromLatestBoundary(workspaceId);
-          if (!compactedHistoryResult.success) {
-            return Err(`Failed to verify compaction boundary: ${compactedHistoryResult.error}`);
-          }
-          const nextCompactionEpoch = getLatestCompactionBoundaryEpoch(compactedHistoryResult.data);
-          if (nextCompactionEpoch <= previousCompactionEpoch) {
-            return Err("Compaction finished without writing a new context boundary");
-          }
-          return Ok("compact");
-        } catch (error) {
-          return Err(getErrorMessage(error));
-        }
-      }
-      default: {
-        const exhaustiveContextMode: never = contextMode;
-        return Err(`Unsupported workflow schedule context mode: ${String(exhaustiveContextMode)}`);
-      }
     }
   }
 

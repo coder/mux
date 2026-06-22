@@ -9,12 +9,6 @@ import {
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
 } from "@/constants/heartbeat";
-import {
-  WORKFLOW_SCHEDULE_CONTEXT_MODE_VALUES,
-  WORKFLOW_SCHEDULE_MAX_INTERVAL_MS,
-  WORKFLOW_SCHEDULE_MIN_INTERVAL_MS,
-} from "@/constants/workflowSchedule";
-import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
 export const ProjectRefSchema = z.object({
   projectPath: z.string().meta({ description: "Absolute path to the project's main git repo" }),
@@ -92,86 +86,6 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   }),
 });
 
-export const WorkflowScheduleTargetBranchNameSchema = z
-  .string()
-  .min(1)
-  .superRefine((value, ctx) => {
-    const validation = validateWorkspaceName(value.trim());
-    if (!validation.valid) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: validation.error ?? "Invalid workspace name",
-      });
-    }
-  });
-
-export const WorkflowScheduleContextModeSchema = z.enum(WORKFLOW_SCHEDULE_CONTEXT_MODE_VALUES);
-
-export const WorkspaceWorkflowScheduleTargetSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("current-workspace").meta({
-      description: "Run the workflow in the workspace that owns the schedule.",
-    }),
-  }),
-  z.object({
-    type: z.literal("new-workspace").meta({
-      description: "Create a fresh workspace for each due scheduled run.",
-    }),
-    branchName: WorkflowScheduleTargetBranchNameSchema.optional().meta({
-      description:
-        "Optional branch/workspace-name base for the fresh workspace. Runtime collision handling may suffix it.",
-    }),
-    trunkBranch: z.string().min(1).meta({
-      description: "Base branch checked out when creating the fresh workspace.",
-    }),
-    title: z.string().min(1).optional().meta({
-      description: "Optional human-readable title for each fresh scheduled-run workspace.",
-    }),
-  }),
-]);
-
-/**
- * Per-workspace scheduled workflow run (single source of truth for persisted
- * config entries and workspace metadata IPC). Wall-clock semantics: the
- * WorkflowSchedulerService dispatches `workflowName` in this workspace
- * whenever `intervalMs` has elapsed since `lastRunStartedAt` (at-least-once;
- * overdue schedules fire on startup), skipping while a previous run is active.
- */
-export const WorkspaceWorkflowScheduleSchema = z.object({
-  enabled: z.boolean().meta({
-    description: "Whether the scheduled workflow run is active for this workspace.",
-  }),
-  workflowName: z.string().min(1).meta({
-    description: "Named workflow definition to run (resolved like workflows.start).",
-  }),
-  args: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .meta({ description: "JSON args passed to the workflow run." }),
-  contextMode: WorkflowScheduleContextModeSchema.optional().meta({
-    description:
-      'Context preparation before each scheduled run. Missing values default to "normal" at read time for backward compatibility.',
-  }),
-  target: WorkspaceWorkflowScheduleTargetSchema.optional().meta({
-    description:
-      'Workspace target for each run. Missing values default to "current-workspace" for backward compatibility.',
-  }),
-  intervalMs: z
-    .number()
-    .int()
-    .min(WORKFLOW_SCHEDULE_MIN_INTERVAL_MS)
-    .max(WORKFLOW_SCHEDULE_MAX_INTERVAL_MS)
-    .meta({ description: "Wall-clock interval between dispatched runs." }),
-  lastRunStartedAt: z
-    .string()
-    .optional()
-    .meta({
-      description:
-        "ISO timestamp of the last dispatched run (persisted before dispatch so restarts retry " +
-        "at most once per interval).",
-    }),
-});
-
 // Single source of truth for workflow task metadata on both persisted config
 // entries (src/common/schemas/project.ts) and workspace metadata IPC. The runId
 // stays a loose non-empty string (not WorkflowRunIdSchema) so a malformed
@@ -229,9 +143,6 @@ export const WorkspaceMetadataSchema = z.object({
   }),
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
-  }),
-  workflowSchedule: WorkspaceWorkflowScheduleSchema.optional().meta({
-    description: "Persisted scheduled workflow run for this workspace.",
   }),
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:

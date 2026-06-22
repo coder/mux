@@ -8,7 +8,6 @@ import { resolveProjectDir } from "./trust";
 const BUN_EXECUTABLE = process.execPath;
 const TRUST_ENTRY = path.join(import.meta.dir, "trust.ts");
 const INDEX_ENTRY = path.join(import.meta.dir, "index.ts");
-const WORKFLOW_ENTRY = path.join(import.meta.dir, "workflow.ts");
 
 describe("mux trust CLI", () => {
   test("normalizes implicit cwd to git root but preserves explicit --dir", async () => {
@@ -26,15 +25,8 @@ describe("mux trust CLI", () => {
     using tmp = new DisposableTempDir("trust-cli-cycle");
     const repo = path.join(tmp.path, "repo");
     const muxRoot = path.join(tmp.path, "mux-root");
-    await fs.mkdir(path.join(repo, ".mux", "workflows"), { recursive: true });
+    await fs.mkdir(repo, { recursive: true });
     await fs.mkdir(muxRoot, { recursive: true });
-    await fs.writeFile(
-      path.join(repo, ".mux", "workflows", "echo-review.js"),
-      `export const metadata = { description: "Echo review input" };
-export default function workflow() { return { reportMarkdown: "trusted via cli" }; }
-`,
-      "utf-8"
-    );
     const env = { ...process.env, MUX_ROOT: muxRoot };
 
     // Grant trust for a project that was never added to mux (no desktop/server
@@ -49,12 +41,6 @@ export default function workflow() { return { reportMarkdown: "trusted via cli" 
       trusted: true,
     });
 
-    const listTrusted = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
-      .env(env)
-      .quiet();
-    expect(listTrusted.stdout.toString()).toContain("echo-review\tproject\tEcho review input");
-    expect(listTrusted.stderr.toString()).not.toContain("skipped project workflows");
-
     const revokeResult = await Bun.$`${BUN_EXECUTABLE} ${TRUST_ENTRY} --revoke --dir ${repo} --json`
       .env(env)
       .quiet();
@@ -63,12 +49,6 @@ export default function workflow() { return { reportMarkdown: "trusted via cli" 
       projectPath: repo,
       trusted: false,
     });
-
-    const listRevoked = await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} list --dir ${repo}`
-      .env(env)
-      .quiet();
-    expect(listRevoked.stdout.toString()).not.toContain("echo-review");
-    expect(listRevoked.stderr.toString()).toContain("skipped project workflows");
   }, 15_000);
 
   test("revoke from a worktree also clears a direct trust entry for the worktree path", async () => {

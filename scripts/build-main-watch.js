@@ -16,13 +16,8 @@ const buildCompleteStampPath = path.join(rootDir, "dist/.main-build-complete");
 try {
   console.log("Building main process...");
 
-  // Re-embed JavaScript-authored workflow sources first so edits hot-reload:
-  // tsgo compiles the regenerated .generated.ts files into dist (the .js sources
-  // themselves are excluded from the main-process program). No-op when in sync.
-  for (const command of [
-    "bun scripts/gen_builtin_workflows.ts",
-    "bun scripts/gen_workflow_runtime_sources.ts",
-  ]) {
+  // Re-embed JavaScript-authored workflow runtime sources first so edits hot-reload.
+  for (const command of ["bun scripts/gen_workflow_runtime_sources.ts"]) {
     execSync(command, {
       cwd: rootDir,
       stdio: "inherit",

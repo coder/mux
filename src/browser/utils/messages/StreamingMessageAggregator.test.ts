@@ -519,7 +519,7 @@ describe("StreamingMessageAggregator", () => {
         },
       });
       const card = buildWorkflowRunCardMessage(
-        { name: "deep-research", args: { input: "mux" } },
+        { scriptPath: "skill://deep-research/workflow.js", args: { input: "mux" } },
         { runId: "wfr_123", status: "running", result: null },
         2
       );
@@ -567,7 +567,11 @@ describe("StreamingMessageAggregator", () => {
       expect(displayed[1]).toMatchObject({
         type: "tool",
         toolName: "workflow_run",
-        args: { name: "deep-research", args: { input: "mux" }, run_in_background: true },
+        args: {
+          script_path: "skill://deep-research/workflow.js",
+          args: { input: "mux" },
+          run_in_background: true,
+        },
         result: { status: "running", runId: "wfr_123", result: null },
       });
     });

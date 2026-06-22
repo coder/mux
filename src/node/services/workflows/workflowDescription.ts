@@ -1,9 +1,8 @@
 /**
  * Shared parser for workflow `export const metadata = { description: "..." }` declarations.
  *
- * Both the runtime workflow scanner (WorkflowDefinitionStore) and the built-in
- * workflow codegen (scripts/gen_builtin_workflows.ts) consume this so the
- * convention cannot drift between build time and runtime. Metadata is parsed
+ * Workflow display helpers consume this so the description convention cannot drift.
+ * Metadata is parsed
  * statically rather than evaluated: discovery must not run arbitrary top-level
  * workflow code just to read a description.
  */
@@ -23,6 +22,21 @@ export function parseWorkflowDescription(source: string): string | null {
   const description = parseWorkflowMetadataDescription(rawMetadata);
   if (description != null) return description;
   return parseLegacyWorkflowDescription(source);
+}
+
+export function parseWorkflowName(source: string): string | null {
+  try {
+    return parseWorkflowMetadataName(parseStaticWorkflowMetadataLiteral(source));
+  } catch {
+    return null;
+  }
+}
+
+export function parseWorkflowMetadataName(rawMetadata: unknown): string | null {
+  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
+    return normalizeDescription((rawMetadata as { name?: unknown }).name);
+  }
+  return null;
 }
 
 export function parseWorkflowMetadataDescription(rawMetadata: unknown): string | null {

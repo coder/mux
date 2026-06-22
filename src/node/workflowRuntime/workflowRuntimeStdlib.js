@@ -1,4 +1,3 @@
-/* global __workflowApplyPatch, __workflowParallelAgents */
 function __muxSchemaWithOptions(schema, options) {
   if (options && typeof options === "object" && !Array.isArray(options)) {
     return Object.assign(schema, options);
@@ -124,71 +123,6 @@ function __muxUtilsMustObject(value, message) {
   }
   return value;
 }
-// Workflow results must stay JSON-compatible; QuickJS preserves undefined object
-// properties, so optional patch fields are added only when present.
-function __muxAssignDefined(target, key, value) {
-  if (value !== undefined) target[key] = value;
-}
-
-function __muxPatchNormalize(result) {
-  var status =
-    result && result.status
-      ? result.status
-      : result && result.success === true
-        ? "applied"
-        : "failed";
-  var normalized = {
-    success: Boolean(result && result.success),
-    status: status,
-  };
-  if (result) {
-    __muxAssignDefined(normalized, "taskId", result.taskId);
-    __muxAssignDefined(normalized, "appliedCommits", result.appliedCommits);
-    __muxAssignDefined(normalized, "headCommitSha", result.headCommitSha);
-    __muxAssignDefined(normalized, "conflictPaths", result.conflictPaths);
-    __muxAssignDefined(normalized, "failedPatchSubject", result.failedPatchSubject);
-    __muxAssignDefined(normalized, "error", result.error);
-    __muxAssignDefined(normalized, "projectResults", result.projectResults);
-  }
-  return normalized;
-}
-async function __muxPatchApplySafely(spec) {
-  try {
-    var normalizedSpec = Object.assign(
-      { target: "parent", onConflict: "return", threeWay: true },
-      spec || {}
-    );
-    return __muxPatchNormalize(await __workflowApplyPatch(normalizedSpec));
-  } catch (error) {
-    return {
-      success: false,
-      status: "failed",
-      error: error && error.message ? error.message : String(error),
-    };
-  }
-}
-function __muxParallelMap(options) {
-  options = options || {};
-  var items = __muxUtilsAsArray(options.items);
-  if (items.length === 0) return [];
-  var specs = items.map(function (item, index) {
-    return {
-      id:
-        typeof options.stepId === "function"
-          ? options.stepId(item, index)
-          : String(options.id || "parallel-map") + "-" + String(index),
-      title: typeof options.title === "function" ? options.title(item, index) : options.title,
-      agentId:
-        typeof options.agentId === "function" ? options.agentId(item, index) : options.agentId,
-      prompt: typeof options.prompt === "function" ? options.prompt(item, index) : options.prompt,
-      outputSchema:
-        typeof options.outputSchema === "function"
-          ? options.outputSchema(item, index)
-          : options.outputSchema,
-    };
-  });
-  return __workflowParallelAgents(specs, { maxParallel: options.maxParallel || items.length });
-}
 globalThis.mux = Object.freeze({
   schema: Object.freeze({
     string: __muxSchemaString,
@@ -202,11 +136,6 @@ globalThis.mux = Object.freeze({
     optional: __muxSchemaOptional,
     nullable: __muxSchemaNullable,
   }),
-  patch: Object.freeze({
-    normalize: __muxPatchNormalize,
-    applySafely: __muxPatchApplySafely,
-  }),
-  parallelMap: __muxParallelMap,
   utils: Object.freeze({
     asArray: __muxUtilsAsArray,
     optionalString: __muxUtilsOptionalString,

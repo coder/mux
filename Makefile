@@ -167,7 +167,6 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
 	@bun x concurrently -k \
-		"bun x nodemon --watch src/node/builtinWorkflows --ext js --exec ./scripts/generate-builtin-workflows.sh" \
 		"bun x nodemon --watch src/node/workflowRuntime --ext js --exec 'bun scripts/gen_workflow_runtime_sources.ts'" \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
@@ -220,7 +219,6 @@ build-main: node_modules/.installed dist/cli/index.js dist/cli/api.mjs ## Build 
 
 BUILTIN_AGENTS_GENERATED := src/node/services/agentDefinitions/builtInAgentContent.generated.ts
 BUILTIN_SKILLS_GENERATED := src/node/services/agentSkills/builtInSkillContent.generated.ts
-BUILTIN_WORKFLOWS_GENERATED := src/node/services/workflows/builtInWorkflowContent.generated.ts
 WORKFLOW_RUNTIME_SOURCES_GENERATED := src/node/services/workflows/workflowRuntimeSources.generated.ts
 WORKFLOW_RUNTIME_SOURCES := $(shell find src/node/workflowRuntime -type f -name '*.js' 2>/dev/null)
 
@@ -232,9 +230,6 @@ $(BUILTIN_SKILLS_GENERATED): $(BUILTIN_SKILL_SOURCES) $(DOCS_SOURCES) scripts/ge
 
 $(WORKFLOW_RUNTIME_SOURCES_GENERATED): $(WORKFLOW_RUNTIME_SOURCES) scripts/gen_workflow_runtime_sources.ts
 	@bun scripts/gen_workflow_runtime_sources.ts
-
-$(BUILTIN_WORKFLOWS_GENERATED): src/node/builtinWorkflows/*.js scripts/generate-builtin-workflows.sh scripts/gen_builtin_workflows.ts
-	@./scripts/generate-builtin-workflows.sh
 
 dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/version.ts tsconfig.main.json tsconfig.json $(TS_SOURCES) $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) $(BUILTIN_WORKFLOWS_GENERATED) $(WORKFLOW_RUNTIME_SOURCES_GENERATED)
 	@echo "Building main process..."

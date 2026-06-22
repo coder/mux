@@ -425,9 +425,10 @@ export async function processSlashCommand(
     }
 
     const workspaceId = context.workspaceId;
+    const scriptPath = parsed.name;
     const rawInput = context.rawInput?.trim();
-    const rawCommand = rawInput && rawInput.length > 0 ? rawInput : `/${parsed.name}`;
-    const commandPrefix = rawCommand.split(/\s+/u)[0] ?? `/${parsed.name}`;
+    const rawCommand = rawInput && rawInput.length > 0 ? rawInput : `/${scriptPath}`;
+    const commandPrefix = rawCommand.split(/\s+/u)[0] ?? `/${scriptPath}`;
     const isCurrent =
       context.asyncCommandToken != null && context.isAsyncCommandCurrent != null
         ? () => context.isAsyncCommandCurrent?.(context.asyncCommandToken!, workspaceId) !== false
@@ -447,7 +448,7 @@ export async function processSlashCommand(
     try {
       const result = await activeClient.workflows.start({
         workspaceId,
-        name: parsed.name,
+        scriptPath,
         runInBackground: true,
         args,
         continuationOptions: context.sendMessageOptions,
@@ -461,7 +462,7 @@ export async function processSlashCommand(
         setToast({
           id: Date.now().toString(),
           type: "success",
-          message: `Workflow ${parsed.name} started`,
+          message: `Workflow ${scriptPath} started`,
         });
         return { clearInput: true, toastShown: true };
       }
@@ -478,13 +479,13 @@ export async function processSlashCommand(
         setToast({
           id: Date.now().toString(),
           type: "success",
-          message: `Workflow ${parsed.name} interrupted`,
+          message: `Workflow ${scriptPath} interrupted`,
         });
         return { clearInput: true, toastShown: true };
       }
       const workflowResultMessage = buildWorkflowResultContextMessage({
         rawCommand,
-        name: parsed.name,
+        name: scriptPath,
         runId: result.runId,
         status: terminalStatus,
         result: result.result,
@@ -515,7 +516,7 @@ export async function processSlashCommand(
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: `Workflow ${parsed.name} ${terminalStatus}`,
+        message: `Workflow ${scriptPath} ${terminalStatus}`,
       });
       return { clearInput: true, toastShown: true };
     } catch (error) {

@@ -26,13 +26,9 @@ import type {
   ProjectRefSchema,
   WorkspaceActivitySnapshotSchema,
   WorkspaceMetadataSchema,
-  WorkspaceWorkflowScheduleSchema,
 } from "../orpc/schemas";
 
 export type WorkspaceMetadata = z.infer<typeof WorkspaceMetadataSchema>;
-
-/** Per-workspace scheduled workflow run (see WorkflowSchedulerService). */
-export type WorkspaceWorkflowSchedule = z.infer<typeof WorkspaceWorkflowScheduleSchema>;
 
 export type ProjectRef = z.infer<typeof ProjectRefSchema>;
 

@@ -179,9 +179,6 @@ describe("task_list tool", () => {
       ...baseConfig,
       taskService,
       workflowService: {
-        listDefinitions: mock(() => Promise.resolve([])),
-        readDefinition: mock(() => Promise.reject(new Error("unused"))),
-        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
         listRuns,
       },
     });
@@ -222,9 +219,6 @@ describe("task_list tool", () => {
       ...baseConfig,
       taskService,
       workflowService: {
-        listDefinitions: mock(() => Promise.resolve([])),
-        readDefinition: mock(() => Promise.reject(new Error("unused"))),
-        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
         listRuns,
       },
     });

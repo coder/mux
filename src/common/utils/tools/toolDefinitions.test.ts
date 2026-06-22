@@ -6,6 +6,7 @@ import {
   supportsGoogleNativeToolsWithFunctionTools,
   TaskToolArgsSchema,
   TOOL_DEFINITIONS,
+  WorkflowRunToolArgsSchema,
 } from "./toolDefinitions";
 
 describe("TOOL_DEFINITIONS", () => {
@@ -567,6 +568,24 @@ describe("TOOL_DEFINITIONS", () => {
     expect(subAgentTools).not.toContain("review_pane_get");
   });
 
+  it("requires workflow_run calls to use script_path instead of name", () => {
+    expect(
+      WorkflowRunToolArgsSchema.safeParse({
+        script_path: "skill://deep-research/workflow.js",
+        args: { topic: "workflow tools" },
+        run_in_background: false,
+      }).success
+    ).toBe(true);
+
+    expect(
+      WorkflowRunToolArgsSchema.safeParse({
+        name: "deep-research",
+        args: { topic: "workflow tools" },
+        run_in_background: false,
+      }).success
+    ).toBe(false);
+  });
+
   it("only includes workflow tools when dynamic workflows are enabled", () => {
     const disabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: false });
     expect(disabledTools).not.toContain("workflow_list");
@@ -575,8 +594,8 @@ describe("TOOL_DEFINITIONS", () => {
     expect(disabledTools).not.toContain("workflow_resume");
 
     const enabledTools = getAvailableTools("openai:gpt-4o", { enableDynamicWorkflows: true });
-    expect(enabledTools).toContain("workflow_list");
-    expect(enabledTools).toContain("workflow_read");
+    expect(enabledTools).not.toContain("workflow_list");
+    expect(enabledTools).not.toContain("workflow_read");
     expect(enabledTools).toContain("workflow_run");
     expect(enabledTools).toContain("workflow_resume");
   });

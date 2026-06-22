@@ -155,9 +155,6 @@ describe("task_terminate tool", () => {
       ...baseConfig,
       taskService,
       workflowService: {
-        listDefinitions: mock(() => Promise.resolve([])),
-        readDefinition: mock(() => Promise.reject(new Error("unused"))),
-        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
         getRun,
         interruptRun,
       },
@@ -192,9 +189,6 @@ describe("task_terminate tool", () => {
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
-        listDefinitions: mock(() => Promise.resolve([])),
-        readDefinition: mock(() => Promise.reject(new Error("unused"))),
-        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
         getRun: mock(() => Promise.resolve(buildWorkflowRun("interrupted"))),
         interruptRun,
       },
@@ -225,9 +219,6 @@ describe("task_terminate tool", () => {
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
-        listDefinitions: mock(() => Promise.resolve([])),
-        readDefinition: mock(() => Promise.reject(new Error("unused"))),
-        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
         getRun: mock(() => Promise.resolve(buildWorkflowRun("completed"))),
         interruptRun,
       },
@@ -257,9 +248,6 @@ describe("task_terminate tool", () => {
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
-        listDefinitions: mock(() => Promise.resolve([])),
-        readDefinition: mock(() => Promise.reject(new Error("unused"))),
-        startNamedWorkflow: mock(() => Promise.reject(new Error("unused"))),
         getRun: mock(() => Promise.resolve(null)),
         interruptRun: mock(() => Promise.reject(new Error("unused"))),
       },
