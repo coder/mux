@@ -6,6 +6,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { APIContext } from "@/browser/contexts/API";
 import { WorkflowRunToolCall } from "@/browser/features/Tools/WorkflowRunToolCall";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 
 const meta = {
@@ -345,6 +346,63 @@ const taskActionsProps = {
 export const TaskActions: Story = {
   render: (args) => <WorkflowTaskActionsStory {...taskActionsProps} {...args} />,
   args: taskActionsProps,
+};
+
+const structuredOnlyTaskReportProps = {
+  args: {
+    script_path: TASK_ACTIONS_SCRIPT_PATH,
+    args: { topic: "structured-only workflow task" },
+    run_in_background: true,
+  },
+  status: "completed" as const,
+  result: {
+    status: "running" as const,
+    runId: "wfr_story_structured_only_task",
+    result: null,
+    run: {
+      ...taskActionsRun,
+      id: "wfr_story_structured_only_task",
+      events: [
+        { sequence: 1, type: "phase" as const, at: "2026-05-29T00:00:00.000Z", name: "scope" },
+        {
+          sequence: 2,
+          type: "task" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          stepId: "scope-research-angles",
+          taskId: "cb803680e1",
+          status: "completed",
+          title: "Scope research angles",
+        },
+        {
+          sequence: 3,
+          type: "log" as const,
+          at: "2026-05-29T00:00:01.500Z",
+          message: "Scoped research angles",
+        },
+      ],
+      steps: [
+        {
+          stepId: "scope-research-angles",
+          inputHash: "sha256:scope-research-angles",
+          status: "completed" as const,
+          taskId: "cb803680e1",
+          startedAt: "2026-05-29T00:00:00.000Z",
+          completedAt: "2026-05-29T00:00:01.000Z",
+          result: {
+            reportMarkdown: STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN,
+            structuredOutput: {
+              summary: "Research angles scoped for downstream agents.",
+              followUpCount: 3,
+            },
+          },
+        },
+      ],
+    },
+  },
+} satisfies Parameters<typeof WorkflowRunToolCall>[0];
+
+export const StructuredOnlyTaskReport: Story = {
+  args: structuredOnlyTaskReportProps,
 };
 
 export const RunningForegroundDiscovered: Story = {

@@ -10,6 +10,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
+import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import { log } from "@/node/services/log";
 import {
   discoverAgentDefinitions,
@@ -7803,7 +7804,7 @@ export class TaskService {
         !Array.isArray(part.input)
       ) {
         return {
-          reportMarkdown: "Structured workflow report submitted.",
+          reportMarkdown: STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN,
           structuredOutput: part.input,
         };
       }
