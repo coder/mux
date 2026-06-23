@@ -205,7 +205,7 @@ export class WorkflowRunStore {
   async getRunStatusSnapshot(runId: string): Promise<WorkflowRunStatusSnapshot> {
     assertValidWorkflowRunId(runId);
     const rawRun = JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as unknown;
-    const snapshot = WorkflowRunStatusSnapshotSchema.parse(normalizeWorkflowRunRecord(rawRun));
+    const snapshot = WorkflowRunStatusSnapshotSchema.parse(rawRun);
     if (await this.hasActiveWorkflowMutationLock(runId)) {
       return snapshot;
     }

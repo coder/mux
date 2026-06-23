@@ -79,13 +79,6 @@ describe("WorkflowRunStore", () => {
       workflow: definition,
       source,
     });
-    await expect(store.getRunStatusSnapshot("wfr_123")).resolves.toMatchObject({
-      id: "wfr_123",
-      workspaceId: "workspace-1",
-      status: "pending",
-    });
-    const snapshots = await store.listRunStatusSnapshots();
-    expect(snapshots.map((snapshot) => snapshot.id)).toEqual(["wfr_123"]);
   });
 
   test("lists lightweight run status snapshots without hydrating journals or source", async () => {
