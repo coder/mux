@@ -116,6 +116,44 @@ describe("agent_report tool", () => {
     expect(inputSchema.jsonSchema).toEqual(outputSchema);
   });
 
+  it("sanitizes provider-facing schema while preserving host validation", async () => {
+    using tempDir = new TestTempDir("test-agent-report-tool-sanitized-schema");
+    const outputSchema = {
+      type: "object",
+      required: ["code", "score"],
+      properties: {
+        code: { type: "string", pattern: "^[A-Z]+$" },
+        score: { type: "number", minimum: 1 },
+      },
+      additionalProperties: false,
+    };
+    const tool = createAgentReportTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
+      taskService: {
+        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      } as unknown as TaskService,
+      workflowAgentOutputSchema: outputSchema,
+    });
+
+    expect(tool.inputSchema).toHaveProperty("jsonSchema");
+    const inputSchema = tool.inputSchema as { jsonSchema?: typeof outputSchema };
+    expect(inputSchema.jsonSchema?.properties.code).not.toHaveProperty("pattern");
+    expect(inputSchema.jsonSchema?.properties.score).not.toHaveProperty("minimum");
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ code: "lowercase", score: 0 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      success: false,
+      message: "Structured output failed schema validation.",
+      errors: [
+        { path: "$.code", message: 'must match pattern "^[A-Z]+$"' },
+        { path: "$.score", message: "must be >= 1" },
+      ],
+    });
+  });
+
   it("accepts schema-shaped workflow output without markdown wrapper", async () => {
     using tempDir = new TestTempDir("test-agent-report-tool-direct-structured");
     const tool = createAgentReportTool({

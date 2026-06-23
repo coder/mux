@@ -6,6 +6,7 @@ import {
   validateJsonSchemaSubsetSchema,
   type JsonSchemaValidationError,
 } from "@/common/utils/jsonSchemaSubset";
+import { sanitizeJsonSchemaForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
   AgentReportInlineToolArgsSchema,
@@ -84,7 +85,10 @@ function buildInlineInputSchema(config: ToolConfiguration) {
     return AgentReportInlineToolArgsSchema;
   }
 
-  return jsonSchema(outputSchema as JSONSchema7, {
+  // Expose an OpenAI-compatible schema to providers while keeping the richer
+  // Ajv schema for host-side validation in executeInlineReport.
+  const providerFacingSchema = sanitizeJsonSchemaForOpenAI(outputSchema) as JSONSchema7;
+  return jsonSchema(providerFacingSchema, {
     validate: (value) => {
       const validation = validateStructuredOutput(config, value);
       if (validation) {

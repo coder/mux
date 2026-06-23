@@ -98,6 +98,15 @@ function stripUnsupportedProperties(schema: unknown): void {
 }
 
 /**
+ * Return a sanitized clone of a JSON Schema for OpenAI Responses API compatibility.
+ */
+export function sanitizeJsonSchemaForOpenAI<T>(schema: T): T {
+  const clonedSchema = JSON.parse(JSON.stringify(schema)) as T;
+  stripUnsupportedProperties(clonedSchema);
+  return clonedSchema;
+}
+
+/**
  * Sanitize a tool's parameter schema for OpenAI Responses API compatibility.
  *
  * OpenAI's Responses API has stricter JSON Schema validation than other providers.
@@ -127,8 +136,7 @@ export function sanitizeToolSchemaForOpenAI(tool: Tool): Tool {
     const rawJsonSchema = inputSchemaWrapper.jsonSchema;
     if (rawJsonSchema && typeof rawJsonSchema === "object") {
       // Deep clone and sanitize
-      const clonedSchema = JSON.parse(JSON.stringify(rawJsonSchema)) as Record<string, unknown>;
-      stripUnsupportedProperties(clonedSchema);
+      const clonedSchema = sanitizeJsonSchemaForOpenAI(rawJsonSchema) as Record<string, unknown>;
 
       // Create a new inputSchema wrapper that returns our sanitized schema
       const sanitizedInputSchema = {
@@ -152,11 +160,8 @@ export function sanitizeToolSchemaForOpenAI(tool: Tool): Tool {
     return tool;
   }
 
-  // Deep clone the parameters to avoid mutating the original
-  const clonedParams = JSON.parse(JSON.stringify(toolRecord.parameters)) as unknown;
-
-  // Strip unsupported properties
-  stripUnsupportedProperties(clonedParams);
+  // Deep clone and sanitize the parameters to avoid mutating the original
+  const clonedParams = sanitizeJsonSchemaForOpenAI(toolRecord.parameters);
 
   // Create a new tool with sanitized parameters
   return {
