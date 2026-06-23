@@ -3769,11 +3769,6 @@ export class TaskService {
       this.backgroundableForegroundWaitersByWorkspaceId.set(workspaceId, set);
     }
     set.add(waiter);
-    // ponytail: level-trigger the edge-trigger from sendMessage, so a message
-    // queued before this waiter existed still backgrounds the foreground wait.
-    if (this.workspaceService.hasQueuedMessages(workspaceId, "tool-end")) {
-      this.backgroundForegroundWaitsForWorkspace(workspaceId);
-    }
   }
 
   private unregisterBackgroundableForegroundWaiter(
@@ -4034,6 +4029,13 @@ export class TaskService {
         () => waiterEntry.reject(new Error("Timed out waiting for workspace turn")),
         timeoutMs
       );
+
+      if (
+        shouldBackgroundOnQueuedMessage &&
+        this.workspaceService.hasQueuedMessages(options.requestingWorkspaceId, "tool-end")
+      ) {
+        this.backgroundForegroundWaitsForWorkspace(options.requestingWorkspaceId);
+      }
 
       void (async () => {
         const record = await this.taskHandleStore.getWorkspaceTurn(
@@ -4379,6 +4381,14 @@ export class TaskService {
             reject(new Error("Interrupted"));
           };
           options.abortSignal.addEventListener("abort", abortListener, { once: true });
+        }
+
+        if (
+          shouldBackgroundOnQueuedMessage &&
+          requestingWorkspaceId &&
+          this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
+        ) {
+          this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
         }
       })().catch((error: unknown) => {
         reject(error instanceof Error ? error : new Error(String(error)));

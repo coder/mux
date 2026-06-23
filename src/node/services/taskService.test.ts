@@ -526,6 +526,7 @@ describe("TaskService", () => {
       sendMessage?: ReturnType<typeof mock>;
       remove?: ReturnType<typeof mock>;
       isStreaming?: ReturnType<typeof mock>;
+      hasQueuedMessages?: ReturnType<typeof mock>;
       hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
       waitForPendingStreamErrorRecoveryDecision?: ReturnType<typeof mock>;
     } = {}
@@ -558,6 +559,9 @@ describe("TaskService", () => {
       create: createWorkspace,
       ...(options.sendMessage != null ? { sendMessage: options.sendMessage } : {}),
       ...(options.remove != null ? { remove: options.remove } : {}),
+      ...(options.hasQueuedMessages != null
+        ? { hasQueuedMessages: options.hasQueuedMessages }
+        : {}),
       ...(options.hasPendingQueuedOrPreparingTurn != null
         ? { hasPendingQueuedOrPreparingTurn: options.hasPendingQueuedOrPreparingTurn }
         : {}),
@@ -1893,6 +1897,23 @@ describe("TaskService", () => {
 
     expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(1);
     expect(await waitResult).toBeInstanceOf(ForegroundWaitBackgroundedError);
+    expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(0);
+  });
+
+  test("waitForWorkspaceTurn backgrounds when tool-end message was already queued", async () => {
+    const hasQueuedMessages = mock(() => true);
+    const { parentId, taskService } = await startWorkspaceTurnForTest({ hasQueuedMessages });
+
+    const waitError = await taskService
+      .waitForWorkspaceTurn("wst_handle", {
+        requestingWorkspaceId: parentId,
+        timeoutMs: 1_000,
+        backgroundOnMessageQueued: true,
+      })
+      .catch((error: unknown) => error);
+
+    expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+    expect(hasQueuedMessages).toHaveBeenCalledWith(parentId, "tool-end");
     expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(0);
   });
 
@@ -7472,7 +7493,7 @@ describe("TaskService", () => {
             name: "agent_explore_child",
             parentWorkspaceId: parentId,
             agentType: "explore",
-            taskStatus: "running",
+            taskStatus: "queued",
           },
         ],
         testTaskSettings(2, 3)
@@ -7481,6 +7502,11 @@ describe("TaskService", () => {
       const hasQueuedMessages = mock(() => true);
       const { workspaceService } = createWorkspaceServiceMocks({ hasQueuedMessages });
       const { taskService } = createTaskServiceHarness(config, { workspaceService });
+      const internal = taskService as unknown as {
+        backgroundableForegroundWaitersByWorkspaceId: Map<string, Set<unknown>>;
+        pendingStartWaitersByTaskId: Map<string, unknown[]>;
+        pendingWaitersByTaskId: Map<string, unknown[]>;
+      };
 
       const waitError = await taskService
         .waitForAgentReport(childId, {
@@ -7492,6 +7518,9 @@ describe("TaskService", () => {
       expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
       expect(hasQueuedMessages).toHaveBeenCalledWith(parentId, "tool-end");
       expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(0);
+      expect(internal.backgroundableForegroundWaitersByWorkspaceId.has(parentId)).toBe(false);
+      expect(internal.pendingStartWaitersByTaskId.has(childId)).toBe(false);
+      expect(internal.pendingWaitersByTaskId.has(childId)).toBe(false);
     });
 
     test("defaults to queue-backgroundable when requestingWorkspaceId is present", async () => {
