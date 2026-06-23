@@ -137,43 +137,121 @@ const TaskStatusBadge: React.FC<{
   );
 };
 
+function getAgentTypeStyle(type: string): string {
+  switch (type) {
+    case "explore":
+      return "border-plan-mode/50 text-plan-mode";
+    case "exec":
+      return "border-exec-mode/50 text-exec-mode";
+    case "workspace":
+      return "border-task-mode/50 text-task-mode";
+    default:
+      return "border-muted/50 text-muted";
+  }
+}
+
+function findWorkspaceForTaskTarget(
+  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined,
+  taskId: string,
+  openWorkspaceId?: string
+): FrontendWorkspaceMetadata | undefined {
+  const explicitWorkspaceId = trimToNonEmptyString(openWorkspaceId);
+  if (explicitWorkspaceId) {
+    const explicitWorkspace = workspaceMetadata?.get(explicitWorkspaceId);
+    if (explicitWorkspace) {
+      return explicitWorkspace;
+    }
+  }
+
+  const directWorkspace = workspaceMetadata?.get(taskId);
+  if (directWorkspace) {
+    return directWorkspace;
+  }
+
+  // Workspace-turn task IDs (`wst_...`) are handles, not workspace IDs. Newly-created
+  // workspace tasks tag the actual workspace with the handle so stale tool results remain clickable
+  // after the result's explicit workspaceId falls out of view.
+  for (const metadata of workspaceMetadata?.values() ?? []) {
+    if (metadata.tags?.["mux.taskHandleId"] === taskId) {
+      return metadata;
+    }
+  }
+
+  return undefined;
+}
+
+function openWorkspaceFromContext(
+  workspaceContext: ReturnType<typeof useOptionalWorkspaceContext>,
+  workspace: FrontendWorkspaceMetadata | undefined
+): boolean {
+  if (!workspace || !workspaceContext) {
+    return false;
+  }
+
+  workspaceContext.setSelectedWorkspace(toWorkspaceSelection(workspace));
+  return true;
+}
+
 // Agent type badge
 const AgentTypeBadge: React.FC<{
   type: string;
   className?: string;
-}> = ({ type, className }) => {
-  const getTypeStyle = () => {
-    switch (type) {
-      case "explore":
-        return "border-plan-mode/50 text-plan-mode";
-      case "exec":
-        return "border-exec-mode/50 text-exec-mode";
-      default:
-        return "border-muted/50 text-muted";
-    }
-  };
+  taskId?: string;
+  openWorkspaceId?: string;
+}> = ({ type, className, taskId, openWorkspaceId }) => {
+  const workspaceContext = useOptionalWorkspaceContext();
+  const targetTaskId = trimToNonEmptyString(taskId);
+  const workspace = targetTaskId
+    ? findWorkspaceForTaskTarget(workspaceContext?.workspaceMetadata, targetTaskId, openWorkspaceId)
+    : undefined;
+  const classNames = cn(
+    "inline-block shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+    getAgentTypeStyle(type),
+    className
+  );
+
+  const openWorkspaceLabel = type === "workspace" ? "Open workspace" : `Open ${type} workspace`;
+
+  if (!workspace) {
+    return <span className={classNames}>{type}</span>;
+  }
 
   return (
-    <span
-      className={cn(
-        "inline-block shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-        getTypeStyle(),
-        className
-      )}
-    >
-      {type}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={openWorkspaceLabel}
+          className={cn(classNames, "hover:underline underline-offset-2")}
+          onClick={(event) => {
+            event.stopPropagation();
+            openWorkspaceFromContext(workspaceContext, workspace);
+          }}
+        >
+          {type}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>Open workspace</TooltipContent>
+    </Tooltip>
   );
 };
 
 // Task ID display with open/copy affordance.
 // - If the task workspace exists locally, clicking opens it.
 // - Otherwise, clicking copies the ID (so the user can search / share it).
-const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className }) => {
+const TaskId: React.FC<{ id: string; openWorkspaceId?: string; className?: string }> = ({
+  id,
+  openWorkspaceId,
+  className,
+}) => {
   const workspaceContext = useOptionalWorkspaceContext();
   const { copied, copyToClipboard } = useCopyToClipboard();
 
-  const workspace = workspaceContext?.workspaceMetadata.get(id);
+  const workspace = findWorkspaceForTaskTarget(
+    workspaceContext?.workspaceMetadata,
+    id,
+    openWorkspaceId
+  );
 
   const canOpenWorkspace = Boolean(workspace && workspaceContext);
 
@@ -187,8 +265,7 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
             className
           )}
           onClick={() => {
-            if (workspace && workspaceContext) {
-              workspaceContext.setSelectedWorkspace(toWorkspaceSelection(workspace));
+            if (openWorkspaceFromContext(workspaceContext, workspace)) {
               return;
             }
 
@@ -212,6 +289,7 @@ interface TaskRowProps {
   title?: string;
   depth?: number;
   startedAtMs?: number;
+  openWorkspaceId?: string;
   className?: string;
 }
 
@@ -249,9 +327,15 @@ const TaskRow: React.FC<TaskRowProps> = (props) => (
   <div
     className={cn("bg-code-bg flex flex-wrap items-center gap-2 rounded-sm p-2", props.className)}
   >
-    <TaskId id={props.taskId} />
+    <TaskId id={props.taskId} openWorkspaceId={props.openWorkspaceId} />
     <TaskStatusBadge status={props.status} />
-    {props.agentType && <AgentTypeBadge type={props.agentType} />}
+    {props.agentType && (
+      <AgentTypeBadge
+        type={props.agentType}
+        taskId={props.taskId}
+        openWorkspaceId={props.openWorkspaceId}
+      />
+    )}
     {props.title && (
       <span className="text-foreground max-w-[200px] truncate text-[11px]">{props.title}</span>
     )}
@@ -326,6 +410,10 @@ function toTaskStatusFromBackgroundProcessStatus(
   }
 }
 
+function isWorkspaceTurnTaskHandleId(taskId: string): boolean {
+  return /^wst_[a-z0-9][a-z0-9_-]*$/.test(taskId);
+}
+
 function fromBashTaskId(taskId: string): string | null {
   const prefix = "bash:";
   if (!taskId.startsWith(prefix)) {
@@ -355,6 +443,7 @@ interface TaskToolDisplayEntry {
   status: string;
   title?: string;
   reportMarkdown?: string;
+  openWorkspaceId?: string;
   groupKind?: TaskGroupKind;
   label?: string;
 }
@@ -561,17 +650,20 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
   statusByTaskId: Map<string, string>;
   ownReportsByTaskId: Map<string, TaskToolOwnReport>;
   taskGroupsByTaskId: Map<string, { groupKind?: TaskGroupKind; label?: string }>;
+  workspaceIdByTaskId: Map<string, string>;
 } {
   const taskIds = new Set<string>();
   const statusByTaskId = new Map<string, string>();
   const ownReportsByTaskId = new Map<string, TaskToolOwnReport>();
   const taskGroupsByTaskId = new Map<string, { groupKind?: TaskGroupKind; label?: string }>();
+  const workspaceIdByTaskId = new Map<string, string>();
   if (!result) {
     return {
       taskIds: [],
       statusByTaskId,
       ownReportsByTaskId,
       taskGroupsByTaskId,
+      workspaceIdByTaskId,
     };
   }
 
@@ -597,8 +689,18 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
     });
   };
 
+  const rememberWorkspace = (taskId: string, workspaceId: unknown): void => {
+    const normalizedWorkspaceId = trimToNonEmptyString(workspaceId);
+    if (normalizedWorkspaceId) {
+      workspaceIdByTaskId.set(taskId, normalizedWorkspaceId);
+    }
+  };
+
   const taskStatuses = "tasks" in result && Array.isArray(result.tasks) ? result.tasks : undefined;
   const singleTaskId = rememberTaskId(result.taskId);
+  if (singleTaskId) {
+    rememberWorkspace(singleTaskId, result.workspaceId);
+  }
   if (singleTaskId && result.status === "completed" && typeof result.reportMarkdown === "string") {
     ownReportsByTaskId.set(singleTaskId, {
       reportMarkdown: result.reportMarkdown,
@@ -617,6 +719,7 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
       const taskId = rememberTaskId(task.taskId);
       if (taskId) {
         statusByTaskId.set(taskId, task.status);
+        rememberWorkspace(taskId, task.workspaceId);
         rememberTaskGroup(taskId, { groupKind: task.groupKind, label: task.label });
       }
     }
@@ -632,6 +735,7 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
           groupKind: report.groupKind,
           label: normalizeTaskGroupLabel(report.label),
         });
+        rememberWorkspace(taskId, report.workspaceId);
         rememberTaskGroup(taskId, { groupKind: report.groupKind, label: report.label });
       }
     }
@@ -649,6 +753,7 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
     statusByTaskId,
     ownReportsByTaskId,
     taskGroupsByTaskId,
+    workspaceIdByTaskId,
   };
 }
 
@@ -695,7 +800,7 @@ const TaskToolCandidateCard: React.FC<{
     <div className="bg-code-bg rounded-sm p-2">
       <div className={cn("flex flex-wrap items-center gap-2", hasReport && "mb-2")}>
         {total > 1 && <span className="text-muted text-[10px]">{memberLabel}</span>}
-        <TaskId id={entry.taskId} />
+        <TaskId id={entry.taskId} openWorkspaceId={entry.openWorkspaceId} />
         <TaskStatusBadge status={entry.status} />
         {entry.title && (
           <span className="text-foreground text-[11px] font-medium">{entry.title}</span>
@@ -743,20 +848,22 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     statusByTaskId,
     ownReportsByTaskId,
     taskGroupsByTaskId,
+    workspaceIdByTaskId,
   } = collectTaskToolResultDisplayData(successResult);
 
   const requestedTaskGroupCount = getTaskGroupCount(args);
   const taskGroupKind = getTaskGroupKindFromArgs(args);
   const title = args.title ?? "Task";
   const prompt = args.prompt ?? "";
-  const agentType = args.agentId ?? args.subagent_type ?? "unknown";
+  const taskKindLabel =
+    args.kind === "workspace" ? "workspace" : (args.agentId ?? args.subagent_type ?? "unknown");
   const recoveredTaskIdsRef = useRef<string[]>([]);
   // Keep the current grouped-task binding stable once a task call has matched concrete child IDs.
   // This prevents a recovered group from disappearing when the last running child flips to
   // reported before the parent task tool call itself produces a result.
   const recoveredWorkspaceEntries = recoverTaskGroupTaskIdsFromWorkspaceMetadata({
     workspaceId,
-    requestedAgentType: agentType,
+    requestedAgentType: taskKindLabel,
     requestedTitle: title,
     requestedCandidateCount: requestedTaskGroupCount,
     requestedGroupKind: taskGroupKind,
@@ -782,13 +889,13 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   );
   const isTaskGroup = totalTaskGroupCount > 1;
 
-  const kindBadge = <AgentTypeBadge type={agentType} />;
   const isBackground = args.run_in_background;
 
   const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId, index) => {
     const ownReport = ownReportsByTaskId.get(taskId);
     const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
-    const metadata = workspaceMetadata?.get(taskId);
+    const openWorkspaceId = workspaceIdByTaskId.get(taskId);
+    const metadata = findWorkspaceForTaskTarget(workspaceMetadata, taskId, openWorkspaceId);
     const resultTaskGroup = taskGroupsByTaskId.get(taskId);
     const reportMarkdown = hasNonEmptyText(ownReport?.reportMarkdown)
       ? ownReport.reportMarkdown
@@ -805,6 +912,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         derivedStatus ?? (status === "executing" ? "running" : (successResult?.status ?? "queued")),
       title: reportTitle ?? getTaskToolWorkspaceTitle(metadata) ?? title,
       reportMarkdown,
+      openWorkspaceId,
       groupKind:
         ownReport?.groupKind ??
         resultTaskGroup?.groupKind ??
@@ -847,6 +955,13 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     ? formatTaskGroupHeader(taskGroupKind, totalTaskGroupCount, preview)
     : preview;
   const singleEntry = !isTaskGroup ? displayEntries[0] : undefined;
+  const kindBadge = (
+    <AgentTypeBadge
+      type={taskKindLabel}
+      taskId={singleEntry?.taskId}
+      openWorkspaceId={singleEntry?.openWorkspaceId}
+    />
+  );
   const createdTaskGroupCount = taskIds.length;
   const shouldShowCreationProgress =
     isTaskGroup &&
@@ -901,7 +1016,9 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
                   {completedTaskGroupCount}/{totalTaskGroupCount} completed
                 </span>
               ) : (
-                singleEntry?.taskId && <TaskId id={singleEntry.taskId} />
+                singleEntry?.taskId && (
+                  <TaskId id={singleEntry.taskId} openWorkspaceId={singleEntry.openWorkspaceId} />
+                )
               )}
               {!isTaskGroup && singleEntry?.status && (
                 <TaskStatusBadge status={singleEntry.status} />
@@ -1037,13 +1154,20 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         continue;
       }
 
-      const metadata = workspaceMetadata?.get(taskId);
+      const metadata = findWorkspaceForTaskTarget(workspaceMetadata, taskId);
+      const isWorkspaceTurn = isWorkspaceTurnTaskHandleId(taskId);
       if (!metadata) {
-        awaitedRows.push({ taskId, status: "waiting" });
+        awaitedRows.push({
+          taskId,
+          status: "waiting",
+          agentType: isWorkspaceTurn ? "workspace" : undefined,
+        });
         continue;
       }
 
-      const resolvedAgentType = resolvePersistedAgentId(metadata, "");
+      const resolvedAgentType = isWorkspaceTurn
+        ? "workspace"
+        : resolvePersistedAgentId(metadata, "");
       const agentType = resolvedAgentType.length > 0 ? resolvedAgentType : undefined;
       const title = metadata.title?.trim().length ? metadata.title : metadata.name;
 
@@ -1054,9 +1178,10 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         title,
         depth:
           workspaceId && workspaceMetadata
-            ? computeWorkspaceDepthFromRoot(workspaceId, taskId, workspaceMetadata)
+            ? computeWorkspaceDepthFromRoot(workspaceId, metadata.id, workspaceMetadata)
             : undefined,
         startedAtMs: parseWorkspaceCreatedAtMs(metadata.createdAt),
+        openWorkspaceId: metadata.id,
       });
     }
   }
@@ -1120,8 +1245,11 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
                   const spawnTitle = taskId
                     ? taskReportLinking?.spawnTitleByTaskId.get(taskId)
                     : undefined;
+                  const resultWorkspaceId = "workspaceId" in r ? r.workspaceId : undefined;
                   const workspaceTitle = taskId
-                    ? getTaskToolWorkspaceTitle(workspaceMetadata?.get(taskId))
+                    ? getTaskToolWorkspaceTitle(
+                        findWorkspaceForTaskTarget(workspaceMetadata, taskId, resultWorkspaceId)
+                      )
                     : undefined;
                   const fallbackTitle = trimToNonEmptyString(spawnTitle) ?? workspaceTitle;
 
@@ -1179,12 +1307,14 @@ const TaskAwaitResult: React.FC<{
   const patchSummary = formatGitPatchArtifactSummary(gitPatchArtifact);
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
+  const openWorkspaceId = "workspaceId" in result ? result.workspaceId : undefined;
+
   const showDetails = !suppressReport;
 
   return (
     <div className="bg-code-bg rounded-sm p-2">
       <div className={cn("flex flex-wrap items-center gap-2", showDetails && "mb-1")}>
-        <TaskId id={result.taskId} />
+        <TaskId id={result.taskId} openWorkspaceId={openWorkspaceId} />
         <TaskStatusBadge status={result.status} />
         {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
         {exitCode !== undefined && <span className="text-muted text-[10px]">exit {exitCode}</span>}
@@ -1299,9 +1429,10 @@ const TaskListItem: React.FC<{
   <TaskRow
     taskId={task.taskId}
     status={task.status}
-    agentType={task.agentType}
+    agentType={task.handleKind === "workspace_turn" ? "workspace" : task.agentType}
     title={task.title}
     depth={task.depth}
+    openWorkspaceId={task.workspaceId}
   />
 );
 

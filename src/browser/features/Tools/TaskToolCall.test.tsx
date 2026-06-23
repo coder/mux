@@ -6,8 +6,10 @@ import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
-let workspaceContextMock: { workspaceMetadata: Map<string, FrontendWorkspaceMetadata> } | null =
-  null;
+let workspaceContextMock: {
+  workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
+  setSelectedWorkspace?: (selection: unknown) => void;
+} | null = null;
 
 void mock.module("@/browser/contexts/WorkspaceContext", () => ({
   useOptionalWorkspaceContext: () => workspaceContextMock,
@@ -42,6 +44,28 @@ void mock.module("./Shared/ElapsedTimeDisplay", () => ({
 
 import { getToolComponent } from "./Shared/getToolComponent";
 
+const workspaceTaskArgs = {
+  kind: "workspace" as const,
+  prompt: "Investigate this issue in a separate workspace.",
+  title: "Workspace investigation",
+  run_in_background: true,
+};
+const TaskToolCall = getToolComponent("task", workspaceTaskArgs);
+
+function createWorkspaceMetadata(
+  overrides: Partial<FrontendWorkspaceMetadata> = {}
+): FrontendWorkspaceMetadata {
+  return {
+    id: "workspace-1",
+    name: "workspace-task",
+    projectName: "project",
+    projectPath: "/project",
+    runtimeConfig: { type: "local" },
+    namedWorkspacePath: "/project/workspace-task",
+    ...overrides,
+  };
+}
+
 const taskAwaitArgs = { task_ids: ["task-1"], timeout_secs: 70 };
 const TaskAwaitToolCall = getToolComponent("task_await", taskAwaitArgs);
 
@@ -57,6 +81,63 @@ function renderTaskAwaitToolCall(props: Record<string, unknown> = {}) {
     </TooltipProvider>
   );
 }
+
+describe("TaskToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    workspaceContextMock = null;
+    cleanup();
+    mock.restore();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  });
+
+  test("labels workspace tasks and opens their created workspace", () => {
+    const workspace = createWorkspaceMetadata({
+      id: "created-workspace-1",
+      title: "Created workspace",
+    });
+    const setSelectedWorkspace = mock((selection: unknown) => {
+      void selection;
+    });
+    workspaceContextMock = {
+      workspaceMetadata: new Map([[workspace.id, workspace]]),
+      setSelectedWorkspace,
+    };
+
+    const view = render(
+      <TooltipProvider>
+        <TaskToolCall
+          args={workspaceTaskArgs}
+          result={{
+            status: "running",
+            taskId: "wst_workspace_turn",
+            workspaceId: workspace.id,
+            handleKind: "workspace_turn",
+            note: "Task started in background.",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.queryByText("unknown")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Open workspace" }));
+
+    expect(setSelectedWorkspace).toHaveBeenCalledTimes(1);
+    expect(setSelectedWorkspace.mock.calls[0][0]).toEqual(workspace);
+  });
+});
 
 describe("TaskAwaitToolCall", () => {
   let originalWindow: typeof globalThis.window;
