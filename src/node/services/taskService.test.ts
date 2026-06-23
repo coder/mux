@@ -41,6 +41,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
+import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import { defaultModel } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -4356,7 +4357,7 @@ describe("TaskService", () => {
     );
 
     expect(report).toEqual({
-      reportMarkdown: "Structured workflow report submitted.",
+      reportMarkdown: STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN,
       structuredOutput: schemaOutput,
     });
   });
@@ -11113,7 +11114,7 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
     const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
-    expect(report?.reportMarkdown).toBe("Structured workflow report submitted.");
+    expect(report?.reportMarkdown).toBe(STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN);
     expect(report?.structuredOutput).toEqual({ reportMarkdown: "Done", title: null });
   });
 

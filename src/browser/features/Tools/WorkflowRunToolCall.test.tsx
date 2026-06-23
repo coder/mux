@@ -25,6 +25,7 @@ import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { ToolNameProvider } from "@/browser/features/Messages/ToolNameContext";
+import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import { getAutoExpandPrefsKey } from "@/common/constants/storage";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 function createWorkflowTaskWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata {
@@ -655,6 +656,110 @@ describe("WorkflowRunToolCall", () => {
     await waitFor(() => {
       expect(document.querySelector('[role="dialog"]')).toBeNull();
     });
+  });
+
+  test("hides task report button for structured-only workflow reports", async () => {
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <TooltipProvider>
+          <WorkflowRunToolCall
+            args={{ name: "implementation", args: {}, run_in_background: true }}
+            status="executing"
+            result={{
+              status: "running",
+              runId: "wfr_structured_only_report",
+              result: null,
+              run: {
+                id: "wfr_structured_only_report",
+                workspaceId: "workspace-1",
+                workflow: {
+                  name: "implementation",
+                  description: "Implementation",
+                  scope: "built-in",
+                  executable: true,
+                },
+                source: "export default function workflow() { return null; }",
+                sourceHash: "sha256:test",
+                args: {},
+                status: "running",
+                createdAt: "2026-05-29T00:00:00.000Z",
+                updatedAt: "2026-05-29T00:00:01.000Z",
+                events: [
+                  {
+                    sequence: 1,
+                    type: "task",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "scope",
+                    taskId: "task_structured_only",
+                    status: "completed",
+                  },
+                  {
+                    sequence: 2,
+                    type: "task",
+                    at: "2026-05-29T00:00:01.000Z",
+                    stepId: "manual-report",
+                    taskId: "task_placeholder_markdown",
+                    status: "completed",
+                  },
+                ],
+                steps: [
+                  {
+                    stepId: "scope",
+                    inputHash: "sha256:scope",
+                    status: "completed",
+                    taskId: "task_structured_only",
+                    startedAt: "2026-05-29T00:00:00.000Z",
+                    completedAt: "2026-05-29T00:00:01.000Z",
+                    result: {
+                      reportMarkdown: STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN,
+                      structuredOutput: { summary: "Scoped research angles" },
+                    },
+                  },
+                  {
+                    stepId: "manual-report",
+                    inputHash: "sha256:manual-report",
+                    status: "completed",
+                    taskId: "task_placeholder_markdown",
+                    startedAt: "2026-05-29T00:00:00.000Z",
+                    completedAt: "2026-05-29T00:00:01.000Z",
+                    result: {
+                      reportMarkdown: STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN,
+                    },
+                  },
+                ],
+              },
+            }}
+          />
+        </TooltipProvider>
+      </ThemeProvider>
+    );
+
+    expect(view.queryByLabelText("Open report for task_structured_only")).toBeNull();
+    expect(view.container.textContent).not.toContain(
+      STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN
+    );
+
+    const placeholderReportToggle = view.getByLabelText(
+      "Open report for task_placeholder_markdown"
+    );
+    expect(placeholderReportToggle.textContent).toBe("Report");
+    fireEvent.click(placeholderReportToggle);
+    await waitFor(() => {
+      const reportDialog = document.querySelector('[role="dialog"]');
+      expect(reportDialog?.textContent).toContain(STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN);
+    });
+    fireEvent.click(view.getByLabelText("Close"));
+    await waitFor(() => {
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    const completedTaskControl = view.getByRole("button", {
+      name: "Expand structured output for workflow task task_structured_only",
+    });
+    fireEvent.click(completedTaskControl);
+
+    expect(view.container.textContent).toContain("summary");
+    expect(view.container.textContent).toContain("Scoped research angles");
   });
 
   test("labels task rows with the sub-agent title and falls back to stepId without one", () => {

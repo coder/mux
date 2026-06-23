@@ -13,6 +13,7 @@ import {
   useOptionalCommandRegistry,
   type CommandAction,
 } from "@/browser/contexts/CommandRegistryContext";
+import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import type {
   WorkflowRunEvent,
   WorkflowRunRecord,
@@ -191,10 +192,30 @@ function isWorkflowRunSuccessResult(
   return value != null && !isToolErrorResult(value);
 }
 
+// Schema-shaped workflow agent reports carry structuredOutput only; their placeholder
+// markdown exists for backend compatibility and should not create noisy Report buttons.
+function hasDisplayableReportMarkdown(
+  reportMarkdown: string,
+  result: { structuredOutput?: unknown } | null | undefined
+): boolean {
+  const trimmedReportMarkdown = reportMarkdown.trim();
+  if (trimmedReportMarkdown.length === 0) {
+    return false;
+  }
+  return !(
+    trimmedReportMarkdown === STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN &&
+    result?.structuredOutput !== undefined
+  );
+}
+
 function getReportMarkdown(value: unknown): string | null {
   if (value != null && typeof value === "object") {
-    const reportMarkdown = (value as Record<string, unknown>).reportMarkdown;
-    if (typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0) {
+    const result = value as Record<string, unknown>;
+    const reportMarkdown = result.reportMarkdown;
+    if (
+      typeof reportMarkdown === "string" &&
+      hasDisplayableReportMarkdown(reportMarkdown, result)
+    ) {
       return reportMarkdown;
     }
   }
@@ -468,8 +489,9 @@ function getTaskReportMarkdown(
   steps: readonly WorkflowStepRecord[]
 ): string | null {
   const step = findTaskStepForEvent(event, steps);
-  const reportMarkdown = step?.result?.reportMarkdown;
-  return typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0
+  const result = step?.result;
+  const reportMarkdown = result?.reportMarkdown;
+  return typeof reportMarkdown === "string" && hasDisplayableReportMarkdown(reportMarkdown, result)
     ? reportMarkdown
     : null;
 }
