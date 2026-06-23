@@ -163,7 +163,7 @@ Required options:
 - `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
 - `schema`: optional JSON object schema. When present, the child reports schema-shaped data through `agent_report` and `agent()` returns that structured object directly. When omitted, `agent()` returns the child report markdown string.
 
-Optional fields include `title`, `agentType`, `isolation`, and `onRefusal`. `model` and `effort` are rejected for now instead of being silently ignored.
+Workflow agents default to `exec`. Optional fields include `title`, `agentId` (preferred), legacy `agentType`, `model`, `thinking`, `isolation`, and `onRefusal`. Use `agentId: "explore"` for read-only research/discovery stages. `model` accepts the same aliases/full model strings as the UI, `thinking` accepts `off|low|medium|high|xhigh|max` or a numeric index, and `effort` is rejected to avoid ambiguous provider-specific behavior.
 
 ```js
 const scope = agent("Scope this topic", {

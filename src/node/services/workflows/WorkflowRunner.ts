@@ -6,6 +6,8 @@ import type {
   WorkflowRunEvent,
   WorkflowStepRecord,
 } from "@/common/types/workflow";
+import { parseThinkingInput, type ParsedThinkingInput } from "@/common/types/thinking";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
@@ -38,6 +40,8 @@ export interface WorkflowAgentSpec {
   prompt: string;
   title?: string;
   agentId?: string;
+  modelString?: string;
+  thinkingLevel?: ParsedThinkingInput;
   isolation?: "fork" | "none";
   outputSchema?: unknown;
   /** Internal marker for new `agent(prompt, { id })` prose-only steps. */
@@ -2302,6 +2306,39 @@ function parseStartedWorkflowAgentHandle(rawHandle: unknown): StartedWorkflowAge
   return { handleId };
 }
 
+function parseWorkflowAgentModelString(rawValue: unknown): string | undefined {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+  assert(
+    typeof rawValue === "string" && rawValue.trim().length > 0,
+    "agent model must be a non-empty string"
+  );
+  const normalized = normalizeModelInput(rawValue);
+  assert(
+    normalized.model != null,
+    `agent model "${rawValue}" must be a known alias or provider:model string`
+  );
+  return normalized.model;
+}
+
+function parseWorkflowAgentThinkingLevel(rawValue: unknown): ParsedThinkingInput | undefined {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+  const value = typeof rawValue === "number" ? String(rawValue) : rawValue;
+  assert(
+    typeof value === "string" && value.trim().length > 0,
+    "agent thinking must be a non-empty string or numeric index"
+  );
+  const parsed = parseThinkingInput(value);
+  assert(
+    parsed !== undefined,
+    "agent thinking must be one of off, low, medium, high, xhigh, max, or a numeric index"
+  );
+  return parsed;
+}
+
 function parseWorkflowAgentSpec(
   rawSpec: unknown,
   options: { allowMissingOutputSchema: boolean }
@@ -2322,6 +2359,14 @@ function parseWorkflowAgentSpec(
   }
   if (typeof spec.agentId === "string" && spec.agentId.length > 0) {
     parsed.agentId = spec.agentId;
+  }
+  const modelString = parseWorkflowAgentModelString(spec.modelString);
+  if (modelString !== undefined) {
+    parsed.modelString = modelString;
+  }
+  const thinkingLevel = parseWorkflowAgentThinkingLevel(spec.thinkingLevel);
+  if (thinkingLevel !== undefined) {
+    parsed.thinkingLevel = thinkingLevel;
   }
   if (spec.isolation !== undefined) {
     assert(
@@ -2540,13 +2585,18 @@ function __muxAgent(prompt, options) {
   if (typeof options.id !== "string" || options.id.length === 0) {
     throw new Error("agent replay boundary requires a stable id");
   }
-  if (Object.prototype.hasOwnProperty.call(options, "model")) {
-    throw new Error("agent options.model is not supported yet");
-  }
   if (Object.prototype.hasOwnProperty.call(options, "effort")) {
-    throw new Error("agent options.effort is not supported yet");
+    throw new Error("agent options.effort is not supported; use options.thinking");
   }
   const spec = { ...options, prompt };
+  if (Object.prototype.hasOwnProperty.call(spec, "model")) {
+    spec.modelString = spec.model;
+    delete spec.model;
+  }
+  if (Object.prototype.hasOwnProperty.call(spec, "thinking")) {
+    spec.thinkingLevel = spec.thinking;
+    delete spec.thinking;
+  }
   if (Object.prototype.hasOwnProperty.call(spec, "schema")) {
     spec.outputSchema = spec.schema;
     delete spec.schema;

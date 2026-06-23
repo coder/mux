@@ -26,6 +26,8 @@ import {
   type TaskApplyGitPatchResult,
 } from "@/node/services/tools/task_apply_git_patch";
 
+export const DEFAULT_WORKFLOW_AGENT_ID = "exec";
+
 interface WorkflowTaskExperiments {
   programmaticToolCalling?: boolean;
   programmaticToolCallingExclusive?: boolean;
@@ -53,6 +55,7 @@ interface WorkflowTaskServiceLike {
     modelString?: string;
     thinkingLevel?: ParsedThinkingInput;
     isolation?: "fork" | "none";
+    onRefusal?: "fail" | "fallback";
   }): Promise<{ success: true; data: TaskCreateResult } | { success: false; error: string }>;
   createMany?(
     args: Array<{
@@ -71,6 +74,7 @@ interface WorkflowTaskServiceLike {
       modelString?: string;
       thinkingLevel?: ParsedThinkingInput;
       isolation?: "fork" | "none";
+      onRefusal?: "fail" | "fallback";
     }>,
     options?: {
       onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
@@ -398,6 +402,8 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
 
     const agentId = spec.agentId ?? this.defaultAgentId;
     const experiments = this.getExperimentsForAgent(agentId);
+    const modelString = spec.modelString ?? this.modelString;
+    const thinkingLevel = spec.thinkingLevel ?? this.thinkingLevel;
     return {
       parentWorkspaceId: this.parentWorkspaceId,
       kind: "agent",
@@ -407,8 +413,8 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       workflowTask,
       ...(spec.isolation !== undefined ? { isolation: spec.isolation } : {}),
       ...(experiments !== undefined ? { experiments } : {}),
-      ...(this.modelString !== undefined ? { modelString: this.modelString } : {}),
-      ...(this.thinkingLevel !== undefined ? { thinkingLevel: this.thinkingLevel } : {}),
+      ...(modelString !== undefined ? { modelString } : {}),
+      ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
       // Refusal policy must survive both the single-step and parallel
       // (createAgentTasks) paths: a verifier step marked onRefusal: "fail"
       // must fail honestly instead of silently continuing on a fallback model.

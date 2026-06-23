@@ -16,4 +16,4 @@ workflow_run({
 });
 ```
 
-The workflow scopes search angles, searches and fetches sources, extracts falsifiable claims, verifies claims adversarially, and synthesizes a cited report with caveats.
+The workflow scopes search angles, searches and fetches sources, extracts falsifiable claims, verifies claims adversarially with exec agents on a stronger model, and synthesizes a cited report with caveats.
