@@ -283,6 +283,7 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/setup-playwright
+        timeout-minutes: 10
       - run: make storybook-build
       - run: |
           bun x http-server storybook-static -p 6006 &
@@ -321,7 +322,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
+      # Bound browser setup; Playwright downloads can stall after progress reaches 100%.
       - uses: ./.github/actions/setup-playwright
+        timeout-minutes: 10
       - name: Run tests
         if: matrix.os == 'linux'
         run: xvfb-run -a make test-e2e
