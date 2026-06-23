@@ -416,7 +416,7 @@ describe("StreamManager - cleanupStreamTempDir", () => {
 describe("StreamManager - stopWhen configuration", () => {
   type StopWhenCondition = (options: { steps: unknown[] }) => boolean;
   type BuildStopWhenCondition = (request: {
-    hasQueuedMessage?: () => boolean;
+    hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean;
     toolPolicy?: ToolPolicy;
   }) => StopWhenCondition[];
 
@@ -429,7 +429,7 @@ describe("StreamManager - stopWhen configuration", () => {
 
   function requiredToolConditionForTests(toolPolicy: ToolPolicy): StopWhenCondition {
     const [, , requiredToolCondition] = buildStopWhenForTests()({
-      hasQueuedMessage: () => false,
+      hasQueuedMessages: () => false,
       toolPolicy,
     });
     return requiredToolCondition;
@@ -441,7 +441,7 @@ describe("StreamManager - stopWhen configuration", () => {
 
   test("returns step-cap and queued-message conditions with no policy", () => {
     let queued = false;
-    const stopWhen = buildStopWhenForTests()({ hasQueuedMessage: () => queued });
+    const stopWhen = buildStopWhenForTests()({ hasQueuedMessages: () => queued });
     expect(stopWhen).toHaveLength(3);
 
     const [maxStepCondition, queuedMessageCondition, requiredToolCondition] = stopWhen;
@@ -666,7 +666,7 @@ describe("StreamManager - sequential tool execution", () => {
     headers?: Record<string, string | undefined>;
     maxOutputTokens?: number;
     streamCallSettings?: Record<string, unknown>;
-    hasQueuedMessage?: () => boolean;
+    hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean;
     toolPolicy?: ToolPolicy;
     toolChoice?: { type: "tool"; toolName: string };
   }

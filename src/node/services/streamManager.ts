@@ -156,7 +156,7 @@ interface StreamRequestConfig {
   headers?: Record<string, string | undefined>;
   maxOutputTokens?: number;
   streamCallSettings?: Omit<ResolvedCallSettingsOverrides, "maxOutputTokens">;
-  hasQueuedMessage?: () => boolean;
+  hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean;
   /** Optional hook for callers that need chunk-level visibility during streaming. */
   onChunk?: StreamTextOnChunk;
   /** Optional hook for callers that need the live prepared step transcript. */
@@ -1392,7 +1392,7 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
     toolPolicy?: ToolPolicy,
-    hasQueuedMessage?: () => boolean,
+    hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean,
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     onChunk?: StreamTextOnChunk,
@@ -1449,7 +1449,7 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens: effectiveMaxOutputTokens,
       streamCallSettings:
         Object.keys(streamCallSettings).length > 0 ? streamCallSettings : undefined,
-      hasQueuedMessage,
+      hasQueuedMessages,
       onChunk,
       onStepMessages,
       toolPolicy,
@@ -1457,7 +1457,7 @@ export class StreamManager extends EventEmitter {
   }
 
   private createStopWhenCondition(
-    request: Pick<StreamRequestConfig, "hasQueuedMessage" | "toolPolicy">
+    request: Pick<StreamRequestConfig, "hasQueuedMessages" | "toolPolicy">
   ): Array<ReturnType<typeof stepCountIs>> {
     // Completion-tool stop check: completion/routing tools use explicit
     // success/ok markers (agent_report, propose_plan).
@@ -1507,7 +1507,7 @@ export class StreamManager extends EventEmitter {
 
     return [
       stepCountIs(100000),
-      () => request.hasQueuedMessage?.() ?? false,
+      () => request.hasQueuedMessages?.("tool-end") ?? false,
       hasSuccessfulRequiredToolResult,
     ];
   }
@@ -1570,7 +1570,7 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     callSettingsOverrides?: ResolvedCallSettingsOverrides,
-    hasQueuedMessage?: () => boolean,
+    hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
@@ -1593,7 +1593,7 @@ export class StreamManager extends EventEmitter {
       maxOutputTokens,
       callSettingsOverrides,
       toolPolicy,
-      hasQueuedMessage,
+      hasQueuedMessages,
       headers,
       anthropicCacheTtlOverride,
       onChunk,
@@ -2249,7 +2249,7 @@ export class StreamManager extends EventEmitter {
       fallbackState.original.maxOutputTokens,
       prepared.data.callSettingsOverrides,
       streamInfo.request.toolPolicy,
-      streamInfo.request.hasQueuedMessage,
+      streamInfo.request.hasQueuedMessages,
       prepared.data.headers,
       prepared.data.anthropicCacheTtl,
       streamInfo.request.onChunk,
@@ -3638,7 +3638,7 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     providedStreamToken?: StreamToken,
-    hasQueuedMessage?: () => boolean,
+    hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean,
     workspaceName?: string,
     thinkingLevel?: string,
     headers?: Record<string, string | undefined>,
@@ -3723,7 +3723,7 @@ export class StreamManager extends EventEmitter {
           maxOutputTokens,
           toolPolicy,
           callSettingsOverrides,
-          hasQueuedMessage,
+          hasQueuedMessages,
           workspaceName,
           thinkingLevel,
           headers,

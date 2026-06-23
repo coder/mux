@@ -3608,7 +3608,7 @@ export class AgentSession {
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
-      hasQueuedMessage: () => this.hasQueuedMessages("tool-end"),
+      hasQueuedMessages: this.hasQueuedMessages.bind(this),
       openaiTruncationModeOverride,
     });
 
