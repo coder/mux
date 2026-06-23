@@ -7433,11 +7433,7 @@ export class WorkspaceService extends EventEmitter {
   }
 
   isBusyForMessage(workspaceId: string): boolean {
-    const trimmedWorkspaceId = workspaceId.trim();
-    return (
-      this.sessions.get(trimmedWorkspaceId)?.isBusy() === true ||
-      this.aiService.isStreaming(trimmedWorkspaceId)
-    );
+    return this.sessions.get(workspaceId.trim())?.isBusy() === true;
   }
 
   hasQueuedWorkspaceTurn(workspaceId: string, handleId: string): boolean {
