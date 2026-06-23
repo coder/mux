@@ -11,6 +11,7 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
+import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
 import { log } from "@/node/services/log";
 import {
   discoverAgentDefinitions,
@@ -2841,9 +2842,9 @@ export class TaskService {
       const slot = await ensureParallelSlot();
       if (!slot.success) return Err(slot.error);
       const tags = {
-        "mux.taskHandleId": handleId,
-        "mux.taskOwnerWorkspaceId": ownerWorkspaceId,
-        "mux.taskTurnId": turnId,
+        [WORKSPACE_TURN_TASK_TAGS.handle]: handleId,
+        [WORKSPACE_TURN_TASK_TAGS.ownerWorkspaceId]: ownerWorkspaceId,
+        [WORKSPACE_TURN_TASK_TAGS.turn]: turnId,
       };
       const createResult = await this.workspaceService.create(
         parentMeta.projectPath,
