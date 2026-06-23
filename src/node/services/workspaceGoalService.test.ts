@@ -1458,7 +1458,9 @@ describe("WorkspaceGoalService", () => {
 
   test("does not dispatch stale continuation candidates after the goal changes", async () => {
     await setGoalOk(service, { workspaceId, objective: "Original" });
-    const dispatcher = new IdleDispatcher({ debounceMs: 10 });
+    // Give the replacement write time to commit before the idle dispatch builds
+    // its payload; this test is about rejecting an already-stale candidate, not racing setGoal.
+    const dispatcher = new IdleDispatcher({ debounceMs: 250 });
     const execute = mock(() => Promise.resolve(true));
     service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
 
