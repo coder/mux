@@ -70,6 +70,29 @@ describe("AgentSession.waitForIdle", () => {
     }
   });
 
+  test("tracks only tool-end queued messages for foreground wait backgrounding", async () => {
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId: "wait-for-idle-tool-end-queue",
+    });
+
+    try {
+      session.queueMessage("later", {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+      expect(session.hasQueuedMessages()).toBe(true);
+      expect(session.hasQueuedMessages("tool-end")).toBe(false);
+
+      session.clearQueue();
+      session.queueMessage("now");
+      expect(session.hasQueuedMessages("tool-end")).toBe(true);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("removes repeated aborted idle waiters during one busy turn", async () => {
     const { session, cleanup } = await createAgentSessionHarness({
       workspaceId: "wait-for-idle-repeated-aborts",

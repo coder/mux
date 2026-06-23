@@ -3608,8 +3608,7 @@ export class AgentSession {
       workspaceGoalService: this.workspaceGoalService,
       experiments: options?.experiments,
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
-      hasQueuedMessage: () =>
-        !this.messageQueue.isEmpty() && this.messageQueue.getQueueDispatchMode() === "tool-end",
+      hasQueuedMessage: () => this.hasQueuedMessages("tool-end"),
       openaiTruncationModeOverride,
     });
 
@@ -5022,8 +5021,11 @@ export class AgentSession {
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
   }
 
-  hasQueuedMessages(): boolean {
-    return !this.messageQueue.isEmpty();
+  hasQueuedMessages(dispatchMode?: "tool-end" | "turn-end"): boolean {
+    return (
+      !this.messageQueue.isEmpty() &&
+      (dispatchMode == null || this.messageQueue.getQueueDispatchMode() === dispatchMode)
+    );
   }
 
   async waitForPendingStreamErrorRecoveryDecision(): Promise<void> {

@@ -3769,6 +3769,11 @@ export class TaskService {
       this.backgroundableForegroundWaitersByWorkspaceId.set(workspaceId, set);
     }
     set.add(waiter);
+    // ponytail: level-trigger the edge-trigger from sendMessage, so a message
+    // queued before this waiter existed still backgrounds the foreground wait.
+    if (this.workspaceService.hasQueuedMessages(workspaceId, "tool-end")) {
+      this.backgroundForegroundWaitsForWorkspace(workspaceId);
+    }
   }
 
   private unregisterBackgroundableForegroundWaiter(
