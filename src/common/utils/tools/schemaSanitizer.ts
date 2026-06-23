@@ -138,6 +138,49 @@ export function sanitizeWorkflowAgentReportSchemaForOpenAI<T>(schema: T): T {
   return clonedSchema;
 }
 
+function makeWorkflowReportPropertyNullable(schema: unknown): unknown {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+    return { anyOf: [schema, { type: "null" }] };
+  }
+
+  const obj = schema as Record<string, unknown>;
+  if (Array.isArray(obj.enum)) {
+    const values: unknown[] = obj.enum;
+    if (!values.includes(null)) {
+      obj.enum = [...values, null];
+    }
+    return obj;
+  }
+  if (typeof obj.type === "string") {
+    if (obj.type !== "null") {
+      obj.type = [obj.type, "null"];
+    }
+    return obj;
+  }
+  if (Array.isArray(obj.type)) {
+    const types: unknown[] = obj.type;
+    if (!types.includes("null")) {
+      obj.type = [...types, "null"];
+    }
+    return obj;
+  }
+  if (Array.isArray(obj.anyOf)) {
+    const options: unknown[] = obj.anyOf;
+    const hasNullOption = options.some(
+      (option) =>
+        option != null &&
+        typeof option === "object" &&
+        !Array.isArray(option) &&
+        (option as { type?: unknown }).type === "null"
+    );
+    if (!hasNullOption) {
+      obj.anyOf = [...options, { type: "null" }];
+    }
+    return obj;
+  }
+  return { anyOf: [obj, { type: "null" }] };
+}
+
 function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
   if (typeof schema !== "object" || schema === null) {
     return;
@@ -162,13 +205,18 @@ function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
       ? (obj.properties as Record<string, unknown>)
       : null;
   if (properties != null) {
-    const required = Array.isArray(obj.required)
-      ? obj.required.filter((key): key is string => typeof key === "string" && key in properties)
-      : [];
+    const originallyRequired = new Set(
+      Array.isArray(obj.required)
+        ? obj.required.filter((key): key is string => typeof key === "string" && key in properties)
+        : []
+    );
     obj.additionalProperties = false;
-    obj.required = required;
-    for (const propSchema of Object.values(properties)) {
+    obj.required = Object.keys(properties);
+    for (const [propertyName, propSchema] of Object.entries(properties)) {
       sanitizeWorkflowAgentReportSchemaNode(propSchema);
+      if (!originallyRequired.has(propertyName)) {
+        properties[propertyName] = makeWorkflowReportPropertyNullable(propSchema);
+      }
     }
   } else if (obj.type === "object") {
     obj.additionalProperties = false;

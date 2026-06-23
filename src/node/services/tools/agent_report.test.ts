@@ -143,7 +143,8 @@ describe("agent_report tool", () => {
     expect(inputSchema.jsonSchema?.properties.code).not.toHaveProperty("default");
     expect(inputSchema.jsonSchema?.properties.score).toHaveProperty("minimum", 1);
     expect(inputSchema.jsonSchema).toHaveProperty("additionalProperties", false);
-    expect(inputSchema.jsonSchema).toHaveProperty("required", ["code", "score"]);
+    expect(inputSchema.jsonSchema).toHaveProperty("required", ["code", "score", "notes"]);
+    expect(inputSchema.jsonSchema?.properties.notes).toHaveProperty("type", ["string", "null"]);
     expect(inputSchema.jsonSchema).not.toHaveProperty("allOf");
 
     const result: unknown = await Promise.resolve(

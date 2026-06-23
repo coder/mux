@@ -265,13 +265,13 @@ describe("schemaSanitizer", () => {
 
       expect(sanitized).toEqual({
         type: "object",
-        required: ["code"],
+        required: ["code", "score", "tags"],
         additionalProperties: false,
         properties: {
           code: { type: "string", pattern: "^[A-Z]+$" },
-          score: { type: "number", minimum: 1, maximum: 5 },
+          score: { type: ["number", "null"], minimum: 1, maximum: 5 },
           tags: {
-            type: "array",
+            type: ["array", "null"],
             minItems: 1,
             maxItems: 3,
             items: {
