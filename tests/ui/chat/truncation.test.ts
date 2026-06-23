@@ -119,15 +119,20 @@ describe("Chat truncation UI", () => {
       const oldPairs = oldDisplayedMessages / 4;
       const expectedHiddenCount = oldPairs * 3;
 
-      const indicators = await waitFor(() => {
-        const nodes = Array.from(
-          view?.container.querySelectorAll('[data-testid="chat-message"]') ?? []
-        ).filter((node) => node.textContent?.match(/some messages are hidden for performance/i));
-        if (nodes.length === 0) {
-          throw new Error("Truncation indicator not found");
-        }
-        return nodes;
-      });
+      const indicators = await waitFor(
+        () => {
+          const nodes = Array.from(
+            view?.container.querySelectorAll('[data-testid="chat-message"]') ?? []
+          ).filter((node) => node.textContent?.match(/some messages are hidden for performance/i));
+          if (nodes.length === 0) {
+            throw new Error("Truncation indicator not found");
+          }
+          return nodes;
+        },
+        // Full integration runs can hydrate the seeded transcript slower than
+        // Testing Library's default 1s wait, even though the chat window exists.
+        { timeout: 30_000 }
+      );
 
       expect(indicators).toHaveLength(MAX_HISTORY_HIDDEN_SEGMENTS);
 
