@@ -430,6 +430,9 @@ export class WorkflowRunner {
       }
       const ignoreStartedTaskIds = resumingInterruptedRun;
       const allowLegacyMissingOutputSchema = run.agentOutputSchemaRequired !== true;
+      // Runs persisted before agentType was removed lack this marker but may still resume their
+      // original source snapshot. New runs set it to false at creation and fail fast.
+      const allowLegacyAgentType = run.agentTypeAliasAllowed !== false;
       let backgrounded: Promise<void> | null = null;
       const markBackgrounded = async () => {
         leaseGuard.throwIfLost();
@@ -607,7 +610,7 @@ export class WorkflowRunner {
 
       let compiledSource: string;
       try {
-        compiledSource = compileWorkflowSource(run.source);
+        compiledSource = compileWorkflowSource(run.source, { allowLegacyAgentType });
       } catch (error) {
         leaseGuard.throwIfLost();
         await this.appendEvent(runId, {
@@ -2424,7 +2427,7 @@ function normalizeWorkflowResultForEvent(result: unknown): WorkflowResult {
   return WorkflowResultSchema.parse({ reportMarkdown });
 }
 
-function compileWorkflowSource(source: string): string {
+function compileWorkflowSource(source: string, options: { allowLegacyAgentType: boolean }): string {
   // Workflow scripts are evaluated as a script (not a module), so export
   // syntax must be rewritten away. Top-level named export declarations are
   // allowed so built-in workflows can expose pure helpers for direct unit
@@ -2450,6 +2453,7 @@ ${WORKFLOW_RUNTIME_STDLIB_SOURCE}
 let __muxParallelCollectingAgents = null;
 let __muxPipelineCollectingAgents = null;
 const __MUX_PARALLEL_AGENT_MARKER = "__muxParallelAgentMarker";
+const __MUX_ALLOW_LEGACY_AGENT_TYPE = ${options.allowLegacyAgentType ? "true" : "false"};
 function __muxParallel(thunks, options) {
   if (!Array.isArray(thunks)) {
     throw new Error("parallel requires an array of thunks");
@@ -2602,6 +2606,9 @@ function __muxAgent(prompt, options) {
     delete spec.schema;
   }
   if (Object.prototype.hasOwnProperty.call(spec, "agentType")) {
+    if (!__MUX_ALLOW_LEGACY_AGENT_TYPE) {
+      throw new Error("agent options.agentType is not supported; use options.agentId");
+    }
     spec.agentId = spec.agentType;
     delete spec.agentType;
   }

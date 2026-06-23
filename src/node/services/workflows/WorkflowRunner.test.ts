@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/no-unsafe-argument, @typescript-eslint/require-await */
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { describe, expect, mock, test } from "bun:test";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
@@ -138,7 +140,7 @@ describe("WorkflowRunner", () => {
     expect(seenSpecs[1]).toMatchObject({ id: "markdown" });
   });
 
-  test("new agent API maps agent, model, and thinking options", async () => {
+  test("new agent API maps agentId, model, and thinking options", async () => {
     using tmp = new DisposableTempDir("workflow-runner-agent-options");
     const store = new WorkflowRunStore({
       sessionDir: tmp.path,
@@ -151,7 +153,7 @@ describe("WorkflowRunner", () => {
       source: `export default function workflow({ agent }) {
   const result = agent("Verify claim", {
     id: "verify",
-    agentType: "exec",
+    agentId: "exec",
     model: "fable",
     thinking: "high",
   });
@@ -180,6 +182,84 @@ describe("WorkflowRunner", () => {
         thinkingLevel: "high",
       }),
     ]);
+  });
+
+  test("new agent API rejects legacy agentType option", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-type-rejected");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_agent_type_rejected",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  agent("Verify claim", { id: "verify", agentType: "explore" });
+  return { reportMarkdown: "unreachable" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runAgent = mock(async () => ({
+      taskId: "task_verify",
+      reportMarkdown: "verified",
+      structuredOutput: {},
+    }));
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_agent_type_rejected")).rejects.toThrow(
+      "agent options.agentType is not supported; use options.agentId"
+    );
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  test("legacy runs still replay agentType source snapshots", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-agent-type-replay");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_agent_type_replay",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Verify claim", { id: "verify", agentType: "explore" });
+  return { reportMarkdown: result };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runFile = path.join(tmp.path, "workflows", "wfr_legacy_agent_type_replay", "run.json");
+    const persistedRun = JSON.parse(await fs.readFile(runFile, "utf-8")) as Record<string, unknown>;
+    delete persistedRun.agentTypeAliasAllowed;
+    await fs.writeFile(runFile, `${JSON.stringify(persistedRun, null, 2)}\n`, "utf-8");
+    const legacySpec = {
+      id: "verify",
+      prompt: "Verify claim",
+      agentId: "explore",
+      markdownOnly: true,
+    };
+    await store.recordStepCompleted("wfr_legacy_agent_type_replay", {
+      stepId: legacySpec.id,
+      inputHash: hashWorkflowStepInput(legacySpec.id, legacySpec),
+      taskId: "task_legacy_verify",
+      result: { taskId: "task_legacy_verify", reportMarkdown: "verified", structuredOutput: {} },
+      startedAt: "2026-05-29T00:00:00.500Z",
+      completedAt: "2026-05-29T00:00:00.750Z",
+    });
+    const runAgent = mock(async () => {
+      throw new Error("agent should replay");
+    });
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_legacy_agent_type_replay")).resolves.toEqual({
+      reportMarkdown: "verified",
+    });
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   test("parallel runs agent thunks concurrently and returns ordered schema outputs", async () => {
@@ -1018,7 +1098,7 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       workflow: definition,
       source: `export default function workflow({ agent, applyPatch }) {
-  agent("Implement the change", { id: "implement", agentType: "exec" });
+  agent("Implement the change", { id: "implement" });
   const patch = applyPatch({ id: "apply-implement", agentId: "implement" });
   return { reportMarkdown: patch.status + ":" + patch.taskId };
 }

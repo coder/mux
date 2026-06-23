@@ -50,6 +50,8 @@ export interface CreateWorkflowRunInput {
   source: string;
   args: unknown;
   agentOutputSchemaRequired?: boolean;
+  /** Existing persisted source snapshots may still contain agentType; new runs default to false. */
+  agentTypeAliasAllowed?: boolean;
   parentWorkflow?: WorkflowRunParent;
   now: string;
 }
@@ -114,6 +116,7 @@ export class WorkflowRunStore {
       sourceHash: hashSource(input.source),
       args: input.args,
       agentOutputSchemaRequired: input.agentOutputSchemaRequired ?? true,
+      agentTypeAliasAllowed: input.agentTypeAliasAllowed ?? false,
       ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
       status: "pending",
       createdAt: input.now,
@@ -166,6 +169,7 @@ export class WorkflowRunStore {
           sourceHash: hashSource(input.source),
           args: input.args,
           agentOutputSchemaRequired: input.agentOutputSchemaRequired ?? true,
+          agentTypeAliasAllowed: input.agentTypeAliasAllowed ?? false,
           ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
           status: "pending",
           createdAt: input.now,
