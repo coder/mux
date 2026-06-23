@@ -181,7 +181,7 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
           duplicates.push({ url: result.url, angle: angle.label });
           continue;
         }
-        if (fetchSlots <= 0 && result.relevance !== "high") {
+        if (fetchSlots <= 0) {
           budgetDropped.push({ url: result.url, angle: angle.label });
           continue;
         }

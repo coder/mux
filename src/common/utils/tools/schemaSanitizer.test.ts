@@ -265,7 +265,7 @@ describe("schemaSanitizer", () => {
 
       expect(sanitized).toEqual({
         type: "object",
-        required: ["code", "score", "tags"],
+        required: ["code"],
         additionalProperties: false,
         properties: {
           code: { type: "string", pattern: "^[A-Z]+$" },

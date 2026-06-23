@@ -162,8 +162,11 @@ function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
       ? (obj.properties as Record<string, unknown>)
       : null;
   if (properties != null) {
+    const required = Array.isArray(obj.required)
+      ? obj.required.filter((key): key is string => typeof key === "string" && key in properties)
+      : [];
     obj.additionalProperties = false;
-    obj.required = Object.keys(properties);
+    obj.required = required;
     for (const propSchema of Object.values(properties)) {
       sanitizeWorkflowAgentReportSchemaNode(propSchema);
     }
