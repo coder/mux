@@ -653,11 +653,17 @@ describe("WorkflowRunner", () => {
       workflow: definition,
       source: `export default function workflow({ agent, parallelAgents }) {
   const single = agent({ id: "old-shape", prompt: "Old object shape" });
-  const parallel = parallelAgents([
+  const direct = parallelAgents([
     { id: "old-parallel-a", prompt: "Old parallel A" },
     { id: "old-parallel-b", prompt: "Old parallel B" },
   ]);
-  return { reportMarkdown: single.reportMarkdown + "|" + parallel.map((result) => result.reportMarkdown).join(",") };
+  const mapped = mux.parallelMap({
+    items: ["mapped-a", "mapped-b"],
+    stepId: function (item) { return item; },
+    prompt: function (item) { return "Old " + item; },
+    outputSchema: { type: "object" },
+  });
+  return { reportMarkdown: single.reportMarkdown + "|" + direct.concat(mapped).map((result) => result.reportMarkdown).join(",") };
 }
 `,
       args: {},
@@ -673,12 +679,14 @@ describe("WorkflowRunner", () => {
     });
 
     await expect(runner.run("wfr_legacy_agent_api")).resolves.toEqual({
-      reportMarkdown: "old-shape|old-parallel-a,old-parallel-b",
+      reportMarkdown: "old-shape|old-parallel-a,old-parallel-b,mapped-a,mapped-b",
     });
     expect(seenSpecs.map((spec) => spec.id)).toEqual([
       "old-shape",
       "old-parallel-a",
       "old-parallel-b",
+      "mapped-a",
+      "mapped-b",
     ]);
   });
 
@@ -1030,6 +1038,46 @@ describe("WorkflowRunner", () => {
         }),
       ])
     );
+  });
+
+  test("supports legacy mux.patch.applySafely alias for snapshotted runs", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-legacy-patch-alias");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_legacy_patch_alias",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const fixer = agent({ id: "legacy-fixer", prompt: "Fix legacy issue" });
+  const patch = mux.patch.applySafely({ id: "legacy-apply", source: fixer });
+  return { reportMarkdown: patch.status + ":" + patch.taskId };
+}
+`,
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const applyPatchCalls: unknown[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        return { taskId: "task_legacy_fixer", reportMarkdown: "fixed", structuredOutput: {} };
+      },
+      async applyPatch(spec) {
+        applyPatchCalls.push(spec);
+        return { success: true, status: "applied", taskId: spec.sourceTaskId };
+      },
+    });
+
+    await expect(runner.run("wfr_legacy_patch_alias")).resolves.toEqual({
+      reportMarkdown: "applied:task_legacy_fixer",
+    });
+    expect(applyPatchCalls[0]).toMatchObject({
+      id: "legacy-apply",
+      sourceTaskId: "task_legacy_fixer",
+    });
   });
 
   test("applyPatch fails before adapter calls when agentId has not completed", async () => {

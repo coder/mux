@@ -2610,6 +2610,45 @@ function __muxParallelAgents(specs, options) {
   }
   return __workflowParallelAgents(specs, options);
 }
+function __muxCallMaybeFunction(value, item, index) {
+  return typeof value === "function" ? value(item, index) : value;
+}
+function __muxParallelMap(options) {
+  if (options === null || typeof options !== "object" || Array.isArray(options)) {
+    throw new Error("mux.parallelMap requires an options object");
+  }
+  const items = Array.isArray(options.items) ? options.items : [];
+  const specs = items.map((item, index) => {
+    const id = __muxCallMaybeFunction(options.stepId, item, index);
+    const prompt = __muxCallMaybeFunction(options.prompt, item, index);
+    const spec = {
+      id,
+      prompt,
+      title: __muxCallMaybeFunction(options.title, item, index),
+      agentId: __muxCallMaybeFunction(options.agentId, item, index),
+      isolation: __muxCallMaybeFunction(options.isolation, item, index),
+      outputSchema: __muxCallMaybeFunction(options.outputSchema, item, index),
+      onRefusal: __muxCallMaybeFunction(options.onRefusal, item, index),
+    };
+    if (spec.title === undefined) delete spec.title;
+    if (spec.agentId === undefined) delete spec.agentId;
+    if (spec.isolation === undefined) delete spec.isolation;
+    if (spec.outputSchema === undefined) delete spec.outputSchema;
+    if (spec.onRefusal === undefined) delete spec.onRefusal;
+    return spec;
+  });
+  return __muxParallelAgents(specs, { maxParallel: options.maxParallel });
+}
+function __muxInstallLegacyMuxHelpers() {
+  const currentMux = globalThis.mux && typeof globalThis.mux === "object" ? globalThis.mux : {};
+  const currentPatch = currentMux.patch && typeof currentMux.patch === "object" ? currentMux.patch : {};
+  globalThis.mux = Object.freeze({
+    ...currentMux,
+    parallelMap: __muxParallelMap,
+    patch: Object.freeze({ ...currentPatch, applySafely: __muxApplyPatch }),
+  });
+}
+__muxInstallLegacyMuxHelpers();
 ${compiled}
 return (async () => await __muxWorkflow({
   args: __workflowArgs(),
