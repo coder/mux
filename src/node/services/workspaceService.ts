@@ -7578,6 +7578,10 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  hasQueuedMessages(workspaceId: string, dispatchMode?: "tool-end" | "turn-end"): boolean {
+    return this.sessions.get(workspaceId.trim())?.hasQueuedMessages(dispatchMode) ?? false;
+  }
+
   async waitForPendingStreamErrorRecoveryDecision(workspaceId: string): Promise<void> {
     const session = this.sessions.get(workspaceId.trim());
     await session?.waitForPendingStreamErrorRecoveryDecision();

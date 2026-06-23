@@ -363,6 +363,7 @@ function createWorkspaceServiceMocks(
     sendMessage: ReturnType<typeof mock>;
     resumeStream: ReturnType<typeof mock>;
     clearQueue: ReturnType<typeof mock>;
+    hasQueuedMessages: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
@@ -380,6 +381,7 @@ function createWorkspaceServiceMocks(
   sendMessage: ReturnType<typeof mock>;
   resumeStream: ReturnType<typeof mock>;
   clearQueue: ReturnType<typeof mock>;
+  hasQueuedMessages: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
@@ -398,6 +400,7 @@ function createWorkspaceServiceMocks(
     overrides?.resumeStream ??
     mock((): Promise<Result<{ started: boolean }>> => Promise.resolve(Ok({ started: true })));
   const clearQueue = overrides?.clearQueue ?? mock((): Result<void> => Ok(undefined));
+  const hasQueuedMessages = overrides?.hasQueuedMessages ?? mock(() => false);
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
   const waitForPendingStreamErrorRecoveryDecision =
@@ -429,6 +432,7 @@ function createWorkspaceServiceMocks(
       sendMessage,
       resumeStream,
       clearQueue,
+      hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
       waitForPendingStreamErrorRecoveryDecision,
       remove,
@@ -444,6 +448,7 @@ function createWorkspaceServiceMocks(
     sendMessage,
     resumeStream,
     clearQueue,
+    hasQueuedMessages,
     hasPendingQueuedOrPreparingTurn,
     waitForPendingStreamErrorRecoveryDecision,
     remove,
@@ -521,6 +526,7 @@ describe("TaskService", () => {
       sendMessage?: ReturnType<typeof mock>;
       remove?: ReturnType<typeof mock>;
       isStreaming?: ReturnType<typeof mock>;
+      hasQueuedMessages?: ReturnType<typeof mock>;
       hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
       waitForPendingStreamErrorRecoveryDecision?: ReturnType<typeof mock>;
     } = {}
@@ -553,6 +559,9 @@ describe("TaskService", () => {
       create: createWorkspace,
       ...(options.sendMessage != null ? { sendMessage: options.sendMessage } : {}),
       ...(options.remove != null ? { remove: options.remove } : {}),
+      ...(options.hasQueuedMessages != null
+        ? { hasQueuedMessages: options.hasQueuedMessages }
+        : {}),
       ...(options.hasPendingQueuedOrPreparingTurn != null
         ? { hasPendingQueuedOrPreparingTurn: options.hasPendingQueuedOrPreparingTurn }
         : {}),
@@ -1888,6 +1897,23 @@ describe("TaskService", () => {
 
     expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(1);
     expect(await waitResult).toBeInstanceOf(ForegroundWaitBackgroundedError);
+    expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(0);
+  });
+
+  test("waitForWorkspaceTurn backgrounds when tool-end message was already queued", async () => {
+    const hasQueuedMessages = mock(() => true);
+    const { parentId, taskService } = await startWorkspaceTurnForTest({ hasQueuedMessages });
+
+    const waitError = await taskService
+      .waitForWorkspaceTurn("wst_handle", {
+        requestingWorkspaceId: parentId,
+        timeoutMs: 1_000,
+        backgroundOnMessageQueued: true,
+      })
+      .catch((error: unknown) => error);
+
+    expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+    expect(hasQueuedMessages).toHaveBeenCalledWith(parentId, "tool-end");
     expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(0);
   });
 
@@ -7447,6 +7473,54 @@ describe("TaskService", () => {
 
       const count2 = taskService.backgroundForegroundWaitsForWorkspace(parentId);
       expect(count2).toBe(0);
+    });
+
+    test("backgrounds waiters when tool-end message was already queued", async () => {
+      const config = await createTestConfig(rootDir);
+
+      const parentId = "parent-ws";
+      const childId = "child-task-ws";
+      const projectPath = "/test/project";
+
+      await saveWorkspaces(
+        config,
+        projectPath,
+        [
+          { path: `${projectPath}/parent`, id: parentId, name: "parent" },
+          {
+            path: `${projectPath}/child`,
+            id: childId,
+            name: "agent_explore_child",
+            parentWorkspaceId: parentId,
+            agentType: "explore",
+            taskStatus: "queued",
+          },
+        ],
+        testTaskSettings(2, 3)
+      );
+
+      const hasQueuedMessages = mock(() => true);
+      const { workspaceService } = createWorkspaceServiceMocks({ hasQueuedMessages });
+      const { taskService } = createTaskServiceHarness(config, { workspaceService });
+      const internal = taskService as unknown as {
+        backgroundableForegroundWaitersByWorkspaceId: Map<string, Set<unknown>>;
+        pendingStartWaitersByTaskId: Map<string, unknown[]>;
+        pendingWaitersByTaskId: Map<string, unknown[]>;
+      };
+
+      const waitError = await taskService
+        .waitForAgentReport(childId, {
+          requestingWorkspaceId: parentId,
+          backgroundOnMessageQueued: true,
+        })
+        .catch((error: unknown) => error);
+
+      expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
+      expect(hasQueuedMessages).toHaveBeenCalledWith(parentId, "tool-end");
+      expect(taskService.backgroundForegroundWaitsForWorkspace(parentId)).toBe(0);
+      expect(internal.backgroundableForegroundWaitersByWorkspaceId.has(parentId)).toBe(false);
+      expect(internal.pendingStartWaitersByTaskId.has(childId)).toBe(false);
+      expect(internal.pendingWaitersByTaskId.has(childId)).toBe(false);
     });
 
     test("defaults to queue-backgroundable when requestingWorkspaceId is present", async () => {

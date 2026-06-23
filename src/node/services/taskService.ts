@@ -4030,6 +4030,13 @@ export class TaskService {
         timeoutMs
       );
 
+      if (
+        shouldBackgroundOnQueuedMessage &&
+        this.workspaceService.hasQueuedMessages(options.requestingWorkspaceId, "tool-end")
+      ) {
+        this.backgroundForegroundWaitsForWorkspace(options.requestingWorkspaceId);
+      }
+
       void (async () => {
         const record = await this.taskHandleStore.getWorkspaceTurn(
           options.requestingWorkspaceId,
@@ -4374,6 +4381,14 @@ export class TaskService {
             reject(new Error("Interrupted"));
           };
           options.abortSignal.addEventListener("abort", abortListener, { once: true });
+        }
+
+        if (
+          shouldBackgroundOnQueuedMessage &&
+          requestingWorkspaceId &&
+          this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
+        ) {
+          this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
         }
       })().catch((error: unknown) => {
         reject(error instanceof Error ? error : new Error(String(error)));

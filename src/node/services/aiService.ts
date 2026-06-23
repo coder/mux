@@ -250,7 +250,7 @@ export interface StreamMessageOptions {
   allowAgentSetGoal?: boolean;
   workspaceGoalService?: WorkspaceGoalService;
   disableWorkspaceAgents?: boolean;
-  hasQueuedMessage?: () => boolean;
+  hasQueuedMessages?: (dispatchMode?: "tool-end" | "turn-end") => boolean;
   muxMetadata?: MuxMessageMetadata;
   openaiTruncationModeOverride?: "auto" | "disabled";
 }
@@ -1003,7 +1003,7 @@ export class AIService extends EventEmitter {
       allowAgentSetGoal,
       workspaceGoalService,
       disableWorkspaceAgents,
-      hasQueuedMessage,
+      hasQueuedMessages,
       openaiTruncationModeOverride,
       muxMetadata,
     } = opts;
@@ -2694,7 +2694,7 @@ export class AIService extends EventEmitter {
         maxOutputTokens,
         effectiveToolPolicy,
         streamToken, // Pass the pre-generated stream token
-        hasQueuedMessage,
+        hasQueuedMessages,
         metadata.name,
         effectiveThinkingLevel,
         requestHeaders,
