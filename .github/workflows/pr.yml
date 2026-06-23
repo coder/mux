@@ -192,9 +192,10 @@ jobs:
 
 
           isolated_unit_tests=(
-            # QuickJS-heavy workflow runner tests can crash Bun coverage when sharing
+            # QuickJS-heavy workflow tests can crash Bun coverage when sharing
             # the monolithic unit-test process; keep them in the isolated pass.
             src/node/services/workflows/WorkflowRunner.test.ts
+            src/node/orpc/router.test.ts
             src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx
             src/browser/features/Messages/InlineSkillMarkdown.test.tsx
             src/browser/hooks/useChatTranscriptFullWidth.test.tsx
@@ -204,6 +205,7 @@ jobs:
 
           mapfile -d '' unit_files < <(
             find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) \
+              ! -path 'src/node/orpc/router.test.ts' \
               ! -path 'src/node/services/workflows/WorkflowRunner.test.ts' \
               ! -path 'src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx' \
               ! -path 'src/browser/features/Messages/InlineSkillMarkdown.test.tsx' \
