@@ -1,6 +1,6 @@
 ---
 name: workflow-smoke
-description: Minimal built-in workflow fixture for validating skill-packaged workflow execution.
+description: "[Workflow] Minimal built-in workflow fixture for validating skill-packaged workflow execution."
 advertise: false
 ---
 

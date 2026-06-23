@@ -7,7 +7,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
     "SKILL.md": [
       "---",
       "name: deep-research",
-      "description: Run a multi-source, adversarially verified research workflow.",
+      'description: "[Workflow] Run a multi-source, adversarially verified research workflow."',
       "---",
       "",
       "# Deep Research",
@@ -7858,7 +7858,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
     "SKILL.md": [
       "---",
       "name: workflow-smoke",
-      "description: Minimal built-in workflow fixture for validating skill-packaged workflow execution.",
+      'description: "[Workflow] Minimal built-in workflow fixture for validating skill-packaged workflow execution."',
       "advertise: false",
       "---",
       "",

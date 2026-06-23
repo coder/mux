@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: Run a multi-source, adversarially verified research workflow.
+description: "[Workflow] Run a multi-source, adversarially verified research workflow."
 ---
 
 # Deep Research
