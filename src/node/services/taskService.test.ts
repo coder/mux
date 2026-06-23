@@ -8357,7 +8357,6 @@ describe("TaskService", () => {
           input: {
             reportMarkdown: "Hello from child",
             title: "Result",
-            structuredOutput: { claims: ["durable"] },
           },
           state: "output-available",
           output: { success: true },
@@ -8421,7 +8420,8 @@ describe("TaskService", () => {
       config.getSessionDir(parentId),
       childId
     );
-    expect(reportArtifact?.structuredOutput).toEqual({ claims: ["durable"] });
+    expect(reportArtifact?.reportMarkdown).toBe("Hello from child");
+    expect(reportArtifact?.structuredOutput).toBeUndefined();
 
     expect(remove).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledWith(childId, true);
@@ -10804,7 +10804,7 @@ describe("TaskService", () => {
           workflowTask: {
             runId: workflowRunId,
             stepId: "collect",
-            outputSchema: { type: "object", description: "pre-upgrade schema" },
+            outputSchema: { $ref: "#/defs/pre-upgrade" },
           },
         }),
       ],
@@ -10862,7 +10862,7 @@ describe("TaskService", () => {
     expect(report?.structuredOutput).toBeUndefined();
   });
 
-  test("workflow subagent missing structuredOutput does not finalize even with empty schema", async () => {
+  test("workflow subagent accepts direct schema-shaped report for empty schema", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -10934,20 +10934,11 @@ describe("TaskService", () => {
       ],
     });
 
-    const sendCalls = (sendMessage as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    expect(sendCalls).toHaveLength(1);
-    expect(sendCalls[0]?.[0]).toBe(childId);
-    expect(String(sendCalls[0]?.[1])).toContain("agent_report");
-    expect(sendCalls[0]?.[2]).toEqual(
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      })
-    );
-    expect(sendCalls[0]?.[3]).toEqual(
-      expect.objectContaining({ synthetic: true, agentInitiated: true })
-    );
-    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
-    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.reportMarkdown).toBe("Structured workflow report submitted.");
+    expect(report?.structuredOutput).toEqual({ reportMarkdown: "Done", title: null });
   });
 
   test("length-truncated final assistant text still requires explicit agent_report", async () => {

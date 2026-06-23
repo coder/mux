@@ -422,9 +422,9 @@ export default function workflow({ args }) { return { reportMarkdown: args.proje
     const workspacePath = path.join(tempDir, "workspace-checkout");
     const subProjectPath = path.join(projectPath, "packages", "api");
     const workspaceSubProjectPath = path.join(workspacePath, "packages", "api");
-    fs.mkdirSync(path.join(workspacePath, ".mux", "workflows"), { recursive: true });
+    fs.mkdirSync(path.join(workspaceSubProjectPath, ".mux", "workflows"), { recursive: true });
     fs.writeFileSync(
-      path.join(workspacePath, ".mux", "workflows", "needs-active-project.js"),
+      path.join(workspaceSubProjectPath, ".mux", "workflows", "needs-active-project.js"),
       `const s = mux.schema;
 export const meta = {
   description: "Needs active project",

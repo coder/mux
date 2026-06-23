@@ -338,12 +338,7 @@ function validateWorkflowAgentReportStructuredOutput(params: {
   }
 
   if (params.allowLegacyInvalidOutputSchema) {
-    const schemaValidation = validateJsonSchemaSubsetSchema(workflowTask.outputSchema, {
-      requireObjectSchema: true,
-    });
-    if (!schemaValidation.success) {
-      return null;
-    }
+    return null;
   }
 
   if (
@@ -8074,15 +8069,6 @@ export class TaskService {
       return [];
     }
 
-    // If someone is actively awaiting this report (foreground task tool call or task_await),
-    // skip injecting a synthetic history message to avoid duplicating the report in context.
-    if (childWorkspaceId) {
-      const waiters = this.pendingWaitersByTaskId.get(childWorkspaceId);
-      if (waiters && waiters.length > 0) {
-        return [];
-      }
-    }
-
     if (childEntry?.workspace.workflowTask != null) {
       log.debug("Skipping generic parent report delivery for workflow-owned child", {
         parentWorkspaceId,
@@ -8124,6 +8110,15 @@ export class TaskService {
         ) {
           return [];
         }
+      }
+    }
+
+    // If someone is actively awaiting this report (foreground task tool call or task_await),
+    // skip injecting a synthetic history message to avoid duplicating the report in context.
+    if (childWorkspaceId) {
+      const waiters = this.pendingWaitersByTaskId.get(childWorkspaceId);
+      if (waiters && waiters.length > 0) {
+        return [];
       }
     }
 
