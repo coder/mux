@@ -57,6 +57,7 @@ import {
   useWorkspaceStoreRaw,
   type WorkflowToolLiveRunState,
 } from "@/browser/stores/WorkspaceStore";
+import { workflowScriptMatchesPath } from "@/browser/utils/workflowRunScriptPaths";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 
 type WorkflowRunToolDisplayArgs =
@@ -877,7 +878,7 @@ function findForegroundWorkflowRun(input: {
   const invocationArgs = input.args.args ?? {};
   const candidates = input.runs.filter(
     (run) =>
-      run.workflow.sourcePath === scriptPath &&
+      workflowScriptMatchesPath(run.workflow, scriptPath) &&
       DISCOVERABLE_FOREGROUND_WORKFLOW_STATUSES.has(run.status) &&
       workflowArgsEqual(run.args ?? {}, invocationArgs) &&
       isFreshEnoughForToolCall(run, input.startedAt)

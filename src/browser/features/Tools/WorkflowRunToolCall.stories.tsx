@@ -18,10 +18,12 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
+const DEEP_RESEARCH_SCRIPT_PATH = "skill://deep-research/workflow.js";
+
 export const CompletedDeepResearch: Story = {
   args: {
     args: {
-      script_path: "skill://deep-research/workflow.js",
+      script_path: DEEP_RESEARCH_SCRIPT_PATH,
       args: { topic: "workflow run cards" },
       run_in_background: false,
     },
@@ -41,8 +43,9 @@ export const CompletedDeepResearch: Story = {
           name: "deep-research",
           description: "Deep research",
           scope: "built-in",
-          requestedScriptPath: "skill://deep-research/workflow.js",
-          canonicalScriptPath: "skill://deep-research/workflow.js",
+          sourcePath: DEEP_RESEARCH_SCRIPT_PATH,
+          requestedScriptPath: DEEP_RESEARCH_SCRIPT_PATH,
+          canonicalScriptPath: DEEP_RESEARCH_SCRIPT_PATH,
           sourceKind: "skill",
           sourceHash: "sha256:story",
           executable: true,
@@ -109,6 +112,11 @@ const foregroundDiscoveryRun: WorkflowRunRecord = {
     name: "deep-research",
     description: "Deep research",
     scope: "built-in" as const,
+    sourcePath: DEEP_RESEARCH_SCRIPT_PATH,
+    requestedScriptPath: DEEP_RESEARCH_SCRIPT_PATH,
+    canonicalScriptPath: DEEP_RESEARCH_SCRIPT_PATH,
+    sourceKind: "skill" as const,
+    sourceHash: "sha256:story-foreground",
     executable: true,
   },
   source: "export default function workflow() { return null; }",
@@ -171,13 +179,20 @@ function createTaskWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMeta
   };
 }
 
+const TASK_ACTIONS_SCRIPT_PATH = "./workflows/implementation.js";
+
 const taskActionsRun: WorkflowRunRecord = {
   id: "wfr_story_task_actions",
   workspaceId: "workspace-1",
   workflow: {
     name: "implementation",
     description: "Implementation workflow",
-    scope: "built-in" as const,
+    scope: "project" as const,
+    sourcePath: TASK_ACTIONS_SCRIPT_PATH,
+    requestedScriptPath: TASK_ACTIONS_SCRIPT_PATH,
+    canonicalScriptPath: TASK_ACTIONS_SCRIPT_PATH,
+    sourceKind: "workspace-file" as const,
+    sourceHash: "sha256:story-task-actions",
     executable: true,
   },
   source: "export default function workflow() { return null; }",
@@ -314,7 +329,7 @@ function ForegroundWorkflowAPIProvider(props: { children: ReactNode }) {
 
 const taskActionsProps = {
   args: {
-    name: "implementation",
+    script_path: TASK_ACTIONS_SCRIPT_PATH,
     args: { topic: "workflow task actions" },
     run_in_background: true,
   },
@@ -344,7 +359,7 @@ export const RunningForegroundDiscovered: Story = {
   ),
   args: {
     args: {
-      script_path: "skill://deep-research/workflow.js",
+      script_path: DEEP_RESEARCH_SCRIPT_PATH,
       args: { topic: "workflow run cards" },
       run_in_background: false,
     },
@@ -360,7 +375,7 @@ export const RunningBackgroundWithRun: Story = {
   ),
   args: {
     args: {
-      script_path: "skill://deep-research/workflow.js",
+      script_path: DEEP_RESEARCH_SCRIPT_PATH,
       args: { topic: "workflow run cards" },
       run_in_background: true,
     },
@@ -393,6 +408,7 @@ export const WorkspaceFileCompleted: Story = {
           name: "local-report",
           description: "Workspace file workflow",
           scope: "project",
+          sourcePath: "./workflows/local-report.js",
           requestedScriptPath: "./workflows/local-report.js",
           canonicalScriptPath: "./workflows/local-report.js",
           sourceKind: "workspace-file",

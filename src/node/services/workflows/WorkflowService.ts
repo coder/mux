@@ -508,9 +508,11 @@ export class WorkflowService {
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
         await this.notifyRunStatusChanged(createdRun, "backgrounded");
-        void this.runInBackground(runId, "Backgrounded workflow run failed:", {
-          projectTrusted: input.projectTrusted,
-        }).catch(() => undefined);
+        if (!runnerAbortController.signal.aborted) {
+          void this.runInBackground(runId, "Backgrounded workflow run failed:", {
+            projectTrusted: input.projectTrusted,
+          }).catch(() => undefined);
+        }
         return { runId, status: "backgrounded", result: null };
       }
       await this.notifyLatestRunStatus(runId);

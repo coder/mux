@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 import assert from "@/common/utils/assert";
+import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { WorkflowRunStore } from "./WorkflowRunStore";
@@ -193,6 +194,62 @@ export default function workflow() { return { reportMarkdown: "done" }; }
       { workspaceId: "workspace-1", runId: "wfr_demo", status: "pending" },
       { workspaceId: "workspace-1", runId: "wfr_demo", status: "completed" },
     ]);
+  });
+
+  test("does not continue canceled foreground workflows in the background", async () => {
+    using tmp = new DisposableTempDir("workflow-service-canceled-background");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const abortController = new AbortController();
+    let runnerFactoryCalls = 0;
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapterFactory: (_runId, workflowName) => {
+        if (workflowName != null) {
+          runnerFactoryCalls += 1;
+        }
+        return {
+          async runAgent() {
+            abortController.abort();
+            throw new ForegroundWaitBackgroundedError();
+          },
+          async interruptRun() {
+            // The foreground caller cancellation is expected to interrupt the run.
+          },
+        };
+      },
+      generateRunId: () => "wfr_canceled_foreground",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startWorkflow({
+      script: createScript(`export default async function workflow({ agent }) {
+  await agent("Queue follow-up", {
+    id: "queue-follow-up",
+    schema: { type: "object", required: ["summary"], properties: { summary: { type: "string" } } },
+  });
+  return { reportMarkdown: "done" };
+}
+`),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+      abortSignal: abortController.signal,
+    });
+
+    expect(result).toEqual({
+      runId: "wfr_canceled_foreground",
+      status: "backgrounded",
+      result: null,
+    });
+    expect(runnerFactoryCalls).toBe(1);
+    await expect(runStore.getRun("wfr_canceled_foreground")).resolves.toMatchObject({
+      status: "interrupted",
+    });
   });
 
   test("runs nested workflow scripts as durable child runs", async () => {

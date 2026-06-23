@@ -161,6 +161,8 @@ describe("buildWorkflowRunCardMessage", () => {
         description: "Deep research",
         scope: "built-in" as const,
         sourcePath: "skill://deep-research/workflow.js",
+        requestedScriptPath: "skill://deep-research/./workflow.js",
+        canonicalScriptPath: "skill://deep-research/workflow.js",
         executable: true,
       },
       args: { topic: "reload" },
@@ -179,7 +181,7 @@ describe("buildWorkflowRunCardMessage", () => {
           toolCallId: "call_1",
           toolName: "workflow_run",
           state: "input-available",
-          input: { script_path: "skill://deep-research/workflow.js", args: { topic: "reload" } },
+          input: { script_path: "skill://deep-research/./workflow.js", args: { topic: "reload" } },
         },
       ],
     };

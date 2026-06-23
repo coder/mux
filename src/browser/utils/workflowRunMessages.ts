@@ -1,6 +1,10 @@
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import type { MuxMessage } from "@/common/types/message";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
+import {
+  getWorkflowScriptDisplayPath,
+  workflowScriptMatchesPath,
+} from "@/browser/utils/workflowRunScriptPaths";
 import assert from "@/common/utils/assert";
 import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
@@ -29,7 +33,7 @@ function getOutputRunId(output: unknown): string | null {
   return null;
 }
 
-function getWorkflowInput(input: unknown): WorkflowRunCardInput | null {
+function getWorkflowInput(input: unknown): { scriptPath: string; args: unknown } | null {
   if (input != null && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const scriptPath = record.script_path ?? record.name;
@@ -133,8 +137,11 @@ export function hasWorkflowRunToolCallMessage(
         return false;
       }
       const input = getWorkflowInput(part.input);
-      const scriptPath = run.workflow.sourcePath ?? run.workflow.name;
-      return input?.scriptPath === scriptPath && jsonEqual(input.args, run.args);
+      return (
+        input != null &&
+        workflowScriptMatchesPath(run.workflow, input.scriptPath) &&
+        jsonEqual(input.args, run.args)
+      );
     })
   );
 }
@@ -187,7 +194,7 @@ export function addWorkflowRunCardMessageForRun(
 ): void {
   addWorkflowRunCardMessage(
     workspaceId,
-    { scriptPath: run.workflow.sourcePath ?? run.workflow.name, args: run.args },
+    { scriptPath: getWorkflowScriptDisplayPath(run.workflow), args: run.args },
     { runId: run.id, status: run.status, result: getLatestWorkflowResult(run), run },
     options
   );

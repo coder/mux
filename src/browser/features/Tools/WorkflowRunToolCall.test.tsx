@@ -120,6 +120,9 @@ function APIHarness(props: { client: unknown; children: ReactNode }) {
   );
 }
 
+const TEST_WORKFLOW_SCRIPT_PATH = "skill://deep-research/workflow.js";
+const TEST_REQUESTED_WORKFLOW_SCRIPT_PATH = "skill://deep-research/./workflow.js";
+
 const TEST_WORKSPACE_ID = "workflow-run-tool-test";
 
 function withStickyToolProviders(ui: ReactElement, toolName = "workflow_run") {
@@ -154,6 +157,11 @@ function createWorkflowRunForExpansionTest(input: {
       name: "deep-research",
       description: "Deep research",
       scope: "built-in" as const,
+      sourcePath: TEST_WORKFLOW_SCRIPT_PATH,
+      requestedScriptPath: TEST_WORKFLOW_SCRIPT_PATH,
+      canonicalScriptPath: TEST_WORKFLOW_SCRIPT_PATH,
+      sourceKind: "skill" as const,
+      sourceHash: "sha256:test",
       executable: true,
     },
     source: "export default function workflow() { return null; }",
@@ -1238,7 +1246,7 @@ describe("WorkflowRunToolCall", () => {
           <TooltipProvider>
             <WorkflowRunToolCall
               args={{
-                name: "deep-research",
+                script_path: TEST_REQUESTED_WORKFLOW_SCRIPT_PATH,
                 args: { topic: "workflow cards" },
                 run_in_background: false,
               }}
@@ -1324,7 +1332,11 @@ describe("WorkflowRunToolCall", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
-        sourcePath: "deep-research",
+        sourcePath: TEST_WORKFLOW_SCRIPT_PATH,
+        requestedScriptPath: TEST_REQUESTED_WORKFLOW_SCRIPT_PATH,
+        canonicalScriptPath: TEST_WORKFLOW_SCRIPT_PATH,
+        sourceKind: "skill" as const,
+        sourceHash: "sha256:stale",
         executable: true,
       },
       source: "export default function workflow() { return null; }",
@@ -1340,6 +1352,7 @@ describe("WorkflowRunToolCall", () => {
     };
     const foregroundRun = {
       ...staleRun,
+      workflow: { ...staleRun.workflow, sourceHash: "sha256:foreground" },
       id: "wfr_foreground",
       sourceHash: "sha256:foreground",
       createdAt: "2026-05-29T00:00:00.490Z",
@@ -1388,7 +1401,7 @@ describe("WorkflowRunToolCall", () => {
           <TooltipProvider>
             <WorkflowRunToolCall
               args={{
-                name: "deep-research",
+                script_path: TEST_REQUESTED_WORKFLOW_SCRIPT_PATH,
                 args: { topic: "workflow cards" },
                 run_in_background: false,
               }}
@@ -1424,6 +1437,11 @@ describe("WorkflowRunToolCall", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: TEST_WORKFLOW_SCRIPT_PATH,
+        requestedScriptPath: TEST_REQUESTED_WORKFLOW_SCRIPT_PATH,
+        canonicalScriptPath: TEST_WORKFLOW_SCRIPT_PATH,
+        sourceKind: "skill" as const,
+        sourceHash: "sha256:first",
         executable: true,
       },
       source: "export default function workflow() { return null; }",
@@ -1461,7 +1479,7 @@ describe("WorkflowRunToolCall", () => {
           <TooltipProvider>
             <WorkflowRunToolCall
               args={{
-                name: "deep-research",
+                script_path: TEST_REQUESTED_WORKFLOW_SCRIPT_PATH,
                 args: { topic: "workflow cards" },
                 run_in_background: false,
               }}
