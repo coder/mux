@@ -3938,6 +3938,26 @@ export class TaskService {
     return count;
   }
 
+  /**
+   * Background any registered foreground waits for the requesting workspace when a
+   * tool-end message is already queued. Shared by both wait-registration paths
+   * (workspace-turn and task await): the auto-backgrounding signal is edge-triggered
+   * on enqueue, so a message queued before the waiter registered must be re-checked
+   * here. No-op when backgrounding is disabled or no requesting workspace is set.
+   */
+  private backgroundForegroundWaitIfQueued(
+    shouldBackgroundOnQueuedMessage: boolean,
+    requestingWorkspaceId: string | undefined
+  ): void {
+    if (
+      shouldBackgroundOnQueuedMessage &&
+      requestingWorkspaceId &&
+      this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
+    ) {
+      this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
+    }
+  }
+
   private buildWorkspaceTurnWaitResult(
     record: WorkspaceTurnTaskHandleRecord
   ): WorkspaceTurnWaitResult {
@@ -4162,12 +4182,10 @@ export class TaskService {
         timeoutMs
       );
 
-      if (
-        shouldBackgroundOnQueuedMessage &&
-        this.workspaceService.hasQueuedMessages(options.requestingWorkspaceId, "tool-end")
-      ) {
-        this.backgroundForegroundWaitsForWorkspace(options.requestingWorkspaceId);
-      }
+      this.backgroundForegroundWaitIfQueued(
+        shouldBackgroundOnQueuedMessage,
+        options.requestingWorkspaceId
+      );
 
       void (async () => {
         const record = await this.taskHandleStore.getWorkspaceTurn(
@@ -4548,13 +4566,10 @@ export class TaskService {
           options.abortSignal.addEventListener("abort", abortListener, { once: true });
         }
 
-        if (
-          shouldBackgroundOnQueuedMessage &&
-          requestingWorkspaceId &&
-          this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
-        ) {
-          this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
-        }
+        this.backgroundForegroundWaitIfQueued(
+          shouldBackgroundOnQueuedMessage,
+          requestingWorkspaceId
+        );
       })().catch((error: unknown) => {
         reject(error instanceof Error ? error : new Error(String(error)));
       });
