@@ -477,6 +477,8 @@ function refutedSummaries(killed) {
 }
 
 function buildStats(angles, sources, claims, votedClaims, confirmed, duplicates, budgetDropped) {
+  const verifierAgentCalls = votedClaims.reduce((sum, claim) => sum + claim.verdicts.length, 0);
+
   return {
     angles: angles.length,
     sourcesFetched: sources.length,
@@ -486,7 +488,7 @@ function buildStats(angles, sources, claims, votedClaims, confirmed, duplicates,
     killed: votedClaims.length - confirmed.length,
     urlDuplicates: duplicates.length,
     budgetDropped: budgetDropped.length,
-    agentCalls: 1 + angles.length + sources.length + votedClaims.length * VOTES_PER_CLAIM + (confirmed.length > 0 ? 1 : 0),
+    agentCalls: 1 + angles.length + sources.length + verifierAgentCalls + (confirmed.length > 0 ? 1 : 0),
   };
 }
 
