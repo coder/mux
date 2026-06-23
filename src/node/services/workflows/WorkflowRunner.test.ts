@@ -138,6 +138,50 @@ describe("WorkflowRunner", () => {
     expect(seenSpecs[1]).toMatchObject({ id: "markdown" });
   });
 
+  test("new agent API maps agent, model, and thinking options", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-options");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_agent_options",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Verify claim", {
+    id: "verify",
+    agentType: "exec",
+    model: "fable",
+    thinking: "high",
+  });
+  return { reportMarkdown: result };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const seenSpecs: WorkflowAgentSpec[] = [];
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        seenSpecs.push(spec);
+        return { taskId: "task_verify", reportMarkdown: "verified", structuredOutput: {} };
+      },
+    });
+
+    await expect(runner.run("wfr_agent_options")).resolves.toEqual({
+      reportMarkdown: "verified",
+    });
+    expect(seenSpecs).toEqual([
+      expect.objectContaining({
+        id: "verify",
+        agentId: "exec",
+        modelString: "anthropic:claude-fable-5",
+        thinkingLevel: "high",
+      }),
+    ]);
+  });
+
   test("parallel runs agent thunks concurrently and returns ordered schema outputs", async () => {
     using tmp = new DisposableTempDir("workflow-runner-parallel-api");
     const store = new WorkflowRunStore({

@@ -7,7 +7,10 @@ import { Ok } from "@/common/types/result";
 import type { TaskApplyGitPatchConfiguration } from "@/node/services/tools/task_apply_git_patch";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import type { TaskCreateResult } from "@/node/services/taskService";
-import { WorkflowTaskServiceAdapter } from "./WorkflowTaskServiceAdapter";
+import {
+  DEFAULT_WORKFLOW_AGENT_ID,
+  WorkflowTaskServiceAdapter,
+} from "./WorkflowTaskServiceAdapter";
 
 describe("WorkflowTaskServiceAdapter", () => {
   test("spawns a workflow child task with workflow metadata and returns its report", async () => {
@@ -23,7 +26,7 @@ describe("WorkflowTaskServiceAdapter", () => {
       taskService: { create, waitForAgentReport },
       parentWorkspaceId: "parent_1",
       workflowRunId: "wfr_123",
-      defaultAgentId: "explore",
+      defaultAgentId: DEFAULT_WORKFLOW_AGENT_ID,
     });
 
     const result = await adapter.runAgent({
@@ -36,7 +39,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     expect(create).toHaveBeenCalledWith({
       parentWorkspaceId: "parent_1",
       kind: "agent",
-      agentId: "explore",
+      agentId: DEFAULT_WORKFLOW_AGENT_ID,
       prompt: "Extract claims",
       title: "Claim extractor",
       workflowTask: {
@@ -171,6 +174,37 @@ describe("WorkflowTaskServiceAdapter", () => {
     expect(createArgs).toMatchObject({
       agentId: "exec",
       modelString: "openai/gpt-5.1-codex-max",
+      thinkingLevel: "high",
+    });
+  });
+
+  test("per-step model and thinking override workflow defaults", async () => {
+    let createArgs: unknown;
+    const create = mock(async (args: unknown) => {
+      createArgs = args;
+      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+    });
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: DEFAULT_WORKFLOW_AGENT_ID,
+      modelString: "opus",
+      thinkingLevel: "medium",
+    });
+
+    await adapter.runAgent({
+      id: "verify",
+      agentId: "exec",
+      prompt: "Verify claim",
+      modelString: "anthropic:claude-fable-5",
+      thinkingLevel: "high",
+    });
+
+    expect(createArgs).toMatchObject({
+      agentId: "exec",
+      modelString: "anthropic:claude-fable-5",
       thinkingLevel: "high",
     });
   });

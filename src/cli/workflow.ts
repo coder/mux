@@ -32,7 +32,10 @@ import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { WorkflowService } from "@/node/services/workflows/WorkflowService";
-import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import {
+  DEFAULT_WORKFLOW_AGENT_ID,
+  WorkflowTaskServiceAdapter,
+} from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { hasAnyConfiguredProvider, buildProvidersFromEnv } from "@/node/utils/providerRequirements";
 import { getParseOptions } from "./argv";
 import { exitAfterStdoutFlush } from "./processExit";
@@ -371,7 +374,7 @@ function createWorkflowService(input: {
         taskService: input.ctx.services.taskService,
         parentWorkspaceId: input.ctx.workspaceId,
         workflowRunId: runId,
-        defaultAgentId: "explore",
+        defaultAgentId: DEFAULT_WORKFLOW_AGENT_ID,
         experiments,
         modelString: input.model,
         thinkingLevel: input.thinkingLevel,

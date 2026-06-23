@@ -27,6 +27,9 @@ const MAX_VERIFY_CLAIMS = 25;
 const MAX_PARALLEL_FETCH = 5;
 const MAX_PARALLEL_VERIFY = 12;
 
+const EXPLORE_AGENT = "explore";
+const EXEC_AGENT = "exec";
+
 const SCOPE_SCHEMA = {
   type: "object",
   required: ["question", "summary", "angles"],
@@ -150,6 +153,7 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
   const scope = agent(buildScopePrompt(question), {
     id: "scope",
     title: "Scope research angles",
+    agentId: EXPLORE_AGENT,
     schema: SCOPE_SCHEMA,
   });
   const angles = scope.angles.slice(0, 6);
@@ -167,6 +171,7 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
       agent(buildSearchPrompt(question, angle), {
         id: stableId("search", angleIndex, angle.label),
         title: "Search: " + angle.label,
+        agentId: EXPLORE_AGENT,
         schema: SEARCH_SCHEMA,
       }),
     (searchResult, angleIndex) => {
@@ -199,6 +204,7 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
           agent(buildFetchPrompt(question, source, angle.label), {
             id: stableId("fetch", angleIndex + "-" + sourceIndex, hostFromUrl(source.url)),
             title: "Fetch: " + hostFromUrl(source.url),
+            agentId: EXPLORE_AGENT,
             schema: EXTRACT_SCHEMA,
           })
         ),
@@ -260,6 +266,8 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
       agent(buildVerifyPrompt(question, spec.claim, spec.voteIndex), {
         id: stableId("verify", spec.claimIndex + "-" + spec.voteIndex, spec.claim.claim),
         title: "Verify claim " + (spec.claimIndex + 1) + "." + (spec.voteIndex + 1),
+        agentId: EXEC_AGENT,
+        onRefusal: "fail",
         schema: VERDICT_SCHEMA,
       })
     ),
@@ -289,6 +297,7 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
   const report = agent(buildSynthesisPrompt(question, confirmed, killed), {
     id: "synthesize",
     title: "Synthesize research report",
+    agentId: EXEC_AGENT,
     schema: REPORT_SCHEMA,
   });
 

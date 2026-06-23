@@ -148,7 +148,10 @@ import {
   WorkflowService,
   type WorkflowRunStatusChangedEvent,
 } from "@/node/services/workflows/WorkflowService";
-import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import {
+  DEFAULT_WORKFLOW_AGENT_ID,
+  WorkflowTaskServiceAdapter,
+} from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
 
@@ -1782,7 +1785,7 @@ export class AIService extends EventEmitter {
                   parentWorkspaceId: workspaceId,
                   workflowRunId: runId,
                   workflowName,
-                  defaultAgentId: "explore",
+                  defaultAgentId: DEFAULT_WORKFLOW_AGENT_ID,
                   patchToolConfig: {
                     workspaceId,
                     cwd: workspacePath,

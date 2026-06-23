@@ -119,7 +119,10 @@ import {
   WorkflowService,
   type WorkflowBackgroundRunTerminalEvent,
 } from "@/node/services/workflows/WorkflowService";
-import { WorkflowTaskServiceAdapter } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import {
+  DEFAULT_WORKFLOW_AGENT_ID,
+  WorkflowTaskServiceAdapter,
+} from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { WorkflowArgsValidationError } from "@/node/services/workflows/workflowArgs";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 import { isProjectTrusted } from "@/node/utils/projectTrust";
@@ -396,7 +399,7 @@ export async function resolveWorkflowContext(
           parentWorkspaceId: workspaceId,
           workflowRunId: runId,
           workflowName,
-          defaultAgentId: "explore",
+          defaultAgentId: DEFAULT_WORKFLOW_AGENT_ID,
           patchToolConfig: {
             workspaceId,
             cwd: workspacePath,
