@@ -496,6 +496,13 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
+const ACTIVE_AGENT_TASK_STATUSES = new Set<AgentTaskStatus>([
+  "queued",
+  "starting",
+  "running",
+  "awaiting_report",
+]);
+
 const WORKSPACE_BUSY_IDLE_ONLY_SEND_MESSAGE = "Workspace is busy; idle-only send was skipped.";
 
 function isWorkspaceBusyIdleOnlySend(error: unknown): boolean {
@@ -4135,6 +4142,23 @@ export class TaskService {
       });
       this.enforceCompletedReportCacheLimit();
 
+      const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), taskId);
+      if (entry != null && !hasCompletedAgentReport(entry.workspace)) {
+        await this.editWorkspaceEntry(
+          taskId,
+          (workspace) => {
+            workspace.taskStatus = "reported";
+            workspace.reportedAt = getIsoNow();
+            delete workspace.taskRecoveryAttempts;
+          },
+          { allowMissing: true }
+        );
+        await this.maybeStartPatchGenerationForReportedTask(taskId);
+        await this.emitWorkspaceMetadata(taskId);
+        await this.maybeStartQueuedTasks();
+        await this.cleanupReportedLeafTask(taskId);
+      }
+
       return {
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
@@ -4325,6 +4349,12 @@ export class TaskService {
           this.registerBackgroundableForegroundWaiter(requestingWorkspaceId, entry);
         }
 
+        const persistedAfterRegister = await tryReadPersistedReport();
+        if (persistedAfterRegister) {
+          entry.resolve(persistedAfterRegister);
+          return;
+        }
+
         // Don't start the execution timeout while the task is still queued/starting.
         // The timer starts once the child actually begins running (queued/starting -> running).
         const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
@@ -4511,12 +4541,6 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
 
-    const activeStatuses = new Set<AgentTaskStatus>([
-      "queued",
-      "starting",
-      "running",
-      "awaiting_report",
-    ]);
     const result: string[] = [];
     const stack: Array<{ taskId: string; workflowOwned: boolean }> = [
       ...(index.childrenByParent.get(workspaceId) ?? []).map((taskId) => ({
@@ -4528,10 +4552,9 @@ export class TaskService {
       const next = stack.pop()!;
       const entry = index.byId.get(next.taskId);
       const workflowOwned = next.workflowOwned || entry?.workflowTask != null;
-      const status = entry?.taskStatus;
       if (
-        status &&
-        activeStatuses.has(status) &&
+        entry != null &&
+        this.isActiveAgentTaskEntry(entry) &&
         !(options.excludeWorkflowTasks && workflowOwned)
       ) {
         result.push(next.taskId);
@@ -4554,10 +4577,32 @@ export class TaskService {
       return null;
     }
     const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    // Older recovery skipped deferred stream-end history and could mark a completed workspace turn
+    // interrupted. Re-check the durable child history so affected handles self-heal on next await.
+    if (
+      record?.status === "interrupted" &&
+      record.error === "Workspace turn interrupted after restart" &&
+      (record.deferredMessageIds?.length ?? 0) > 0
+    ) {
+      const recovered = await this.recoverTerminalWorkspaceTurnFromHistory(record);
+      if (recovered != null) {
+        await this.taskHandleStore.upsertWorkspaceTurn(recovered);
+        await this.cleanupDisposableWorkspaceTurn(recovered);
+        const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
+        if (
+          active?.handleId === record.handleId &&
+          active.ownerWorkspaceId === record.ownerWorkspaceId
+        ) {
+          this.activeWorkspaceTurnHandleByWorkspaceId.delete(record.workspaceId);
+        }
+        return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+      }
+    }
+
     if (
       record != null &&
       (record.status === "starting" || record.status === "running") &&
-      !this.isLiveWorkspaceTurn(record)
+      !(await this.isLiveWorkspaceTurn(record))
     ) {
       await this.settleStaleWorkspaceTurn(record);
       return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
@@ -4575,7 +4620,7 @@ export class TaskService {
     for (const record of records) {
       if (
         (record.status === "starting" || record.status === "running") &&
-        !this.isLiveWorkspaceTurn(record)
+        !(await this.isLiveWorkspaceTurn(record))
       ) {
         await this.settleStaleWorkspaceTurn(record);
         const latest = await this.taskHandleStore.getWorkspaceTurn(
@@ -4997,14 +5042,50 @@ export class TaskService {
     return record.status === "starting" || record.status === "running";
   }
 
-  private isLiveWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): boolean {
-    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
-    return (
-      (active?.handleId === record.handleId &&
-        active.ownerWorkspaceId === record.ownerWorkspaceId) ||
-      this.aiService.isStreaming(record.workspaceId) ||
-      this.workspaceService.hasPendingQueuedOrPreparingTurn(record.workspaceId)
+  private async hasActiveWorkspaceTurnDeferredBlockers(
+    record: WorkspaceTurnTaskHandleRecord
+  ): Promise<boolean> {
+    if (this.hasActiveDescendantAgentTasks(this.config.loadConfigOrDefault(), record.workspaceId)) {
+      return true;
+    }
+
+    const referencedWorkflowRunIds = await this.listAgentReferencedWorkflowRunIds(
+      record.workspaceId,
+      []
     );
+    if (
+      (await this.listActiveBackgroundWorkflowRunIds(record.workspaceId, referencedWorkflowRunIds))
+        .length > 0
+    ) {
+      return true;
+    }
+
+    return (await this.listActiveWorkspaceTurnTaskIdsForOwner(record.workspaceId)).length > 0;
+  }
+
+  private async isLiveWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): Promise<boolean> {
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
+    const hasRuntimeActivity =
+      this.aiService.isStreaming(record.workspaceId) ||
+      this.workspaceService.hasPendingQueuedOrPreparingTurn(record.workspaceId);
+    if (hasRuntimeActivity) {
+      return true;
+    }
+
+    const isActiveHandle =
+      active?.handleId === record.handleId && active.ownerWorkspaceId === record.ownerWorkspaceId;
+    if (!isActiveHandle) {
+      return false;
+    }
+
+    if ((record.deferredMessageIds?.length ?? 0) === 0) {
+      return true;
+    }
+
+    // A deferred workspace-turn stream-end was waiting for background work. Once there is no
+    // live stream/queued retry and no active descendant/workflow/nested turn left, the in-memory
+    // handle is stale and should be recovered from the deferred history instead of blocking forever.
+    return await this.hasActiveWorkspaceTurnDeferredBlockers(record);
   }
 
   private async settleStaleWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): Promise<void> {
@@ -5021,6 +5102,18 @@ export class TaskService {
             ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(recovered) }
             : { status: "error", error: new Error(recovered.error ?? "Workspace turn failed") },
       });
+      return;
+    }
+
+    // Same-process deferred stream-ends can be observed before the final assistant message is
+    // readable from history. Keep the handle alive in that narrow window; after restart the active
+    // map is empty, so unrecoverable deferred handles still settle terminally instead of leaking.
+    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
+    if (
+      (record.deferredMessageIds?.length ?? 0) > 0 &&
+      active?.handleId === record.handleId &&
+      active.ownerWorkspaceId === record.ownerWorkspaceId
+    ) {
       return;
     }
 
@@ -5053,7 +5146,7 @@ export class TaskService {
       if (!this.isActiveWorkspaceTurn(record)) {
         continue;
       }
-      if (!this.isLiveWorkspaceTurn(record)) {
+      if (!(await this.isLiveWorkspaceTurn(record))) {
         await this.settleStaleWorkspaceTurn(record);
         continue;
       }
@@ -5073,13 +5166,29 @@ export class TaskService {
       if (record.status !== "starting" && record.status !== "running") {
         continue;
       }
-      if (!this.isLiveWorkspaceTurn(record)) {
+      if (!(await this.isLiveWorkspaceTurn(record))) {
         await this.settleStaleWorkspaceTurn(record);
         continue;
       }
       taskIds.push(record.handleId);
     }
     return taskIds;
+  }
+
+  private isActiveAgentTaskEntry(task: AgentTaskWorkspaceEntry): boolean {
+    const status: AgentTaskStatus = task.taskStatus ?? "running";
+    if (!ACTIVE_AGENT_TASK_STATUSES.has(status)) {
+      return false;
+    }
+
+    // Archiving a task stops its stream but intentionally leaves taskStatus untouched in
+    // persisted config. Treat archived, non-streaming tasks as inactive so stale status cannot
+    // keep ancestors/workspace-turn handles blocked forever.
+    if (isWorkspaceArchived(task.archivedAt, task.unarchivedAt)) {
+      return task.id != null && this.aiService.isStreaming(task.id);
+    }
+
+    return true;
   }
 
   private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
@@ -5094,7 +5203,7 @@ export class TaskService {
       if (status === "running" && task.id && this.isForegroundAwaiting(task.id)) {
         continue;
       }
-      if (status === "starting" || status === "running" || status === "awaiting_report") {
+      if (status !== "queued" && this.isActiveAgentTaskEntry(task)) {
         activeCount += 1;
         continue;
       }
@@ -5129,17 +5238,11 @@ export class TaskService {
       "hasActiveDescendantAgentTasksUsingIndex: workspaceId must be non-empty"
     );
 
-    const activeStatuses = new Set<AgentTaskStatus>([
-      "queued",
-      "starting",
-      "running",
-      "awaiting_report",
-    ]);
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
+      const entry = index.byId.get(next);
+      if (entry != null && this.isActiveAgentTaskEntry(entry)) {
         return true;
       }
       const children = index.childrenByParent.get(next);
@@ -5895,10 +5998,13 @@ export class TaskService {
     record: WorkspaceTurnTaskHandleRecord,
     event: StreamEndEvent
   ): WorkspaceTurnTaskHandleRecord {
+    const baseRecord = { ...record };
+    delete baseRecord.error;
+    delete baseRecord.deferredMessageIds;
     // Truncated/non-stop provider finishes are partial output, not a completed delegated turn.
     if (event.metadata.finishReason != null && event.metadata.finishReason !== "stop") {
       return {
-        ...record,
+        ...baseRecord,
         status: "error",
         updatedAt: getIsoNow(),
         messageId: event.messageId,
@@ -5911,7 +6017,7 @@ export class TaskService {
       };
     }
     return {
-      ...record,
+      ...baseRecord,
       status: "completed",
       updatedAt: getIsoNow(),
       messageId: event.messageId,
@@ -5946,8 +6052,10 @@ export class TaskService {
       });
       return null;
     }
+
+    const allowDeferredMessages = !(await this.hasActiveWorkspaceTurnDeferredBlockers(record));
     for (const message of historyResult.data.toReversed()) {
-      if (this.isDeferredWorkspaceTurnMessage(record, message.id)) {
+      if (this.isDeferredWorkspaceTurnMessage(record, message.id) && !allowDeferredMessages) {
         continue;
       }
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
