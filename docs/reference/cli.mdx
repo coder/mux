@@ -144,10 +144,9 @@ Run a durable workflow JavaScript file from the command line without opening the
   isolation and cleanup semantics are implemented.
 </Note>
 
-```bash
-# Run a packaged workflow script from a skill
-mux workflow run skill://workflow-smoke/workflow.js --args-json '{"message":"hello"}' --json
+Use local workflow files for cheap CLI smoke tests. `skill://` paths run the packaged workflow they reference, which may require AI credentials or model budget.
 
+```bash
 # Run a trusted local workflow file with positional text, mapped to { "input": "research workflow runners" }
 mux workflow run ./workflows/research.js "research workflow runners"
 

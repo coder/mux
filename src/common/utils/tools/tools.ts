@@ -75,6 +75,13 @@ import type { ModelMessage } from "@/common/types/message";
 import type { GoalDefaults } from "@/constants/goals";
 import type { ProjectRef, WorkspaceMetadata } from "@/common/types/workspace";
 
+export interface ToolAgentSkillsRoots {
+  projectRoot: string;
+  projectUniversalRoot?: string;
+  globalRoot: string;
+  universalRoot?: string;
+}
+
 export interface ToolModelUsageEvent {
   source: "tool";
   toolName: string;
@@ -162,6 +169,8 @@ export interface ToolConfiguration {
   workspaceId?: string;
   /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
   muxScope?: MuxToolScope;
+  /** Optional skill roots override for tests and isolated workflow resolution. */
+  agentSkillsRoots?: ToolAgentSkillsRoots;
   /** Memory service for the memory tool (present only when the memory experiment is enabled). */
   memoryService?: MemoryService;
   /** Per-scope memory write policy for the current agent (defaults to read-only). */

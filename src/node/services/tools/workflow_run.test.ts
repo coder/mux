@@ -6,7 +6,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import { COMPLETED_REPORT_REFETCH_NOTE } from "@/common/utils/tools/toolDefinitions";
 import { createWorkflowRunTool } from "./workflow_run";
-import { TestTempDir, createTestToolConfig } from "./testHelpers";
+import { TestTempDir, createIsolatedAgentSkillsRoots, createTestToolConfig } from "./testHelpers";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
@@ -195,6 +195,7 @@ describe("workflow_run tool", () => {
     }));
     const tool = createWorkflowRunTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      agentSkillsRoots: createIsolatedAgentSkillsRoots(tempDir.path),
       trusted: false,
       workflowService: {
         startWorkflow,
@@ -204,8 +205,8 @@ describe("workflow_run tool", () => {
 
     const result = await tool.execute!(
       {
-        script_path: "skill://workflow-smoke/workflow.js",
-        args: { message: "from tool" },
+        script_path: "skill://deep-research/workflow.js",
+        args: { input: "from tool" },
         run_in_background: false,
       },
       mockToolCallOptions
@@ -214,14 +215,14 @@ describe("workflow_run tool", () => {
     expect(startWorkflow).toHaveBeenCalledWith(
       expect.objectContaining({
         script: expect.objectContaining({
-          requestedScriptPath: "skill://workflow-smoke/workflow.js",
-          canonicalScriptPath: "skill://workflow-smoke/workflow.js",
+          requestedScriptPath: "skill://deep-research/workflow.js",
+          canonicalScriptPath: "skill://deep-research/workflow.js",
           sourceKind: "skill",
           scope: "built-in",
-          source: expect.stringContaining("Workflow Smoke"),
+          source: expect.stringContaining("Deep Research"),
         }),
         projectTrusted: false,
-        args: { message: "from tool" },
+        args: { input: "from tool" },
       })
     );
     expect(result).toEqual({

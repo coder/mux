@@ -213,9 +213,9 @@ const results = pipeline(
 Runs a nested durable workflow by explicit script path. `options.id` is required and participates in replay identity together with `scriptPath` and `options.args`; completed child runs are replayed from their source snapshot instead of re-resolving the file.
 
 ```js
-const child = workflow("skill://workflow-smoke/workflow.js", {
+const child = workflow("./workflows/child.js", {
   id: "child-research",
-  args: { message: "from parent" },
+  args: { input: "from parent" },
 });
 ```
 
@@ -224,8 +224,8 @@ The object form is also accepted when that is clearer for generated specs:
 ```js
 const child = workflow({
   id: "child-research",
-  script_path: "skill://workflow-smoke/workflow.js",
-  args: { message: "from parent" },
+  script_path: "./workflows/child.js",
+  args: { input: "from parent" },
 });
 ```
 

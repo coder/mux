@@ -8,6 +8,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import {
   TestTempDir,
   TrueRemotePathMappedRuntime,
+  createIsolatedAgentSkillsRoots,
   writeGlobalSkill,
   writeProjectSkill,
 } from "@/node/services/tools/testHelpers";
@@ -107,18 +108,19 @@ describe("resolveWorkflowScript", () => {
     using tempDir = new TestTempDir("workflow-script-built-in-skill");
 
     const resolved = await resolveWorkflowScript({
-      scriptPath: "skill://workflow-smoke/workflow.js",
+      scriptPath: "skill://deep-research/workflow.js",
       runtime: new LocalRuntime(tempDir.path),
       workspacePath: tempDir.path,
       projectTrusted: false,
+      roots: createIsolatedAgentSkillsRoots(tempDir.path),
     });
 
-    expect(resolved.source).toContain("Workflow Smoke");
+    expect(resolved.source).toContain("Deep Research");
     expect(resolved.sourceKind).toBe("skill");
-    expect(resolved.skillName).toBe("workflow-smoke");
+    expect(resolved.skillName).toBe("deep-research");
     expect(resolved.scope).toBe("built-in");
     expect(resolved.relativePath).toBe("workflow.js");
-    expect(resolved.canonicalScriptPath).toBe("skill://workflow-smoke/workflow.js");
+    expect(resolved.canonicalScriptPath).toBe("skill://deep-research/workflow.js");
   });
 
   test("resolves an explicit trusted workspace JavaScript file", async () => {

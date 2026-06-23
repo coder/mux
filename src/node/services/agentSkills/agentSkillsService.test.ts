@@ -260,7 +260,6 @@ describe("agentSkillsService", () => {
       "orchestrate",
       "spawn",
       "workflow-authoring",
-      "workflow-smoke",
     ]);
 
     const foo = skills.find((s) => s.name === "foo");
@@ -671,7 +670,6 @@ describe("agentSkillsService", () => {
       "orchestrate",
       "spawn",
       "workflow-authoring",
-      "workflow-smoke",
     ]);
 
     const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();

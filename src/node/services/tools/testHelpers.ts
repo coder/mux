@@ -380,6 +380,14 @@ function getTestInitStateManager(): InitStateManager {
   return (testInitStateManager ??= new InitStateManager(getTestConfig()));
 }
 
+export function createIsolatedAgentSkillsRoots(root: string) {
+  // Keep built-in skill tests independent from developer-global skills that may share a name.
+  return {
+    projectRoot: path.join(root, "isolated-project-skills"),
+    globalRoot: path.join(root, "isolated-global-skills"),
+  };
+}
+
 export function createTestToolConfig(
   tempDir: string,
   options?: {
