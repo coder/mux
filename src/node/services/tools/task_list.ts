@@ -180,6 +180,17 @@ function shouldHideArchivedAgentTask(
   );
 }
 
+function shouldHideArchivedBackgroundProcess(
+  proc: { status: "running" | "exited" | "killed" | "failed"; workspaceId: string },
+  archiveLookup: WorkspaceArchiveLookup | null
+): boolean {
+  return (
+    archiveLookup != null &&
+    proc.status !== "running" &&
+    archiveLookup.isArchivedInScope(proc.workspaceId)
+  );
+}
+
 function shouldHideArchivedWorkspaceTurn(
   turn: { status: WorkspaceTurnTaskStatus; workspaceId: string },
   archiveLookup: WorkspaceArchiveLookup | null
@@ -300,6 +311,9 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
             continue;
           }
 
+          if (shouldHideArchivedBackgroundProcess(proc, archiveLookup)) {
+            continue;
+          }
           const status = proc.status === "running" ? "running" : "reported";
           if (!statuses.includes(status)) continue;
 

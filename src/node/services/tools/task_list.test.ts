@@ -7,6 +7,7 @@ import { createTaskListTool } from "./task_list";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { Config, type Workspace } from "@/node/config";
 import type { AgentTaskStatus, TaskService } from "@/node/services/taskService";
+import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type {
   WorkspaceTurnTaskHandleRecord,
   WorkspaceTurnTaskStatus,
@@ -421,6 +422,87 @@ describe("task_list tool", () => {
       "turn-archived-completed",
       "turn-ancestor-error",
       "turn-open-completed",
+    ]);
+  });
+
+  it("hides archived non-running background bash tasks by default", async () => {
+    using tempDir = new TestTempDir("test-task-list-background-archive-filter");
+    await writeWorkspaceConfig(tempDir.path, [
+      buildWorkspace(tempDir.path, "root-workspace"),
+      buildWorkspace(tempDir.path, "archived-bash-workspace", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:01:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "open-bash-workspace", {
+        parentWorkspaceId: "root-workspace",
+      }),
+    ]);
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const listDescendantAgentTasks = mock(() => [
+      buildAgentTask("archived-bash-workspace", "running"),
+      buildAgentTask("open-bash-workspace", "running"),
+    ]);
+    const isDescendantAgentTask = mock((_root: string, candidate: string) =>
+      ["archived-bash-workspace", "open-bash-workspace"].includes(candidate)
+    );
+    const isWorkflowOwnedDescendantAgentTask = mock(() => false);
+    const taskService = {
+      listDescendantAgentTasks,
+      isDescendantAgentTask,
+      isWorkflowOwnedDescendantAgentTask,
+    } as unknown as TaskService;
+    const backgroundProcessManager = {
+      list: mock(() =>
+        Promise.resolve([
+          {
+            id: "archived-exited-proc",
+            workspaceId: "archived-bash-workspace",
+            status: "exited" as const,
+            startTime: 1,
+          },
+          {
+            id: "archived-running-proc",
+            workspaceId: "archived-bash-workspace",
+            status: "running" as const,
+            startTime: 2,
+          },
+          {
+            id: "open-exited-proc",
+            workspaceId: "open-bash-workspace",
+            status: "exited" as const,
+            startTime: 3,
+          },
+        ])
+      ),
+    } as unknown as BackgroundProcessManager;
+    const tool = createTaskListTool({
+      ...baseConfig,
+      taskService,
+      backgroundProcessManager,
+    });
+
+    const defaultResult: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["running", "reported"] }, mockToolCallOptions)
+    );
+    const includeArchivedResult: unknown = await Promise.resolve(
+      tool.execute!(
+        { statuses: ["running", "reported"], includeArchived: true },
+        mockToolCallOptions
+      )
+    );
+
+    expect(taskIds(defaultResult)).toEqual([
+      "archived-bash-workspace",
+      "open-bash-workspace",
+      "bash:archived-running-proc",
+      "bash:open-exited-proc",
+    ]);
+    expect(taskIds(includeArchivedResult)).toEqual([
+      "archived-bash-workspace",
+      "open-bash-workspace",
+      "bash:archived-exited-proc",
+      "bash:archived-running-proc",
+      "bash:open-exited-proc",
     ]);
   });
 
