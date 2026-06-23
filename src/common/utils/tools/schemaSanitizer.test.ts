@@ -243,7 +243,12 @@ describe("schemaSanitizer", () => {
         type: "object",
         required: ["code"],
         additionalProperties: { type: "string" },
-        allOf: [{ required: ["score"] }],
+        allOf: [
+          {
+            required: ["score", "summary"],
+            properties: { summary: { type: "string", minLength: 1 } },
+          },
+        ],
         properties: {
           code: { type: "string", pattern: "^[A-Z]+$", default: "ABC" },
           score: { type: "number", minimum: 1, maximum: 5 },
@@ -265,11 +270,12 @@ describe("schemaSanitizer", () => {
 
       expect(sanitized).toEqual({
         type: "object",
-        required: ["code", "score", "tags"],
+        required: ["code", "score", "tags", "summary"],
         additionalProperties: false,
         properties: {
           code: { type: "string", pattern: "^[A-Z]+$" },
-          score: { type: ["number", "null"], minimum: 1, maximum: 5 },
+          score: { type: "number", minimum: 1, maximum: 5 },
+          summary: { type: "string", minLength: 1 },
           tags: {
             type: ["array", "null"],
             minItems: 1,

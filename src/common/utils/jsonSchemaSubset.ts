@@ -28,11 +28,7 @@ export function validateJsonSchemaSubsetSchema(
   if (!isPlainRecord(schema)) {
     return { success: false, errors: [{ path: "$", message: "Schema must be an object" }] };
   }
-  if (
-    options?.requireObjectSchema === true &&
-    schema.type !== undefined &&
-    schema.type !== "object"
-  ) {
+  if (options?.requireObjectSchema === true && schema.type !== "object") {
     return {
       success: false,
       errors: [

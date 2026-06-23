@@ -6,6 +6,7 @@ import {
   validateJsonSchemaSubsetSchema,
   type JsonSchemaValidationError,
 } from "@/common/utils/jsonSchemaSubset";
+import { normalizeWorkflowAgentReportPayloadForHostSchema } from "@/common/utils/tools/workflowReportPayload";
 import { sanitizeWorkflowAgentReportSchemaForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
@@ -73,7 +74,11 @@ function validateStructuredOutput(config: ToolConfiguration, structuredOutput: u
     return null;
   }
 
-  const validation = validateJsonSchemaSubset(outputSchema, structuredOutput);
+  const normalizedOutput = normalizeWorkflowAgentReportPayloadForHostSchema(
+    outputSchema,
+    structuredOutput
+  );
+  const validation = validateJsonSchemaSubset(outputSchema, normalizedOutput);
   return validation.success
     ? null
     : validationFailure("Structured output failed schema validation.", validation.errors);
@@ -92,11 +97,12 @@ function buildInlineInputSchema(config: ToolConfiguration) {
   ) as JSONSchema7;
   return jsonSchema(providerFacingSchema, {
     validate: (value) => {
-      const validation = validateStructuredOutput(config, value);
+      const normalizedValue = normalizeWorkflowAgentReportPayloadForHostSchema(outputSchema, value);
+      const validation = validateStructuredOutput(config, normalizedValue);
       if (validation) {
         return { success: false, error: new Error(validation.message) };
       }
-      return { success: true, value };
+      return { success: true, value: normalizedValue };
     },
   });
 }
@@ -104,7 +110,11 @@ function buildInlineInputSchema(config: ToolConfiguration) {
 function executeInlineReport(config: ToolConfiguration, rawArgs: unknown): AgentReportResult {
   const workflowOutputSchema = getWorkflowAgentOutputSchema(config);
   if (workflowOutputSchema != null) {
-    const structuredValidation = validateStructuredOutput(config, rawArgs);
+    const normalizedArgs = normalizeWorkflowAgentReportPayloadForHostSchema(
+      workflowOutputSchema,
+      rawArgs
+    );
+    const structuredValidation = validateStructuredOutput(config, normalizedArgs);
     if (structuredValidation) {
       return structuredValidation;
     }

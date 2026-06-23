@@ -124,6 +124,7 @@ import {
 } from "@/node/services/taskHandleStore";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
+import { normalizeWorkflowAgentReportPayloadForHostSchema } from "@/common/utils/tools/workflowReportPayload";
 import {
   formatJsonSchemaValidationErrors,
   validateJsonSchemaSubset,
@@ -327,6 +328,22 @@ function formatStructuredOutputValidationMessage(params: {
   return `agent_report structuredOutput failed schema validation${stepLabel}: ${errorSummary}`;
 }
 
+function normalizeWorkflowAgentReportArgsForWorkflowTask(
+  workflowTask: WorkspaceConfigEntry["workflowTask"] | undefined,
+  reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+): { reportMarkdown: string; title?: string; structuredOutput?: unknown } {
+  if (workflowTask?.outputSchema === undefined || reportArgs.structuredOutput === undefined) {
+    return reportArgs;
+  }
+  return {
+    ...reportArgs,
+    structuredOutput: normalizeWorkflowAgentReportPayloadForHostSchema(
+      workflowTask.outputSchema,
+      reportArgs.structuredOutput
+    ),
+  };
+}
+
 function validateWorkflowAgentReportStructuredOutput(params: {
   workflowTask?: WorkspaceConfigEntry["workflowTask"];
   reportArgs: { structuredOutput?: unknown };
@@ -351,10 +368,11 @@ function validateWorkflowAgentReportStructuredOutput(params: {
     });
   }
 
-  const validation = validateJsonSchemaSubset(
+  const structuredOutput = normalizeWorkflowAgentReportPayloadForHostSchema(
     workflowTask.outputSchema,
     params.reportArgs.structuredOutput
   );
+  const validation = validateJsonSchemaSubset(workflowTask.outputSchema, structuredOutput);
   if (validation.success) {
     return null;
   }
@@ -7376,7 +7394,7 @@ export class TaskService {
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+    rawReportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
   ): Promise<AgentReportFinalizationResult> {
     this.markTaskForegroundRelevant(childWorkspaceId);
 
@@ -7385,7 +7403,7 @@ export class TaskService {
       "finalizeAgentTaskReport: childWorkspaceId must be non-empty"
     );
     assert(
-      typeof reportArgs.reportMarkdown === "string" && reportArgs.reportMarkdown.length > 0,
+      typeof rawReportArgs.reportMarkdown === "string" && rawReportArgs.reportMarkdown.length > 0,
       "finalizeAgentTaskReport: reportMarkdown must be non-empty"
     );
 
@@ -7400,6 +7418,10 @@ export class TaskService {
     const allowLegacyInvalidOutputSchema = await this.shouldAllowLegacyInvalidWorkflowOutputSchema(
       childWorkspaceId,
       latestEntryBeforeReport
+    );
+    const reportArgs = normalizeWorkflowAgentReportArgsForWorkflowTask(
+      latestEntryBeforeReport?.workspace.workflowTask,
+      rawReportArgs
     );
     const validationMessage = validateWorkflowAgentReportStructuredOutput({
       workflowTask: latestEntryBeforeReport?.workspace.workflowTask,

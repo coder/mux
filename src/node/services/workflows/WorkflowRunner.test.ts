@@ -878,8 +878,15 @@ describe("WorkflowRunner", () => {
       workspaceId: "workspace-1",
       workflow: definition,
       source: `export default function workflow({ agent }) {
-        agent("Verify", { id: "verify-claim-0-vote-2", title: "Verify claim 1 vote 3", schema: {} });
-        agent("No title", { id: "untitled-step", schema: {} });
+        agent("Verify", {
+          id: "verify-claim-0-vote-2",
+          title: "Verify claim 1 vote 3",
+          schema: { type: "object", additionalProperties: false },
+        });
+        agent("No title", {
+          id: "untitled-step",
+          schema: { type: "object", additionalProperties: false },
+        });
         return { reportMarkdown: "done" };
       }`,
       args: {},

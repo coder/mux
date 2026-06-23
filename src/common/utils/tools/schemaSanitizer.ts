@@ -181,12 +181,85 @@ function makeWorkflowReportPropertyNullable(schema: unknown): unknown {
   return { anyOf: [obj, { type: "null" }] };
 }
 
+function getWorkflowReportRequiredProperties(schema: Record<string, unknown>): Set<string> {
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter((key): key is string => typeof key === "string")
+      : []
+  );
+  if (Array.isArray(schema.allOf)) {
+    for (const subSchema of schema.allOf) {
+      if (subSchema == null || typeof subSchema !== "object" || Array.isArray(subSchema)) {
+        continue;
+      }
+      for (const key of getWorkflowReportRequiredProperties(subSchema as Record<string, unknown>)) {
+        required.add(key);
+      }
+    }
+  }
+  return required;
+}
+
+function mergeSchemaRecords(left: unknown, right: unknown): unknown {
+  if (
+    left != null &&
+    typeof left === "object" &&
+    !Array.isArray(left) &&
+    right != null &&
+    typeof right === "object" &&
+    !Array.isArray(right)
+  ) {
+    return { ...(left as Record<string, unknown>), ...(right as Record<string, unknown>) };
+  }
+  return right;
+}
+
+function mergeAllOfObjectProperties(schema: Record<string, unknown>): void {
+  if (!Array.isArray(schema.allOf)) {
+    return;
+  }
+  for (const subSchema of schema.allOf) {
+    if (subSchema == null || typeof subSchema !== "object" || Array.isArray(subSchema)) {
+      continue;
+    }
+    const subSchemaRecord = subSchema as Record<string, unknown>;
+    mergeAllOfObjectProperties(subSchemaRecord);
+    if (subSchemaRecord.type === "object" && schema.type == null) {
+      schema.type = "object";
+    }
+    if (subSchemaRecord.properties != null) {
+      if (
+        typeof subSchemaRecord.properties !== "object" ||
+        Array.isArray(subSchemaRecord.properties)
+      ) {
+        continue;
+      }
+      schema.properties ??= {};
+      if (typeof schema.properties !== "object" || Array.isArray(schema.properties)) {
+        continue;
+      }
+      const properties = schema.properties as Record<string, unknown>;
+      for (const [propertyName, propertySchema] of Object.entries(
+        subSchemaRecord.properties as Record<string, unknown>
+      )) {
+        properties[propertyName] = mergeSchemaRecords(properties[propertyName], propertySchema);
+      }
+    }
+  }
+  const required = getWorkflowReportRequiredProperties(schema);
+  if (required.size > 0) {
+    schema.required = [...required];
+  }
+}
+
 function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
   if (typeof schema !== "object" || schema === null) {
     return;
   }
 
   const obj = schema as Record<string, unknown>;
+  mergeAllOfObjectProperties(obj);
+  const requiredBeforeSanitizing = getWorkflowReportRequiredProperties(obj);
   for (const prop of OPENAI_WORKFLOW_REPORT_UNSUPPORTED_SCHEMA_PROPERTIES) {
     if (prop in obj) {
       delete obj[prop];
@@ -206,9 +279,7 @@ function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
       : null;
   if (properties != null) {
     const originallyRequired = new Set(
-      Array.isArray(obj.required)
-        ? obj.required.filter((key): key is string => typeof key === "string" && key in properties)
-        : []
+      [...requiredBeforeSanitizing].filter((key) => key in properties)
     );
     obj.additionalProperties = false;
     obj.required = Object.keys(properties);

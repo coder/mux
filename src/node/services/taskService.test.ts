@@ -10862,7 +10862,109 @@ describe("TaskService", () => {
     expect(report?.structuredOutput).toBeUndefined();
   });
 
-  test("workflow subagent accepts direct schema-shaped report for empty schema", async () => {
+  test("workflow subagent treats strict-provider null optional fields as omitted", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-optional-null-structured";
+    const childId = "child-optional-null-structured";
+    const workflowRunId = "wfr_optional_null_structured";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: {
+              type: "object",
+              required: ["code", "nested"],
+              properties: {
+                code: { type: "string" },
+                notes: { type: "string" },
+                nullableNote: { type: ["string", "null"] },
+                nested: {
+                  type: "object",
+                  required: ["id"],
+                  properties: {
+                    id: { type: "string" },
+                    detail: { type: "string" },
+                  },
+                  additionalProperties: false,
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "optional-null-structured",
+        description: "Optional null structured",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: {
+            code: "ABC",
+            notes: null,
+            nullableNote: null,
+            nested: { id: "nested-1", detail: null },
+          },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.structuredOutput).toEqual({
+      code: "ABC",
+      nullableNote: null,
+      nested: { id: "nested-1" },
+    });
+  });
+
+  test("workflow subagent accepts direct schema-shaped report for object schema", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -10884,7 +10986,7 @@ describe("TaskService", () => {
           workflowTask: {
             runId: workflowRunId,
             stepId: "collect",
-            outputSchema: {},
+            outputSchema: { type: "object" },
           },
         }),
       ],

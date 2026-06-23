@@ -166,7 +166,14 @@ describe("validateJsonSchemaSubset", () => {
     ).toEqual({ success: true });
 
     expect(validateJsonSchemaSubsetSchema({}, { requireObjectSchema: true })).toEqual({
-      success: true,
+      success: false,
+      errors: [
+        {
+          path: "$.type",
+          message:
+            "Workflow agent schemas must be object schemas; wrap scalar or array results in an object field",
+        },
+      ],
     });
 
     expect(
