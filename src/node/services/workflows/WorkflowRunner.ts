@@ -2384,7 +2384,13 @@ function compileWorkflowSource(source: string): string {
   // template-literal line inside the workflow that starts with `export ` would
   // also be rewritten, so authors must keep flush-left `export ` lines out of
   // template literals.
-  const withoutNamedExports = source.replace(
+  // Pre-script-path runs may have snapshotted CommonJS metadata assignments;
+  // strip those headers so old durable snapshots do not ReferenceError on `exports`.
+  const withoutLegacyCommonJsMetadata = source.replace(
+    /^\s*(?:exports|module\.exports)\.metadata\s*=\s*[\s\S]*?;\s*(?:\r?\n)?/gmu,
+    ""
+  );
+  const withoutNamedExports = withoutLegacyCommonJsMetadata.replace(
     /^export\s+(?=(?:async\s+)?function\s|class\s|const\s|let\s|var\s)/gmu,
     ""
   );
