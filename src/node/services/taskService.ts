@@ -4722,40 +4722,73 @@ export class TaskService {
     ownerWorkspaceId: string,
     handleId: string
   ): Promise<Result<{ workspaceId: string }, string>> {
-    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
-    if (record == null) {
-      return Err("Workspace turn not found or out of scope");
-    }
-    if (record.status === "completed" || record.status === "error") {
-      return Err(`Workspace turn is already ${record.status} and cannot be interrupted.`);
-    }
-    if (record.status === "queued") {
-      if (this.workspaceService.hasQueuedWorkspaceTurn(record.workspaceId, record.handleId)) {
-        const clearQueueResult = this.workspaceService.clearQueue(record.workspaceId, {
-          cancelReason: "Workspace turn interrupted",
-        });
-        if (!clearQueueResult.success) {
-          return Err(`Failed to clear queued workspace turn: ${clearQueueResult.error}`);
-        }
+    let workspaceId: string | undefined;
+    let shouldClearQueuedPrompt = false;
+    let shouldStopStream = false;
+    let interruptedRecord: WorkspaceTurnTaskHandleRecord | undefined;
+
+    const result = await this.workspaceTurnSettlementLocks.withLock(handleId, async () => {
+      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+      if (record == null) {
+        return Err("Workspace turn not found or out of scope");
       }
-    } else {
+      if (record.status === "completed" || record.status === "error") {
+        return Err(`Workspace turn is already ${record.status} and cannot be interrupted.`);
+      }
+
+      workspaceId = record.workspaceId;
+      shouldClearQueuedPrompt =
+        record.status === "queued" &&
+        this.workspaceService.hasQueuedWorkspaceTurn(record.workspaceId, record.handleId);
+      shouldStopStream = record.status !== "queued";
+
+      const next: WorkspaceTurnTaskHandleRecord = {
+        ...record,
+        status: "interrupted",
+        updatedAt: getIsoNow(),
+      };
+      await this.taskHandleStore.upsertWorkspaceTurn(next);
+      interruptedRecord = next;
+
+      const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
+      if (
+        active?.handleId === record.handleId &&
+        active.ownerWorkspaceId === record.ownerWorkspaceId
+      ) {
+        this.activeWorkspaceTurnHandleByWorkspaceId.delete(record.workspaceId);
+      }
+      this.settleWorkspaceTurnWaiters(record.handleId, {
+        status: "error",
+        error: new Error("Workspace turn interrupted"),
+      });
+      this.markTaskForegroundRelevant(record.handleId);
+      return Ok({ workspaceId: record.workspaceId });
+    });
+
+    if (!result.success) {
+      return result;
+    }
+
+    if (shouldClearQueuedPrompt && workspaceId != null) {
+      const clearQueueResult = this.workspaceService.clearQueue(workspaceId, {
+        cancelReason: "Workspace turn interrupted",
+      });
+      if (!clearQueueResult.success) {
+        return Err(`Failed to clear queued workspace turn: ${clearQueueResult.error}`);
+      }
+    }
+    if (shouldStopStream && workspaceId != null) {
       try {
-        await this.aiService.stopStream(record.workspaceId, { abandonPartial: false });
+        await this.aiService.stopStream(workspaceId, { abandonPartial: false });
       } catch (error: unknown) {
         log.debug("interruptWorkspaceTurn: stopStream threw", { handleId, error });
       }
     }
-    const next: WorkspaceTurnTaskHandleRecord = {
-      ...record,
-      status: "interrupted",
-      updatedAt: getIsoNow(),
-    };
-    await this.settleWorkspaceTurn({
-      record,
-      next,
-      waiterSettlement: { status: "error", error: new Error("Workspace turn interrupted") },
-    });
-    return Ok({ workspaceId: record.workspaceId });
+    if (interruptedRecord != null) {
+      await this.cleanupDisposableWorkspaceTurn(interruptedRecord);
+    }
+    this.scheduleMaybeStartQueuedTasks();
+    return result;
   }
 
   listDescendantAgentTasks(
