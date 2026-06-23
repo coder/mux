@@ -641,45 +641,34 @@ describe("WorkflowRunner", () => {
     expect(runChild).toHaveBeenCalledTimes(2);
   });
 
-  test("supports legacy object-form agent and parallelAgents APIs for snapshotted runs", async () => {
-    using tmp = new DisposableTempDir("workflow-runner-legacy-agent-api");
+  test("fails before spawning when workflow code uses the removed object-form agent API", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-object-form-agent");
     const store = new WorkflowRunStore({
       sessionDir: tmp.path,
       staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
     });
     await store.createRun({
-      id: "wfr_legacy_agent_api",
+      id: "wfr_object_form_agent",
       workspaceId: "workspace-1",
       workflow: definition,
-      source: `export default function workflow({ agent, parallelAgents }) {
-  const single = agent({ id: "old-shape", prompt: "Old object shape" });
-  const parallel = parallelAgents([
-    { id: "old-parallel-a", prompt: "Old parallel A" },
-    { id: "old-parallel-b", prompt: "Old parallel B" },
-  ]);
-  return { reportMarkdown: single.reportMarkdown + "|" + parallel.map((result) => result.reportMarkdown).join(",") };
+      source: `export default function workflow({ agent }) {
+  return agent({ id: "old-shape", prompt: "Old object shape" });
 }
 `,
       args: {},
-      agentOutputSchemaRequired: false,
       now: "2026-05-29T00:00:00.000Z",
     });
-    const seenSpecs: WorkflowAgentSpec[] = [];
-    const runner = createRunner(store, {
-      async runAgent(spec) {
-        seenSpecs.push(spec);
-        return { taskId: `task_${spec.id}`, reportMarkdown: spec.id, structuredOutput: {} };
-      },
-    });
+    const runAgent = mock(async () => ({
+      taskId: "task_1",
+      reportMarkdown: "summary",
+      structuredOutput: {},
+    }));
+    const runner = createRunner(store, { runAgent });
 
-    await expect(runner.run("wfr_legacy_agent_api")).resolves.toEqual({
-      reportMarkdown: "old-shape|old-parallel-a,old-parallel-b",
-    });
-    expect(seenSpecs.map((spec) => spec.id)).toEqual([
-      "old-shape",
-      "old-parallel-a",
-      "old-parallel-b",
-    ]);
+    await expect(runner.run("wfr_object_form_agent")).rejects.toThrow(
+      "agent requires a non-empty prompt"
+    );
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   test("fails before spawning when workflow agent outputSchema is invalid", async () => {

@@ -2432,9 +2432,6 @@ function __muxParallel(thunks, options) {
       return branchResult;
     }
     const taskResult = taskResults[branchResult.index];
-    if (branchResult.returnFullResult) {
-      return taskResult;
-    }
     if (branchResult.hasSchema) {
       return taskResult.structuredOutput;
     }
@@ -2491,11 +2488,9 @@ function __muxPipeline(items, ...stages) {
     }
     pending.delete(completion.handleId);
     const taskResult = completion.result;
-    pendingEntry.state.value = pendingEntry.collectedAgent.returnFullResult
-      ? taskResult
-      : pendingEntry.collectedAgent.hasSchema
-        ? taskResult.structuredOutput
-        : taskResult.reportMarkdown;
+    pendingEntry.state.value = pendingEntry.collectedAgent.hasSchema
+      ? taskResult.structuredOutput
+      : taskResult.reportMarkdown;
     pendingEntry.state.stageIndex += 1;
     startNextStage(pendingEntry.state);
   }
@@ -2531,38 +2526,23 @@ function __muxNestedWorkflow(scriptPathOrSpec, options) {
   }
   return __workflowNestedWorkflow(spec);
 }
-function __muxNormalizeAgentCall(promptOrSpec, options) {
-  let spec;
-  let returnFullResult = false;
-  if (promptOrSpec !== null && typeof promptOrSpec === "object" && !Array.isArray(promptOrSpec)) {
-    if (options !== undefined) {
-      throw new Error("legacy agent object form does not accept a second argument");
-    }
-    // Durable runs keep their snapshotted source. Accept the pre-script_path
-    // agent({ id, prompt, outputSchema }) API so those checkpoints stay resumable.
-    spec = { ...promptOrSpec };
-    returnFullResult = true;
-  } else {
-    if (typeof promptOrSpec !== "string" || promptOrSpec.length === 0) {
-      throw new Error("agent requires a non-empty prompt");
-    }
-    if (options === null || typeof options !== "object") {
-      throw new Error("agent replay boundary requires a stable id");
-    }
-    if (typeof options.id !== "string" || options.id.length === 0) {
-      throw new Error("agent replay boundary requires a stable id");
-    }
-    if (Object.prototype.hasOwnProperty.call(options, "model")) {
-      throw new Error("agent options.model is not supported yet");
-    }
-    if (Object.prototype.hasOwnProperty.call(options, "effort")) {
-      throw new Error("agent options.effort is not supported yet");
-    }
-    spec = { ...options, prompt: promptOrSpec };
-    if (!Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
-      spec.markdownOnly = true;
-    }
+function __muxAgent(prompt, options) {
+  if (typeof prompt !== "string" || prompt.length === 0) {
+    throw new Error("agent requires a non-empty prompt");
   }
+  if (options === null || typeof options !== "object") {
+    throw new Error("agent replay boundary requires a stable id");
+  }
+  if (typeof options.id !== "string" || options.id.length === 0) {
+    throw new Error("agent replay boundary requires a stable id");
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "model")) {
+    throw new Error("agent options.model is not supported yet");
+  }
+  if (Object.prototype.hasOwnProperty.call(options, "effort")) {
+    throw new Error("agent options.effort is not supported yet");
+  }
+  const spec = { ...options, prompt };
   if (Object.prototype.hasOwnProperty.call(spec, "schema")) {
     spec.outputSchema = spec.schema;
     delete spec.schema;
@@ -2571,44 +2551,30 @@ function __muxNormalizeAgentCall(promptOrSpec, options) {
     spec.agentId = spec.agentType;
     delete spec.agentType;
   }
-  return { spec, returnFullResult };
-}
-function __muxAgent(promptOrSpec, options) {
-  const normalized = __muxNormalizeAgentCall(promptOrSpec, options);
-  const spec = normalized.spec;
-  const hasSchema = Object.prototype.hasOwnProperty.call(spec, "outputSchema");
+  if (!Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
+    spec.markdownOnly = true;
+  }
   if (__muxParallelCollectingAgents !== null) {
     const index = __muxParallelCollectingAgents.length;
-    __muxParallelCollectingAgents.push({ spec, returnFullResult: normalized.returnFullResult });
+    __muxParallelCollectingAgents.push({ spec });
     return {
       [__MUX_PARALLEL_AGENT_MARKER]: true,
       index,
-      hasSchema,
-      returnFullResult: normalized.returnFullResult,
+      hasSchema: Object.prototype.hasOwnProperty.call(spec, "outputSchema"),
     };
   }
   if (__muxPipelineCollectingAgents !== null) {
     __muxPipelineCollectingAgents.push({
       handle: __workflowAgentStart(spec),
-      hasSchema,
-      returnFullResult: normalized.returnFullResult,
+      hasSchema: Object.prototype.hasOwnProperty.call(spec, "outputSchema"),
     });
     return null;
   }
   const result = __workflowAgent(spec);
-  if (normalized.returnFullResult) {
-    return result;
-  }
-  if (hasSchema) {
+  if (Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
     return result.structuredOutput;
   }
   return result.reportMarkdown;
-}
-function __muxParallelAgents(specs, options) {
-  if (!Array.isArray(specs)) {
-    throw new Error("parallelAgents requires an array of agent specs");
-  }
-  return __workflowParallelAgents(specs, options);
 }
 ${compiled}
 return (async () => await __muxWorkflow({
@@ -2619,8 +2585,6 @@ return (async () => await __muxWorkflow({
   parallel: __muxParallel,
   pipeline: __muxPipeline,
   applyPatch: __muxApplyPatch,
-  // Compatibility only: snapshotted pre-script_path workflows used parallelAgents.
-  parallelAgents: __muxParallelAgents,
   workflow: __muxNestedWorkflow,
 }))();
 `;
