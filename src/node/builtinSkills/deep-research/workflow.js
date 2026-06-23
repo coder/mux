@@ -29,10 +29,6 @@ const MAX_PARALLEL_VERIFY = 12;
 
 const EXPLORE_AGENT = "explore";
 const EXEC_AGENT = "exec";
-const VERIFIER_MODEL = "fable";
-const VERIFIER_THINKING = "high";
-const SYNTHESIS_MODEL = "fable";
-const SYNTHESIS_THINKING = "high";
 
 const SCOPE_SCHEMA = {
   type: "object",
@@ -271,8 +267,6 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
         id: stableId("verify", spec.claimIndex + "-" + spec.voteIndex, spec.claim.claim),
         title: "Verify claim " + (spec.claimIndex + 1) + "." + (spec.voteIndex + 1),
         agentId: EXEC_AGENT,
-        model: VERIFIER_MODEL,
-        thinking: VERIFIER_THINKING,
         onRefusal: "fail",
         schema: VERDICT_SCHEMA,
       })
@@ -304,8 +298,6 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
     id: "synthesize",
     title: "Synthesize research report",
     agentId: EXEC_AGENT,
-    model: SYNTHESIS_MODEL,
-    thinking: SYNTHESIS_THINKING,
     schema: REPORT_SCHEMA,
   });
 
