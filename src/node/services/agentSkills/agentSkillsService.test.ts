@@ -251,6 +251,7 @@ describe("agentSkillsService", () => {
     // Note: deep-review skill is a project skill in the Mux repo, not a built-in
     expect(skills.map((s) => s.name)).toEqual([
       "bar",
+      "deep-research",
       "foo",
       "init",
       "loop",
@@ -661,6 +662,7 @@ describe("agentSkillsService", () => {
     const diagnostics = await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
 
     expect(diagnostics.skills.map((s) => s.name)).toEqual([
+      "deep-research",
       "foo",
       "init",
       "loop",

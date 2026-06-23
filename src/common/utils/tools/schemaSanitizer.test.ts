@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
-import { sanitizeToolSchemaForOpenAI, sanitizeMCPToolsForOpenAI } from "./schemaSanitizer";
+import {
+  sanitizeToolSchemaForOpenAI,
+  sanitizeMCPToolsForOpenAI,
+  sanitizeWorkflowAgentReportSchemaForOpenAI,
+} from "./schemaSanitizer";
 import type { Tool } from "ai";
 
 // Test helper to access tool parameters
@@ -230,6 +234,56 @@ describe("schemaSanitizer", () => {
 
       // Original should still have minLength
       expect(jsonSchema.properties.content.minLength).toBe(1);
+    });
+  });
+
+  describe("sanitizeWorkflowAgentReportSchemaForOpenAI", () => {
+    it("preserves useful validation constraints while making objects OpenAI-strict", () => {
+      const schema = {
+        type: "object",
+        required: ["code"],
+        additionalProperties: { type: "string" },
+        allOf: [{ required: ["score"] }],
+        properties: {
+          code: { type: "string", pattern: "^[A-Z]+$", default: "ABC" },
+          score: { type: "number", minimum: 1, maximum: 5 },
+          tags: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            items: {
+              oneOf: [
+                { type: "string", minLength: 2 },
+                { type: "number", minimum: 0 },
+              ],
+            },
+          },
+        },
+      };
+
+      const sanitized = sanitizeWorkflowAgentReportSchemaForOpenAI(schema);
+
+      expect(sanitized).toEqual({
+        type: "object",
+        required: ["code", "score", "tags"],
+        additionalProperties: false,
+        properties: {
+          code: { type: "string", pattern: "^[A-Z]+$" },
+          score: { type: "number", minimum: 1, maximum: 5 },
+          tags: {
+            type: "array",
+            minItems: 1,
+            maxItems: 3,
+            items: {
+              anyOf: [
+                { type: "string", minLength: 2 },
+                { type: "number", minimum: 0 },
+              ],
+            },
+          },
+        },
+      });
+      expect(schema.properties.code.default).toBe("ABC");
     });
   });
 

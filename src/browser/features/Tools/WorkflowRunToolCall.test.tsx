@@ -1324,6 +1324,7 @@ describe("WorkflowRunToolCall", () => {
         name: "deep-research",
         description: "Deep research",
         scope: "built-in" as const,
+        sourcePath: "deep-research",
         executable: true,
       },
       source: "export default function workflow() { return null; }",

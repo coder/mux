@@ -122,10 +122,12 @@ describe("agent_report tool", () => {
       type: "object",
       required: ["code", "score"],
       properties: {
-        code: { type: "string", pattern: "^[A-Z]+$" },
+        code: { type: "string", pattern: "^[A-Z]+$", default: "ABC" },
         score: { type: "number", minimum: 1 },
+        notes: { type: "string" },
       },
-      additionalProperties: false,
+      additionalProperties: { type: "string" },
+      allOf: [{ required: ["notes"] }],
     };
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
@@ -137,11 +139,15 @@ describe("agent_report tool", () => {
 
     expect(tool.inputSchema).toHaveProperty("jsonSchema");
     const inputSchema = tool.inputSchema as { jsonSchema?: typeof outputSchema };
-    expect(inputSchema.jsonSchema?.properties.code).not.toHaveProperty("pattern");
-    expect(inputSchema.jsonSchema?.properties.score).not.toHaveProperty("minimum");
+    expect(inputSchema.jsonSchema?.properties.code).toHaveProperty("pattern", "^[A-Z]+$");
+    expect(inputSchema.jsonSchema?.properties.code).not.toHaveProperty("default");
+    expect(inputSchema.jsonSchema?.properties.score).toHaveProperty("minimum", 1);
+    expect(inputSchema.jsonSchema).toHaveProperty("additionalProperties", false);
+    expect(inputSchema.jsonSchema).toHaveProperty("required", ["code", "score", "notes"]);
+    expect(inputSchema.jsonSchema).not.toHaveProperty("allOf");
 
     const result: unknown = await Promise.resolve(
-      tool.execute!({ code: "lowercase", score: 0 }, mockToolCallOptions)
+      tool.execute!({ code: "lowercase", score: 0, notes: "present" }, mockToolCallOptions)
     );
 
     expect(result).toEqual({

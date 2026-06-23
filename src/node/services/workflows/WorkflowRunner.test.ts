@@ -88,36 +88,6 @@ describe("WorkflowRunner", () => {
     expect(lifecycle).toEqual(["agent", "ended"]);
   });
 
-  test("strips legacy CommonJS metadata assignments before evaluation", async () => {
-    using tmp = new DisposableTempDir("workflow-runner-legacy-metadata");
-    const store = new WorkflowRunStore({
-      sessionDir: tmp.path,
-      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
-    });
-    await store.createRun({
-      id: "wfr_legacy_metadata",
-      workspaceId: "workspace-1",
-      workflow: definition,
-      source: `exports.metadata = { description: "Legacy metadata" };
-module.exports.metadata = { description: "Legacy module metadata" };
-export default function workflow() {
-  return { reportMarkdown: "legacy ok" };
-}
-`,
-      args: {},
-      now: "2026-05-29T00:00:00.000Z",
-    });
-    const runner = createRunner(store, {
-      async runAgent() {
-        throw new Error("unexpected agent step");
-      },
-    });
-
-    await expect(runner.run("wfr_legacy_metadata")).resolves.toEqual({
-      reportMarkdown: "legacy ok",
-    });
-  });
-
   test("new agent API returns structured output for schema-backed steps and markdown otherwise", async () => {
     using tmp = new DisposableTempDir("workflow-runner-agent-api");
     const store = new WorkflowRunStore({

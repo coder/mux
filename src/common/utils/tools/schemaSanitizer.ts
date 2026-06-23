@@ -106,6 +106,91 @@ export function sanitizeJsonSchemaForOpenAI<T>(schema: T): T {
   return clonedSchema;
 }
 
+const OPENAI_WORKFLOW_REPORT_UNSUPPORTED_SCHEMA_PROPERTIES = new Set([
+  "$defs",
+  "$schema",
+  "allOf",
+  "default",
+  "definitions",
+  "dependentRequired",
+  "dependentSchemas",
+  "deprecated",
+  "else",
+  "examples",
+  "if",
+  "not",
+  "readOnly",
+  "then",
+  "writeOnly",
+]);
+
+/**
+ * Return an OpenAI-compatible clone of a workflow agent output schema.
+ *
+ * Workflow authors can use Ajv validation keywords for host-side validation; this
+ * sanitizer keeps supported constraints (pattern, numeric bounds, array bounds,
+ * enum, anyOf) but removes unsupported composition/annotation keys and makes
+ * object schemas strict for OpenAI tool parameters.
+ */
+export function sanitizeWorkflowAgentReportSchemaForOpenAI<T>(schema: T): T {
+  const clonedSchema = JSON.parse(JSON.stringify(schema)) as T;
+  sanitizeWorkflowAgentReportSchemaNode(clonedSchema);
+  return clonedSchema;
+}
+
+function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
+  if (typeof schema !== "object" || schema === null) {
+    return;
+  }
+
+  const obj = schema as Record<string, unknown>;
+  for (const prop of OPENAI_WORKFLOW_REPORT_UNSUPPORTED_SCHEMA_PROPERTIES) {
+    if (prop in obj) {
+      delete obj[prop];
+    }
+  }
+
+  if (Array.isArray(obj.oneOf)) {
+    if (!Array.isArray(obj.anyOf)) {
+      obj.anyOf = obj.oneOf;
+    }
+    delete obj.oneOf;
+  }
+
+  const properties =
+    obj.properties != null && typeof obj.properties === "object" && !Array.isArray(obj.properties)
+      ? (obj.properties as Record<string, unknown>)
+      : null;
+  if (properties != null) {
+    obj.additionalProperties = false;
+    obj.required = Object.keys(properties);
+    for (const propSchema of Object.values(properties)) {
+      sanitizeWorkflowAgentReportSchemaNode(propSchema);
+    }
+  } else if (obj.type === "object") {
+    obj.additionalProperties = false;
+    if (!Array.isArray(obj.required)) {
+      obj.required = [];
+    }
+  }
+
+  if (Array.isArray(obj.items)) {
+    for (const itemSchema of obj.items) {
+      sanitizeWorkflowAgentReportSchemaNode(itemSchema);
+    }
+  } else if (obj.items != null) {
+    sanitizeWorkflowAgentReportSchemaNode(obj.items);
+  }
+
+  for (const keyword of ["anyOf"] as const) {
+    if (Array.isArray(obj[keyword])) {
+      for (const subSchema of obj[keyword]) {
+        sanitizeWorkflowAgentReportSchemaNode(subSchema);
+      }
+    }
+  }
+}
+
 /**
  * Sanitize a tool's parameter schema for OpenAI Responses API compatibility.
  *
