@@ -1018,6 +1018,12 @@ export const TaskListToolArgsSchema = z
         "Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. " +
           "Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume."
       ),
+    includeArchived: z
+      .boolean()
+      .nullish()
+      .describe(
+        "Whether to include archived child workspace tasks. Defaults to false, hiding archived non-actionable child workspace work."
+      ),
   })
   .strict();
 
@@ -1883,6 +1889,7 @@ export const TOOL_DEFINITIONS = {
       "List descendant tasks for the current workspace, including status + metadata. " +
       "This includes sub-agent tasks, background bash tasks, and top-level workflow runs, but omits workflow-owned sub-agents/background bash tasks whose reports are consumed through parent workflow runs. " +
       "Use this after compaction, interruptions, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
+      "Archived non-actionable child workspace tasks are hidden by default; pass includeArchived: true to inspect them. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
   },

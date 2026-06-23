@@ -695,12 +695,13 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>task_list (2)</summary>
+<summary>task_list (3)</summary>
 
-| Env var                           | JSON path           | Type   | Description                                                                                                                                                                                                                                                 |
-| --------------------------------- | ------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_STATUSES_<INDEX>` | `statuses[<INDEX>]` | enum   | Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume.                                  |
-| `MUX_TOOL_INPUT_STATUSES_COUNT`   | `statuses.length`   | number | Number of elements in statuses (Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume.) |
+| Env var                           | JSON path           | Type    | Description                                                                                                                                                                                                                                                 |
+| --------------------------------- | ------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_INCLUDE_ARCHIVED` | `includeArchived`   | boolean | Whether to include archived child workspace tasks. Defaults to false, hiding archived non-actionable child workspace work.                                                                                                                                  |
+| `MUX_TOOL_INPUT_STATUSES_<INDEX>` | `statuses[<INDEX>]` | enum    | Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume.                                  |
+| `MUX_TOOL_INPUT_STATUSES_COUNT`   | `statuses.length`   | number  | Number of elements in statuses (Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume.) |
 
 </details>
 

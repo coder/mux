@@ -1,14 +1,91 @@
+import * as path from "node:path";
+
 import { describe, it, expect, mock } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import { createTaskListTool } from "./task_list";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
-import type { TaskService } from "@/node/services/taskService";
+import { Config, type Workspace } from "@/node/config";
+import type { AgentTaskStatus, TaskService } from "@/node/services/taskService";
+import type {
+  WorkspaceTurnTaskHandleRecord,
+  WorkspaceTurnTaskStatus,
+} from "@/node/services/taskHandleStore";
 
 const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };
+
+interface WorkspaceFixtureOptions {
+  parentWorkspaceId?: string;
+  archivedAt?: string;
+  unarchivedAt?: string;
+}
+
+function buildWorkspace(
+  tempDir: string,
+  id: string,
+  options: WorkspaceFixtureOptions = {}
+): Workspace {
+  return {
+    id,
+    path: path.join(tempDir, id),
+    parentWorkspaceId: options.parentWorkspaceId,
+    archivedAt: options.archivedAt,
+    unarchivedAt: options.unarchivedAt,
+  };
+}
+
+async function writeWorkspaceConfig(tempDir: string, workspaces: Workspace[]): Promise<void> {
+  const config = new Config(tempDir);
+  const cfg = config.loadConfigOrDefault();
+  cfg.projects.set(path.join(tempDir, "project"), { workspaces });
+  await config.saveConfig(cfg);
+}
+
+function buildAgentTask(
+  taskId: string,
+  status: AgentTaskStatus,
+  parentWorkspaceId = "root-workspace",
+  depth = 1
+) {
+  return {
+    taskId,
+    status,
+    parentWorkspaceId,
+    agentType: "exec",
+    workspaceName: taskId,
+    title: taskId,
+    createdAt: "2026-06-23T00:00:00.000Z",
+    depth,
+  };
+}
+
+function buildWorkspaceTurn(
+  handleId: string,
+  workspaceId: string,
+  status: WorkspaceTurnTaskStatus
+): WorkspaceTurnTaskHandleRecord {
+  return {
+    kind: "workspace_turn",
+    handleId,
+    ownerWorkspaceId: "root-workspace",
+    workspaceId,
+    turnId: `${handleId}-turn`,
+    status,
+    createdAt: "2026-06-23T00:00:00.000Z",
+    updatedAt: "2026-06-23T00:00:01.000Z",
+    createdWorkspace: true,
+    disposableWorkspace: false,
+    title: handleId,
+  };
+}
+
+function taskIds(result: unknown): string[] {
+  const parsed = result as { tasks: Array<{ taskId: string }> };
+  return parsed.tasks.map((task) => task.taskId);
+}
 
 describe("task_list tool", () => {
   it("uses default statuses when none are provided", async () => {
@@ -91,6 +168,109 @@ describe("task_list tool", () => {
     });
   });
 
+  it("hides archived non-actionable descendant agent tasks by default", async () => {
+    using tempDir = new TestTempDir("test-task-list-agent-archive-filter");
+    await writeWorkspaceConfig(tempDir.path, [
+      buildWorkspace(tempDir.path, "root-workspace", {
+        archivedAt: "2026-06-23T00:00:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-reported", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:01:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-running", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:02:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-interrupted", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:03:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-parent", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:04:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "ancestor-archived-child", {
+        parentWorkspaceId: "archived-parent",
+      }),
+      buildWorkspace(tempDir.path, "open-reported", {
+        parentWorkspaceId: "root-workspace",
+      }),
+      buildWorkspace(tempDir.path, "unarchived-reported", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:05:00.000Z",
+        unarchivedAt: "2026-06-23T00:06:00.000Z",
+      }),
+    ]);
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const listDescendantAgentTasks = mock(() => [
+      buildAgentTask("archived-reported", "reported"),
+      buildAgentTask("archived-running", "running"),
+      buildAgentTask("archived-interrupted", "interrupted"),
+      buildAgentTask("ancestor-archived-child", "reported", "archived-parent", 2),
+      buildAgentTask("open-reported", "reported"),
+      buildAgentTask("unarchived-reported", "reported"),
+      buildAgentTask("missing-reported", "reported"),
+    ]);
+    const taskService = { listDescendantAgentTasks } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["reported", "running", "interrupted"] }, mockToolCallOptions)
+    );
+
+    expect(taskIds(result)).toEqual([
+      "archived-running",
+      "open-reported",
+      "unarchived-reported",
+      "missing-reported",
+    ]);
+  });
+
+  it("includes archived descendant agent tasks when requested", async () => {
+    using tempDir = new TestTempDir("test-task-list-agent-archive-include");
+    await writeWorkspaceConfig(tempDir.path, [
+      buildWorkspace(tempDir.path, "root-workspace"),
+      buildWorkspace(tempDir.path, "archived-reported", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:01:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-parent", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:02:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "ancestor-archived-child", {
+        parentWorkspaceId: "archived-parent",
+      }),
+      buildWorkspace(tempDir.path, "open-reported", {
+        parentWorkspaceId: "root-workspace",
+      }),
+    ]);
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const listDescendantAgentTasks = mock(() => [
+      buildAgentTask("archived-reported", "reported"),
+      buildAgentTask("ancestor-archived-child", "reported", "archived-parent", 2),
+      buildAgentTask("open-reported", "reported"),
+    ]);
+    const taskService = { listDescendantAgentTasks } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    const defaultResult: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["reported"], includeArchived: null }, mockToolCallOptions)
+    );
+    const includeArchivedResult: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["reported"], includeArchived: true }, mockToolCallOptions)
+    );
+
+    expect(taskIds(defaultResult)).toEqual(["open-reported"]);
+    expect(taskIds(includeArchivedResult)).toEqual([
+      "archived-reported",
+      "ancestor-archived-child",
+      "open-reported",
+    ]);
+  });
+
   it("lists workspace-turn handles with workspace metadata", async () => {
     using tempDir = new TestTempDir("test-task-list-workspace-turns");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
@@ -141,6 +321,109 @@ describe("task_list tool", () => {
     });
   });
 
+  it("hides archived non-actionable workspace-turn tasks by default", async () => {
+    using tempDir = new TestTempDir("test-task-list-workspace-turn-archive-filter");
+    await writeWorkspaceConfig(tempDir.path, [
+      buildWorkspace(tempDir.path, "root-workspace"),
+      buildWorkspace(tempDir.path, "archived-turn-workspace", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:01:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-running-workspace", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:02:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-turn-parent", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:03:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "ancestor-archived-turn-workspace", {
+        parentWorkspaceId: "archived-turn-parent",
+      }),
+      buildWorkspace(tempDir.path, "open-turn-workspace", {
+        parentWorkspaceId: "root-workspace",
+      }),
+    ]);
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const listDescendantAgentTasks = mock(() => []);
+    const listWorkspaceTurnTasks = mock(() => [
+      buildWorkspaceTurn("turn-archived-completed", "archived-turn-workspace", "completed"),
+      buildWorkspaceTurn("turn-archived-running", "archived-running-workspace", "running"),
+      buildWorkspaceTurn("turn-ancestor-error", "ancestor-archived-turn-workspace", "error"),
+      buildWorkspaceTurn("turn-open-completed", "open-turn-workspace", "completed"),
+      buildWorkspaceTurn("turn-missing-completed", "missing-turn-workspace", "completed"),
+    ]);
+    const taskService = {
+      listDescendantAgentTasks,
+      listWorkspaceTurnTasks,
+    } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["completed", "failed", "running"] }, mockToolCallOptions)
+    );
+
+    expect(listWorkspaceTurnTasks).toHaveBeenCalledWith("root-workspace", {
+      statuses: ["completed", "error", "running"],
+    });
+    expect(taskIds(result)).toEqual([
+      "turn-archived-running",
+      "turn-open-completed",
+      "turn-missing-completed",
+    ]);
+  });
+
+  it("includes archived workspace-turn tasks when requested", async () => {
+    using tempDir = new TestTempDir("test-task-list-workspace-turn-archive-include");
+    await writeWorkspaceConfig(tempDir.path, [
+      buildWorkspace(tempDir.path, "root-workspace"),
+      buildWorkspace(tempDir.path, "archived-turn-workspace", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:01:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "archived-turn-parent", {
+        parentWorkspaceId: "root-workspace",
+        archivedAt: "2026-06-23T00:02:00.000Z",
+      }),
+      buildWorkspace(tempDir.path, "ancestor-archived-turn-workspace", {
+        parentWorkspaceId: "archived-turn-parent",
+      }),
+      buildWorkspace(tempDir.path, "open-turn-workspace", {
+        parentWorkspaceId: "root-workspace",
+      }),
+    ]);
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const listDescendantAgentTasks = mock(() => []);
+    const listWorkspaceTurnTasks = mock(() => [
+      buildWorkspaceTurn("turn-archived-completed", "archived-turn-workspace", "completed"),
+      buildWorkspaceTurn("turn-ancestor-error", "ancestor-archived-turn-workspace", "error"),
+      buildWorkspaceTurn("turn-open-completed", "open-turn-workspace", "completed"),
+    ]);
+    const taskService = {
+      listDescendantAgentTasks,
+      listWorkspaceTurnTasks,
+    } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    const defaultResult: unknown = await Promise.resolve(
+      tool.execute!({ statuses: ["completed", "failed"] }, mockToolCallOptions)
+    );
+    const includeArchivedResult: unknown = await Promise.resolve(
+      tool.execute!(
+        { statuses: ["completed", "failed"], includeArchived: true },
+        mockToolCallOptions
+      )
+    );
+
+    expect(taskIds(defaultResult)).toEqual(["turn-open-completed"]);
+    expect(taskIds(includeArchivedResult)).toEqual([
+      "turn-archived-completed",
+      "turn-ancestor-error",
+      "turn-open-completed",
+    ]);
+  });
+
   const buildWorkflowRun = (id: string, status: string) => ({
     id,
     workspaceId: "root-workspace",
@@ -183,7 +466,9 @@ describe("task_list tool", () => {
       },
     });
 
-    const result: unknown = await Promise.resolve(tool.execute!({}, mockToolCallOptions));
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ includeArchived: false }, mockToolCallOptions)
+    );
 
     expect(listRuns).toHaveBeenCalledWith({ workspaceId: "root-workspace" });
     expect(result).toEqual({
