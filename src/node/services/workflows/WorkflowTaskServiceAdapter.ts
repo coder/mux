@@ -38,44 +38,34 @@ interface WorkflowTaskExperiments {
   dynamicWorkflows?: boolean;
 }
 
+// Shared shape for agent task creation so the single-step `create` and the
+// batched `createMany` stay in lockstep; adding a field (e.g. onRefusal) in one
+// place must not silently diverge from the other.
+interface WorkflowTaskCreateArgs {
+  parentWorkspaceId: string;
+  kind: "agent";
+  agentId: string;
+  prompt: string;
+  title: string;
+  workflowTask: {
+    runId: string;
+    stepId: string;
+    workflowName?: string;
+    outputSchema?: unknown;
+  };
+  experiments?: WorkflowTaskExperiments;
+  modelString?: string;
+  thinkingLevel?: ParsedThinkingInput;
+  isolation?: "fork" | "none";
+  onRefusal?: "fail" | "fallback";
+}
+
 interface WorkflowTaskServiceLike {
-  create(args: {
-    parentWorkspaceId: string;
-    kind: "agent";
-    agentId: string;
-    prompt: string;
-    title: string;
-    workflowTask: {
-      runId: string;
-      stepId: string;
-      workflowName?: string;
-      outputSchema?: unknown;
-    };
-    experiments?: WorkflowTaskExperiments;
-    modelString?: string;
-    thinkingLevel?: ParsedThinkingInput;
-    isolation?: "fork" | "none";
-    onRefusal?: "fail" | "fallback";
-  }): Promise<{ success: true; data: TaskCreateResult } | { success: false; error: string }>;
+  create(
+    args: WorkflowTaskCreateArgs
+  ): Promise<{ success: true; data: TaskCreateResult } | { success: false; error: string }>;
   createMany?(
-    args: Array<{
-      parentWorkspaceId: string;
-      kind: "agent";
-      agentId: string;
-      prompt: string;
-      title: string;
-      workflowTask: {
-        runId: string;
-        stepId: string;
-        workflowName?: string;
-        outputSchema?: unknown;
-      };
-      experiments?: WorkflowTaskExperiments;
-      modelString?: string;
-      thinkingLevel?: ParsedThinkingInput;
-      isolation?: "fork" | "none";
-      onRefusal?: "fail" | "fallback";
-    }>,
+    args: WorkflowTaskCreateArgs[],
     options?: {
       onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
     }
