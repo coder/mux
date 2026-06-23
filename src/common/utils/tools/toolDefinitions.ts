@@ -337,6 +337,12 @@ const WorkspaceTaskTargetSchema = z
     workspaceId: z.string().trim().min(1).nullish(),
     branchName: z.string().trim().min(1).nullish(),
     trunkBranch: z.string().trim().min(1).nullish(),
+    queueDispatchMode: z
+      .enum(["tool-end", "turn-end"])
+      .nullish()
+      .describe(
+        'For kind="workspace" + workspace.mode="existing", choose when a follow-up queued while the workspace is busy should dispatch: "tool-end" after the next tool call, or "turn-end" after the current turn.'
+      ),
     disposable: z.boolean().nullish(),
   })
   .strict();

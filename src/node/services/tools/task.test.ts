@@ -172,6 +172,56 @@ describe("task tool", () => {
     });
   });
 
+  it("forwards workspace turn queue dispatch mode", async () => {
+    using tempDir = new TestTempDir("test-task-tool-workspace-turn-queue-mode");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const createWorkspaceTurn = mock(() =>
+      Ok({
+        taskId: "wst_child-turn",
+        kind: "workspace_turn" as const,
+        status: "queued" as const,
+        workspaceId: "child-workspace",
+      })
+    );
+    const taskService = { createWorkspaceTurn } as unknown as TaskService;
+    const tool = createTaskTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          kind: "workspace",
+          prompt: "follow up",
+          title: "Follow-up",
+          run_in_background: true,
+          workspace: {
+            mode: "existing",
+            workspaceId: "child-workspace",
+            queueDispatchMode: "turn-end",
+          },
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(createWorkspaceTurn).toHaveBeenCalledTimes(1);
+    const createWorkspaceTurnCall = createWorkspaceTurn.mock.calls[0] as unknown[];
+    expect(createWorkspaceTurnCall[0]).toMatchObject({
+      ownerWorkspaceId: "parent-workspace",
+      workspace: {
+        mode: "existing",
+        workspaceId: "child-workspace",
+        queueDispatchMode: "turn-end",
+      },
+    });
+    expect(result).toMatchObject({
+      status: "queued",
+      taskId: "wst_child-turn",
+      workspaceId: "child-workspace",
+      handleKind: "workspace_turn",
+    });
+  });
+
   it("forwards isolation to taskService.create", async () => {
     using tempDir = new TestTempDir("test-task-tool-isolation-passthrough");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

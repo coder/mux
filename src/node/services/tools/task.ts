@@ -426,6 +426,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             ...(workspace?.workspaceId != null ? { workspaceId: workspace.workspaceId } : {}),
             ...(workspace?.branchName != null ? { branchName: workspace.branchName } : {}),
             ...(workspace?.trunkBranch != null ? { trunkBranch: workspace.trunkBranch } : {}),
+            ...(workspace?.queueDispatchMode != null
+              ? { queueDispatchMode: workspace.queueDispatchMode }
+              : {}),
             ...(workspace?.disposable != null ? { disposable: workspace.disposable } : {}),
           },
         });

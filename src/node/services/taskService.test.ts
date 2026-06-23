@@ -364,7 +364,9 @@ function createWorkspaceServiceMocks(
     sendMessage: ReturnType<typeof mock>;
     resumeStream: ReturnType<typeof mock>;
     clearQueue: ReturnType<typeof mock>;
+    hasQueuedWorkspaceTurn: ReturnType<typeof mock>;
     hasQueuedMessages: ReturnType<typeof mock>;
+    isBusyForMessage: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
@@ -382,7 +384,9 @@ function createWorkspaceServiceMocks(
   sendMessage: ReturnType<typeof mock>;
   resumeStream: ReturnType<typeof mock>;
   clearQueue: ReturnType<typeof mock>;
+  hasQueuedWorkspaceTurn: ReturnType<typeof mock>;
   hasQueuedMessages: ReturnType<typeof mock>;
+  isBusyForMessage: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
@@ -401,7 +405,9 @@ function createWorkspaceServiceMocks(
     overrides?.resumeStream ??
     mock((): Promise<Result<{ started: boolean }>> => Promise.resolve(Ok({ started: true })));
   const clearQueue = overrides?.clearQueue ?? mock((): Result<void> => Ok(undefined));
+  const hasQueuedWorkspaceTurn = overrides?.hasQueuedWorkspaceTurn ?? mock(() => false);
   const hasQueuedMessages = overrides?.hasQueuedMessages ?? mock(() => false);
+  const isBusyForMessage = overrides?.isBusyForMessage ?? mock(() => false);
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
   const waitForPendingStreamErrorRecoveryDecision =
@@ -433,6 +439,8 @@ function createWorkspaceServiceMocks(
       sendMessage,
       resumeStream,
       clearQueue,
+      isBusyForMessage,
+      hasQueuedWorkspaceTurn,
       hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
       waitForPendingStreamErrorRecoveryDecision,
@@ -449,7 +457,9 @@ function createWorkspaceServiceMocks(
     sendMessage,
     resumeStream,
     clearQueue,
+    hasQueuedWorkspaceTurn,
     hasQueuedMessages,
+    isBusyForMessage,
     hasPendingQueuedOrPreparingTurn,
     waitForPendingStreamErrorRecoveryDecision,
     remove,
@@ -794,7 +804,11 @@ describe("TaskService", () => {
         return Ok({ metadata: createWorkspaceTurnMetadata(projectPath) });
       }
     );
-    const sendMessage = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
     const workspaceMocks = createWorkspaceServiceMocks({ create: createWorkspace, sendMessage });
     const { taskService } = createTaskServiceHarness(config, {
       workspaceService: workspaceMocks.workspaceService,
@@ -834,9 +848,10 @@ describe("TaskService", () => {
     });
     expect(createWorkspace).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    const secondSend = sendMessage.mock.calls[1] as unknown[];
+    const secondSend = sendMessage.mock.calls[1];
     expect(secondSend[0]).toBe("childworkspace");
     expect(secondSend[1]).toBe("Second prompt");
+    expect(secondSend[3]).toMatchObject({ requireIdle: true });
     const secondSnapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_secondhandle");
     expect(secondSnapshot).toMatchObject({
       createdWorkspace: false,
@@ -868,6 +883,217 @@ describe("TaskService", () => {
     if (foreign.success) return;
     expect(foreign.error).toContain("invalid_scope");
     expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("createWorkspaceTurn queues busy owner-created existing workspaces", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["firsthandle", "firstturn", "secondhandle", "secondturn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    await config.editConfig((cfg) => {
+      cfg.taskSettings = { ...DEFAULT_TASK_SETTINGS, maxParallelAgentTasks: 1 };
+      return cfg;
+    });
+
+    const createWorkspace = mock(
+      async (...args: unknown[]): Promise<Result<{ metadata: WorkspaceMetadata }>> => {
+        const tags = args[7] as Record<string, string> | undefined;
+        await config.editConfig((cfg) => {
+          const project = cfg.projects.get(projectPath);
+          assert(project, "test project must exist");
+          project.workspaces.push({
+            path: path.join(projectPath, "workspace-turn"),
+            id: "childworkspace",
+            name: "workspace-turn",
+            title: "Workspace turn",
+            createdAt: "2026-06-19T00:00:00.000Z",
+            runtimeConfig: { type: "local" },
+            tags,
+          });
+          return cfg;
+        });
+        return Ok({ metadata: createWorkspaceTurnMetadata(projectPath) });
+      }
+    );
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void, SendMessageError>> =>
+        Promise.resolve(Ok(undefined))
+    );
+    const busyWorkspaceIds = new Set<string>();
+    const isStreaming = mock((workspaceId: string) => busyWorkspaceIds.has(workspaceId));
+    const isBusyForMessage = mock((workspaceId: string) => busyWorkspaceIds.has(workspaceId));
+    const hasQueuedMessages = mock((workspaceId: string) => busyWorkspaceIds.has(workspaceId));
+    const workspaceMocks = createWorkspaceServiceMocks({
+      create: createWorkspace,
+      sendMessage,
+      hasQueuedWorkspaceTurn: mock(
+        (workspaceId: string, handleId: string) =>
+          workspaceId === "childworkspace" && handleId === "wst_secondhandle"
+      ),
+      isBusyForMessage,
+      hasQueuedMessages,
+    });
+    const aiMocks = createAIServiceMocks(config, { isStreaming });
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService: aiMocks.aiService,
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const first = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "First prompt",
+      title: "Workspace turn",
+      workspace: { mode: "new" },
+    });
+    expect(first.success).toBe(true);
+    busyWorkspaceIds.add("childworkspace");
+
+    const second = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Queued prompt",
+      title: "Follow-up",
+      workspace: {
+        mode: "existing",
+        workspaceId: "childworkspace",
+        queueDispatchMode: "turn-end",
+      },
+    });
+
+    expect(second.success).toBe(true);
+    if (!second.success) return;
+    expect(second.data).toMatchObject({
+      taskId: "wst_secondhandle",
+      workspaceId: "childworkspace",
+      kind: "workspace_turn",
+      status: "queued",
+    });
+    expect(createWorkspace).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    const secondSend = sendMessage.mock.calls[1];
+    expect(secondSend[0]).toBe("childworkspace");
+    expect(secondSend[1]).toBe("Queued prompt");
+    expect(secondSend[2]).toMatchObject({
+      queueDispatchMode: "turn-end",
+      muxMetadata: {
+        type: "workspace-turn-task",
+        taskHandleId: "wst_secondhandle",
+        ownerWorkspaceId: parentId,
+        turnId: "secondturn",
+      },
+    });
+    expect(secondSend[3]).toMatchObject({
+      startStreamInBackground: true,
+      requireIdle: false,
+      agentInitiated: true,
+    });
+    expect(secondSend[3]).toHaveProperty("onAccepted");
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_secondhandle");
+    expect(snapshot).toMatchObject({
+      createdWorkspace: false,
+      workspaceId: "childworkspace",
+      status: "queued",
+    });
+
+    const internal = taskService as unknown as { countActiveWorkspaceTurns: () => Promise<number> };
+    expect(await internal.countActiveWorkspaceTurns()).toBe(1);
+
+    const interrupted = await taskService.interruptWorkspaceTurn(parentId, "wst_secondhandle");
+    expect(interrupted.success).toBe(true);
+    expect(workspaceMocks.clearQueue).toHaveBeenCalledWith("childworkspace", {
+      cancelReason: "Workspace turn interrupted",
+    });
+    const sendInternal = secondSend[3] as { onAccepted: () => Promise<void> };
+    let acceptedAfterInterruptError: unknown;
+    try {
+      await sendInternal.onAccepted();
+    } catch (error) {
+      acceptedAfterInterruptError = error;
+    }
+    if (!(acceptedAfterInterruptError instanceof Error)) {
+      throw new Error("Expected onAccepted to reject after interrupt");
+    }
+    expect(acceptedAfterInterruptError.message).toMatch(/canceled before stream start/);
+    expect(aiMocks.stopStream).not.toHaveBeenCalled();
+  });
+
+  test("createWorkspaceTurn reserves a slot before queueing a manually busy existing workspace", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["queuedhandle", "queuedturn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    await config.editConfig((cfg) => {
+      cfg.taskSettings = { ...DEFAULT_TASK_SETTINGS, maxParallelAgentTasks: 1 };
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        {
+          path: path.join(projectPath, "childworkspace"),
+          id: "childworkspace",
+          name: "childworkspace",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          runtimeConfig: { type: "local" },
+        },
+        {
+          path: path.join(projectPath, "otherworkspace"),
+          id: "otherworkspace",
+          name: "otherworkspace",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          runtimeConfig: { type: "local" },
+        }
+      );
+      return cfg;
+    });
+
+    const sendMessage = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const workspaceMocks = createWorkspaceServiceMocks({
+      sendMessage,
+      isBusyForMessage: mock((workspaceId: string) => workspaceId === "childworkspace"),
+    });
+    const aiMocks = createAIServiceMocks(config, {
+      isStreaming: mock((workspaceId: string) => workspaceId === "otherworkspace"),
+    });
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService: aiMocks.aiService,
+      workspaceService: workspaceMocks.workspaceService,
+    });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const createdAt = "2026-06-19T00:00:00.000Z";
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_owned",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "ownedturn",
+      status: "completed",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    });
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_other",
+      ownerWorkspaceId: parentId,
+      workspaceId: "otherworkspace",
+      turnId: "otherturn",
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    });
+
+    const result = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Queued prompt",
+      title: "Follow-up",
+      workspace: { mode: "existing", workspaceId: "childworkspace" },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toContain("maxParallelAgentTasks exceeded");
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("createWorkspaceTurn counts active workspace turns across all owners", async () => {
@@ -1013,6 +1239,46 @@ describe("TaskService", () => {
       error: "Workspace turn interrupted after restart",
       workspaceId: "childworkspace",
     });
+  });
+
+  test("uncorrelated stream-end before queued workspace turn prompt does not interrupt it", async () => {
+    const { parentId, taskService, historyService, created } = await startWorkspaceTurnForTest();
+    const oldAssistant = createMuxMessage("old-assistant", "assistant", "Previous turn", {
+      model: "anthropic:claude-opus-4-6",
+      finishReason: "stop",
+    });
+    const queuedPrompt = createMuxMessage("queued-prompt", "user", "Queued follow-up", {
+      muxMetadata: {
+        type: "workspace-turn-task",
+        taskHandleId: created.taskId,
+        ownerWorkspaceId: parentId,
+        turnId: "turn",
+      },
+    });
+    expect((await historyService.appendToHistory(created.workspaceId, oldAssistant)).success).toBe(
+      true
+    );
+    expect((await historyService.appendToHistory(created.workspaceId, queuedPrompt)).success).toBe(
+      true
+    );
+
+    const internal = taskService as unknown as {
+      interruptWorkspaceTurnFromUncorrelatedStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
+    };
+    const handled = await internal.interruptWorkspaceTurnFromUncorrelatedStreamEnd({
+      type: "stream-end",
+      workspaceId: created.workspaceId,
+      messageId: "old-assistant",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        finishReason: "stop",
+      },
+      parts: [],
+    });
+
+    expect(handled).toBe(true);
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, created.taskId);
+    expect(snapshot).toMatchObject({ status: "running", workspaceId: created.workspaceId });
   });
 
   test("getWorkspaceTurnSnapshot recovers stale completed handles from matching history", async () => {

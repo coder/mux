@@ -272,6 +272,47 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("workspace turn metadata", () => {
+    const metadata: MuxMessageMetadata = {
+      type: "workspace-turn-task",
+      taskHandleId: "wst_followup",
+      ownerWorkspaceId: "parent-workspace",
+      turnId: "turn-1",
+    };
+
+    it("should not batch workspace-turn follow-ups with other queued messages", () => {
+      queue.add("Follow up", { model: "gpt-4", agentId: "exec", muxMetadata: metadata });
+
+      expect(() => queue.add("Second message")).toThrow(/workspace turn/);
+
+      queue.clear();
+      queue.add("Normal message");
+
+      expect(() =>
+        queue.add("Follow up", { model: "gpt-4", agentId: "exec", muxMetadata: metadata })
+      ).toThrow(/workspace turn/);
+    });
+
+    it("should preserve internal workspace-turn callbacks", () => {
+      const onAccepted = () => undefined;
+      const onAcceptedPreStreamFailure = () => undefined;
+      const onCanceled = () => undefined;
+
+      queue.add(
+        "Follow up",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        { agentInitiated: true, onAccepted, onAcceptedPreStreamFailure, onCanceled }
+      );
+
+      const { internal } = queue.produceMessage();
+      expect(internal?.agentInitiated).toBe(true);
+      expect(internal?.onAccepted).toBe(onAccepted);
+      expect(internal?.onAcceptedPreStreamFailure).toBe(onAcceptedPreStreamFailure);
+      expect(internal?.onCanceled).toBe(onCanceled);
+      expect(queue.getClearCallbacks().onCanceled).toBe(onCanceled);
+    });
+  });
+
   describe("goal intervention policy", () => {
     it("should preserve steering policy for queued user messages", () => {
       queue.add("Steer next turn", {

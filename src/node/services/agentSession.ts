@@ -2272,7 +2272,9 @@ export class AgentSession {
       goalContinuation?: boolean;
       goalKind?: GoalSyntheticMessageKind;
       startStreamInBackground?: boolean;
+      onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      onCanceled?: (reason: string) => Promise<void> | void;
     }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
@@ -2795,6 +2797,12 @@ export class AgentSession {
     // Same-session retry should resume the exact accepted request we just finalized
     // in history, even if runtime warmup fails before streamWithHistory() starts.
     this.setAutoRetryResumeState(optionsForStream, agentInitiated, goalKind);
+    try {
+      await internal?.onAccepted?.();
+    } catch (error) {
+      return Err(createUnknownSendMessageError(getErrorMessage(error)));
+    }
+
     const preparedTurnAbortController = new AbortController();
     this.activePreparedTurnAbortController = preparedTurnAbortController;
     this.setTurnPhase(TurnPhase.PREPARING);
@@ -4996,7 +5004,13 @@ export class AgentSession {
   queueMessage(
     message: string,
     options?: SendMessageOptions & { fileParts?: FilePart[] },
-    internal?: { synthetic?: boolean; agentInitiated?: boolean }
+    internal?: {
+      synthetic?: boolean;
+      agentInitiated?: boolean;
+      onAccepted?: () => Promise<void> | void;
+      onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      onCanceled?: (reason: string) => Promise<void> | void;
+    }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");
     const didEnqueue = this.messageQueue.add(message, options, internal);
@@ -5014,11 +5028,40 @@ export class AgentSession {
     return effectiveDispatchMode;
   }
 
-  clearQueue(): void {
+  clearQueue(cancelReason = "Queued message cleared before dispatch."): void {
     this.assertNotDisposed("clearQueue");
+    const callbacks = this.messageQueue.getClearCallbacks();
     this.messageQueue.clear();
     this.emitQueuedMessageChanged();
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
+    this.notifyQueuedMessageCleared(callbacks, cancelReason);
+  }
+
+  private notifyQueuedMessageCleared(
+    callbacks: {
+      onCanceled?: (reason: string) => Promise<void> | void;
+      onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+    },
+    cancelReason: string
+  ): void {
+    const notify = async () => {
+      if (callbacks.onCanceled != null) {
+        await callbacks.onCanceled(cancelReason);
+        return;
+      }
+      await callbacks.onAcceptedPreStreamFailure?.(createUnknownSendMessageError(cancelReason));
+    };
+    notify().catch((error: unknown) => {
+      log.error("Queued message clear callback failed", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    });
+  }
+
+  hasQueuedWorkspaceTurn(handleId: string): boolean {
+    assert(handleId.length > 0, "hasQueuedWorkspaceTurn requires handleId");
+    return this.messageQueue.hasWorkspaceTurn(handleId);
   }
 
   hasQueuedMessages(dispatchMode?: "tool-end" | "turn-end"): boolean {
@@ -5100,11 +5143,14 @@ export class AgentSession {
       this.setTurnPhase(TurnPhase.PREPARING);
 
       void this.sendMessage(message, options, internal)
-        .then((result) => {
+        .then(async (result) => {
           // If sendMessage fails before it can start streaming, ensure we don't
-          // leave the session stuck in PREPARING.
-          if (!result.success && this.turnPhase === TurnPhase.PREPARING) {
-            this.setTurnPhase(TurnPhase.IDLE);
+          // leave the session stuck in PREPARING and notify correlated internal callers.
+          if (!result.success) {
+            await internal?.onAcceptedPreStreamFailure?.(result.error);
+            if (this.turnPhase === TurnPhase.PREPARING) {
+              this.setTurnPhase(TurnPhase.IDLE);
+            }
           }
         })
         .catch(() => {

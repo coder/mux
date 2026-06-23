@@ -384,6 +384,8 @@ function validateWorkflowAgentReportStructuredOutput(params: {
   });
 }
 
+type WorkspaceTurnQueueDispatchMode = "tool-end" | "turn-end";
+
 export interface WorkspaceTurnCreateArgs {
   ownerWorkspaceId: string;
   prompt: string;
@@ -396,6 +398,7 @@ export interface WorkspaceTurnCreateArgs {
     workspaceId?: string;
     branchName?: string;
     trunkBranch?: string;
+    queueDispatchMode?: WorkspaceTurnQueueDispatchMode;
     disposable?: boolean;
   };
   experiments?: TaskCreateArgs["experiments"];
@@ -404,7 +407,7 @@ export interface WorkspaceTurnCreateArgs {
 export interface WorkspaceTurnCreateResult {
   taskId: string;
   kind: "workspace_turn";
-  status: "starting" | "running";
+  status: "queued" | "starting" | "running";
   workspaceId: string;
 }
 
@@ -2733,6 +2736,10 @@ export class TaskService {
     if (mode !== "new" && mode !== "fork" && mode !== "existing") {
       return Err("Task.createWorkspaceTurn: unsupported workspace mode");
     }
+    const queueDispatchMode = args.workspace?.queueDispatchMode ?? "tool-end";
+    if (queueDispatchMode !== "tool-end" && queueDispatchMode !== "turn-end") {
+      return Err("Task.createWorkspaceTurn: unsupported queueDispatchMode");
+    }
 
     await using _lock = await this.mutex.acquire();
 
@@ -2759,19 +2766,24 @@ export class TaskService {
     const ownerWorkspaceTurns = allWorkspaceTurns.filter(
       (record) => record.ownerWorkspaceId === ownerWorkspaceId
     );
-    const activeWorkspaceTurnCount = await this.countActiveWorkspaceTurns(allWorkspaceTurns);
     const activeAgentCount = this.countActiveAgentTasks(cfg);
-    if (activeAgentCount + activeWorkspaceTurnCount >= taskSettings.maxParallelAgentTasks) {
-      return Err(
-        `Task.createWorkspaceTurn: maxParallelAgentTasks exceeded (active=${activeAgentCount + activeWorkspaceTurnCount}, max=${taskSettings.maxParallelAgentTasks})`
-      );
-    }
+    const ensureParallelSlot = async (): Promise<Result<void, string>> => {
+      const activeWorkspaceTurnCount = await this.countActiveWorkspaceTurns(allWorkspaceTurns);
+      const activeCount = activeAgentCount + activeWorkspaceTurnCount;
+      if (activeCount >= taskSettings.maxParallelAgentTasks) {
+        return Err(
+          `Task.createWorkspaceTurn: maxParallelAgentTasks exceeded (active=${activeCount}, max=${taskSettings.maxParallelAgentTasks})`
+        );
+      }
+      return Ok(undefined);
+    };
 
     const handleId = `${WORKSPACE_TURN_TASK_ID_PREFIX}${this.config.generateStableId()}`;
     const turnId = this.config.generateStableId();
     const createdAt = getIsoNow();
     let targetWorkspaceId: string;
     let createdWorkspace = false;
+    let queuedForExistingWorkspace = false;
 
     if (mode === "fork") {
       return Err('Task.createWorkspaceTurn: workspace.mode="fork" is not supported yet');
@@ -2788,11 +2800,19 @@ export class TaskService {
       if (!ownsExistingWorkspace) {
         return Err("Task.createWorkspaceTurn: invalid_scope for existing workspace");
       }
-      if (this.aiService.isStreaming(existingWorkspaceId)) {
-        return Err("Task.createWorkspaceTurn: existing workspace is busy; wait until it is idle");
-      }
       targetWorkspaceId = existingWorkspaceId;
+      queuedForExistingWorkspace = this.workspaceService.isBusyForMessage(existingWorkspaceId);
+      const targetHasActiveWorkspaceTurn = await this.hasActiveWorkspaceTurnForWorkspace(
+        allWorkspaceTurns,
+        existingWorkspaceId
+      );
+      if (!queuedForExistingWorkspace || !targetHasActiveWorkspaceTurn) {
+        const slot = await ensureParallelSlot();
+        if (!slot.success) return Err(slot.error);
+      }
     } else {
+      const slot = await ensureParallelSlot();
+      if (!slot.success) return Err(slot.error);
       const tags = {
         "mux.taskHandleId": handleId,
         "mux.taskOwnerWorkspaceId": ownerWorkspaceId,
@@ -2834,7 +2854,7 @@ export class TaskService {
       ownerWorkspaceId,
       workspaceId: targetWorkspaceId,
       turnId,
-      status: "running",
+      status: queuedForExistingWorkspace ? "queued" : "running",
       createdAt,
       updatedAt: createdAt,
       createdWorkspace,
@@ -2845,10 +2865,38 @@ export class TaskService {
       ...(thinkingLevel != null ? { thinkingLevel } : {}),
     };
     await this.taskHandleStore.upsertWorkspaceTurn(record);
-    this.activeWorkspaceTurnHandleByWorkspaceId.set(targetWorkspaceId, {
-      handleId,
-      ownerWorkspaceId,
-    });
+    if (record.status !== "queued") {
+      this.activeWorkspaceTurnHandleByWorkspaceId.set(targetWorkspaceId, {
+        handleId,
+        ownerWorkspaceId,
+      });
+    }
+
+    const markWorkspaceTurnAccepted = async () => {
+      await this.workspaceTurnSettlementLocks.withLock(handleId, async () => {
+        const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+        if (current?.workspaceId !== targetWorkspaceId) {
+          throw new Error("Workspace turn was canceled before stream start");
+        }
+        if (current.turnId !== turnId) {
+          throw new Error("Workspace turn correlation changed before stream start");
+        }
+        if (this.isTerminalWorkspaceTurnStatus(current.status)) {
+          throw new Error(current.error ?? "Workspace turn was canceled before stream start");
+        }
+        if (current.status !== "running") {
+          await this.taskHandleStore.upsertWorkspaceTurn({
+            ...current,
+            status: "running",
+            updatedAt: getIsoNow(),
+          });
+        }
+        this.activeWorkspaceTurnHandleByWorkspaceId.set(targetWorkspaceId, {
+          handleId,
+          ownerWorkspaceId,
+        });
+      });
+    };
 
     const sendResult = await this.workspaceService.sendMessage(
       targetWorkspaceId,
@@ -2859,14 +2907,43 @@ export class TaskService {
         ...(thinkingLevel != null ? { thinkingLevel } : {}),
         muxMetadata: this.buildWorkspaceTurnMuxMetadata(record),
         experiments: args.experiments,
+        ...(mode === "existing" ? { queueDispatchMode } : {}),
       },
       {
         startStreamInBackground: true,
-        requireIdle: true,
+        requireIdle: !queuedForExistingWorkspace,
+        onCanceled: async (reason) => {
+          const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+          if (
+            current == null ||
+            (current.status !== "queued" &&
+              current.status !== "starting" &&
+              current.status !== "running")
+          ) {
+            return;
+          }
+          const next: WorkspaceTurnTaskHandleRecord = {
+            ...current,
+            status: "interrupted",
+            updatedAt: getIsoNow(),
+            error: reason,
+          };
+          await this.settleWorkspaceTurn({
+            record: current,
+            next,
+            waiterSettlement: { status: "error", error: new Error(reason) },
+          });
+        },
+        onAccepted: markWorkspaceTurnAccepted,
         onAcceptedPreStreamFailure: async (sendError) => {
           const error = formatSendMessageError(sendError).message;
           const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
-          if (current == null || (current.status !== "starting" && current.status !== "running")) {
+          if (
+            current == null ||
+            (current.status !== "queued" &&
+              current.status !== "starting" &&
+              current.status !== "running")
+          ) {
             return;
           }
           const next: WorkspaceTurnTaskHandleRecord = {
@@ -2901,10 +2978,12 @@ export class TaskService {
       return Err(`Task.createWorkspaceTurn: send failed (${error})`);
     }
 
+    const acceptedRecord = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    const acceptedStatus = acceptedRecord?.status === "running" ? "running" : record.status;
     return Ok({
       taskId: handleId,
       kind: "workspace_turn",
-      status: "running",
+      status: acceptedStatus === "queued" ? "queued" : "running",
       workspaceId: targetWorkspaceId,
     });
   }
@@ -4601,7 +4680,7 @@ export class TaskService {
 
     if (
       record != null &&
-      (record.status === "starting" || record.status === "running") &&
+      (record.status === "queued" || record.status === "starting" || record.status === "running") &&
       !(await this.isLiveWorkspaceTurn(record))
     ) {
       await this.settleStaleWorkspaceTurn(record);
@@ -4619,7 +4698,9 @@ export class TaskService {
     const result: WorkspaceTurnTaskHandleRecord[] = [];
     for (const record of records) {
       if (
-        (record.status === "starting" || record.status === "running") &&
+        (record.status === "queued" ||
+          record.status === "starting" ||
+          record.status === "running") &&
         !(await this.isLiveWorkspaceTurn(record))
       ) {
         await this.settleStaleWorkspaceTurn(record);
@@ -4648,10 +4729,21 @@ export class TaskService {
     if (record.status === "completed" || record.status === "error") {
       return Err(`Workspace turn is already ${record.status} and cannot be interrupted.`);
     }
-    try {
-      await this.aiService.stopStream(record.workspaceId, { abandonPartial: false });
-    } catch (error: unknown) {
-      log.debug("interruptWorkspaceTurn: stopStream threw", { handleId, error });
+    if (record.status === "queued") {
+      if (this.workspaceService.hasQueuedWorkspaceTurn(record.workspaceId, record.handleId)) {
+        const clearQueueResult = this.workspaceService.clearQueue(record.workspaceId, {
+          cancelReason: "Workspace turn interrupted",
+        });
+        if (!clearQueueResult.success) {
+          return Err(`Failed to clear queued workspace turn: ${clearQueueResult.error}`);
+        }
+      }
+    } else {
+      try {
+        await this.aiService.stopStream(record.workspaceId, { abandonPartial: false });
+      } catch (error: unknown) {
+        log.debug("interruptWorkspaceTurn: stopStream threw", { handleId, error });
+      }
     }
     const next: WorkspaceTurnTaskHandleRecord = {
       ...record,
@@ -5039,7 +5131,27 @@ export class TaskService {
     if (record.status === "running" && this.isForegroundAwaiting(record.workspaceId)) {
       return false;
     }
-    return record.status === "starting" || record.status === "running";
+    return (
+      record.status === "queued" || record.status === "starting" || record.status === "running"
+    );
+  }
+
+  private async hasActiveWorkspaceTurnForWorkspace(
+    records: readonly WorkspaceTurnTaskHandleRecord[],
+    workspaceId: string
+  ): Promise<boolean> {
+    assert(workspaceId.length > 0, "hasActiveWorkspaceTurnForWorkspace requires workspaceId");
+    for (const record of records) {
+      if (record.workspaceId !== workspaceId || !this.isActiveWorkspaceTurn(record)) {
+        continue;
+      }
+      if (!(await this.isLiveWorkspaceTurn(record))) {
+        await this.settleStaleWorkspaceTurn(record);
+        continue;
+      }
+      return true;
+    }
+    return false;
   }
 
   private async hasActiveWorkspaceTurnDeferredBlockers(
@@ -5089,7 +5201,7 @@ export class TaskService {
   }
 
   private async settleStaleWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): Promise<void> {
-    if (record.status !== "starting" && record.status !== "running") {
+    if (record.status !== "queued" && record.status !== "starting" && record.status !== "running") {
       return;
     }
     const recovered = await this.recoverTerminalWorkspaceTurnFromHistory(record);
@@ -5139,9 +5251,11 @@ export class TaskService {
     const candidateWorkspaceTurns =
       records ??
       (await this.taskHandleStore.listAllWorkspaceTurns({
-        statuses: ["starting", "running"],
+        statuses: ["queued", "starting", "running"],
       }));
     let count = 0;
+    const countedWorkspaceIds = new Set<string>();
+    const queuedRecords: WorkspaceTurnTaskHandleRecord[] = [];
     for (const record of candidateWorkspaceTurns) {
       if (!this.isActiveWorkspaceTurn(record)) {
         continue;
@@ -5150,7 +5264,19 @@ export class TaskService {
         await this.settleStaleWorkspaceTurn(record);
         continue;
       }
+      if (record.status === "queued") {
+        queuedRecords.push(record);
+        continue;
+      }
       count += 1;
+      countedWorkspaceIds.add(record.workspaceId);
+    }
+    for (const record of queuedRecords) {
+      if (countedWorkspaceIds.has(record.workspaceId)) {
+        continue;
+      }
+      count += 1;
+      countedWorkspaceIds.add(record.workspaceId);
     }
     return count;
   }
@@ -5159,11 +5285,15 @@ export class TaskService {
     ownerWorkspaceId: string
   ): Promise<string[]> {
     const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId, {
-      statuses: ["starting", "running"],
+      statuses: ["queued", "starting", "running"],
     });
     const taskIds: string[] = [];
     for (const record of records) {
-      if (record.status !== "starting" && record.status !== "running") {
+      if (
+        record.status !== "queued" &&
+        record.status !== "starting" &&
+        record.status !== "running"
+      ) {
         continue;
       }
       if (!(await this.isLiveWorkspaceTurn(record))) {
@@ -6106,6 +6236,39 @@ export class TaskService {
     };
   }
 
+  private async isStreamEndBeforeWorkspaceTurnPrompt(
+    record: WorkspaceTurnTaskHandleRecord,
+    event: StreamEndEvent
+  ): Promise<boolean> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(event.workspaceId);
+    if (!historyResult.success) {
+      log.warn("Could not compare uncorrelated stream-end history for workspace turn", {
+        workspaceId: event.workspaceId,
+        handleId: record.handleId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+
+    let streamEndIndex = -1;
+    let promptIndex = -1;
+    for (const [index, message] of historyResult.data.entries()) {
+      if (message.id === event.messageId) {
+        streamEndIndex = index;
+      }
+      const metadata = this.getWorkspaceTurnMetadataFromValue(message.metadata?.muxMetadata);
+      if (
+        metadata?.taskHandleId === record.handleId &&
+        metadata.ownerWorkspaceId === record.ownerWorkspaceId &&
+        metadata.turnId === record.turnId
+      ) {
+        promptIndex = index;
+      }
+    }
+
+    return streamEndIndex !== -1 && promptIndex !== -1 && streamEndIndex < promptIndex;
+  }
+
   private async interruptWorkspaceTurnFromUncorrelatedStreamEnd(
     event: StreamEndEvent
   ): Promise<boolean> {
@@ -6134,6 +6297,15 @@ export class TaskService {
     }
     if (record.status !== "starting" && record.status !== "running") {
       this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+      return true;
+    }
+
+    if (await this.isStreamEndBeforeWorkspaceTurnPrompt(record, event)) {
+      log.debug("Ignoring stale uncorrelated stream-end before queued workspace turn prompt", {
+        workspaceId: event.workspaceId,
+        taskHandleId: record.handleId,
+        streamEndMessageId: event.messageId,
+      });
       return true;
     }
 

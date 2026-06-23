@@ -1,4 +1,5 @@
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
+import type { SendMessageError } from "@/common/types/errors";
 import type { ReviewNoteData } from "@/common/types/review";
 
 // Type guard for compaction request metadata (for display text)
@@ -29,6 +30,26 @@ function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
   return obj.type === "compaction-request" && typeof obj.rawCommand === "string";
+}
+
+// Workspace-turn task metadata must stay attached to exactly one queued message;
+// otherwise a batched follow-up would leave one durable task handle with no matching stream-end.
+interface WorkspaceTurnMetadata {
+  type: "workspace-turn-task";
+  taskHandleId: string;
+  ownerWorkspaceId: string;
+  turnId: string;
+}
+
+function isWorkspaceTurnMetadata(meta: unknown): meta is WorkspaceTurnMetadata {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  return (
+    obj.type === "workspace-turn-task" &&
+    typeof obj.taskHandleId === "string" &&
+    typeof obj.ownerWorkspaceId === "string" &&
+    typeof obj.turnId === "string"
+  );
 }
 
 // Type guard for metadata with reviews
@@ -69,6 +90,9 @@ type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
   agentInitiated?: boolean;
+  onAccepted?: () => Promise<void> | void;
+  onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+  onCanceled?: (reason: string) => Promise<void> | void;
 }
 
 export class MessageQueue {
@@ -82,12 +106,23 @@ export class MessageQueue {
   private queuedEntryCount = 0;
   private queuedSyntheticCount = 0;
   private queuedAgentInitiatedCount = 0;
+  private onCanceled?: (reason: string) => Promise<void> | void;
+  private onAccepted?: () => Promise<void> | void;
+  private onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
 
   /**
    * Check if the queue currently contains a compaction request.
    */
   hasCompactionRequest(): boolean {
     return isCompactionMetadata(this.firstMuxMetadata);
+  }
+
+  hasWorkspaceTurn(handleId: string): boolean {
+    return (
+      handleId.length > 0 &&
+      isWorkspaceTurnMetadata(this.firstMuxMetadata) &&
+      this.firstMuxMetadata.taskHandleId === handleId
+    );
   }
 
   getQueueDispatchMode(): QueueDispatchMode {
@@ -145,6 +180,11 @@ export class MessageQueue {
 
     const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
     const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
+    const incomingIsWorkspaceTurn = isWorkspaceTurnMetadata(options?.muxMetadata);
+    const incomingHasAcceptedCallbacks =
+      internal?.onAccepted != null ||
+      internal?.onAcceptedPreStreamFailure != null ||
+      internal?.onCanceled != null;
     const queueHasMessages = !this.isEmpty();
     const incomingMode = options?.queueDispatchMode ?? "tool-end";
     const nextQueueDispatchMode = !queueHasMessages
@@ -154,6 +194,9 @@ export class MessageQueue {
         : this.queueDispatchMode;
 
     const queueHasAgentSkill = isAgentSkillMetadata(this.firstMuxMetadata);
+    const queueHasWorkspaceTurn = isWorkspaceTurnMetadata(this.firstMuxMetadata);
+    const queueHasAcceptedCallbacks =
+      this.onAccepted != null || this.onAcceptedPreStreamFailure != null || this.onCanceled != null;
 
     // Avoid leaking agent-skill metadata to later queued messages.
     // A skill invocation must be sent alone (or the user should restore/edit the queued message).
@@ -161,6 +204,26 @@ export class MessageQueue {
       throw new Error(
         "Cannot queue additional messages: an agent skill invocation is already queued. " +
           "Wait for the current stream to complete before sending another message."
+      );
+    }
+
+    if (queueHasWorkspaceTurn) {
+      throw new Error(
+        "Cannot queue additional messages: a workspace turn follow-up is already queued. " +
+          "Wait for it to dispatch before sending another message."
+      );
+    }
+    if (queueHasAcceptedCallbacks) {
+      throw new Error(
+        "Cannot queue additional messages: an internal workspace turn follow-up is already queued. " +
+          "Wait for it to dispatch before sending another message."
+      );
+    }
+
+    if (incomingHasAcceptedCallbacks && queueHasMessages) {
+      throw new Error(
+        "Cannot queue workspace turn follow-up: queue already has messages. " +
+          "Wait for the current stream to complete before sending another workspace turn."
       );
     }
 
@@ -178,6 +241,12 @@ export class MessageQueue {
       throw new Error(
         "Cannot queue agent skill invocation: queue already has messages. " +
           "Wait for the current stream to complete before running a skill."
+      );
+    }
+    if (incomingIsWorkspaceTurn && queueHasMessages) {
+      throw new Error(
+        "Cannot queue workspace turn follow-up: queue already has messages. " +
+          "Wait for the current stream to complete before sending another workspace turn."
       );
     }
 
@@ -208,6 +277,15 @@ export class MessageQueue {
       if (fileParts && fileParts.length > 0) {
         this.accumulatedFileParts.push(...fileParts);
       }
+    }
+    if (internal?.onCanceled != null) {
+      this.onCanceled = internal.onCanceled;
+    }
+    if (internal?.onAccepted != null) {
+      this.onAccepted = internal.onAccepted;
+    }
+    if (internal?.onAcceptedPreStreamFailure != null) {
+      this.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
     }
 
     this.queuedEntryCount += 1;
@@ -266,6 +344,18 @@ export class MessageQueue {
     return undefined;
   }
 
+  getClearCallbacks(): Pick<
+    QueuedMessageInternalOptions,
+    "onCanceled" | "onAcceptedPreStreamFailure"
+  > {
+    return {
+      ...(this.onCanceled != null ? { onCanceled: this.onCanceled } : {}),
+      ...(this.onAcceptedPreStreamFailure != null
+        ? { onAcceptedPreStreamFailure: this.onAcceptedPreStreamFailure }
+        : {}),
+    };
+  }
+
   /**
    * Get combined message and options for sending.
    */
@@ -299,13 +389,23 @@ export class MessageQueue {
       this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
     const allQueuedEntriesAreAgentInitiated =
       this.queuedEntryCount > 0 && this.queuedAgentInitiatedCount === this.queuedEntryCount;
-    const internal =
-      allQueuedEntriesAreSynthetic || allQueuedEntriesAreAgentInitiated
-        ? {
-            ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
-            ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
-          }
-        : undefined;
+    const hasInternalOptions =
+      allQueuedEntriesAreSynthetic ||
+      allQueuedEntriesAreAgentInitiated ||
+      this.onAccepted != null ||
+      this.onAcceptedPreStreamFailure != null ||
+      this.onCanceled != null;
+    const internal = hasInternalOptions
+      ? {
+          ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
+          ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
+          ...(this.onCanceled != null ? { onCanceled: this.onCanceled } : {}),
+          ...(this.onAccepted != null ? { onAccepted: this.onAccepted } : {}),
+          ...(this.onAcceptedPreStreamFailure != null
+            ? { onAcceptedPreStreamFailure: this.onAcceptedPreStreamFailure }
+            : {}),
+        }
+      : undefined;
 
     return { message: joinedMessages, options, internal };
   }
@@ -321,6 +421,9 @@ export class MessageQueue {
     this.dedupeKeys.clear();
     this.goalInterventionPolicy = undefined;
     this.queueDispatchMode = "tool-end";
+    this.onCanceled = undefined;
+    this.onAccepted = undefined;
+    this.onAcceptedPreStreamFailure = undefined;
     this.queuedEntryCount = 0;
     this.queuedSyntheticCount = 0;
     this.queuedAgentInitiatedCount = 0;

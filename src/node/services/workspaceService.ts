@@ -6626,6 +6626,8 @@ export class WorkspaceService extends EventEmitter {
       goalKind?: GoalSyntheticMessageKind;
       /** Force Copilot billing classification to "agent" for internal sends. */
       agentInitiated?: boolean;
+      onAccepted?: () => Promise<void> | void;
+      onCanceled?: (reason: string) => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       /** Return once the user message is accepted; stream startup continues asynchronously. */
       startStreamInBackground?: boolean;
@@ -6737,6 +6739,8 @@ export class WorkspaceService extends EventEmitter {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
             goalKind: internal?.goalKind,
+            onCanceled: internal?.onCanceled,
+            onAccepted: internal?.onAccepted,
             onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
             startStreamInBackground: internal?.startStreamInBackground,
             goalContinuation: internal?.goalContinuation,
@@ -6790,6 +6794,9 @@ export class WorkspaceService extends EventEmitter {
         const effectiveQueueDispatchMode = session.queueMessage(message, normalizedOptions, {
           synthetic: internal?.synthetic,
           agentInitiated: internal?.agentInitiated,
+          onCanceled: internal?.onCanceled,
+          onAccepted: internal?.onAccepted,
+          onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
         });
 
         if (effectiveQueueDispatchMode != null && !internal?.skipAutoResumeReset) {
@@ -6854,6 +6861,8 @@ export class WorkspaceService extends EventEmitter {
         goalKind: internal?.goalKind,
         goalContinuation: internal?.goalContinuation,
         startStreamInBackground: internal?.startStreamInBackground,
+        onCanceled: internal?.onCanceled,
+        onAccepted: internal?.onAccepted,
         onAcceptedPreStreamFailure,
       });
       if (!result.success) {
@@ -7411,16 +7420,28 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  clearQueue(workspaceId: string): Result<void> {
+  clearQueue(workspaceId: string, options?: { cancelReason?: string }): Result<void> {
     try {
       const session = this.getOrCreateSession(workspaceId);
-      session.clearQueue();
+      session.clearQueue(options?.cancelReason);
       return Ok(undefined);
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in clearQueue handler:", error);
       return Err(`Failed to clear queue: ${errorMessage}`);
     }
+  }
+
+  isBusyForMessage(workspaceId: string): boolean {
+    const trimmedWorkspaceId = workspaceId.trim();
+    return (
+      this.sessions.get(trimmedWorkspaceId)?.isBusy() === true ||
+      this.aiService.isStreaming(trimmedWorkspaceId)
+    );
+  }
+
+  hasQueuedWorkspaceTurn(workspaceId: string, handleId: string): boolean {
+    return this.sessions.get(workspaceId.trim())?.hasQueuedWorkspaceTurn(handleId) ?? false;
   }
 
   hasQueuedMessages(workspaceId: string, dispatchMode?: "tool-end" | "turn-end"): boolean {

@@ -457,6 +457,38 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("accepts workspace turn queue dispatch mode", () => {
+    const parsed = TOOL_DEFINITIONS.task.schema.safeParse({
+      kind: "workspace",
+      prompt: "follow up",
+      title: "Follow-up",
+      run_in_background: true,
+      workspace: {
+        mode: "existing",
+        workspaceId: "child-workspace",
+        queueDispatchMode: "turn-end",
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.workspace?.queueDispatchMode).toBe("turn-end");
+    }
+
+    expect(
+      TOOL_DEFINITIONS.task.schema.safeParse({
+        kind: "workspace",
+        prompt: "follow up",
+        title: "Follow-up",
+        workspace: {
+          mode: "existing",
+          workspaceId: "child-workspace",
+          queueDispatchMode: "after-breakfast",
+        },
+      }).success
+    ).toBe(false);
+  });
+
   describe("task tool isolation parameter", () => {
     const validArgs = { agentId: "explore", prompt: "investigate", title: "Investigate" };
 
