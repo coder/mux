@@ -236,8 +236,16 @@ const WORKFLOW_AGENT_MAX_ATTEMPTS = 3;
 
 const WORKFLOW_RUNTIME_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
+// Shared shape for the `.name`-tagged sentinel errors used throughout this runner
+// (foreground-backgrounded, agent-report timeout, hard timeout). Keeps the
+// `instanceof Error && error.name === ...` guard in one place so the individual
+// predicates can't drift in how they recognize a tagged error.
+function isErrorWithName(error: unknown, name: string): boolean {
+  return error instanceof Error && error.name === name;
+}
+
 function isForegroundWaitBackgroundedError(error: unknown): boolean {
-  return error instanceof Error && error.name === "ForegroundWaitBackgroundedError";
+  return isErrorWithName(error, "ForegroundWaitBackgroundedError");
 }
 
 function createForegroundWaitBackgroundedError(): Error {
@@ -276,7 +284,7 @@ function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
 }
 
 function isAgentReportWaitTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.name === "AgentReportWaitTimeoutError";
+  return isErrorWithName(error, "AgentReportWaitTimeoutError");
 }
 
 function buildWorkflowAgentTimeoutFinalizationToken(
@@ -294,7 +302,7 @@ function createWorkflowAgentHardTimeoutError(message: string): Error {
 }
 
 function isWorkflowAgentHardTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.name === "WorkflowAgentHardTimeoutError";
+  return isErrorWithName(error, "WorkflowAgentHardTimeoutError");
 }
 
 function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
