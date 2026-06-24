@@ -1187,6 +1187,71 @@ describe("WorkflowRunner", () => {
     ).toEqual(["soft", "finalization_prompt_sent", "recovered"]);
   });
 
+  test("extends persisted hard deadline when timeout finalization prompt is accepted", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-finalization-deadline");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_finalization_deadline";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "recovered" : "bad" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("soft wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    let nowMs = Date.parse("2026-05-29T00:00:01.000Z");
+    let waitCount = 0;
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => new Date(nowMs).toISOString(),
+        nowMs: () => nowMs,
+      },
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+        },
+        async createAgentTasks(_specs, lifecycle) {
+          await lifecycle?.onTaskCreated?.(0, "task_slow");
+          return [{ taskId: "task_slow", status: "running" }];
+        },
+        async waitForAgentTask(_taskId, _spec, waitOptions) {
+          await waitOptions?.onExecutionStarted?.();
+          waitCount += 1;
+          if (waitCount === 1) {
+            throw timeoutError;
+          }
+          return { taskId: "task_slow", reportMarkdown: "ok", structuredOutput: { ok: true } };
+        },
+        async requestAgentFinalReportForTimeout() {
+          nowMs = Date.parse("2026-05-29T00:00:06.000Z");
+          return "prompted";
+        },
+      },
+    });
+
+    await expect(runner.run(runId)).resolves.toEqual({ reportMarkdown: "recovered" });
+    const run = await store.getRun(runId);
+    const timeout = run.steps.find((step) => step.stepId === "slow-step")?.timeout;
+    expect(timeout?.finalizationPromptSentAt).toBe("2026-05-29T00:00:06.000Z");
+    expect(timeout?.hardDeadlineAt).toBe("2026-05-29T00:00:08.000Z");
+  });
+
   test("does not mark timeout finalization prompt sent before TaskService accepts it", async () => {
     using tmp = new DisposableTempDir("workflow-runner-agent-timeout-finalization-queued");
     const store = new WorkflowRunStore({

@@ -1913,6 +1913,37 @@ export class WorkflowRunner {
       });
       throw createWorkflowAgentHardTimeoutError(errorMessage);
     };
+    const buildHardDeadlineFromNow = (): string =>
+      new Date(this.clock.nowMs() + timeout.graceMs).toISOString();
+    const recordFinalizationPromptAccepted = async (
+      finalizationToken: string | undefined,
+      finalizationResult: "prompted" | "queued" | "already_reported" | "not_active"
+    ): Promise<string> => {
+      const finalizationPromptSentAt = this.clock.nowIso();
+      const hardDeadlineAt = buildHardDeadlineFromNow();
+      step.leaseGuard.throwIfLost();
+      await this.recordStepTimeoutMetadata(runId, {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId: step.taskId,
+        startedAt: step.startedAt,
+        timeout: {
+          ...(finalizationToken != null ? { finalizationToken } : {}),
+          finalizationPromptSentAt,
+          hardDeadlineAt,
+        },
+      });
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "timeout",
+        at: finalizationPromptSentAt,
+        stepId: step.spec.id,
+        taskId: step.taskId,
+        phase: "finalization_prompt_sent",
+        details: { result: finalizationResult },
+      });
+      return hardDeadlineAt;
+    };
     const waitDuringGrace = async (graceTimeoutMs: number): Promise<WorkflowAgentResult> => {
       try {
         const result = await waitForReport(graceTimeoutMs);
@@ -1959,23 +1990,11 @@ export class WorkflowRunner {
           );
         }
         if (finalizationResult === "prompted") {
-          step.leaseGuard.throwIfLost();
-          await this.recordStepTimeoutMetadata(runId, {
-            stepId: step.spec.id,
-            inputHash: step.inputHash,
-            taskId: step.taskId,
-            startedAt: step.startedAt,
-            timeout: { finalizationToken, finalizationPromptSentAt: this.clock.nowIso() },
-          });
-          await this.appendEvent(runId, {
-            sequence: sequence.next(),
-            type: "timeout",
-            at: this.clock.nowIso(),
-            stepId: step.spec.id,
-            taskId: step.taskId,
-            phase: "finalization_prompt_sent",
-            details: { result: finalizationResult },
-          });
+          const hardDeadlineAt = await recordFinalizationPromptAccepted(
+            finalizationToken,
+            finalizationResult
+          );
+          existingTimeout = { ...existingTimeout, hardDeadlineAt };
         }
       }
       return await waitDuringGrace(
@@ -2010,7 +2029,7 @@ export class WorkflowRunner {
       step,
       softTimedOutAt
     );
-    const hardDeadlineAt = new Date(this.clock.nowMs() + timeout.graceMs).toISOString();
+    const hardDeadlineAt = buildHardDeadlineFromNow();
     await this.recordStepTimeoutMetadata(runId, {
       stepId: step.spec.id,
       inputHash: step.inputHash,
@@ -2051,27 +2070,12 @@ export class WorkflowRunner {
     if (finalizationResult === "already_reported") {
       return await waitForReport(timeout.graceMs);
     }
-    if (finalizationResult === "prompted") {
-      step.leaseGuard.throwIfLost();
-      await this.recordStepTimeoutMetadata(runId, {
-        stepId: step.spec.id,
-        inputHash: step.inputHash,
-        taskId: step.taskId,
-        startedAt: step.startedAt,
-        timeout: { finalizationPromptSentAt: this.clock.nowIso() },
-      });
-      await this.appendEvent(runId, {
-        sequence: sequence.next(),
-        type: "timeout",
-        at: this.clock.nowIso(),
-        stepId: step.spec.id,
-        taskId: step.taskId,
-        phase: "finalization_prompt_sent",
-        details: { result: finalizationResult },
-      });
-    }
+    const acceptedHardDeadlineAt =
+      finalizationResult === "prompted"
+        ? await recordFinalizationPromptAccepted(finalizationToken, finalizationResult)
+        : hardDeadlineAt;
 
-    return await waitDuringGrace(timeout.graceMs);
+    return await waitDuringGrace(remainingMsUntil(acceptedHardDeadlineAt, timeout.graceMs));
   }
 
   private async runOrResumeAgentStep(
