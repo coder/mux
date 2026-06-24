@@ -890,7 +890,9 @@ export class WorkflowService {
   }
 }
 
-function buildWorkflowScriptDescriptor(script: ResolvedWorkflowScript): WorkflowScriptDescriptor {
+export function buildWorkflowScriptDescriptor(
+  script: ResolvedWorkflowScript
+): WorkflowScriptDescriptor {
   return {
     name: getWorkflowScriptDefinitionName(script),
     description:

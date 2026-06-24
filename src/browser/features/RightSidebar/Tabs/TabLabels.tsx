@@ -16,6 +16,7 @@ import {
   Sparkles,
   Target,
   Terminal as TerminalIcon,
+  Workflow,
   X,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
@@ -217,6 +218,35 @@ export const GoalTabLabel: React.FC<GoalTabLabelProps> = ({ workspaceId }) => {
     >
       <Target className="h-3 w-3 shrink-0" />
       Goal
+    </span>
+  );
+};
+
+interface WorkflowsTabLabelProps {
+  workspaceId: string;
+}
+
+/**
+ * Workflows tab label. Subscribes to the workspace's sidebar state to surface a
+ * pulsing accent count of currently-active (pending/running/backgrounded) runs,
+ * mirroring how the Goal/Stats labels expose live workspace signals.
+ */
+export const WorkflowsTabLabel: React.FC<WorkflowsTabLabelProps> = ({ workspaceId }) => {
+  const sidebarState = useOptionalWorkspaceSidebarState(workspaceId);
+  const activeCount = sidebarState?.activeWorkflowRunCount ?? 0;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Workflow className="h-3 w-3 shrink-0" />
+      Workflows
+      {activeCount > 0 && (
+        <span
+          className="text-accent inline-flex items-center gap-1 text-[10px] tabular-nums"
+          aria-label={`${activeCount} running workflow${activeCount === 1 ? "" : "s"}`}
+        >
+          <span className="bg-accent inline-block h-[6px] w-[6px] animate-pulse rounded-full motion-reduce:animate-none" />
+          {activeCount}
+        </span>
+      )}
     </span>
   );
 };

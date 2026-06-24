@@ -106,6 +106,7 @@ export {
 
 // Workflow schemas
 export {
+  AvailableWorkflowSchema,
   JsonValueSchema,
   StructuredTaskOutputSchema,
   WorkflowArgSummarySchema,
@@ -121,6 +122,7 @@ export {
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
   WorkflowRunStatusTransitionSchema,
+  WorkflowRunStreamEventSchema,
   WorkflowStepRecordSchema,
   WorkflowStepStatusSchema,
 } from "./schemas/workflow";

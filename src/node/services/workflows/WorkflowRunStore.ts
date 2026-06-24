@@ -26,6 +26,7 @@ import {
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
+import { workflowRunStreamHub } from "@/node/services/workflows/workflowRunStreamHub";
 
 const WorkflowRunStatusSnapshotSchema = WorkflowRunRecordSchema.pick({
   id: true,
@@ -952,6 +953,10 @@ export class WorkflowRunStore {
   private async writeRunFile(runId: string, run: WorkflowRunRecord): Promise<void> {
     const runForDisk = WorkflowRunRecordSchema.parse(run);
     await writeJsonAtomic(this.runFile(runId), runForDisk);
+    // Notify live subscribers (workflows.subscribe) after the durable write. The hub is a
+    // module-level bus, so any store instance — regardless of which flow constructed it —
+    // feeds the same stream. Persist-before-notify keeps disk and observers consistent.
+    workflowRunStreamHub.notifyRunPersisted(runForDisk);
   }
 
   getStepArtifactsDir(runId: string, stepId: string, inputHash: string): string {

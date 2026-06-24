@@ -34,4 +34,5 @@ export {
   DebugTabLabel,
   DesktopTabLabel,
   GoalTabLabel,
+  WorkflowsTabLabel,
 } from "./TabLabels";

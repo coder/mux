@@ -1,0 +1,78 @@
+import type { AgentSkillDescriptor, SkillName } from "@/common/types/agentSkill";
+import type { AvailableWorkflow } from "@/common/types/workflow";
+import { getErrorMessage } from "@/common/utils/errors";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { getBuiltInSkillDescriptors } from "@/node/services/agentSkills/builtInSkillDefinitions";
+import { log } from "@/node/services/log";
+
+import { buildWorkflowScriptDescriptor } from "./WorkflowService";
+import { parseWorkflowMetadata, summarizeWorkflowArgs } from "./workflowMetadata";
+import { resolveWorkflowScript } from "./workflowScriptResolver";
+
+/** Conventional entry file for a workflow-bearing skill (e.g. deep-research). */
+const WORKFLOW_SKILL_ENTRY = "workflow.js";
+
+export interface DiscoverWorkflowScriptsInput {
+  runtime: Runtime;
+  workspacePath: string;
+  projectTrusted: boolean;
+}
+
+/**
+ * Enumerate the workflow scripts a workspace can run, for the Workflows tab's
+ * empty-state launcher. There is no first-class workflow registry, so we probe
+ * every known skill (built-in + project + global) for a `workflow.js` entry by
+ * attempting to resolve it — a skill that resolves is a workflow; anything that
+ * throws (no entry, or project trust missing) is skipped.
+ *
+ * Standalone `.mux/workflows/*.js` files are intentionally not enumerated here:
+ * they're an advanced, trust-gated path still launchable from chat. Skill-based
+ * workflows cover the common case.
+ */
+export async function discoverWorkflowScripts(
+  input: DiscoverWorkflowScriptsInput
+): Promise<AvailableWorkflow[]> {
+  const skillNames: SkillName[] = [];
+  const seen = new Set<string>();
+  const addSkill = (descriptor: AgentSkillDescriptor) => {
+    if (!seen.has(descriptor.name)) {
+      seen.add(descriptor.name);
+      skillNames.push(descriptor.name);
+    }
+  };
+
+  // Built-ins aren't part of discoverAgentSkills' project/global scan, so seed them first;
+  // readAgentSkill resolves by precedence (project > global > built-in) when names collide.
+  getBuiltInSkillDescriptors().forEach(addSkill);
+  try {
+    (await discoverAgentSkills(input.runtime, input.workspacePath)).forEach(addSkill);
+  } catch (error) {
+    log.warn(`Workflow script discovery: failed to enumerate skills: ${getErrorMessage(error)}`);
+  }
+
+  const available: AvailableWorkflow[] = [];
+  for (const skillName of skillNames) {
+    try {
+      const resolved = await resolveWorkflowScript({
+        scriptPath: `skill://${skillName}/${WORKFLOW_SKILL_ENTRY}`,
+        runtime: input.runtime,
+        workspacePath: input.workspacePath,
+        projectTrusted: input.projectTrusted,
+      });
+      available.push({
+        descriptor: buildWorkflowScriptDescriptor(resolved),
+        scriptPath: resolved.canonicalScriptPath,
+        args: summarizeWorkflowArgs(parseWorkflowMetadata(resolved.source)) ?? [],
+      });
+    } catch {
+      // Skip non-workflow skills (no workflow.js), untrusted project skills, AND scripts whose
+      // arg metadata fails to parse/summarize — keeping the whole body in the per-skill catch so
+      // one malformed workflow can't abort discovery and hide every other workflow.
+      continue;
+    }
+  }
+
+  available.sort((a, b) => a.descriptor.name.localeCompare(b.descriptor.name));
+  return available;
+}

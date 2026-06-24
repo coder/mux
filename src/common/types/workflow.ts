@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import type {
+  AvailableWorkflowSchema,
   StructuredTaskOutputSchema,
   WorkflowArgSummarySchema,
   WorkflowScriptDescriptorSchema,
@@ -12,6 +13,7 @@ import type {
   WorkflowRunParentSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
+  WorkflowRunStreamEventSchema,
   WorkflowStepRecordSchema,
   WorkflowStepStatusSchema,
 } from "@/common/orpc/schemas";
@@ -32,6 +34,8 @@ export type WorkflowRunEvent = z.infer<typeof WorkflowRunEventSchema>;
 export type WorkflowStepRecord = z.infer<typeof WorkflowStepRecordSchema>;
 export type WorkflowRunParent = z.infer<typeof WorkflowRunParentSchema>;
 export type WorkflowRunRecord = z.infer<typeof WorkflowRunRecordSchema>;
+export type WorkflowRunStreamEvent = z.infer<typeof WorkflowRunStreamEventSchema>;
+export type AvailableWorkflow = z.infer<typeof AvailableWorkflowSchema>;
 
 const ACTIVE_WORKFLOW_RUN_STATUSES = new Set<WorkflowRunStatus>([
   "pending",

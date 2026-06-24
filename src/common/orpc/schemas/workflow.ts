@@ -253,3 +253,26 @@ export const WorkflowRunRecordSchema = z.object({
   events: WorkflowEventSequenceSchema,
   steps: z.array(WorkflowStepRecordSchema),
 });
+
+// Live stream events for `workflows.subscribe`: an initial snapshot of all
+// top-level runs, then a full-record delta whenever any run is persisted. The
+// client upserts by id, so a snapshot followed by an in-flight delta converges.
+export const WorkflowRunStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("snapshot"),
+    runs: z.array(WorkflowRunRecordSchema),
+  }),
+  z.object({
+    type: z.literal("run-changed"),
+    run: WorkflowRunRecordSchema,
+  }),
+]);
+
+// A workflow script available to run in a workspace, with its declared args, for
+// the Workflows tab's empty-state launcher. `scriptPath` is the canonical path
+// to pass back to `workflows.start`.
+export const AvailableWorkflowSchema = z.object({
+  descriptor: WorkflowScriptDescriptorSchema,
+  scriptPath: z.string().min(1),
+  args: z.array(WorkflowArgSummarySchema),
+});

@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { APIContext, type APIClient } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +14,7 @@ import {
   useOptionalCommandRegistry,
   type CommandAction,
 } from "@/browser/contexts/CommandRegistryContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import type {
   WorkflowRunEvent,
@@ -817,8 +819,6 @@ function WorkflowTaskRow(props: {
   );
 }
 
-const AUTO_COLLAPSE_WORKFLOW_STATUSES = new Set(["completed"]);
-
 const REFRESHING_WORKFLOW_STATUSES = new Set(["pending", "running", "backgrounded"]);
 
 const FOREGROUND_WORKFLOW_DISCOVERY_SKEW_MS = 1_000;
@@ -1017,15 +1017,22 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const displayRows = getWorkflowDisplayRows(events);
   const headerStatus = toToolStatus(displayStatus);
   const workspaceStore = useWorkspaceStoreRaw();
+  // The Workflows right-sidebar tab (gated on the dynamic-workflows experiment) is the primary
+  // surface for run detail, so when it's available the in-chat card is redundant.
+  const workflowsTabEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const {
     expanded,
     setLocalExpanded,
     toggleExpanded,
     markInteracted: markExpansionInteracted,
   } = useAutoCollapsingToolExpansion(true, {
-    // Completed workflow runs can contain large reports and event logs. Collapse them for
-    // scanability without persisting that automatic presentation choice as user intent.
-    autoCollapsed: AUTO_COLLAPSE_WORKFLOW_STATUSES.has(displayStatus),
+    // With the Workflows tab available (dynamic-workflows experiment on), auto-collapse the
+    // in-chat card for ANY status — the tab is the primary detail surface. Without the tab,
+    // preserve the prior behavior of auto-collapsing only completed runs (which can carry large
+    // reports/event logs). But never auto-collapse a tool-error card: pre-run failures (invalid
+    // args / unresolved script path) create no durable run, so the Workflows tab has nothing to
+    // show and the failure reason lives only here. Manual expansion always wins, per run.
+    autoCollapsed: (workflowsTabEnabled || displayStatus === "completed") && errorResult == null,
     resetKey: runId,
   });
 

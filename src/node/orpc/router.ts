@@ -102,6 +102,7 @@ import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
 import type { DevToolsEvent } from "@/common/types/devtools";
+import type { WorkflowRunStreamEvent } from "@/common/types/workflow";
 import type { MuxMessage } from "@/common/types/message";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
@@ -115,6 +116,8 @@ import {
 import { getErrorMessage } from "@/common/utils/errors";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import { workflowRunStreamHub } from "@/node/services/workflows/workflowRunStreamHub";
+import { discoverWorkflowScripts } from "@/node/services/workflows/workflowScriptDiscovery";
 import {
   WorkflowService,
   type WorkflowBackgroundRunTerminalEvent,
@@ -2048,6 +2051,104 @@ export const router = (authToken?: string) => {
             });
           }
           return { ...result, invocationMessagePersisted };
+        }),
+      // Live run stream for the Workflows tab. Mirrors devtools.subscribe (queue +
+      // resolve-next async generator). The event source is the module-level
+      // workflowRunStreamHub, fed by WorkflowRunStore on every durable write, so
+      // updates surface regardless of which flow is executing the run.
+      subscribe: t
+        .input(schemas.workflows.subscribe.input)
+        .output(schemas.workflows.subscribe.output)
+        .handler(async function* ({ context, input, signal }) {
+          assertDynamicWorkflowsEnabled(context);
+          let resolveNext: ((value: WorkflowRunStreamEvent | null) => void) | null = null;
+          const queue: WorkflowRunStreamEvent[] = [];
+          let ended = false;
+
+          const push = (event: WorkflowRunStreamEvent) => {
+            if (ended) {
+              return;
+            }
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(event);
+              return;
+            }
+            queue.push(event);
+          };
+
+          // Register before snapshotting so writes between the two are queued, not dropped.
+          // Only top-level runs are surfaced (mirrors listRuns); nested child runs are an
+          // implementation detail of their parent.
+          const unsubscribe = workflowRunStreamHub.subscribe(input.workspaceId, (run) => {
+            if (run.parentWorkflow != null) {
+              return;
+            }
+            push({ type: "run-changed", run });
+          });
+
+          const onAbort = () => {
+            if (ended) {
+              return;
+            }
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          try {
+            const { service, projectTrusted } = await resolveWorkflowContext(
+              context,
+              input.workspaceId
+            );
+            await service.resumeCrashedRuns({ workspaceId: input.workspaceId, projectTrusted });
+            const runs = await service.listRuns({ workspaceId: input.workspaceId });
+            yield { type: "snapshot", runs };
+
+            while (!ended) {
+              const queuedEvent = queue.shift();
+              if (queuedEvent) {
+                yield queuedEvent;
+                continue;
+              }
+
+              const event = await new Promise<WorkflowRunStreamEvent | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (event == null || ended) {
+                break;
+              }
+
+              yield event;
+            }
+          } finally {
+            ended = true;
+            signal?.removeEventListener("abort", onAbort);
+            unsubscribe();
+          }
+        }),
+      listScripts: t
+        .input(schemas.workflows.listScripts.input)
+        .output(schemas.workflows.listScripts.output)
+        .handler(async ({ context, input }) => {
+          const { runtime, workspacePath, projectTrusted } = await resolveWorkflowContext(
+            context,
+            input.workspaceId
+          );
+          return discoverWorkflowScripts({ runtime, workspacePath, projectTrusted });
         }),
     },
     providers: {

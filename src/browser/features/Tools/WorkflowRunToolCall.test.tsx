@@ -103,6 +103,14 @@ void mock.module("@/browser/components/Dialog/Dialog", () => ({
   ),
 }));
 
+// WorkflowRunToolCall reads the dynamic-workflows experiment to decide whether to auto-collapse.
+// Force it off so these tests are hermetic: in the full bun-test suite, cross-file experiment
+// state (shared happy-dom localStorage) can otherwise flip the card to collapsed and hide the
+// expanded content these tests assert.
+void mock.module("@/browser/contexts/ExperimentsContext", () => ({
+  useExperimentValue: () => false,
+}));
+
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "./WorkflowRunToolCall";
 
 function APIHarness(props: { client: unknown; children: ReactNode }) {

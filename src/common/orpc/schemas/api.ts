@@ -78,7 +78,13 @@ import {
   AgentSkillPackageSchema,
   SkillNameSchema,
 } from "./agentSkill";
-import { WorkflowRunIdSchema, WorkflowRunRecordSchema, WorkflowRunStatusSchema } from "./workflow";
+import {
+  AvailableWorkflowSchema,
+  WorkflowRunIdSchema,
+  WorkflowRunRecordSchema,
+  WorkflowRunStatusSchema,
+  WorkflowRunStreamEventSchema,
+} from "./workflow";
 import {
   AgentDefinitionDescriptorSchema,
   AgentDefinitionPackageSchema,
@@ -1845,6 +1851,14 @@ export const workflows = {
       result: z.unknown(),
       invocationMessagePersisted: z.boolean().optional(),
     }),
+  },
+  subscribe: {
+    input: z.object({ workspaceId: z.string().min(1) }).strict(),
+    output: eventIterator(WorkflowRunStreamEventSchema),
+  },
+  listScripts: {
+    input: z.object({ workspaceId: z.string().min(1) }).strict(),
+    output: z.array(AvailableWorkflowSchema),
   },
 };
 
