@@ -36,7 +36,7 @@ shipped stylesheet):
 | Text        | `text-foreground`, `text-muted-foreground`, `text-content-primary`, `text-content-secondary` |
 | Borders     | `border-border`                                                                              |
 | Accent      | `bg-accent`, `text-accent`                                                                   |
-| Agent modes | `text-plan-mode` / `bg-plan-mode` (also `ask` / `edit` / `exec` / `debug` mode variants)     |
+| Agent modes | `text-plan-mode` / `bg-plan-mode` — same for `edit` / `exec` / `thinking` / `task`. `ask` & `debug` ship only as `--color-<mode>-mode` tokens (no utility): use `style={{ color: "var(--color-ask-mode)" }}` |
 | Radius      | `rounded-md`                                                                                 |
 
 For a token Tailwind doesn't expose as a utility, reference it directly:

@@ -23,7 +23,6 @@
     "PhoneViewports": null,
     "READMEScreenshots": null,
     "TranscriptDensity": null,
-    "Input": null,
     "AIView": null,
     "RightSidebar": null,
     "CodeExecution": null,
@@ -183,6 +182,36 @@
       "skip": []
     },
     "TranscriptHydrationSkeleton": {
+      "skip": []
+    },
+    "Button": {
+      "skip": []
+    },
+    "Input": {
+      "skip": ["app-chat-input--voice-input-no-api-key", "app-chat-input--editing-message"]
+    },
+    "Checkbox": {
+      "skip": []
+    },
+    "Switch": {
+      "skip": []
+    },
+    "Select": {
+      "skip": ["components-select--open"]
+    },
+    "Dialog": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "skip": []
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "skip": []
+    },
+    "Popover": {
+      "cardMode": "single",
+      "primaryStory": "Default",
       "skip": []
     }
   },

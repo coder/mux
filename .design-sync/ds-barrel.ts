@@ -5,30 +5,38 @@
 // Run `node .design-sync/gen-barrel.mjs` after stories change; it also prints
 // the titleMap to merge into config.json.
 
+export { Button } from "@/browser/components/Button/Button";
+export { Checkbox } from "@/browser/components/Checkbox/Checkbox";
 export { CoderWorkspaceForm } from "@/browser/features/Runtime/CoderControls";
 export { CompactingMessageContent } from "@/browser/features/Messages/CompactingMessageContent";
 export { ContextSwitchWarning } from "@/browser/components/ContextSwitchWarning/ContextSwitchWarning";
 export { ContextUsageIndicatorButton } from "@/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
 export { DebugLlmRequestModal } from "@/browser/components/DebugLlmRequestModal/DebugLlmRequestModal";
 export { DevToolsStepCard } from "@/browser/features/RightSidebar/DevToolsTab/DevToolsStepCard";
+export { Dialog } from "@/browser/components/Dialog/Dialog";
 export { GeneralSection } from "@/browser/features/Settings/Sections/GeneralSection";
 export { GetGoalToolCall } from "@/browser/features/Tools/GetGoalToolCall";
 export { GoalTab } from "@/browser/features/RightSidebar/GoalTab";
 export { HookOutputDisplay } from "@/browser/features/Tools/Shared/HookOutputDisplay";
 export { InitMessage } from "@/browser/features/Messages/InitMessage";
+export { Input } from "@/browser/components/Input/Input";
 export { InterruptedBarrier } from "@/browser/features/Messages/ChatBarrier/InterruptedBarrier";
 export { KeybindsSection } from "@/browser/features/Settings/Sections/KeybindsSection";
 export { MCPSettingsSection } from "@/browser/features/Settings/Sections/MCPSettingsSection";
 export { MemorySection } from "@/browser/features/Settings/Sections/MemorySection";
+export { Popover } from "@/browser/components/Popover/Popover";
 export { PRLinkBadge } from "@/browser/components/PRLinkBadge/PRLinkBadge";
 export { ProjectCreateModal } from "@/browser/components/ProjectCreateModal/ProjectCreateModal";
 export { RosettaBanner } from "@/browser/components/RosettaBanner/RosettaBanner";
 export { SecretsSection } from "@/browser/features/Settings/Sections/SecretsSection";
 export { SecuritySection } from "@/browser/features/Settings/Sections/SecuritySection";
+export { Select } from "@/browser/components/Select/Select";
 export { ServerAccessSection } from "@/browser/features/Settings/Sections/ServerAccessSection";
 export { StreamingBarrierView } from "@/browser/features/Messages/ChatBarrier/StreamingBarrierView";
+export { Switch } from "@/browser/components/Switch/Switch";
 export { TitleBar } from "@/browser/components/TitleBar/TitleBar";
 export { TodoToolCall } from "@/browser/features/Tools/TodoToolCall";
+export { Tooltip } from "@/browser/components/Tooltip/Tooltip";
 export { TranscriptHydrationSkeleton } from "@/browser/components/ChatPane/TranscriptHydrationSkeleton";
 
 // ── Providers ──
@@ -41,3 +49,8 @@ export { SettingsProvider } from "@/browser/contexts/SettingsContext";
 export { RouterProvider } from "@/browser/contexts/RouterContext";
 export { ProjectProvider } from "@/browser/contexts/ProjectContext";
 export { AboutDialogProvider } from "@/browser/contexts/AboutDialogContext";
+
+// ── Compound primitive parts ──
+export { DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, WarningBox, WarningTitle, WarningText } from "@/browser/components/Dialog/Dialog";
+export { TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
+export { PopoverTrigger, PopoverContent } from "@/browser/components/Popover/Popover";

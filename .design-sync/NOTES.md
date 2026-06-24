@@ -81,6 +81,14 @@ per component, in `.design-sync/previews/<RealName>.tsx`:
   `MuxPreviewShell` (`.design-sync/preview-harness.tsx`) — a lightweight provider
   chain (theme, API+mock client, experiments, policy, router, project, settings,
   about-dialog, tooltip) WITHOUT the app shell. No heavy renderers.
+- **`MuxPreviewShell` injects a `height:auto` reset** for `html,body,#root,
+  #storybook-root`. globals.css pins those to `100vh;min-height:100vh` (so the
+  Electron app fills its window); inside the gallery's auto-sizing iframe that
+  clamps `documentElement.scrollHeight` to the iframe's short initial height, so
+  cards never grow and the component (below its variant label) is **clipped on
+  the main page** — only the full-height Edit view shows it. Keep the reset in
+  the shell; do NOT remove it. (No-op for modals: fixed content floors scrollH at
+  the viewport.)
 - `cfg.storyImports.shim: ["/src/browser/"]` routes component/provider imports to
   `window.Mux` (the prebuilt bundle) so previews stay thin (~3.3 MB) and share
   React-context identity; `cfg.storyImports.bundle: ["/src/browser/stories/"]`
@@ -134,6 +142,19 @@ needed; the cap is per-file 5 MB on both `_ds_bundle.js` and each `_preview/*.js
   `node .design-sync/gen-barrel.mjs` (it errors with this exact prerequisite if
   the reference is missing) and rebuild — otherwise new components drop or stale
   ones 404. The barrel is committed; the generator is the source of truth.
+- **UI primitives (Button/Input/Checkbox/Switch/Select/Dialog/Tooltip/Popover):**
+  storied at `src/browser/components/<Name>/<Name>.stories.tsx` (title
+  `Components/<Name>`) with owned previews in `previews/`. Gotchas baked into the
+  tooling: (1) the chat composer (`App/Chat/Input` → ChatInput) shares the "Input"
+  title segment, so `gen-barrel.mjs` excludes it by path (`EXCLUDE_IMPORT`) and
+  `cfg.overrides.Input.skip` drops its 2 stories from the Input component — if
+  ChatInput gains stories they resurface as `unpaired` under Input; add them to
+  that skip. (2) Compound primitives export only their Root from the title-segment
+  resolution; their parts (`DialogContent`/`TooltipContent`/`PopoverContent`/…)
+  ride `window.Mux` via `gen-barrel.mjs`'s `PRIMITIVE_PART_LINES`. (3) Overlays
+  (Dialog/Tooltip/Popover) use `cardMode: "single"`; previews render them
+  `defaultOpen`. (4) Select's play-driven `Open` story is skipped (static preview
+  can't reproduce the click).
 - **`[DOCS_UNMAPPED]`:** Mux has no per-component markdown in `docs/`; components
   ship the floor doc. Non-fatal — not a regression.
 - **novnc/katex stubs:** if Mux swaps these libs or the desktop/markdown wiring
@@ -141,6 +162,22 @@ needed; the cap is per-file 5 MB on both `_ds_bundle.js` and each `_preview/*.js
 - **Per-file 5 MB cap** applies to BOTH `_ds_bundle.js` and each `_preview/*.js`.
   Bundle ~4.7 MB and previews ~3.3 MB leave thin headroom — adding components or
   providers needs a fresh size measurement.
+- **Accepted `close` grades (6 stories — isolated-preview limits, NOT defects):**
+  the isolated single-component preview legitimately diverges from a story that is
+  a gallery, a full-app scenario, a play-expanded interaction, or a mid-stream
+  capture; the component itself renders faithfully each time. Don't re-investigate
+  on a churn re-grade — re-confirm only if that component or its story changes.
+  - `GetGoalToolCall` (Get/Complete Goal Gallery): story is a multi-variant
+    gallery; preview shows one representative variant.
+  - `TodoToolCall` (Todo Write With Long Todos) & `DevToolsStepCard` (Narrow
+    Expanded): story `play()`-clicks to expand; static preview shows the collapsed
+    default (no `defaultExpanded` prop to set).
+  - `InterruptedBarrier` (Context Exceeded Suggestion): presentation-only
+    component; story drives the full app to a richer context-exceeded composition.
+  - `TitleBar` (Mac OS Desktop): isolated preview has no workspace context, so the
+    bar shows its version-string fallback vs the story's project/branch.
+  - `CompactingMessageContent` (Streaming Compaction): story captured mid-stream
+    (3 bullets) vs the preview's settled summary (5); same card.
 
 ## Accepted validator warnings (triaged — not regressions)
 
