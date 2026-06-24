@@ -11,6 +11,7 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
+import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
 import { log } from "@/node/services/log";
 import {
   discoverAgentDefinitions,
@@ -2868,9 +2869,9 @@ export class TaskService {
       const slot = await ensureParallelSlot();
       if (!slot.success) return Err(slot.error);
       const tags = {
-        "mux.taskHandleId": handleId,
-        "mux.taskOwnerWorkspaceId": ownerWorkspaceId,
-        "mux.taskTurnId": turnId,
+        [WORKSPACE_TURN_TASK_TAGS.handle]: handleId,
+        [WORKSPACE_TURN_TASK_TAGS.ownerWorkspaceId]: ownerWorkspaceId,
+        [WORKSPACE_TURN_TASK_TAGS.turn]: turnId,
       };
       const createResult = await this.workspaceService.create(
         parentMeta.projectPath,
@@ -3965,6 +3966,26 @@ export class TaskService {
     return count;
   }
 
+  /**
+   * Background any registered foreground waits for the requesting workspace when a
+   * tool-end message is already queued. Shared by both wait-registration paths
+   * (workspace-turn and task await): the auto-backgrounding signal is edge-triggered
+   * on enqueue, so a message queued before the waiter registered must be re-checked
+   * here. No-op when backgrounding is disabled or no requesting workspace is set.
+   */
+  private backgroundForegroundWaitIfQueued(
+    shouldBackgroundOnQueuedMessage: boolean,
+    requestingWorkspaceId: string | undefined
+  ): void {
+    if (
+      shouldBackgroundOnQueuedMessage &&
+      requestingWorkspaceId &&
+      this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
+    ) {
+      this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
+    }
+  }
+
   private buildWorkspaceTurnWaitResult(
     record: WorkspaceTurnTaskHandleRecord
   ): WorkspaceTurnWaitResult {
@@ -4189,12 +4210,10 @@ export class TaskService {
         timeoutMs
       );
 
-      if (
-        shouldBackgroundOnQueuedMessage &&
-        this.workspaceService.hasQueuedMessages(options.requestingWorkspaceId, "tool-end")
-      ) {
-        this.backgroundForegroundWaitsForWorkspace(options.requestingWorkspaceId);
-      }
+      this.backgroundForegroundWaitIfQueued(
+        shouldBackgroundOnQueuedMessage,
+        options.requestingWorkspaceId
+      );
 
       void (async () => {
         const record = await this.taskHandleStore.getWorkspaceTurn(
@@ -4765,13 +4784,10 @@ export class TaskService {
           options.abortSignal.addEventListener("abort", abortListener, { once: true });
         }
 
-        if (
-          shouldBackgroundOnQueuedMessage &&
-          requestingWorkspaceId &&
-          this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
-        ) {
-          this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
-        }
+        this.backgroundForegroundWaitIfQueued(
+          shouldBackgroundOnQueuedMessage,
+          requestingWorkspaceId
+        );
       })().catch((error: unknown) => {
         reject(error instanceof Error ? error : new Error(String(error)));
       });

@@ -30,6 +30,7 @@ import { useTaskToolLiveTaskIds } from "@/browser/stores/WorkspaceStore";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
 import type {
   TaskToolArgs,
   TaskToolResult,
@@ -172,7 +173,7 @@ function findWorkspaceForTaskTarget(
   // workspace tasks tag the actual workspace with the handle so stale tool results remain clickable
   // after the result's explicit workspaceId falls out of view.
   for (const metadata of workspaceMetadata?.values() ?? []) {
-    if (metadata.tags?.["mux.taskHandleId"] === taskId) {
+    if (metadata.tags?.[WORKSPACE_TURN_TASK_TAGS.handle] === taskId) {
       return metadata;
     }
   }

@@ -76,7 +76,7 @@ async function resolveSkillWorkflowScript(
     const builtIn = readBuiltInSkillFile(parsed.skillName, parsed.relativePath);
     return buildResolvedScript({
       requestedScriptPath: input.scriptPath,
-      canonicalScriptPath: `skill://${parsed.skillName}/${builtIn.resolvedPath}`,
+      canonicalScriptPath: `${SKILL_SCRIPT_PATH_PREFIX}${parsed.skillName}/${builtIn.resolvedPath}`,
       source: builtIn.content,
       sourceKind: "skill",
       scope: "built-in",
@@ -106,7 +106,7 @@ async function resolveSkillWorkflowScript(
   const source = await readFileString(skillRuntime, resolvedPath);
   return buildResolvedScript({
     requestedScriptPath: input.scriptPath,
-    canonicalScriptPath: `skill://${parsed.skillName}/${parsed.relativePath}`,
+    canonicalScriptPath: `${SKILL_SCRIPT_PATH_PREFIX}${parsed.skillName}/${parsed.relativePath}`,
     source,
     sourceKind: "skill",
     scope: resolvedSkill.package.scope,
