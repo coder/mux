@@ -4292,44 +4292,29 @@ export class TaskService {
       return "already_reported";
     }
     let finalizationAccepted = false;
-    let resolveFinalizationAccepted!: () => void;
-    let rejectFinalizationAccepted!: (error: Error) => void;
-    const finalizationAcceptedPromise = new Promise<void>((resolve, reject) => {
-      resolveFinalizationAccepted = resolve;
-      rejectFinalizationAccepted = reject;
-    });
     const persistFinalizationToken = async (): Promise<void> => {
-      try {
-        await this.workspaceEventLocks.withLock(taskId, async () => {
-          const cfg = this.config.loadConfigOrDefault();
-          const entry = findWorkspaceEntry(cfg, taskId);
-          if (!entry?.workspace.parentWorkspaceId) {
-            return;
-          }
-          if (
-            hasCompletedAgentReport(entry.workspace) ||
-            this.completedReportsByTaskId.has(taskId)
-          ) {
-            return;
-          }
-          await this.editWorkspaceEntry(
-            taskId,
-            (workspace) => {
-              const existing = workspace.taskTimeoutFinalizationTokens ?? [];
-              workspace.taskTimeoutFinalizationTokens = Array.from(
-                new Set([...existing, options.finalizationToken])
-              );
-              workspace.taskStatus = "awaiting_report";
-            },
-            { allowMissing: true }
-          );
-        });
-        finalizationAccepted = true;
-        resolveFinalizationAccepted();
-      } catch (error) {
-        rejectFinalizationAccepted(error instanceof Error ? error : new Error(String(error)));
-        throw error;
-      }
+      await this.workspaceEventLocks.withLock(taskId, async () => {
+        const cfg = this.config.loadConfigOrDefault();
+        const entry = findWorkspaceEntry(cfg, taskId);
+        if (!entry?.workspace.parentWorkspaceId) {
+          return;
+        }
+        if (hasCompletedAgentReport(entry.workspace) || this.completedReportsByTaskId.has(taskId)) {
+          return;
+        }
+        await this.editWorkspaceEntry(
+          taskId,
+          (workspace) => {
+            const existing = workspace.taskTimeoutFinalizationTokens ?? [];
+            workspace.taskTimeoutFinalizationTokens = Array.from(
+              new Set([...existing, options.finalizationToken])
+            );
+            workspace.taskStatus = "awaiting_report";
+          },
+          { allowMissing: true }
+        );
+      });
+      finalizationAccepted = true;
     };
     const completionToolName = (await this.isPlanLikeTaskWorkspace(freshEntry))
       ? "propose_plan"
@@ -4352,7 +4337,12 @@ export class TaskService {
         startStreamInBackground: true,
         onAccepted: persistFinalizationToken,
         onCanceled: (reason) => {
-          rejectFinalizationAccepted(new Error(reason));
+          log.debug("Workflow timeout finalization prompt was canceled", {
+            taskId,
+            workflowRunId: options.workflowRunId,
+            stepId: options.stepId,
+            reason,
+          });
         },
       }
     );
@@ -4366,20 +4356,7 @@ export class TaskService {
       return "not_active";
     }
 
-    if (!finalizationAccepted) {
-      try {
-        await finalizationAcceptedPromise;
-      } catch (error) {
-        log.error("Workflow timeout finalization prompt was not accepted", {
-          taskId,
-          workflowRunId: options.workflowRunId,
-          stepId: options.stepId,
-          error,
-        });
-        return "not_active";
-      }
-    }
-    return "prompted";
+    return finalizationAccepted ? "prompted" : "queued";
   }
 
   async failAgentTaskForHardTimeout(

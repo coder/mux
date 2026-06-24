@@ -6846,6 +6846,8 @@ describe("TaskService", () => {
     );
 
     let isStreaming = false;
+    let callOnAccepted = true;
+    let queuedOnAccepted: (() => Promise<void> | void) | undefined;
     const { aiService, stopStream } = createAIServiceMocks(config, {
       isStreaming: mock(() => isStreaming),
     });
@@ -6855,7 +6857,11 @@ describe("TaskService", () => {
           return Err("send failed");
         }
         const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
-        await internal?.onAccepted?.();
+        if (callOnAccepted) {
+          await internal?.onAccepted?.();
+        } else {
+          queuedOnAccepted = internal?.onAccepted;
+        }
         return Ok(undefined);
       }),
     });
@@ -6903,6 +6909,25 @@ describe("TaskService", () => {
     expect(alreadyPromptedResult).toBe("prompted");
     expect(stopStream).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledTimes(2);
+    isStreaming = false;
+    callOnAccepted = false;
+    const queuedPromptResult = await taskService.requestAgentFinalReportForTimeout(childTaskId, {
+      ...request,
+      finalizationToken: "token-queued",
+    });
+    expect(queuedPromptResult).toBe("queued");
+    childWorkspace = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((workspace) => workspace.id === childTaskId);
+    expect(childWorkspace?.taskTimeoutFinalizationTokens).toEqual(["token-1"]);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    await queuedOnAccepted?.();
+    childWorkspace = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((workspace) => workspace.id === childTaskId);
+    expect(childWorkspace?.taskTimeoutFinalizationTokens).toEqual(["token-1", "token-queued"]);
   });
 
   test("requestAgentFinalReportForTimeout requires propose_plan for timed-out plan agents", async () => {
