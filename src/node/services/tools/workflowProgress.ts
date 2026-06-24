@@ -26,11 +26,16 @@ function getWorkflowStepCounts(steps: ReadonlyArray<{ status: WorkflowStepStatus
   return counts;
 }
 
+// Shared so the summary builder and the note formatter agree on what "latest phase" means.
+function getLatestPhaseEvent(run: WorkflowRunRecord) {
+  return run.events.findLast((event) => event.type === "phase");
+}
+
 export function buildWorkflowProgressSummary(run: WorkflowRunRecord) {
   assert(run.workflow.name.length > 0, "buildWorkflowProgressSummary: workflow name is required");
 
   const progressEvents = run.events.filter(isWorkflowProgressEvent);
-  const latestPhase = run.events.findLast((event) => event.type === "phase");
+  const latestPhase = getLatestPhaseEvent(run);
   const latestProgressEvent = progressEvents.at(-1);
 
   if (latestPhase == null && progressEvents.length === 0 && run.steps.length === 0) {
@@ -55,7 +60,7 @@ export function buildWorkflowProgressSummary(run: WorkflowRunRecord) {
 export function formatWorkflowProgressNote(baseNote: string, run: WorkflowRunRecord): string {
   assert(baseNote.length > 0, "formatWorkflowProgressNote: base note is required");
 
-  const latestPhase = run.events.findLast((event) => event.type === "phase");
+  const latestPhase = getLatestPhaseEvent(run);
   if (latestPhase == null) {
     return baseNote;
   }
