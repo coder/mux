@@ -578,6 +578,31 @@ export class WorkflowRunStore {
     });
   }
 
+  async recordStepTimeoutMetadata(
+    runId: string,
+    input: {
+      stepId: string;
+      inputHash: string;
+      taskId: string;
+      startedAt: string;
+      timeout: NonNullable<WorkflowStepRecord["timeout"]>;
+    },
+    options: AppendWorkflowRunEventOptions = {}
+  ): Promise<void> {
+    await this.appendStepRecord(
+      runId,
+      {
+        stepId: input.stepId,
+        inputHash: input.inputHash,
+        taskId: input.taskId,
+        startedAt: input.startedAt,
+        status: "started",
+        timeout: input.timeout,
+      },
+      options
+    );
+  }
+
   async recordStepFailed(
     runId: string,
     input: {
@@ -1056,13 +1081,40 @@ function mergeWorkflowStepRecords(
   nextRecord?: WorkflowStepRecord
 ): WorkflowStepRecord[] {
   const byKey = new Map<string, WorkflowStepRecord>();
+  const mergeRecord = (record: WorkflowStepRecord): void => {
+    const key = getWorkflowStepKey(record);
+    const previous = byKey.get(key);
+    byKey.set(key, {
+      ...record,
+      timeout: mergeWorkflowStepTimeoutMetadata(previous, record),
+    });
+  };
   for (const record of records) {
-    byKey.set(getWorkflowStepKey(record), record);
+    mergeRecord(record);
   }
   if (nextRecord !== undefined) {
-    byKey.set(getWorkflowStepKey(nextRecord), nextRecord);
+    mergeRecord(nextRecord);
   }
   return Array.from(byKey.values());
+}
+
+function mergeWorkflowStepTimeoutMetadata(
+  previous: WorkflowStepRecord | undefined,
+  next: WorkflowStepRecord
+): WorkflowStepRecord["timeout"] {
+  if (next.timeout != null) {
+    if (previous?.timeout != null && previous.taskId === next.taskId) {
+      return { ...previous.timeout, ...next.timeout };
+    }
+    return next.timeout;
+  }
+  if (previous?.timeout == null) {
+    return undefined;
+  }
+  if (previous.taskId != null && next.taskId != null && previous.taskId !== next.taskId) {
+    return undefined;
+  }
+  return previous.timeout;
 }
 
 function hashSource(source: string): string {

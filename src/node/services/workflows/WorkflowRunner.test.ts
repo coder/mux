@@ -737,6 +737,74 @@ describe("WorkflowRunner", () => {
     expect(interruptRun).toHaveBeenCalledTimes(1);
   });
 
+  test("pipeline hard timeouts keep the timed_out task event without adding a failed task event", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-pipeline-timeout-terminal-event");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_pipeline_timeout_terminal_event";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent, pipeline }) {
+  return pipeline(["slow", "sibling"], (item) => agent("Stage " + item, { id: item, timeout: { softMs: 1000, graceMs: 2000 } }));
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    const releaseSibling = createDeferred();
+    const interruptRun = mock(async () => {
+      releaseSibling.resolve();
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("pipeline should start agent tasks without using runAgent");
+      },
+      async createAgentTasks(specs, lifecycle) {
+        for (const [index, spec] of specs.entries()) {
+          await lifecycle?.onTaskCreated?.(index, `task_${spec.id}`);
+        }
+        return specs.map((spec) => ({ taskId: `task_${spec.id}`, status: "running" as const }));
+      },
+      async waitForAgentTask(taskId, _spec, waitOptions) {
+        await waitOptions?.onExecutionStarted?.();
+        if (taskId === "task_slow") {
+          throw timeoutError;
+        }
+        await releaseSibling.promise;
+        return { taskId, reportMarkdown: "sibling", structuredOutput: { label: "sibling" } };
+      },
+      async requestAgentFinalReportForTimeout() {
+        return "prompted";
+      },
+      async failAgentTaskForHardTimeout() {
+        // The workflow timeout path records the timed_out event before surfacing the failure.
+      },
+      interruptRun,
+    });
+
+    await expect(runner.run(runId)).rejects.toThrow("exceeded its soft timeout");
+    expect(interruptRun).toHaveBeenCalledTimes(1);
+    const run = await store.getRun(runId);
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "task" && event.taskId === "task_slow" && event.status === "timed_out"
+      )
+    ).toBe(true);
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "task" && event.taskId === "task_slow" && event.status === "failed"
+      )
+    ).toBe(false);
+  });
+
   test("workflow primitive requires a stable id before creating child runs", async () => {
     using tmp = new DisposableTempDir("workflow-runner-nested-workflow-missing-id");
     const store = new WorkflowRunStore({
@@ -984,6 +1052,630 @@ describe("WorkflowRunner", () => {
       "agent requires a non-empty prompt"
     );
     expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  test("normalizes explicit workflow agent timeout options before spawning", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-options");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_agent_timeout_options",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  return agent("Return structured output", {
+    id: "timeout-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000, finalInstructions: "Summarize only completed work." },
+  });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const seenSpecs: WorkflowAgentSpec[] = [];
+    const runner = createRunner(store, {
+      async runAgent(spec) {
+        seenSpecs.push(spec);
+        return { taskId: "task_timeout", reportMarkdown: "ok", structuredOutput: { ok: true } };
+      },
+    });
+
+    await expect(runner.run("wfr_agent_timeout_options")).resolves.toEqual({
+      reportMarkdown: JSON.stringify({ ok: true }),
+    });
+    expect(seenSpecs[0]?.timeout).toEqual({
+      softMs: 1000,
+      graceMs: 2000,
+      finalInstructions: "Summarize only completed work.",
+    });
+  });
+
+  test("fails before spawning when workflow agent timeout is incomplete", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-invalid");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_agent_timeout_invalid",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  return agent("Invalid timeout", { id: "invalid-timeout", timeout: { softMs: 1000 } });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runAgent = mock(async () => ({
+      taskId: "task_1",
+      reportMarkdown: "summary",
+      structuredOutput: {},
+    }));
+    const runner = createRunner(store, { runAgent });
+
+    await expect(runner.run("wfr_agent_timeout_invalid")).rejects.toThrow(
+      "agent timeout.graceMs must be a positive integer"
+    );
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  test("requests a final report when an agent soft timeout recovers during grace", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-recovered");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_agent_timeout_recovered",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000, finalInstructions: "No extra tools." },
+  });
+  return { reportMarkdown: result.ok ? "recovered" : "bad" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("soft wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    const waitTimeouts: Array<number | undefined> = [];
+    const finalizationRequests: unknown[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(specs, lifecycle) {
+        await lifecycle?.onTaskCreated?.(0, "task_slow");
+        expect(specs).toHaveLength(1);
+        return [{ taskId: "task_slow", status: "running" }];
+      },
+      async waitForAgentTask(_taskId, _spec, waitOptions) {
+        await waitOptions?.onExecutionStarted?.();
+        waitTimeouts.push(waitOptions?.timeoutMs);
+        if (waitTimeouts.length === 1) {
+          throw timeoutError;
+        }
+        return { taskId: "task_slow", reportMarkdown: "ok", structuredOutput: { ok: true } };
+      },
+      async requestAgentFinalReportForTimeout(taskId, request) {
+        finalizationRequests.push({ taskId, request });
+        return "prompted";
+      },
+      async failAgentTaskForHardTimeout() {
+        throw new Error("hard timeout should not run when grace recovers");
+      },
+    });
+
+    await expect(runner.run("wfr_agent_timeout_recovered")).resolves.toEqual({
+      reportMarkdown: "recovered",
+    });
+
+    expect(waitTimeouts).toEqual([1000, 2000]);
+    expect(finalizationRequests).toHaveLength(1);
+    const run = await store.getRun("wfr_agent_timeout_recovered");
+    expect(
+      run.events.filter((event) => event.type === "timeout").map((event) => event.phase)
+    ).toEqual(["soft", "finalization_prompt_sent", "recovered"]);
+  });
+
+  test("does not mark timeout finalization prompt sent before TaskService accepts it", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-finalization-queued");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_finalization_queued";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "recovered" : "bad" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("soft wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    let waitCount = 0;
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(_specs, lifecycle) {
+        await lifecycle?.onTaskCreated?.(0, "task_slow");
+        return [{ taskId: "task_slow", status: "running" }];
+      },
+      async waitForAgentTask(_taskId, _spec, waitOptions) {
+        await waitOptions?.onExecutionStarted?.();
+        waitCount += 1;
+        if (waitCount === 1) {
+          throw timeoutError;
+        }
+        return { taskId: "task_slow", reportMarkdown: "ok", structuredOutput: { ok: true } };
+      },
+      async requestAgentFinalReportForTimeout() {
+        return "queued";
+      },
+    });
+
+    await expect(runner.run(runId)).resolves.toEqual({ reportMarkdown: "recovered" });
+    const run = await store.getRun(runId);
+    expect(
+      run.events.filter((event) => event.type === "timeout").map((event) => event.phase)
+    ).toEqual(["soft", "recovered"]);
+    expect(
+      run.steps.find((step) => step.stepId === "slow-step")?.timeout?.finalizationPromptSentAt
+    ).toBeUndefined();
+  });
+
+  test("fails and hard-times-out an agent that does not report during grace", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-hard");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_agent_timeout_hard",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  return agent("Slow work", { id: "slow-step", timeout: { softMs: 1000, graceMs: 2000 } });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    const hardTimeouts: unknown[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(_specs, lifecycle) {
+        await lifecycle?.onTaskCreated?.(0, "task_slow");
+        return [{ taskId: "task_slow", status: "running" }];
+      },
+      async waitForAgentTask(_taskId, _spec, waitOptions) {
+        await waitOptions?.onExecutionStarted?.();
+        throw timeoutError;
+      },
+      async requestAgentFinalReportForTimeout() {
+        return "prompted";
+      },
+      async failAgentTaskForHardTimeout(taskId, request) {
+        hardTimeouts.push({ taskId, request });
+      },
+    });
+
+    await expect(runner.run("wfr_agent_timeout_hard")).rejects.toThrow(
+      "Workflow agent step slow-step exceeded its soft timeout (1000ms) and did not produce a valid agent_report within the grace period (2000ms)."
+    );
+    expect(hardTimeouts).toHaveLength(1);
+    const run = await store.getRun("wfr_agent_timeout_hard");
+    expect(
+      run.events.filter((event) => event.type === "timeout").map((event) => event.phase)
+    ).toContain("hard");
+  });
+
+  test("does not persist workflow agent timeout deadlines before the child starts running", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-queued-start");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_queued_start";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Queued work", {
+    id: "queued-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "started" : "bad" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const spec: WorkflowAgentSpec = {
+      id: "queued-step",
+      prompt: "Queued work",
+      outputSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+      timeout: { softMs: 1000, graceMs: 2000 },
+    };
+    const inputHash = hashWorkflowStepInput(spec.id, spec);
+    let inspectedBeforeStart = false;
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.000Z",
+        nowMs: () => Date.parse("2026-05-29T00:00:01.000Z"),
+      },
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+        },
+        async createAgentTasks(_specs, lifecycle) {
+          await lifecycle?.onTaskCreated?.(0, "task_queued");
+          return [{ taskId: "task_queued", status: "queued" }];
+        },
+        async waitForAgentTask(_taskId, _spec, waitOptions) {
+          const stepBeforeStart = await store.getStep(runId, spec.id, inputHash);
+          expect(stepBeforeStart?.timeout).toBeUndefined();
+          inspectedBeforeStart = true;
+          await waitOptions?.onExecutionStarted?.();
+          return { taskId: "task_queued", reportMarkdown: "ok", structuredOutput: { ok: true } };
+        },
+      },
+    });
+
+    await expect(runner.run(runId)).resolves.toEqual({ reportMarkdown: "started" });
+    expect(inspectedBeforeStart).toBe(true);
+    const stepAfterStart = await store.getStep(runId, spec.id, inputHash);
+    expect(stepAfterStart?.timeout).toEqual({
+      executionStartedAt: "2026-05-29T00:00:01.000Z",
+      softDeadlineAt: "2026-05-29T00:00:02.000Z",
+    });
+  });
+
+  test("resets timeout metadata when validation retries start a fresh agent task", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-retry-reset");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_retry_reset";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "recovered" : "bad" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("soft wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    const taskIds = ["task_first", "task_retry"];
+    const waitCalls: Array<{ taskId: string; timeoutMs: number | undefined }> = [];
+    const finalizationRequests: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(_specs, lifecycle) {
+        const taskId = taskIds.shift();
+        expect(taskId).toBeDefined();
+        if (taskId == null) {
+          throw new Error("test expected another task id");
+        }
+        await lifecycle?.onTaskCreated?.(0, taskId);
+        return [{ taskId, status: "running" }];
+      },
+      async waitForAgentTask(taskId, _spec, waitOptions) {
+        await waitOptions?.onExecutionStarted?.();
+        waitCalls.push({ taskId, timeoutMs: waitOptions?.timeoutMs });
+        if (taskId === "task_first" && waitCalls.length === 1) {
+          throw timeoutError;
+        }
+        if (taskId === "task_first") {
+          return { taskId, reportMarkdown: "invalid", structuredOutput: { ok: "not boolean" } };
+        }
+        return { taskId, reportMarkdown: "ok", structuredOutput: { ok: true } };
+      },
+      async requestAgentFinalReportForTimeout(taskId) {
+        finalizationRequests.push(taskId);
+        return "prompted";
+      },
+      async failAgentTaskForHardTimeout() {
+        throw new Error("hard timeout should not run when retry gets a fresh budget");
+      },
+    });
+
+    await expect(runner.run(runId)).resolves.toEqual({ reportMarkdown: "recovered" });
+    expect(waitCalls).toEqual([
+      { taskId: "task_first", timeoutMs: 1000 },
+      { taskId: "task_first", timeoutMs: 2000 },
+      { taskId: "task_retry", timeoutMs: 1000 },
+    ]);
+    expect(finalizationRequests).toEqual(["task_first"]);
+  });
+
+  test("uses a task-accepted report instead of recording hard timeout failure", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-hard-report-race");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_hard_report_race";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "accepted" : "bad" };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const timeoutError = new Error("wait expired");
+    timeoutError.name = "AgentReportWaitTimeoutError";
+    let waitCount = 0;
+    const failHardTimeout = mock(async () => undefined);
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(_specs, lifecycle) {
+        await lifecycle?.onTaskCreated?.(0, "task_slow");
+        return [{ taskId: "task_slow", status: "running" }];
+      },
+      async waitForAgentTask(_taskId, _spec, waitOptions) {
+        await waitOptions?.onExecutionStarted?.();
+        waitCount += 1;
+        if (waitCount <= 2) {
+          throw timeoutError;
+        }
+        return { taskId: "task_slow", reportMarkdown: "ok", structuredOutput: { ok: true } };
+      },
+      async requestAgentFinalReportForTimeout() {
+        return "prompted";
+      },
+      failAgentTaskForHardTimeout: failHardTimeout,
+    });
+
+    await expect(runner.run(runId)).resolves.toEqual({ reportMarkdown: "accepted" });
+    expect(failHardTimeout).not.toHaveBeenCalled();
+    const run = await store.getRun(runId);
+    expect(run.steps.find((step) => step.stepId === "slow-step")?.status).toBe("completed");
+  });
+
+  test("restarts timeout-configured resumed agent steps whose task workspace is gone", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-missing-task-restart");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_missing_task_restart";
+    const source = `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "restarted" : "bad" };
+}
+`;
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const spec: WorkflowAgentSpec = {
+      id: "slow-step",
+      prompt: "Slow work",
+      outputSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+      timeout: { softMs: 1000, graceMs: 2000 },
+    };
+    const inputHash = hashWorkflowStepInput(spec.id, spec);
+    await store.recordStepStarted(runId, {
+      stepId: spec.id,
+      inputHash,
+      taskId: "task_missing",
+      startedAt: "2026-05-29T00:00:00.000Z",
+    });
+    const waitCalls: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(_specs, lifecycle) {
+        await lifecycle?.onTaskCreated?.(0, "task_restarted");
+        return [{ taskId: "task_restarted", status: "running" }];
+      },
+      async waitForAgentTask(taskId, _spec, waitOptions) {
+        waitCalls.push(taskId);
+        if (taskId === "task_missing") {
+          throw new Error("Task not found");
+        }
+        await waitOptions?.onExecutionStarted?.();
+        return { taskId, reportMarkdown: "ok", structuredOutput: { ok: true } };
+      },
+    });
+
+    await expect(runner.run(runId)).resolves.toEqual({ reportMarkdown: "restarted" });
+    expect(waitCalls).toEqual(["task_missing", "task_restarted"]);
+  });
+
+  test("records terminal task events for non-timeout failures from timeout waits", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-terminal-event");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const runId = "wfr_agent_timeout_terminal_event";
+    await store.createRun({
+      id: runId,
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  return agent("Slow work", { id: "slow-step", timeout: { softMs: 1000, graceMs: 2000 } });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("timeout steps should use createAgentTasks so the runner controls waits");
+      },
+      async createAgentTasks(_specs, lifecycle) {
+        await lifecycle?.onTaskCreated?.(0, "task_failed");
+        return [{ taskId: "task_failed", status: "running" }];
+      },
+      async waitForAgentTask() {
+        throw new Error("model refused");
+      },
+    });
+
+    await expect(runner.run(runId)).rejects.toThrow("model refused");
+    const run = await store.getRun(runId);
+    expect(
+      run.events.some(
+        (event) =>
+          event.type === "task" && event.taskId === "task_failed" && event.status === "failed"
+      )
+    ).toBe(true);
+  });
+
+  test("resumes a timeout-finalizing agent without sending a duplicate finalization prompt", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-timeout-resume-grace");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    const source = `export default function workflow({ agent }) {
+  const result = agent("Slow work", {
+    id: "slow-step",
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+    timeout: { softMs: 1000, graceMs: 2000 },
+  });
+  return { reportMarkdown: result.ok ? "recovered" : "bad" };
+}
+`;
+    await store.createRun({
+      id: "wfr_agent_timeout_resume_grace",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const spec: WorkflowAgentSpec = {
+      id: "slow-step",
+      prompt: "Slow work",
+      outputSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+      },
+      timeout: { softMs: 1000, graceMs: 2000 },
+    };
+    const inputHash = hashWorkflowStepInput(spec.id, spec);
+    await store.recordStepStarted("wfr_agent_timeout_resume_grace", {
+      stepId: spec.id,
+      inputHash,
+      taskId: "task_slow",
+      startedAt: "2026-05-29T00:00:00.000Z",
+    });
+    await store.recordStepTimeoutMetadata("wfr_agent_timeout_resume_grace", {
+      stepId: spec.id,
+      inputHash,
+      taskId: "task_slow",
+      startedAt: "2026-05-29T00:00:00.000Z",
+      timeout: {
+        executionStartedAt: "2026-05-29T00:00:00.000Z",
+        softDeadlineAt: "2026-05-29T00:00:01.000Z",
+        softTimedOutAt: "2026-05-29T00:00:01.000Z",
+        hardDeadlineAt: "2026-05-29T00:00:03.000Z",
+        finalizationToken: "existing-token",
+        finalizationPromptSentAt: "2026-05-29T00:00:01.100Z",
+      },
+    });
+    const waitTimeouts: Array<number | undefined> = [];
+    const requestFinalReport = mock(async () => "prompted" as const);
+    const runner = new WorkflowRunner({
+      runStore: store,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:01.500Z",
+        nowMs: () => Date.parse("2026-05-29T00:00:01.500Z"),
+      },
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("resume should wait on the started task");
+        },
+        async waitForAgentTask(_taskId, _spec, waitOptions) {
+          await waitOptions?.onExecutionStarted?.();
+          waitTimeouts.push(waitOptions?.timeoutMs);
+          return { taskId: "task_slow", reportMarkdown: "ok", structuredOutput: { ok: true } };
+        },
+        requestAgentFinalReportForTimeout: requestFinalReport,
+      },
+    });
+
+    await expect(runner.run("wfr_agent_timeout_resume_grace")).resolves.toEqual({
+      reportMarkdown: "recovered",
+    });
+    expect(waitTimeouts).toEqual([1500]);
+    expect(requestFinalReport).not.toHaveBeenCalled();
   });
 
   test("fails before spawning when workflow agent outputSchema is invalid", async () => {

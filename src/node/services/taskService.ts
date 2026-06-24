@@ -134,6 +134,13 @@ import {
 
 export type TaskKind = "agent";
 
+export class AgentReportWaitTimeoutError extends Error {
+  constructor() {
+    super("Timed out waiting for agent_report");
+    this.name = "AgentReportWaitTimeoutError";
+  }
+}
+
 export type AgentTaskStatus = NonNullable<WorkspaceConfigEntry["taskStatus"]>;
 
 /**
@@ -959,6 +966,26 @@ export class ForegroundWaitBackgroundedError extends Error {
     super("Foreground wait sent to background due to queued message");
     this.name = "ForegroundWaitBackgroundedError";
   }
+}
+
+function buildWorkflowTimeoutFinalizationPrompt(
+  finalInstructions: string | undefined,
+  completionToolName: "agent_report" | "propose_plan"
+): string {
+  const reportNoun = completionToolName === "propose_plan" ? "plan" : "report";
+  const base =
+    `Your workflow step time budget has expired. Stop starting new work and prepare a final ${reportNoun} now.\n\n` +
+    `In your ${reportNoun}:\n` +
+    "- summarize work completed;\n" +
+    "- list files changed or inspected;\n" +
+    "- include validation/test results already obtained;\n" +
+    "- call out uncertainty and remaining work;\n" +
+    `- do not run additional long-running tools unless absolutely necessary to write the ${reportNoun}.\n\n` +
+    getTaskCompletionInstruction({ completionToolName });
+  if (finalInstructions == null) {
+    return base;
+  }
+  return `${base}\n\nAdditional workflow-specific finalization instructions:\n${finalInstructions}`;
 }
 
 export class TaskService {
@@ -4196,6 +4223,208 @@ export class TaskService {
     });
   }
 
+  async requestAgentFinalReportForTimeout(
+    taskId: string,
+    options: {
+      workflowRunId: string;
+      stepId: string;
+      inputHash: string;
+      finalizationToken: string;
+      finalInstructions?: string;
+    }
+  ): Promise<"prompted" | "queued" | "already_reported" | "not_active"> {
+    assert(taskId.length > 0, "requestAgentFinalReportForTimeout: taskId must be non-empty");
+    assert(
+      options.finalizationToken.length > 0,
+      "requestAgentFinalReportForTimeout: finalizationToken must be non-empty"
+    );
+
+    const reservation = await this.workspaceEventLocks.withLock(taskId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const entry = findWorkspaceEntry(cfg, taskId);
+      if (!entry?.workspace.parentWorkspaceId) {
+        return { status: "not_active" as const };
+      }
+      if (hasCompletedAgentReport(entry.workspace) || this.completedReportsByTaskId.has(taskId)) {
+        return { status: "already_reported" as const };
+      }
+      if (entry.workspace.taskStatus === "interrupted" && !this.aiService.isStreaming(taskId)) {
+        return { status: "not_active" as const };
+      }
+
+      const tokens = entry.workspace.taskTimeoutFinalizationTokens ?? [];
+      const alreadyPrompted = tokens.includes(options.finalizationToken);
+      if (!alreadyPrompted) {
+        await this.editWorkspaceEntry(
+          taskId,
+          (workspace) => {
+            workspace.taskStatus = "awaiting_report";
+          },
+          { allowMissing: true }
+        );
+      }
+      return { status: "reserved" as const, alreadyPrompted };
+    });
+
+    if (reservation.status !== "reserved") {
+      return reservation.status;
+    }
+    if (reservation.alreadyPrompted) {
+      return "prompted";
+    }
+    if (this.aiService.isStreaming(taskId)) {
+      await this.aiService.stopStream(taskId, {
+        soft: true,
+        abandonPartial: false,
+        abortReason: "system",
+      });
+    }
+
+    const freshConfig = this.config.loadConfigOrDefault();
+    const freshEntry = findWorkspaceEntry(freshConfig, taskId);
+    if (!freshEntry?.workspace.parentWorkspaceId) {
+      return "not_active";
+    }
+    if (
+      hasCompletedAgentReport(freshEntry.workspace) ||
+      this.completedReportsByTaskId.has(taskId)
+    ) {
+      return "already_reported";
+    }
+    let finalizationAccepted = false;
+    let resolveFinalizationAccepted!: () => void;
+    let rejectFinalizationAccepted!: (error: Error) => void;
+    const finalizationAcceptedPromise = new Promise<void>((resolve, reject) => {
+      resolveFinalizationAccepted = resolve;
+      rejectFinalizationAccepted = reject;
+    });
+    const persistFinalizationToken = async (): Promise<void> => {
+      try {
+        await this.workspaceEventLocks.withLock(taskId, async () => {
+          const cfg = this.config.loadConfigOrDefault();
+          const entry = findWorkspaceEntry(cfg, taskId);
+          if (!entry?.workspace.parentWorkspaceId) {
+            return;
+          }
+          if (
+            hasCompletedAgentReport(entry.workspace) ||
+            this.completedReportsByTaskId.has(taskId)
+          ) {
+            return;
+          }
+          await this.editWorkspaceEntry(
+            taskId,
+            (workspace) => {
+              const existing = workspace.taskTimeoutFinalizationTokens ?? [];
+              workspace.taskTimeoutFinalizationTokens = Array.from(
+                new Set([...existing, options.finalizationToken])
+              );
+              workspace.taskStatus = "awaiting_report";
+            },
+            { allowMissing: true }
+          );
+        });
+        finalizationAccepted = true;
+        resolveFinalizationAccepted();
+      } catch (error) {
+        rejectFinalizationAccepted(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
+    };
+    const completionToolName = (await this.isPlanLikeTaskWorkspace(freshEntry))
+      ? "propose_plan"
+      : "agent_report";
+    const model = freshEntry.workspace.taskModelString ?? defaultModel;
+    const agentId = resolveTaskAgentIdForResume(freshEntry.workspace);
+    const sendResult = await this.workspaceService.sendMessage(
+      taskId,
+      buildWorkflowTimeoutFinalizationPrompt(options.finalInstructions, completionToolName),
+      {
+        model,
+        agentId,
+        thinkingLevel: freshEntry.workspace.taskThinkingLevel,
+        experiments: freshEntry.workspace.taskExperiments,
+        toolPolicy: [{ regex_match: `^${completionToolName}$`, action: "require" }],
+      },
+      {
+        synthetic: true,
+        agentInitiated: true,
+        startStreamInBackground: true,
+        onAccepted: persistFinalizationToken,
+        onCanceled: (reason) => {
+          rejectFinalizationAccepted(new Error(reason));
+        },
+      }
+    );
+    if (!sendResult.success) {
+      log.error("Failed to prompt workflow task for timeout final report", {
+        taskId,
+        workflowRunId: options.workflowRunId,
+        stepId: options.stepId,
+        error: sendResult.error,
+      });
+      return "not_active";
+    }
+
+    if (!finalizationAccepted) {
+      try {
+        await finalizationAcceptedPromise;
+      } catch (error) {
+        log.error("Workflow timeout finalization prompt was not accepted", {
+          taskId,
+          workflowRunId: options.workflowRunId,
+          stepId: options.stepId,
+          error,
+        });
+        return "not_active";
+      }
+    }
+    return "prompted";
+  }
+
+  async failAgentTaskForHardTimeout(
+    taskId: string,
+    options: { workflowRunId: string; stepId: string; inputHash: string; reason: string }
+  ): Promise<void> {
+    assert(taskId.length > 0, "failAgentTaskForHardTimeout: taskId must be non-empty");
+    assert(options.reason.length > 0, "failAgentTaskForHardTimeout: reason must be non-empty");
+
+    await this.workspaceEventLocks.withLock(taskId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const entry = findWorkspaceEntry(cfg, taskId);
+      if (!entry?.workspace.parentWorkspaceId) {
+        return;
+      }
+      if (hasCompletedAgentReport(entry.workspace) || this.completedReportsByTaskId.has(taskId)) {
+        return;
+      }
+      try {
+        const clearQueueResult = this.workspaceService.clearQueue(taskId);
+        if (!clearQueueResult.success) {
+          log.debug("failAgentTaskForHardTimeout: clearQueue failed", {
+            taskId,
+            error: clearQueueResult.error,
+          });
+        }
+      } catch (error: unknown) {
+        log.debug("failAgentTaskForHardTimeout: clearQueue threw", { taskId, error });
+      }
+      try {
+        await this.aiService.stopStream(taskId, {
+          abandonPartial: true,
+          abortReason: "system",
+        });
+      } catch (error: unknown) {
+        log.debug("failAgentTaskForHardTimeout: stopStream threw", { taskId, error });
+      }
+      await this.terminateAllDescendantAgentTasks(taskId, { workflowRunId: options.workflowRunId });
+      await this.failAgentTaskTerminally(taskId, entry, {
+        errorType: "workflow_agent_timeout",
+        errorMessage: options.reason,
+      });
+    });
+  }
+
   async waitForAgentReport(
     taskId: string,
     options?: {
@@ -4203,6 +4432,7 @@ export class TaskService {
       abortSignal?: AbortSignal;
       requestingWorkspaceId?: string;
       backgroundOnMessageQueued?: boolean;
+      onExecutionStarted?: () => void | Promise<void>;
     }
   ): Promise<{
     reportMarkdown: string;
@@ -4386,8 +4616,18 @@ export class TaskService {
           ? this.startForegroundAwait(requestingWorkspaceId)
           : null;
 
+        let executionStartNotified = false;
+        const notifyExecutionStarted = () => {
+          if (executionStartNotified) return;
+          executionStartNotified = true;
+          void Promise.resolve(options?.onExecutionStarted?.()).catch((error: unknown) => {
+            log.error("waitForAgentReport execution-start callback failed", { taskId, error });
+          });
+        };
+
         const startReportTimeout = () => {
           if (timeout) return;
+          notifyExecutionStarted();
           timeout = setTimeout(() => {
             // Prefer a persisted terminal failure over a generic timeout so late
             // awaits surface the typed failure (e.g. model_refusal) even when the
@@ -4395,7 +4635,7 @@ export class TaskService {
             void (async () => {
               const persistedFailure = await tryReadPersistedFailureError().catch(() => null);
               entry.cleanup();
-              reject(persistedFailure ?? new Error("Timed out waiting for agent_report"));
+              reject(persistedFailure ?? new AgentReportWaitTimeoutError());
             })();
           }, timeoutMs);
         };

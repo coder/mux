@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
+import * as APIModule from "@/browser/contexts/API";
 import {
   buildAutoSelectedTemplateConfig,
   useCoderWorkspace,
@@ -8,6 +9,8 @@ import {
 } from "./useCoderWorkspace";
 import type { CoderInfo, CoderTemplate } from "@/common/orpc/schemas/coder";
 import type { CoderWorkspaceConfig } from "@/common/types/runtime";
+
+const actualAPIModule = { ...APIModule };
 
 const makeTemplate = (name: string, org = "default-org"): CoderTemplate => ({
   name,
@@ -34,12 +37,17 @@ const apiMock = {
 };
 
 void mock.module("@/browser/contexts/API", () => ({
+  ...actualAPIModule,
   useAPI: () => ({
     api: apiMock,
     status: "connected" as const,
     error: null,
   }),
 }));
+
+afterAll(async () => {
+  await mock.module("@/browser/contexts/API", () => actualAPIModule);
+});
 
 function deferred<T>() {
   let resolve!: (v: T) => void;

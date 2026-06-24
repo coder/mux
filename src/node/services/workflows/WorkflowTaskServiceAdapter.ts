@@ -92,6 +92,25 @@ interface WorkflowTaskServiceLike {
     structuredOutput?: unknown;
     planFilePath?: string;
   }>;
+  requestAgentFinalReportForTimeout?(
+    taskId: string,
+    options: {
+      workflowRunId: string;
+      stepId: string;
+      inputHash: string;
+      finalizationToken: string;
+      finalInstructions?: string;
+    }
+  ): Promise<"prompted" | "queued" | "already_reported" | "not_active">;
+  failAgentTaskForHardTimeout?(
+    taskId: string,
+    options: {
+      workflowRunId: string;
+      stepId: string;
+      inputHash: string;
+      reason: string;
+    }
+  ): Promise<void>;
   terminateAllDescendantAgentTasks?(
     workspaceId: string,
     options?: { workflowRunId?: string }
@@ -460,6 +479,34 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     return { ...experiments, subagentFileReports: false };
   }
 
+  async requestAgentFinalReportForTimeout(
+    taskId: string,
+    options: {
+      workflowRunId: string;
+      stepId: string;
+      inputHash: string;
+      finalizationToken: string;
+      finalInstructions?: string;
+    }
+  ): Promise<"prompted" | "queued" | "already_reported" | "not_active"> {
+    assert(
+      this.taskService.requestAgentFinalReportForTimeout != null,
+      "WorkflowTaskServiceAdapter requires TaskService timeout finalization support"
+    );
+    return await this.taskService.requestAgentFinalReportForTimeout(taskId, options);
+  }
+
+  async failAgentTaskForHardTimeout(
+    taskId: string,
+    options: { workflowRunId: string; stepId: string; inputHash: string; reason: string }
+  ): Promise<void> {
+    assert(
+      this.taskService.failAgentTaskForHardTimeout != null,
+      "WorkflowTaskServiceAdapter requires TaskService hard timeout support"
+    );
+    await this.taskService.failAgentTaskForHardTimeout(taskId, options);
+  }
+
   async waitForAgentTask(
     taskId: string,
     _spec: WorkflowAgentSpec,
@@ -468,6 +515,9 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     const report = await this.taskService.waitForAgentReport(taskId, {
       ...(waitOptions?.abortSignal != null ? { abortSignal: waitOptions.abortSignal } : {}),
       ...(waitOptions?.timeoutMs != null ? { timeoutMs: waitOptions.timeoutMs } : {}),
+      ...(waitOptions?.onExecutionStarted != null
+        ? { onExecutionStarted: waitOptions.onExecutionStarted }
+        : {}),
       requestingWorkspaceId: this.parentWorkspaceId,
       backgroundOnMessageQueued: waitOptions?.backgroundOnMessageQueued ?? true,
     });

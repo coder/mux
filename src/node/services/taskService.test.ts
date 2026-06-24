@@ -6818,6 +6818,209 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("requestAgentFinalReportForTimeout records finalization token only after prompt send succeeds", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-111";
+    const childTaskId = "task-timeout-child";
+    let sendSucceeds = false;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    let isStreaming = false;
+    const { aiService, stopStream } = createAIServiceMocks(config, {
+      isStreaming: mock(() => isStreaming),
+    });
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
+      sendMessage: mock(async (...args: unknown[]): Promise<Result<void>> => {
+        if (!sendSucceeds) {
+          return Err("send failed");
+        }
+        const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+        await internal?.onAccepted?.();
+        return Ok(undefined);
+      }),
+    });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const request = {
+      workflowRunId: "wfr_timeout",
+      stepId: "slow-step",
+      inputHash: "hash",
+      finalizationToken: "token-1",
+    };
+
+    const failedPromptResult = await taskService.requestAgentFinalReportForTimeout(
+      childTaskId,
+      request
+    );
+    expect(failedPromptResult).toBe("not_active");
+    let childWorkspace = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((workspace) => workspace.id === childTaskId);
+    expect(childWorkspace?.taskTimeoutFinalizationTokens).toBeUndefined();
+
+    sendSucceeds = true;
+    const promptedResult = await taskService.requestAgentFinalReportForTimeout(
+      childTaskId,
+      request
+    );
+    expect(promptedResult).toBe("prompted");
+    childWorkspace = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((workspace) => workspace.id === childTaskId);
+    expect(sendMessage).toHaveBeenLastCalledWith(
+      childTaskId,
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ startStreamInBackground: true })
+    );
+    expect(childWorkspace?.taskTimeoutFinalizationTokens).toEqual(["token-1"]);
+    isStreaming = true;
+    const alreadyPromptedResult = await taskService.requestAgentFinalReportForTimeout(
+      childTaskId,
+      request
+    );
+    expect(alreadyPromptedResult).toBe("prompted");
+    expect(stopStream).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  test("requestAgentFinalReportForTimeout requires propose_plan for timed-out plan agents", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-111";
+    const childTaskId = "task-timeout-plan-child";
+    let sentMessage = "";
+    let sentToolPolicy: Array<{ regex_match: string; action: string }> | undefined;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_plan_child",
+          parentWorkspaceId,
+          agentId: "plan",
+          agentType: "plan",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage: mock(
+        async (
+          _workspaceId: string,
+          message: string,
+          options: { toolPolicy?: Array<{ regex_match: string; action: string }> },
+          internal?: { onAccepted?: () => Promise<void> | void }
+        ): Promise<Result<void>> => {
+          sentMessage = message;
+          sentToolPolicy = options.toolPolicy;
+          await internal?.onAccepted?.();
+          return Ok(undefined);
+        }
+      ),
+    });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const result = await taskService.requestAgentFinalReportForTimeout(childTaskId, {
+      workflowRunId: "wfr_timeout",
+      stepId: "plan-step",
+      inputHash: "hash",
+      finalizationToken: "plan-token",
+    });
+    expect(result).toBe("prompted");
+
+    expect(sentToolPolicy).toEqual([{ regex_match: "^propose_plan$", action: "require" }]);
+    expect(sentMessage).toContain("propose_plan");
+    expect(sentMessage).not.toContain("agent_report");
+  });
+
+  test("failAgentTaskForHardTimeout clears queued finalization before aborting the stream", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-111";
+    const childTaskId = "task-timeout-child";
+    const operations: string[] = [];
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService, stopStream } = createAIServiceMocks(config, {
+      stopStream: mock((): Promise<Result<void>> => {
+        operations.push("stopStream");
+        return Promise.resolve(Ok(undefined));
+      }),
+    });
+    const { workspaceService, clearQueue } = createWorkspaceServiceMocks({
+      clearQueue: mock((): Result<void> => {
+        operations.push("clearQueue");
+        return Ok(undefined);
+      }),
+    });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await taskService.failAgentTaskForHardTimeout(childTaskId, {
+      workflowRunId: "wfr_timeout",
+      stepId: "slow-step",
+      inputHash: "hash",
+      reason: "timed out",
+    });
+
+    expect(clearQueue).toHaveBeenCalledWith(childTaskId);
+    expect(stopStream).toHaveBeenCalledWith(childTaskId, {
+      abandonPartial: true,
+      abortReason: "system",
+    });
+    expect(operations.slice(0, 2)).toEqual(["clearQueue", "stopStream"]);
+  });
+
   test("terminateDescendantAgentTask stops stream, removes workspace, and rejects waiters", async () => {
     const config = await createTestConfig(rootDir);
 

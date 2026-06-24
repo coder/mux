@@ -7,9 +7,9 @@ const COLOCATED_STORY_DIRS = ["src/browser/components", "src/browser/features"];
 const MAX_SNAPSHOT_ENABLED_FILES = 70;
 // Keep a buffer under Chromatic's 300 snapshot limit. This reflects the current
 // retained snapshot set while still blocking accidental growth.
-// 262 keeps the retained snapshot set under Chromatic's limit while leaving
-// headroom for the pinned-mobile WorkflowListNarrow story guarding narrow rows.
-const MAX_ESTIMATED_SNAPSHOTS = 262;
+// 271 keeps the retained snapshot set under Chromatic's limit while leaving
+// headroom for disabled/dogfood-only stories that must not add Chromatic snapshots.
+const MAX_ESTIMATED_SNAPSHOTS = 271;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
 const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;

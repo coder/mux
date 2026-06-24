@@ -126,6 +126,15 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     sequence: z.number().int().positive(),
+    type: z.literal("timeout"),
+    at: IsoDateTimeSchema,
+    stepId: z.string().min(1),
+    taskId: z.string().min(1),
+    phase: z.enum(["soft", "finalization_prompt_sent", "recovered", "hard"]),
+    details: JsonValueSchema.optional(),
+  }),
+  z.object({
+    sequence: z.number().int().positive(),
     type: z.literal("workflow"),
     at: IsoDateTimeSchema,
     stepId: z.string().min(1),
@@ -195,6 +204,18 @@ export const WorkflowEventSequenceSchema = z
 
 export const WorkflowStepStatusSchema = z.enum(["started", "completed", "failed", "interrupted"]);
 
+export const WorkflowStepTimeoutMetadataSchema = z
+  .object({
+    executionStartedAt: IsoDateTimeSchema.optional(),
+    softDeadlineAt: IsoDateTimeSchema.optional(),
+    hardDeadlineAt: IsoDateTimeSchema.optional(),
+    softTimedOutAt: IsoDateTimeSchema.optional(),
+    finalizationToken: z.string().min(1).optional(),
+    finalizationPromptSentAt: IsoDateTimeSchema.optional(),
+    hardTimedOutAt: IsoDateTimeSchema.optional(),
+  })
+  .strict();
+
 export const WorkflowStepRecordSchema = z.object({
   stepId: z.string().min(1),
   inputHash: z.string().min(1),
@@ -203,6 +224,7 @@ export const WorkflowStepRecordSchema = z.object({
   startedAt: IsoDateTimeSchema,
   completedAt: IsoDateTimeSchema.optional(),
   result: StructuredTaskOutputSchema.optional(),
+  timeout: WorkflowStepTimeoutMetadataSchema.optional(),
   error: z.string().min(1).optional(),
 });
 

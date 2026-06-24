@@ -216,6 +216,29 @@ const reviews = parallel(
 );
 ```
 
+Timeouts are optional and explicit. Mux does not provide default workflow-agent timeout durations. When `timeout` is present, both `softMs` and `graceMs` are required positive integer millisecond values:
+
+```js
+const report = agent("Investigate and report useful partial findings if time expires", {
+  id: "investigate",
+  schema: {
+    type: "object",
+    required: ["summary", "remainingWork"],
+    properties: {
+      summary: { type: "string" },
+      remainingWork: { type: "array", items: { type: "string" } },
+    },
+  },
+  timeout: {
+    softMs: 20 * 60_000,
+    graceMs: 2 * 60_000,
+    finalInstructions: "Prioritize completed findings and validation evidence.",
+  },
+});
+```
+
+The soft budget starts when the child task begins running; queued/starting time does not count. If the soft timeout expires, Mux soft-interrupts the child turn, sends a synthetic prompt requiring `agent_report` (or `propose_plan` for Plan agents), and waits for the explicit grace period. A valid report during grace completes the step normally; otherwise Mux hard-times-out the child and fails the step. For schema-backed agents, design the schema so partial-but-useful results can still be represented.
+
 ### `parallel(thunks, options?)`
 
 Runs independent workflow agent branches concurrently and returns results in input order. Each thunk should call `agent(...)` once. `options.maxParallel` may cap live child tasks.

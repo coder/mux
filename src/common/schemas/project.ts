@@ -135,6 +135,10 @@ export const WorkspaceConfigSchema = z.object({
   taskLaunchError: z.string().optional().meta({
     description: "Startup failure recorded before an agent task could begin streaming.",
   }),
+  taskTimeoutFinalizationTokens: z.array(z.string().min(1)).optional().meta({
+    description:
+      "Idempotency tokens for workflow timeout finalization prompts already sent to this task.",
+  }),
   taskRecoveryAttempts: z.number().int().nonnegative().optional().meta({
     description:
       "Completion-tool recovery prompts sent to this agent task since it last completed successfully. Persisted (not in-memory) so crash/restart recovery loops stay bounded; cleared on a successful report, on plan-to-exec handoff, and on user-initiated resume.",

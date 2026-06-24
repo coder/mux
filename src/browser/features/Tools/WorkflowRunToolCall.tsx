@@ -354,6 +354,18 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
       // Prefer the human-readable sub-agent title (matches the spawned
       // workspace title); fall back to stepId for legacy events without one.
       return `${event.title ?? event.stepId} / ${event.taskId} / ${event.status}`;
+    case "timeout":
+      switch (event.phase) {
+        case "soft":
+          return `${event.stepId} / ${event.taskId} / Soft timeout reached; requesting final report`;
+        case "finalization_prompt_sent":
+          return `${event.stepId} / ${event.taskId} / Final report requested`;
+        case "recovered":
+          return `${event.stepId} / ${event.taskId} / Recovered during grace period`;
+        case "hard":
+          return `${event.stepId} / ${event.taskId} / Hard timeout; child terminated`;
+      }
+      return `${event.stepId} / ${event.taskId} / timeout`;
     case "workflow":
       return `${event.stepId} / ${event.name} / ${event.runId} / ${event.status}`;
     case "patch":
@@ -386,6 +398,8 @@ function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
     case "workflow":
       return event.details;
     case "patch":
+      return event.details;
+    case "timeout":
       return event.details;
     case "action":
       return event.details;
@@ -420,6 +434,9 @@ function getEventTone(event: WorkflowRunEvent): "normal" | "success" | "warning"
       return "success";
     }
     return event.status === "failed" ? "warning" : "normal";
+  }
+  if (event.type === "timeout") {
+    return event.phase === "recovered" ? "success" : "warning";
   }
   if (event.type === "workflow") {
     return event.status === "completed"

@@ -35,6 +35,12 @@ class WorkflowAgentOutputValidationError extends Error {
   }
 }
 
+export interface WorkflowAgentTimeoutSpec {
+  softMs: number;
+  graceMs: number;
+  finalInstructions?: string;
+}
+
 export interface WorkflowAgentSpec {
   id: string;
   prompt: string;
@@ -44,6 +50,7 @@ export interface WorkflowAgentSpec {
   thinkingLevel?: ParsedThinkingInput;
   isolation?: "fork" | "none";
   outputSchema?: unknown;
+  timeout?: WorkflowAgentTimeoutSpec;
   /** Internal marker for new `agent(prompt, { id })` prose-only steps. */
   markdownOnly?: boolean;
   /**
@@ -59,6 +66,7 @@ export interface WorkflowAgentWaitOptions {
   abortSignal?: AbortSignal;
   timeoutMs?: number;
   backgroundOnMessageQueued?: boolean;
+  onExecutionStarted?: () => void | Promise<void>;
 }
 
 export type WorkflowAgentResult = StructuredTaskOutput & { taskId: string };
@@ -166,6 +174,25 @@ export interface WorkflowTaskAdapter {
     spec: WorkflowAgentSpec,
     waitOptions?: WorkflowAgentWaitOptions
   ): Promise<WorkflowAgentResult>;
+  requestAgentFinalReportForTimeout?(
+    taskId: string,
+    options: {
+      workflowRunId: string;
+      stepId: string;
+      inputHash: string;
+      finalizationToken: string;
+      finalInstructions?: string;
+    }
+  ): Promise<"prompted" | "queued" | "already_reported" | "not_active">;
+  failAgentTaskForHardTimeout?(
+    taskId: string,
+    options: {
+      workflowRunId: string;
+      stepId: string;
+      inputHash: string;
+      reason: string;
+    }
+  ): Promise<void>;
   applyPatch?(
     spec: WorkflowApplyPatchSpec,
     options?: { abortSignal?: AbortSignal }
@@ -246,6 +273,28 @@ function parseWorkflowParallelOptions(
 
 function parseParallelAgentsOptions(raw: unknown): { maxParallel?: number } {
   return parseWorkflowParallelOptions(raw, "parallel");
+}
+
+function isAgentReportWaitTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AgentReportWaitTimeoutError";
+}
+
+function buildWorkflowAgentTimeoutFinalizationToken(
+  runId: string,
+  step: { spec: WorkflowAgentSpec; inputHash: string; taskId: string },
+  softTimedOutAt: string
+): string {
+  return `workflow-agent-timeout:${runId}:${step.spec.id}:${step.inputHash}:${step.taskId}:${softTimedOutAt}`;
+}
+
+function createWorkflowAgentHardTimeoutError(message: string): Error {
+  const error = new Error(message);
+  error.name = "WorkflowAgentHardTimeoutError";
+  return error;
+}
+
+function isWorkflowAgentHardTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === "WorkflowAgentHardTimeoutError";
 }
 
 function shouldRestartUnrecoverableStartedTask(error: unknown): boolean {
@@ -747,6 +796,15 @@ export class WorkflowRunner {
     await this.runStore.recordStepCompleted(runId, input, { expectedLeaseOwnerId: this.runnerId });
   }
 
+  private async recordStepTimeoutMetadata(
+    runId: string,
+    input: Parameters<WorkflowRunStore["recordStepTimeoutMetadata"]>[1]
+  ): Promise<void> {
+    await this.runStore.recordStepTimeoutMetadata(runId, input, {
+      expectedLeaseOwnerId: this.runnerId,
+    });
+  }
+
   private async recordStepFailed(
     runId: string,
     input: Parameters<WorkflowRunStore["recordStepFailed"]>[1]
@@ -1233,11 +1291,18 @@ export class WorkflowRunner {
       }
       assert(state.taskId != null, `pipeline agent ${state.spec.id} has no taskId to wait for`);
       const taskId = state.taskId;
-      state.rawResultPromise = this.taskAdapter.waitForAgentTask(
-        taskId,
-        state.resultSpec,
-        options.waitOptions
-      );
+      state.rawResultPromise =
+        state.spec.timeout == null
+          ? this.taskAdapter.waitForAgentTask(taskId, state.resultSpec, options.waitOptions)
+          : this.waitForAgentTaskWithGracefulTimeout(runId, sequence, {
+              spec: state.spec,
+              inputHash: state.inputHash,
+              startedAt: state.startedAt,
+              taskId,
+              resultSpec: state.resultSpec,
+              waitOptions: options.waitOptions,
+              leaseGuard: options.leaseGuard,
+            });
     }
 
     let interruptPromise: Promise<void> | undefined;
@@ -1263,7 +1328,7 @@ export class WorkflowRunner {
 
     if ("error" in settled) {
       if (!isForegroundWaitBackgroundedError(settled.error)) {
-        if (settled.state.taskId != null) {
+        if (!isWorkflowAgentHardTimeoutError(settled.error) && settled.state.taskId != null) {
           options.leaseGuard.throwIfLost();
           await this.recordTaskTerminalEventIfMissing(runId, sequence, {
             stepId: settled.state.spec.id,
@@ -1709,6 +1774,306 @@ export class WorkflowRunner {
     });
   }
 
+  private async waitForAgentTaskWithGracefulTimeout(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    step: {
+      spec: WorkflowAgentSpec;
+      inputHash: string;
+      startedAt: string;
+      taskId: string;
+      resultSpec: WorkflowAgentSpec;
+      waitOptions?: WorkflowAgentWaitOptions;
+      leaseGuard: WorkflowRunnerLeaseGuard;
+    }
+  ): Promise<WorkflowAgentResult> {
+    const timeout = step.spec.timeout;
+    assert(timeout != null, "WorkflowRunner timeout wait requires timeout spec");
+    assert(
+      this.taskAdapter.waitForAgentTask != null,
+      "WorkflowRunner timeout wait requires waitForAgentTask"
+    );
+    const waitForAgentTask = this.taskAdapter.waitForAgentTask.bind(this.taskAdapter);
+    const existingStep = await this.runStore.getStep(runId, step.spec.id, step.inputHash);
+    let existingTimeout = existingStep?.timeout;
+    let executionStartedRecord: Promise<void> | undefined;
+    const recordExecutionStarted = (): void => {
+      if (existingTimeout?.executionStartedAt != null && existingTimeout.softDeadlineAt != null) {
+        return;
+      }
+      if (executionStartedRecord != null) {
+        return;
+      }
+      const executionStartedAt = this.clock.nowIso();
+      const softDeadlineAt = new Date(this.clock.nowMs() + timeout.softMs).toISOString();
+      existingTimeout = { ...existingTimeout, executionStartedAt, softDeadlineAt };
+      executionStartedRecord = this.recordStepTimeoutMetadata(runId, {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId: step.taskId,
+        startedAt: step.startedAt,
+        timeout: { executionStartedAt, softDeadlineAt },
+      });
+    };
+    const waitForExecutionStartRecord = async (): Promise<void> => {
+      if (executionStartedRecord != null) {
+        await executionStartedRecord;
+      }
+    };
+    const waitForReport = async (timeoutMs: number): Promise<WorkflowAgentResult> => {
+      assert(timeoutMs > 0, "WorkflowRunner timeout wait requires positive timeoutMs");
+      try {
+        const result = await waitForAgentTask(step.taskId, step.resultSpec, {
+          ...step.waitOptions,
+          timeoutMs,
+          onExecutionStarted: () => {
+            recordExecutionStarted();
+            return step.waitOptions?.onExecutionStarted?.();
+          },
+        });
+        await waitForExecutionStartRecord();
+        return result;
+      } catch (error) {
+        await waitForExecutionStartRecord();
+        throw error;
+      }
+    };
+    const remainingMsUntil = (deadlineIso: string | undefined, fallbackMs: number): number => {
+      if (deadlineIso == null) {
+        return fallbackMs;
+      }
+      const parsedDeadlineMs = Date.parse(deadlineIso);
+      if (!Number.isFinite(parsedDeadlineMs)) {
+        return fallbackMs;
+      }
+      return Math.max(1, parsedDeadlineMs - this.clock.nowMs());
+    };
+    const tryReadAcceptedReport = async (): Promise<WorkflowAgentResult | null> => {
+      const completedStep = await this.runStore.getCompletedStep(
+        runId,
+        step.spec.id,
+        step.inputHash
+      );
+      if (completedStep?.result != null) {
+        return { ...completedStep.result, taskId: step.taskId };
+      }
+      try {
+        return await waitForReport(1);
+      } catch {
+        return null;
+      }
+    };
+    const hardTimeout = async (): Promise<WorkflowAgentResult> => {
+      const acceptedReportBeforeHardTimeout = await tryReadAcceptedReport();
+      if (acceptedReportBeforeHardTimeout != null) {
+        return acceptedReportBeforeHardTimeout;
+      }
+
+      const errorMessage = `Workflow agent step ${step.spec.id} exceeded its soft timeout (${timeout.softMs}ms) and did not produce a valid agent_report within the grace period (${timeout.graceMs}ms).`;
+      const hardTimedOutAt = this.clock.nowIso();
+      await this.recordStepTimeoutMetadata(runId, {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId: step.taskId,
+        startedAt: step.startedAt,
+        timeout: { hardTimedOutAt },
+      });
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "timeout",
+        at: hardTimedOutAt,
+        stepId: step.spec.id,
+        taskId: step.taskId,
+        phase: "hard",
+        details: { error: errorMessage },
+      });
+      await this.recordTaskEventIfMissing(runId, sequence, {
+        stepId: step.spec.id,
+        taskId: step.taskId,
+        title: step.spec.title,
+        status: "timed_out",
+      });
+      await this.taskAdapter.failAgentTaskForHardTimeout?.(step.taskId, {
+        workflowRunId: runId,
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        reason: errorMessage,
+      });
+      const acceptedReportAfterHardTimeout = await tryReadAcceptedReport();
+      if (acceptedReportAfterHardTimeout != null) {
+        return acceptedReportAfterHardTimeout;
+      }
+      await this.recordStepFailed(runId, {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId: step.taskId,
+        error: errorMessage,
+        startedAt: step.startedAt,
+        completedAt: hardTimedOutAt,
+      });
+      throw createWorkflowAgentHardTimeoutError(errorMessage);
+    };
+    const waitDuringGrace = async (graceTimeoutMs: number): Promise<WorkflowAgentResult> => {
+      try {
+        const result = await waitForReport(graceTimeoutMs);
+        await this.appendEvent(runId, {
+          sequence: sequence.next(),
+          type: "timeout",
+          at: this.clock.nowIso(),
+          stepId: step.spec.id,
+          taskId: step.taskId,
+          phase: "recovered",
+          details: { graceMs: timeout.graceMs },
+        });
+        return result;
+      } catch (error) {
+        if (!isAgentReportWaitTimeoutError(error)) {
+          throw error;
+        }
+      }
+      return await hardTimeout();
+    };
+
+    if (existingTimeout?.softTimedOutAt != null) {
+      assert(
+        this.taskAdapter.requestAgentFinalReportForTimeout != null,
+        "WorkflowRunner timeout wait requires requestAgentFinalReportForTimeout"
+      );
+      const finalizationToken =
+        existingTimeout.finalizationToken ??
+        buildWorkflowAgentTimeoutFinalizationToken(runId, step, existingTimeout.softTimedOutAt);
+      if (existingTimeout.finalizationPromptSentAt == null) {
+        const finalizationResult = await this.taskAdapter.requestAgentFinalReportForTimeout(
+          step.taskId,
+          {
+            workflowRunId: runId,
+            stepId: step.spec.id,
+            inputHash: step.inputHash,
+            finalizationToken,
+            finalInstructions: timeout.finalInstructions,
+          }
+        );
+        if (finalizationResult === "already_reported") {
+          return await waitForReport(
+            remainingMsUntil(existingTimeout.hardDeadlineAt, timeout.graceMs)
+          );
+        }
+        if (finalizationResult === "prompted") {
+          step.leaseGuard.throwIfLost();
+          await this.recordStepTimeoutMetadata(runId, {
+            stepId: step.spec.id,
+            inputHash: step.inputHash,
+            taskId: step.taskId,
+            startedAt: step.startedAt,
+            timeout: { finalizationToken, finalizationPromptSentAt: this.clock.nowIso() },
+          });
+          await this.appendEvent(runId, {
+            sequence: sequence.next(),
+            type: "timeout",
+            at: this.clock.nowIso(),
+            stepId: step.spec.id,
+            taskId: step.taskId,
+            phase: "finalization_prompt_sent",
+            details: { result: finalizationResult },
+          });
+        }
+      }
+      return await waitDuringGrace(
+        remainingMsUntil(existingTimeout.hardDeadlineAt, timeout.graceMs)
+      );
+    }
+
+    try {
+      return await waitForReport(remainingMsUntil(existingTimeout?.softDeadlineAt, timeout.softMs));
+    } catch (error) {
+      if (!isAgentReportWaitTimeoutError(error)) {
+        throw error;
+      }
+    }
+
+    const completedAfterSoftTimeout = await this.runStore.getCompletedStep(
+      runId,
+      step.spec.id,
+      step.inputHash
+    );
+    if (completedAfterSoftTimeout?.result != null) {
+      return { ...completedAfterSoftTimeout.result, taskId: step.taskId };
+    }
+
+    assert(
+      this.taskAdapter.requestAgentFinalReportForTimeout != null,
+      "WorkflowRunner timeout wait requires requestAgentFinalReportForTimeout"
+    );
+    const softTimedOutAt = this.clock.nowIso();
+    const finalizationToken = buildWorkflowAgentTimeoutFinalizationToken(
+      runId,
+      step,
+      softTimedOutAt
+    );
+    const hardDeadlineAt = new Date(this.clock.nowMs() + timeout.graceMs).toISOString();
+    await this.recordStepTimeoutMetadata(runId, {
+      stepId: step.spec.id,
+      inputHash: step.inputHash,
+      taskId: step.taskId,
+      startedAt: step.startedAt,
+      timeout: {
+        softTimedOutAt,
+        hardDeadlineAt,
+        finalizationToken,
+      },
+    });
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "timeout",
+      at: softTimedOutAt,
+      stepId: step.spec.id,
+      taskId: step.taskId,
+      phase: "soft",
+      details: { softMs: timeout.softMs, graceMs: timeout.graceMs },
+    });
+    await this.recordTaskEventIfMissing(runId, sequence, {
+      stepId: step.spec.id,
+      taskId: step.taskId,
+      title: step.spec.title,
+      status: "finalizing",
+    });
+
+    const finalizationResult = await this.taskAdapter.requestAgentFinalReportForTimeout(
+      step.taskId,
+      {
+        workflowRunId: runId,
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        finalizationToken,
+        finalInstructions: timeout.finalInstructions,
+      }
+    );
+    if (finalizationResult === "already_reported") {
+      return await waitForReport(timeout.graceMs);
+    }
+    if (finalizationResult === "prompted") {
+      step.leaseGuard.throwIfLost();
+      await this.recordStepTimeoutMetadata(runId, {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        taskId: step.taskId,
+        startedAt: step.startedAt,
+        timeout: { finalizationPromptSentAt: this.clock.nowIso() },
+      });
+      await this.appendEvent(runId, {
+        sequence: sequence.next(),
+        type: "timeout",
+        at: this.clock.nowIso(),
+        stepId: step.spec.id,
+        taskId: step.taskId,
+        phase: "finalization_prompt_sent",
+        details: { result: finalizationResult },
+      });
+    }
+
+    return await waitDuringGrace(timeout.graceMs);
+  }
+
   private async runOrResumeAgentStep(
     runId: string,
     sequence: WorkflowEventSequence,
@@ -1723,6 +2088,90 @@ export class WorkflowRunner {
     }
   ): Promise<WorkflowAgentRunResult> {
     step.leaseGuard.throwIfLost();
+    if (step.spec.timeout != null && this.taskAdapter.waitForAgentTask != null) {
+      const resultSpec = normalizeWorkflowAgentSpecForExecution(step.spec, {
+        allowMissingOutputSchema: step.allowMissingOutputSchema,
+      });
+      let taskId = step.taskId;
+      if (taskId == null) {
+        assert(
+          this.taskAdapter.createAgentTasks != null,
+          "agent timeout requires workflow task adapter support for nonblocking agent starts"
+        );
+        const createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
+          onTaskCreated: async (index, createdTaskId) => {
+            assert(index === 0, "WorkflowRunner timeout agent start lifecycle index mismatch");
+            taskId = createdTaskId;
+            step.leaseGuard.throwIfLost();
+            await this.recordStepStarted(runId, {
+              stepId: step.spec.id,
+              inputHash: step.inputHash,
+              taskId: createdTaskId,
+              startedAt: step.startedAt,
+            });
+            await this.recordTaskStartedEventIfMissing(runId, sequence, {
+              stepId: step.spec.id,
+              taskId: createdTaskId,
+              title: step.spec.title,
+            });
+          },
+        });
+        assert(createdTasks.length === 1, "timeout agent start returned the wrong number of tasks");
+        const createdTask = createdTasks[0];
+        assert(createdTask != null, "timeout agent start must return a task");
+        if (taskId == null) {
+          taskId = createdTask.taskId;
+          await this.recordStepStarted(runId, {
+            stepId: step.spec.id,
+            inputHash: step.inputHash,
+            taskId,
+            startedAt: step.startedAt,
+          });
+          await this.recordTaskStartedEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            taskId,
+            title: step.spec.title,
+          });
+        }
+      } else {
+        await this.recordTaskStartedEventIfMissing(runId, sequence, {
+          stepId: step.spec.id,
+          taskId,
+          title: step.spec.title,
+        });
+      }
+      try {
+        const rawResult = await this.waitForAgentTaskWithGracefulTimeout(runId, sequence, {
+          spec: step.spec,
+          inputHash: step.inputHash,
+          startedAt: step.startedAt,
+          taskId,
+          resultSpec,
+          waitOptions: step.waitOptions,
+          leaseGuard: step.leaseGuard,
+        });
+        return { rawResult, resultSpec };
+      } catch (error) {
+        if (!isForegroundWaitBackgroundedError(error) && !isWorkflowAgentHardTimeoutError(error)) {
+          step.leaseGuard.throwIfLost();
+          await this.recordTaskTerminalEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            taskId,
+            title: step.spec.title,
+            status: getTaskTerminalStatusForError(error, step.waitOptions?.abortSignal),
+          });
+        }
+        if (step.taskId == null || !shouldRestartUnrecoverableStartedTask(error)) {
+          throw error;
+        }
+        return await this.runOrResumeAgentStep(runId, sequence, {
+          ...step,
+          startedAt: this.clock.nowIso(),
+          taskId: undefined,
+        });
+      }
+    }
+
     if (step.taskId != null && this.taskAdapter.waitForAgentTask != null) {
       await this.recordTaskStartedEventIfMissing(runId, sequence, {
         stepId: step.spec.id,
@@ -2342,6 +2791,49 @@ function parseWorkflowAgentThinkingLevel(rawValue: unknown): ParsedThinkingInput
   return parsed;
 }
 
+const WORKFLOW_AGENT_TIMEOUT_MIN_MS = 1_000;
+const WORKFLOW_AGENT_SOFT_TIMEOUT_MAX_MS = 24 * 60 * 60 * 1000;
+const WORKFLOW_AGENT_GRACE_TIMEOUT_MAX_MS = 60 * 60 * 1000;
+const WORKFLOW_AGENT_FINAL_INSTRUCTIONS_MAX_LENGTH = 4_000;
+
+function parseWorkflowAgentTimeoutSpec(rawValue: unknown): WorkflowAgentTimeoutSpec | undefined {
+  if (rawValue === undefined) {
+    return undefined;
+  }
+  assert(
+    rawValue != null && typeof rawValue === "object" && !Array.isArray(rawValue),
+    "agent timeout must be an object"
+  );
+  const timeout = rawValue as Record<string, unknown>;
+  const softMs = timeout.softMs;
+  assert(
+    typeof softMs === "number" &&
+      Number.isInteger(softMs) &&
+      softMs >= WORKFLOW_AGENT_TIMEOUT_MIN_MS &&
+      softMs <= WORKFLOW_AGENT_SOFT_TIMEOUT_MAX_MS,
+    "agent timeout.softMs must be a positive integer between 1000ms and 24h"
+  );
+  const graceMs = timeout.graceMs;
+  assert(
+    typeof graceMs === "number" &&
+      Number.isInteger(graceMs) &&
+      graceMs >= WORKFLOW_AGENT_TIMEOUT_MIN_MS &&
+      graceMs <= WORKFLOW_AGENT_GRACE_TIMEOUT_MAX_MS,
+    "agent timeout.graceMs must be a positive integer between 1000ms and 1h"
+  );
+  const parsed: WorkflowAgentTimeoutSpec = { softMs, graceMs };
+  if (timeout.finalInstructions !== undefined) {
+    assert(
+      typeof timeout.finalInstructions === "string" &&
+        timeout.finalInstructions.trim().length > 0 &&
+        timeout.finalInstructions.length <= WORKFLOW_AGENT_FINAL_INSTRUCTIONS_MAX_LENGTH,
+      "agent timeout.finalInstructions must be a non-empty string under 4000 characters"
+    );
+    parsed.finalInstructions = timeout.finalInstructions;
+  }
+  return parsed;
+}
+
 function parseWorkflowAgentSpec(
   rawSpec: unknown,
   options: { allowMissingOutputSchema: boolean }
@@ -2377,6 +2869,10 @@ function parseWorkflowAgentSpec(
       'agent isolation must be "fork" or "none"'
     );
     parsed.isolation = spec.isolation;
+  }
+  const timeout = parseWorkflowAgentTimeoutSpec(spec.timeout);
+  if (timeout !== undefined) {
+    parsed.timeout = timeout;
   }
   if (spec.markdownOnly !== undefined) {
     assert(spec.markdownOnly === true, "agent markdownOnly must be true when provided");
