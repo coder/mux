@@ -158,6 +158,27 @@ describe("goal tools", () => {
     expect(result).toMatchObject({ goal: { budgetCents: 450, turnCap: 3 } });
   });
 
+  test("set_goal uses positive default budget even when omitted user budgets are allowed", async () => {
+    const tool = createSetGoalTool({
+      cwd: "/tmp",
+      runtimeTempDir: "/tmp",
+      runtime: inertRuntime,
+      workspaceId,
+      goalService,
+      goalDefaults: {
+        defaultBudgetCents: 650,
+        defaultTurnCap: null,
+        alwaysRequireExplicitBudget: false,
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ objective: "Use global budget default" }, mockToolCallOptions)
+    );
+
+    expect(result).toMatchObject({ goal: { budgetCents: 650, turnCap: null } });
+  });
+
   test("set_goal accepts explicit positive budget and turn cap", async () => {
     const tool = createSetGoalTool({
       cwd: "/tmp",

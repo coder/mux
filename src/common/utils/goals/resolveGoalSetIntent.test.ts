@@ -40,10 +40,25 @@ describe("resolveModelGoalSetIntent", () => {
     expect(intent.turnCap).toBe(8);
   });
 
-  test("honors no-budget defaults for model tools without treating null as explicit clear", () => {
+  test("applies the positive budget default even when user-authored goals may omit budgets", () => {
     const intent = resolveModelGoalSetIntent(
       { objective: "ship", budgetCents: null, turnCap: null },
       { ...defaults, alwaysRequireExplicitBudget: false, defaultTurnCap: null }
+    );
+
+    expect(intent.budgetCents).toBe(500);
+    expect(intent.turnCap).toBeNull();
+  });
+
+  test("resolves to unbounded only when effective defaults have no positive budget or turn cap", () => {
+    const intent = resolveModelGoalSetIntent(
+      { objective: "ship", budgetCents: null, turnCap: null },
+      {
+        ...defaults,
+        defaultBudgetCents: 0,
+        defaultTurnCap: null,
+        alwaysRequireExplicitBudget: false,
+      }
     );
 
     expect(intent.budgetCents).toBeNull();

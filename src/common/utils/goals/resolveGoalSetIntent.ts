@@ -101,6 +101,8 @@ export function resolveGoalSetIntent(
  * providers. For agent-created goals, `null` must therefore mean "use the
  * effective defaults" rather than the UI meaning "the user explicitly cleared
  * this bound"; otherwise a model could accidentally create an unbounded goal.
+ * The budget default applies even when user-authored forms allow omitted
+ * budgets to mean "no budget" — a model omission is not an explicit user clear.
  */
 export function resolveModelGoalSetIntent(
   input: GoalSetIntentInput,
@@ -110,9 +112,7 @@ export function resolveModelGoalSetIntent(
   const budgetCents =
     input.budgetCents != null
       ? normalizeGoalBudgetCents(input.budgetCents)
-      : defaults.alwaysRequireExplicitBudget
-        ? normalizeGoalBudgetCents(defaults.defaultBudgetCents)
-        : null;
+      : normalizeGoalBudgetCents(defaults.defaultBudgetCents);
   const turnCap = input.turnCap ?? defaults.defaultTurnCap;
 
   return {

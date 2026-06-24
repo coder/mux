@@ -42,7 +42,7 @@ export const createSetGoalTool: ToolFactory = (config) => {
       assertResolvedModelGoalBounds(resolved);
       if (resolved.budgetCents == null && resolved.turnCap == null) {
         throw new Error(
-          "set_goal requires a budget or turn cap for model-created goals. Ask the user to provide a budget/turn cap or configure workspace goal defaults."
+          "set_goal requires a budget or turn cap for model-created goals. Ask the user to provide one, or configure a positive effective default goal budget/turn cap."
         );
       }
 
