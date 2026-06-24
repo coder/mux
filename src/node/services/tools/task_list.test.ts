@@ -531,9 +531,39 @@ describe("task_list tool", () => {
 
     const listDescendantAgentTasks = mock(() => []);
     const taskService = { listDescendantAgentTasks } as unknown as TaskService;
+    const activeRun = {
+      ...buildWorkflowRun("wfr_active", "backgrounded"),
+      events: [
+        {
+          sequence: 1,
+          type: "phase" as const,
+          at: "2026-05-29T00:00:01.000Z",
+          name: "verify",
+          details: { claimCount: 2 },
+        },
+        {
+          sequence: 2,
+          type: "task" as const,
+          at: "2026-05-29T00:00:02.000Z",
+          stepId: "verify-1",
+          taskId: "child-task-id",
+          title: "Verify claim 1",
+          status: "started",
+        },
+      ],
+      steps: [
+        {
+          stepId: "verify-1",
+          inputHash: "sha256:verify-1",
+          status: "started" as const,
+          taskId: "child-task-id",
+          startedAt: "2026-05-29T00:00:02.000Z",
+        },
+      ],
+    };
     const listRuns = mock(() =>
       Promise.resolve([
-        buildWorkflowRun("wfr_active", "backgrounded"),
+        activeRun,
         // Terminal/interrupted runs are excluded by the default (active) status filter.
         buildWorkflowRun("wfr_done", "completed"),
         buildWorkflowRun("wfr_stopped", "interrupted"),
@@ -561,10 +591,21 @@ describe("task_list tool", () => {
           parentWorkspaceId: "root-workspace",
           title: "deep-research",
           createdAt: "2026-05-29T00:00:00.000Z",
+          workflowProgress: {
+            name: "deep-research",
+            latestPhase: {
+              name: "verify",
+              at: "2026-05-29T00:00:01.000Z",
+            },
+            lastProgressAt: "2026-05-29T00:00:02.000Z",
+            stepCounts: { started: 1, completed: 0, failed: 0, interrupted: 0 },
+          },
           depth: 1,
         },
       ],
     });
+    expect(JSON.stringify(result)).not.toContain("child-task-id");
+    expect(JSON.stringify(result)).not.toContain("claimCount");
   });
 
   it("discovers resumable workflow runs without querying agent tasks", async () => {

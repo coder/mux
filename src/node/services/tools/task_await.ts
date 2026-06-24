@@ -29,6 +29,7 @@ import {
   isWorkspaceTurnTaskId,
   type WorkspaceTurnTaskStatus,
 } from "@/node/services/taskHandleStore";
+import { buildWorkflowProgressSummary, formatWorkflowProgressNote } from "./workflowProgress";
 import {
   ForegroundWaitBackgroundedError,
   type AgentTaskStatus,
@@ -165,6 +166,8 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
     taskId: run.id,
     ...withElapsedMs(getWorkflowRunElapsedMs(run)),
   };
+  const workflowProgress = buildWorkflowProgressSummary(run);
+  const workflowProgressField = workflowProgress == null ? {} : { workflowProgress };
 
   switch (run.status) {
     case "completed": {
@@ -197,19 +200,25 @@ function buildWorkflowAwaitResult(run: WorkflowRunRecord) {
       return {
         status: "queued" as const,
         ...base,
-        note: `Workflow ${run.workflow.name} is queued.`,
+        ...workflowProgressField,
+        note: formatWorkflowProgressNote(`Workflow ${run.workflow.name} is queued.`, run),
       };
     case "backgrounded":
       return {
         status: "backgrounded" as const,
         ...base,
-        note: `Workflow ${run.workflow.name} is backgrounded. Use task_await to monitor progress.`,
+        ...workflowProgressField,
+        note: formatWorkflowProgressNote(
+          `Workflow ${run.workflow.name} is backgrounded. Use task_await to monitor progress.`,
+          run
+        ),
       };
     case "running":
       return {
         status: "running" as const,
         ...base,
-        note: `Workflow ${run.workflow.name} is still running.`,
+        ...workflowProgressField,
+        note: formatWorkflowProgressNote(`Workflow ${run.workflow.name} is still running.`, run),
       };
   }
 }

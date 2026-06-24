@@ -16,6 +16,7 @@ import { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import type { WorkspaceTurnTaskStatus } from "@/node/services/taskHandleStore";
 
+import { buildWorkflowProgressSummary } from "./workflowProgress";
 import { toBashTaskId } from "./taskId";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 
@@ -244,12 +245,14 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
           ) {
             continue;
           }
+          const workflowProgress = buildWorkflowProgressSummary(parsed.data);
           tasks.push({
             taskId: parsed.data.id,
             status: parsed.data.status,
             parentWorkspaceId: workspaceId,
             title: parsed.data.workflow.name,
             createdAt: parsed.data.createdAt,
+            ...(workflowProgress != null ? { workflowProgress } : {}),
             depth: 1,
           });
         }

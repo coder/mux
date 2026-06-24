@@ -756,6 +756,31 @@ export const TaskAwaitToolCompletedResultSchema = z
   })
   .strict();
 
+export const WorkflowProgressPhaseSummarySchema = z
+  .object({
+    name: z.string().min(1),
+    at: z.string(),
+  })
+  .strict();
+
+export const WorkflowProgressStepCountsSchema = z
+  .object({
+    started: z.number().int().nonnegative(),
+    completed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    interrupted: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const WorkflowProgressSummarySchema = z
+  .object({
+    name: z.string().min(1),
+    latestPhase: WorkflowProgressPhaseSummarySchema.optional(),
+    lastProgressAt: z.string().optional(),
+    stepCounts: WorkflowProgressStepCountsSchema,
+  })
+  .strict();
+
 export const TaskAwaitToolActiveResultSchema = z
   .object({
     status: z.enum([
@@ -772,6 +797,7 @@ export const TaskAwaitToolActiveResultSchema = z
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     note: z.string().optional(),
+    workflowProgress: WorkflowProgressSummarySchema.optional(),
   })
   .strict();
 
@@ -1046,6 +1072,7 @@ export const TaskListToolTaskSchema = z
     workspaceId: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    workflowProgress: WorkflowProgressSummarySchema.optional(),
     depth: z.number().int().min(0),
   })
   .strict();
@@ -1877,6 +1904,7 @@ export const TOOL_DEFINITIONS = {
       "This is ideal for independent lanes (variants) or any case where per-result work exists. " +
       "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
       "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
+      "Active workflow-run results may include compact `workflowProgress` (latest phase, last progress timestamp, and step counts); use that to see that phased progress is still happening instead of treating elapsed time alone as a hang. " +
       "You always get per-task results (like Promise.allSettled), just possibly before every task has finished. " +
       "Possible statuses: completed, queued, starting, running, backgrounded, awaiting_report, interrupted, not_found, invalid_scope, error. " +
       "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
@@ -1895,6 +1923,7 @@ export const TOOL_DEFINITIONS = {
       "List descendant tasks for the current workspace, including status + metadata. " +
       "This includes sub-agent tasks, background bash tasks, and top-level workflow runs, but omits workflow-owned sub-agents/background bash tasks whose reports are consumed through parent workflow runs. " +
       "Use this after compaction, interruptions, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
+      "Workflow rows may include compact `workflowProgress` so callers can see the latest phase before deciding whether to await, resume, or leave the run alone. " +
       "Archived non-actionable child workspace tasks are hidden by default; pass includeArchived: true to inspect them. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
