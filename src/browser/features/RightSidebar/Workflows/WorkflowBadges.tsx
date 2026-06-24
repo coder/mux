@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Circle, Pause, X } from "lucide-react";
+import { Check, Circle, Pause, X, type LucideIcon } from "lucide-react";
 
 import type { WorkflowRunStatus, WorkflowScriptScope } from "@/common/types/workflow";
 import { WORKFLOW_STATUS_META, WORKFLOW_TONE_VAR, type WorkflowTone } from "./workflowDisplay";
@@ -13,17 +13,20 @@ export const WorkflowLiveDot: React.FC<{ tone?: WorkflowTone; className?: string
   />
 );
 
+// Status → glyph. Exhaustive over WorkflowRunStatus (via Record) so adding a run status
+// is a compile error here rather than a silent fall-through to the default icon.
+const WORKFLOW_STATUS_ICON: Record<WorkflowRunStatus, LucideIcon> = {
+  pending: Circle,
+  running: Circle,
+  backgrounded: Pause,
+  interrupted: Pause,
+  completed: Check,
+  failed: X,
+};
+
 const WorkflowStatusIcon: React.FC<{ status: WorkflowRunStatus; color: string }> = (props) => {
-  if (props.status === "completed") {
-    return <Check className="h-3 w-3 shrink-0" style={{ color: props.color }} />;
-  }
-  if (props.status === "failed") {
-    return <X className="h-3 w-3 shrink-0" style={{ color: props.color }} />;
-  }
-  if (props.status === "backgrounded" || props.status === "interrupted") {
-    return <Pause className="h-3 w-3 shrink-0" style={{ color: props.color }} />;
-  }
-  return <Circle className="h-3 w-3 shrink-0" style={{ color: props.color }} />;
+  const Icon = WORKFLOW_STATUS_ICON[props.status];
+  return <Icon className="h-3 w-3 shrink-0" style={{ color: props.color }} />;
 };
 
 /** Run status pill — colored by status tone; pulses while running. */
