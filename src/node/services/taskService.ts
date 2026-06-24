@@ -331,8 +331,13 @@ function formatStructuredOutputValidationMessage(params: {
 
 function normalizeWorkflowAgentReportArgsForWorkflowTask(
   workflowTask: WorkspaceConfigEntry["workflowTask"] | undefined,
-  reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
-): { reportMarkdown: string; title?: string; structuredOutput?: unknown } {
+  reportArgs: {
+    reportMarkdown: string;
+    title?: string;
+    structuredOutput?: unknown;
+    planFilePath?: string;
+  }
+): { reportMarkdown: string; title?: string; structuredOutput?: unknown; planFilePath?: string } {
   if (workflowTask?.outputSchema === undefined || reportArgs.structuredOutput === undefined) {
     return reportArgs;
   }
@@ -382,6 +387,16 @@ function validateWorkflowAgentReportStructuredOutput(params: {
     workflowTask,
     errors: validation.errors,
   });
+}
+
+function isAgentRunnableAsChild(
+  frontmatter: { subagent?: { runnable?: boolean; workflow_runnable?: boolean } },
+  params: { workflowOwned: boolean }
+): boolean {
+  if (frontmatter.subagent?.runnable === true) {
+    return true;
+  }
+  return params.workflowOwned && frontmatter.subagent?.workflow_runnable === true;
 }
 
 type WorkspaceTurnQueueDispatchMode = "tool-end" | "turn-end";
@@ -592,7 +607,12 @@ interface InactiveWorkflowTaskOwner {
 type InterruptedTaskStatusMutation = "interrupted" | "preserved-completed-report";
 
 interface PendingTaskWaiter extends BackgroundableForegroundWaiter {
-  resolve: (report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }) => void;
+  resolve: (report: {
+    reportMarkdown: string;
+    title?: string;
+    structuredOutput?: unknown;
+    planFilePath?: string;
+  }) => void;
 }
 
 interface PendingTaskStartWaiter {
@@ -602,6 +622,7 @@ interface PendingTaskStartWaiter {
 
 interface CompletedAgentReportCacheEntry {
   reportMarkdown: string;
+  planFilePath?: string;
   structuredOutput?: unknown;
   title?: string;
   // Ancestor workspace IDs captured when the report was cached.
@@ -2164,7 +2185,13 @@ export class TaskService {
                     agent.id,
                     { skipScopesAbove: getSkipScopesAboveForKnownScope(agent.scope) }
                   );
-                  if (frontmatter.subagent?.runnable !== true) return null;
+                  if (
+                    !isAgentRunnableAsChild(frontmatter, {
+                      workflowOwned: args.workflowTask != null,
+                    })
+                  ) {
+                    return null;
+                  }
                   return isAgentEffectivelyDisabled({
                     cfg,
                     agentId: agent.id,
@@ -2189,7 +2216,7 @@ export class TaskService {
       let skipInitHook = false;
       try {
         const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
-        if (frontmatter.subagent?.runnable !== true) {
+        if (!isAgentRunnableAsChild(frontmatter, { workflowOwned: args.workflowTask != null })) {
           const hint = await getRunnableHint();
           return Err(
             `Task.createMany: agentId is not runnable as a sub-agent (${agentId}). ${hint}`
@@ -3177,7 +3204,11 @@ export class TaskService {
                     skipScopesAbove: getSkipScopesAboveForKnownScope(agent.scope),
                   }
                 );
-                if (frontmatter.subagent?.runnable !== true) {
+                if (
+                  !isAgentRunnableAsChild(frontmatter, {
+                    workflowOwned: args.workflowTask != null,
+                  })
+                ) {
                   return null;
                 }
 
@@ -3205,7 +3236,7 @@ export class TaskService {
     let skipInitHook = false;
     try {
       const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
-      if (frontmatter.subagent?.runnable !== true) {
+      if (!isAgentRunnableAsChild(frontmatter, { workflowOwned: args.workflowTask != null })) {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId}). ${hint}`);
       }
@@ -4173,7 +4204,12 @@ export class TaskService {
       requestingWorkspaceId?: string;
       backgroundOnMessageQueued?: boolean;
     }
-  ): Promise<{ reportMarkdown: string; title?: string; structuredOutput?: unknown }> {
+  ): Promise<{
+    reportMarkdown: string;
+    title?: string;
+    structuredOutput?: unknown;
+    planFilePath?: string;
+  }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
     // Report monotonicity invariant: check the in-memory cache before any status-based
@@ -4183,6 +4219,7 @@ export class TaskService {
       return {
         reportMarkdown: cached.reportMarkdown,
         title: cached.title,
+        planFilePath: cached.planFilePath,
         structuredOutput: cached.structuredOutput,
       };
     }
@@ -4198,6 +4235,7 @@ export class TaskService {
 
     const tryReadPersistedReport = async (): Promise<{
       reportMarkdown: string;
+      planFilePath?: string;
       structuredOutput?: unknown;
       title?: string;
     } | null> => {
@@ -4215,6 +4253,7 @@ export class TaskService {
       this.completedReportsByTaskId.set(taskId, {
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
+        planFilePath: artifact.planFilePath,
         structuredOutput: artifact.structuredOutput,
         workflowOwnedAncestorWorkspaceIds: artifact.workflowOwnedAncestorWorkspaceIds,
         ancestorWorkspaceIds: artifact.ancestorWorkspaceIds,
@@ -4241,6 +4280,7 @@ export class TaskService {
       return {
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
+        planFilePath: artifact.planFilePath,
         structuredOutput: artifact.structuredOutput,
       };
     };
@@ -4293,6 +4333,7 @@ export class TaskService {
     return await new Promise<{
       reportMarkdown: string;
       title?: string;
+      planFilePath?: string;
       structuredOutput?: unknown;
     }>((resolve, reject) => {
       void (async () => {
@@ -6645,10 +6686,17 @@ export class TaskService {
     const reportArgs = this.findAgentReportArgsInParts(event.parts, {
       acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
     });
+    const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
+    const proposePlanResult = this.findProposePlanSuccessInParts(event.parts);
 
     // Stream-end settlement: interrupted tasks must settle all pending waiters.
-    // Report present → finalize (resolve waiters). No report → reject waiters promptly.
+    // A workflow-owned plan step that successfully called propose_plan is already complete,
+    // even if the interruption status landed before the provider emitted stream-end.
     if (status === "interrupted") {
+      if (isPlanLike && proposePlanResult && entry.workspace.workflowTask != null) {
+        await this.handleSuccessfulWorkflowProposePlan({ workspaceId, entry, proposePlanResult });
+        return;
+      }
       await this.settleInterruptedTaskAtStreamEnd(workspaceId, entry, reportArgs);
       return;
     }
@@ -6659,6 +6707,7 @@ export class TaskService {
 
     if (
       reportArgs == null &&
+      !(isPlanLike && proposePlanResult && entry.workspace.workflowTask != null) &&
       (await this.interruptTaskRecoveryForInactiveWorkflowOwner(
         workspaceId,
         cfg,
@@ -6668,8 +6717,6 @@ export class TaskService {
     ) {
       return;
     }
-
-    const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
 
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
@@ -6715,8 +6762,11 @@ export class TaskService {
       return;
     }
 
-    const proposePlanResult = this.findProposePlanSuccessInParts(event.parts);
     if (isPlanLike && proposePlanResult) {
+      if (entry.workspace.workflowTask != null) {
+        await this.handleSuccessfulWorkflowProposePlan({ workspaceId, entry, proposePlanResult });
+        return;
+      }
       await this.handleSuccessfulProposePlanAutoHandoff({
         workspaceId,
         entry,
@@ -7146,7 +7196,12 @@ export class TaskService {
   private async settleInterruptedTaskAtStreamEnd(
     workspaceId: string,
     entry: { projectPath: string; workspace: WorkspaceConfigEntry },
-    reportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown } | null,
+    reportArgs: {
+      reportMarkdown: string;
+      title?: string;
+      structuredOutput?: unknown;
+      planFilePath?: string;
+    } | null,
     options?: { rejectionError?: Error }
   ): Promise<void> {
     if (reportArgs) {
@@ -7172,6 +7227,103 @@ export class TaskService {
         groupId: bestOf.groupId,
         total: bestOf.total,
       });
+    }
+  }
+
+  private async handleSuccessfulWorkflowProposePlan(args: {
+    workspaceId: string;
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry };
+    proposePlanResult: { planPath: string };
+  }): Promise<void> {
+    assert(
+      args.workspaceId.length > 0,
+      "handleSuccessfulWorkflowProposePlan: workspaceId must be non-empty"
+    );
+    assert(
+      args.proposePlanResult.planPath.length > 0,
+      "handleSuccessfulWorkflowProposePlan: planPath must be non-empty"
+    );
+
+    if (args.entry.workspace.workflowTask?.outputSchema !== undefined) {
+      const error = new Error(
+        "Workflow plan agents return plan markdown and planFilePath; do not provide schema/outputSchema."
+      );
+      await this.editWorkspaceEntry(
+        args.workspaceId,
+        (workspace) => {
+          workspace.taskStatus = "interrupted";
+          workspace.taskLaunchError = error.message;
+        },
+        { allowMissing: true }
+      );
+      this.rejectWaiters(args.workspaceId, error);
+      await this.emitWorkspaceMetadata(args.workspaceId);
+      return;
+    }
+
+    let planSummary: { content: string; path: string } | null = null;
+    try {
+      const info = await this.workspaceService.getInfo(args.workspaceId);
+      if (!info) {
+        log.error("Workflow plan completion could not read workspace metadata", {
+          workspaceId: args.workspaceId,
+        });
+      } else {
+        const runtime = createRuntimeForWorkspace(info);
+        const planResult = await readPlanFile(
+          runtime,
+          info.name,
+          info.projectName,
+          args.workspaceId
+        );
+        if (planResult.exists && planResult.content.trim().length > 0) {
+          if (planResult.path !== args.proposePlanResult.planPath) {
+            log.debug("Workflow plan completion using canonical plan file path", {
+              workspaceId: args.workspaceId,
+              proposedPlanPath: args.proposePlanResult.planPath,
+              canonicalPlanPath: planResult.path,
+            });
+          }
+          planSummary = { content: planResult.content, path: planResult.path };
+        } else {
+          log.error("Workflow plan completion did not find non-empty plan file content", {
+            workspaceId: args.workspaceId,
+            planPath: args.proposePlanResult.planPath,
+            canonicalPlanPath: planResult.path,
+          });
+        }
+      }
+    } catch (error: unknown) {
+      log.error("Workflow plan completion failed to read plan file", {
+        workspaceId: args.workspaceId,
+        planPath: args.proposePlanResult.planPath,
+        error,
+      });
+    }
+
+    if (planSummary == null) {
+      await this.editWorkspaceEntry(
+        args.workspaceId,
+        (workspace) => {
+          workspace.taskStatus = "awaiting_report";
+          workspace.reportedAt = undefined;
+        },
+        { allowMissing: true }
+      );
+      await this.emitWorkspaceMetadata(args.workspaceId);
+      await this.promptTaskForRequiredCompletionTool(args.workspaceId, { reason: "stream_end" });
+      return;
+    }
+
+    const finalization = await this.finalizeAgentTaskReport(args.workspaceId, args.entry, {
+      reportMarkdown: planSummary.content,
+      title: "Proposed plan",
+      planFilePath: planSummary.path,
+    });
+    if (finalization.finalized) {
+      await this.finalizeTerminationPhaseForReportedTask(args.workspaceId);
+    } else {
+      this.rejectWaiters(args.workspaceId, new Error(finalization.message));
     }
   }
 
@@ -7619,6 +7771,7 @@ export class TaskService {
           {
             reportMarkdown: artifact.reportMarkdown,
             ...(artifact.title !== undefined ? { title: artifact.title } : {}),
+            ...(artifact.planFilePath !== undefined ? { planFilePath: artifact.planFilePath } : {}),
             ...(artifact.structuredOutput !== undefined
               ? { structuredOutput: artifact.structuredOutput }
               : {}),
@@ -7730,7 +7883,12 @@ export class TaskService {
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    rawReportArgs: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+    rawReportArgs: {
+      reportMarkdown: string;
+      title?: string;
+      structuredOutput?: unknown;
+      planFilePath?: string;
+    }
   ): Promise<AgentReportFinalizationResult> {
     this.markTaskForegroundRelevant(childWorkspaceId);
 
@@ -7868,6 +8026,7 @@ export class TaskService {
           model: latestChildEntry?.workspace.taskModelString,
           thinkingLevel: latestChildEntry?.workspace.taskThinkingLevel,
           title: reportArgs.title,
+          planFilePath: reportArgs.planFilePath,
           structuredOutput: reportArgs.structuredOutput,
           nowMs: persistedAtMs,
         });
@@ -7990,7 +8149,12 @@ export class TaskService {
 
   private resolveWaiters(
     taskId: string,
-    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+    report: {
+      reportMarkdown: string;
+      title?: string;
+      structuredOutput?: unknown;
+      planFilePath?: string;
+    }
   ): boolean {
     this.markTaskForegroundRelevant(taskId);
 
@@ -8009,6 +8173,7 @@ export class TaskService {
     this.completedReportsByTaskId.set(taskId, {
       reportMarkdown: report.reportMarkdown,
       title: report.title,
+      planFilePath: report.planFilePath,
       structuredOutput: report.structuredOutput,
       ancestorWorkspaceIds,
       workflowOwnedAncestorWorkspaceIds,
@@ -8221,6 +8386,7 @@ export class TaskService {
       taskId: string;
       reportMarkdown: string;
       structuredOutput?: unknown;
+      planFilePath?: string;
       title?: string;
       agentId?: string;
       agentType?: string;
@@ -8238,6 +8404,7 @@ export class TaskService {
         taskId: sibling.taskId,
         reportMarkdown: artifact.reportMarkdown,
         title: artifact.title,
+        planFilePath: artifact.planFilePath,
         structuredOutput: artifact.structuredOutput,
         agentId: sibling.agentId,
         agentType: sibling.agentType,
@@ -8373,7 +8540,12 @@ export class TaskService {
     parentWorkspaceId: string,
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+    report: {
+      reportMarkdown: string;
+      title?: string;
+      structuredOutput?: unknown;
+      planFilePath?: string;
+    }
   ): Promise<void> {
     assert(
       childWorkspaceId.length > 0,
@@ -8409,7 +8581,12 @@ export class TaskService {
     parentWorkspaceId: string,
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
-    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+    report: {
+      reportMarkdown: string;
+      title?: string;
+      structuredOutput?: unknown;
+      planFilePath?: string;
+    }
   ): Promise<readonly string[]> {
     const agentType = coerceNonEmptyString(childEntry?.workspace.agentType) ?? "agent";
 
@@ -8418,6 +8595,7 @@ export class TaskService {
       taskId: childWorkspaceId,
       reportMarkdown: report.reportMarkdown,
       title: report.title,
+      planFilePath: report.planFilePath,
       structuredOutput: report.structuredOutput,
       agentType,
     };

@@ -86,7 +86,12 @@ interface WorkflowTaskServiceLike {
       requestingWorkspaceId: string;
       backgroundOnMessageQueued: boolean;
     }
-  ): Promise<{ reportMarkdown: string; title?: string; structuredOutput?: unknown }>;
+  ): Promise<{
+    reportMarkdown: string;
+    title?: string;
+    structuredOutput?: unknown;
+    planFilePath?: string;
+  }>;
   terminateAllDescendantAgentTasks?(
     workspaceId: string,
     options?: { workflowRunId?: string }
@@ -471,6 +476,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       taskId,
       reportMarkdown: report.reportMarkdown,
       ...(report.title != null ? { title: report.title } : {}),
+      ...(report.planFilePath !== undefined ? { planFilePath: report.planFilePath } : {}),
       ...(report.structuredOutput !== undefined
         ? { structuredOutput: report.structuredOutput }
         : {}),

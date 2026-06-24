@@ -87,6 +87,7 @@ export const WorkflowResultSchema = z.object({
 export const StructuredTaskOutputSchema = z.object({
   reportMarkdown: z.string(),
   title: z.string().min(1).nullable().optional(),
+  planFilePath: z.string().min(1).optional(),
   structuredOutput: JsonValueSchema.optional(),
   taskId: z.string().min(1).optional(),
 });

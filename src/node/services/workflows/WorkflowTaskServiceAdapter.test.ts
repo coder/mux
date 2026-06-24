@@ -20,6 +20,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     );
     const waitForAgentReport = mock(async () => ({
       reportMarkdown: "child report",
+      planFilePath: "/tmp/mux/plans/repo/task_1.md",
       structuredOutput: { claims: ["durable"] },
     }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -55,6 +56,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     expect(result).toEqual({
       taskId: "task_1",
       reportMarkdown: "child report",
+      planFilePath: "/tmp/mux/plans/repo/task_1.md",
       structuredOutput: { claims: ["durable"] },
     });
   });

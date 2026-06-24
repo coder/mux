@@ -29,6 +29,7 @@ export interface SubagentReportArtifactIndexEntry {
   /** Ancestors for which this child is owned by a workflow step. */
   workflowOwnedAncestorWorkspaceIds?: string[];
   structuredOutput?: unknown;
+  planFilePath?: string;
   /** Estimated token count of delivered report markdown (~4 chars/token). */
   reportTokenEstimate?: number;
 }
@@ -140,6 +141,7 @@ export async function readSubagentReportArtifact(
       ancestorWorkspaceIds?: unknown;
       workflowOwnedAncestorWorkspaceIds?: unknown;
       structuredOutput?: unknown;
+      planFilePath?: unknown;
       reportMarkdown?: unknown;
     };
 
@@ -149,6 +151,11 @@ export async function readSubagentReportArtifact(
     }
 
     const title = typeof obj.title === "string" ? obj.title : undefined;
+
+    const planFilePath =
+      typeof obj.planFilePath === "string" && obj.planFilePath.trim().length > 0
+        ? obj.planFilePath.trim()
+        : undefined;
 
     const model =
       typeof obj.model === "string" && obj.model.trim().length > 0 ? obj.model.trim() : undefined;
@@ -169,6 +176,7 @@ export async function readSubagentReportArtifact(
         thinkingLevel: coerceThinkingLevel(meta.thinkingLevel),
         title: title ?? meta.title,
         structuredOutput: obj.structuredOutput,
+        planFilePath: planFilePath ?? meta.planFilePath,
         reportMarkdown,
       };
     }
@@ -197,6 +205,7 @@ export async function readSubagentReportArtifact(
       ancestorWorkspaceIds,
       workflowOwnedAncestorWorkspaceIds,
       structuredOutput: obj.structuredOutput,
+      planFilePath,
       reportMarkdown,
     };
   } catch (error) {
@@ -243,6 +252,7 @@ export async function upsertSubagentReportArtifact(params: {
   /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
   thinkingLevel?: ThinkingLevel;
   workflowOwnedAncestorWorkspaceIds?: string[];
+  planFilePath?: string;
   structuredOutput?: unknown;
   title?: string;
   nowMs?: number;
@@ -257,6 +267,11 @@ export async function upsertSubagentReportArtifact(params: {
         ? params.model.trim()
         : undefined;
     const thinkingLevel = coerceThinkingLevel(params.thinkingLevel);
+
+    const planFilePath =
+      typeof params.planFilePath === "string" && params.planFilePath.trim().length > 0
+        ? params.planFilePath.trim()
+        : undefined;
 
     const file = await readSubagentReportArtifactsFile(params.workspaceSessionDir);
     const existing = file.artifactsByChildTaskId[params.childTaskId] ?? null;
@@ -282,6 +297,7 @@ export async function upsertSubagentReportArtifact(params: {
             title: params.title,
             ancestorWorkspaceIds: params.ancestorWorkspaceIds,
             workflowOwnedAncestorWorkspaceIds: params.workflowOwnedAncestorWorkspaceIds,
+            planFilePath,
             structuredOutput: params.structuredOutput,
             reportMarkdown: params.reportMarkdown,
           },
@@ -307,6 +323,7 @@ export async function upsertSubagentReportArtifact(params: {
       thinkingLevel,
       title: params.title,
       workflowOwnedAncestorWorkspaceIds: params.workflowOwnedAncestorWorkspaceIds,
+      planFilePath,
       structuredOutput: params.structuredOutput,
       ancestorWorkspaceIds: params.ancestorWorkspaceIds,
     };

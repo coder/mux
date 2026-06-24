@@ -47,11 +47,12 @@ Do the thing.
     expect(result.body).toContain("# Instructions");
   });
 
-  test("parses subagent.skip_init_hook", () => {
+  test("parses subagent workflow-only runnability", () => {
     const content = `---
-name: Skip Init
+name: Workflow Runnable
 subagent:
-  runnable: true
+  runnable: false
+  workflow_runnable: true
   skip_init_hook: true
 ---
 Body
@@ -62,6 +63,8 @@ Body
       byteSize: Buffer.byteLength(content, "utf-8"),
     });
 
+    expect(result.frontmatter.subagent?.runnable).toBe(false);
+    expect(result.frontmatter.subagent?.workflow_runnable).toBe(true);
     expect(result.frontmatter.subagent?.skip_init_hook).toBe(true);
   });
 

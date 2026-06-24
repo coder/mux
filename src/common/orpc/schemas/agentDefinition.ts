@@ -20,6 +20,8 @@ const AgentDefinitionUiSchema = z
 const AgentDefinitionSubagentSchema = z
   .object({
     runnable: z.boolean().optional(),
+    // Workflow-owned child tasks may opt into subagent execution without being generally runnable.
+    workflow_runnable: z.boolean().optional(),
     // Instructions appended when this agent runs as a subagent (child workspace)
     append_prompt: z.string().min(1).optional(),
     // When true, do not run the project's .mux/init hook for this sub-agent.

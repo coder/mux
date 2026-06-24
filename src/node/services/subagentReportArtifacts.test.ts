@@ -43,6 +43,29 @@ describe("subagentReportArtifacts", () => {
     expect(entry?.reportTokenEstimate).toBe(100);
   });
 
+  test("upsertSubagentReportArtifact preserves plan file path metadata", async () => {
+    const workspaceId = "parent-1";
+    const childTaskId = "child-plan";
+    const planFilePath = path.join(testDir, "plans", "repo", "plan-child.md");
+
+    await upsertSubagentReportArtifact({
+      workspaceId,
+      workspaceSessionDir: testDir,
+      childTaskId,
+      parentWorkspaceId: workspaceId,
+      ancestorWorkspaceIds: [workspaceId],
+      reportMarkdown: "plan report",
+      planFilePath,
+      nowMs: Date.now(),
+    });
+
+    const artifacts = await readSubagentReportArtifactsFile(testDir);
+    expect(artifacts.artifactsByChildTaskId[childTaskId]?.planFilePath).toBe(planFilePath);
+
+    const artifact = await readSubagentReportArtifact(testDir, childTaskId);
+    expect(artifact?.planFilePath).toBe(planFilePath);
+  });
+
   test("upsertSubagentReportArtifact preserves structured output", async () => {
     const workspaceId = "parent-1";
     const childTaskId = "child-structured";

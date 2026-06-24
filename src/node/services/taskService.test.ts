@@ -32,6 +32,7 @@ import { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { TaskHandleStore } from "@/node/services/taskHandleStore";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
+import { log } from "@/node/services/log";
 import { recordAgentWorkflowRunReference } from "@/node/services/agentWorkflowRunReferences";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -2581,6 +2582,56 @@ describe("TaskService", () => {
       expect(third.error).toContain("maxTaskNestingDepth");
     }
   }, 20_000);
+
+  test("plan is only runnable for workflow-owned task creation", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["planworkflow"]);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+
+    const normal = await createAgentTask(taskService, parentId, "plan normally", {
+      agentId: "plan",
+      agentType: "plan",
+    });
+    expect(normal.success).toBe(false);
+
+    const workflowOwned = await createAgentTask(taskService, parentId, "plan workflow step", {
+      agentId: "plan",
+      agentType: "plan",
+      workflowTask: { runId: "wfr_plan", stepId: "plan" },
+    });
+    expect(workflowOwned.success).toBe(true);
+  });
+
+  test("createMany allows workflow-owned plan tasks but not normal plan tasks", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["planbatcha", "planbatchb"]);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+
+    const normal = await taskService.createMany([
+      {
+        parentWorkspaceId: parentId,
+        kind: "agent" as const,
+        agentId: "plan",
+        prompt: "plan normally",
+        title: "Normal plan",
+      },
+    ]);
+    expect(normal.success).toBe(false);
+
+    const workflowOwned = await taskService.createMany([
+      {
+        parentWorkspaceId: parentId,
+        kind: "agent" as const,
+        agentId: "plan",
+        prompt: "plan workflow step",
+        title: "Workflow plan",
+        workflowTask: { runId: "wfr_plan_many", stepId: "plan" },
+      },
+    ]);
+    expect(workflowOwned.success).toBe(true);
+  });
 
   test("createMany reserves admitted tasks as starting and over-capacity tasks as queued", async () => {
     const config = await createTestConfig(rootDir);
@@ -8363,6 +8414,7 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
+    const planFilePath = path.join(rootDir, "plans", "repo", "child-222.md");
     await upsertSubagentReportArtifact({
       workspaceId: parentId,
       workspaceSessionDir: config.getSessionDir(parentId),
@@ -8371,6 +8423,7 @@ describe("TaskService", () => {
       ancestorWorkspaceIds: [parentId],
       reportMarkdown: "persisted report",
       title: "persisted title",
+      planFilePath,
       nowMs: Date.now(),
     });
 
@@ -8379,7 +8432,11 @@ describe("TaskService", () => {
       requestingWorkspaceId: parentId,
     });
 
-    expect(report).toEqual({ reportMarkdown: "persisted report", title: "persisted title" });
+    expect(report).toEqual({
+      reportMarkdown: "persisted report",
+      title: "persisted title",
+      planFilePath,
+    });
   });
 
   test("waitForAgentReport returns persisted artifact for stale running task", async () => {
@@ -12739,6 +12796,9 @@ describe("TaskService", () => {
 
   async function setupPlanModeStreamEndHarness(options?: {
     childAgentId?: string;
+    childTaskStatus?: WorkspaceConfigEntry["taskStatus"];
+    workflowTask?: WorkspaceConfigEntry["workflowTask"];
+    projectName?: string;
     maxTaskNestingDepth?: number;
     parentAiSettingsByAgent?: Record<string, { model: string; thinkingLevel: ThinkingLevel }>;
     agentAiDefaults?: Record<
@@ -12797,7 +12857,8 @@ describe("TaskService", () => {
           parentWorkspaceId: parentId,
           agentId: childAgentId,
           agentType: childAgentId,
-          taskStatus: "running",
+          taskStatus: options?.childTaskStatus ?? "running",
+          workflowTask: options?.workflowTask,
           aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "max" },
           taskModelString: "openai:gpt-4o-mini",
           runtimeConfig,
@@ -12816,7 +12877,7 @@ describe("TaskService", () => {
     const getInfo = mock(() => ({
       id: childId,
       name: "agent_plan_child",
-      projectName: "repo",
+      projectName: options?.projectName ?? "repo",
       projectPath,
       runtimeConfig,
       namedWorkspacePath: childWorkspacePath,
@@ -12843,6 +12904,7 @@ describe("TaskService", () => {
       replaceHistory,
       createModel,
       updateAgentStatus,
+      taskService,
       internal,
     };
   }
@@ -13046,6 +13108,160 @@ describe("TaskService", () => {
 
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("workflow-owned plan propose_plan finalizes with plan markdown instead of exec handoff", async () => {
+    const projectName = `repo-${path.basename(rootDir)}`;
+    const planPath = path.join(os.homedir(), ".mux", "plans", projectName, "agent_plan_child.md");
+    await fsPromises.mkdir(path.dirname(planPath), { recursive: true });
+    await fsPromises.writeFile(
+      planPath,
+      "# Proposed workflow plan\n\nDo the tiny safe change.\n",
+      "utf-8"
+    );
+
+    const debugSpy = spyOn(log, "debug").mockImplementation(() => undefined);
+    try {
+      const { config, childId, sendMessage, replaceHistory, taskService, internal } =
+        await setupPlanModeStreamEndHarness({
+          projectName,
+          workflowTask: { runId: "wfr_plan_step", stepId: "plan" },
+        });
+
+      const waiter = taskService.waitForAgentReport(childId, { timeoutMs: 5_000 });
+
+      await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+      const report = await waiter;
+      expect(report).toEqual({
+        reportMarkdown: "# Proposed workflow plan\n\nDo the tiny safe change.\n",
+        title: "Proposed plan",
+        planFilePath: planPath,
+      });
+      expect(debugSpy).toHaveBeenCalledWith(
+        "Workflow plan completion using canonical plan file path",
+        expect.objectContaining({
+          canonicalPlanPath: planPath,
+          proposedPlanPath: "/tmp/test-plan.md",
+        })
+      );
+      expect(replaceHistory).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalled();
+
+      const updatedTask = findWorkspaceInConfig(config, childId);
+      expect(updatedTask?.agentId).toBe("plan");
+      expect(updatedTask?.taskStatus).toBe("reported");
+    } finally {
+      debugSpy.mockRestore();
+      await fsPromises.rm(planPath, { force: true });
+    }
+  });
+
+  test("workflow-owned plan propose_plan with missing plan file keeps requiring propose_plan", async () => {
+    const projectName = `repo-missing-${path.basename(rootDir)}`;
+    const planPath = path.join(os.homedir(), ".mux", "plans", projectName, "agent_plan_child.md");
+    await fsPromises.rm(planPath, { force: true });
+
+    const workflowRunId = "wfr_plan_missing";
+    const { config, childId, sendMessage, replaceHistory, internal } =
+      await setupPlanModeStreamEndHarness({
+        projectName,
+        workflowTask: { runId: workflowRunId, stepId: "plan" },
+      });
+    const parentId = findWorkspaceInConfig(config, childId)?.parentWorkspaceId;
+    assert(parentId, "workflow-owned plan test requires a parent workspace id");
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "plan-missing",
+        description: "Plan missing",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(replaceHistory).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const reminderMessage = (sendMessage as unknown as { mock: { calls: Array<[string, string]> } })
+      .mock.calls[0]?.[1];
+    expect(reminderMessage).toContain("propose_plan");
+    expect(reminderMessage).not.toContain("agent_report");
+
+    const updatedTask = findWorkspaceInConfig(config, childId);
+    expect(updatedTask?.agentId).toBe("plan");
+    expect(updatedTask?.taskStatus).toBe("awaiting_report");
+  });
+
+  test("interrupted workflow-owned plan with successful propose_plan resolves as plan output", async () => {
+    const projectName = `repo-interrupted-${path.basename(rootDir)}`;
+    const planPath = path.join(os.homedir(), ".mux", "plans", projectName, "agent_plan_child.md");
+    await fsPromises.mkdir(path.dirname(planPath), { recursive: true });
+    await fsPromises.writeFile(
+      planPath,
+      "# Interrupted workflow plan\n\nStill complete.\n",
+      "utf-8"
+    );
+
+    try {
+      const { config, childId, replaceHistory, sendMessage, taskService, internal } =
+        await setupPlanModeStreamEndHarness({
+          projectName,
+          childTaskStatus: "interrupted",
+          workflowTask: { runId: "wfr_plan_interrupted", stepId: "plan" },
+        });
+
+      await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+      const report = await taskService.waitForAgentReport(childId, { timeoutMs: 5_000 });
+      expect(report).toEqual({
+        reportMarkdown: "# Interrupted workflow plan\n\nStill complete.\n",
+        title: "Proposed plan",
+        planFilePath: planPath,
+      });
+      expect(replaceHistory).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
+    } finally {
+      await fsPromises.rm(planPath, { force: true });
+    }
+  });
+
+  test("workflow-owned plan with output schema fails instead of retrying propose_plan", async () => {
+    const { config, childId, replaceHistory, sendMessage, taskService, internal } =
+      await setupPlanModeStreamEndHarness({
+        workflowTask: {
+          runId: "wfr_plan_schema_fallback",
+          stepId: "plan",
+          outputSchema: { type: "object" },
+        },
+      });
+
+    const waiter = taskService
+      .waitForAgentReport(childId, { timeoutMs: 5_000 })
+      .catch((error: unknown) => error);
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    const waiterError = await waiter;
+    expect(waiterError).toBeInstanceOf(Error);
+    expect((waiterError as Error).message).toContain(
+      "Workflow plan agents return plan markdown and planFilePath"
+    );
+    expect(replaceHistory).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const updatedTask = findWorkspaceInConfig(config, childId);
+    expect(updatedTask?.taskStatus).toBe("interrupted");
+    expect(updatedTask?.taskLaunchError).toContain(
+      "Workflow plan agents return plan markdown and planFilePath"
+    );
   });
 
   test("plan-to-exec auto-handoff resets the persisted recovery budget", async () => {

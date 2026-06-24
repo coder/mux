@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { EXPERIMENTS, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { WorkflowTaskMetadataSchema } from "./workspace";
 import {
+  StructuredTaskOutputSchema,
   WorkflowScriptDescriptorSchema,
   WorkflowEventSequenceSchema,
   WorkflowNameSchema,
@@ -55,6 +56,17 @@ describe("workflow domain schemas", () => {
 
     expect(run.workflow.name).toBe("deep-research");
     expect(run.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
+  });
+
+  test("accepts plan file path metadata on structured task output", () => {
+    const parsed = StructuredTaskOutputSchema.parse({
+      taskId: "task-plan",
+      title: "Proposed plan",
+      reportMarkdown: "Plan content",
+      planFilePath: "/tmp/mux/plans/repo/task-plan.md",
+    });
+
+    expect(parsed.planFilePath).toBe("/tmp/mux/plans/repo/task-plan.md");
   });
 
   test("rejects workflow run ids that could escape the run directory", () => {

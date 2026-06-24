@@ -90,6 +90,38 @@ describe("WorkflowRunner", () => {
     expect(lifecycle).toEqual(["agent", "ended"]);
   });
 
+  test("rejects schema on built-in plan agent steps", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-plan-schema");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_plan_schema",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  return agent("Plan", {
+    id: "plan",
+    agentId: "plan",
+    schema: { type: "object", properties: { plan: { type: "string" } }, required: ["plan"] },
+  });
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("plan schema should fail before spawning");
+      },
+    });
+
+    await expect(runner.run("wfr_plan_schema")).rejects.toThrow(
+      "Workflow plan agents return plan markdown and planFilePath"
+    );
+  });
+
   test("new agent API returns structured output for schema-backed steps and markdown otherwise", async () => {
     using tmp = new DisposableTempDir("workflow-runner-agent-api");
     const store = new WorkflowRunStore({

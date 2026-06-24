@@ -456,6 +456,8 @@ Custom planning instructions.
       tempDir.path,
       "custom-plan"
     );
+    expect(customPlanFrontmatter.subagent?.runnable).toBe(false);
+    expect(customPlanFrontmatter.subagent?.workflow_runnable).toBe(true);
     expect(customPlanFrontmatter.tools?.require).toEqual(["propose_plan"]);
   });
 
@@ -596,6 +598,7 @@ ui:
   color: red
 subagent:
   runnable: true
+  workflow_runnable: true
   append_prompt: Base subagent prompt
   skip_init_hook: true
 ai:
@@ -634,6 +637,7 @@ Project body.
     expect(frontmatter.ui?.hidden).toBe(true);
     expect(frontmatter.ui?.color).toBe("blue");
     expect(frontmatter.subagent?.runnable).toBe(true);
+    expect(frontmatter.subagent?.workflow_runnable).toBe(true);
     expect(frontmatter.subagent?.append_prompt).toBe("Base subagent prompt");
     expect(frontmatter.subagent?.skip_init_hook).toBe(true);
     expect(frontmatter.ai?.model).toBe("base-model");
@@ -655,6 +659,7 @@ ui:
   hidden: true
 subagent:
   runnable: true
+  workflow_runnable: true
   skip_init_hook: true
 ---
 `,
@@ -670,6 +675,7 @@ ui:
   hidden: false
 subagent:
   runnable: false
+  workflow_runnable: false
   skip_init_hook: false
 ---
 `,
@@ -683,6 +689,7 @@ subagent:
 
     expect(frontmatter.ui?.hidden).toBe(false);
     expect(frontmatter.subagent?.runnable).toBe(false);
+    expect(frontmatter.subagent?.workflow_runnable).toBe(false);
     expect(frontmatter.subagent?.skip_init_hook).toBe(false);
   });
 

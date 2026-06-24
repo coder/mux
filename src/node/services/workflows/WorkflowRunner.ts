@@ -2612,6 +2612,11 @@ function __muxAgent(prompt, options) {
     spec.agentId = spec.agentType;
     delete spec.agentType;
   }
+  if (spec.agentId === "plan" && Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
+    throw new Error(
+      "Workflow plan agents return plan markdown and planFilePath; do not provide schema/outputSchema."
+    );
+  }
   if (!Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
     spec.markdownOnly = true;
   }

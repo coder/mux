@@ -163,7 +163,7 @@ Required options:
 - `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
 - `schema`: optional JSON object schema. When present, the child reports schema-shaped data through `agent_report` and `agent()` returns that structured object directly. When omitted, `agent()` returns the child report markdown string.
 
-Workflow agents default to `exec`. Optional fields include `title`, `agentId`, `model`, `thinking`, `isolation`, and `onRefusal`. Use `agentId: "explore"` for read-only research/discovery stages. `model` accepts the same aliases/full model strings as the UI, `thinking` accepts `off|low|medium|high|xhigh|max` or a numeric index, and `effort` is rejected to avoid ambiguous provider-specific behavior.
+Workflow agents default to `exec`. Optional fields include `title`, `agentId`, `model`, `thinking`, `isolation`, and `onRefusal`. Use `agentId: "explore"` for read-only research/discovery stages. Use `agentId: "plan"` for markdown-only planning stages: Plan completes through `propose_plan`, `agent()` returns the proposed plan markdown, and Mux records the canonical `planFilePath` in task output metadata. Do not provide `schema` for Plan agents; model plan → exec explicitly in workflow code. `model` accepts the same aliases/full model strings as the UI, `thinking` accepts `off|low|medium|high|xhigh|max` or a numeric index, and `effort` is rejected to avoid ambiguous provider-specific behavior.
 
 ```js
 const scope = agent("Scope this topic", {
@@ -176,6 +176,25 @@ const scope = agent("Scope this topic", {
 });
 
 const summaryMarkdown = agent("Write a concise markdown summary", { id: "summary" });
+```
+
+Plan agents are first-class workflow-owned planning steps:
+
+- `agent(prompt, { id, agentId: "plan" })` starts the built-in Plan agent in Plan Mode.
+- The child completes by calling `propose_plan`, not `agent_report`.
+- Without `schema`, `agent()` returns the proposed plan markdown string.
+- The durable task/step output also includes `title: "Proposed plan"`, `taskId`, and the canonical `planFilePath` beside `reportMarkdown`.
+- Do not provide `schema` for Plan agents; if implementation should follow, pass the returned plan markdown to a separate `exec` step.
+
+Plan-to-exec orchestration is explicit:
+
+```js
+const plan = agent("Plan the requested change", { id: "plan", agentId: "plan" });
+const implementation = agent(`Implement this accepted plan:\n\n${plan}`, {
+  id: "implement",
+  agentId: "exec",
+});
+return { reportMarkdown: implementation };
 ```
 
 ### `parallel(thunks, options?)`

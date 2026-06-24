@@ -19,7 +19,7 @@ Coordinate implementation by delegating investigation + coding to sub-agents, th
 - **Trust `explore` sub-agent reports as authoritative for repo facts** (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if a report is ambiguous or contradicts other evidence. For correctness claims, an `explore` report counts as having read the referenced files.
 - **`bash` is for orchestration only:** `git` / `gh` repo coordination, targeted post-apply verification, and waiting on PR review/CI. Do not use `bash` for file reads/writes, manual code editing, or broad repo exploration. If a direct verification check fails due to a code issue, delegate the fix to `exec` instead of patching it yourself.
 - **Never read or scan session storage** (`~/.mux/sessions/**`, `~/.mux/sessions/subagent-patches/**`). Treat session storage as internal. Access patches only through `task_apply_git_patch`.
-- **Do not call `propose_plan`** from this workflow. If a complex subtask needs more shape before implementation, decompose it with one or more `explore` tasks and write a richer brief for `exec`, rather than spawning a `plan` sub-agent (plan is not runnable as a sub-agent).
+- **Do not call `propose_plan`** from this workflow conductor. If a complex subtask needs more shape before implementation, either decompose it with one or more `explore` tasks and write a richer brief for `exec`, or model an explicit workflow-owned `agentId: "plan"` step followed by a separate `exec` step.
 
 ## Long-horizon work: prefer a durable workflow
 
