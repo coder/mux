@@ -261,7 +261,7 @@ const PROVIDER_LINES = [
 // window.<Global> so isolated previews can shim to them. Source-only re-exports —
 // harmless if a compound primitive is later excluded.
 const PRIMITIVE_PART_LINES = [
-  `export { DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, WarningBox, WarningTitle, WarningText } from "@/browser/components/Dialog/Dialog";`,
+  `export { DialogTrigger, DialogClose, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, WarningBox, WarningTitle, WarningText } from "@/browser/components/Dialog/Dialog";`,
   `export { TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";`,
   `export { PopoverTrigger, PopoverContent } from "@/browser/components/Popover/Popover";`,
 ];

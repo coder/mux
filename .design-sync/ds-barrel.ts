@@ -51,6 +51,6 @@ export { ProjectProvider } from "@/browser/contexts/ProjectContext";
 export { AboutDialogProvider } from "@/browser/contexts/AboutDialogContext";
 
 // ── Compound primitive parts ──
-export { DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, WarningBox, WarningTitle, WarningText } from "@/browser/components/Dialog/Dialog";
+export { DialogTrigger, DialogClose, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, WarningBox, WarningTitle, WarningText } from "@/browser/components/Dialog/Dialog";
 export { TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 export { PopoverTrigger, PopoverContent } from "@/browser/components/Popover/Popover";
