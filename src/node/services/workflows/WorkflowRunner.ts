@@ -2485,10 +2485,7 @@ function __muxParallel(thunks, options) {
       return branchResult;
     }
     const taskResult = taskResults[branchResult.index];
-    if (branchResult.hasSchema) {
-      return taskResult.structuredOutput;
-    }
-    return taskResult.reportMarkdown;
+    return __muxAgentReturnValue(taskResult, branchResult.hasSchema, branchResult.isPlanAgent);
   });
 }
 function __muxPipeline(items, ...stages) {
@@ -2541,13 +2538,36 @@ function __muxPipeline(items, ...stages) {
     }
     pending.delete(completion.handleId);
     const taskResult = completion.result;
-    pendingEntry.state.value = pendingEntry.collectedAgent.hasSchema
-      ? taskResult.structuredOutput
-      : taskResult.reportMarkdown;
+    pendingEntry.state.value = __muxAgentReturnValue(
+      taskResult,
+      pendingEntry.collectedAgent.hasSchema,
+      pendingEntry.collectedAgent.isPlanAgent
+    );
     pendingEntry.state.stageIndex += 1;
     startNextStage(pendingEntry.state);
   }
   return states.map((state) => state.value);
+}
+function __muxPlanAgentResult(taskResult) {
+  if (typeof taskResult.reportMarkdown !== "string") {
+    throw new Error("Workflow plan agent result is missing reportMarkdown");
+  }
+  if (typeof taskResult.planFilePath !== "string" || taskResult.planFilePath.length === 0) {
+    throw new Error("Workflow plan agent result is missing planFilePath");
+  }
+  return {
+    reportMarkdown: taskResult.reportMarkdown,
+    planFilePath: taskResult.planFilePath,
+  };
+}
+function __muxAgentReturnValue(taskResult, hasSchema, isPlanAgent) {
+  if (hasSchema) {
+    return taskResult.structuredOutput;
+  }
+  if (isPlanAgent) {
+    return __muxPlanAgentResult(taskResult);
+  }
+  return taskResult.reportMarkdown;
 }
 function __muxApplyPatch(spec) {
   if (spec === null || typeof spec !== "object") {
@@ -2612,12 +2632,14 @@ function __muxAgent(prompt, options) {
     spec.agentId = spec.agentType;
     delete spec.agentType;
   }
-  if (spec.agentId === "plan" && Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
+  const hasSchema = Object.prototype.hasOwnProperty.call(spec, "outputSchema");
+  const isPlanAgent = spec.agentId === "plan";
+  if (isPlanAgent && hasSchema) {
     throw new Error(
-      "Workflow plan agents return plan markdown and planFilePath; do not provide schema/outputSchema."
+      "Workflow plan agents return { reportMarkdown, planFilePath }; do not provide schema/outputSchema."
     );
   }
-  if (!Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
+  if (!hasSchema) {
     spec.markdownOnly = true;
   }
   if (__muxParallelCollectingAgents !== null) {
@@ -2626,21 +2648,20 @@ function __muxAgent(prompt, options) {
     return {
       [__MUX_PARALLEL_AGENT_MARKER]: true,
       index,
-      hasSchema: Object.prototype.hasOwnProperty.call(spec, "outputSchema"),
+      hasSchema,
+      isPlanAgent,
     };
   }
   if (__muxPipelineCollectingAgents !== null) {
     __muxPipelineCollectingAgents.push({
       handle: __workflowAgentStart(spec),
-      hasSchema: Object.prototype.hasOwnProperty.call(spec, "outputSchema"),
+      hasSchema,
+      isPlanAgent,
     });
     return null;
   }
   const result = __workflowAgent(spec);
-  if (Object.prototype.hasOwnProperty.call(spec, "outputSchema")) {
-    return result.structuredOutput;
-  }
-  return result.reportMarkdown;
+  return __muxAgentReturnValue(result, hasSchema, isPlanAgent);
 }
 ${compiled}
 return (async () => await __muxWorkflow({

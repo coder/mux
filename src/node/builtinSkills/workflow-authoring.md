@@ -161,9 +161,9 @@ Runs one workflow-owned sub-agent and waits for its final report.
 Required options:
 
 - `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
-- `schema`: optional JSON object schema. When present, the child reports schema-shaped data through `agent_report` and `agent()` returns that structured object directly. When omitted, `agent()` returns the child report markdown string.
+- `schema`: optional JSON object schema. When present, the child reports schema-shaped data through `agent_report` and `agent()` returns that structured object directly. When omitted, non-Plan agents return the child report markdown string.
 
-Workflow agents default to `exec`. Optional fields include `title`, `agentId`, `model`, `thinking`, `isolation`, and `onRefusal`. Use `agentId: "explore"` for read-only research/discovery stages. Use `agentId: "plan"` for markdown-only planning stages: Plan completes through `propose_plan`, `agent()` returns the proposed plan markdown, and Mux records the canonical `planFilePath` in task output metadata. Do not provide `schema` for Plan agents; model plan → exec explicitly in workflow code. `model` accepts the same aliases/full model strings as the UI, `thinking` accepts `off|low|medium|high|xhigh|max` or a numeric index, and `effort` is rejected to avoid ambiguous provider-specific behavior.
+Workflow agents default to `exec`. Optional fields include `title`, `agentId`, `model`, `thinking`, `isolation`, and `onRefusal`. Use `agentId: "explore"` for read-only research/discovery stages. Use `agentId: "plan"` for planning stages that complete through `propose_plan` and return `{ reportMarkdown, planFilePath }`. Do not provide `schema` for Plan agents; model plan → exec explicitly in workflow code. `model` accepts the same aliases/full model strings as the UI, `thinking` accepts `off|low|medium|high|xhigh|max` or a numeric index, and `effort` is rejected to avoid ambiguous provider-specific behavior.
 
 ```js
 const scope = agent("Scope this topic", {
@@ -182,19 +182,38 @@ Plan agents are first-class workflow-owned planning steps:
 
 - `agent(prompt, { id, agentId: "plan" })` starts the built-in Plan agent in Plan Mode.
 - The child completes by calling `propose_plan`, not `agent_report`.
-- Without `schema`, `agent()` returns the proposed plan markdown string.
-- The durable task/step output also includes `title: "Proposed plan"`, `taskId`, and the canonical `planFilePath` beside `reportMarkdown`.
-- Do not provide `schema` for Plan agents; if implementation should follow, pass the returned plan markdown to a separate `exec` step.
+- Without `schema`, `agent()` returns `{ reportMarkdown, planFilePath }`.
+- `reportMarkdown` is the plan content snapshot.
+- `planFilePath` is the canonical path to the plan file captured at proposal time in the Plan task/runtime. It may not be readable from every isolated sibling runtime; fall back to `reportMarkdown` when needed.
+- The durable task/step output also includes `title: "Proposed plan"` and `taskId` metadata, but workflow code should use the returned `reportMarkdown` and `planFilePath` fields.
+- Do not provide `schema` or `outputSchema` for Plan agents; if implementation should follow, pass `planResult.reportMarkdown` to a separate `exec` step.
 
 Plan-to-exec orchestration is explicit:
 
 ```js
-const plan = agent("Plan the requested change", { id: "plan", agentId: "plan" });
-const implementation = agent(`Implement this accepted plan:\n\n${plan}`, {
+const planResult = agent("Plan the requested change", { id: "plan", agentId: "plan" });
+const implementation = agent(`Implement this accepted plan:\n\n${planResult.reportMarkdown}`, {
   id: "implement",
   agentId: "exec",
 });
 return { reportMarkdown: implementation };
+```
+
+If a workflow returns a Plan result object directly, final result normalization uses `reportMarkdown`; include `planFilePath` inside the returned `reportMarkdown` text or `structuredOutput` when the final workflow output must show it.
+
+Verifier fan-out can pass the plan path and fall back to the snapshot:
+
+```js
+const planResult = agent("Plan the requested change", { id: "plan", agentId: "plan" });
+const reviews = parallel(
+  ["tests", "architecture", "UX"].map(
+    (section) => () =>
+      agent(
+        `Read the proposed plan at ${planResult.planFilePath}. Focus on ${section}, but inspect the whole plan if needed. If the path is unreadable, use this snapshot:\n\n${planResult.reportMarkdown}`,
+        { id: `verify-${section}`, agentId: "explore", schema: reviewSchema }
+      )
+  )
+);
 ```
 
 ### `parallel(thunks, options?)`

@@ -13254,7 +13254,7 @@ describe("TaskService", () => {
     const waiterError = await waiter;
     expect(waiterError).toBeInstanceOf(Error);
     expect((waiterError as Error).message).toContain(
-      "Workflow plan agents return plan markdown and planFilePath"
+      "Workflow plan agents return { reportMarkdown, planFilePath }"
     );
     expect(replaceHistory).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
@@ -13262,7 +13262,7 @@ describe("TaskService", () => {
     const updatedTask = findWorkspaceInConfig(config, childId);
     expect(updatedTask?.taskStatus).toBe("interrupted");
     expect(updatedTask?.taskLaunchError).toContain(
-      "Workflow plan agents return plan markdown and planFilePath"
+      "Workflow plan agents return { reportMarkdown, planFilePath }"
     );
   });
 

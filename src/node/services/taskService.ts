@@ -7246,7 +7246,7 @@ export class TaskService {
 
     if (args.entry.workspace.workflowTask?.outputSchema !== undefined) {
       const error = new Error(
-        "Workflow plan agents return plan markdown and planFilePath; do not provide schema/outputSchema."
+        "Workflow plan agents return { reportMarkdown, planFilePath }; do not provide schema/outputSchema."
       );
       await this.editWorkspaceEntry(
         args.workspaceId,

@@ -118,7 +118,166 @@ describe("WorkflowRunner", () => {
     });
 
     await expect(runner.run("wfr_plan_schema")).rejects.toThrow(
-      "Workflow plan agents return plan markdown and planFilePath"
+      "Workflow plan agents return { reportMarkdown, planFilePath }"
+    );
+  });
+
+  test("plan agent returns report markdown and plan file path object", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-plan-result");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_plan_result",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Plan the change", { id: "plan", agentId: "plan" });
+  return { reportMarkdown: result.reportMarkdown + "\\n" + result.planFilePath };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        return {
+          taskId: "task_plan",
+          reportMarkdown: "Plan contents",
+          planFilePath: "/tmp/mux/plans/example.md",
+          structuredOutput: {},
+        };
+      },
+    });
+
+    await expect(runner.run("wfr_plan_result")).resolves.toEqual({
+      reportMarkdown: "Plan contents\n/tmp/mux/plans/example.md",
+      structuredOutput: undefined,
+    });
+  });
+
+  test("parallel plan agents return report objects in input order", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-parallel-plan-result");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_parallel_plan_result",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent, parallel }) {
+  const results = parallel([
+    () => agent("Plan A", { id: "plan-a", agentId: "plan" }),
+    () => agent("Plan B", { id: "plan-b", agentId: "plan" }),
+  ]);
+  return { reportMarkdown: results.map((result) => result.reportMarkdown + "@" + result.planFilePath).join("|") };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("parallel should create captured agent specs");
+      },
+      async createAgentTasks(specs, lifecycle) {
+        for (const [index, spec] of specs.entries()) {
+          await lifecycle?.onTaskCreated?.(index, `task_${spec.id}`);
+        }
+        return specs.map((spec) => ({ taskId: `task_${spec.id}`, status: "starting" as const }));
+      },
+      async waitForAgentTask(taskId) {
+        const id = taskId.replace("task_", "");
+        return {
+          taskId,
+          reportMarkdown: `Plan ${id}`,
+          planFilePath: `/tmp/mux/plans/${id}.md`,
+          structuredOutput: {},
+        };
+      },
+    });
+
+    await expect(runner.run("wfr_parallel_plan_result")).resolves.toEqual({
+      reportMarkdown: "Plan plan-a@/tmp/mux/plans/plan-a.md|Plan plan-b@/tmp/mux/plans/plan-b.md",
+    });
+  });
+
+  test("pipeline plan agents pass report objects to the next stage", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-pipeline-plan-result");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_pipeline_plan_result",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent, pipeline }) {
+  const results = pipeline(
+    ["a", "b"],
+    (item) => agent("Plan " + item, { id: "plan-" + item, agentId: "plan" }),
+    (plan) => plan.reportMarkdown + "@" + plan.planFilePath
+  );
+  return { reportMarkdown: results.join("|") };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("pipeline should start captured agent specs");
+      },
+      async createAgentTasks(specs, lifecycle) {
+        for (const [index, spec] of specs.entries()) {
+          await lifecycle?.onTaskCreated?.(index, `task_${spec.id}`);
+        }
+        return specs.map((spec) => ({ taskId: `task_${spec.id}`, status: "starting" as const }));
+      },
+      async waitForAgentTask(taskId) {
+        const id = taskId.replace("task_", "");
+        return {
+          taskId,
+          reportMarkdown: `Plan ${id}`,
+          planFilePath: `/tmp/mux/plans/${id}.md`,
+          structuredOutput: {},
+        };
+      },
+    });
+
+    await expect(runner.run("wfr_pipeline_plan_result")).resolves.toEqual({
+      reportMarkdown: "Plan plan-a@/tmp/mux/plans/plan-a.md|Plan plan-b@/tmp/mux/plans/plan-b.md",
+    });
+  });
+
+  test("plan agent fails fast when task output is missing plan file path", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-plan-missing-path");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_plan_missing_path",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: `export default function workflow({ agent }) {
+  const result = agent("Plan the change", { id: "plan", agentId: "plan" });
+  return { reportMarkdown: result.reportMarkdown };
+}
+`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    const runner = createRunner(store, {
+      async runAgent() {
+        return { taskId: "task_plan", reportMarkdown: "Plan contents", structuredOutput: {} };
+      },
+    });
+
+    await expect(runner.run("wfr_plan_missing_path")).rejects.toThrow(
+      "Workflow plan agent result is missing planFilePath"
     );
   });
 
