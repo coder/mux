@@ -11163,10 +11163,12 @@ describe("TaskService", () => {
       workspaceService,
     });
 
-    const waiter = taskService.waitForAgentReport(childId, {
-      timeoutMs: 10_000,
-      requestingWorkspaceId: parentId,
-    });
+    const waiter = taskService
+      .waitForAgentReport(childId, {
+        timeoutMs: 10_000,
+        requestingWorkspaceId: parentId,
+      })
+      .catch((error: unknown) => error);
 
     childStreaming = false;
 
@@ -11178,7 +11180,7 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    const waiterError = await waiter.catch((error: unknown) => error);
+    const waiterError = await waiter;
     expect(waiterError).toBeInstanceOf(Error);
     if (waiterError instanceof Error) {
       expect(waiterError.message).toMatch(/Task interrupted/);
