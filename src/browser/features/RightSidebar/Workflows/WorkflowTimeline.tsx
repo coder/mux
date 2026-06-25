@@ -313,12 +313,13 @@ const WorkflowFinalReport: React.FC<{ view: WorkflowRunView }> = (props) => {
           )}
           {stats.length > 0 && (
             <div className="flex flex-wrap gap-2">
+              {/* Field labels lead and stay emphasized so report chips scan as key → value. */}
               {stats.map((stat) => (
                 <span
                   key={stat.key}
                   className="border-border bg-surface-secondary text-muted rounded-md border px-2 py-0.5 text-[11px] tabular-nums"
                 >
-                  <b className="text-content-primary font-semibold">{stat.value}</b> {stat.key}
+                  <b className="text-content-primary font-semibold">{stat.key}</b> {stat.value}
                 </span>
               ))}
             </div>
