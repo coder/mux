@@ -227,9 +227,9 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
     badge = { tone: "cleared", label: "Not set" };
   }
 
-  // Which detail block (if any) the resolved result drives. When none applies and the
-  // call isn't executing or errored, fall back to the requested args so the expanded body
-  // is never blank (interrupted/in-flight, or a degraded success with null settings).
+  // Which detail block (if any) the resolved result drives. When none applies (and there's
+  // no error) we fall back to the requested args — including while executing — so the
+  // expanded body always shows what the agent is scheduling, never a blank panel.
   const hasResolvedDetail =
     Boolean(settings) || success?.action === "unset" || (success?.action === "get" && !settings);
 
@@ -315,14 +315,12 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
             </div>
           )}
 
+          {!errorResult && !hasResolvedDetail && <RequestedArgs args={props.args} />}
+
           {status === "executing" && (
             <div className="text-muted px-3 py-2 text-[11px] italic">
               Updating heartbeat settings…
             </div>
-          )}
-
-          {!errorResult && !hasResolvedDetail && status !== "executing" && (
-            <RequestedArgs args={props.args} />
           )}
         </ToolDetails>
       )}
