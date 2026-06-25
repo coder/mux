@@ -58,6 +58,33 @@ describe("workflow domain schemas", () => {
     expect(run.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
   });
 
+  test("workflow run records default to no attentionPolicy and accept notify_on_terminal", () => {
+    const baseRun = {
+      id: "wfr_123",
+      workspaceId: "workspace-1",
+      workflow: { name: "deep-research", description: "x", scope: "built-in", executable: true },
+      source: "export default async function workflow() { return null; }",
+      sourceHash: "sha256:abc123",
+      args: {},
+      status: "running",
+      createdAt: "2026-05-29T00:00:00.000Z",
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [],
+      steps: [],
+    };
+    // Legacy record without the field still parses.
+    expect(WorkflowRunRecordSchema.parse(baseRun).attentionPolicy).toBeUndefined();
+    // Background runs persist notify_on_terminal.
+    expect(
+      WorkflowRunRecordSchema.parse({ ...baseRun, attentionPolicy: "notify_on_terminal" })
+        .attentionPolicy
+    ).toBe("notify_on_terminal");
+    // Invalid policy values are rejected.
+    expect(
+      WorkflowRunRecordSchema.safeParse({ ...baseRun, attentionPolicy: "bogus" }).success
+    ).toBe(false);
+  });
+
   test("accepts plan file path metadata on structured task output", () => {
     const parsed = StructuredTaskOutputSchema.parse({
       taskId: "task-plan",
