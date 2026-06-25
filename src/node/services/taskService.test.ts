@@ -1676,6 +1676,59 @@ describe("TaskService", () => {
     expect(prompt).toContain("task_await");
   });
 
+  test("terminal wake-up drains are serialized per owner", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    let releaseSend!: () => void;
+    const sendReleased = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    let sawFirstSend!: () => void;
+    const firstSendSeen = new Promise<void>((resolve) => {
+      sawFirstSend = resolve;
+    });
+    const sendMessage = mock(async (..._args: unknown[]): Promise<Result<void>> => {
+      sawFirstSend();
+      await sendReleased;
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      enqueueTerminalAttention: (params: {
+        ownerWorkspaceId: string;
+        sourceKind: "agent_task";
+        sourceId: string;
+        outputDelivery: "already_injected";
+        terminalOutcome: "completed";
+      }) => Promise<void>;
+    };
+
+    await Promise.all([
+      internal.enqueueTerminalAttention({
+        ownerWorkspaceId: parentId,
+        sourceKind: "agent_task",
+        sourceId: "task-a",
+        outputDelivery: "already_injected",
+        terminalOutcome: "completed",
+      }),
+      internal.enqueueTerminalAttention({
+        ownerWorkspaceId: parentId,
+        sourceKind: "agent_task",
+        sourceId: "task-b",
+        outputDelivery: "already_injected",
+        terminalOutcome: "completed",
+      }),
+    ]);
+    await firstSendSeen;
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    releaseSend();
+    await flushTerminalAttentionDrains(taskService);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   test("terminal wake-up drain ignores nested workflow runs", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
@@ -1769,6 +1822,40 @@ describe("TaskService", () => {
       requireIdle: true,
     });
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("initialize recovers terminal notify workspace turns without pending notification", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const handleId = "wst_restart_missing_notification";
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "completed",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+      reportMarkdown: "Done before notification persisted",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(handleId);
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, handleId);
+    expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
   });
 
   test("initialize defers terminal wake-up while blocking task-owned work is active", async () => {

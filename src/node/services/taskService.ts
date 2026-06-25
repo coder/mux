@@ -1064,6 +1064,7 @@ export class TaskService {
   private readonly pendingNotifyOnTerminalPersists = new Set<Promise<void>>();
   // In-flight terminal attention drains (workspace-turn / sub-agent terminal wake-ups). Tracked so
   // tests and shutdown can await them; drains are idempotent and re-triggered on owner idle events.
+  private readonly pendingTerminalAttentionDrainsByOwner = new Map<string, Promise<void>>();
   private readonly pendingTerminalAttentionDrains = new Set<Promise<void>>();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
@@ -2072,6 +2073,8 @@ export class TaskService {
     }
     const cleanupReportedTasksMs = Date.now() - cleanupReportedTasksStartedAt;
 
+    const recoveredTerminalWorkspaceTurnNotificationCount =
+      await this.recoverTerminalWorkspaceTurnAttentionNotifications();
     const terminalAttentionDrainStartedAt = Date.now();
     const pendingTerminalAttentionOwnerWorkspaceIds =
       await this.terminalAttentionStore.listPendingOwnerWorkspaceIds();
@@ -2095,6 +2098,7 @@ export class TaskService {
       patchGenerationRecoveryMs,
       bestOfParentRecoveryCount: bestOfParentWorkspaceIds.size,
       bestOfRecoveryMs,
+      recoveredTerminalWorkspaceTurnNotificationCount,
       pendingTerminalAttentionOwnerWorkspaceCount: pendingTerminalAttentionOwnerWorkspaceIds.length,
       terminalAttentionDrainMs,
       cleanupReportedTasksMs,
@@ -4169,6 +4173,48 @@ export class TaskService {
     });
   }
 
+  private async recoverTerminalWorkspaceTurnAttentionNotifications(): Promise<number> {
+    const terminalRecords = await this.taskHandleStore.listAllWorkspaceTurns({
+      statuses: ["completed", "interrupted", "error"],
+    });
+    let recoveredCount = 0;
+    for (const record of terminalRecords) {
+      if (
+        resolveBackgroundWorkAttentionPolicy(record.attentionPolicy) !== "notify_on_terminal" ||
+        record.terminalAttentionNotifiedAt != null
+      ) {
+        continue;
+      }
+      await this.enqueueTerminalAttention({
+        ownerWorkspaceId: record.ownerWorkspaceId,
+        sourceKind: "workspace_turn",
+        sourceId: record.handleId,
+        outputDelivery: "requires_task_await",
+        terminalOutcome: workspaceTurnTerminalOutcome(record.status),
+        ...(record.title != null ? { title: record.title } : {}),
+      });
+      await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
+        const current = await this.taskHandleStore.getWorkspaceTurn(
+          record.ownerWorkspaceId,
+          record.handleId
+        );
+        if (
+          current != null &&
+          this.isTerminalWorkspaceTurnStatus(current.status) &&
+          resolveBackgroundWorkAttentionPolicy(current.attentionPolicy) === "notify_on_terminal" &&
+          current.terminalAttentionNotifiedAt == null
+        ) {
+          await this.taskHandleStore.upsertWorkspaceTurn({
+            ...current,
+            terminalAttentionNotifiedAt: getIsoNow(),
+          });
+        }
+      });
+      recoveredCount += 1;
+    }
+    return recoveredCount;
+  }
+
   // ---- Terminal attention notifier ------------------------------------------------------------
   // Deep module for delivering terminal wake-ups for notify_on_terminal work. Settlement paths
   // enqueue a persisted notification (outside any settlement lock); the notifier drains pending
@@ -4196,13 +4242,20 @@ export class TaskService {
   }
 
   private scheduleTerminalAttentionDrain(ownerWorkspaceId: string): void {
-    const promise = this.drainTerminalAttention(ownerWorkspaceId)
+    const previous = this.pendingTerminalAttentionDrainsByOwner.get(ownerWorkspaceId);
+    const promise = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.drainTerminalAttention(ownerWorkspaceId))
       .catch((error: unknown) => {
         log.error("Terminal attention drain failed", { ownerWorkspaceId, error });
       })
       .finally(() => {
         this.pendingTerminalAttentionDrains.delete(promise);
+        if (this.pendingTerminalAttentionDrainsByOwner.get(ownerWorkspaceId) === promise) {
+          this.pendingTerminalAttentionDrainsByOwner.delete(ownerWorkspaceId);
+        }
       });
+    this.pendingTerminalAttentionDrainsByOwner.set(ownerWorkspaceId, promise);
     this.pendingTerminalAttentionDrains.add(promise);
   }
 
