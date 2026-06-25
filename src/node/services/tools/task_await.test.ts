@@ -900,9 +900,11 @@ describe("task_await tool", () => {
       },
     ]);
 
+    const markWorkflowRunTerminalAttentionConsumed = mock(() => Promise.resolve());
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
       isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      markWorkflowRunTerminalAttentionConsumed,
       waitForAgentReport: mock(() => {
         throw new Error("workflow run IDs should not be treated as agent tasks");
       }),
@@ -935,6 +937,10 @@ describe("task_await tool", () => {
     });
     expect(workflowService.getRun).toHaveBeenCalledWith({
       workspaceId: "parent-workspace",
+      runId: "wfr_demo",
+    });
+    expect(markWorkflowRunTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-workspace",
       runId: "wfr_demo",
     });
   });

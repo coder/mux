@@ -4315,6 +4315,21 @@ export class TaskService {
     });
   }
 
+  async markWorkflowRunTerminalAttentionConsumed(params: {
+    ownerWorkspaceId: string;
+    runId: string;
+  }): Promise<void> {
+    assert(
+      params.ownerWorkspaceId.length > 0,
+      "markWorkflowRunTerminalAttentionConsumed requires ownerWorkspaceId"
+    );
+    assert(params.runId.length > 0, "markWorkflowRunTerminalAttentionConsumed requires runId");
+    await this.terminalAttentionStore.markDelivered(
+      params.ownerWorkspaceId,
+      TerminalAttentionStore.notificationId("workflow_run", params.runId)
+    );
+  }
+
   private async enqueueTerminalAttention(params: {
     ownerWorkspaceId: string;
     sourceKind: TerminalAttentionNotification["sourceKind"];
