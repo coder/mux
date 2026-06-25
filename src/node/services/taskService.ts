@@ -4319,6 +4319,12 @@ export class TaskService {
     }
     const prompt = promptSections.join("\n\n");
 
+    const markPendingDelivered = async () => {
+      for (const notification of pending) {
+        await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
+      }
+    };
+
     const resumeOptions = await this.resolveParentAutoResumeOptions(
       ownerWorkspaceId,
       entry,
@@ -4348,6 +4354,7 @@ export class TaskService {
         !this.interruptedParentWorkspaceIds.has(ownerWorkspaceId) &&
         !(await this.hasBlockingActiveWorkForTerminalDrain(ownerWorkspaceId, latestTaskIndex))
       ) {
+        let fallbackAccepted = false;
         sendResult = await this.workspaceService.sendMessage(
           ownerWorkspaceId,
           prompt,
@@ -4356,8 +4363,15 @@ export class TaskService {
             skipAutoResumeReset: true,
             synthetic: true,
             agentInitiated: true,
+            onAccepted: async () => {
+              fallbackAccepted = true;
+              await markPendingDelivered();
+            },
           }
         );
+        if (sendResult.success && !fallbackAccepted) {
+          return;
+        }
       }
     }
 
@@ -4370,9 +4384,7 @@ export class TaskService {
       return;
     }
 
-    for (const notification of pending) {
-      await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
-    }
+    await markPendingDelivered();
   }
 
   /**

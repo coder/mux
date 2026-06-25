@@ -1688,18 +1688,20 @@ describe("TaskService", () => {
       terminalOutcome: "completed",
     });
 
+    let acceptQueuedFallback: (() => Promise<void> | void) | undefined;
     const sendMessage = mock(
       (
         _workspaceId: string,
         _message: string,
         _options: unknown,
-        internal?: { requireIdle?: boolean }
+        internal?: { requireIdle?: boolean; onAccepted?: () => Promise<void> | void }
       ): Promise<Result<void, { type: string; raw: string }>> => {
         if (internal?.requireIdle === true) {
           return Promise.resolve(
             Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
           );
         }
+        acceptQueuedFallback = internal?.onAccepted;
         return Promise.resolve(Ok(undefined));
       }
     );
@@ -1714,6 +1716,9 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({ requireIdle: true });
     expect(sendMessage.mock.calls[1]?.[3]).not.toMatchObject({ requireIdle: true });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+    expect(acceptQueuedFallback).toBeDefined();
+    await acceptQueuedFallback?.();
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
