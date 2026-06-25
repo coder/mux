@@ -2170,6 +2170,18 @@ describe("TaskService", () => {
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+
+    await taskService.resetWorkflowRunTerminalAttention({ ownerWorkspaceId: parentId, runId });
+    await taskService.enqueueWorkflowRunTerminalAttention({
+      ownerWorkspaceId: parentId,
+      runId,
+      status: "completed",
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("Already consumed");
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
   test("startup recovery persists terminal workflow wake-ups", async () => {

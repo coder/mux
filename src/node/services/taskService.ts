@@ -4315,6 +4315,21 @@ export class TaskService {
     });
   }
 
+  async resetWorkflowRunTerminalAttention(params: {
+    ownerWorkspaceId: string;
+    runId: string;
+  }): Promise<void> {
+    assert(
+      params.ownerWorkspaceId.length > 0,
+      "resetWorkflowRunTerminalAttention requires ownerWorkspaceId"
+    );
+    assert(params.runId.length > 0, "resetWorkflowRunTerminalAttention requires runId");
+    await this.terminalAttentionStore.delete(
+      params.ownerWorkspaceId,
+      TerminalAttentionStore.notificationId("workflow_run", params.runId)
+    );
+  }
+
   async markWorkflowRunTerminalAttentionConsumed(params: {
     ownerWorkspaceId: string;
     runId: string;

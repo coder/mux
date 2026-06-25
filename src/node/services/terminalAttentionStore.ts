@@ -172,6 +172,10 @@ export class TerminalAttentionStore {
     return ownerWorkspaceIds;
   }
 
+  async delete(ownerWorkspaceId: string, id: string): Promise<void> {
+    await fsPromises.rm(this.file(ownerWorkspaceId, id), { force: true });
+  }
+
   async markPending(ownerWorkspaceId: string, id: string): Promise<void> {
     const record = await this.get(ownerWorkspaceId, id);
     if (record?.status !== "delivered") {
