@@ -46,6 +46,10 @@ const EXCLUDE_HEAVY = [
   "Messages",
   "Task",
   "WorkflowRun",
+  // WorkflowRunToolCall's timeout stories title to ".../WorkflowRun/Timeouts" (segment
+  // "Timeouts"); exclude that segment too so the heavy component stays out — and so the
+  // generated titleMap nulls "Timeouts" (a path exclusion would not, drifting from config).
+  "Timeouts",
   "ProposePlan",
   "Media",
   "AttachFile",

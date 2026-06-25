@@ -17,6 +17,7 @@ export { Dialog } from "@/browser/components/Dialog/Dialog";
 export { GeneralSection } from "@/browser/features/Settings/Sections/GeneralSection";
 export { GetGoalToolCall } from "@/browser/features/Tools/GetGoalToolCall";
 export { GoalTab } from "@/browser/features/RightSidebar/GoalTab";
+export { HeartbeatToolCall } from "@/browser/features/Tools/HeartbeatToolCall";
 export { HookOutputDisplay } from "@/browser/features/Tools/Shared/HookOutputDisplay";
 export { InitMessage } from "@/browser/features/Messages/InitMessage";
 export { Input } from "@/browser/components/Input/Input";

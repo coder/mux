@@ -29,6 +29,7 @@
     "Messages": null,
     "Task": null,
     "WorkflowRun": null,
+    "Timeouts": null,
     "ProposePlan": null,
     "Media": null,
     "AttachFile": null,
@@ -70,6 +71,7 @@
     "Compaction": "CompactingMessageContent",
     "ContextUsageIndicator": "ContextUsageIndicatorButton",
     "Goal": "GetGoalToolCall",
+    "Heartbeat": "HeartbeatToolCall",
     "HookOutput": "HookOutputDisplay",
     "Init": "InitMessage",
     "Streaming": "StreamingBarrierView",
@@ -162,6 +164,10 @@
     },
     "GetGoalToolCall": {
       "skip": []
+    },
+    "HeartbeatToolCall": {
+      "skip": [],
+      "cardMode": "column"
     },
     "InitMessage": {
       "skip": []

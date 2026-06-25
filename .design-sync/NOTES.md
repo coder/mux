@@ -161,7 +161,24 @@ needed; the cap is per-file 5 MB on both `_ds_bundle.js` and each `_preview/*.js
   changes, revisit the `tsconfig.ds.json` stubs.
 - **Per-file 5 MB cap** applies to BOTH `_ds_bundle.js` and each `_preview/*.js`.
   Bundle ~4.7 MB and previews ~3.3 MB leave thin headroom — adding components or
-  providers needs a fresh size measurement.
+  providers needs a fresh size measurement. (HeartbeatToolCall added: bundle 4.69 MB,
+  its preview 3.21 MB — still fits, headroom now ~0.3 MB.)
+- **HeartbeatToolCall (tool card):** owned preview has one cell per story (10, named to
+  match the story exports so `compare` pairs them — the stories import `meta.tsx` → the
+  whole app, so the preview is hand-authored like the other cards). `cfg.overrides`
+  uses `cardMode: "column"` because the `CustomMessageWrapping` story renders at a pinned
+  375px (narrower than a grid cell → `[GRID_OVERFLOW] wide`); column keeps all stories
+  full-width. All 10 stories grade `match`.
+- **WorkflowRun/Timeouts exclusion:** `WorkflowRunToolCall` is EXCLUDE_HEAVY via its
+  `WorkflowRun` segment, but `WorkflowRunToolCall.timeout.stories.tsx` titles to
+  `…/WorkflowRun/Timeouts` (segment `Timeouts`), which slips that exclusion and would pull
+  the heavy component (shiki/mermaid/recharts) into the bundle over cap. Fixed by adding
+  `"Timeouts"` to `gen-barrel.mjs` EXCLUDE_HEAVY (a **segment** exclusion, not a path one, so
+  the generated titleMap also nulls `Timeouts` and stays consistent with `cfg.titleMap "Timeouts": null`
+  — a path exclusion would drift). If WorkflowRun stories are retitled again, re-check this.
+- **`[FONT_MISSING]` "Ubuntu Mono":** pre-existing fallback in the `globals.css` monospace
+  stack (`… "Geist Mono", "Ubuntu Mono", "Consolas" …`). Geist Mono ships and wins, so
+  nothing renders in Ubuntu Mono — accepted (the unused fallback needs no @font-face).
 - **Accepted `close` grades (6 stories — isolated-preview limits, NOT defects):**
   the isolated single-component preview legitimately diverges from a story that is
   a gallery, a full-app scenario, a play-expanded interaction, or a mid-stream
