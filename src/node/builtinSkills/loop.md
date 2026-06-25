@@ -44,6 +44,15 @@ Before the first side effect, write down or infer these invariants:
 
 Re-read actual state immediately before every create/update operation. If the state changed, recompute rather than continuing from stale assumptions.
 
+## Foreground vs background dispatch
+
+Before dispatching a task or workflow, decide whether the loop's next decision depends on its result:
+
+- **Depends on the result:** use foreground/default mode (`run_in_background` omitted or `false`), or explicitly `task_await` the returned ID before continuing.
+- **Does not depend on the result:** use `run_in_background: true`. Mux treats background work as non-blocking (internal `notify_on_terminal` policy) and wakes the workspace later with the result; you do not need to force-await it just to end the turn.
+
+Do not use background dispatch to hide an unbounded polling loop — record the spawned IDs and the convergence condition, and reconcile against actual state. The `notify_on_terminal` policy is internal and inferred from `run_in_background`; there is no settable `attentionPolicy` argument in v1.
+
 ## Ask when the route changes risk
 
 Ask a short clarifying question instead of guessing when any of these are ambiguous:

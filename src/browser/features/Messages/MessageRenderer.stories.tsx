@@ -318,9 +318,9 @@ export const SyntheticAutoResumeMessages: AppStory = {
             ),
             createUserMessage(
               "msg-3",
-              "You have active background sub-agent task(s) (task-abc123). " +
-                "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
-                "Call task_await now to wait for them to finish.",
+              "You have active background task handle(s) (task-abc123). " +
+                "You MUST NOT end your turn while any listed task handles are queued/starting/running/awaiting_report. " +
+                'Call task_await now with task_ids: ["task-abc123"] to wait for them.',
               {
                 historySequence: 3,
                 timestamp: STABLE_TIMESTAMP - 290000,
@@ -329,7 +329,9 @@ export const SyntheticAutoResumeMessages: AppStory = {
             ),
             createUserMessage(
               "msg-4",
-              "Your background sub-agent task(s) have completed. Use task_await to retrieve their reports and integrate the results.",
+              "Background sub-agent task(s) have completed. Their accepted reports and any structured outputs " +
+                "are already injected into this workspace context as task tool results or synthetic user report " +
+                "messages. Write the final response now, integrating those results.",
               {
                 historySequence: 4,
                 timestamp: STABLE_TIMESTAMP - 285000,

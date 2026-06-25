@@ -61,6 +61,16 @@ Packaged reusable workflows should live inside skill directories and be invoked 
 
 Default to foreground workflow runs. When a foreground `workflow_run` returns `status: "completed"`, the final result is available directly, avoiding an unnecessary `task_await` call just to discover completion. Set `run_in_background: true` only when another workflow/task or unrelated work can proceed in parallel. If any `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` with `task_await` before using the result.
 
+### Attention policy (internal, not author-settable)
+
+Mux persists an internal attention policy for background work and uses it to decide whether your workspace must await the work before ending its turn. You do not set this field in v1 — it is derived from `run_in_background`:
+
+- Foreground/default runs are **blocking**: their result is needed before you can continue.
+- `run_in_background: true` runs are **notify-on-terminal**: non-blocking, and Mux wakes the owning workspace with the terminal workflow result when the run finishes. `workflow_resume({ run_in_background: true })` also makes the run notify-on-terminal.
+- Workflow-owned `agent()`, `parallel()`, `pipeline()`, and nested `workflow()` steps are blocking from the conductor's perspective because their outputs are durable step results delivered through the journal — there is no generic parent wake-up for them.
+
+There is no public `attentionPolicy`/`attention_policy` argument and no "silent background" mode in v1.
+
 ## Interrupting and resuming runs
 
 Runs are durable, so stopping one is non-destructive:
