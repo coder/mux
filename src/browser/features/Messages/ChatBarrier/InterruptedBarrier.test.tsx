@@ -31,7 +31,11 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
 
 let currentWorkspaceState = createWorkspaceState();
 
-let resumeStreamResult: { success: true; data: { started: boolean } } = {
+type ResumeStreamResult =
+  | { success: true; data: { started: boolean } }
+  | { success: false; error: { type: "runtime_start_failed"; message: string } };
+
+let resumeStreamResult: ResumeStreamResult = {
   success: true,
   data: { started: true },
 };
@@ -119,5 +123,21 @@ describe("InterruptedBarrier", () => {
 
     expect(view.queryByRole("button")).toBeNull();
     expect(view.getByText("interrupted")).toBeTruthy();
+  });
+
+  test("surfaces a resume failure so the click is not a silent no-op", async () => {
+    resumeStreamResult = {
+      success: false,
+      error: { type: "runtime_start_failed", message: "Runtime failed to start" },
+    };
+
+    const view = render(<InterruptedBarrier workspaceId="ws-1" resumable />);
+
+    fireEvent.click(view.getByRole("button", { name: "Continue interrupted response" }));
+
+    await waitFor(() => {
+      expect(view.getByText("Couldn't continue:")).toBeTruthy();
+    });
+    expect(view.getByText(/Runtime failed to start/)).toBeTruthy();
   });
 });

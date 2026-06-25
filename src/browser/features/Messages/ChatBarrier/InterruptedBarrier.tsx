@@ -25,14 +25,23 @@ interface InterruptedBarrierProps {
  */
 export const InterruptedBarrier: React.FC<InterruptedBarrierProps> = (props) => {
   // resume() internally guards against re-entrancy while a resume is in flight.
-  const { resume } = useResumeStream(props.workspaceId, { autoRetryOnFailure: false });
+  const { resume, error } = useResumeStream(props.workspaceId, { autoRetryOnFailure: false });
   return (
-    <BaseBarrier
-      text="interrupted"
-      color="var(--color-interrupted)"
-      className={props.className}
-      onClick={props.resumable ? () => void resume() : undefined}
-      ariaLabel={props.resumable ? "Continue interrupted response" : undefined}
-    />
+    <>
+      <BaseBarrier
+        text="interrupted"
+        color="var(--color-interrupted)"
+        className={props.className}
+        onClick={props.resumable ? () => void resume() : undefined}
+        ariaLabel={props.resumable ? "Continue interrupted response" : undefined}
+      />
+      {props.resumable && error && (
+        // This divider is the only continue affordance for a user-aborted stream,
+        // so a resume failure must be visible or the click looks like a no-op.
+        <div className="font-primary text-foreground/80 text-center text-[12px]">
+          <span className="text-warning font-semibold">Couldn&apos;t continue:</span> {error}
+        </div>
+      )}
+    </>
   );
 };
