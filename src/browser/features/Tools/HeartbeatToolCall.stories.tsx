@@ -64,9 +64,10 @@ export const ScheduledEnabled: Story = {
 };
 
 /**
- * set · multiline custom message with a long unbroken token — verifies the prompt
- * body preserves newlines and wraps long URLs/paths instead of overflowing the card
- * (check at the ~375px mobile width).
+ * set · multiline custom message with a long unbroken token. Pinned to a fixed ~360px
+ * container (the Storybook test-runner renders at desktop width and ignores viewport /
+ * Chromatic modes, so the narrow case must be forced with a wrapper) and a play that
+ * fails if the prompt body's long URL/path overflows instead of wrapping.
  */
 export const CustomMessageWrapping: Story = {
   args: {
@@ -88,6 +89,33 @@ export const CustomMessageWrapping: Story = {
       },
       summary: "Heartbeat is enabled for this workspace at 30 minutes.",
     },
+  },
+  decorators: [
+    (Story) => (
+      <div data-testid="heartbeat-card-container" className="w-[375px]">
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    // defaultExpanded renders the prompt synchronously; confirm the long token is present.
+    if (!canvasElement.textContent?.includes("ci.example.com")) {
+      throw new Error("Heartbeat check-in prompt did not render");
+    }
+    const container = canvasElement.querySelector('[data-testid="heartbeat-card-container"]');
+    if (!(container instanceof HTMLElement)) {
+      throw new Error("Heartbeat story container not found");
+    }
+    // Let layout settle before measuring.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+    if (container.scrollWidth > container.clientWidth + 1) {
+      throw new Error(
+        `Heartbeat tool card overflowed its ${container.clientWidth}px container by ` +
+          `${container.scrollWidth - container.clientWidth}px`
+      );
+    }
   },
 };
 
