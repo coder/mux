@@ -7467,22 +7467,31 @@ export class WorkspaceService extends EventEmitter {
       }
 
       await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          unsubscribe();
+          resolve();
+        };
         const unsubscribe = session.onChatEvent((event) => {
           const eventType = event.message.type;
-          if (
-            (eventType === "queued-message-changed" ||
-              eventType === "auto-retry-starting" ||
-              eventType === "auto-retry-abandoned") &&
+          const retryStartedOrTurnPhaseChanged =
+            eventType === "auto-retry-starting" ||
+            eventType === "auto-retry-scheduled" ||
+            eventType === "stream-lifecycle";
+          const queuedOrRetryCleared =
+            (eventType === "queued-message-changed" || eventType === "auto-retry-abandoned") &&
             !session.hasQueuedMessages() &&
-            !session.hasPendingAutoRetry()
-          ) {
-            unsubscribe();
-            resolve();
+            !session.hasPendingAutoRetry();
+          if (retryStartedOrTurnPhaseChanged || queuedOrRetryCleared) {
+            finish();
           }
         });
         if (!session.hasQueuedMessages() && !session.hasPendingAutoRetry()) {
-          unsubscribe();
-          resolve();
+          finish();
         }
       });
     }
