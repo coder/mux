@@ -7610,6 +7610,104 @@ describe("TaskService", () => {
     expect(JSON.stringify(parentHistory)).not.toContain("<mux_subagent_report>");
   });
 
+  test("pending injected report wake-up drains after foreground-awaited sibling completes", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-pending-sibling-report";
+    const backgroundChildId = "task-background-report";
+    const foregroundChildId = "task-foreground-report";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "background-child", backgroundChildId, {
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+        projectWorkspace(projectPath, "foreground-child", foregroundChildId, {
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const foregroundWaiter = taskService.waitForAgentReport(foregroundChildId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentWorkspaceId,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: backgroundChildId,
+      messageId: "assistant-background-output",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-background",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Background result", title: "Background" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(await terminalAttentionStore.listPending(parentWorkspaceId)).toHaveLength(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: foregroundChildId,
+      messageId: "assistant-foreground-output",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-foreground",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Foreground result", title: "Foreground" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    const foregroundReport = await foregroundWaiter;
+    expect(foregroundReport.reportMarkdown).toBe("Foreground result");
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      parentWorkspaceId,
+      expect.stringContaining("Background sub-agent task(s) have completed"),
+      expect.anything(),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+    expect(await terminalAttentionStore.listPending(parentWorkspaceId)).toHaveLength(0);
+  });
+
   test("foreground waiter suppresses tasks-completed auto-resume notification", async () => {
     const config = await createTestConfig(rootDir);
 

@@ -4532,7 +4532,11 @@ export class TaskService {
     // enqueued AFTER the lock is released (no sendMessage / notifier work while holding the lock).
     const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
       params.record.handleId,
-      async (): Promise<{ outcome: TerminalAttentionOutcome; title?: string } | null> => {
+      async (): Promise<
+        | { kind: "notify"; outcome: TerminalAttentionOutcome; title?: string }
+        | { kind: "drain_pending" }
+        | null
+      > => {
         const current = await this.taskHandleStore.getWorkspaceTurn(
           params.record.ownerWorkspaceId,
           params.record.handleId
@@ -4592,12 +4596,17 @@ export class TaskService {
         await this.cleanupDisposableWorkspaceTurn(params.next);
         this.scheduleMaybeStartQueuedTasks();
 
-        // A foreground waiter that received the terminal result already integrates it, so suppress
-        // the synthetic wake-up for that source.
-        if (!shouldNotify || hadForegroundWaiter) {
+        // A foreground waiter that received this terminal result already integrates it, so suppress
+        // this source's synthetic wake-up. Still kick the drain after the lock: another sibling may
+        // have a pending terminal notification that was deferred on this workspace turn.
+        if (hadForegroundWaiter) {
+          return { kind: "drain_pending" };
+        }
+        if (!shouldNotify) {
           return null;
         }
         return {
+          kind: "notify",
           outcome: workspaceTurnTerminalOutcome(params.next.status),
           ...(params.next.title != null ? { title: params.next.title } : {}),
         };
@@ -4605,6 +4614,10 @@ export class TaskService {
     );
 
     if (pendingNotify == null) {
+      return;
+    }
+    if (pendingNotify.kind === "drain_pending") {
+      this.scheduleTerminalAttentionDrain(params.record.ownerWorkspaceId);
       return;
     }
 
@@ -8033,6 +8046,7 @@ export class TaskService {
     // An active waiter (foreground task tool call or task_await) already
     // surfaced the rejection to the parent's in-flight turn.
     if (hadForegroundWaiters) {
+      this.scheduleTerminalAttentionDrain(parentWorkspaceId);
       return;
     }
     // Workflow-owned children propagate failures through the WorkflowRunner
@@ -8085,15 +8099,9 @@ export class TaskService {
       });
       return;
     }
-    if (hasActiveDescendants) {
-      // Remaining active children wake the parent when the last one settles
-      // (report delivery or another terminal failure); the failure message
-      // appended above keeps this child's outcome in that turn's context.
-      return;
-    }
-    // The failure message is already injected above. Enqueue a coalesced terminal wake-up; the
-    // notifier defers while the parent is streaming or has a queued/preparing turn (which a direct
-    // send here did not guard), and is restart-safe.
+    // The failure message is already injected above. Enqueue even when other children are active:
+    // the drain defers on blocking work, and the later settling child may have a foreground waiter
+    // that suppresses its own terminal wake-up.
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
@@ -9010,6 +9018,8 @@ export class TaskService {
         parentWorkspaceId,
         childWorkspaceId,
       });
+      this.scheduleTerminalAttentionDrain(parentWorkspaceId);
+      return { finalized: true };
     }
 
     if (isWorkflowOwnedChildReport) {
@@ -9019,22 +9029,20 @@ export class TaskService {
         parentWorkspaceId,
         childWorkspaceId,
       });
+      this.scheduleTerminalAttentionDrain(parentWorkspaceId);
       return { finalized: true };
     }
 
-    // The report is already injected into parent history above (deliverReportToParent). When no
-    // foreground waiter consumed it and no other descendants are active, enqueue a coalesced
-    // terminal wake-up. The notifier drains only when the owner is idle and not preparing a queued
-    // user turn, and is restart-safe — this replaces a direct send that could race a queued turn.
-    if (!hadForegroundWaiters && !hasActiveDescendants) {
-      await this.enqueueTerminalAttention({
-        ownerWorkspaceId: parentWorkspaceId,
-        sourceKind: "agent_task",
-        sourceId: childWorkspaceId,
-        outputDelivery: "already_injected",
-        terminalOutcome: "completed",
-      });
-    }
+    // The report is already injected into parent history above (deliverReportToParent). Enqueue the
+    // notification even when other children are still active: the drain defers on blocking work and
+    // a later foreground-awaited sibling may suppress its own wake-up.
+    await this.enqueueTerminalAttention({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: childWorkspaceId,
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
 
     return { finalized: true };
   }
