@@ -1259,7 +1259,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
           />
         )}
         {isAtCutoff && <EditCutoffBarrier />}
-        {interruptedBarrierMessageIds.has(message.id) && <InterruptedBarrier />}
+        {interruptedBarrierMessageIds.has(message.id) && (
+          <InterruptedBarrier workspaceId={workspaceId} />
+        )}
       </React.Fragment>
     );
   };
