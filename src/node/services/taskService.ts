@@ -4104,40 +4104,59 @@ export class TaskService {
   ): Promise<void> {
     if (isWorkspaceTurnTaskId(taskId)) {
       if (ownerWorkspaceId == null) return;
-      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-      if (record == null) return;
+      const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
+        taskId,
+        async (): Promise<{
+          handleId: string;
+          outcome: TerminalAttentionOutcome;
+          title?: string;
+        } | null> => {
+          const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
+          if (current == null) return null;
 
-      const updatedRecord: WorkspaceTurnTaskHandleRecord =
-        record.attentionPolicy === "notify_on_terminal"
-          ? record
-          : { ...record, attentionPolicy: "notify_on_terminal", updatedAt: getIsoNow() };
-      if (updatedRecord !== record) {
-        await this.taskHandleStore.upsertWorkspaceTurn(updatedRecord);
-      }
+          const updatedRecord: WorkspaceTurnTaskHandleRecord =
+            current.attentionPolicy === "notify_on_terminal"
+              ? current
+              : { ...current, attentionPolicy: "notify_on_terminal", updatedAt: getIsoNow() };
+          if (updatedRecord !== current) {
+            await this.taskHandleStore.upsertWorkspaceTurn(updatedRecord);
+          }
 
-      // A queued-message/timeout detach can race with child stream-end settlement: the waiter is
-      // gone before notify_on_terminal is durably persisted, so settleWorkspaceTurn may have seen a
-      // blocking policy and skipped the terminal wake-up. If the handle is already terminal here,
-      // enqueue the missing wake-up now.
-      if (
-        this.isTerminalWorkspaceTurnStatus(updatedRecord.status) &&
-        updatedRecord.terminalAttentionNotifiedAt == null
-      ) {
+          // A queued-message/timeout detach can race with child stream-end settlement: the waiter is
+          // gone before notify_on_terminal is durably persisted, so settleWorkspaceTurn may have seen a
+          // blocking policy and skipped the terminal wake-up. If the handle is already terminal here,
+          // enqueue the missing wake-up after releasing the settlement lock.
+          if (
+            this.isTerminalWorkspaceTurnStatus(updatedRecord.status) &&
+            updatedRecord.terminalAttentionNotifiedAt == null
+          ) {
+            return {
+              handleId: updatedRecord.handleId,
+              outcome: workspaceTurnTerminalOutcome(updatedRecord.status),
+              ...(updatedRecord.title != null ? { title: updatedRecord.title } : {}),
+            };
+          }
+          return null;
+        }
+      );
+      if (pendingNotify != null) {
         await this.enqueueTerminalAttention({
           ownerWorkspaceId,
           sourceKind: "workspace_turn",
-          sourceId: updatedRecord.handleId,
+          sourceId: pendingNotify.handleId,
           outputDelivery: "requires_task_await",
-          terminalOutcome: workspaceTurnTerminalOutcome(updatedRecord.status),
-          ...(updatedRecord.title != null ? { title: updatedRecord.title } : {}),
+          terminalOutcome: pendingNotify.outcome,
+          ...(pendingNotify.title != null ? { title: pendingNotify.title } : {}),
         });
-        const terminal = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-        if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
-          await this.taskHandleStore.upsertWorkspaceTurn({
-            ...terminal,
-            terminalAttentionNotifiedAt: getIsoNow(),
-          });
-        }
+        await this.workspaceTurnSettlementLocks.withLock(taskId, async () => {
+          const terminal = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
+          if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
+            await this.taskHandleStore.upsertWorkspaceTurn({
+              ...terminal,
+              terminalAttentionNotifiedAt: getIsoNow(),
+            });
+          }
+        });
       }
       return;
     }
