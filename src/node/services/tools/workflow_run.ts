@@ -80,7 +80,12 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
       const invocationStartedAtMs = Date.now();
       const result =
         args.run_in_background === true
-          ? await requireBackgroundWorkflowStart(workflowService)(startInput)
+          ? await requireBackgroundWorkflowStart(workflowService)({
+              ...startInput,
+              // Background runs are non-blocking; terminal result is delivered by
+              // AIService.onBackgroundRunTerminal rather than a forced task_await.
+              attentionPolicy: "notify_on_terminal",
+            })
           : await requireForegroundWorkflowStart(workflowService)({
               ...startInput,
               ...(options.abortSignal != null ? { abortSignal: options.abortSignal } : {}),

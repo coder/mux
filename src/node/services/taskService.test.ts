@@ -6117,7 +6117,7 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("one-shot exemption — first stream-end suppressed, second stream-end nudges", async () => {
+  test("queue-backgrounded foreground wait stays suppressed across multiple stream-ends", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6155,39 +6155,29 @@ describe("TaskService", () => {
     const waitError = await waitPromise.catch((error: unknown) => error);
     expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
 
-    await handleTaskServiceStreamEndForTest(taskService, {
-      type: "stream-end",
-      workspaceId: rootWorkspaceId,
-      messageId: "assistant-root-1",
-      metadata: { model: "openai:gpt-5.2" },
-      parts: [],
-    });
+    for (const messageId of ["assistant-root-1", "assistant-root-2"]) {
+      await handleTaskServiceStreamEndForTest(taskService, {
+        type: "stream-end",
+        workspaceId: rootWorkspaceId,
+        messageId,
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+    }
 
-    // First stream-end: exemption active → no nudge.
+    // Detaching a foreground wait via a queued message now persists notify_on_terminal,
+    // so neither stream-end re-forces a task_await nudge (durable, not one-shot).
     expect(sendMessage).not.toHaveBeenCalled();
 
-    await handleTaskServiceStreamEndForTest(taskService, {
-      type: "stream-end",
-      workspaceId: rootWorkspaceId,
-      messageId: "assistant-root-2",
-      metadata: { model: "openai:gpt-5.2" },
-      parts: [],
-    });
-
-    // Second stream-end: exemption consumed → nudge fires.
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(childTaskId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    // The persisted policy is durable.
+    const persisted = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((w) => w.id === childTaskId);
+    expect(persisted?.taskAttentionPolicy).toBe("notify_on_terminal");
   });
 
-  test("multiple queue-backgrounded tasks — one-shot exemptions consumed together", async () => {
+  test("multiple queue-backgrounded tasks stay durably non-blocking", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6261,28 +6251,11 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(taskAId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(taskBId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    // Both detached waits persist notify_on_terminal, so a later stream-end never re-forces await.
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("renewed foreground wait clears stale queue-backgrounded exemption", async () => {
+  test("renewed foreground wait does not re-promote durable notify policy to blocking", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6339,16 +6312,15 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(childTaskId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    // The first detachment persisted notify_on_terminal durably. A later explicit foreground
+    // wait (even though it times out) must NOT re-promote the work to blocking, so no nudge fires.
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const persisted = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((w) => w.id === childTaskId);
+    expect(persisted?.taskAttentionPolicy).toBe("notify_on_terminal");
   });
 
   test("mixed descendants — nudges only for non-queue-backgrounded tasks", async () => {

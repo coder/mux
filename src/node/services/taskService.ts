@@ -213,6 +213,13 @@ export interface TaskCreateArgs {
     workflowName?: string;
     outputSchema?: unknown;
   };
+  /**
+   * How the owner's stream-end treats this task while it is active. Derived from
+   * launch intent: `run_in_background: true` -> "notify_on_terminal" (non-blocking
+   * with terminal wake-up); foreground/default -> "blocking_until_terminal".
+   * Defaults to blocking when omitted.
+   */
+  attentionPolicy?: BackgroundWorkAttentionPolicy;
   /** Experiments to inherit to subagent */
   experiments?: {
     programmaticToolCalling?: boolean;
@@ -429,6 +436,12 @@ export interface WorkspaceTurnCreateArgs {
     disposable?: boolean;
   };
   experiments?: TaskCreateArgs["experiments"];
+  /**
+   * How the owner's stream-end treats this workspace turn while active. Derived
+   * from `run_in_background`: background -> "notify_on_terminal"; foreground/default
+   * -> "blocking_until_terminal". Defaults to blocking when omitted.
+   */
+  attentionPolicy?: BackgroundWorkAttentionPolicy;
 }
 
 export interface WorkspaceTurnCreateResult {
@@ -491,6 +504,7 @@ interface TaskLaunchPlan {
   bestOf?: TaskCreateArgs["bestOf"];
   experiments?: TaskCreateArgs["experiments"];
   onRefusal?: TaskCreateArgs["onRefusal"];
+  attentionPolicy?: TaskCreateArgs["attentionPolicy"];
 }
 
 interface TaskCreateManyOptions {
@@ -1010,6 +1024,9 @@ export class TaskService {
   // Git worktree creation touches per-repository metadata; serialize that narrow phase per project
   // while allowing post-fork init/send startup work for sibling tasks to overlap.
   private readonly reservedTaskLaunchByProjectPath = new Map<string, Promise<void>>();
+  // In-flight durable persistence of notify_on_terminal policy for backgrounded foreground waits.
+  // Awaited at the start of handleStreamEnd so a just-detached wait is treated as non-blocking.
+  private readonly pendingNotifyOnTerminalPersists = new Set<Promise<void>>();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
   // Tracks workspaces currently blocked in a foreground wait (e.g. a task tool call awaiting
@@ -2300,6 +2317,7 @@ export class TaskService {
         bestOf: normalizedBestOf,
         experiments: args.experiments,
         onRefusal: args.onRefusal,
+        attentionPolicy: args.attentionPolicy,
         status,
         ...(sharedWorkspacePath != null ? { sharedWorkspacePath } : {}),
         // Real branch checked out in the parent's checkout: persisted as taskTrunkBranch and used
@@ -2365,6 +2383,7 @@ export class TaskService {
           taskOnRefusal: plan.onRefusal,
           taskExperiments: plan.experiments,
           taskIsolation: plan.sharedWorkspacePath != null ? "none" : undefined,
+          taskAttentionPolicy: plan.attentionPolicy,
           projects: plan.parentMeta.projects,
         });
       }
@@ -2933,6 +2952,7 @@ export class TaskService {
       prompt,
       modelString: model,
       ...(thinkingLevel != null ? { thinkingLevel } : {}),
+      ...(args.attentionPolicy != null ? { attentionPolicy: args.attentionPolicy } : {}),
     };
     await this.taskHandleStore.upsertWorkspaceTurn(record);
     if (record.status !== "queued") {
@@ -3370,6 +3390,7 @@ export class TaskService {
           taskOnRefusal: args.onRefusal,
           taskExperiments: args.experiments,
           taskIsolation: useSharedWorkspace ? "none" : undefined,
+          taskAttentionPolicy: args.attentionPolicy,
           projects: parentMeta.projects,
         });
         return config;
@@ -3530,6 +3551,7 @@ export class TaskService {
         taskOnRefusal: args.onRefusal,
         taskExperiments: args.experiments,
         taskIsolation: useSharedWorkspace ? "none" : undefined,
+        taskAttentionPolicy: args.attentionPolicy,
         projects: inheritedProjects,
       });
       return config;
@@ -3972,6 +3994,11 @@ export class TaskService {
     for (const waiter of waiters) {
       try {
         this.markTaskQueueBackgrounded(waiter.taskId);
+        // A foreground wait detached by a queued message becomes durably non-blocking:
+        // persist notify_on_terminal so future stream-ends and restarts do not re-force the
+        // await. The in-memory mark above covers the immediate next stream-end while this
+        // persistence settles. Tracked so handleStreamEnd can await it before reading config.
+        this.scheduleNotifyOnTerminalPersist(waiter.taskId, waiter.requestingWorkspaceId);
         waiter.reject(new ForegroundWaitBackgroundedError());
         count++;
       } catch {
@@ -3979,6 +4006,52 @@ export class TaskService {
       }
     }
     return count;
+  }
+
+  /**
+   * Persist `notify_on_terminal` on a backgrounded handle (agent task config or
+   * workspace-turn record). Tracked per workspace so `handleStreamEnd` can await
+   * any in-flight persistence before it reads config to decide blocking work.
+   */
+  private scheduleNotifyOnTerminalPersist(
+    taskId: string,
+    ownerWorkspaceId: string | undefined
+  ): void {
+    const promise = this.persistNotifyOnTerminalPolicy(taskId, ownerWorkspaceId)
+      .catch((error: unknown) => {
+        log.error("Failed to persist notify_on_terminal policy for backgrounded wait", {
+          taskId,
+          error,
+        });
+      })
+      .finally(() => {
+        this.pendingNotifyOnTerminalPersists.delete(promise);
+      });
+    this.pendingNotifyOnTerminalPersists.add(promise);
+  }
+
+  private async persistNotifyOnTerminalPolicy(
+    taskId: string,
+    ownerWorkspaceId: string | undefined
+  ): Promise<void> {
+    if (isWorkspaceTurnTaskId(taskId)) {
+      if (ownerWorkspaceId == null) return;
+      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
+      if (record == null || record.attentionPolicy === "notify_on_terminal") return;
+      await this.taskHandleStore.upsertWorkspaceTurn({
+        ...record,
+        attentionPolicy: "notify_on_terminal",
+        updatedAt: getIsoNow(),
+      });
+      return;
+    }
+    await this.config.editConfig((config) => {
+      const found = findWorkspaceEntry(config, taskId);
+      if (found != null && found.workspace.taskAttentionPolicy !== "notify_on_terminal") {
+        found.workspace.taskAttentionPolicy = "notify_on_terminal";
+      }
+      return config;
+    });
   }
 
   /**
@@ -6739,6 +6812,12 @@ export class TaskService {
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const workspaceId = event.workspaceId;
+
+    // Ensure any in-flight notify_on_terminal persistence (from a just-detached foreground wait)
+    // has settled so the config we read below reflects the durable non-blocking policy.
+    if (this.pendingNotifyOnTerminalPersists.size > 0) {
+      await Promise.all([...this.pendingNotifyOnTerminalPersists]);
+    }
 
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, workspaceId);

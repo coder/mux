@@ -1,5 +1,6 @@
 import { type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createAttachFileTool } from "@/node/services/tools/attach_file";
@@ -192,6 +193,7 @@ export interface ToolConfiguration {
       workspaceId: string;
       projectTrusted: boolean;
       args: unknown;
+      attentionPolicy?: BackgroundWorkAttentionPolicy;
       onRunCreated?: (event: {
         runId: string;
         status: "pending";

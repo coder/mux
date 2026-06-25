@@ -7,6 +7,7 @@ import {
   type WorkflowRunRecord,
   type WorkflowRunStatus,
 } from "@/common/types/workflow";
+import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
@@ -85,6 +86,12 @@ export interface StartWorkflowInput {
   onBackgroundRunCreated?: (event: WorkflowBackgroundRunCreatedEvent) => Promise<void> | void;
   abortSignal?: AbortSignal;
   backgroundOnMessageQueued?: boolean;
+  /**
+   * Background runs persist "notify_on_terminal" so the owner's stream-end does not force a
+   * task_await; foreground/default runs omit this (blocking). Terminal wake-up for background runs
+   * is handled by AIService.onBackgroundRunTerminal.
+   */
+  attentionPolicy?: BackgroundWorkAttentionPolicy;
 }
 
 export interface StartNamedWorkflowResult {
@@ -330,6 +337,9 @@ export class WorkflowService {
     const run = await this.requireRunForWorkspace(input);
     assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
     assertWorkflowRunCanTransition(run.status, "running");
+    // A run resumed in the background becomes non-blocking; persist so future stream-ends do not
+    // re-force a task_await even if the run was originally started in the foreground.
+    await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
     await this.runInBackground(input.runId, "Background workflow resume failed:", {
       allowResumeFromInterrupted: run.status === "interrupted",
       projectTrusted: input.projectTrusted,
@@ -679,6 +689,7 @@ export class WorkflowService {
       workflow: buildWorkflowScriptDescriptor(input.script),
       source: input.script.source,
       args: normalized.args,
+      ...(input.attentionPolicy != null ? { attentionPolicy: input.attentionPolicy } : {}),
       now: this.clock?.nowIso() ?? new Date().toISOString(),
     });
   }

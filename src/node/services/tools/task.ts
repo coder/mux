@@ -421,6 +421,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             ? { thinkingLevel: aiOverrides.thinkingLevel }
             : {}),
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
+          // Background launches are non-blocking with terminal wake-up; foreground/default block.
+          attentionPolicy: run_in_background ? "notify_on_terminal" : "blocking_until_terminal",
           workspace: {
             mode: workspace?.mode ?? "new",
             ...(workspace?.workspaceId != null ? { workspaceId: workspace.workspaceId } : {}),
@@ -539,6 +541,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
             : {}),
           ...(isolation != null ? { isolation } : {}),
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
+          // Background launches are non-blocking with terminal wake-up; foreground/default block.
+          attentionPolicy: run_in_background ? "notify_on_terminal" : "blocking_until_terminal",
           bestOf:
             taskGroupId != null
               ? {
