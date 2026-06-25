@@ -485,6 +485,13 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           }
           const errorMessage = getErrorMessage(error);
           if (errorMessage === "Timed out waiting for workspace turn") {
+            // The foreground wait exceeded its budget but the workspace turn keeps running. Make it
+            // non-blocking so the owner's stream-end does not re-force a task_await; Mux wakes the
+            // owner with the terminal output instead.
+            await taskService.markBackgroundWorkNotifyOnTerminal?.(
+              created.data.taskId,
+              workspaceId
+            );
             return parseToolResult(
               TaskToolResultSchema,
               {
@@ -671,6 +678,17 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const didTimeOut = waitOutcomes.some((outcome) => outcome.kind === "timed_out");
       const hadInterruptedTask = waitOutcomes.some(
         (outcome) => outcome.kind === "task_interrupted"
+      );
+
+      // Foreground waits that exceeded their budget but whose tasks keep running become
+      // non-blocking: persist notify_on_terminal so the owner is not re-forced to await them.
+      await Promise.all(
+        waitOutcomes.flatMap((outcome, index) => {
+          const task = createdTasks[index];
+          return outcome.kind === "timed_out" && task != null
+            ? [taskService.markBackgroundWorkNotifyOnTerminal?.(task.taskId, workspaceId)]
+            : [];
+        })
       );
       if (wasBackgrounded || didTimeOut || hadInterruptedTask) {
         return parseToolResult(

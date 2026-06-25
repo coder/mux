@@ -6449,6 +6449,56 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("markBackgroundWorkNotifyOnTerminal makes a timed-out wait durably non-blocking", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-timeout";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-timeout", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    // Simulate the task tool's timeout-detach: the foreground wait exceeded its budget but the task
+    // keeps running, so it is marked notify_on_terminal.
+    await taskService.markBackgroundWorkNotifyOnTerminal(childTaskId, rootWorkspaceId);
+
+    const persisted = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((w) => w.id === childTaskId);
+    expect(persisted?.taskAttentionPolicy).toBe("notify_on_terminal");
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("renewed foreground wait does not re-promote durable notify policy to blocking", async () => {
     const config = await createTestConfig(rootDir);
 

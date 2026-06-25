@@ -4053,6 +4053,19 @@ export class TaskService {
    * workspace-turn record). Tracked per workspace so `handleStreamEnd` can await
    * any in-flight persistence before it reads config to decide blocking work.
    */
+  /**
+   * Durably mark a still-active task/handle as `notify_on_terminal`. Used when a foreground wait
+   * detaches because it exceeded its foreground wait budget (timeout) and the work continues in the
+   * background: like queued-message detachment, the work must not re-force the owner to await it.
+   * Awaited so callers (e.g. the task tool) can rely on the policy before returning pending results.
+   */
+  async markBackgroundWorkNotifyOnTerminal(
+    taskId: string,
+    ownerWorkspaceId: string
+  ): Promise<void> {
+    await this.persistNotifyOnTerminalPolicy(taskId, ownerWorkspaceId);
+  }
+
   private scheduleNotifyOnTerminalPersist(
     taskId: string,
     ownerWorkspaceId: string | undefined
@@ -4320,20 +4333,55 @@ export class TaskService {
       "settleWorkspaceTurn requires stable workspaceId"
     );
 
-    await this.workspaceTurnSettlementLocks.withLock(params.record.handleId, async () => {
-      const current = await this.taskHandleStore.getWorkspaceTurn(
-        params.record.ownerWorkspaceId,
-        params.record.handleId
-      );
-      if (current == null) {
-        return;
-      }
-      assert(
-        current.workspaceId === params.record.workspaceId,
-        "settleWorkspaceTurn requires current record to match workspaceId"
-      );
+    // The settlement lock only persists durable state and resolves waiters. The terminal wake-up is
+    // enqueued AFTER the lock is released (no sendMessage / notifier work while holding the lock).
+    const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
+      params.record.handleId,
+      async (): Promise<{ outcome: TerminalAttentionOutcome; title?: string } | null> => {
+        const current = await this.taskHandleStore.getWorkspaceTurn(
+          params.record.ownerWorkspaceId,
+          params.record.handleId
+        );
+        if (current == null) {
+          return null;
+        }
+        assert(
+          current.workspaceId === params.record.workspaceId,
+          "settleWorkspaceTurn requires current record to match workspaceId"
+        );
 
-      if (this.isTerminalWorkspaceTurnStatus(current.status)) {
+        if (this.isTerminalWorkspaceTurnStatus(current.status)) {
+          const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
+          if (
+            active?.handleId === params.record.handleId &&
+            active.ownerWorkspaceId === params.record.ownerWorkspaceId
+          ) {
+            this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+          }
+          this.settleWorkspaceTurnWaiters(
+            current.handleId,
+            current.status === "completed"
+              ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(current) }
+              : {
+                  status: "error",
+                  error: new Error(
+                    current.error ??
+                      (current.status === "interrupted"
+                        ? "Workspace turn interrupted"
+                        : "Workspace turn failed")
+                  ),
+                }
+          );
+          this.markTaskForegroundRelevant(current.handleId);
+          return null;
+        }
+
+        // Decide the terminal wake-up using persisted policy + the restart-safe dedupe marker.
+        const policy = resolveBackgroundWorkAttentionPolicy(current.attentionPolicy);
+        const shouldNotify =
+          policy === "notify_on_terminal" && current.terminalAttentionNotifiedAt == null;
+
+        await this.taskHandleStore.upsertWorkspaceTurn(params.next);
         const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
         if (
           active?.handleId === params.record.handleId &&
@@ -4341,63 +4389,51 @@ export class TaskService {
         ) {
           this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
         }
-        this.settleWorkspaceTurnWaiters(
-          current.handleId,
-          current.status === "completed"
-            ? { status: "completed", result: this.buildWorkspaceTurnWaitResult(current) }
-            : {
-                status: "error",
-                error: new Error(
-                  current.error ??
-                    (current.status === "interrupted"
-                      ? "Workspace turn interrupted"
-                      : "Workspace turn failed")
-                ),
-              }
+        const hadForegroundWaiter = this.settleWorkspaceTurnWaiters(
+          params.record.handleId,
+          params.waiterSettlement
         );
-        this.markTaskForegroundRelevant(current.handleId);
-        return;
-      }
+        this.markTaskForegroundRelevant(params.record.handleId);
+        await this.cleanupDisposableWorkspaceTurn(params.next);
+        this.scheduleMaybeStartQueuedTasks();
 
-      // Decide the terminal wake-up inside the lock (using persisted policy + dedupe marker), but
-      // do NOT send while holding the lock. Persist terminalAttentionNotifiedAt before the upsert
-      // so restart/duplicate settlement cannot double-wake; enqueue + drain after the lock.
-      const policy = resolveBackgroundWorkAttentionPolicy(current.attentionPolicy);
-      const shouldNotify =
-        policy === "notify_on_terminal" && current.terminalAttentionNotifiedAt == null;
-      const nextRecord: WorkspaceTurnTaskHandleRecord = shouldNotify
-        ? { ...params.next, terminalAttentionNotifiedAt: getIsoNow() }
-        : params.next;
-
-      await this.taskHandleStore.upsertWorkspaceTurn(nextRecord);
-      const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
-      if (
-        active?.handleId === params.record.handleId &&
-        active.ownerWorkspaceId === params.record.ownerWorkspaceId
-      ) {
-        this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
+        // A foreground waiter that received the terminal result already integrates it, so suppress
+        // the synthetic wake-up for that source.
+        if (!shouldNotify || hadForegroundWaiter) {
+          return null;
+        }
+        return {
+          outcome: workspaceTurnTerminalOutcome(params.next.status),
+          ...(params.next.title != null ? { title: params.next.title } : {}),
+        };
       }
-      const hadForegroundWaiter = this.settleWorkspaceTurnWaiters(
-        params.record.handleId,
-        params.waiterSettlement
-      );
-      this.markTaskForegroundRelevant(params.record.handleId);
-      await this.cleanupDisposableWorkspaceTurn(nextRecord);
-      this.scheduleMaybeStartQueuedTasks();
+    );
 
-      // A foreground waiter that received the terminal result already integrates it, so suppress
-      // the synthetic wake-up for that source. Enqueue happens outside the settlement lock.
-      if (shouldNotify && !hadForegroundWaiter) {
-        await this.enqueueTerminalAttention({
-          ownerWorkspaceId: params.record.ownerWorkspaceId,
-          sourceKind: "workspace_turn",
-          sourceId: params.record.handleId,
-          outputDelivery: "requires_task_await",
-          terminalOutcome: workspaceTurnTerminalOutcome(nextRecord.status),
-          ...(nextRecord.title != null ? { title: nextRecord.title } : {}),
-        });
-      }
+    if (pendingNotify == null) {
+      return;
+    }
+
+    // Enqueue the terminal wake-up outside the lock. The persisted notification is the restart-safe
+    // record of intent; only after it is accepted do we set terminalAttentionNotifiedAt on the
+    // handle so a duplicate settlement / stale recovery cannot double-wake.
+    await this.enqueueTerminalAttention({
+      ownerWorkspaceId: params.record.ownerWorkspaceId,
+      sourceKind: "workspace_turn",
+      sourceId: params.record.handleId,
+      outputDelivery: "requires_task_await",
+      terminalOutcome: pendingNotify.outcome,
+      ...(pendingNotify.title != null ? { title: pendingNotify.title } : {}),
     });
+    const terminal = await this.taskHandleStore.getWorkspaceTurn(
+      params.record.ownerWorkspaceId,
+      params.record.handleId
+    );
+    if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
+      await this.taskHandleStore.upsertWorkspaceTurn({
+        ...terminal,
+        terminalAttentionNotifiedAt: getIsoNow(),
+      });
+    }
   }
 
   async waitForWorkspaceTurn(
