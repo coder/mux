@@ -111,10 +111,7 @@ export class TerminalAttentionStore {
     return record;
   }
 
-  async get(
-    ownerWorkspaceId: string,
-    id: string
-  ): Promise<TerminalAttentionNotification | null> {
+  async get(ownerWorkspaceId: string, id: string): Promise<TerminalAttentionNotification | null> {
     let raw: string;
     try {
       raw = await fsPromises.readFile(this.file(ownerWorkspaceId, id), "utf-8");
@@ -163,7 +160,7 @@ export class TerminalAttentionStore {
     status: "delivered" | "superseded"
   ): Promise<void> {
     const record = await this.get(ownerWorkspaceId, id);
-    if (record == null || record.status !== "pending") {
+    if (record?.status !== "pending") {
       return;
     }
     await this.write({

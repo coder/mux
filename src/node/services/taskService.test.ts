@@ -1525,7 +1525,7 @@ describe("TaskService", () => {
     await Promise.all([...internal.pendingTerminalAttentionDrains]);
 
     const wakeCall = sendMessage.mock.calls.find(
-      (call) => typeof call[1] === "string" && (call[1] as string).includes("wst_handle")
+      (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
     );
     expect(wakeCall).toBeDefined();
     const prompt = wakeCall?.[1] as string;
@@ -1624,7 +1624,7 @@ describe("TaskService", () => {
 
     // No wake-up sent while a queued/preparing turn exists.
     const wakeCall = sendMessage.mock.calls.find(
-      (call) => typeof call[1] === "string" && (call[1] as string).includes("wst_handle")
+      (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
     );
     expect(wakeCall).toBeUndefined();
 
@@ -1632,7 +1632,7 @@ describe("TaskService", () => {
     hasPendingQueuedOrPreparingTurn.mockImplementation(() => false);
     await internal.drainTerminalAttention(parentId);
     const drained = sendMessage.mock.calls.find(
-      (call) => typeof call[1] === "string" && (call[1] as string).includes("wst_handle")
+      (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
     );
     expect(drained).toBeDefined();
   });
