@@ -1676,6 +1676,67 @@ describe("TaskService", () => {
     expect(prompt).toContain("task_await");
   });
 
+  test("terminal wake-up drain ignores nested workflow runs", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: "wfr_top_notify",
+      workspaceId: parentId,
+      workflow: {
+        name: "top",
+        description: "Top workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'top' }; }\n",
+      args: {},
+      attentionPolicy: "notify_on_terminal",
+      now: "2026-06-19T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_top_notify", "running", "2026-06-19T00:00:01.000Z");
+    await runStore.createRun({
+      id: "wfr_nested_internal",
+      workspaceId: parentId,
+      workflow: {
+        name: "nested",
+        description: "Nested workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'nested' }; }\n",
+      args: {},
+      parentWorkflow: { runId: "wfr_top_notify", stepId: "nested", inputHash: "hash", depth: 0 },
+      now: "2026-06-19T00:00:02.000Z",
+    });
+    await runStore.appendStatus("wfr_nested_internal", "running", "2026-06-19T00:00:03.000Z");
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(
+      "Background sub-agent task(s) have completed"
+    );
+  });
+
   test("initialize drains persisted terminal wake-ups from before restart", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);

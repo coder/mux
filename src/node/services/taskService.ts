@@ -6033,7 +6033,12 @@ export class TaskService {
       const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
       const runs = await runStore.listRuns();
       return runs
-        .filter((run) => run.workspaceId === workspaceId && isActiveWorkflowRunStatus(run.status))
+        .filter(
+          (run) =>
+            run.workspaceId === workspaceId &&
+            run.parentWorkflow == null &&
+            isActiveWorkflowRunStatus(run.status)
+        )
         .map((run) => run.id);
     } catch (error: unknown) {
       log.warn("Failed to list active workflow runs for workspace", {
