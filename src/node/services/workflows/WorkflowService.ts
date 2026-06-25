@@ -442,6 +442,7 @@ export class WorkflowService {
         // silently reverted back to `running`. Likewise skip the continuation entirely
         // when this call was aborted (interruptRunOnAbort aborts our runner controller and
         // is concurrently transitioning the run to `interrupted`).
+        await this.runStore.setAttentionPolicy(runId, "notify_on_terminal");
         await this.notifyRunStatusChanged(input.run, "backgrounded");
         if (!runnerAbortController.signal.aborted) {
           void this.runInBackground(runId, input.backgroundedFailureMessage, {
@@ -517,6 +518,7 @@ export class WorkflowService {
       return { runId, status: "completed", result };
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
+        await this.runStore.setAttentionPolicy(runId, "notify_on_terminal");
         await this.notifyRunStatusChanged(createdRun, "backgrounded");
         if (!runnerAbortController.signal.aborted) {
           void this.runInBackground(runId, "Backgrounded workflow run failed:", {

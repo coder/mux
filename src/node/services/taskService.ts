@@ -4090,12 +4090,40 @@ export class TaskService {
     if (isWorkspaceTurnTaskId(taskId)) {
       if (ownerWorkspaceId == null) return;
       const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-      if (record == null || record.attentionPolicy === "notify_on_terminal") return;
-      await this.taskHandleStore.upsertWorkspaceTurn({
-        ...record,
-        attentionPolicy: "notify_on_terminal",
-        updatedAt: getIsoNow(),
-      });
+      if (record == null) return;
+
+      const updatedRecord: WorkspaceTurnTaskHandleRecord =
+        record.attentionPolicy === "notify_on_terminal"
+          ? record
+          : { ...record, attentionPolicy: "notify_on_terminal", updatedAt: getIsoNow() };
+      if (updatedRecord !== record) {
+        await this.taskHandleStore.upsertWorkspaceTurn(updatedRecord);
+      }
+
+      // A queued-message/timeout detach can race with child stream-end settlement: the waiter is
+      // gone before notify_on_terminal is durably persisted, so settleWorkspaceTurn may have seen a
+      // blocking policy and skipped the terminal wake-up. If the handle is already terminal here,
+      // enqueue the missing wake-up now.
+      if (
+        this.isTerminalWorkspaceTurnStatus(updatedRecord.status) &&
+        updatedRecord.terminalAttentionNotifiedAt == null
+      ) {
+        await this.enqueueTerminalAttention({
+          ownerWorkspaceId,
+          sourceKind: "workspace_turn",
+          sourceId: updatedRecord.handleId,
+          outputDelivery: "requires_task_await",
+          terminalOutcome: workspaceTurnTerminalOutcome(updatedRecord.status),
+          ...(updatedRecord.title != null ? { title: updatedRecord.title } : {}),
+        });
+        const terminal = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
+        if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
+          await this.taskHandleStore.upsertWorkspaceTurn({
+            ...terminal,
+            terminalAttentionNotifiedAt: getIsoNow(),
+          });
+        }
+      }
       return;
     }
     await this.config.editConfig((config) => {

@@ -6499,6 +6499,56 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("markBackgroundWorkNotifyOnTerminal wakes for terminal workspace-turn records", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const handleId = "wst_timeout_race";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: rootWorkspaceId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "completed",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "Done before notify policy persisted",
+    });
+
+    // Simulates the race Codex caught: the workspace turn settled before the queued/timeout detach
+    // persisted notify_on_terminal, so the persistence helper must enqueue the missing wake-up.
+    await taskService.markBackgroundWorkNotifyOnTerminal(handleId, rootWorkspaceId);
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(handleId);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("timeout_secs: 0");
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(rootWorkspaceId, handleId);
+    expect(snapshot?.attentionPolicy).toBe("notify_on_terminal");
+    expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+  });
+
   test("renewed foreground wait does not re-promote durable notify policy to blocking", async () => {
     const config = await createTestConfig(rootDir);
 

@@ -196,6 +196,58 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     ]);
   });
 
+  test("foreground workflows that self-background persist notify_on_terminal policy", async () => {
+    using tmp = new DisposableTempDir("workflow-service-self-background-notify");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    let agentCalls = 0;
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          agentCalls += 1;
+          if (agentCalls === 1) {
+            throw new ForegroundWaitBackgroundedError();
+          }
+          return {
+            taskId: "task-resumed",
+            reportMarkdown: "resumed",
+            structuredOutput: { summary: "resumed" },
+          };
+        },
+      },
+      generateRunId: () => "wfr_self_background_notify",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startWorkflow({
+      script: createScript(`export default async function workflow({ agent }) {
+  const child = await agent("Wait for queued message", {
+    id: "wait-for-queue",
+    schema: { type: "object", required: ["summary"], properties: { summary: { type: "string" } } },
+  });
+  return { reportMarkdown: child.summary };
+}
+`),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    expect(result).toEqual({
+      runId: "wfr_self_background_notify",
+      status: "backgrounded",
+      result: null,
+    });
+    await expect(runStore.getRun("wfr_self_background_notify")).resolves.toMatchObject({
+      attentionPolicy: "notify_on_terminal",
+    });
+  });
+
   test("does not continue canceled foreground workflows in the background", async () => {
     using tmp = new DisposableTempDir("workflow-service-canceled-background");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
