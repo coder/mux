@@ -4325,17 +4325,41 @@ export class TaskService {
       defaultModel
     );
 
-    const sendResult = await this.workspaceService.sendMessage(
+    const sendOptions = {
+      model: resumeOptions.model,
+      agentId: resumeOptions.agentId,
+      thinkingLevel: resumeOptions.thinkingLevel,
+    };
+    let sendResult = await this.workspaceService.sendMessage(
       ownerWorkspaceId,
       prompt,
-      {
-        model: resumeOptions.model,
-        agentId: resumeOptions.agentId,
-        thinkingLevel: resumeOptions.thinkingLevel,
-      },
+      sendOptions,
       // Synthetic, idle-only auto-resume — same flags as the active-work auto-resume path.
       { skipAutoResumeReset: true, synthetic: true, agentInitiated: true, requireIdle: true }
     );
+
+    if (!sendResult.success && isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+      const latestCfg = this.config.loadConfigOrDefault();
+      const latestTaskIndex = this.buildAgentTaskIndex(latestCfg);
+      if (
+        findWorkspaceEntry(latestCfg, ownerWorkspaceId) != null &&
+        !this.aiService.isStreaming(ownerWorkspaceId) &&
+        !this.workspaceService.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId) &&
+        !this.interruptedParentWorkspaceIds.has(ownerWorkspaceId) &&
+        !(await this.hasBlockingActiveWorkForTerminalDrain(ownerWorkspaceId, latestTaskIndex))
+      ) {
+        sendResult = await this.workspaceService.sendMessage(
+          ownerWorkspaceId,
+          prompt,
+          sendOptions,
+          {
+            skipAutoResumeReset: true,
+            synthetic: true,
+            agentInitiated: true,
+          }
+        );
+      }
+    }
 
     if (!sendResult.success) {
       // Owner became busy between the idle check and the send: leave pending and retry next drain.
