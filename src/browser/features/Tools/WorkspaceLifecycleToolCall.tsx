@@ -25,7 +25,6 @@ import {
 import {
   useToolExpansion,
   getStatusDisplay,
-  isToolErrorResult,
   unwrapResult,
   type ToolStatus,
 } from "./Shared/toolUtils";
@@ -182,6 +181,21 @@ const ACTION_META: Record<TaskWorkspaceLifecycleToolArgs["action"], ActionMeta> 
 function extractRows(result: unknown): TaskWorkspaceLifecycleTargetResult[] {
   const parsed = TaskWorkspaceLifecycleToolResultSchema.safeParse(result);
   return parsed.success ? parsed.data.results : [];
+}
+
+/**
+ * Top-level failure message, if the result represents a failed call rather than a
+ * `{ results: [...] }` payload. Covers both the standard thrown shape
+ * (`{ success: false, error }`) and the nested code_execution/PTC shape (`{ error }` with no
+ * `success` flag, reconstructed by displayedMessageBuilder) — the latter reaches this card
+ * now that nested calls route here instead of GenericToolCall. A valid results payload has no
+ * top-level `error`, so successful batches (even with per-row errors) are unaffected.
+ */
+function extractErrorText(result: unknown): string | null {
+  if (result == null || typeof result !== "object") return null;
+  const record = result as Record<string, unknown>;
+  if (Array.isArray(record.results)) return null;
+  return typeof record.error === "string" ? record.error : null;
 }
 
 /** Human-readable identifier for a target: prefer the resolved workspace id. */
@@ -387,7 +401,7 @@ export const WorkspaceLifecycleToolCall: React.FC<WorkspaceLifecycleToolCallProp
   // ({ type: "json", value: ... }); unwrap (idempotent for already-bare results) before
   // parsing so a valid { results: [...] } payload isn't misread as malformed.
   const result = unwrapResult(props.result);
-  const errorResult = isToolErrorResult(result) ? result : null;
+  const errorText = extractErrorText(result);
   const rows = extractRows(result);
   const executing = status === "executing";
 
@@ -415,7 +429,7 @@ export const WorkspaceLifecycleToolCall: React.FC<WorkspaceLifecycleToolCallProp
             {total === 1 ? "" : "s"}
           </span>
         )}
-        {!errorResult && (rows.length > 0 || executing) && (
+        {!errorText && (rows.length > 0 || executing) && (
           <HeaderBadge rows={rows} executing={executing} />
         )}
         <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
@@ -423,7 +437,7 @@ export const WorkspaceLifecycleToolCall: React.FC<WorkspaceLifecycleToolCallProp
 
       {expanded && (
         <ToolDetails>
-          {errorResult && <ErrorBox>{errorResult.error}</ErrorBox>}
+          {errorText && <ErrorBox>{errorText}</ErrorBox>}
 
           {rows.length > 0 && (
             <>
@@ -443,7 +457,7 @@ export const WorkspaceLifecycleToolCall: React.FC<WorkspaceLifecycleToolCallProp
             </>
           )}
 
-          {rows.length === 0 && !errorResult && (
+          {rows.length === 0 && !errorText && (
             <RequestedTargets args={props.args} meta={meta} executing={executing} />
           )}
         </ToolDetails>

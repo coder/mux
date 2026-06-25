@@ -172,4 +172,18 @@ describe("WorkspaceLifecycleToolCall", () => {
     // The requested-targets fallback is suppressed when there is a top-level error.
     expect(view.queryByText("ws-1")).toBeNull();
   });
+
+  test("surfaces a nested { error } failure (no success flag) instead of the fallback", () => {
+    const view = renderWithProviders(
+      <WorkspaceLifecycleToolCall
+        args={{ action: "archive", targets: [{ workspaceId: "ws-nested" }] }}
+        status="failed"
+        defaultExpanded
+        // code_execution/PTC reconstructs nested failures as { error } with no success flag.
+        result={{ error: "child workspace is not owned by this orchestrator" }}
+      />
+    );
+    expect(view.queryByText("child workspace is not owned by this orchestrator")).not.toBeNull();
+    expect(view.queryByText("ws-nested")).toBeNull();
+  });
 });
