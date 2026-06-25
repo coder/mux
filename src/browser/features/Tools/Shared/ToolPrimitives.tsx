@@ -6,6 +6,7 @@ import {
 } from "@/browser/features/Messages/TranscriptQuoteBoundary";
 import type { LucideIcon } from "lucide-react";
 import {
+  Activity,
   ArrowDownUp,
   Bell,
   BookOpen,
@@ -271,6 +272,9 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   set_goal: Target,
   get_goal: Target,
   complete_goal: CircleCheck,
+  // Activity (ECG line) rather than HeartPulse: it matches the scanning pulse-trace
+  // motif inside the HeartbeatToolCall card. The config menu uses HeartPulse.
+  heartbeat: Activity,
 };
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {

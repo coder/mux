@@ -2430,6 +2430,43 @@ input[type="checkbox"] {
   }
 }
 
+/* HeartbeatToolCall: pulsing "live" dot + scanning ECG trace. Conveys an
+   actively-ticking schedule; both are gated on reduced-motion below. */
+@keyframes heartbeat-dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.75);
+    opacity: 0.35;
+  }
+}
+
+@keyframes heartbeat-trace-scan {
+  to {
+    stroke-dashoffset: -240;
+  }
+}
+
+.heartbeat-dot {
+  transform-origin: center;
+  animation: heartbeat-dot-pulse 1.7s ease-in-out infinite;
+}
+
+.heartbeat-trace {
+  stroke-dasharray: 4 5;
+  animation: heartbeat-trace-scan 4.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heartbeat-dot,
+  .heartbeat-trace {
+    animation: none;
+  }
+}
+
 /* Animated dashed connector for active sub-agents */
 @keyframes connector-dash-scroll {
   from {

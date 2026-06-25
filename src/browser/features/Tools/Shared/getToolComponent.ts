@@ -44,6 +44,7 @@ import {
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
 import { SetGoalToolCall } from "../SetGoalToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
+import { HeartbeatToolCall } from "../HeartbeatToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 
@@ -200,6 +201,7 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     component: CompleteGoalToolCall,
     schema: TOOL_DEFINITIONS.complete_goal.schema,
   },
+  heartbeat: { component: HeartbeatToolCall, schema: TOOL_DEFINITIONS.heartbeat.schema },
   review_pane_update: {
     component: ReviewPaneUpdateToolCall,
     schema: TOOL_DEFINITIONS.review_pane_update.schema,

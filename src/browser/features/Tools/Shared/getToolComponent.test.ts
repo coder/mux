@@ -11,6 +11,7 @@ import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
 import { SetGoalToolCall } from "../SetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
+import { HeartbeatToolCall } from "../HeartbeatToolCall";
 import { getToolComponent } from "./getToolComponent";
 
 describe("getToolComponent", () => {
@@ -90,6 +91,20 @@ describe("getToolComponent", () => {
   test("complete_goal falls back to GenericToolCall when summary is empty (zod min(1) fails)", () => {
     const component = getToolComponent("complete_goal", { summary: "" });
     expect(component).toBe(GenericToolCall);
+  });
+
+  test("returns HeartbeatToolCall for heartbeat", () => {
+    expect(getToolComponent("heartbeat", { action: "get" })).toBe(HeartbeatToolCall);
+    expect(getToolComponent("heartbeat", { action: "set", intervalMs: 30 * 60_000 })).toBe(
+      HeartbeatToolCall
+    );
+  });
+
+  test("heartbeat falls back to GenericToolCall when intervalMs is out of range", () => {
+    // 30s is below HEARTBEAT_MIN_INTERVAL_MS (5min); the schema's .min() rejects it.
+    expect(getToolComponent("heartbeat", { action: "set", intervalMs: 30_000 })).toBe(
+      GenericToolCall
+    );
   });
 
   test("falls back to GenericToolCall when args validation fails", () => {
