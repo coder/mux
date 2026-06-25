@@ -1262,10 +1262,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         {interruptedBarrierMessageIds.has(message.id) && (
           // Only the divider on the resume target (history tail) is clickable;
           // resumeStream always continues the tail, so older partial dividers
-          // must stay decorative to avoid resuming the wrong turn.
+          // must stay decorative to avoid resuming the wrong turn. Transcript-only
+          // (archived, no-checkout) workspaces are read-only, so resume stays off.
           <InterruptedBarrier
             workspaceId={workspaceId}
-            resumable={message.id === lastRetryCandidateMessage?.id}
+            resumable={!transcriptOnly && message.id === lastRetryCandidateMessage?.id}
           />
         )}
       </React.Fragment>
