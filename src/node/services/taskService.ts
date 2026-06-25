@@ -128,6 +128,11 @@ import {
   type WorkspaceTurnTaskHandleRecord,
   type WorkspaceTurnTaskStatus,
 } from "@/node/services/taskHandleStore";
+import {
+  TerminalAttentionStore,
+  type TerminalAttentionNotification,
+  type TerminalAttentionOutcome,
+} from "@/node/services/terminalAttentionStore";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
 import { normalizeWorkflowAgentReportPayloadForHostSchema } from "@/common/utils/tools/workflowReportPayload";
@@ -318,6 +323,36 @@ const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
   "details are already injected into this workspace context as synthetic user messages. Do not " +
   "re-await those tasks. Integrate the failures into your work now: adjust your approach (e.g. a " +
   "different model, agent, or task design) or surface the failures in your response.";
+
+/**
+ * Workspace-turn terminal output is NOT injected into parent history (unlike sub-agent reports);
+ * it lives in the task handle store. So the wake-up must tell the agent to retrieve it with a
+ * one-shot task_await (terminal already, timeout_secs: 0), not to keep waiting.
+ */
+function buildCompletedWorkspaceTurnPrompt(handleIds: string[]): string {
+  assert(handleIds.length > 0, "buildCompletedWorkspaceTurnPrompt requires at least one handle id");
+  return (
+    "Background workspace turn(s) have reached a terminal state: " +
+    `${handleIds.join(", ")}. ` +
+    `Call task_await now with task_ids: ${JSON.stringify(handleIds)} and timeout_secs: 0 to ` +
+    "retrieve their terminal output, then integrate it into your work. These handles are already " +
+    "terminal — do not repeatedly wait if task_await returns a terminal status."
+  );
+}
+
+function workspaceTurnTerminalOutcome(status: WorkspaceTurnTaskStatus): TerminalAttentionOutcome {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "interrupted":
+      return "interrupted";
+    case "error":
+      return "error";
+    default:
+      // Non-terminal status should never reach the terminal notifier.
+      return "error";
+  }
+}
 
 function getTaskCompletionInstruction(params: {
   completionToolName: "agent_report" | "propose_plan";
@@ -1027,6 +1062,9 @@ export class TaskService {
   // In-flight durable persistence of notify_on_terminal policy for backgrounded foreground waits.
   // Awaited at the start of handleStreamEnd so a just-detached wait is treated as non-blocking.
   private readonly pendingNotifyOnTerminalPersists = new Set<Promise<void>>();
+  // In-flight terminal attention drains (workspace-turn / sub-agent terminal wake-ups). Tracked so
+  // tests and shutdown can await them; drains are idempotent and re-triggered on owner idle events.
+  private readonly pendingTerminalAttentionDrains = new Set<Promise<void>>();
   private readonly pendingWaitersByTaskId = new Map<string, PendingTaskWaiter[]>();
   private readonly pendingStartWaitersByTaskId = new Map<string, PendingTaskStartWaiter[]>();
   // Tracks workspaces currently blocked in a foreground wait (e.g. a task tool call awaiting
@@ -1043,6 +1081,7 @@ export class TaskService {
     { handleId: string; ownerWorkspaceId: string }
   >();
   private readonly taskHandleStore: TaskHandleStore;
+  private readonly terminalAttentionStore: TerminalAttentionStore;
   private readonly userBackgroundedTaskIds = new Set<string>();
 
   // Cache completed reports so callers can retrieve them without re-reading disk.
@@ -1434,6 +1473,7 @@ export class TaskService {
     private readonly workspaceGoalService?: WorkspaceGoalService
   ) {
     this.taskHandleStore = new TaskHandleStore(config);
+    this.terminalAttentionStore = new TerminalAttentionStore(config);
     this.gitPatchArtifactService = new GitPatchArtifactService(config);
 
     this.aiService.on("stream-end", (payload: unknown) => {
@@ -4054,6 +4094,131 @@ export class TaskService {
     });
   }
 
+  // ---- Terminal attention notifier ------------------------------------------------------------
+  // Deep module for delivering terminal wake-ups for notify_on_terminal work. Settlement paths
+  // enqueue a persisted notification (outside any settlement lock); the notifier drains pending
+  // notifications when the owner is idle, sends one coalesced synthetic wake-up, and marks each
+  // delivered only after an accepted send. Crash/restart safe via the persisted store.
+
+  /**
+   * Persist a pending terminal wake-up for the owner workspace and schedule an async drain.
+   * Idempotent by source kind/id. Must NOT be called while holding settlement/event locks; only
+   * the persisted enqueue happens synchronously inside callers, the drain is deferred.
+   */
+  private async enqueueTerminalAttention(params: {
+    ownerWorkspaceId: string;
+    sourceKind: TerminalAttentionNotification["sourceKind"];
+    sourceId: string;
+    outputDelivery: TerminalAttentionNotification["outputDelivery"];
+    terminalOutcome: TerminalAttentionOutcome;
+    title?: string;
+  }): Promise<void> {
+    const created = await this.terminalAttentionStore.enqueueIfAbsent(params);
+    if (created == null) {
+      return;
+    }
+    this.scheduleTerminalAttentionDrain(params.ownerWorkspaceId);
+  }
+
+  private scheduleTerminalAttentionDrain(ownerWorkspaceId: string): void {
+    const promise = this.drainTerminalAttention(ownerWorkspaceId)
+      .catch((error: unknown) => {
+        log.error("Terminal attention drain failed", { ownerWorkspaceId, error });
+      })
+      .finally(() => {
+        this.pendingTerminalAttentionDrains.delete(promise);
+      });
+    this.pendingTerminalAttentionDrains.add(promise);
+  }
+
+  /**
+   * Drain pending terminal notifications for one owner workspace: defer (leave pending) when the
+   * owner is busy/queued/preparing, otherwise send one coalesced synthetic wake-up and mark the
+   * drained notifications delivered. Stale (deleted-workspace) notifications are marked superseded.
+   */
+  private async drainTerminalAttention(ownerWorkspaceId: string): Promise<void> {
+    const pending = await this.terminalAttentionStore.listPending(ownerWorkspaceId);
+    if (pending.length === 0) {
+      return;
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, ownerWorkspaceId);
+    if (entry == null) {
+      // Owner workspace no longer exists: the terminal artifacts remain retrievable elsewhere.
+      for (const notification of pending) {
+        await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
+      }
+      return;
+    }
+
+    // Defer-until-idle: never inject ahead of an active stream or a queued/preparing user turn.
+    if (
+      this.aiService.isStreaming(ownerWorkspaceId) ||
+      this.workspaceService.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId) ||
+      this.interruptedParentWorkspaceIds.has(ownerWorkspaceId)
+    ) {
+      return;
+    }
+
+    const injectedTaskIds = pending
+      .filter((n) => n.outputDelivery === "already_injected")
+      .map((n) => n.sourceId);
+    const awaitHandleIds = pending
+      .filter((n) => n.outputDelivery === "requires_task_await")
+      .map((n) => n.sourceId);
+    const anyFailure = pending.some(
+      (n) => n.terminalOutcome === "failed" || n.terminalOutcome === "error"
+    );
+
+    const promptSections: string[] = [];
+    if (injectedTaskIds.length > 0) {
+      promptSections.push(
+        anyFailure
+          ? FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT
+          : COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT
+      );
+    }
+    if (awaitHandleIds.length > 0) {
+      promptSections.push(buildCompletedWorkspaceTurnPrompt(awaitHandleIds));
+    }
+    if (promptSections.length === 0) {
+      return;
+    }
+    const prompt = promptSections.join("\n\n");
+
+    const resumeOptions = await this.resolveParentAutoResumeOptions(
+      ownerWorkspaceId,
+      entry,
+      defaultModel
+    );
+
+    const sendResult = await this.workspaceService.sendMessage(
+      ownerWorkspaceId,
+      prompt,
+      {
+        model: resumeOptions.model,
+        agentId: resumeOptions.agentId,
+        thinkingLevel: resumeOptions.thinkingLevel,
+      },
+      // Synthetic, idle-only auto-resume — same flags as the active-work auto-resume path.
+      { skipAutoResumeReset: true, synthetic: true, agentInitiated: true, requireIdle: true }
+    );
+
+    if (!sendResult.success) {
+      // Owner became busy between the idle check and the send: leave pending and retry next drain.
+      log.debug("Terminal attention wake-up not accepted; leaving pending", {
+        ownerWorkspaceId,
+        error: sendResult.error,
+      });
+      return;
+    }
+
+    for (const notification of pending) {
+      await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
+    }
+  }
+
   /**
    * Background any registered foreground waits for the requesting workspace when a
    * tool-end message is already queued. Shared by both wait-registration paths
@@ -4090,12 +4255,16 @@ export class TaskService {
     };
   }
 
+  /**
+   * Settle pending workspace-turn waiters. Returns whether any foreground waiter consumed the
+   * terminal result — callers use this to suppress a duplicate terminal wake-up notification.
+   */
   private settleWorkspaceTurnWaiters(
     handleId: string,
     settlement:
       | { status: "completed"; result: WorkspaceTurnWaitResult }
       | { status: "error"; error: Error }
-  ): void {
+  ): boolean {
     assert(handleId.length > 0, "settleWorkspaceTurnWaiters requires handleId");
     const waiters = this.pendingWorkspaceTurnWaitersByHandleId.get(handleId) ?? [];
     this.pendingWorkspaceTurnWaitersByHandleId.delete(handleId);
@@ -4106,6 +4275,7 @@ export class TaskService {
         waiter.reject(settlement.error);
       }
     }
+    return waiters.length > 0;
   }
 
   private async cleanupDisposableWorkspaceTurn(
@@ -4189,7 +4359,17 @@ export class TaskService {
         return;
       }
 
-      await this.taskHandleStore.upsertWorkspaceTurn(params.next);
+      // Decide the terminal wake-up inside the lock (using persisted policy + dedupe marker), but
+      // do NOT send while holding the lock. Persist terminalAttentionNotifiedAt before the upsert
+      // so restart/duplicate settlement cannot double-wake; enqueue + drain after the lock.
+      const policy = resolveBackgroundWorkAttentionPolicy(current.attentionPolicy);
+      const shouldNotify =
+        policy === "notify_on_terminal" && current.terminalAttentionNotifiedAt == null;
+      const nextRecord: WorkspaceTurnTaskHandleRecord = shouldNotify
+        ? { ...params.next, terminalAttentionNotifiedAt: getIsoNow() }
+        : params.next;
+
+      await this.taskHandleStore.upsertWorkspaceTurn(nextRecord);
       const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
       if (
         active?.handleId === params.record.handleId &&
@@ -4197,10 +4377,26 @@ export class TaskService {
       ) {
         this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
       }
-      this.settleWorkspaceTurnWaiters(params.record.handleId, params.waiterSettlement);
+      const hadForegroundWaiter = this.settleWorkspaceTurnWaiters(
+        params.record.handleId,
+        params.waiterSettlement
+      );
       this.markTaskForegroundRelevant(params.record.handleId);
-      await this.cleanupDisposableWorkspaceTurn(params.next);
+      await this.cleanupDisposableWorkspaceTurn(nextRecord);
       this.scheduleMaybeStartQueuedTasks();
+
+      // A foreground waiter that received the terminal result already integrates it, so suppress
+      // the synthetic wake-up for that source. Enqueue happens outside the settlement lock.
+      if (shouldNotify && !hadForegroundWaiter) {
+        await this.enqueueTerminalAttention({
+          ownerWorkspaceId: params.record.ownerWorkspaceId,
+          sourceKind: "workspace_turn",
+          sourceId: params.record.handleId,
+          outputDelivery: "requires_task_await",
+          terminalOutcome: workspaceTurnTerminalOutcome(nextRecord.status),
+          ...(nextRecord.title != null ? { title: nextRecord.title } : {}),
+        });
+      }
     });
   }
 
@@ -6818,6 +7014,10 @@ export class TaskService {
     if (this.pendingNotifyOnTerminalPersists.size > 0) {
       await Promise.all([...this.pendingNotifyOnTerminalPersists]);
     }
+
+    // The owner's own stream ending is the signal to retry any terminal wake-ups that were deferred
+    // while it was busy. Drain checks idle internally and leaves notifications pending otherwise.
+    this.scheduleTerminalAttentionDrain(workspaceId);
 
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, workspaceId);

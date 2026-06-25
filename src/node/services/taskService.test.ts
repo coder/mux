@@ -1443,6 +1443,99 @@ describe("TaskService", () => {
     expect(childConfig?.taskStatus).toBeUndefined();
   });
 
+  test("notify_on_terminal workspace turn wakes the owner via task_await on completion", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["handle", "turn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+
+    // Register the child workspace the handle points at.
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "workspace-turn"),
+        id: "childworkspace",
+        name: "workspace-turn",
+        title: "Workspace turn",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+      return cfg;
+    });
+
+    const sendMessage = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const workspaceMocks = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const createdAt = "2026-06-19T00:00:00.000Z";
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      pendingTerminalAttentionDrains: Set<Promise<void>>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_1",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Done" }],
+    });
+
+    // Drain runs asynchronously; await any in-flight drains before asserting.
+    await Promise.all([...internal.pendingTerminalAttentionDrains]);
+
+    const wakeCall = sendMessage.mock.calls.find(
+      (call) => typeof call[1] === "string" && (call[1] as string).includes("wst_handle")
+    );
+    expect(wakeCall).toBeDefined();
+    const prompt = wakeCall?.[1] as string;
+    expect(prompt).toContain("task_await");
+    expect(prompt).toContain("timeout_secs: 0");
+    expect(wakeCall?.[3]).toMatchObject({ synthetic: true, requireIdle: true });
+
+    // Restart-safe dedupe marker is persisted.
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+  });
+
   test("workspace-turn stream-end with non-stop finish marks the handle error", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
