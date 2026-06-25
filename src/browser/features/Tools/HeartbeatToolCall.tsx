@@ -18,7 +18,11 @@ import {
 } from "./Shared/toolUtils";
 import { HeartbeatToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
-import { HEARTBEAT_DEFAULT_CONTEXT_MODE, type HeartbeatContextMode } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_DEFAULT_CONTEXT_MODE,
+  HEARTBEAT_DEFAULT_MESSAGE_BODY,
+  type HeartbeatContextMode,
+} from "@/constants/heartbeat";
 
 /**
  * Transcript card for the `heartbeat` tool — the agent's recurring, idle-gated
@@ -87,21 +91,21 @@ const BADGE_CLASSES: Record<BadgeTone, string> = {
   cleared: "bg-white/5 text-secondary border-white/10",
 };
 
-const HeartbeatBadge: React.FC<{ tone: BadgeTone; label: string }> = ({ tone, label }) => (
+const HeartbeatBadge: React.FC<{ tone: BadgeTone; label: string }> = (props) => (
   <span
     className={cn(
       "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-1.5 py-0.5",
       "text-[10px] font-medium leading-none tracking-wide uppercase",
-      BADGE_CLASSES[tone]
+      BADGE_CLASSES[props.tone]
     )}
   >
-    {tone === "enabled" ? (
+    {props.tone === "enabled" ? (
       // Pulsing dot signals a live, ticking schedule; CSS gates it on reduced-motion.
       <span className="heartbeat-dot bg-success inline-block h-1.5 w-1.5 rounded-full" />
     ) : (
       <Activity aria-hidden="true" className="h-2.5 w-2.5" />
     )}
-    {label}
+    {props.label}
   </span>
 );
 
@@ -109,7 +113,7 @@ const HeartbeatBadge: React.FC<{ tone: BadgeTone; label: string }> = ({ tone, la
 const PULSE_TRACE_POINTS =
   "0,14 40,14 50,14 54,5 58,23 62,14 96,14 160,14 166,14 170,5 174,23 178,14 212,14 240,14";
 
-const PulseTrace: React.FC<{ live: boolean }> = ({ live }) => (
+const PulseTrace: React.FC<{ live: boolean }> = (props) => (
   <svg
     viewBox="0 0 240 28"
     preserveAspectRatio="none"
@@ -129,20 +133,20 @@ const PulseTrace: React.FC<{ live: boolean }> = ({ live }) => (
     <polyline
       points={PULSE_TRACE_POINTS}
       fill="none"
-      stroke={live ? "var(--color-success)" : "var(--color-warning)"}
+      stroke={props.live ? "var(--color-success)" : "var(--color-warning)"}
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={live ? "heartbeat-trace" : undefined}
-      opacity={live ? 1 : 0.55}
+      className={props.live ? "heartbeat-trace" : undefined}
+      opacity={props.live ? 1 : 0.55}
     />
   </svg>
 );
 
-const HeartbeatStat: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+const HeartbeatStat: React.FC<{ label: string; value: React.ReactNode }> = (props) => (
   <div className="flex flex-col gap-0.5">
-    <dt className="text-secondary text-[10px] tracking-wide uppercase">{label}</dt>
-    <dd className="text-foreground leading-tight">{value}</dd>
+    <dt className="text-secondary text-[10px] tracking-wide uppercase">{props.label}</dt>
+    <dd className="text-foreground leading-tight">{props.value}</dd>
   </div>
 );
 
@@ -154,17 +158,13 @@ interface HeartbeatToolCallProps {
   defaultExpanded?: boolean;
 }
 
-export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = ({
-  args,
-  result,
-  status = "pending",
-  defaultExpanded = false,
-}) => {
-  const { expanded, toggleExpanded } = useToolExpansion(defaultExpanded);
+export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
+  const status = props.status ?? "pending";
+  const { expanded, toggleExpanded } = useToolExpansion(props.defaultExpanded ?? false);
 
-  const action = args.action;
-  const errorResult = isToolErrorResult(result) ? result : null;
-  const success = extractHeartbeatSuccess(result);
+  const action = props.args.action;
+  const errorResult = isToolErrorResult(props.result) ? props.result : null;
+  const success = extractHeartbeatSuccess(props.result);
   const settings: HeartbeatSettings | null = success?.settings ?? null;
   const summary = success?.summary ?? null;
 
@@ -177,6 +177,13 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = ({
 
   const live = settings?.enabled ?? false;
   const ctx = CONTEXT_MODES[settings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE];
+  // WorkspaceService only persists `message` when a custom one is provided, so the
+  // common case has no stored text — fall back to the built-in default body and mark
+  // it as such, rather than hiding the prompt section entirely. An empty string means
+  // the custom message was explicitly cleared, so treat that as "no custom prompt" too.
+  const message = settings?.message ?? "";
+  const hasCustomMessage = message.length > 0;
+  const promptBody = hasCustomMessage ? message : HEARTBEAT_DEFAULT_MESSAGE_BODY;
 
   // Header pill: live cadence (green), paused (amber), or cleared/not-set (muted).
   let badge: { tone: BadgeTone; label: string } | null = null;
@@ -239,16 +246,17 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = ({
                   : " No check-ins will run until re-enabled."}
               </div>
 
-              {settings.message && (
-                <div>
-                  <div className="text-secondary mb-1 text-[10px] tracking-wide uppercase">
-                    Check-in prompt
-                  </div>
-                  <div className="text-foreground border-l-2 border-white/10 pl-2.5 italic">
-                    {settings.message}
-                  </div>
+              <div>
+                <div className="text-secondary mb-1 text-[10px] tracking-wide uppercase">
+                  Check-in prompt
+                  {!hasCustomMessage && (
+                    <span className="text-muted tracking-normal normal-case"> · default</span>
+                  )}
                 </div>
-              )}
+                <div className="text-foreground border-l-2 border-white/10 pl-2.5 italic">
+                  {promptBody}
+                </div>
+              </div>
             </div>
           )}
 

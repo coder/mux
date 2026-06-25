@@ -63,7 +63,10 @@ export const ScheduledEnabled: Story = {
   },
 };
 
-/** set · long cadence that compacts context before each check-in. */
+/**
+ * set · long cadence that compacts context first, with no custom message — exercises
+ * the default-prompt fallback (the common case, since `message` is only stored when set).
+ */
 export const LongCadenceCompact: Story = {
   args: {
     args: { action: "set", enabled: true, intervalMs: 2 * 3_600_000, contextMode: "compact" },
@@ -73,12 +76,7 @@ export const LongCadenceCompact: Story = {
       success: true,
       action: "set",
       configured: true,
-      settings: {
-        enabled: true,
-        intervalMs: 2 * 3_600_000,
-        contextMode: "compact",
-        message: HEARTBEAT_DEFAULT_MESSAGE_BODY,
-      },
+      settings: { enabled: true, intervalMs: 2 * 3_600_000, contextMode: "compact" },
       summary: "Heartbeat is enabled for this workspace at 2 hours.",
     },
   },
