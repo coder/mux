@@ -398,11 +398,14 @@ export const WorkspaceLifecycleToolCall: React.FC<WorkspaceLifecycleToolCallProp
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="task_workspace_lifecycle" />
-        <span className="text-secondary font-medium whitespace-nowrap">
+        {/* Verb truncates as a last resort so the header never overflows; the count is
+            hidden on narrow containers (the badge already conveys it there), mirroring how
+            HeartbeatToolCall hides its secondary header text below @sm. */}
+        <span className="text-secondary min-w-0 truncate font-medium">
           {executing ? meta.gerund : meta.label}
         </span>
         {total > 0 && (
-          <span className="text-secondary counter-nums whitespace-nowrap">
+          <span className="text-secondary counter-nums hidden whitespace-nowrap @sm:inline">
             {total} {meta.unit}
             {total === 1 ? "" : "s"}
           </span>
