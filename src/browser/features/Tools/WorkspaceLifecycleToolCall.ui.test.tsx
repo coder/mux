@@ -138,6 +138,27 @@ describe("WorkspaceLifecycleToolCall", () => {
     expect(view.queryByText("arg-fallback-id")).not.toBeNull();
   });
 
+  test("unwraps a JSON-containered result before parsing", () => {
+    const view = renderWithProviders(
+      <WorkspaceLifecycleToolCall
+        args={{ action: "archive", targets: [{ workspaceId: "arg-target" }] }}
+        status="completed"
+        defaultExpanded
+        // SDK JSON-container shape — the real { results: [...] } is nested under `value`.
+        result={{
+          type: "json",
+          value: {
+            results: [{ status: "archived", action: "archive", workspaceId: "row-ws-unwrapped" }],
+          },
+        }}
+      />
+    );
+    // The row from the unwrapped payload renders; the requested-targets fallback (which would
+    // show the arg id) does not — i.e. the container was unwrapped, not treated as malformed.
+    expect(view.queryByText("row-ws-unwrapped")).not.toBeNull();
+    expect(view.queryByText("arg-target")).toBeNull();
+  });
+
   test("renders the shared error box for a thrown { success: false } result", () => {
     const view = renderWithProviders(
       <WorkspaceLifecycleToolCall

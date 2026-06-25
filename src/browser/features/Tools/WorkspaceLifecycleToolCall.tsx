@@ -26,6 +26,7 @@ import {
   useToolExpansion,
   getStatusDisplay,
   isToolErrorResult,
+  unwrapResult,
   type ToolStatus,
 } from "./Shared/toolUtils";
 import { TaskWorkspaceLifecycleToolResultSchema } from "@/common/utils/tools/toolDefinitions";
@@ -382,8 +383,12 @@ export const WorkspaceLifecycleToolCall: React.FC<WorkspaceLifecycleToolCallProp
 
   const action = props.args.action;
   const meta = ACTION_META[action];
-  const errorResult = isToolErrorResult(props.result) ? props.result : null;
-  const rows = extractRows(props.result);
+  // Tool results may be persisted/emitted in the SDK JSON-container shape
+  // ({ type: "json", value: ... }); unwrap (idempotent for already-bare results) before
+  // parsing so a valid { results: [...] } payload isn't misread as malformed.
+  const result = unwrapResult(props.result);
+  const errorResult = isToolErrorResult(result) ? result : null;
+  const rows = extractRows(result);
   const executing = status === "executing";
 
   const total =
