@@ -7470,7 +7470,9 @@ export class WorkspaceService extends EventEmitter {
         const unsubscribe = session.onChatEvent((event) => {
           const eventType = event.message.type;
           if (
-            (eventType === "queued-message-changed" || eventType === "auto-retry-abandoned") &&
+            (eventType === "queued-message-changed" ||
+              eventType === "auto-retry-starting" ||
+              eventType === "auto-retry-abandoned") &&
             !session.hasQueuedMessages() &&
             !session.hasPendingAutoRetry()
           ) {
