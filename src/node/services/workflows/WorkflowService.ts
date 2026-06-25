@@ -321,6 +321,9 @@ export class WorkflowService {
     const run = await this.requireRunForWorkspace(input);
     assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
     assertWorkflowRunCanRetryFromCheckpoint(run);
+    // A checkpoint retry dispatched in the background is non-blocking just like background resume:
+    // persist notify_on_terminal before starting the background runner.
+    await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
     await this.runInBackground(input.runId, "Background workflow checkpoint retry failed:", {
       allowRetryFromFailedCheckpoint: true,
       projectTrusted: input.projectTrusted,

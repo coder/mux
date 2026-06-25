@@ -1249,6 +1249,9 @@ export class TaskService {
         if (!referencedRunIdSet.has(run.id) || run.workspaceId !== workspaceId) {
           continue;
         }
+        if (resolveBackgroundWorkAttentionPolicy(run.attentionPolicy) === "notify_on_terminal") {
+          continue;
+        }
         if (isActiveWorkflowRunStatus(run.status)) {
           blockingRunIds.push(run.id);
           continue;
@@ -1902,9 +1905,10 @@ export class TaskService {
         continue;
       }
 
-      // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasksUsingIndex(taskIndex, task.id);
-      if (hasActiveDescendants) {
+      // Avoid resuming a task while it still has blocking active descendants (it shouldn't report yet).
+      const hasBlockingActiveDescendants =
+        this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, task.id).length > 0;
+      if (hasBlockingActiveDescendants) {
         skippedAwaitingReportDueToActiveDescendants += 1;
         continue;
       }
@@ -1938,9 +1942,10 @@ export class TaskService {
       }
 
       // Best-effort: if mux restarted mid-stream, nudge the agent to continue and report.
-      // Only do this when the task has no running descendants, to avoid duplicate spawns.
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasksUsingIndex(taskIndex, task.id);
-      if (hasActiveDescendants) {
+      // Only do this when the task has no blocking running descendants, to avoid duplicate spawns.
+      const hasBlockingActiveDescendants =
+        this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, task.id).length > 0;
+      if (hasBlockingActiveDescendants) {
         skippedRunningDueToActiveDescendants += 1;
         continue;
       }
@@ -6089,6 +6094,46 @@ export class TaskService {
     return false;
   }
 
+  private listBlockingActiveDescendantAgentTaskIdsUsingIndex(
+    index: AgentTaskIndex,
+    workspaceId: string,
+    options: { excludeWorkflowTasks?: boolean } = {}
+  ): string[] {
+    assert(
+      workspaceId.length > 0,
+      "listBlockingActiveDescendantAgentTaskIdsUsingIndex: workspaceId must be non-empty"
+    );
+
+    const result: string[] = [];
+    const stack: Array<{ taskId: string; workflowOwned: boolean }> = [
+      ...(index.childrenByParent.get(workspaceId) ?? []).map((taskId) => ({
+        taskId,
+        workflowOwned: false,
+      })),
+    ];
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+      const entry = index.byId.get(next.taskId);
+      const workflowOwned = next.workflowOwned || entry?.workflowTask != null;
+      if (
+        entry != null &&
+        this.isActiveAgentTaskEntry(entry) &&
+        !(options.excludeWorkflowTasks && workflowOwned) &&
+        this.resolveAgentTaskAttentionPolicy(next.taskId, index) !== "notify_on_terminal" &&
+        !this.isTaskQueueBackgrounded(next.taskId)
+      ) {
+        result.push(next.taskId);
+      }
+      const children = index.childrenByParent.get(next.taskId);
+      if (children) {
+        for (const child of children) {
+          stack.push({ taskId: child, workflowOwned });
+        }
+      }
+    }
+    return result;
+  }
+
   /**
    * Topology predicate: does this workspace still have child agent-task nodes in config?
    * Unlike hasActiveDescendantAgentTasks (which checks runtime activity for scheduling),
@@ -6589,7 +6634,9 @@ export class TaskService {
     ) {
       return false;
     }
-    if (this.hasActiveDescendantAgentTasksUsingIndex(taskIndex, workspaceId)) {
+    if (
+      this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, workspaceId).length > 0
+    ) {
       return false;
     }
     if (this.aiService.isStreaming(workspaceId)) {
@@ -7383,13 +7430,14 @@ export class TaskService {
       return;
     }
 
-    // Never allow a task to finish/report while it still has active descendant tasks.
-    // We'll auto-resume this task once the last descendant reports.
-    const hasActiveDescendants = this.hasActiveDescendantAgentTasksUsingIndex(
+    // Never allow a task to finish/report while it still has blocking active descendants. Durable
+    // notify_on_terminal descendants are intentionally non-blocking: the owner task can finish its
+    // current turn, and Mux will wake it when those descendants reach terminal state.
+    const blockingDescendantTaskIds = this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(
       taskIndex,
       workspaceId
     );
-    if (hasActiveDescendants) {
+    if (blockingDescendantTaskIds.length > 0) {
       if (status === "awaiting_report") {
         await this.setTaskStatus(workspaceId, "running");
       }
@@ -7406,8 +7454,10 @@ export class TaskService {
       taskReferencedWorkflowRunIds,
       event.parts
     );
-    const taskActiveWorkspaceTurnIds =
-      await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
+    const taskActiveWorkspaceTurnIds = await this.listBlockingWorkspaceTurnTaskIds(
+      workspaceId,
+      await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId)
+    );
     if (taskActiveWorkflowRunIds.length > 0 || taskActiveWorkspaceTurnIds.length > 0) {
       if (status === "awaiting_report") {
         await this.setTaskStatus(workspaceId, "running");
@@ -7593,7 +7643,9 @@ export class TaskService {
       return;
     }
 
-    if (this.hasActiveDescendantAgentTasksUsingIndex(taskIndex, workspaceId)) {
+    if (
+      this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, workspaceId).length > 0
+    ) {
       return;
     }
 
