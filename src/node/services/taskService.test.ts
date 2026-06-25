@@ -29,6 +29,7 @@ import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataServi
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { IdleDispatcher } from "@/node/services/idleDispatcher";
+import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
 import { TaskHandleStore } from "@/node/services/taskHandleStore";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
@@ -1635,6 +1636,40 @@ describe("TaskService", () => {
       (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
     );
     expect(drained).toBeDefined();
+  });
+
+  test("initialize drains persisted terminal wake-ups from before restart", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_restart_pending",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("wst_restart_pending");
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("timeout_secs: 0");
+    expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({
+      synthetic: true,
+      agentInitiated: true,
+      requireIdle: true,
+    });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
   test("workspace-turn stream-end with non-stop finish marks the handle error", async () => {
@@ -9337,7 +9372,7 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("running");
   });
 
-  test("requests agent_report while task-owned notify_on_terminal descendants are active", async () => {
+  test("does not force await or report while task-owned notify_on_terminal descendants are active", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -9378,9 +9413,67 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("agent_report");
-    expect(String(sendMessage.mock.calls[0]?.[1])).not.toContain(descendantTaskId);
+    expect(sendMessage).not.toHaveBeenCalled();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
+  });
+
+  test("keeps agent_report blocked while task-owned notify_on_terminal descendants are active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const descendantTaskId = "task-333";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+        projectWorkspace(projectPath, "child-task", descendantTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Premature report", title: "Too early" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(
+      await readSubagentReportArtifact(config.getSessionDir(rootWorkspaceId), parentTaskId)
+    ).toBeNull();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
   });
 
   test("does not accept agent_report while task-owned workspace turns are still active", async () => {
@@ -9465,7 +9558,7 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("running");
   });
 
-  test("requests agent_report while task-owned notify_on_terminal workspace turns are active", async () => {
+  test("does not force await or report while task-owned notify_on_terminal workspace turns are active", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -9524,12 +9617,12 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("agent_report");
-    expect(String(sendMessage.mock.calls[0]?.[1])).not.toContain(workspaceTurnHandleId);
+    expect(sendMessage).not.toHaveBeenCalled();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
   });
 
-  test("requests agent_report while task-owned notify_on_terminal workflow runs are active", async () => {
+  test("does not force await or report while task-owned notify_on_terminal workflow runs are active", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -9584,9 +9677,9 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("agent_report");
-    expect(String(sendMessage.mock.calls[0]?.[1])).not.toContain(workflowRunId);
+    expect(sendMessage).not.toHaveBeenCalled();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
   });
 
   test("reverts awaiting_report to running on stream end while task has active descendants", async () => {

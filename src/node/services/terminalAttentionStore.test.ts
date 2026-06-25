@@ -6,8 +6,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
 
-function makeConfig(rootDir: string): { getSessionDir: (id: string) => string } {
-  return { getSessionDir: (id: string) => path.join(rootDir, "sessions", id) };
+function makeConfig(rootDir: string): {
+  sessionsDir: string;
+  getSessionDir: (id: string) => string;
+} {
+  const sessionsDir = path.join(rootDir, "sessions");
+  return { sessionsDir, getSessionDir: (id: string) => path.join(sessionsDir, id) };
 }
 
 describe("TerminalAttentionStore", () => {
@@ -100,5 +104,28 @@ describe("TerminalAttentionStore", () => {
     });
     const pending = await store.listPending("owner-1");
     expect(pending.map((n) => n.sourceId)).toEqual(["task-a", "wst-b"]);
+  });
+
+  test("listPendingOwnerWorkspaceIds finds pending notifications across session dirs", async () => {
+    const store = new TerminalAttentionStore(makeConfig(rootDir));
+    await store.enqueueIfAbsent({
+      ownerWorkspaceId: "owner-b",
+      sourceKind: "workspace_turn",
+      sourceId: "wst-b",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+    const delivered = await store.enqueueIfAbsent({
+      ownerWorkspaceId: "owner-a",
+      sourceKind: "agent_task",
+      sourceId: "task-a",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+    expect(delivered).not.toBeNull();
+    await store.markDelivered("owner-a", delivered!.id);
+    await fsPromises.mkdir(path.join(rootDir, "sessions", "owner-empty"), { recursive: true });
+
+    expect(await store.listPendingOwnerWorkspaceIds()).toEqual(["owner-b"]);
   });
 });

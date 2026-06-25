@@ -2072,6 +2072,14 @@ export class TaskService {
     }
     const cleanupReportedTasksMs = Date.now() - cleanupReportedTasksStartedAt;
 
+    const terminalAttentionDrainStartedAt = Date.now();
+    const pendingTerminalAttentionOwnerWorkspaceIds =
+      await this.terminalAttentionStore.listPendingOwnerWorkspaceIds();
+    for (const ownerWorkspaceId of pendingTerminalAttentionOwnerWorkspaceIds) {
+      this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
+    }
+    const terminalAttentionDrainMs = Date.now() - terminalAttentionDrainStartedAt;
+
     log.info("[startup] TaskService.initialize completed", {
       totalMs: Date.now() - startupStartedAt,
       maybeStartQueuedTasksMs,
@@ -2087,6 +2095,8 @@ export class TaskService {
       patchGenerationRecoveryMs,
       bestOfParentRecoveryCount: bestOfParentWorkspaceIds.size,
       bestOfRecoveryMs,
+      pendingTerminalAttentionOwnerWorkspaceCount: pendingTerminalAttentionOwnerWorkspaceIds.length,
+      terminalAttentionDrainMs,
       cleanupReportedTasksMs,
     });
   }
@@ -7430,9 +7440,7 @@ export class TaskService {
       return;
     }
 
-    // Never allow a task to finish/report while it still has blocking active descendants. Durable
-    // notify_on_terminal descendants are intentionally non-blocking: the owner task can finish its
-    // current turn, and Mux will wake it when those descendants reach terminal state.
+    const activeDescendantTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
     const blockingDescendantTaskIds = this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(
       taskIndex,
       workspaceId
@@ -7449,23 +7457,41 @@ export class TaskService {
       event.parts,
       event.messageId
     );
-    const taskActiveWorkflowRunIds = await this.listBlockingBackgroundWorkflowRunIds(
+    const activeTaskWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+      workspaceId,
+      taskReferencedWorkflowRunIds
+    );
+    const blockingTaskWorkflowRunIds = await this.listBlockingBackgroundWorkflowRunIds(
       workspaceId,
       taskReferencedWorkflowRunIds,
       event.parts
     );
-    const taskActiveWorkspaceTurnIds = await this.listBlockingWorkspaceTurnTaskIds(
+    const activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
+    const blockingWorkspaceTurnIds = await this.listBlockingWorkspaceTurnTaskIds(
       workspaceId,
-      await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId)
+      activeWorkspaceTurnIds
     );
-    if (taskActiveWorkflowRunIds.length > 0 || taskActiveWorkspaceTurnIds.length > 0) {
+    if (blockingTaskWorkflowRunIds.length > 0 || blockingWorkspaceTurnIds.length > 0) {
       if (status === "awaiting_report") {
         await this.setTaskStatus(workspaceId, "running");
       }
       await this.promptTaskForBackgroundAwait(workspaceId, {
-        taskIds: taskActiveWorkspaceTurnIds,
-        workflowRunIds: taskActiveWorkflowRunIds,
+        taskIds: blockingWorkspaceTurnIds,
+        workflowRunIds: blockingTaskWorkflowRunIds,
       });
+      return;
+    }
+
+    // Non-blocking background children should not force task_await, but a child task's final
+    // agent_report must wait for them so the original parent does not receive an incomplete report.
+    if (
+      activeDescendantTaskIds.length > 0 ||
+      activeTaskWorkflowRunIds.length > 0 ||
+      activeWorkspaceTurnIds.length > 0
+    ) {
+      if (status === "awaiting_report") {
+        await this.setTaskStatus(workspaceId, "running");
+      }
       return;
     }
 

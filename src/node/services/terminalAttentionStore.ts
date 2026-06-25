@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
@@ -62,7 +63,7 @@ const TerminalAttentionNotificationSchema = z
  * by skipping malformed files at read time.
  */
 export class TerminalAttentionStore {
-  constructor(private readonly config: Pick<Config, "getSessionDir">) {}
+  constructor(private readonly config: Pick<Config, "getSessionDir" | "sessionsDir">) {}
 
   private dir(ownerWorkspaceId: string): string {
     assert(ownerWorkspaceId.trim().length > 0, "TerminalAttentionStore requires ownerWorkspaceId");
@@ -144,6 +145,26 @@ export class TerminalAttentionStore {
     // Stable order for deterministic coalescing.
     records.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     return records;
+  }
+
+  async listPendingOwnerWorkspaceIds(): Promise<string[]> {
+    let entries: Dirent[];
+    try {
+      entries = await fsPromises.readdir(this.config.sessionsDir, { withFileTypes: true });
+    } catch (error) {
+      if (isErrnoWithCode(error, "ENOENT")) return [];
+      throw error;
+    }
+
+    const ownerWorkspaceIds: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if ((await this.listPending(entry.name)).length > 0) {
+        ownerWorkspaceIds.push(entry.name);
+      }
+    }
+    ownerWorkspaceIds.sort();
+    return ownerWorkspaceIds;
   }
 
   async markDelivered(ownerWorkspaceId: string, id: string): Promise<void> {
