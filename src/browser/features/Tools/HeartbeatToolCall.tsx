@@ -249,7 +249,11 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
                   <div className="text-secondary mb-1 text-[10px] tracking-wide uppercase">
                     Check-in prompt
                   </div>
-                  <div className="text-foreground border-l-2 border-white/10 pl-2.5 italic">
+                  {/* Custom messages come from a multiline textarea and can contain long
+                      URLs/paths — preserve newlines and break long tokens (with a scroll cap)
+                      so the card never overflows its container on narrow/mobile widths, as the
+                      generic tool-output fallback did. */}
+                  <div className="text-foreground max-h-[200px] overflow-y-auto border-l-2 border-white/10 pl-2.5 break-words whitespace-pre-wrap italic">
                     {customMessage}
                   </div>
                 </div>

@@ -64,6 +64,34 @@ export const ScheduledEnabled: Story = {
 };
 
 /**
+ * set · multiline custom message with a long unbroken token — verifies the prompt
+ * body preserves newlines and wraps long URLs/paths instead of overflowing the card
+ * (check at the ~375px mobile width).
+ */
+export const CustomMessageWrapping: Story = {
+  args: {
+    args: { action: "set", enabled: true, intervalMs: 1_800_000 },
+    status: "completed",
+    defaultExpanded: true,
+    result: {
+      success: true,
+      action: "set",
+      configured: true,
+      settings: {
+        enabled: true,
+        intervalMs: 1_800_000,
+        contextMode: "normal",
+        message:
+          "Poll the deploy and report status.\n" +
+          "Logs: https://ci.example.com/runs/0123456789abcdef0123456789abcdef/jobs/deploy-prod-us-east-1/raw?download=true\n" +
+          "If it failed, summarize the first error and stop.",
+      },
+      summary: "Heartbeat is enabled for this workspace at 30 minutes.",
+    },
+  },
+};
+
+/**
  * set · long cadence that compacts context first, with no custom message — exercises
  * the default-prompt fallback (the common case, since `message` is only stored when set).
  */
