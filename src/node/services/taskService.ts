@@ -4363,6 +4363,12 @@ export class TaskService {
             skipAutoResumeReset: true,
             synthetic: true,
             agentInitiated: true,
+            onCanceled: () => {
+              this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
+            },
+            onAcceptedPreStreamFailure: () => {
+              this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
+            },
             onAccepted: async () => {
               fallbackAccepted = true;
               await markPendingDelivered();
