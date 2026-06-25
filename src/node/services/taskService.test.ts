@@ -1776,6 +1776,63 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
+  test("terminal wake-up re-pends when queued fallback fails before stream", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let idleFailuresRemaining = 1;
+    let acceptQueuedFallback: (() => Promise<void> | void) | undefined;
+    let failQueuedFallback: ((error: SendMessageError) => Promise<void> | void) | undefined;
+    const sendMessage = mock(
+      (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: {
+          requireIdle?: boolean;
+          onAccepted?: () => Promise<void> | void;
+          onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+        }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        if (internal?.requireIdle === true && idleFailuresRemaining > 0) {
+          idleFailuresRemaining -= 1;
+          return Promise.resolve(
+            Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+          );
+        }
+        if (internal?.requireIdle !== true) {
+          acceptQueuedFallback = internal?.onAccepted;
+          failQueuedFallback = internal?.onAcceptedPreStreamFailure;
+        }
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+    await acceptQueuedFallback?.();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+
+    await failQueuedFallback?.({ type: "unknown", raw: "pre-stream failure" });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage.mock.calls[2]?.[3]).toMatchObject({ requireIdle: true });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
   test("terminal wake-up drains are serialized per owner", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);

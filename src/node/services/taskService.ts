@@ -4325,6 +4325,12 @@ export class TaskService {
       }
     };
 
+    const markPendingForRetry = async () => {
+      for (const notification of pending) {
+        await this.terminalAttentionStore.markPending(ownerWorkspaceId, notification.id);
+      }
+    };
+
     const resumeOptions = await this.resolveParentAutoResumeOptions(
       ownerWorkspaceId,
       entry,
@@ -4366,7 +4372,8 @@ export class TaskService {
             onCanceled: () => {
               this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
             },
-            onAcceptedPreStreamFailure: () => {
+            onAcceptedPreStreamFailure: async () => {
+              await markPendingForRetry();
               this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
             },
             onAccepted: async () => {

@@ -167,6 +167,15 @@ export class TerminalAttentionStore {
     return ownerWorkspaceIds;
   }
 
+  async markPending(ownerWorkspaceId: string, id: string): Promise<void> {
+    const record = await this.get(ownerWorkspaceId, id);
+    if (record?.status !== "delivered") {
+      return;
+    }
+    const { deliveredAt: _deliveredAt, ...pendingRecord } = record;
+    await this.write({ ...pendingRecord, status: "pending" });
+  }
+
   async markDelivered(ownerWorkspaceId: string, id: string): Promise<void> {
     await this.transition(ownerWorkspaceId, id, "delivered");
   }
