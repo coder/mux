@@ -1463,7 +1463,9 @@ describe("TaskService", () => {
       return cfg;
     });
 
-    const sendMessage = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
     const workspaceMocks = createWorkspaceServiceMocks({ sendMessage });
     const { taskService } = createTaskServiceHarness(config, {
       workspaceService: workspaceMocks.workspaceService,
@@ -1534,6 +1536,105 @@ describe("TaskService", () => {
     // Restart-safe dedupe marker is persisted.
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+  });
+
+  test("notify_on_terminal workspace turn defers wake-up while owner has a queued turn", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["handle", "turn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "workspace-turn"),
+        id: "childworkspace",
+        name: "workspace-turn",
+        title: "Workspace turn",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+      return cfg;
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    // Owner is preparing/queuing a user turn: terminal wake-up must NOT inject ahead of it.
+    const hasPendingQueuedOrPreparingTurn = mock(() => true);
+    const workspaceMocks = createWorkspaceServiceMocks({
+      sendMessage,
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const createdAt = "2026-06-19T00:00:00.000Z";
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      pendingTerminalAttentionDrains: Set<Promise<void>>;
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_1",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Done" }],
+    });
+    await Promise.all([...internal.pendingTerminalAttentionDrains]);
+
+    // No wake-up sent while a queued/preparing turn exists.
+    const wakeCall = sendMessage.mock.calls.find(
+      (call) => typeof call[1] === "string" && (call[1] as string).includes("wst_handle")
+    );
+    expect(wakeCall).toBeUndefined();
+
+    // Notification remains pending; once the owner is idle, draining delivers it.
+    hasPendingQueuedOrPreparingTurn.mockImplementation(() => false);
+    await internal.drainTerminalAttention(parentId);
+    const drained = sendMessage.mock.calls.find(
+      (call) => typeof call[1] === "string" && (call[1] as string).includes("wst_handle")
+    );
+    expect(drained).toBeDefined();
   });
 
   test("workspace-turn stream-end with non-stop finish marks the handle error", async () => {
@@ -6722,6 +6823,12 @@ describe("TaskService", () => {
       ],
     });
 
+    // The completed-subagent wake-up is delivered by the async terminal-attention drain.
+    await Promise.all([
+      ...(taskService as unknown as { pendingTerminalAttentionDrains: Set<Promise<void>> })
+        .pendingTerminalAttentionDrains,
+    ]);
+
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const handoffPrompt = (sendMessage as unknown as { mock: { calls: Array<[string, string]> } })
       .mock.calls[0]?.[1];
@@ -9630,6 +9737,18 @@ describe("TaskService", () => {
         handleStreamEnd: (streamEndEvent: StreamEndEvent) => Promise<void>;
       }
     ).handleStreamEnd(event);
+  }
+
+  async function flushTerminalAttentionDrains(taskService: TaskService): Promise<void> {
+    // Terminal wake-ups are delivered by an async drain; await any in-flight drains, then await
+    // again in case a drain scheduled another (idempotent, settles quickly).
+    for (let i = 0; i < 3; i++) {
+      const drains = (
+        taskService as unknown as { pendingTerminalAttentionDrains: Set<Promise<void>> }
+      ).pendingTerminalAttentionDrains;
+      if (drains.size === 0) break;
+      await Promise.all([...drains]);
+    }
   }
 
   async function finalizeReportedChildTaskForTest(params: {
@@ -13808,6 +13927,7 @@ describe("TaskService", () => {
 
     // One recovery prompt to the child (stream-end), then — after the terminal
     // settlement — one failure handoff waking the idle parent (no waiter).
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
@@ -13948,6 +14068,7 @@ describe("TaskService", () => {
 
     // No agent_report recovery prompt goes to the child. The only send is the
     // failure handoff waking the idle parent (no foreground waiter existed).
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
     expect(String(sendMessage.mock.calls[0]?.[1])).toContain("failed terminally");
@@ -14186,6 +14307,7 @@ describe("TaskService", () => {
     expect(messagesAfterSecondFailure).toHaveLength(2);
     expect(messagesAfterSecondFailure[1]).toContain(childBId);
 
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
     expect(String(sendMessage.mock.calls[0]?.[1])).toContain("failed terminally");
@@ -14295,6 +14417,7 @@ describe("TaskService", () => {
 
     // Breaker tripped: no further recovery prompt to the child; the task
     // settles terminally and the only send wakes the idle parent.
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
 

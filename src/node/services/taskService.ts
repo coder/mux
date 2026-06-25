@@ -7758,35 +7758,16 @@ export class TaskService {
       // appended above keeps this child's outcome in that turn's context.
       return;
     }
-    if (this.aiService.isStreaming(parentWorkspaceId)) {
-      // A streaming parent picks the appended failure message up on its next
-      // turn (or sooner via a task_await rejection / persisted artifact).
-      return;
-    }
-
-    const resumeOptions = await this.resolveParentAutoResumeOptions(
-      parentWorkspaceId,
-      parentEntry,
-      childEntry.workspace.taskModelString ?? defaultModel
-    );
-    const sendResult = await this.workspaceService.sendMessage(
-      parentWorkspaceId,
-      FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT,
-      {
-        model: resumeOptions.model,
-        agentId: resumeOptions.agentId,
-        thinkingLevel: resumeOptions.thinkingLevel,
-      },
-      // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-      { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
-    );
-    if (!sendResult.success) {
-      log.error("Failed to auto-resume parent after terminal child failure", {
-        parentWorkspaceId,
-        childWorkspaceId,
-        error: sendResult.error,
-      });
-    }
+    // The failure message is already injected above. Enqueue a coalesced terminal wake-up; the
+    // notifier defers while the parent is streaming or has a queued/preparing turn (which a direct
+    // send here did not guard), and is restart-safe.
+    await this.enqueueTerminalAttention({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: childWorkspaceId,
+      outputDelivery: "already_injected",
+      terminalOutcome: "failed",
+    });
   }
 
   /**
@@ -8708,33 +8689,18 @@ export class TaskService {
       return { finalized: true };
     }
 
-    if (
-      !hadForegroundWaiters &&
-      !hasActiveDescendants &&
-      !this.aiService.isStreaming(parentWorkspaceId)
-    ) {
-      const resumeOptions = await this.resolveParentAutoResumeOptions(
-        parentWorkspaceId,
-        parentEntry,
-        latestChildEntry?.workspace.taskModelString ?? defaultModel
-      );
-      const sendResult = await this.workspaceService.sendMessage(
-        parentWorkspaceId,
-        COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT,
-        {
-          model: resumeOptions.model,
-          agentId: resumeOptions.agentId,
-          thinkingLevel: resumeOptions.thinkingLevel,
-        },
-        // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true, synthetic: true, agentInitiated: true }
-      );
-      if (!sendResult.success) {
-        log.error("Failed to auto-resume parent after agent_report", {
-          parentWorkspaceId,
-          error: sendResult.error,
-        });
-      }
+    // The report is already injected into parent history above (deliverReportToParent). When no
+    // foreground waiter consumed it and no other descendants are active, enqueue a coalesced
+    // terminal wake-up. The notifier drains only when the owner is idle and not preparing a queued
+    // user turn, and is restart-safe — this replaces a direct send that could race a queued turn.
+    if (!hadForegroundWaiters && !hasActiveDescendants) {
+      await this.enqueueTerminalAttention({
+        ownerWorkspaceId: parentWorkspaceId,
+        sourceKind: "agent_task",
+        sourceId: childWorkspaceId,
+        outputDelivery: "already_injected",
+        terminalOutcome: "completed",
+      });
     }
 
     return { finalized: true };
