@@ -197,6 +197,44 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     ]);
   });
 
+  test("background workflow starts persist notify_on_terminal policy", async () => {
+    using tmp = new DisposableTempDir("workflow-service-background-notify");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      generateRunId: () => "wfr_background_notify",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startWorkflowInBackground({
+      script: createScript(
+        `export default function workflow() { return { reportMarkdown: "done" }; }\n`
+      ),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    expect(result).toMatchObject({
+      runId: "wfr_background_notify",
+      status: "running",
+      result: null,
+    });
+    await expect(runStore.getRun("wfr_background_notify")).resolves.toMatchObject({
+      attentionPolicy: "notify_on_terminal",
+    });
+  });
+
   test("foreground workflows that self-background persist notify_on_terminal policy", async () => {
     using tmp = new DisposableTempDir("workflow-service-self-background-notify");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });

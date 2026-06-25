@@ -468,7 +468,10 @@ export class WorkflowService {
   }
 
   async startWorkflowInBackground(input: StartWorkflowInput): Promise<StartNamedWorkflowResult> {
-    const createdRun = await this.createWorkflowRun(input);
+    const createdRun = await this.createWorkflowRun({
+      ...input,
+      attentionPolicy: "notify_on_terminal",
+    });
     const runId = createdRun.id;
     await this.notifyRunStatusChanged(createdRun);
     await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });

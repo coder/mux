@@ -4222,20 +4222,19 @@ export class TaskService {
       return;
     }
 
-    const injectedTaskIds = pending
-      .filter((n) => n.outputDelivery === "already_injected")
-      .map((n) => n.sourceId);
+    const injectedNotifications = pending.filter((n) => n.outputDelivery === "already_injected");
+    const injectedTaskIds = injectedNotifications.map((n) => n.sourceId);
     const awaitHandleIds = pending
       .filter((n) => n.outputDelivery === "requires_task_await")
       .map((n) => n.sourceId);
-    const anyFailure = pending.some(
+    const anyInjectedFailure = injectedNotifications.some(
       (n) => n.terminalOutcome === "failed" || n.terminalOutcome === "error"
     );
 
     const promptSections: string[] = [];
     if (injectedTaskIds.length > 0) {
       promptSections.push(
-        anyFailure
+        anyInjectedFailure
           ? FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT
           : COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT
       );

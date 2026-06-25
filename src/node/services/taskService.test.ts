@@ -1638,6 +1638,44 @@ describe("TaskService", () => {
     expect(drained).toBeDefined();
   });
 
+  test("coalesced workspace-turn errors do not turn completed sub-agent handoff into failure", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_error",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "error",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const prompt = String(sendMessage.mock.calls[0]?.[1]);
+    expect(prompt).toContain("Background sub-agent task(s) have completed");
+    expect(prompt).not.toContain("failed terminally");
+    expect(prompt).toContain("wst_error");
+    expect(prompt).toContain("task_await");
+  });
+
   test("initialize drains persisted terminal wake-ups from before restart", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
