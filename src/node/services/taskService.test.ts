@@ -1737,6 +1737,55 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
+  test("terminal wake-up waits for pending auto-retry to clear", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let ownerPendingAutoRetry = true;
+    const hasPendingQueuedOrPreparingTurn = mock(() => ownerPendingAutoRetry);
+    let releaseRetryCleared!: () => void;
+    const waitForIdleAndNoQueuedMessages = mock(
+      (): Promise<void> =>
+        new Promise((resolve) => {
+          releaseRetryCleared = resolve;
+        })
+    );
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage,
+      hasPendingQueuedOrPreparingTurn,
+      waitForIdleAndNoQueuedMessages,
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+    await Promise.resolve();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(waitForIdleAndNoQueuedMessages).toHaveBeenCalledWith(parentId);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+
+    ownerPendingAutoRetry = false;
+    releaseRetryCleared();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
   test("terminal wake-up retries without idle-only flag after completion-phase busy", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);

@@ -4299,15 +4299,18 @@ export class TaskService {
     }
 
     // Defer-until-idle: never inject ahead of an active stream or a queued/preparing user turn.
-    const ownerHasBusyOrQueuedTurn =
+    const ownerHasPendingQueuedPreparingOrRetry =
+      this.workspaceService.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId);
+    const ownerHasBusyQueuedOrRetry =
       this.workspaceService.isBusyForMessage(ownerWorkspaceId) ||
-      this.workspaceService.hasQueuedMessages(ownerWorkspaceId);
+      this.workspaceService.hasQueuedMessages(ownerWorkspaceId) ||
+      ownerHasPendingQueuedPreparingOrRetry;
     if (
       this.aiService.isStreaming(ownerWorkspaceId) ||
-      this.workspaceService.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId) ||
+      ownerHasPendingQueuedPreparingOrRetry ||
       this.interruptedParentWorkspaceIds.has(ownerWorkspaceId)
     ) {
-      if (ownerHasBusyOrQueuedTurn && !this.interruptedParentWorkspaceIds.has(ownerWorkspaceId)) {
+      if (ownerHasBusyQueuedOrRetry && !this.interruptedParentWorkspaceIds.has(ownerWorkspaceId)) {
         this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
       }
       return;

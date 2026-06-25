@@ -7460,7 +7460,7 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    while (session.isBusy() || session.hasQueuedMessages()) {
+    while (session.isBusy() || session.hasQueuedMessages() || session.hasPendingAutoRetry()) {
       if (session.isBusy()) {
         await session.waitForIdle();
         continue;
@@ -7468,12 +7468,17 @@ export class WorkspaceService extends EventEmitter {
 
       await new Promise<void>((resolve) => {
         const unsubscribe = session.onChatEvent((event) => {
-          if (event.message.type === "queued-message-changed" && !session.hasQueuedMessages()) {
+          const eventType = event.message.type;
+          if (
+            (eventType === "queued-message-changed" || eventType === "auto-retry-abandoned") &&
+            !session.hasQueuedMessages() &&
+            !session.hasPendingAutoRetry()
+          ) {
             unsubscribe();
             resolve();
           }
         });
-        if (!session.hasQueuedMessages()) {
+        if (!session.hasQueuedMessages() && !session.hasPendingAutoRetry()) {
           unsubscribe();
           resolve();
         }
