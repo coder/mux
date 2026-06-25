@@ -4217,6 +4217,11 @@ export class TaskService {
       return;
     }
 
+    const taskIndex = this.buildAgentTaskIndex(cfg);
+    if (await this.hasBlockingActiveWorkForTerminalDrain(ownerWorkspaceId, taskIndex)) {
+      return;
+    }
+
     const injectedTaskIds = pending
       .filter((n) => n.outputDelivery === "already_injected")
       .map((n) => n.sourceId);
@@ -6023,6 +6028,59 @@ export class TaskService {
     return blocking;
   }
 
+  private async listActiveWorkflowRunIdsForWorkspace(workspaceId: string): Promise<string[]> {
+    assert(workspaceId.length > 0, "listActiveWorkflowRunIdsForWorkspace requires workspaceId");
+    try {
+      const runStore = new WorkflowRunStore({ sessionDir: this.config.getSessionDir(workspaceId) });
+      const runs = await runStore.listRuns();
+      return runs
+        .filter((run) => run.workspaceId === workspaceId && isActiveWorkflowRunStatus(run.status))
+        .map((run) => run.id);
+    } catch (error: unknown) {
+      log.warn("Failed to list active workflow runs for workspace", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+  }
+
+  private async hasActiveTaskOwnedWork(
+    workspaceId: string,
+    taskIndex: AgentTaskIndex
+  ): Promise<boolean> {
+    assert(workspaceId.length > 0, "hasActiveTaskOwnedWork requires workspaceId");
+    if (this.hasActiveDescendantAgentTasksUsingIndex(taskIndex, workspaceId)) {
+      return true;
+    }
+    if ((await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId)).length > 0) {
+      return true;
+    }
+    return (await this.listActiveWorkflowRunIdsForWorkspace(workspaceId)).length > 0;
+  }
+
+  private async hasBlockingActiveWorkForTerminalDrain(
+    workspaceId: string,
+    taskIndex: AgentTaskIndex
+  ): Promise<boolean> {
+    assert(workspaceId.length > 0, "hasBlockingActiveWorkForTerminalDrain requires workspaceId");
+    if (
+      this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, workspaceId, {
+        excludeWorkflowTasks: true,
+      }).length > 0
+    ) {
+      return true;
+    }
+    const activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
+    if (
+      (await this.listBlockingWorkspaceTurnTaskIds(workspaceId, activeWorkspaceTurnIds)).length > 0
+    ) {
+      return true;
+    }
+    const activeWorkflowRunIds = await this.listActiveWorkflowRunIdsForWorkspace(workspaceId);
+    return (await this.listBlockingWorkflowRunIds(workspaceId, activeWorkflowRunIds)).length > 0;
+  }
+
   private isActiveAgentTaskEntry(task: AgentTaskWorkspaceEntry): boolean {
     const status: AgentTaskStatus = task.taskStatus ?? "running";
     if (!ACTIVE_AGENT_TASK_STATUSES.has(status)) {
@@ -6644,9 +6702,7 @@ export class TaskService {
     ) {
       return false;
     }
-    if (
-      this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, workspaceId).length > 0
-    ) {
+    if (await this.hasActiveTaskOwnedWork(workspaceId, taskIndex)) {
       return false;
     }
     if (this.aiService.isStreaming(workspaceId)) {
@@ -7669,9 +7725,7 @@ export class TaskService {
       return;
     }
 
-    if (
-      this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, workspaceId).length > 0
-    ) {
+    if (await this.hasActiveTaskOwnedWork(workspaceId, taskIndex)) {
       return;
     }
 

@@ -1672,6 +1672,56 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
+  test("initialize defers terminal wake-up while blocking task-owned work is active", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_blocking_active",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
+      handleId: "wst_blocking_active",
+      ownerWorkspaceId: parentId,
+    });
+
+    await taskService.initialize();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+  });
+
   test("workspace-turn stream-end with non-stop finish marks the handle error", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
@@ -9680,6 +9730,62 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
     const ws = findWorkspaceInConfig(config, parentTaskId);
     expect(ws?.taskStatus).toBe("running");
+  });
+
+  test("initialize does not request agent_report while task-owned notify_on_terminal work is active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const workspaceTurnId = "workspace-turn-child";
+    const workspaceTurnHandleId = "wst_childturn_notify";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+      ],
+      testTaskSettings()
+    );
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: workspaceTurnHandleId,
+      ownerWorkspaceId: parentTaskId,
+      workspaceId: workspaceTurnId,
+      turnId: "turn-1",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set(workspaceTurnId, {
+      handleId: workspaceTurnHandleId,
+      ownerWorkspaceId: parentTaskId,
+    });
+
+    await taskService.initialize();
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("reverts awaiting_report to running on stream end while task has active descendants", async () => {
