@@ -370,6 +370,7 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages: ReturnType<typeof mock>;
     isBusyForMessage: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+    waitForIdle: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
     remove: ReturnType<typeof mock>;
     emit: ReturnType<typeof mock>;
@@ -389,6 +390,7 @@ function createWorkspaceServiceMocks(
   hasQueuedWorkspaceTurn: ReturnType<typeof mock>;
   hasQueuedMessages: ReturnType<typeof mock>;
   isBusyForMessage: ReturnType<typeof mock>;
+  waitForIdle: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   remove: ReturnType<typeof mock>;
@@ -412,6 +414,7 @@ function createWorkspaceServiceMocks(
   const isBusyForMessage = overrides?.isBusyForMessage ?? mock(() => false);
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
+  const waitForIdle = overrides?.waitForIdle ?? mock((): Promise<void> => Promise.resolve());
   const waitForPendingStreamErrorRecoveryDecision =
     overrides?.waitForPendingStreamErrorRecoveryDecision ??
     mock((): Promise<void> => Promise.resolve());
@@ -445,6 +448,7 @@ function createWorkspaceServiceMocks(
       hasQueuedWorkspaceTurn,
       hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
+      waitForIdle,
       waitForPendingStreamErrorRecoveryDecision,
       remove,
       emit,
@@ -463,6 +467,7 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages,
     isBusyForMessage,
     hasPendingQueuedOrPreparingTurn,
+    waitForIdle,
     waitForPendingStreamErrorRecoveryDecision,
     remove,
     emit,
@@ -1815,7 +1820,14 @@ describe("TaskService", () => {
         return Promise.resolve(Ok(undefined));
       }
     );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    let releaseIdle!: () => void;
+    const waitForIdle = mock(
+      (): Promise<void> =>
+        new Promise((resolve) => {
+          releaseIdle = resolve;
+        })
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage, waitForIdle });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
     const internal = taskService as unknown as {
       drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
@@ -1826,6 +1838,12 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
 
     await failQueuedFallback?.({ type: "unknown", raw: "pre-stream failure" });
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+
+    releaseIdle();
     await flushTerminalAttentionDrains(taskService);
 
     expect(sendMessage).toHaveBeenCalledTimes(3);

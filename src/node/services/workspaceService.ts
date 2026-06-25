@@ -7449,6 +7449,11 @@ export class WorkspaceService extends EventEmitter {
     await session?.waitForPendingStreamErrorRecoveryDecision();
   }
 
+  async waitForIdle(workspaceId: string): Promise<void> {
+    const session = this.sessions.get(workspaceId.trim());
+    await session?.waitForIdle();
+  }
+
   hasPendingQueuedOrPreparingTurn(workspaceId: string): boolean {
     const session = this.sessions.get(workspaceId.trim());
     if (!session) {

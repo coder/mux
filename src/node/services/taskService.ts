@@ -4259,6 +4259,24 @@ export class TaskService {
     this.pendingTerminalAttentionDrains.add(promise);
   }
 
+  private scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId: string): void {
+    const promise = this.workspaceService
+      .waitForIdle(ownerWorkspaceId)
+      .catch((error: unknown) => {
+        log.debug("Terminal attention idle wait failed; retrying drain anyway", {
+          ownerWorkspaceId,
+          error,
+        });
+      })
+      .then(() => {
+        this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
+      })
+      .finally(() => {
+        this.pendingTerminalAttentionDrains.delete(promise);
+      });
+    this.pendingTerminalAttentionDrains.add(promise);
+  }
+
   /**
    * Drain pending terminal notifications for one owner workspace: defer (leave pending) when the
    * owner is busy/queued/preparing, otherwise send one coalesced synthetic wake-up and mark the
@@ -4370,11 +4388,11 @@ export class TaskService {
             synthetic: true,
             agentInitiated: true,
             onCanceled: () => {
-              this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
+              this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
             },
             onAcceptedPreStreamFailure: async () => {
               await markPendingForRetry();
-              this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
+              this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
             },
             onAccepted: async () => {
               fallbackAccepted = true;
