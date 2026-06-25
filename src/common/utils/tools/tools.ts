@@ -30,6 +30,7 @@ import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
 import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
+import { createTaskWorkspaceLifecycleTool } from "@/node/services/tools/task_workspace_lifecycle";
 import { createTaskListTool } from "@/node/services/tools/task_list";
 import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
 import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
@@ -538,6 +539,7 @@ export async function getToolsForModel(
     task_await: wrap(createTaskAwaitTool(config)),
     task_apply_git_patch: wrap(createTaskApplyGitPatchTool(config)),
     task_terminate: wrap(createTaskTerminateTool(config)),
+    task_workspace_lifecycle: wrap(createTaskWorkspaceLifecycleTool(config)),
     task_list: wrap(createTaskListTool(config)),
 
     // Bash execution (foreground/background). Manage background output via task_await/task_list/task_terminate.

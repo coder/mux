@@ -1023,6 +1023,97 @@ export const TaskTerminateToolResultSchema = z
   .strict();
 
 // -----------------------------------------------------------------------------
+// task_workspace_lifecycle (parent-owned workspace cleanup)
+// -----------------------------------------------------------------------------
+
+export const TaskWorkspaceLifecycleActionSchema = z.enum(["archive", "delete_worktree", "remove"]);
+
+export const TaskWorkspaceLifecycleTargetSchema = z
+  .object({
+    taskId: z.string().min(1).nullish(),
+    workspaceId: z.string().min(1).nullish(),
+  })
+  .strict()
+  .superRefine((target, ctx) => {
+    const hasTaskId = target.taskId != null && target.taskId.trim().length > 0;
+    const hasWorkspaceId = target.workspaceId != null && target.workspaceId.trim().length > 0;
+    if (hasTaskId === hasWorkspaceId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide exactly one of taskId or workspaceId",
+        path: ["taskId"],
+      });
+    }
+  });
+
+export const TaskWorkspaceLifecycleToolArgsSchema = z
+  .object({
+    action: TaskWorkspaceLifecycleActionSchema.describe(
+      'Lifecycle action to perform: "archive" is the safe default, "delete_worktree" reclaims disk after archive, and "remove" irreversibly deletes archived workspace metadata/session state.'
+    ),
+    targets: z
+      .array(TaskWorkspaceLifecycleTargetSchema)
+      .min(1)
+      .describe(
+        "Parent-owned workspace-turn targets. Provide exactly one of taskId (wst_...) or workspaceId for each target."
+      ),
+    interrupt_active: z
+      .boolean()
+      .nullish()
+      .describe(
+        "When true, interrupt active workspace turns for the target before performing an otherwise-eligible lifecycle action. Defaults to false."
+      ),
+    force: z
+      .boolean()
+      .nullish()
+      .describe(
+        "Only applies to remove. Does not bypass ownership, active-turn, archive, or archive-confirmation safety checks."
+      ),
+    acknowledged_untracked_paths: z
+      .record(z.string(), z.array(z.string()))
+      .nullish()
+      .describe(
+        "Archive-only confirmations keyed by resolved workspaceId. Use only paths returned by a previous requires_confirmation result."
+      ),
+  })
+  .strict();
+
+const TaskWorkspaceLifecycleBaseResultSchema = z.object({
+  action: TaskWorkspaceLifecycleActionSchema,
+  taskId: z.string().optional(),
+  workspaceId: z.string().optional(),
+  paths: z.array(z.string()).optional(),
+  activeTaskIds: z.array(z.string()).optional(),
+  note: z.string().optional(),
+  error: z.string().optional(),
+});
+
+export const TaskWorkspaceLifecycleToolTargetResultSchema = z.discriminatedUnion("status", [
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("archived") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("already_archived") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("deleted_worktree") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({
+    status: z.literal("already_transcript_only"),
+  }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("removed") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("already_removed") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("requires_archive") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({
+    status: z.literal("requires_confirmation"),
+  }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("active") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("not_found") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("invalid_scope") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("error") }).strict(),
+]);
+
+export const TaskWorkspaceLifecycleToolResultSchema = z
+  .object({
+    results: z.array(TaskWorkspaceLifecycleToolTargetResultSchema),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
 // task_list (list descendant sub-agent tasks)
 // -----------------------------------------------------------------------------
 
@@ -1920,6 +2011,14 @@ export const TOOL_DEFINITIONS = {
       "For workflow runs (wfr_... IDs), this interrupts the run instead: durable state is preserved and the run can be resumed later with workflow_resume.",
     schema: TaskTerminateToolArgsSchema,
   },
+  task_workspace_lifecycle: {
+    description:
+      'Archive, delete the managed worktree for, or remove full workspaces that the current workspace created via task(kind="workspace"). ' +
+      "This tool is scoped by durable workspace-turn ownership records; it cannot act on arbitrary user workspaces. " +
+      'Use action="archive" as the safe default when child work is complete. Use delete_worktree only after archive to reclaim disk while preserving transcript metadata. ' +
+      "Use remove only for irreversible cleanup of already archived owned workspaces. Active workspace turns are refused unless interrupt_active is true, and force never bypasses ownership, archive, or confirmation checks.",
+    schema: TaskWorkspaceLifecycleToolArgsSchema,
+  },
   task_list: {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
@@ -2702,6 +2801,7 @@ export type BridgeableToolName =
   | "task_apply_git_patch"
   | "task_list"
   | "task_terminate"
+  | "task_workspace_lifecycle"
   | "heartbeat"
   | "memory";
 
@@ -2728,6 +2828,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_terminate: TaskTerminateToolResultSchema,
+  task_workspace_lifecycle: TaskWorkspaceLifecycleToolResultSchema,
   heartbeat: HeartbeatToolResultSchema,
   memory: MemoryToolResultSchema,
 };
@@ -2834,6 +2935,7 @@ export function getAvailableTools(
     "task_await",
     "task_apply_git_patch",
     "task_terminate",
+    "task_workspace_lifecycle",
     "task_list",
     ...(enableDynamicWorkflows ? ["workflow_run", "workflow_resume"] : []),
     ...(enableAgentReport ? ["agent_report"] : []),

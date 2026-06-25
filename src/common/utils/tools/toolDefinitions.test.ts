@@ -5,6 +5,7 @@ import {
   getAvailableTools,
   supportsGoogleNativeToolsWithFunctionTools,
   TaskToolArgsSchema,
+  TaskWorkspaceLifecycleToolArgsSchema,
   TOOL_DEFINITIONS,
   WorkflowRunToolArgsSchema,
 } from "./toolDefinitions";
@@ -147,6 +148,46 @@ describe("TOOL_DEFINITIONS", () => {
         prompt: "Summarize ${variant}",
         title: "Repository summary",
         variants: ["frontend", "backend"],
+      }).success
+    ).toBe(false);
+  });
+
+  it("validates task workspace lifecycle targets and optional nulls", () => {
+    expect(
+      TaskWorkspaceLifecycleToolArgsSchema.safeParse({
+        action: "archive",
+        targets: [{ taskId: "wst_child" }],
+        interrupt_active: null,
+        force: null,
+        acknowledged_untracked_paths: null,
+      }).success
+    ).toBe(true);
+
+    expect(
+      TaskWorkspaceLifecycleToolArgsSchema.safeParse({
+        action: "delete_worktree",
+        targets: [{ workspaceId: "child-workspace" }],
+      }).success
+    ).toBe(true);
+
+    expect(
+      TaskWorkspaceLifecycleToolArgsSchema.safeParse({
+        action: "remove",
+        targets: [{ taskId: "wst_child", workspaceId: "child-workspace" }],
+      }).success
+    ).toBe(false);
+
+    expect(
+      TaskWorkspaceLifecycleToolArgsSchema.safeParse({
+        action: "archive",
+        targets: [{}],
+      }).success
+    ).toBe(false);
+
+    expect(
+      TaskWorkspaceLifecycleToolArgsSchema.safeParse({
+        action: "destroy",
+        targets: [{ workspaceId: "child-workspace" }],
       }).success
     ).toBe(false);
   });

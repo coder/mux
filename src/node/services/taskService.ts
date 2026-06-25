@@ -91,6 +91,7 @@ import {
   AgentReportSubmittedReportSchema,
   TaskToolResultSchema,
   TaskToolArgsSchema,
+  type TaskWorkspaceLifecycleToolTargetResultSchema,
   type TaskIsolation,
 } from "@/common/utils/tools/toolDefinitions";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
@@ -163,6 +164,26 @@ export interface AgentTaskStatusLookup {
 export interface AgentTaskTimestamps {
   createdAt?: string;
   reportedAt?: string;
+}
+
+type WorkspaceLifecycleAction = "archive" | "delete_worktree" | "remove";
+interface WorkspaceLifecycleTarget {
+  taskId?: string;
+  workspaceId?: string;
+}
+type WorkspaceLifecycleResult = z.infer<typeof TaskWorkspaceLifecycleToolTargetResultSchema>;
+interface WorkspaceLifecycleOptions {
+  interruptActive?: boolean;
+  acknowledgedUntrackedPaths?: string[];
+  acknowledgedUntrackedPathsByWorkspaceId?: Record<string, string[]>;
+  force?: boolean;
+}
+
+interface ResolvedWorkspaceLifecycleTarget {
+  action: WorkspaceLifecycleAction;
+  taskId?: string;
+  workspaceId: string;
+  metadata: WorkspaceMetadata | null;
 }
 
 export interface TaskCreateArgs {
@@ -997,6 +1018,9 @@ export class TaskService {
   // concurrently from multiple child stream-end handlers for the same parent, and it must remain
   // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
   private readonly deferredBestOfLocks = new MutexMap<string>();
+  // Serialize lifecycle actions per resolved child workspace: a batch may include both the
+  // created handle and later existing-mode handles for the same workspace.
+  private readonly workspaceLifecycleLocks = new MutexMap<string>();
   // Serialize terminal writes per workspace-turn handle so late completions/interruptions cannot
   // overwrite an already-settled handle.
   private readonly workspaceTurnSettlementLocks = new MutexMap<string>();
@@ -5063,6 +5087,315 @@ export class TaskService {
     }
     this.scheduleMaybeStartQueuedTasks();
     return result;
+  }
+
+  async archiveOwnedWorkspaceTurnWorkspace(
+    ownerWorkspaceId: string,
+    target: WorkspaceLifecycleTarget,
+    options: WorkspaceLifecycleOptions = {}
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+    assert(ownerWorkspaceId.trim().length > 0, "archive lifecycle requires ownerWorkspaceId");
+    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
+      ownerWorkspaceId,
+      "archive",
+      target
+    );
+    if ("status" in resolved) return Ok(resolved);
+
+    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+      if (resolved.metadata == null) {
+        return Ok({
+          status: "not_found",
+          action: "archive",
+          ...this.lifecycleTargetFields(resolved),
+          note: "Owned workspace metadata is already absent.",
+        });
+      }
+      if (isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
+        return Ok({
+          status: "already_archived",
+          action: "archive",
+          ...this.lifecycleTargetFields(resolved),
+        });
+      }
+
+      const active = await this.handleActiveWorkspaceLifecycleTurns(
+        ownerWorkspaceId,
+        resolved,
+        options.interruptActive === true
+      );
+      if (active != null) return Ok(active);
+
+      const acknowledgedUntrackedPaths =
+        options.acknowledgedUntrackedPaths ??
+        options.acknowledgedUntrackedPathsByWorkspaceId?.[resolved.workspaceId];
+      const result = await this.workspaceService.archive(
+        resolved.workspaceId,
+        acknowledgedUntrackedPaths
+      );
+      if (!result.success) {
+        return Ok({
+          status: "error",
+          action: "archive",
+          ...this.lifecycleTargetFields(resolved),
+          error: result.error,
+        });
+      }
+      if (result.data.kind === "confirm-lossy-untracked-files") {
+        return Ok({
+          status: "requires_confirmation",
+          action: "archive",
+          ...this.lifecycleTargetFields(resolved),
+          paths: result.data.paths,
+        });
+      }
+      return Ok({ status: "archived", action: "archive", ...this.lifecycleTargetFields(resolved) });
+    });
+  }
+
+  async deleteOwnedWorkspaceTurnWorktree(
+    ownerWorkspaceId: string,
+    target: WorkspaceLifecycleTarget,
+    options: WorkspaceLifecycleOptions = {}
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+    assert(
+      ownerWorkspaceId.trim().length > 0,
+      "delete worktree lifecycle requires ownerWorkspaceId"
+    );
+    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
+      ownerWorkspaceId,
+      "delete_worktree",
+      target
+    );
+    if ("status" in resolved) return Ok(resolved);
+
+    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+      if (resolved.metadata == null) {
+        return Ok({
+          status: "not_found",
+          action: "delete_worktree",
+          ...this.lifecycleTargetFields(resolved),
+          note: "Owned workspace metadata is already absent.",
+        });
+      }
+      if (!isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
+        return Ok({
+          status: "requires_archive",
+          action: "delete_worktree",
+          ...this.lifecycleTargetFields(resolved),
+        });
+      }
+      if (this.isTranscriptOnlyWorkspaceMetadata(resolved.metadata)) {
+        return Ok({
+          status: "already_transcript_only",
+          action: "delete_worktree",
+          ...this.lifecycleTargetFields(resolved),
+        });
+      }
+
+      const active = await this.handleActiveWorkspaceLifecycleTurns(
+        ownerWorkspaceId,
+        resolved,
+        options.interruptActive === true
+      );
+      if (active != null) return Ok(active);
+
+      const result = await this.workspaceService.deleteWorktree(resolved.workspaceId);
+      if (!result.success) {
+        return Ok({
+          status: "error",
+          action: "delete_worktree",
+          ...this.lifecycleTargetFields(resolved),
+          error: result.error,
+        });
+      }
+      return Ok({
+        status: "deleted_worktree",
+        action: "delete_worktree",
+        ...this.lifecycleTargetFields(resolved),
+      });
+    });
+  }
+
+  async removeOwnedWorkspaceTurnWorkspace(
+    ownerWorkspaceId: string,
+    target: WorkspaceLifecycleTarget,
+    options: WorkspaceLifecycleOptions = {}
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+    assert(ownerWorkspaceId.trim().length > 0, "remove lifecycle requires ownerWorkspaceId");
+    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
+      ownerWorkspaceId,
+      "remove",
+      target
+    );
+    if ("status" in resolved) return Ok(resolved);
+
+    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+      if (resolved.metadata == null) {
+        return Ok({
+          status: "already_removed",
+          action: "remove",
+          ...this.lifecycleTargetFields(resolved),
+        });
+      }
+      if (!isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
+        return Ok({
+          status: "requires_archive",
+          action: "remove",
+          ...this.lifecycleTargetFields(resolved),
+        });
+      }
+
+      const active = await this.handleActiveWorkspaceLifecycleTurns(
+        ownerWorkspaceId,
+        resolved,
+        options.interruptActive === true
+      );
+      if (active != null) return Ok(active);
+
+      const result = await this.workspaceService.remove(
+        resolved.workspaceId,
+        options.force === true
+      );
+      if (!result.success) {
+        return Ok({
+          status: "error",
+          action: "remove",
+          ...this.lifecycleTargetFields(resolved),
+          error: result.error,
+        });
+      }
+      return Ok({ status: "removed", action: "remove", ...this.lifecycleTargetFields(resolved) });
+    });
+  }
+
+  private async withWorkspaceLifecycleLock<T>(
+    resolved: ResolvedWorkspaceLifecycleTarget,
+    operation: (lockedResolved: ResolvedWorkspaceLifecycleTarget) => Promise<T>
+  ): Promise<T> {
+    return await this.workspaceLifecycleLocks.withLock(resolved.workspaceId, async () => {
+      const lockedResolved = {
+        ...resolved,
+        metadata: await this.findWorkspaceLifecycleMetadata(resolved.workspaceId),
+      };
+      return await operation(lockedResolved);
+    });
+  }
+
+  private async resolveOwnedWorkspaceLifecycleTarget(
+    ownerWorkspaceId: string,
+    action: WorkspaceLifecycleAction,
+    target: WorkspaceLifecycleTarget
+  ): Promise<ResolvedWorkspaceLifecycleTarget | WorkspaceLifecycleResult> {
+    assert(
+      ownerWorkspaceId.trim().length > 0,
+      "workspace lifecycle target resolution requires owner"
+    );
+    const hasTaskId = target.taskId != null && target.taskId.trim().length > 0;
+    const hasWorkspaceId = target.workspaceId != null && target.workspaceId.trim().length > 0;
+    assert(hasTaskId !== hasWorkspaceId, "workspace lifecycle target must have exactly one ID");
+
+    let taskId: string | undefined;
+    let workspaceId: string;
+    if (hasTaskId) {
+      taskId = target.taskId;
+      assert(taskId != null, "workspace lifecycle taskId must be resolved");
+      if (!isWorkspaceTurnTaskId(taskId)) {
+        return { status: "invalid_scope", action, taskId };
+      }
+      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
+      if (record == null) {
+        return { status: "invalid_scope", action, taskId };
+      }
+      workspaceId = record.workspaceId;
+    } else {
+      assert(target.workspaceId != null, "workspace lifecycle workspaceId must be resolved");
+      workspaceId = target.workspaceId;
+    }
+
+    const owned = await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, workspaceId);
+    if (!owned) {
+      return {
+        status: "invalid_scope",
+        action,
+        ...(taskId != null ? { taskId } : {}),
+        workspaceId,
+      };
+    }
+
+    const metadata = await this.findWorkspaceLifecycleMetadata(workspaceId);
+    return { action, ...(taskId != null ? { taskId } : {}), workspaceId, metadata };
+  }
+
+  private lifecycleTargetFields(resolved: ResolvedWorkspaceLifecycleTarget): {
+    taskId?: string;
+    workspaceId: string;
+  } {
+    return {
+      ...(resolved.taskId != null ? { taskId: resolved.taskId } : {}),
+      workspaceId: resolved.workspaceId,
+    };
+  }
+
+  private async findWorkspaceLifecycleMetadata(
+    workspaceId: string
+  ): Promise<WorkspaceMetadata | null> {
+    assert(
+      workspaceId.trim().length > 0,
+      "workspace lifecycle metadata lookup requires workspaceId"
+    );
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+      return allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
+    } catch (error: unknown) {
+      log.debug("Failed to load workspace metadata for workspace lifecycle", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+  }
+
+  private isTranscriptOnlyWorkspaceMetadata(metadata: WorkspaceMetadata): boolean {
+    return "transcriptOnly" in metadata && metadata.transcriptOnly === true;
+  }
+
+  private async handleActiveWorkspaceLifecycleTurns(
+    ownerWorkspaceId: string,
+    resolved: ResolvedWorkspaceLifecycleTarget,
+    interruptActive: boolean
+  ): Promise<WorkspaceLifecycleResult | null> {
+    const activeRecords = (
+      await this.listWorkspaceTurnTasks(ownerWorkspaceId, {
+        statuses: ["queued", "starting", "running"],
+      })
+    ).filter((record) => record.workspaceId === resolved.workspaceId);
+    const activeTaskIds = activeRecords.map((record) => record.handleId);
+    if (activeTaskIds.length === 0) {
+      return null;
+    }
+    if (!interruptActive) {
+      return {
+        status: "active",
+        action: resolved.action,
+        ...this.lifecycleTargetFields(resolved),
+        activeTaskIds,
+      };
+    }
+
+    for (const activeTaskId of activeTaskIds) {
+      const interruptResult = await this.interruptWorkspaceTurn(ownerWorkspaceId, activeTaskId);
+      if (!interruptResult.success) {
+        return {
+          status: "error",
+          action: resolved.action,
+          ...this.lifecycleTargetFields(resolved),
+          activeTaskIds,
+          error: interruptResult.error,
+        };
+      }
+    }
+    return null;
   }
 
   listDescendantAgentTasks(

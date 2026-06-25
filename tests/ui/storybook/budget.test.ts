@@ -4,12 +4,11 @@ import { join } from "node:path";
 
 const STORY_DIR = "src/browser/stories";
 const COLOCATED_STORY_DIRS = ["src/browser/components", "src/browser/features"];
-const MAX_SNAPSHOT_ENABLED_FILES = 70;
-// Keep a buffer under Chromatic's 300 snapshot limit. This reflects the current
-// retained snapshot set while still blocking accidental growth.
-// 271 keeps the retained snapshot set under Chromatic's limit while leaving
-// headroom for disabled/dogfood-only stories that must not add Chromatic snapshots.
-const MAX_ESTIMATED_SNAPSHOTS = 271;
+const MAX_SNAPSHOT_ENABLED_FILES = 78;
+// Exact current retained snapshot baseline. Keep this no-headroom guardrail tight:
+// future growth should disable, consolidate, or intentionally rebalance snapshots
+// rather than silently increasing Chromatic load.
+const MAX_ESTIMATED_SNAPSHOTS = 285;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
 const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;

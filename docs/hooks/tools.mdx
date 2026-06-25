@@ -717,6 +717,22 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>task_workspace_lifecycle (8)</summary>
+
+| Env var                                                     | JSON path                                      | Type    | Description                                                                                                                                                                                     |
+| ----------------------------------------------------------- | ---------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_ACKNOWLEDGED_UNTRACKED_PATHS_<KEY>_<INDEX>` | `acknowledged_untracked_paths[<KEY>][<INDEX>]` | string  | Archive-only confirmations keyed by resolved workspaceId. Use only paths returned by a previous requires_confirmation result.                                                                   |
+| `MUX_TOOL_INPUT_ACKNOWLEDGED_UNTRACKED_PATHS_<KEY>_COUNT`   | `acknowledged_untracked_paths[<KEY>].length`   | number  | Number of elements in acknowledged_untracked_paths[&lt;KEY&gt;] (Archive-only confirmations keyed by resolved workspaceId. Use only paths returned by a previous requires_confirmation result.) |
+| `MUX_TOOL_INPUT_ACTION`                                     | `action`                                       | enum    | Lifecycle action to perform: "archive" is the safe default, "delete_worktree" reclaims disk after archive, and "remove" irreversibly deletes archived workspace metadata/session state.         |
+| `MUX_TOOL_INPUT_FORCE`                                      | `force`                                        | boolean | Only applies to remove. Does not bypass ownership, active-turn, archive, or archive-confirmation safety checks.                                                                                 |
+| `MUX_TOOL_INPUT_INTERRUPT_ACTIVE`                           | `interrupt_active`                             | boolean | When true, interrupt active workspace turns for the target before performing an otherwise-eligible lifecycle action. Defaults to false.                                                         |
+| `MUX_TOOL_INPUT_TARGETS_<INDEX>_TASK_ID`                    | `targets[<INDEX>].taskId`                      | string  | —                                                                                                                                                                                               |
+| `MUX_TOOL_INPUT_TARGETS_<INDEX>_WORKSPACE_ID`               | `targets[<INDEX>].workspaceId`                 | string  | —                                                                                                                                                                                               |
+| `MUX_TOOL_INPUT_TARGETS_COUNT`                              | `targets.length`                               | number  | Number of elements in targets (Parent-owned workspace-turn targets. Provide exactly one of taskId (wst\_...) or workspaceId for each target.)                                                   |
+
+</details>
+
+<details>
 <summary>todo_write (3)</summary>
 
 | Env var                                | JSON path                | Type   | Description                                                                                                                  |
