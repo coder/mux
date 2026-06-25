@@ -17,6 +17,23 @@ export interface UseResumeStreamResult {
   clearError: () => void;
 }
 
+export interface UseResumeStreamOptions {
+  /**
+   * When true (default), the resumed attempt temporarily enables auto-retry
+   * (persist:false) so transient failures keep retrying, then restores the
+   * user's preference once the attempt reaches a terminal outcome. This is the
+   * RetryBarrier semantic (it stays mounted across the whole lifecycle).
+   *
+   * Set false for callers that may unmount mid-attempt (e.g. the interrupted
+   * divider, which ChatPane hides once auto-retry becomes active): a user
+   * pressing Esc asked to stop, so "continue once" is the correct semantic, and
+   * skipping the enable+rollback avoids canceling an in-flight scheduled retry
+   * on unmount. Auto-retry-enabled users still get backend recovery because the
+   * backend consults the persisted preference on failure regardless.
+   */
+  autoRetryOnFailure?: boolean;
+}
+
 /**
  * Shared "continue from where it stopped" flow used by both the RetryBarrier
  * button (system/error interrupts) and the InterruptedBarrier splitter
@@ -29,7 +46,11 @@ export interface UseResumeStreamResult {
  * auto-retry for the resumed attempt without silently flipping the user's
  * persisted preference.
  */
-export function useResumeStream(workspaceId: string): UseResumeStreamResult {
+export function useResumeStream(
+  workspaceId: string,
+  options?: UseResumeStreamOptions
+): UseResumeStreamResult {
+  const autoRetryOnFailure = options?.autoRetryOnFailure ?? true;
   const { api } = useAPI();
   const workspaceState = useWorkspaceState(workspaceId);
   const [error, setError] = useState<string | null>(null);
@@ -166,23 +187,25 @@ export function useResumeStream(workspaceId: string): UseResumeStreamResult {
         options = applyCompactionOverrides(options, lastUserMessage.compactionRequest.parsed);
       }
 
-      const enableResult = await api.workspace.setAutoRetryEnabled?.({
-        workspaceId,
-        enabled: true,
-        persist: false,
-      });
-      if (enableResult && !enableResult.success) {
-        setError(enableResult.error);
-        return;
-      }
+      if (autoRetryOnFailure) {
+        const enableResult = await api.workspace.setAutoRetryEnabled?.({
+          workspaceId,
+          enabled: true,
+          persist: false,
+        });
+        if (enableResult && !enableResult.success) {
+          setError(enableResult.error);
+          return;
+        }
 
-      if (enableResult?.success && enableResult.data.previousEnabled === false) {
-        // Manual resume temporarily enables auto-retry for this resumed attempt.
-        // Restore only when stream/retry outcome is terminal.
-        rollbackWorkspaceIdRef.current = workspaceId;
-        rollbackPendingRef.current = true;
-        rollbackArmedRef.current = false;
-        rollbackBaselineMessageCountRef.current = workspaceState.messages.length;
+        if (enableResult?.success && enableResult.data.previousEnabled === false) {
+          // Manual resume temporarily enables auto-retry for this resumed attempt.
+          // Restore only when stream/retry outcome is terminal.
+          rollbackWorkspaceIdRef.current = workspaceId;
+          rollbackPendingRef.current = true;
+          rollbackArmedRef.current = false;
+          rollbackBaselineMessageCountRef.current = workspaceState.messages.length;
+        }
       }
 
       const resumeResult = await api.workspace.resumeStream({

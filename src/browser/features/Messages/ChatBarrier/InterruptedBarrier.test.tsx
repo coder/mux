@@ -97,8 +97,8 @@ describe("InterruptedBarrier", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("clicking the interrupted label resumes the stream", async () => {
-    const view = render(<InterruptedBarrier workspaceId="ws-1" />);
+  test("clicking the resumable interrupted label resumes the tail without touching auto-retry", async () => {
+    const view = render(<InterruptedBarrier workspaceId="ws-1" resumable />);
 
     const label = view.getByRole("button", { name: "Continue interrupted response" });
     fireEvent.click(label);
@@ -107,13 +107,17 @@ describe("InterruptedBarrier", () => {
       expect(resumeStream).toHaveBeenCalledTimes(1);
     });
 
-    // Temporarily enables auto-retry (persist:false) before resuming, mirroring
-    // the RetryBarrier / backend auto-retry flow.
-    expect(setAutoRetryEnabled).toHaveBeenCalledWith({
-      workspaceId: "ws-1",
-      enabled: true,
-      persist: false,
-    });
+    // A user-initiated (Esc) interrupt means "continue once" — it must NOT flip
+    // the auto-retry preference, so the unmount-on-auto-retry path can't cancel
+    // an in-flight scheduled retry.
+    expect(setAutoRetryEnabled).not.toHaveBeenCalled();
     expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({ workspaceId: "ws-1" });
+  });
+
+  test("a non-resumable divider renders no clickable control", () => {
+    const view = render(<InterruptedBarrier workspaceId="ws-1" resumable={false} />);
+
+    expect(view.queryByRole("button")).toBeNull();
+    expect(view.getByText("interrupted")).toBeTruthy();
   });
 });

@@ -4,27 +4,35 @@ import { useResumeStream } from "@/browser/hooks/useResumeStream";
 
 interface InterruptedBarrierProps {
   workspaceId: string;
+  /**
+   * Whether this divider sits on the current resume target (the history tail).
+   * resumeStream always continues the tail, so only the tail divider is made
+   * clickable — older partial dividers stay decorative to avoid resuming the
+   * wrong turn.
+   */
+  resumable?: boolean;
   className?: string;
 }
 
 /**
- * Decorative "interrupted" divider shown on a partial assistant turn. Clicking
- * the label continues the stream from where it stopped, identical to the
- * RetryBarrier's Retry button and the backend auto-retry path (resumeStream).
- * This is the only continue affordance for user-initiated (Esc) interrupts,
- * where the RetryBarrier is intentionally suppressed.
+ * "interrupted" divider shown on a partial assistant turn. When it sits on the
+ * resumable tail, clicking the label continues the stream from where it stopped
+ * (same backend path as RetryBarrier / auto-retry). It is the only continue
+ * affordance for user-initiated (Esc) interrupts, where RetryBarrier is
+ * suppressed. autoRetryOnFailure is disabled because ChatPane unmounts this
+ * divider once auto-retry becomes active; see useResumeStream for why that
+ * matters.
  */
 export const InterruptedBarrier: React.FC<InterruptedBarrierProps> = (props) => {
-  // resume() internally guards against re-entrancy while a resume is in flight,
-  // so we always keep the clickable label mounted (no button<->div remount flicker).
-  const { resume } = useResumeStream(props.workspaceId);
+  // resume() internally guards against re-entrancy while a resume is in flight.
+  const { resume } = useResumeStream(props.workspaceId, { autoRetryOnFailure: false });
   return (
     <BaseBarrier
       text="interrupted"
       color="var(--color-interrupted)"
       className={props.className}
-      onClick={() => void resume()}
-      ariaLabel="Continue interrupted response"
+      onClick={props.resumable ? () => void resume() : undefined}
+      ariaLabel={props.resumable ? "Continue interrupted response" : undefined}
     />
   );
 };

@@ -1260,7 +1260,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         )}
         {isAtCutoff && <EditCutoffBarrier />}
         {interruptedBarrierMessageIds.has(message.id) && (
-          <InterruptedBarrier workspaceId={workspaceId} />
+          // Only the divider on the resume target (history tail) is clickable;
+          // resumeStream always continues the tail, so older partial dividers
+          // must stay decorative to avoid resuming the wrong turn.
+          <InterruptedBarrier
+            workspaceId={workspaceId}
+            resumable={message.id === lastRetryCandidateMessage?.id}
+          />
         )}
       </React.Fragment>
     );
