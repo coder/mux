@@ -30,6 +30,7 @@ import type {
   TaskApplyGitPatchToolResultSchema,
   TaskListToolResultSchema,
   TaskTerminateToolResultSchema,
+  TaskWorkspaceLifecycleToolResultSchema,
   TOOL_DEFINITIONS,
   WebFetchToolResultSchema,
   WorkflowRunToolResultSchema,
@@ -270,6 +271,27 @@ export type TaskListToolSuccessResult = z.infer<typeof TaskListToolResultSchema>
 export type TaskTerminateToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_terminate.schema>;
 
 export type TaskTerminateToolSuccessResult = z.infer<typeof TaskTerminateToolResultSchema>;
+
+// Task Workspace Lifecycle Tool Types (parent-owned archive/delete_worktree/remove)
+export type TaskWorkspaceLifecycleToolArgs = z.infer<
+  typeof TOOL_DEFINITIONS.task_workspace_lifecycle.schema
+>;
+
+// Success shape is `{ results: [...] }` (no top-level `success`); a thrown execute()
+// surfaces as ToolErrorResult, so the renderable result is the union of both.
+export type TaskWorkspaceLifecycleToolSuccessResult = z.infer<
+  typeof TaskWorkspaceLifecycleToolResultSchema
+>;
+
+export type TaskWorkspaceLifecycleToolResult =
+  | TaskWorkspaceLifecycleToolSuccessResult
+  | ToolErrorResult;
+
+// One per-target outcome row, discriminated on `status` (12 lifecycle states).
+export type TaskWorkspaceLifecycleTargetResult =
+  TaskWorkspaceLifecycleToolSuccessResult["results"][number];
+
+export type TaskWorkspaceLifecycleStatus = TaskWorkspaceLifecycleTargetResult["status"];
 
 // Workflow Definition Tool Types
 // Workflow Run Tool Types

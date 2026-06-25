@@ -19,6 +19,7 @@ import {
   GraduationCap,
   Hand,
   Keyboard,
+  Layers,
   Lightbulb,
   MessageCircleQuestion,
   Monitor,
@@ -269,6 +270,9 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   review_pane_get: ScanEye,
   analytics_query: Database,
   task_apply_git_patch: GitCommit,
+  // Layers (stacked planes) reads as "manage the stack of child workspaces" — matches the
+  // WorkspaceLifecycleToolCall card's glyph.
+  task_workspace_lifecycle: Layers,
   set_goal: Target,
   get_goal: Target,
   complete_goal: CircleCheck,
