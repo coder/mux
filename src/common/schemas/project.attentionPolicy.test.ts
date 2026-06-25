@@ -19,8 +19,8 @@ describe("WorkspaceConfigSchema taskAttentionPolicy", () => {
   });
 
   test("rejects an invalid attention policy value", () => {
-    expect(
-      WorkspaceConfigSchema.safeParse({ ...base, taskAttentionPolicy: "bogus" }).success
-    ).toBe(false);
+    expect(WorkspaceConfigSchema.safeParse({ ...base, taskAttentionPolicy: "bogus" }).success).toBe(
+      false
+    );
   });
 });
