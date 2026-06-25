@@ -18,11 +18,7 @@ import {
 } from "./Shared/toolUtils";
 import { HeartbeatToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
-import {
-  HEARTBEAT_DEFAULT_CONTEXT_MODE,
-  HEARTBEAT_DEFAULT_MESSAGE_BODY,
-  type HeartbeatContextMode,
-} from "@/constants/heartbeat";
+import { HEARTBEAT_DEFAULT_CONTEXT_MODE, type HeartbeatContextMode } from "@/constants/heartbeat";
 
 /**
  * Transcript card for the `heartbeat` tool — the agent's recurring, idle-gated
@@ -177,23 +173,25 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
 
   const live = settings?.enabled ?? false;
   const ctx = CONTEXT_MODES[settings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE];
-  // WorkspaceService only persists `message` when a custom one is provided, so the
-  // common case has no stored text — fall back to the built-in default body and mark
-  // it as such, rather than hiding the prompt section entirely. An empty string means
-  // the custom message was explicitly cleared, so treat that as "no custom prompt" too.
-  const message = settings?.message ?? "";
-  const hasCustomMessage = message.length > 0;
-  const promptBody = hasCustomMessage ? message : HEARTBEAT_DEFAULT_MESSAGE_BODY;
+  // Only a custom `message` is stored per workspace; an empty string means it was
+  // explicitly cleared. When there's no custom text the effective prompt is the
+  // app-level default (`config.heartbeatDefaultPrompt`) or the built-in body — neither
+  // of which the tool result carries — so we render a neutral "uses the default" note
+  // rather than risk showing a prompt different from the one that will actually run.
+  const customMessage = settings?.message ?? "";
+  const hasCustomMessage = customMessage.length > 0;
 
-  // Header pill: live cadence (green), paused (amber), or cleared/not-set (muted).
+  // Header pill — only once a successful result is in hand (live cadence green, paused
+  // amber, cleared/not-set muted). Gating on `success` avoids confirming a state before
+  // the tool has actually completed.
   let badge: { tone: BadgeTone; label: string } | null = null;
-  if (action === "unset") {
+  if (success?.action === "unset") {
     badge = { tone: "cleared", label: "Cleared" };
   } else if (settings) {
     badge = settings.enabled
       ? { tone: "enabled", label: `Every ${formatHeartbeatIntervalShort(settings.intervalMs)}` }
       : { tone: "disabled", label: "Paused" };
-  } else if (action === "get" && status === "completed") {
+  } else if (success?.action === "get") {
     badge = { tone: "cleared", label: "Not set" };
   }
 
@@ -246,27 +244,30 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
                   : " No check-ins will run until re-enabled."}
               </div>
 
-              <div>
-                <div className="text-secondary mb-1 text-[10px] tracking-wide uppercase">
-                  Check-in prompt
-                  {!hasCustomMessage && (
-                    <span className="text-muted tracking-normal normal-case"> · default</span>
-                  )}
+              {hasCustomMessage ? (
+                <div>
+                  <div className="text-secondary mb-1 text-[10px] tracking-wide uppercase">
+                    Check-in prompt
+                  </div>
+                  <div className="text-foreground border-l-2 border-white/10 pl-2.5 italic">
+                    {customMessage}
+                  </div>
                 </div>
-                <div className="text-foreground border-l-2 border-white/10 pl-2.5 italic">
-                  {promptBody}
+              ) : (
+                <div className="text-muted text-[10.5px] italic">
+                  Uses the default check-in prompt.
                 </div>
-              </div>
+              )}
             </div>
           )}
 
-          {action === "unset" && !errorResult && (
+          {success?.action === "unset" && (
             <div className="text-muted px-3 py-2 text-[11px]">
               Recurring check-ins removed for this workspace.
             </div>
           )}
 
-          {action === "get" && !settings && !errorResult && status === "completed" && (
+          {success?.action === "get" && !settings && (
             <div className="text-muted px-3 py-2 text-[11px] italic">
               No heartbeat is configured for this workspace.
             </div>
