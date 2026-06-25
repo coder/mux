@@ -1350,6 +1350,7 @@ export const TOOL_DEFINITIONS = {
               "List active tasks with task_list. " +
               "Process persists until timeout_secs expires, terminated, or workspace is removed." +
               "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+              "Raw background bash does not automatically wake the parent workspace when it prints output or exits; use task_await when you need output, or wrap the script in a background task/workflow monitor when wake-on-condition behavior is required. " +
               "Do not call task_await in the same parallel tool-call batch; wait for the returned taskId first. " +
               "When you actually need the output, read it with task_await; do not poll task_await just because the process is still running."
           ),

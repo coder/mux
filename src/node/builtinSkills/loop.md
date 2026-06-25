@@ -53,6 +53,12 @@ Before dispatching a task or workflow, decide whether the loop's next decision d
 
 Do not use background dispatch to hide an unbounded polling loop — record the spawned IDs and the convergence condition, and reconcile against actual state. The `notify_on_terminal` policy is internal and inferred from `run_in_background`; there is no settable `attentionPolicy` argument in v1.
 
+### Condition-driven background monitors
+
+When the loop's purpose is to watch external state and wake only when something changes (CI finished, mergeability changed, a review arrived, deployment became healthy), read `background-monitors`. The safe pattern is a bounded background task or workflow that performs the polling internally, then completes with a report when the condition converges or the bound expires.
+
+Use raw `bash(run_in_background=true)` only when you plan to explicitly retrieve output with `task_await`; raw background bash does not by itself wake the parent when it prints output or exits. For wake-on-condition behavior, wrap the script in a background task/workflow monitor.
+
 ## Ask when the route changes risk
 
 Ask a short clarifying question instead of guessing when any of these are ambiguous:

@@ -71,6 +71,8 @@ Mux persists an internal attention policy for background work and uses it to dec
 
 There is no public `attentionPolicy`/`attention_policy` argument and no "silent background" mode in v1.
 
+For condition-driven monitors (CI, mergeability, review arrival, deployment health), prefer a background workflow when the watcher must be reusable or resumable. The workflow should encode bounded polling and return a terminal result only when the watched condition converges, fails, or times out. Read `background-monitors` for the monitor contract.
+
 ## Interrupting and resuming runs
 
 Runs are durable, so stopping one is non-destructive:

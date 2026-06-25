@@ -119,6 +119,10 @@ Example dependency chain (schema download → generation):
    - PASS: summary-only (no long logs).
    - FAIL: include the failing command + key error lines; then delegate a fix to `exec` and re-verify.
 
+## Background readiness monitors
+
+For PR/CI readiness that can continue after your turn ends, prefer bounded monitor tasks over parent-side polling. Read `background-monitors`, then launch independent monitors with `task({ run_in_background: true })` for CI/checks, mergeability, review arrival, or deployment health. Each monitor should poll internally with a deadline and call `agent_report` only on convergence, failure, state transition, or timeout. Raw background `bash` is not enough for wake-up semantics unless it is wrapped inside such a monitor task/workflow.
+
 ## Gate loop (verification)
 
 The same loop applies whether you orchestrate interactively or from a workflow:
