@@ -1,6 +1,7 @@
 import React from "react";
 import { BookOpen, Play, Workflow } from "lucide-react";
 
+import { SLASH_COMMAND_HINTS } from "@/common/constants/slashCommandHints";
 import type { AvailableWorkflow, WorkflowArgSummary } from "@/common/types/workflow";
 
 import { WorkflowScopeBadge } from "./WorkflowBadges";
@@ -231,11 +232,12 @@ export const WorkflowEmptyState: React.FC<WorkflowEmptyStateProps> = (props) => 
       )}
 
       <div className="text-muted pt-1 text-center text-[11.5px]">
-        Or start one from chat with{" "}
+        Start one from chat with{" "}
         <span className="border-border bg-surface-secondary rounded border px-1.5 py-px font-mono">
-          /
+          {`/workflow ${SLASH_COMMAND_HINTS.workflow}`}
         </span>
-        , or author one in <span className="text-content-secondary font-mono">.mux/workflows/</span>
+        ; workspace <span className="text-content-secondary font-mono">.js</span> workflows are
+        loaded by explicit path.
       </div>
     </div>
   );

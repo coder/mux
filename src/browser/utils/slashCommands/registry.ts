@@ -665,13 +665,13 @@ const btwCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const WORKFLOW_COMMAND_USAGE = "/workflow <script_path> [args]";
+const WORKFLOW_COMMAND_USAGE = `/workflow ${SLASH_COMMAND_HINTS.workflow}`;
 
 const workflowCommandDefinition: SlashCommandDefinition = {
   key: "workflow",
   description: "Run an explicit workflow by script path",
   experimentGate: EXPERIMENT_IDS.DYNAMIC_WORKFLOWS,
-  inputHint: WORKFLOW_COMMAND_USAGE,
+  inputHint: SLASH_COMMAND_HINTS.workflow,
   handler: ({ rawInput }): ParsedCommand => {
     const trimmed = rawInput.trim();
     if (!trimmed) {
