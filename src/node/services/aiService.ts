@@ -1812,6 +1812,18 @@ export class AIService extends EventEmitter {
               // terminal result back as a hidden user turn so the parent agent continues
               // instead of leaving the user staring at the workflow report payload.
               onBackgroundRunTerminal: async ({ runId, status, result, run }) => {
+                if (run.parentWorkflow != null) {
+                  return;
+                }
+                if (this.taskService != null) {
+                  await this.taskService.enqueueWorkflowRunTerminalAttention({
+                    ownerWorkspaceId: workspaceId,
+                    runId,
+                    status,
+                  });
+                  return;
+                }
+
                 const continuationSender = this.workflowResultContinuationSender;
                 if (continuationSender == null) {
                   log.warn("Workflow completed but no continuation sender is configured", {

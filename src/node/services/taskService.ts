@@ -87,6 +87,7 @@ import {
 } from "@/common/types/workflow";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
+  buildWorkflowResultContextMessage,
   isWorkflowDisplayOnlyMessage,
   isWorkflowRunEmittingToolName,
 } from "@/common/utils/workflowRunMessages";
@@ -338,6 +339,19 @@ function buildCompletedWorkspaceTurnPrompt(handleIds: string[]): string {
     "retrieve their terminal output, then integrate it into your work. These handles are already " +
     "terminal — do not repeatedly wait if task_await returns a terminal status."
   );
+}
+
+function workflowRunTerminalOutcome(status: WorkflowRunStatus): TerminalAttentionOutcome {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "interrupted":
+      return "interrupted";
+    default:
+      return "error";
+  }
 }
 
 function workspaceTurnTerminalOutcome(status: WorkspaceTurnTaskStatus): TerminalAttentionOutcome {
@@ -2073,6 +2087,8 @@ export class TaskService {
     }
     const cleanupReportedTasksMs = Date.now() - cleanupReportedTasksStartedAt;
 
+    const recoveredTerminalWorkflowRunNotificationCount =
+      await this.recoverTerminalWorkflowRunAttentionNotifications();
     const recoveredTerminalWorkspaceTurnNotificationCount =
       await this.recoverTerminalWorkspaceTurnAttentionNotifications();
     const terminalAttentionDrainStartedAt = Date.now();
@@ -2098,6 +2114,7 @@ export class TaskService {
       patchGenerationRecoveryMs,
       bestOfParentRecoveryCount: bestOfParentWorkspaceIds.size,
       bestOfRecoveryMs,
+      recoveredTerminalWorkflowRunNotificationCount,
       recoveredTerminalWorkspaceTurnNotificationCount,
       pendingTerminalAttentionOwnerWorkspaceCount: pendingTerminalAttentionOwnerWorkspaceIds.length,
       terminalAttentionDrainMs,
@@ -4173,6 +4190,56 @@ export class TaskService {
     });
   }
 
+  private async recoverTerminalWorkflowRunAttentionNotifications(): Promise<number> {
+    const cfg = this.config.loadConfigOrDefault();
+    let recoveredCount = 0;
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        if (workspace.id == null) {
+          continue;
+        }
+        const runStore = new WorkflowRunStore({
+          sessionDir: this.config.getSessionDir(workspace.id),
+        });
+        let runs: Awaited<ReturnType<WorkflowRunStore["listRuns"]>>;
+        try {
+          runs = await runStore.listRuns();
+        } catch (error: unknown) {
+          log.warn("Failed to recover workflow terminal notifications", {
+            workspaceId: workspace.id,
+            error: getErrorMessage(error),
+          });
+          continue;
+        }
+        for (const run of runs) {
+          if (
+            run.workspaceId !== workspace.id ||
+            run.parentWorkflow != null ||
+            resolveBackgroundWorkAttentionPolicy(run.attentionPolicy) !== "notify_on_terminal" ||
+            !isTerminalWorkflowRunStatus(run.status)
+          ) {
+            continue;
+          }
+          if (!(await this.workspaceService.isWorkflowInvocationCurrent(workspace.id, run.id))) {
+            continue;
+          }
+          const created = await this.terminalAttentionStore.enqueueIfAbsent({
+            ownerWorkspaceId: workspace.id,
+            sourceKind: "workflow_run",
+            sourceId: run.id,
+            outputDelivery: "workflow_result_context",
+            terminalOutcome: workflowRunTerminalOutcome(run.status),
+          });
+          if (created != null) {
+            this.scheduleTerminalAttentionDrain(workspace.id);
+            recoveredCount += 1;
+          }
+        }
+      }
+    }
+    return recoveredCount;
+  }
+
   private async recoverTerminalWorkspaceTurnAttentionNotifications(): Promise<number> {
     const terminalRecords = await this.taskHandleStore.listAllWorkspaceTurns({
       statuses: ["completed", "interrupted", "error"],
@@ -4226,6 +4293,28 @@ export class TaskService {
    * Idempotent by source kind/id. Must NOT be called while holding settlement/event locks; only
    * the persisted enqueue happens synchronously inside callers, the drain is deferred.
    */
+  async enqueueWorkflowRunTerminalAttention(params: {
+    ownerWorkspaceId: string;
+    runId: string;
+    status: WorkflowRunStatus;
+  }): Promise<void> {
+    assert(
+      params.ownerWorkspaceId.length > 0,
+      "enqueueWorkflowRunTerminalAttention requires ownerWorkspaceId"
+    );
+    assert(params.runId.length > 0, "enqueueWorkflowRunTerminalAttention requires runId");
+    if (!isTerminalWorkflowRunStatus(params.status)) {
+      return;
+    }
+    await this.enqueueTerminalAttention({
+      ownerWorkspaceId: params.ownerWorkspaceId,
+      sourceKind: "workflow_run",
+      sourceId: params.runId,
+      outputDelivery: "workflow_result_context",
+      terminalOutcome: workflowRunTerminalOutcome(params.status),
+    });
+  }
+
   private async enqueueTerminalAttention(params: {
     ownerWorkspaceId: string;
     sourceKind: TerminalAttentionNotification["sourceKind"];
@@ -4277,6 +4366,45 @@ export class TaskService {
     this.pendingTerminalAttentionDrains.add(promise);
   }
 
+  private async buildWorkflowTerminalPrompt(
+    ownerWorkspaceId: string,
+    runId: string
+  ): Promise<string | null> {
+    assert(ownerWorkspaceId.length > 0, "buildWorkflowTerminalPrompt requires ownerWorkspaceId");
+    assert(runId.length > 0, "buildWorkflowTerminalPrompt requires runId");
+    const runStore = new WorkflowRunStore({
+      sessionDir: this.config.getSessionDir(ownerWorkspaceId),
+    });
+    let run: Awaited<ReturnType<WorkflowRunStore["getRun"]>>;
+    try {
+      run = await runStore.getRun(runId);
+    } catch (error: unknown) {
+      log.warn("Failed to load terminal workflow run for wake-up", {
+        ownerWorkspaceId,
+        runId,
+        error: getErrorMessage(error),
+      });
+      return null;
+    }
+    if (
+      run.workspaceId !== ownerWorkspaceId ||
+      run.parentWorkflow != null ||
+      !isTerminalWorkflowRunStatus(run.status) ||
+      !(await this.workspaceService.isWorkflowInvocationCurrent(ownerWorkspaceId, run.id))
+    ) {
+      return null;
+    }
+    const scriptPath = run.workflow.sourcePath ?? run.workflow.name;
+    return buildWorkflowResultContextMessage({
+      rawCommand: `workflow_run ${scriptPath}`,
+      name: scriptPath,
+      runId: run.id,
+      status: run.status,
+      result: null,
+      run,
+    });
+  }
+
   /**
    * Drain pending terminal notifications for one owner workspace: defer (leave pending) when the
    * owner is busy/queued/preparing, otherwise send one coalesced synthetic wake-up and mark the
@@ -4326,6 +4454,9 @@ export class TaskService {
     const awaitHandleIds = pending
       .filter((n) => n.outputDelivery === "requires_task_await")
       .map((n) => n.sourceId);
+    const workflowNotifications = pending.filter(
+      (n) => n.outputDelivery === "workflow_result_context"
+    );
     const anyInjectedFailure = injectedNotifications.some(
       (n) => n.terminalOutcome === "failed" || n.terminalOutcome === "error"
     );
@@ -4340,6 +4471,17 @@ export class TaskService {
     }
     if (awaitHandleIds.length > 0) {
       promptSections.push(buildCompletedWorkspaceTurnPrompt(awaitHandleIds));
+    }
+    for (const notification of workflowNotifications) {
+      const workflowPrompt = await this.buildWorkflowTerminalPrompt(
+        ownerWorkspaceId,
+        notification.sourceId
+      );
+      if (workflowPrompt == null) {
+        await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
+        continue;
+      }
+      promptSections.push(workflowPrompt);
     }
     if (promptSections.length === 0) {
       return;

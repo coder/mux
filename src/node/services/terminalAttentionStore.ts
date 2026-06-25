@@ -20,12 +20,17 @@ import { isErrnoWithCode } from "@/node/utils/fs";
  *   so the wake-up tells the agent to integrate it WITHOUT calling task_await.
  * - `requires_task_await`: a workspace-turn handle's terminal output lives in the handle store, so
  *   the wake-up tells the agent to call task_await with the terminal IDs and timeout_secs: 0.
+ * - `workflow_result_context`: a workflow run's terminal result lives in its durable journal, so the
+ *   wake-up injects the reconstructed workflow-result context directly.
  */
 export const TERMINAL_ATTENTION_DIR = "terminal-attention";
 
-export type TerminalAttentionOutputDelivery = "already_injected" | "requires_task_await";
+export type TerminalAttentionOutputDelivery =
+  | "already_injected"
+  | "requires_task_await"
+  | "workflow_result_context";
 
-export type TerminalAttentionSourceKind = "agent_task" | "workspace_turn";
+export type TerminalAttentionSourceKind = "agent_task" | "workspace_turn" | "workflow_run";
 
 export type TerminalAttentionOutcome = "completed" | "failed" | "interrupted" | "error";
 
@@ -46,9 +51,9 @@ const TerminalAttentionNotificationSchema = z
   .object({
     id: z.string().min(1),
     ownerWorkspaceId: z.string().min(1),
-    sourceKind: z.enum(["agent_task", "workspace_turn"]),
+    sourceKind: z.enum(["agent_task", "workspace_turn", "workflow_run"]),
     sourceId: z.string().min(1),
-    outputDelivery: z.enum(["already_injected", "requires_task_await"]),
+    outputDelivery: z.enum(["already_injected", "requires_task_await", "workflow_result_context"]),
     terminalOutcome: z.enum(["completed", "failed", "interrupted", "error"]),
     status: z.enum(["pending", "delivered", "superseded"]),
     title: z.string().optional(),
