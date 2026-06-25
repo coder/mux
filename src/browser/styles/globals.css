@@ -2446,7 +2446,9 @@ input[type="checkbox"] {
 
 @keyframes heartbeat-trace-scan {
   to {
-    stroke-dashoffset: -240;
+    /* Multiple of the 9px dash period (stroke-dasharray: 4 5) so the pattern aligns
+       across the loop boundary and scrolls seamlessly instead of jumping each cycle. */
+    stroke-dashoffset: -243;
   }
 }
 

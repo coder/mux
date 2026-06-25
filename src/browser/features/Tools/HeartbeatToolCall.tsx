@@ -18,7 +18,12 @@ import {
 } from "./Shared/toolUtils";
 import { HeartbeatToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
-import { HEARTBEAT_DEFAULT_CONTEXT_MODE, type HeartbeatContextMode } from "@/constants/heartbeat";
+import {
+  HEARTBEAT_DEFAULT_CONTEXT_MODE,
+  formatHeartbeatInterval,
+  formatHeartbeatIntervalShort,
+  type HeartbeatContextMode,
+} from "@/constants/heartbeat";
 
 /**
  * Transcript card for the `heartbeat` tool — the agent's recurring, idle-gated
@@ -41,29 +46,6 @@ const CONTEXT_MODES: Record<HeartbeatContextMode, { label: string; blurb: string
   compact: { label: "Compact", blurb: "Compacts context before each check-in" },
   reset: { label: "Reset", blurb: "Starts each check-in from a fresh boundary" },
 };
-
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-
-/** Human cadence for the expanded detail, e.g. "30 minutes", "2 hours", "1 hour". */
-export function formatHeartbeatInterval(ms: number): string {
-  if (ms % HOUR_MS === 0) {
-    const hours = ms / HOUR_MS;
-    return `${hours} ${hours === 1 ? "hour" : "hours"}`;
-  }
-  if (ms % MINUTE_MS === 0) {
-    const minutes = ms / MINUTE_MS;
-    return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
-  }
-  return `${ms} ms`;
-}
-
-/** Compact cadence for the header pill, e.g. "30m", "2h". */
-export function formatHeartbeatIntervalShort(ms: number): string {
-  if (ms % HOUR_MS === 0) return `${ms / HOUR_MS}h`;
-  if (ms % MINUTE_MS === 0) return `${ms / MINUTE_MS}m`;
-  return `${ms} ms`;
-}
 
 /**
  * Narrow an arbitrary tool result to a successful heartbeat payload. Results
@@ -146,6 +128,56 @@ const HeartbeatStat: React.FC<{ label: string; value: React.ReactNode }> = (prop
   </div>
 );
 
+const REQUEST_ACTION_LABELS: Record<HeartbeatToolArgs["action"], string> = {
+  set: "Schedule",
+  get: "Read",
+  unset: "Clear",
+};
+
+// Fallback for states with no resolved settings, error, or recognized empty result:
+// in-flight/interrupted/redacted calls, or a degraded success (e.g. a corrupted set
+// result with settings:null). Surfaces what the agent requested so the expanded card is
+// never blank — the generic renderer used to show the raw args here.
+const RequestedArgs: React.FC<{ args: HeartbeatToolArgs }> = (props) => {
+  const args = props.args;
+  const requestedMessage = args.message ?? "";
+  return (
+    <div className="bg-code-bg space-y-3 rounded px-3 py-2.5 text-[11px] leading-relaxed">
+      <div className="text-secondary text-[10px] tracking-wide uppercase">Requested</div>
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+        <HeartbeatStat label="Action" value={REQUEST_ACTION_LABELS[args.action]} />
+        {args.enabled != null && (
+          <HeartbeatStat label="State" value={args.enabled ? "Enable" : "Pause"} />
+        )}
+        {args.intervalMs != null && (
+          <HeartbeatStat
+            label="Cadence"
+            value={
+              <span className="counter-nums">every {formatHeartbeatInterval(args.intervalMs)}</span>
+            }
+          />
+        )}
+        {args.contextMode != null && (
+          <HeartbeatStat
+            label="Context"
+            value={CONTEXT_MODES[args.contextMode]?.label ?? args.contextMode}
+          />
+        )}
+      </dl>
+      {requestedMessage.length > 0 && (
+        <div>
+          <div className="text-secondary mb-1 text-[10px] tracking-wide uppercase">
+            Check-in prompt
+          </div>
+          <div className="text-foreground border-l-2 border-white/10 pl-2.5 break-words whitespace-pre-wrap italic">
+            {requestedMessage}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface HeartbeatToolCallProps {
   args: HeartbeatToolArgs;
   result?: unknown;
@@ -194,6 +226,12 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
   } else if (success?.action === "get") {
     badge = { tone: "cleared", label: "Not set" };
   }
+
+  // Which detail block (if any) the resolved result drives. When none applies and the
+  // call isn't executing or errored, fall back to the requested args so the expanded body
+  // is never blank (interrupted/in-flight, or a degraded success with null settings).
+  const hasResolvedDetail =
+    Boolean(settings) || success?.action === "unset" || (success?.action === "get" && !settings);
 
   return (
     <ToolContainer expanded={expanded} className="@container">
@@ -281,6 +319,10 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
             <div className="text-muted px-3 py-2 text-[11px] italic">
               Updating heartbeat settings…
             </div>
+          )}
+
+          {!errorResult && !hasResolvedDetail && status !== "executing" && (
+            <RequestedArgs args={props.args} />
           )}
         </ToolDetails>
       )}

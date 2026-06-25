@@ -1,17 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
-import { formatHeartbeatInterval, formatHeartbeatIntervalShort } from "./HeartbeatToolCall";
+import { formatHeartbeatInterval, formatHeartbeatIntervalShort } from "./heartbeat";
 
 describe("formatHeartbeatInterval", () => {
-  test("pluralizes minutes and prefers whole hours", () => {
+  test("renders whole hours and pluralizes minutes", () => {
     expect(formatHeartbeatInterval(60_000)).toBe("1 minute");
     expect(formatHeartbeatInterval(30 * 60_000)).toBe("30 minutes");
     expect(formatHeartbeatInterval(3_600_000)).toBe("1 hour");
     expect(formatHeartbeatInterval(2 * 3_600_000)).toBe("2 hours");
   });
 
-  test("falls back to milliseconds for sub-minute values", () => {
-    expect(formatHeartbeatInterval(30_000)).toBe("30000 ms");
+  test("rounds in-range non-whole-minute intervals instead of emitting raw ms", () => {
+    expect(formatHeartbeatInterval(5 * 60_000 + 1)).toBe("5 minutes");
+    expect(formatHeartbeatIntervalShort(5 * 60_000 + 1)).toBe("5m");
   });
 });
 

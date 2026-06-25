@@ -221,12 +221,38 @@ export const Executing: Story = {
   },
 };
 
-/** Error · interval outside the supported range. */
-export const ErrorOutOfRange: Story = {
+/**
+ * Error · a reachable failure result. Out-of-range intervals are rejected by the tool
+ * schema before this card renders (they route to GenericToolCall), so the card's ErrorBox
+ * is exercised here with valid args and a server-side failure.
+ */
+export const ErrorResult: Story = {
   args: {
-    args: { action: "set", intervalMs: 30_000 },
+    args: { action: "set", enabled: true, intervalMs: 30 * 60_000 },
     status: "failed",
     defaultExpanded: true,
-    result: { success: false, error: "intervalMs must be between 5 minutes and 24 hours." },
+    result: {
+      success: false,
+      error: "Failed to update heartbeat settings: workspace configuration is unavailable.",
+    },
+  },
+};
+
+/**
+ * Interrupted before the result arrived (no settings/error/executing state). The expanded
+ * body falls back to the requested args instead of going blank — the generic renderer used
+ * to surface the args here.
+ */
+export const Interrupted: Story = {
+  args: {
+    args: {
+      action: "set",
+      enabled: true,
+      intervalMs: 2 * 3_600_000,
+      contextMode: "compact",
+      message: "Watch the long-running migration and report when it finishes.",
+    },
+    status: "interrupted",
+    defaultExpanded: true,
   },
 };
