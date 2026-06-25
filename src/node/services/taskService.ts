@@ -4318,12 +4318,23 @@ export class TaskService {
   async markWorkflowRunTerminalAttentionConsumed(params: {
     ownerWorkspaceId: string;
     runId: string;
+    status: WorkflowRunStatus;
   }): Promise<void> {
     assert(
       params.ownerWorkspaceId.length > 0,
       "markWorkflowRunTerminalAttentionConsumed requires ownerWorkspaceId"
     );
     assert(params.runId.length > 0, "markWorkflowRunTerminalAttentionConsumed requires runId");
+    if (!isTerminalWorkflowRunStatus(params.status)) {
+      return;
+    }
+    await this.terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: params.ownerWorkspaceId,
+      sourceKind: "workflow_run",
+      sourceId: params.runId,
+      outputDelivery: "workflow_result_context",
+      terminalOutcome: workflowRunTerminalOutcome(params.status),
+    });
     await this.terminalAttentionStore.markDelivered(
       params.ownerWorkspaceId,
       TerminalAttentionStore.notificationId("workflow_run", params.runId)

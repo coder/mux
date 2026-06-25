@@ -413,6 +413,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         }
         await taskService.markWorkflowRunTerminalAttentionConsumed?.({
           ownerWorkspaceId: workspaceId,
+          status: run.status,
           runId: run.id,
         });
       };

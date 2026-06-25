@@ -941,6 +941,7 @@ describe("task_await tool", () => {
     });
     expect(markWorkflowRunTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
+      status: "completed",
       runId: "wfr_demo",
     });
   });
