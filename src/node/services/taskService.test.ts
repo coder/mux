@@ -6396,6 +6396,53 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("notify_on_terminal child subtree does not leak blocking grandchildren to owner", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-notify";
+    const grandchildTaskId = "task-grandchild";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-notify", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+        projectWorkspace(projectPath, "grandchild-task", grandchildTaskId, {
+          name: "agent_explore_grandchild",
+          parentWorkspaceId: childTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("queue-backgrounded foreground wait stays suppressed across multiple stream-ends", async () => {
     const config = await createTestConfig(rootDir);
 

@@ -6183,17 +6183,19 @@ export class TaskService {
       const next = stack.pop()!;
       const entry = index.byId.get(next.taskId);
       const workflowOwned = next.workflowOwned || entry?.workflowTask != null;
+      const nonBlockingSubtree =
+        this.resolveAgentTaskAttentionPolicy(next.taskId, index) === "notify_on_terminal" ||
+        this.isTaskQueueBackgrounded(next.taskId);
       if (
+        !nonBlockingSubtree &&
         entry != null &&
         this.isActiveAgentTaskEntry(entry) &&
-        !(options.excludeWorkflowTasks && workflowOwned) &&
-        this.resolveAgentTaskAttentionPolicy(next.taskId, index) !== "notify_on_terminal" &&
-        !this.isTaskQueueBackgrounded(next.taskId)
+        !(options.excludeWorkflowTasks && workflowOwned)
       ) {
         result.push(next.taskId);
       }
       const children = index.childrenByParent.get(next.taskId);
-      if (children) {
+      if (!nonBlockingSubtree && children) {
         for (const child of children) {
           stack.push({ taskId: child, workflowOwned });
         }
@@ -7248,26 +7250,19 @@ export class TaskService {
       // bypass that journal/final-result path by asking the model to task_await those child tasks
       // directly. Instead, await the owning workflow run when one is still active.
       // Foreground waits can also be backgrounded at runtime when users queue another message.
-      let activeTaskIds = [
-        ...this.listActiveDescendantAgentTaskIds(workspaceId, {
+      const listBlockingDescendantTaskIds = () =>
+        this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, workspaceId, {
           excludeWorkflowTasks: true,
-        }),
-        ...activeWorkspaceTurnIds,
-      ];
+        });
+      let activeTaskIds = [...listBlockingDescendantTaskIds(), ...activeWorkspaceTurnIds];
       const queueBackgroundedTaskIds = new Set(
         activeTaskIds.filter((id) => this.isTaskQueueBackgrounded(id))
       );
       // Durable `notify_on_terminal` work is non-blocking: it never forces the parent to
-      // task_await and (unlike the queue-backgrounded one-shot exemption) is NOT consumed at
-      // stream-end. Agent-task policy comes from the persisted task index; workspace-turn policy
-      // comes from the handle record.
-      const notifyOnTerminalTaskIds = new Set<string>(
-        this.listActiveDescendantAgentTaskIds(workspaceId, {
-          excludeWorkflowTasks: true,
-        }).filter(
-          (id) => this.resolveAgentTaskAttentionPolicy(id, taskIndex) === "notify_on_terminal"
-        )
-      );
+      // task_await and is not consumed at stream-end. Agent-task policy is applied by
+      // listBlockingDescendantTaskIds, which also suppresses descendants below a notify child;
+      // workspace-turn policy comes from the handle record.
+      const notifyOnTerminalTaskIds = new Set<string>();
       const blockingWorkspaceTurnIds = new Set(
         await this.listBlockingWorkspaceTurnTaskIds(workspaceId, activeWorkspaceTurnIds)
       );
@@ -7322,12 +7317,7 @@ export class TaskService {
       );
 
       activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
-      activeTaskIds = [
-        ...this.listActiveDescendantAgentTaskIds(workspaceId, {
-          excludeWorkflowTasks: true,
-        }),
-        ...activeWorkspaceTurnIds,
-      ];
+      activeTaskIds = [...listBlockingDescendantTaskIds(), ...activeWorkspaceTurnIds];
       blockingTaskIds = getBlockingTaskIds(activeTaskIds);
       activeWorkflowRunIds = await this.listBlockingWorkflowRunIds(
         workspaceId,
@@ -7386,12 +7376,7 @@ export class TaskService {
       );
       if (!sendResult.success && isWorkspaceBusyIdleOnlySend(sendResult.error)) {
         activeWorkspaceTurnIds = await this.listActiveWorkspaceTurnTaskIdsForOwner(workspaceId);
-        activeTaskIds = [
-          ...this.listActiveDescendantAgentTaskIds(workspaceId, {
-            excludeWorkflowTasks: true,
-          }),
-          ...activeWorkspaceTurnIds,
-        ];
+        activeTaskIds = [...listBlockingDescendantTaskIds(), ...activeWorkspaceTurnIds];
         blockingTaskIds = getBlockingTaskIds(activeTaskIds);
         activeWorkflowRunIds = await this.listBlockingWorkflowRunIds(
           workspaceId,
