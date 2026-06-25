@@ -782,6 +782,46 @@ describe("AgentSession startup auto-retry recovery", () => {
     secondSession.dispose();
   });
 
+  test("reports auto-retry as pending while retry resume is starting", async () => {
+    const workspaceId = "startup-retry-starting-pending";
+    const { session, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      retryActiveStream: () => Promise<void>;
+      lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
+      resumeStream: (
+        options: SendMessageOptions
+      ) => Promise<{ success: true; data: { started: boolean } }>;
+    };
+
+    privateSession.lastAutoRetryResumeRequest = {
+      options: {
+        model: "anthropic:claude-sonnet-4-5",
+        agentId: "exec",
+      },
+    };
+
+    let resolveResume!: (result: { success: true; data: { started: boolean } }) => void;
+    privateSession.resumeStream = mock(
+      (_options: SendMessageOptions) =>
+        new Promise<{ success: true; data: { started: boolean } }>((resolve) => {
+          resolveResume = resolve;
+        })
+    );
+
+    const retryPromise = privateSession.retryActiveStream();
+
+    expect(session.hasPendingAutoRetry()).toBe(true);
+
+    resolveResume({ success: true, data: { started: true } });
+    await retryPromise;
+
+    expect(session.hasPendingAutoRetry()).toBe(false);
+
+    session.dispose();
+  });
+
   test("clears persisted startup abandon state once retry resumes successfully", async () => {
     const workspaceId = "startup-retry-clear-abandon-on-resume";
     const { session, cleanup } = await createSessionBundle(workspaceId);

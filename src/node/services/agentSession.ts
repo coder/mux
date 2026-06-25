@@ -364,6 +364,7 @@ export class AgentSession {
   private readonly compactionHandler: CompactionHandler;
   private readonly compactionMonitor: CompactionMonitor;
 
+  private autoRetryStarting = false;
   private readonly retryManager: RetryManager;
   private lastAutoRetryResumeRequest?: AutoRetryResumeRequest;
   /** Startup recovery should run once per session to avoid duplicate retry timers on reconnect. */
@@ -558,7 +559,7 @@ export class AgentSession {
       async () => {
         await this.retryActiveStream();
       },
-      (event) => this.emitRetryEvent(event)
+      (event) => this.handleRetryStatusChange(event)
     );
 
     this.attachAiListeners();
@@ -773,6 +774,15 @@ export class AgentSession {
     this.preparingRuntimeStatus = null;
   }
 
+  private handleRetryStatusChange(event: RetryStatusEvent): void {
+    if (event.type === "auto-retry-starting") {
+      this.autoRetryStarting = true;
+    } else if (event.type === "auto-retry-scheduled" || event.type === "auto-retry-abandoned") {
+      this.autoRetryStarting = false;
+    }
+    this.emitRetryEvent(event);
+  }
+
   private emitRetryEvent(event: RetryStatusEvent): void {
     if (this.disposed) {
       return;
@@ -840,52 +850,57 @@ export class AgentSession {
   }
 
   private async retryActiveStream(): Promise<void> {
-    const request = this.lastAutoRetryResumeRequest;
-    if (!request) {
-      this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
-      return;
-    }
-
-    const result = await this.resumeStream(request.options, {
-      agentInitiated: request.agentInitiated === true ? true : undefined,
-      goalKind: request.goalKind,
-    });
-    if (result.success) {
-      if (!result.data.started) {
-        // resumeStream can defer when a turn is still PREPARING/COMPLETING.
-        // Treat this as retriable so auto-retry keeps progressing instead of
-        // stalling after the "auto-retry-starting" status event.
-        await this.handleStreamFailureForAutoRetry({
-          type: "unknown",
-          message: "retry_deferred_busy",
-        });
+    this.autoRetryStarting = true;
+    try {
+      const request = this.lastAutoRetryResumeRequest;
+      if (!request) {
+        this.emitRetryEvent({ type: "auto-retry-abandoned", reason: "missing_retry_options" });
         return;
       }
 
-      // Retry resumed the stream successfully. Clear stale startup-abandon markers now
-      // (not only on stream-end) so a crash/restart mid-stream doesn't suppress recovery.
-      await this.clearStartupAutoRetryAbandon();
-      return;
-    }
+      const result = await this.resumeStream(request.options, {
+        agentInitiated: request.agentInitiated === true ? true : undefined,
+        goalKind: request.goalKind,
+      });
+      if (result.success) {
+        if (!result.data.started) {
+          // resumeStream can defer when a turn is still PREPARING/COMPLETING.
+          // Treat this as retriable so auto-retry keeps progressing instead of
+          // stalling after the "auto-retry-starting" status event.
+          await this.handleStreamFailureForAutoRetry({
+            type: "unknown",
+            message: "retry_deferred_busy",
+          });
+          return;
+        }
 
-    if (this.activeStreamFailureHandled) {
-      // resumeStream() failure paths already flowed through streamWithHistory() /
-      // handleStreamError(), which scheduled retry and persisted abandon state.
-      // Re-processing here would double-increment backoff attempts.
-      return;
-    }
+        // Retry resumed the stream successfully. Clear stale startup-abandon markers now
+        // (not only on stream-end) so a crash/restart mid-stream doesn't suppress recovery.
+        await this.clearStartupAutoRetryAbandon();
+        return;
+      }
 
-    // Fallback: resumeStream() can fail before stream error handlers run
-    // (for example commitPartial/history read failures). Handle those here so
-    // auto-retry continues instead of stalling after auto-retry-starting.
-    await this.handleStreamFailureForAutoRetry({
-      type: result.error.type,
-      message: this.extractRetryFailureMessage(result.error),
-    });
-    await this.updateStartupAutoRetryAbandonFromFailure(
-      result.error.type,
-      this.activeStreamUserMessageId
-    );
+      if (this.activeStreamFailureHandled) {
+        // resumeStream() failure paths already flowed through streamWithHistory() /
+        // handleStreamError(), which scheduled retry and persisted abandon state.
+        // Re-processing here would double-increment backoff attempts.
+        return;
+      }
+
+      // Fallback: resumeStream() can fail before stream error handlers run
+      // (for example commitPartial/history read failures). Handle those here so
+      // auto-retry continues instead of stalling after auto-retry-starting.
+      await this.handleStreamFailureForAutoRetry({
+        type: result.error.type,
+        message: this.extractRetryFailureMessage(result.error),
+      });
+      await this.updateStartupAutoRetryAbandonFromFailure(
+        result.error.type,
+        this.activeStreamUserMessageId
+      );
+    } finally {
+      this.autoRetryStarting = false;
+    }
   }
 
   private getAutoRetryPreferencePath(): string {
@@ -5076,7 +5091,7 @@ export class AgentSession {
   }
 
   hasPendingAutoRetry(): boolean {
-    return this.retryManager.isRetryPending;
+    return this.retryManager.isRetryPending || this.autoRetryStarting;
   }
 
   hasPendingManualFollowUp(): boolean {
