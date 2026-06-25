@@ -7454,6 +7454,33 @@ export class WorkspaceService extends EventEmitter {
     await session?.waitForIdle();
   }
 
+  async waitForIdleAndNoQueuedMessages(workspaceId: string): Promise<void> {
+    const session = this.sessions.get(workspaceId.trim());
+    if (!session) {
+      return;
+    }
+
+    while (session.isBusy() || session.hasQueuedMessages()) {
+      if (session.isBusy()) {
+        await session.waitForIdle();
+        continue;
+      }
+
+      await new Promise<void>((resolve) => {
+        const unsubscribe = session.onChatEvent((event) => {
+          if (event.message.type === "queued-message-changed" && !session.hasQueuedMessages()) {
+            unsubscribe();
+            resolve();
+          }
+        });
+        if (!session.hasQueuedMessages()) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    }
+  }
+
   hasPendingQueuedOrPreparingTurn(workspaceId: string): boolean {
     const session = this.sessions.get(workspaceId.trim());
     if (!session) {

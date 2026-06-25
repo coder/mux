@@ -4261,7 +4261,7 @@ export class TaskService {
 
   private scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId: string): void {
     const promise = this.workspaceService
-      .waitForIdle(ownerWorkspaceId)
+      .waitForIdleAndNoQueuedMessages(ownerWorkspaceId)
       .catch((error: unknown) => {
         log.debug("Terminal attention idle wait failed; retrying drain anyway", {
           ownerWorkspaceId,
@@ -4299,11 +4299,17 @@ export class TaskService {
     }
 
     // Defer-until-idle: never inject ahead of an active stream or a queued/preparing user turn.
+    const ownerHasBusyOrQueuedTurn =
+      this.workspaceService.isBusyForMessage(ownerWorkspaceId) ||
+      this.workspaceService.hasQueuedMessages(ownerWorkspaceId);
     if (
       this.aiService.isStreaming(ownerWorkspaceId) ||
       this.workspaceService.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId) ||
       this.interruptedParentWorkspaceIds.has(ownerWorkspaceId)
     ) {
+      if (ownerHasBusyOrQueuedTurn && !this.interruptedParentWorkspaceIds.has(ownerWorkspaceId)) {
+        this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
+      }
       return;
     }
 
