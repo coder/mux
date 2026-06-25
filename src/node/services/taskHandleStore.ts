@@ -8,6 +8,10 @@ import type { Config } from "@/node/config";
 import type { CompletedMessagePart, StreamEndEvent } from "@/common/types/stream";
 import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
 import {
+  BackgroundWorkAttentionPolicySchema,
+  type BackgroundWorkAttentionPolicy,
+} from "@/common/types/backgroundWorkAttention";
+import {
   WorkspaceTurnFinalMessageRefSchema,
   type WorkspaceTurnFinalMessageRef,
 } from "@/common/types/workspaceTurn";
@@ -52,6 +56,17 @@ export interface WorkspaceTurnTaskHandleRecord {
   };
   deferredMessageIds?: string[];
   error?: string;
+  /**
+   * How the owner workspace's stream-end treats this workspace turn while active.
+   * Missing/legacy records default to `blocking_until_terminal`.
+   */
+  attentionPolicy?: BackgroundWorkAttentionPolicy;
+  /**
+   * ISO timestamp set only after a terminal `notify_on_terminal` wake-up was
+   * accepted/sent for this handle. Restart-safe one-shot dedupe: a present marker
+   * prevents a duplicate wake-up during stale recovery or duplicate settlement.
+   */
+  terminalAttentionNotifiedAt?: string;
 }
 
 const WorkspaceTurnTaskHandleRecordSchema = z
@@ -83,6 +98,8 @@ const WorkspaceTurnTaskHandleRecordSchema = z
       .optional(),
     deferredMessageIds: z.array(z.string().min(1)).optional(),
     error: z.string().optional(),
+    attentionPolicy: BackgroundWorkAttentionPolicySchema.optional(),
+    terminalAttentionNotifiedAt: z.string().optional(),
   })
   .strict();
 

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { BackgroundWorkAttentionPolicySchema } from "@/common/types/backgroundWorkAttention";
+
 export const WorkflowNameSchema = z
   .string()
   .min(1)
@@ -269,6 +271,9 @@ export const WorkflowRunRecordSchema = z.object({
   agentOutputSchemaRequired: z.boolean().optional(),
   agentTypeAliasAllowed: z.boolean().optional(),
   parentWorkflow: WorkflowRunParentSchema.optional(),
+  // How the owner workspace's stream-end treats this run while active. Background
+  // runs are "notify_on_terminal"; missing/legacy records default to blocking.
+  attentionPolicy: BackgroundWorkAttentionPolicySchema.optional(),
   status: WorkflowRunStatusSchema,
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,

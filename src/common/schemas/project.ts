@@ -12,6 +12,7 @@ import {
   WorkspaceAISettingsSchema,
 } from "@/common/orpc/schemas/workspaceAiSettings";
 import { ThinkingLevelSchema } from "@/common/types/thinking";
+import { BackgroundWorkAttentionPolicySchema } from "@/common/types/backgroundWorkAttention";
 import { z } from "zod";
 
 import { RuntimeEnablementIdSchema } from "./ids";
@@ -193,6 +194,12 @@ export const WorkspaceConfigSchema = z.object({
         "checkout (no fork): its `path` points at the parent's checkout, init is skipped, and removal " +
         'must not delete that shared directory. Absent/"fork" is the isolated default.',
     }),
+  taskAttentionPolicy: BackgroundWorkAttentionPolicySchema.optional().meta({
+    description:
+      "How the owner workspace's stream-end treats this child task while it is active. " +
+      '"notify_on_terminal" (background launches) does not force the owner to await; ' +
+      '"blocking_until_terminal" (foreground/default, and missing/legacy records) does.',
+  }),
   mcp: WorkspaceMCPOverridesSchema.optional().meta({
     description:
       "LEGACY: Per-workspace MCP overrides (migrated to <workspace>/.mux/mcp.local.jsonc)",

@@ -50,6 +50,10 @@ import {
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
+import {
+  resolveBackgroundWorkAttentionPolicy,
+  type BackgroundWorkAttentionPolicy,
+} from "@/common/types/backgroundWorkAttention";
 
 import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
 import {
@@ -1389,6 +1393,17 @@ export class TaskService {
 
   private isTaskQueueBackgrounded(taskId: string): boolean {
     return this.userBackgroundedTaskIds.has(taskId);
+  }
+
+  /**
+   * Resolve the persisted attention policy for a child agent-task workspace.
+   * Missing/legacy records default to `blocking_until_terminal`.
+   */
+  private resolveAgentTaskAttentionPolicy(
+    taskId: string,
+    index: AgentTaskIndex
+  ): BackgroundWorkAttentionPolicy {
+    return resolveBackgroundWorkAttentionPolicy(index.byId.get(taskId)?.taskAttentionPolicy);
   }
 
   constructor(
@@ -5612,6 +5627,54 @@ export class TaskService {
     return taskIds;
   }
 
+  /**
+   * Filter active workspace-turn handle IDs down to those whose persisted
+   * attention policy still blocks the owner's turn-end. `notify_on_terminal`
+   * handles are non-blocking; their terminal output is delivered via wake-up.
+   */
+  private async listBlockingWorkspaceTurnTaskIds(
+    ownerWorkspaceId: string,
+    handleIds: string[]
+  ): Promise<string[]> {
+    if (handleIds.length === 0) {
+      return [];
+    }
+    const blocking: string[] = [];
+    for (const handleId of handleIds) {
+      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+      if (resolveBackgroundWorkAttentionPolicy(record?.attentionPolicy) !== "notify_on_terminal") {
+        blocking.push(handleId);
+      }
+    }
+    return blocking;
+  }
+
+  /**
+   * Filter active workflow run IDs down to those whose persisted attention
+   * policy still blocks the owner's turn-end. `notify_on_terminal` runs are
+   * non-blocking; their terminal result is delivered via the existing
+   * AIService background-run terminal continuation.
+   */
+  private async listBlockingWorkflowRunIds(
+    workspaceId: string,
+    runIds: string[]
+  ): Promise<string[]> {
+    if (runIds.length === 0) {
+      return [];
+    }
+    const runStore = new WorkflowRunStore({
+      sessionDir: this.config.getSessionDir(workspaceId),
+    });
+    const blocking: string[] = [];
+    for (const runId of runIds) {
+      const run = await runStore.getRun(runId).catch(() => null);
+      if (resolveBackgroundWorkAttentionPolicy(run?.attentionPolicy) !== "notify_on_terminal") {
+        blocking.push(runId);
+      }
+    }
+    return blocking;
+  }
+
   private isActiveAgentTaskEntry(task: AgentTaskWorkspaceEntry): boolean {
     const status: AgentTaskStatus = task.taskStatus ?? "running";
     if (!ACTIVE_AGENT_TASK_STATUSES.has(status)) {
@@ -6738,14 +6801,40 @@ export class TaskService {
       const queueBackgroundedTaskIds = new Set(
         activeTaskIds.filter((id) => this.isTaskQueueBackgrounded(id))
       );
+      // Durable `notify_on_terminal` work is non-blocking: it never forces the parent to
+      // task_await and (unlike the queue-backgrounded one-shot exemption) is NOT consumed at
+      // stream-end. Agent-task policy comes from the persisted task index; workspace-turn policy
+      // comes from the handle record.
+      const notifyOnTerminalTaskIds = new Set<string>(
+        this.listActiveDescendantAgentTaskIds(workspaceId, {
+          excludeWorkflowTasks: true,
+        }).filter(
+          (id) => this.resolveAgentTaskAttentionPolicy(id, taskIndex) === "notify_on_terminal"
+        )
+      );
+      const blockingWorkspaceTurnIds = new Set(
+        await this.listBlockingWorkspaceTurnTaskIds(workspaceId, activeWorkspaceTurnIds)
+      );
+      for (const handleId of activeWorkspaceTurnIds) {
+        if (!blockingWorkspaceTurnIds.has(handleId)) {
+          notifyOnTerminalTaskIds.add(handleId);
+        }
+      }
       const getBlockingTaskIds = (taskIds: string[]) =>
-        taskIds.filter((id) => !queueBackgroundedTaskIds.has(id));
+        taskIds.filter(
+          (id) => !queueBackgroundedTaskIds.has(id) && !notifyOnTerminalTaskIds.has(id)
+        );
+      // Only the queue-backgrounded one-shot exemption is consumed; durable notify policy stays.
       const consumeQueueBackgroundedExemptions = () => {
         for (const taskId of new Set([...activeTaskIds, ...queueBackgroundedTaskIds])) {
           this.markTaskForegroundRelevant(taskId);
         }
       };
       let blockingTaskIds = getBlockingTaskIds(activeTaskIds);
+      activeWorkflowRunIds = await this.listBlockingWorkflowRunIds(
+        workspaceId,
+        activeWorkflowRunIds
+      );
 
       if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
         if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
@@ -6784,9 +6873,9 @@ export class TaskService {
         ...activeWorkspaceTurnIds,
       ];
       blockingTaskIds = getBlockingTaskIds(activeTaskIds);
-      activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+      activeWorkflowRunIds = await this.listBlockingWorkflowRunIds(
         workspaceId,
-        activeWorkflowRunIds
+        await this.listActiveBackgroundWorkflowRunIds(workspaceId, activeWorkflowRunIds)
       );
       if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
         if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
@@ -6848,9 +6937,9 @@ export class TaskService {
           ...activeWorkspaceTurnIds,
         ];
         blockingTaskIds = getBlockingTaskIds(activeTaskIds);
-        activeWorkflowRunIds = await this.listActiveBackgroundWorkflowRunIds(
+        activeWorkflowRunIds = await this.listBlockingWorkflowRunIds(
           workspaceId,
-          activeWorkflowRunIds
+          await this.listActiveBackgroundWorkflowRunIds(workspaceId, activeWorkflowRunIds)
         );
         if (blockingTaskIds.length === 0 && activeWorkflowRunIds.length === 0) {
           if (await this.finalizeWorkspaceTurnFromStreamEnd(event)) {
