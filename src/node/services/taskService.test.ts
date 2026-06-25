@@ -2450,6 +2450,50 @@ describe("TaskService", () => {
     expect(workspaceMocks.sendMessage.mock.calls[1]?.[0]).toBe("childworkspace");
   });
 
+  test("workspace-turn stream-end ignores nonblocking notify descendants", async () => {
+    const { config, parentId, projectPath, taskService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const project = Array.from(cfg.projects.values())[0];
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "notify-descendant-task"),
+        id: "notify-descendant-task",
+        name: "notify-descendant-task",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        taskAttentionPolicy: "notify_on_terminal",
+      });
+      return cfg;
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_notify_only",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Final text despite background work" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({ status: "completed", workspaceId: "childworkspace" });
+    expect(snapshot).not.toMatchObject({ deferredMessageIds: ["msg_notify_only"] });
+  });
+
   test("workspace-turn deferred stream-end does not finalize the handle", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const event: StreamEndEvent = {

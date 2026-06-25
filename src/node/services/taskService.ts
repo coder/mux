@@ -7583,17 +7583,6 @@ export class TaskService {
         }
       }
 
-      await this.markWorkspaceTurnStreamEndDeferred(event);
-
-      if (this.aiService.isStreaming(workspaceId)) {
-        return;
-      }
-
-      if (this.interruptedParentWorkspaceIds.has(workspaceId)) {
-        log.debug("Skipping parent auto-resume after hard interrupt", { workspaceId });
-        return;
-      }
-
       // Workflow-owned descendants report through the workflow runner; parent nudges must not
       // bypass that journal/final-result path by asking the model to task_await those child tasks
       // directly. Instead, await the owning workflow run when one is still active.
@@ -7644,6 +7633,17 @@ export class TaskService {
         log.debug("Skipping parent auto-resume: all active descendants were queue-backgrounded", {
           workspaceId,
         });
+        return;
+      }
+
+      await this.markWorkspaceTurnStreamEndDeferred(event);
+
+      if (this.aiService.isStreaming(workspaceId)) {
+        return;
+      }
+
+      if (this.interruptedParentWorkspaceIds.has(workspaceId)) {
+        log.debug("Skipping parent auto-resume after hard interrupt", { workspaceId });
         return;
       }
 
