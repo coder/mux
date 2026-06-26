@@ -93,6 +93,27 @@ Mobile sandbox progress:
 - [ ] Step 5: Re-verify via Chrome MCP + screenshots
 ```
 
+## Agent usage with `bash.monitor`
+
+For one-command mobile sandbox startup, run it as a monitored background bash. This lets the agent end its turn or prepare browser automation while Mux wakes on backend/proxy/mobile readiness or startup errors.
+
+```ts
+bash({
+  script:
+    "BACKEND_PORT=3900 VITE_PORT=5174 MOBILE_CORS_PROXY_PORT=3901 KEEP_SANDBOX=1 make mobile-sandbox",
+  display_name: "Mobile Sandbox",
+  run_in_background: true,
+  timeout_secs: 1800,
+  monitor: {
+    filter: "localhost:8081|127\\.0\\.0\\.1:3901|ready|ERROR|EADDRINUSE|failed|Failed",
+    cooldown_ms: 1000,
+    max_events: 5,
+  },
+});
+```
+
+Use the wake as a readiness/error signal. If you need the exact port block or surrounding logs, call `task_await({ task_ids: ["bash:Mobile Sandbox"], timeout_secs: 0 })` once.
+
 ## Chrome MCP prerequisites
 
 - Ensure Google Chrome is installed and discoverable by MCP.

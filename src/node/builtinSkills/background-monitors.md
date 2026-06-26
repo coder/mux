@@ -31,6 +31,30 @@ Every monitor must be bounded and idempotent. Before launching one, define:
 
 ## Preferred patterns
 
+### Raw bash output monitor
+
+Use raw background `bash` with `monitor` when the condition is a complete line printed by one long-running shell process: dev servers becoming ready, watch-test failures, compiler errors, log-tail panics, benchmark failures, or other stdout/stderr signals.
+
+```ts
+bash({
+  script: "make dev-server-sandbox",
+  display_name: "Dev server sandbox",
+  run_in_background: true,
+  timeout_secs: 1800,
+  monitor: {
+    filter: "ready|listening|compiled|ERROR|FAILED|panic|EADDRINUSE",
+    cooldown_ms: 1000,
+    max_events: 3,
+  },
+});
+```
+
+Rules for `bash.monitor`:
+
+- Keep the regex specific enough to avoid wake storms; use `max_events` for noisy logs.
+- Treat matched lines as a wake signal, not full context; call `task_await({ task_ids: ["bash:<id>"], timeout_secs: 0 })` only when you need surrounding output.
+- Do not use `bash.monitor` for GitHub checks, mergeability, review state, deploy APIs, or any state that requires polling separate commands. Use a background task/workflow monitor for those.
+
 ### Ad-hoc task monitor
 
 Use a background `exec` task when the watch is specific to the current conversation:
@@ -87,7 +111,7 @@ Heartbeat is still useful as a coarse fallback reminder, but it should not repla
 ## Avoid these traps
 
 - Do not create unbounded `while true` monitors. Every monitor needs a deadline.
-- Do not launch a raw background bash process and assume the parent will be woken automatically.
+- Do not launch a raw background bash process without `monitor` and assume the parent will be woken automatically.
 - Do not have multiple monitors watch the same idempotency key unless you intentionally want duplicate reports.
 - Do not report every polling iteration. Report convergence, state transitions, failures, or timeout.
 - Do not use monitors to hide work that the current answer depends on; use foreground/default mode or `task_await` when the next decision requires the result.

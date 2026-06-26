@@ -136,6 +136,26 @@ MUX_RUN_ARGS="--thinking high --use-1m" make benchmark-terminal
 MUX_RUN_ARGS="--thinking high" make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5.5 --agent-kwarg experiments=programmatic-tool-calling"
 ```
 
+## Monitoring local benchmark output
+
+Local Terminal-Bench runs can be long and log-driven. If you intentionally run one locally instead of dispatching CI, start it as a monitored background bash so Mux wakes on terminal benchmark failure/completion lines instead of requiring parent-side polling.
+
+```ts
+bash({
+  script: 'make benchmark-terminal TB_TASK_NAMES="hello-world"',
+  display_name: "Terminal-Bench Local",
+  run_in_background: true,
+  timeout_secs: 7200,
+  monitor: {
+    filter: "FAILED|ERROR|Traceback|AgentTimeoutError|results saved|Results saved|pass rate|score",
+    cooldown_ms: 1000,
+    max_events: 5,
+  },
+});
+```
+
+Use this only for line-oriented local process output. For GitHub workflow dispatch status, use a bounded background task/workflow monitor that polls `gh`/GitHub state.
+
 ## Results
 
 Results are saved to `runs/YYYY-MM-DD__HH-MM-SS/`:
