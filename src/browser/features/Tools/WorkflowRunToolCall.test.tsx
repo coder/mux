@@ -607,6 +607,69 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("running · 0/0 steps · child-phase");
   });
 
+  test("does not fetch collapsed terminal child rows after the parent run is terminal", async () => {
+    const timestamp = "2026-05-29T00:00:00.000Z";
+    let getRunCount = 0;
+    const client = {
+      workflows: {
+        getRun: () => {
+          getRunCount += 1;
+          return Promise.resolve(null);
+        },
+      },
+    };
+
+    renderWithStickyToolProviders(
+      <APIHarness client={client}>
+        <WorkflowRunToolCall
+          args={{ name: "issue-implementation-loop", args: {}, run_in_background: false }}
+          status="interrupted"
+          result={{
+            status: "interrupted",
+            runId: "wfr_parent_terminal_child",
+            result: null,
+            run: {
+              id: "wfr_parent_terminal_child",
+              workspaceId: "workspace-1",
+              workflow: {
+                name: "issue-implementation-loop",
+                description: "Issue loop",
+                scope: "global",
+                requestedScriptPath: "skill://issue-implementation-loop/workflow.js",
+                canonicalScriptPath: "skill://issue-implementation-loop/workflow.js",
+                sourceKind: "skill",
+                sourceHash: "sha256:parent",
+                executable: true,
+              },
+              source: "export default function workflow() { return null; }",
+              sourceHash: "sha256:parent",
+              args: {},
+              status: "interrupted",
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              events: [
+                {
+                  sequence: 1,
+                  type: "workflow",
+                  at: timestamp,
+                  stepId: "implementation-loop",
+                  runId: "wfr_terminal_child",
+                  name: "implementation-loop",
+                  status: "failed",
+                },
+              ],
+              steps: [],
+            },
+          }}
+        />
+      </APIHarness>
+    );
+
+    await Promise.resolve();
+
+    expect(getRunCount).toBe(0);
+  });
+
   test("refreshes a collapsed terminal workflow row when the child run is active again", async () => {
     const timestamp = "2026-05-29T00:00:00.000Z";
     const retriedChildRun: WorkflowRunRecord = {

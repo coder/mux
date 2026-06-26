@@ -660,6 +660,7 @@ function WorkflowChildRunRow(props: {
   displayIndex: number;
   workspaceId?: string;
   depth: number;
+  parentRunActive: boolean;
 }) {
   const event = props.row.latestEvent;
   const [open, setOpen] = useState(
@@ -669,13 +670,15 @@ function WorkflowChildRunRow(props: {
   );
   const withinDepthLimit = props.depth < MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH;
   const fallbackActive = isWorkflowChildEventActive(event.status);
-  // Fetch even for collapsed terminal-looking rows: checkpoint retries reuse the child run id and
-  // may not emit another parent started event, so the durable child record is the source of truth.
+  const shouldPollChildRun = open || fallbackActive || props.parentRunActive;
+  // Fetch collapsed terminal-looking rows while the parent run is active: checkpoint retries reuse
+  // the child run id and may not emit another parent started event. Once the parent is terminal,
+  // collapsed terminal rows stop polling unless the user expands them.
   const childRunState = useWorkflowRunById({
     workspaceId: props.workspaceId,
     runId: event.runId,
-    enabled: props.workspaceId != null && withinDepthLimit,
-    pollAfterTerminal: true,
+    enabled: props.workspaceId != null && withinDepthLimit && shouldPollChildRun,
+    pollAfterTerminal: shouldPollChildRun,
     pollWhileActive: true,
   });
   const childRun = childRunState.run;
@@ -1099,6 +1102,10 @@ function getLatestResultEvent(run: WorkflowRunRecord | null | undefined): unknow
   return run?.events.findLast((event) => event.type === "result")?.result;
 }
 
+function isWorkflowDisplayStatusActive(status: string): boolean {
+  return status === "pending" || status === "running" || status === "backgrounded";
+}
+
 function shouldRefreshWorkflow(status: string): boolean {
   return REFRESHING_WORKFLOW_STATUSES.has(status);
 }
@@ -1168,6 +1175,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     successResult?.run == null && successResult?.status != null && !hasRefreshedRunSnapshot
       ? successResult.status
       : (run?.status ?? successResult?.status ?? status);
+  const parentRunActive = isWorkflowDisplayStatusActive(displayStatus);
   const displayEventSequence = getLatestWorkflowEventSequence(run);
   const resultValue = successResult?.result ?? getLatestResultEvent(run);
   const reportMarkdown = getReportMarkdown(resultValue);
@@ -1576,6 +1584,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                           row={row}
                           displayIndex={index + 1}
                           workspaceId={run?.workspaceId ?? workspaceId}
+                          parentRunActive={parentRunActive}
                           depth={0}
                         />
                       );
