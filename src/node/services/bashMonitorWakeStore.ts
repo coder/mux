@@ -18,7 +18,11 @@ const ANSI_ESCAPE_PATTERN = new RegExp(
   "g"
 );
 
-export type BashMonitorWakeStatus = "pending" | "delivered" | "superseded";
+// Single-source the wake status enum so the exported TS type and the runtime
+// Zod validator below can't drift. Mirrors the `as const` tuple pattern used by
+// the sibling terminalAttentionStore notification enums.
+const BASH_MONITOR_WAKE_STATUSES = ["pending", "delivered", "superseded"] as const;
+export type BashMonitorWakeStatus = (typeof BASH_MONITOR_WAKE_STATUSES)[number];
 
 export interface BashMonitorWakePayload {
   processId: string;
@@ -62,7 +66,7 @@ const BashMonitorWakeRecordSchema = z
     lines: z.array(z.string()),
     totalMatches: z.number().int().nonnegative(),
     droppedLines: z.number().int().nonnegative(),
-    status: z.enum(["pending", "delivered", "superseded"]),
+    status: z.enum(BASH_MONITOR_WAKE_STATUSES),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
     deliveredAt: z.string().optional(),
