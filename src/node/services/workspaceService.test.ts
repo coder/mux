@@ -292,7 +292,7 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
-  test("deduplicates idle waiters while monitor wakes stay pending for a busy owner", async () => {
+  test("does not spin idle waiters when only aiService reports an owner stream", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
       const workspaceId = "bash-monitor-busy-owner";
@@ -329,7 +329,8 @@ describe("WorkspaceService bash monitor wakes", () => {
         totalMatches: 1,
         timestamp: Date.now(),
       });
-      await waitForCondition(() => waitForIdleSpy.mock.calls.length === 1);
+      await drainPendingDispatches();
+      expect(waitForIdleSpy).not.toHaveBeenCalled();
 
       backgroundProcessManager.emit("monitor:match", workspaceId, {
         processId: "proc-1",
@@ -343,7 +344,7 @@ describe("WorkspaceService bash monitor wakes", () => {
       });
 
       await drainPendingDispatches();
-      expect(waitForIdleSpy).toHaveBeenCalledTimes(1);
+      expect(waitForIdleSpy).not.toHaveBeenCalled();
     } finally {
       await cleanup();
     }

@@ -1224,8 +1224,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       return { success: false, error: `Process not found: ${processId}` };
     }
 
-    // If already terminated, return success (idempotent)
+    // If already terminated, return success (idempotent) after clearing any pending monitor flush.
     if (proc.status === "exited" || proc.status === "killed" || proc.status === "failed") {
+      this.stopMonitor(proc, false);
       log.debug(`Process ${processId} already terminated with status: ${proc.status}`);
       return { success: true };
     }

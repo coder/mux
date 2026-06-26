@@ -1719,13 +1719,14 @@ export class WorkspaceService extends EventEmitter {
 
     const ownerHasPendingQueuedPreparingOrRetry =
       this.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId);
-    if (
-      this.aiService.isStreaming(ownerWorkspaceId) ||
+    const ownerHasSessionBackedBusyState =
       this.isBusyForMessage(ownerWorkspaceId) ||
       this.hasQueuedMessages(ownerWorkspaceId) ||
-      ownerHasPendingQueuedPreparingOrRetry
-    ) {
-      this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      ownerHasPendingQueuedPreparingOrRetry;
+    if (this.aiService.isStreaming(ownerWorkspaceId) || ownerHasSessionBackedBusyState) {
+      if (ownerHasSessionBackedBusyState) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      }
       return;
     }
 
@@ -2041,12 +2042,14 @@ export class WorkspaceService extends EventEmitter {
     this.aiService.on("stream-end", (data: unknown) => {
       if (isStreamEndEvent(data)) {
         void this.handleStreamCompletion(data.workspaceId);
+        this.scheduleBashMonitorWakeDrain(data.workspaceId);
       }
     });
 
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
         void this.stopStreamingStatus(data.workspaceId);
+        this.scheduleBashMonitorWakeDrain(data.workspaceId);
         // Goal mutations are drained by AgentSession after any abort accounting
         // runs. Draining here would race ahead of AgentSession's stream-abort
         // listener and could charge the aborted in-flight stream to a goal that

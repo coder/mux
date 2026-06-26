@@ -249,6 +249,37 @@ describe("BackgroundProcessManager", () => {
       expect(proc ? manager.getMonitorSnapshot(proc)?.stopped : undefined).toBe(true);
     });
 
+    it("clears pending monitor timers when terminating an already-exited process", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo ERR", {
+        cwd: process.cwd(),
+        displayName: "monitor-exited-terminate",
+        monitor: {
+          filter: "ERR",
+          pattern: /ERR/,
+          exclude: false,
+          cooldownMs: 10_000,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 20; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if (proc?.monitor?.flushTimer != null && proc.status === "exited") break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      expect(proc?.status).toBe("exited");
+      expect(proc?.monitor?.flushTimer).toBeDefined();
+      const terminateResult = await manager.terminate(result.processId);
+
+      expect(terminateResult.success).toBe(true);
+      expect(proc?.monitor?.stopped).toBe(true);
+      expect(proc?.monitor?.flushTimer).toBeUndefined();
+    });
+
     it("does not consume the task_await output cursor", async () => {
       const eventPromise = waitForMonitorMatch(manager);
       const result = await manager.spawn(
