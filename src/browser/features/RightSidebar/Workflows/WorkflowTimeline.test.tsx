@@ -1,6 +1,9 @@
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
+import { APIContext } from "@/browser/contexts/API";
+import type { WorkflowRunRecord } from "@/common/types/workflow";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 import { installDom } from "../../../../../tests/ui/dom";
@@ -169,6 +172,113 @@ function makeCompletedStepView(taskId: string): WorkflowRunView {
   };
 }
 
+function makeNestedWorkflowParentView(): WorkflowRunView {
+  const timestamp = "2026-06-25T12:00:00.000Z";
+  return {
+    ...makeCompletedView(),
+    status: "running",
+    phases: [
+      {
+        name: "delegate",
+        label: "delegate",
+        steps: [
+          {
+            stepId: "implementation-loop",
+            status: "running",
+            title: "implementation-loop",
+            phaseName: "delegate",
+            startedAt: timestamp,
+            nestedWorkflowRunId: "wfr_child01",
+            nestedWorkflowName: "implementation-loop",
+            nestedWorkflowStatus: "started",
+          },
+        ],
+        done: 0,
+        total: 1,
+        running: true,
+        failed: false,
+      },
+    ],
+    steps: [],
+    result: null,
+    stats: {
+      total: 1,
+      done: 0,
+      running: 1,
+      failed: 0,
+      elapsedMs: 0,
+    },
+  };
+}
+
+function makeChildWorkflowRun(): WorkflowRunRecord {
+  const timestamp = "2026-06-25T12:00:00.000Z";
+  return {
+    id: "wfr_child01",
+    workspaceId: "workspace-main",
+    workflow: {
+      name: "implementation-loop",
+      description: "Implement a nested slice",
+      scope: "global",
+      requestedScriptPath: "skill://implementation-loop/workflow.js",
+      canonicalScriptPath: "skill://implementation-loop/workflow.js",
+      sourceKind: "skill",
+      sourceHash: "sha256:child",
+      executable: true,
+    },
+    source: "export default function workflow() { return null; }",
+    sourceHash: "sha256:child",
+    args: { target: "coder/mux#3546" },
+    parentWorkflow: {
+      runId: "wfr_parent01",
+      stepId: "implementation-loop",
+      inputHash: "hash-child",
+      depth: 0,
+    },
+    status: "running",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    events: [
+      { sequence: 1, type: "status", at: timestamp, status: "running" },
+      { sequence: 2, type: "phase", at: timestamp, name: "child-phase" },
+      {
+        sequence: 3,
+        type: "task",
+        at: timestamp,
+        stepId: "child-task",
+        taskId: "task_child",
+        status: "started",
+        title: "Child task",
+      },
+    ],
+    steps: [
+      {
+        stepId: "child-task",
+        inputHash: "child-task-hash",
+        status: "started",
+        taskId: "task_child",
+        startedAt: timestamp,
+      },
+    ],
+  };
+}
+
+function renderWithWorkflowApi(ui: ReactElement, client: unknown) {
+  return render(
+    <APIContext.Provider
+      value={{
+        status: "connected",
+        api: client as never,
+        error: null,
+        authenticate: () => undefined,
+        retry: () => undefined,
+      }}
+    >
+      {ui}
+    </APIContext.Provider>
+  );
+}
+
 describe("WorkflowTimeline", () => {
   let cleanupDom: (() => void) | null = null;
 
@@ -252,6 +362,87 @@ describe("WorkflowTimeline", () => {
     fireEvent.click(view.getByRole("button", { name: "Review implementation 2s" }));
 
     expect(view.getByText("Completed step report body.")).toBeDefined();
+  });
+
+  test("inlines a nested workflow run under its parent step", async () => {
+    const requestedRunIds: string[] = [];
+    const client = {
+      workflows: {
+        getRun: (input: { runId: string }) => {
+          requestedRunIds.push(input.runId);
+          return Promise.resolve(makeChildWorkflowRun());
+        },
+      },
+    };
+
+    const view = renderWithWorkflowApi(
+      <WorkflowTimeline view={makeNestedWorkflowParentView()} workspaceId="workspace-main" />,
+      client
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "delegate 0/1" }));
+
+    await waitFor(() => {
+      expect(view.getByText("child-phase")).toBeDefined();
+    });
+    expect(requestedRunIds).toContain("wfr_child01");
+    expect(view.getByText("running · 0/1 steps · child-phase")).toBeDefined();
+  });
+
+  test("uses active child run progress when the parent nested event is terminal", async () => {
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(makeChildWorkflowRun()),
+      },
+    };
+    const staleParentView = makeNestedWorkflowParentView();
+    staleParentView.phases[0].failed = true;
+    staleParentView.phases[0].steps[0].status = "failed";
+    staleParentView.phases[0].steps[0].nestedWorkflowStatus = "failed";
+
+    const view = renderWithWorkflowApi(
+      <WorkflowTimeline view={staleParentView} workspaceId="workspace-main" />,
+      client
+    );
+
+    await waitFor(() => {
+      expect(view.getByText("running · 0/1 steps · child-phase")).toBeDefined();
+    });
+  });
+
+  test("auto-opens an active nested workflow when the child event arrives after mount", async () => {
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(makeChildWorkflowRun()),
+      },
+    };
+    const initialView = makeNestedWorkflowParentView();
+    delete initialView.phases[0].steps[0].nestedWorkflowRunId;
+    delete initialView.phases[0].steps[0].nestedWorkflowName;
+    delete initialView.phases[0].steps[0].nestedWorkflowStatus;
+    const withApi = (timelineView: WorkflowRunView) => (
+      <APIContext.Provider
+        value={{
+          status: "connected",
+          api: client as never,
+          error: null,
+          authenticate: () => undefined,
+          retry: () => undefined,
+        }}
+      >
+        <WorkflowTimeline view={timelineView} workspaceId="workspace-main" />
+      </APIContext.Provider>
+    );
+
+    const view = render(withApi(initialView));
+    fireEvent.click(view.getByRole("button", { name: "delegate 0/1" }));
+    expect(view.queryByText("Nested workflow implementation-loop")).toBeNull();
+
+    view.rerender(withApi(makeNestedWorkflowParentView()));
+
+    await waitFor(() => {
+      expect(view.getByText("Nested workflow implementation-loop")).toBeDefined();
+    });
   });
 
   test("renders final report stat chips as bold key before value", () => {

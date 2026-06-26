@@ -16,10 +16,14 @@ import {
 } from "@/browser/contexts/CommandRegistryContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
-import type {
-  WorkflowRunEvent,
-  WorkflowRunRecord,
-  WorkflowStepRecord,
+import { WorkflowTimeline } from "@/browser/features/RightSidebar/Workflows/WorkflowTimeline";
+import { projectWorkflowRun } from "@/browser/features/RightSidebar/Workflows/projectWorkflowRun";
+import { useWorkflowRunById } from "@/browser/hooks/useWorkflowRunById";
+import {
+  isActiveWorkflowRunStatus,
+  type WorkflowRunEvent,
+  type WorkflowRunRecord,
+  type WorkflowStepRecord,
 } from "@/common/types/workflow";
 import type {
   WorkflowResumeToolArgs,
@@ -242,8 +246,25 @@ type WorkflowDisplayRow =
   | { kind: "patch"; firstEvent: WorkflowPatchEvent; latestEvent: WorkflowPatchEvent };
 
 type WorkflowTaskRow = Extract<WorkflowDisplayRow, { kind: "task" }>;
-type WorkflowChildRow = Extract<WorkflowDisplayRow, { kind: "workflow" }>;
+type WorkflowChildDisplayRow = Extract<WorkflowDisplayRow, { kind: "workflow" }>;
 type WorkflowPatchRow = Extract<WorkflowDisplayRow, { kind: "patch" }>;
+
+const MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH = 3;
+
+function isWorkflowChildEventActive(status: WorkflowChildEvent["status"]): boolean {
+  return status === "started" || status === "running" || status === "backgrounded";
+}
+
+function getWorkflowChildProgressSummary(run: WorkflowRunRecord | null): string | null {
+  if (run == null) {
+    return null;
+  }
+  const view = projectWorkflowRun(run);
+  const activePhase = view.phases.find((phase) => phase.running) ?? view.phases.at(-1);
+  const phaseLabel =
+    activePhase != null && activePhase.label.length > 0 ? ` · ${activePhase.label}` : "";
+  return `${view.status} · ${view.stats.done}/${view.stats.total} steps${phaseLabel}`;
+}
 
 function getTaskEventKey(event: WorkflowTaskEvent): string {
   return `task:${event.stepId}:${event.taskId}`;
@@ -259,7 +280,7 @@ function getPatchEventKey(event: WorkflowPatchEvent): string {
 function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDisplayRow[] {
   const rows: WorkflowDisplayRow[] = [];
   const taskRows = new Map<string, WorkflowTaskRow>();
-  const workflowRows = new Map<string, WorkflowChildRow>();
+  const workflowRows = new Map<string, WorkflowChildDisplayRow>();
   const patchRows = new Map<string, WorkflowPatchRow>();
 
   for (const event of events) {
@@ -292,7 +313,7 @@ function getWorkflowDisplayRows(events: readonly WorkflowRunEvent[]): WorkflowDi
         continue;
       }
 
-      const row: WorkflowChildRow = {
+      const row: WorkflowChildDisplayRow = {
         kind: "workflow",
         firstEvent: event,
         latestEvent: event,
@@ -538,7 +559,7 @@ function WorkflowEventTooltip(props: {
   );
 }
 
-function getWorkflowMergedRowDetail(row: WorkflowChildRow | WorkflowPatchRow): unknown {
+function getWorkflowMergedRowDetail(row: WorkflowChildDisplayRow | WorkflowPatchRow): unknown {
   const firstDetail = getWorkflowEventDetail(row.firstEvent);
   const latestDetail = getWorkflowEventDetail(row.latestEvent);
   if (row.firstEvent === row.latestEvent || row.latestEvent.status === "started") {
@@ -617,6 +638,131 @@ function WorkflowEventRow(props: {
         ) : (
           <WorkflowJsonBlock value={detail} className="mx-2 mb-2 max-h-[140px]" />
         )}
+      </details>
+    </li>
+  );
+}
+
+function WorkflowChildEventDetailBlock(props: { detail: unknown }) {
+  if (props.detail === undefined) {
+    return null;
+  }
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="text-muted text-[10px] tracking-wide uppercase">Workflow event details</div>
+      <WorkflowJsonBlock value={props.detail} className="max-h-[180px]" />
+    </div>
+  );
+}
+
+function WorkflowChildRunRow(props: {
+  row: WorkflowChildDisplayRow;
+  displayIndex: number;
+  workspaceId?: string;
+  depth: number;
+  parentRunActive: boolean;
+}) {
+  const event = props.row.latestEvent;
+  const [open, setOpen] = useState(
+    () =>
+      props.depth < MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH &&
+      isWorkflowChildEventActive(event.status)
+  );
+  const withinDepthLimit = props.depth < MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH;
+  const fallbackActive = isWorkflowChildEventActive(event.status);
+  const shouldPollChildRun = open || fallbackActive || props.parentRunActive;
+  // Fetch collapsed terminal-looking rows while the parent run is active: checkpoint retries reuse
+  // the child run id and may not emit another parent started event. Once the parent is terminal,
+  // collapsed terminal rows stop polling unless the user expands them.
+  const childRunState = useWorkflowRunById({
+    workspaceId: props.workspaceId,
+    runId: event.runId,
+    enabled: props.workspaceId != null && withinDepthLimit && shouldPollChildRun,
+    pollAfterTerminal: shouldPollChildRun,
+    pollWhileActive: true,
+  });
+  const childRun = childRunState.run;
+  const childView = childRun != null ? projectWorkflowRun(childRun) : null;
+  const childStatus = childRun?.status ?? event.status;
+  const childActive =
+    childRun != null ? isActiveWorkflowRunStatus(childRun.status) : fallbackActive;
+  const progressSummary = getWorkflowChildProgressSummary(childRun);
+  const fallbackDetail = getWorkflowMergedRowDetail(props.row);
+  const label = `${event.stepId} / ${event.name} / ${event.runId} / ${childStatus}`;
+
+  return (
+    <li className="hover:bg-background/50">
+      <details
+        className="group"
+        open={open}
+        onToggle={(toggleEvent) => setOpen(toggleEvent.currentTarget.open)}
+      >
+        <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+          <div className="border-plan-mode/70 bg-plan-mode-alpha grid grid-cols-[3rem_4.75rem_minmax(0,1fr)] items-center gap-2 border-l-2 px-2 py-1 text-[10px]">
+            <TooltipIfPresent
+              tooltip={
+                <WorkflowEventTooltip
+                  event={props.row.firstEvent}
+                  displayIndex={props.displayIndex}
+                  label={label}
+                />
+              }
+              side="top"
+              align="start"
+            >
+              <span
+                className="text-muted counter-nums-mono w-fit cursor-help"
+                aria-label={`Raw event #${props.row.firstEvent.sequence}`}
+              >
+                #{props.displayIndex}
+              </span>
+            </TooltipIfPresent>
+            <span className={`w-fit font-mono uppercase ${getEventTypeClass(event)}`}>
+              workflow
+            </span>
+            <span className="text-foreground flex min-w-0 items-center gap-1.5 truncate">
+              {childActive && <span className="bg-plan-mode h-1.5 w-1.5 shrink-0 rounded-full" />}
+              <span className="min-w-0 truncate">{label}</span>
+            </span>
+          </div>
+        </summary>
+        <div className="border-border bg-background/40 mx-2 mb-2 rounded border p-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-[10px]">
+            <span className="text-plan-mode font-medium">Nested workflow</span>
+            <span className="text-foreground font-medium">{event.name}</span>
+            <span className="text-muted counter-nums-mono min-w-0 truncate">{event.runId}</span>
+          </div>
+          {progressSummary != null && (
+            <div className="text-muted mt-1 text-[11px]">{progressSummary}</div>
+          )}
+          {!withinDepthLimit ? (
+            <div className="text-muted mt-2 text-[11px]">
+              Nested workflow depth limit reached; showing summary only.
+            </div>
+          ) : childRunState.error != null ? (
+            <>
+              <ErrorBox className="mt-2">{childRunState.error}</ErrorBox>
+              <WorkflowChildEventDetailBlock detail={fallbackDetail} />
+            </>
+          ) : childRunState.loading && childRun == null ? (
+            <div className="text-muted mt-2 text-[11px]">Loading nested workflow…</div>
+          ) : childRun != null && childView != null ? (
+            <div className="border-border/70 mt-2 border-l pl-3">
+              <WorkflowTimeline
+                view={childView}
+                workspaceId={childRun.workspaceId}
+                nestedDepth={props.depth + 1}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="text-muted mt-2 text-[11px]">
+                Nested workflow run is not available.
+              </div>
+              <WorkflowChildEventDetailBlock detail={fallbackDetail} />
+            </>
+          )}
+        </div>
       </details>
     </li>
   );
@@ -956,6 +1102,10 @@ function getLatestResultEvent(run: WorkflowRunRecord | null | undefined): unknow
   return run?.events.findLast((event) => event.type === "result")?.result;
 }
 
+function isWorkflowDisplayStatusActive(status: string): boolean {
+  return status === "pending" || status === "running" || status === "backgrounded";
+}
+
 function shouldRefreshWorkflow(status: string): boolean {
   return REFRESHING_WORKFLOW_STATUSES.has(status);
 }
@@ -1025,6 +1175,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     successResult?.run == null && successResult?.status != null && !hasRefreshedRunSnapshot
       ? successResult.status
       : (run?.status ?? successResult?.status ?? status);
+  const parentRunActive = isWorkflowDisplayStatusActive(displayStatus);
   const displayEventSequence = getLatestWorkflowEventSequence(run);
   const resultValue = successResult?.result ?? getLatestResultEvent(run);
   const reportMarkdown = getReportMarkdown(resultValue);
@@ -1426,7 +1577,19 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
                         />
                       );
                     }
-                    if (row.kind === "workflow" || row.kind === "patch") {
+                    if (row.kind === "workflow") {
+                      return (
+                        <WorkflowChildRunRow
+                          key={getDisplayRowKey(row)}
+                          row={row}
+                          displayIndex={index + 1}
+                          workspaceId={run?.workspaceId ?? workspaceId}
+                          parentRunActive={parentRunActive}
+                          depth={0}
+                        />
+                      );
+                    }
+                    if (row.kind === "patch") {
                       return (
                         <WorkflowEventRow
                           key={getDisplayRowKey(row)}

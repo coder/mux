@@ -384,6 +384,11 @@ describe("projectWorkflowRun — non-task step events", () => {
     expect(view.steps.find((step) => step.stepId === "wf-1")?.phaseName).toBe("delegate");
     // Nested-workflow steps take their title from the child workflow name.
     expect(view.steps.find((step) => step.stepId === "wf-1")?.title).toBe("deep-research");
+    expect(view.steps.find((step) => step.stepId === "wf-1")).toMatchObject({
+      nestedWorkflowRunId: "wfr_child01",
+      nestedWorkflowName: "deep-research",
+      nestedWorkflowStatus: "started",
+    });
     // Patch steps may store the source task id for persistence/usage, but only direct task
     // events represent a child workspace created by that row.
     const patchStep = view.steps.find((step) => step.stepId === "patch-1");
@@ -391,6 +396,64 @@ describe("projectWorkflowRun — non-task step events", () => {
     expect(patchStep?.taskWorkspaceId).toBeUndefined();
     // Nothing falls into the implicit ungrouped bucket.
     expect(view.phases.some((phase) => phase.name === "")).toBe(false);
+  });
+
+  test("assigns repeated nested workflow ids to their matching step attempts", () => {
+    const events: WorkflowRunEvent[] = [
+      { sequence: 1, type: "phase", at: at(1), name: "delegate" },
+      {
+        sequence: 2,
+        type: "workflow",
+        at: at(2),
+        stepId: "wf-repeat",
+        runId: "wfr_child_first",
+        name: "implementation-loop",
+        status: "started",
+      },
+      {
+        sequence: 3,
+        type: "workflow",
+        at: at(3),
+        stepId: "wf-repeat",
+        runId: "wfr_child_first",
+        name: "implementation-loop",
+        status: "completed",
+      },
+      {
+        sequence: 4,
+        type: "workflow",
+        at: at(4),
+        stepId: "wf-repeat",
+        runId: "wfr_child_second",
+        name: "implementation-loop",
+        status: "started",
+      },
+    ];
+    const steps: WorkflowStepRecord[] = [
+      {
+        stepId: "wf-repeat",
+        inputHash: "h-first",
+        status: "completed",
+        startedAt: at(1),
+        completedAt: at(4),
+      },
+      {
+        stepId: "wf-repeat",
+        inputHash: "h-second",
+        status: "started",
+        startedAt: at(4),
+      },
+    ];
+
+    // The second child starts at the exact timestamp the first attempt completed; the end of
+    // a completed attempt must be exclusive so the older row does not steal the newer child.
+    const view = projectWorkflowRun(makeRun({ events, steps }));
+
+    expect(view.steps.map((step) => step.nestedWorkflowRunId)).toEqual([
+      "wfr_child_first",
+      "wfr_child_second",
+    ]);
+    expect(view.steps.map((step) => step.nestedWorkflowStatus)).toEqual(["completed", "started"]);
   });
 });
 
