@@ -302,8 +302,33 @@ describe("BackgroundProcessManager", () => {
       expect(event.payload.lines).toEqual(["FAILED"]);
     });
 
+    it("matches long complete lines when the token appears after the prompt cap", async () => {
+      const eventPromise = waitForMonitorMatch(manager);
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        `bun -e "process.stdout.write('A'.repeat(16384) + ' FAILED tail\\n')"`,
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-long-line-suffix",
+          monitor: {
+            filter: "FAILED tail",
+            pattern: /FAILED tail/,
+            exclude: false,
+            cooldownMs: 0,
+          },
+        }
+      );
+
+      expect(result.success).toBe(true);
+      const event = await eventPromise;
+      expect(event.payload.lines).toHaveLength(1);
+      expect(event.payload.lines[0]).toContain("FAILED tail");
+      expect(event.payload.lines[0]).toContain("truncated");
+    });
+
     it("bounds incomplete monitor lines while a process keeps running", async () => {
-      const longByteCount = 16_384;
+      const longByteCount = 1_100_000;
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
@@ -332,7 +357,7 @@ describe("BackgroundProcessManager", () => {
       }
 
       expect(incompleteLineBytes).toBeGreaterThan(0);
-      expect(incompleteLineBytes).toBeLessThanOrEqual(8_192);
+      expect(incompleteLineBytes).toBeLessThanOrEqual(1_000_000);
     });
   });
 

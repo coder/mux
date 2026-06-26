@@ -14,6 +14,8 @@ const MONITOR_POLL_INTERVAL_MS_REMOTE = 1_000;
 const MONITOR_MAX_PENDING_LINES = 50;
 const MONITOR_MAX_LAST_LINES = 20;
 const MONITOR_MAX_PROMPT_LINE_BYTES = Math.min(BASH_MAX_LINE_BYTES, 8_192);
+const MONITOR_MAX_INCOMPLETE_MATCH_BYTES = 1_000_000;
+const MONITOR_TRUNCATION_MARKER = "… [truncated] …";
 const ANSI_ESCAPE_PATTERN = new RegExp(
   `[${String.fromCharCode(27)}${String.fromCharCode(155)}][[\\]\\()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?${String.fromCharCode(7)})|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))`,
   "g"
@@ -323,6 +325,33 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     return value.slice(0, endIndex);
   }
 
+  private truncateUtf8Suffix(value: string, maxBytes: number): string {
+    assert(maxBytes > 0, "truncateUtf8Suffix requires a positive byte limit");
+    let bytes = 0;
+    let startIndex = value.length;
+    const chars = [...value];
+    for (let index = chars.length - 1; index >= 0; index--) {
+      const char = chars[index];
+      const charBytes = Buffer.byteLength(char, "utf8");
+      if (bytes + charBytes > maxBytes) break;
+      bytes += charBytes;
+      startIndex -= char.length;
+    }
+
+    return value.slice(startIndex);
+  }
+
+  private truncateUtf8Middle(value: string, maxBytes: number): string {
+    assert(maxBytes > 0, "truncateUtf8Middle requires a positive byte limit");
+    if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
+
+    const markerBytes = Buffer.byteLength(MONITOR_TRUNCATION_MARKER, "utf8");
+    const remainingBytes = Math.max(1, maxBytes - markerBytes);
+    const prefixBytes = Math.floor(remainingBytes / 2);
+    const suffixBytes = remainingBytes - prefixBytes;
+    return `${this.truncateUtf8Prefix(value, prefixBytes)}${MONITOR_TRUNCATION_MARKER}${this.truncateUtf8Suffix(value, suffixBytes)}`;
+  }
+
   private sanitizeMonitorLine(line: string): string {
     return [...line.replace(ANSI_ESCAPE_PATTERN, "")]
       .filter((char) => {
@@ -333,15 +362,20 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   private truncateMonitorLine(line: string): string {
-    if (Buffer.byteLength(line, "utf8") <= MONITOR_MAX_PROMPT_LINE_BYTES) return line;
-
-    return `${this.truncateUtf8Prefix(line, MONITOR_MAX_PROMPT_LINE_BYTES)}… [truncated]`;
+    return this.truncateUtf8Middle(line, MONITOR_MAX_PROMPT_LINE_BYTES);
   }
 
   private boundMonitorIncompleteLineBuffer(line: string): string {
-    if (Buffer.byteLength(line, "utf8") <= MONITOR_MAX_PROMPT_LINE_BYTES) return line;
+    if (Buffer.byteLength(line, "utf8") <= MONITOR_MAX_INCOMPLETE_MATCH_BYTES) return line;
 
-    return this.truncateUtf8Prefix(line, MONITOR_MAX_PROMPT_LINE_BYTES);
+    // Keep the newest suffix for still-growing long lines so a token near the eventual end of a
+    // JSON/log line can still match when the newline or exit flush arrives. Prompt truncation happens
+    // separately after matching.
+    const markerBytes = Buffer.byteLength(MONITOR_TRUNCATION_MARKER, "utf8");
+    return `${MONITOR_TRUNCATION_MARKER}${this.truncateUtf8Suffix(
+      line,
+      MONITOR_MAX_INCOMPLETE_MATCH_BYTES - markerBytes
+    )}`;
   }
 
   private recordMonitorMatch(proc: BackgroundProcess, line: string): void {
