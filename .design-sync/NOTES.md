@@ -162,13 +162,39 @@ needed; the cap is per-file 5 MB on both `_ds_bundle.js` and each `_preview/*.js
 - **Per-file 5 MB cap** applies to BOTH `_ds_bundle.js` and each `_preview/*.js`.
   Bundle ~4.7 MB and previews ~3.3 MB leave thin headroom — adding components or
   providers needs a fresh size measurement. (HeartbeatToolCall added: bundle 4.69 MB,
-  its preview 3.21 MB — still fits, headroom now ~0.3 MB.)
+  its preview 3.21 MB. WorkspaceLifecycleToolCall added: bundle **4.71 MB**, its preview
+  3.22 MB — both still fit, headroom now **~0.29 MB**. Tool cards share deps
+  (ToolPrimitives/toolUtils/lucide/the tool schema), so each new one adds only ~tens of KB
+  to the bundle; a NON-tool-card component would need a fresh union measurement first.)
 - **HeartbeatToolCall (tool card):** owned preview has one cell per story (10, named to
   match the story exports so `compare` pairs them — the stories import `meta.tsx` → the
   whole app, so the preview is hand-authored like the other cards). `cfg.overrides`
   uses `cardMode: "column"` because the `CustomMessageWrapping` story renders at a pinned
   375px (narrower than a grid cell → `[GRID_OVERFLOW] wide`); column keeps all stories
   full-width. All 10 stories grade `match`.
+- **WorkspaceLifecycleToolCall (tool card, `task_workspace_lifecycle`):** owned preview, one
+  cell per story (8, named to match exports so `compare` pairs them — stories import
+  `meta.tsx` → whole app, so hand-authored like the other cards). `cfg.overrides` uses
+  `cardMode: "column"` (the `BlockedNeedsAction` story renders at a pinned 375px →
+  `[GRID_OVERFLOW] wide`, same as Heartbeat). **Capture cap raised to 8** (`compare
+  --max-stories 8`) so the tail `ErrorResult` (ErrorBox layout) + `InvalidScope` (danger
+  row) variants grade too — the default cap is 6 and would skip them. All 8 grade `match`.
+  gen-barrel auto-resolves it (segment `WorkspaceLifecycle` → real name via story imports);
+  no EXCLUDE entry needed.
+- **Card viewport — KEEP THE DEFAULT 900x700; do NOT bump it for height.** Tall multi-story
+  column cards (HeartbeatToolCall, WorkspaceLifecycleToolCall) and tall sections
+  (KeybindsSection, GoalTab, GeneralSection) exceed 700px, but the gallery ALREADY handles this:
+  per `emit.mjs` (~L475) the product "fits the card to its ≤728px column / 500px fold by scaling;
+  content below the fold is **hover-scrollable**." So at the default viewport you scroll the card
+  to see everything at normal zoom. Setting a tall `cfg.overrides.<Name>.viewport` (e.g. 900x2600)
+  was tried and REVERTED — it makes the gallery scale the whole oversized card down to fit the
+  column, so it renders tiny/zoomed-out and is harder to read than the scroll. A `viewport`
+  override is for the capture/grading framing of overlays (`single` mode), not for showing tall
+  cards in full. (Reverting the bump re-grades the card — render unchanged, re-confirms `match`.)
+- **"Empty card on first appearance" is a stale gallery render, NOT a defect:** a brand-new
+  card can show empty cells (labels only) in the gallery until the app recompiles its
+  thumbnail — a hard-refresh / re-open of the project (which clears `_ds_needs_recompile` and
+  re-renders) fixes it. Don't chase it as a sync bug if the card renders correctly standalone.
 - **WorkflowRun/Timeouts exclusion:** `WorkflowRunToolCall` is EXCLUDE_HEAVY via its
   `WorkflowRun` segment, but `WorkflowRunToolCall.timeout.stories.tsx` titles to
   `…/WorkflowRun/Timeouts` (segment `Timeouts`), which slips that exclusion and would pull

@@ -75,7 +75,8 @@
     "HookOutput": "HookOutputDisplay",
     "Init": "InitMessage",
     "Streaming": "StreamingBarrierView",
-    "Todo": "TodoToolCall"
+    "Todo": "TodoToolCall",
+    "WorkspaceLifecycle": "WorkspaceLifecycleToolCall"
   },
   "overrides": {
     "StreamingBarrierView": {
@@ -166,6 +167,10 @@
       "skip": []
     },
     "HeartbeatToolCall": {
+      "skip": [],
+      "cardMode": "column"
+    },
+    "WorkspaceLifecycleToolCall": {
       "skip": [],
       "cardMode": "column"
     },

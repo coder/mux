@@ -39,6 +39,7 @@ export { TitleBar } from "@/browser/components/TitleBar/TitleBar";
 export { TodoToolCall } from "@/browser/features/Tools/TodoToolCall";
 export { Tooltip } from "@/browser/components/Tooltip/Tooltip";
 export { TranscriptHydrationSkeleton } from "@/browser/components/ChatPane/TranscriptHydrationSkeleton";
+export { WorkspaceLifecycleToolCall } from "@/browser/features/Tools/WorkspaceLifecycleToolCall";
 
 // ── Providers ──
 export { ThemeProvider } from "@/browser/contexts/ThemeContext";
