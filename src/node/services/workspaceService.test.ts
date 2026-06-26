@@ -291,6 +291,63 @@ describe("WorkspaceService bash monitor wakes", () => {
       await cleanup();
     }
   });
+
+  test("deduplicates idle waiters while monitor wakes stay pending for a busy owner", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-busy-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => true) }),
+      });
+      const waitForIdleSpy = spyOn(
+        workspaceService,
+        "waitForIdleAndNoQueuedMessages"
+      ).mockImplementation(() => new Promise(() => undefined));
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED one"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+      await waitForCondition(() => waitForIdleSpy.mock.calls.length === 1);
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED two"],
+        totalMatches: 2,
+        timestamp: Date.now(),
+      });
+
+      await drainPendingDispatches();
+      expect(waitForIdleSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 describe("WorkspaceService workflow activity", () => {

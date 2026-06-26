@@ -1537,6 +1537,7 @@ export class WorkspaceService extends EventEmitter {
 
   private readonly bashMonitorWakeStore: BashMonitorWakeStore;
   private readonly pendingBashMonitorWakeDrainsByOwner = new Map<string, Promise<void>>();
+  private readonly pendingBashMonitorWakeIdleWaitsByOwner = new Map<string, Promise<void>>();
   private readonly pendingBashMonitorWakeDrains = new Set<Promise<void>>();
   private readonly bashMonitorMatchListener = (
     _workspaceId: string,
@@ -1679,6 +1680,10 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId: string): void {
+    if (this.pendingBashMonitorWakeIdleWaitsByOwner.has(ownerWorkspaceId)) {
+      return;
+    }
+
     const promise = this.waitForIdleAndNoQueuedMessages(ownerWorkspaceId)
       .catch((error: unknown) => {
         log.debug("Bash monitor idle wait failed; retrying drain anyway", {
@@ -1691,7 +1696,11 @@ export class WorkspaceService extends EventEmitter {
       })
       .finally(() => {
         this.pendingBashMonitorWakeDrains.delete(promise);
+        if (this.pendingBashMonitorWakeIdleWaitsByOwner.get(ownerWorkspaceId) === promise) {
+          this.pendingBashMonitorWakeIdleWaitsByOwner.delete(ownerWorkspaceId);
+        }
       });
+    this.pendingBashMonitorWakeIdleWaitsByOwner.set(ownerWorkspaceId, promise);
     this.pendingBashMonitorWakeDrains.add(promise);
   }
 
