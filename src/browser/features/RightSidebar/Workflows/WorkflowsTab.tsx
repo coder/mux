@@ -123,7 +123,7 @@ export const WorkflowsTab: React.FC<{ workspaceId: string }> = (props) => {
             view={view}
             onAfterAction={() => setOverrideRunId(null)}
           />
-          <WorkflowTimeline view={view} />
+          <WorkflowTimeline view={view} workspaceId={props.workspaceId} />
         </React.Fragment>
       )}
 

@@ -384,6 +384,11 @@ describe("projectWorkflowRun — non-task step events", () => {
     expect(view.steps.find((step) => step.stepId === "wf-1")?.phaseName).toBe("delegate");
     // Nested-workflow steps take their title from the child workflow name.
     expect(view.steps.find((step) => step.stepId === "wf-1")?.title).toBe("deep-research");
+    expect(view.steps.find((step) => step.stepId === "wf-1")).toMatchObject({
+      nestedWorkflowRunId: "wfr_child01",
+      nestedWorkflowName: "deep-research",
+      nestedWorkflowStatus: "started",
+    });
     // Patch steps may store the source task id for persistence/usage, but only direct task
     // events represent a child workspace created by that row.
     const patchStep = view.steps.find((step) => step.stepId === "patch-1");

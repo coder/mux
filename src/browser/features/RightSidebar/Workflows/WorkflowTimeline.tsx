@@ -16,10 +16,17 @@ import {
 
 import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import { WorkflowJsonBlock } from "@/browser/features/Tools/WorkflowToolShared";
+import { useWorkflowRunById } from "@/browser/hooks/useWorkflowRunById";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { isActiveWorkflowRunStatus } from "@/common/types/workflow";
 
 import { WorkflowLiveDot } from "./WorkflowBadges";
-import type { WorkflowPhaseView, WorkflowRunView, WorkflowStepView } from "./projectWorkflowRun";
+import {
+  projectWorkflowRun,
+  type WorkflowPhaseView,
+  type WorkflowRunView,
+  type WorkflowStepView,
+} from "./projectWorkflowRun";
 import {
   WORKFLOW_TONE_VAR,
   formatWorkflowCost,
@@ -31,6 +38,46 @@ import {
 } from "./workflowDisplay";
 
 const ASK_MODE_BORDER = "color-mix(in srgb, var(--color-ask-mode) 35%, transparent)";
+const MAX_INLINE_NESTED_WORKFLOW_DEPTH = 3;
+
+interface WorkflowTimelineProps {
+  view: WorkflowRunView;
+  workspaceId?: string;
+  nestedDepth?: number;
+}
+
+interface WorkflowPhaseSectionProps {
+  phase: WorkflowPhaseView;
+  workspaceId?: string;
+  nestedDepth: number;
+}
+
+interface WorkflowStepRowProps {
+  step: WorkflowStepView;
+  isLast: boolean;
+  workspaceId?: string;
+  nestedDepth: number;
+}
+
+function isWorkflowStepNestedStatusActive(
+  status: WorkflowStepView["nestedWorkflowStatus"]
+): boolean {
+  return status === "started" || status === "running" || status === "backgrounded";
+}
+
+function getNestedWorkflowSummary(input: {
+  childView: WorkflowRunView | null;
+  fallbackStatus?: WorkflowStepView["nestedWorkflowStatus"];
+}): string {
+  if (input.childView == null) {
+    return input.fallbackStatus ?? "loading";
+  }
+  const activePhase =
+    input.childView.phases.find((phase) => phase.running) ?? input.childView.phases.at(-1);
+  const phaseLabel =
+    activePhase != null && activePhase.label.length > 0 ? ` · ${activePhase.label}` : "";
+  return `${input.childView.status} · ${input.childView.stats.done}/${input.childView.stats.total} steps${phaseLabel}`;
+}
 
 const WorkflowStepNode: React.FC<{ step: WorkflowStepView; color: string }> = (props) => {
   if (props.step.status === "running") {
@@ -54,9 +101,10 @@ const WorkflowStepNode: React.FC<{ step: WorkflowStepView; color: string }> = (p
  * only a fresh false→true transition forces it open.
  */
 function useDisclosureOpenOnFailure(
-  failed: boolean
+  failed: boolean,
+  defaultOpen = false
 ): readonly [boolean, React.Dispatch<React.SetStateAction<boolean>>] {
-  const [open, setOpen] = React.useState(failed);
+  const [open, setOpen] = React.useState(failed || defaultOpen);
   const [prevFailed, setPrevFailed] = React.useState(failed);
   if (failed !== prevFailed) {
     setPrevFailed(failed);
@@ -67,12 +115,84 @@ function useDisclosureOpenOnFailure(
   return [open, setOpen] as const;
 }
 
-const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (props) => {
+const NestedWorkflowStepPanel: React.FC<{
+  step: WorkflowStepView;
+  workspaceId?: string;
+  nestedDepth: number;
+  parentOpen: boolean;
+}> = (props) => {
+  const nestedRunId = props.step.nestedWorkflowRunId;
+  const withinDepthLimit = props.nestedDepth < MAX_INLINE_NESTED_WORKFLOW_DEPTH;
+  const fallbackActive = isWorkflowStepNestedStatusActive(props.step.nestedWorkflowStatus);
+  const childRunState = useWorkflowRunById({
+    workspaceId: props.workspaceId,
+    runId: nestedRunId,
+    enabled:
+      nestedRunId != null &&
+      props.workspaceId != null &&
+      withinDepthLimit &&
+      (props.parentOpen || fallbackActive),
+    pollWhileActive: fallbackActive,
+  });
+  const childRun = childRunState.run;
+  const childView = childRun != null ? projectWorkflowRun(childRun) : null;
+  const childActive = childRun != null && isActiveWorkflowRunStatus(childRun.status);
+  const childSummary = getNestedWorkflowSummary({
+    childView,
+    fallbackStatus: props.step.nestedWorkflowStatus,
+  });
+
+  if (nestedRunId == null) {
+    return null;
+  }
+
+  return (
+    <div className="border-border bg-surface-secondary/40 mt-2.5 rounded-lg border p-2.5">
+      <div className="flex min-w-0 items-center gap-2">
+        {childActive || (childRun == null && fallbackActive) ? <WorkflowLiveDot /> : null}
+        <span className="text-content-primary min-w-0 truncate text-xs font-semibold">
+          Nested workflow {props.step.nestedWorkflowName ?? props.step.title}
+        </span>
+        <span className="text-muted counter-nums-mono min-w-0 truncate text-[10px]">
+          {nestedRunId}
+        </span>
+      </div>
+      <div className="text-muted mt-1 text-[11px]">{childSummary}</div>
+
+      {!withinDepthLimit ? (
+        <div className="text-muted mt-2 text-[11px]">
+          Nested workflow depth limit reached; showing summary only.
+        </div>
+      ) : childRunState.error != null ? (
+        <div className="text-danger mt-2 text-[11px]">{childRunState.error}</div>
+      ) : childRunState.loading && childRun == null ? (
+        <div className="text-muted mt-2 text-[11px]">Loading nested workflow…</div>
+      ) : childRun != null && childView != null ? (
+        <div className="border-border/70 mt-2 border-l pl-3">
+          <WorkflowTimeline
+            view={childView}
+            workspaceId={childRun.workspaceId}
+            nestedDepth={props.nestedDepth + 1}
+          />
+        </div>
+      ) : (
+        <div className="text-muted mt-2 text-[11px]">Nested workflow run is not available.</div>
+      )}
+    </div>
+  );
+};
+
+const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
   const step = props.step;
-  const expandable = step.status === "completed" || step.status === "failed";
+  const hasNestedWorkflow = step.nestedWorkflowRunId != null;
+  const expandable = step.status === "completed" || step.status === "failed" || hasNestedWorkflow;
   // Surface failures by default (including live failures that arrive after the row mounted while
-  // running); otherwise stay collapsed for scanability.
-  const [open, setOpen] = useDisclosureOpenOnFailure(step.status === "failed");
+  // running); active nested workflows also start open so their child progress is visible.
+  const [open, setOpen] = useDisclosureOpenOnFailure(
+    step.status === "failed",
+    hasNestedWorkflow &&
+      (step.status === "running" || isWorkflowStepNestedStatusActive(step.nestedWorkflowStatus))
+  );
   const color = WORKFLOW_TONE_VAR[getWorkflowStepTone(step.status)];
   const showReport = hasDisplayableWorkflowReport(
     step.result?.reportMarkdown,
@@ -109,6 +229,11 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
       {step.status === "failed" && (
         <span className="shrink-0 text-[11px]" style={{ color }}>
           failed
+        </span>
+      )}
+      {hasNestedWorkflow && (
+        <span className="border-border text-plan-mode shrink-0 rounded border px-1.5 py-px text-[10px]">
+          nested
         </span>
       )}
       {expandable &&
@@ -210,6 +335,14 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
                 </div>
               </>
             )}
+            {hasNestedWorkflow && (
+              <NestedWorkflowStepPanel
+                step={step}
+                workspaceId={props.workspaceId}
+                nestedDepth={props.nestedDepth}
+                parentOpen={open}
+              />
+            )}
           </div>
         )}
       </div>
@@ -217,7 +350,7 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
   );
 };
 
-const WorkflowPhaseSection: React.FC<{ phase: WorkflowPhaseView }> = (props) => {
+const WorkflowPhaseSection: React.FC<WorkflowPhaseSectionProps> = (props) => {
   const phase = props.phase;
   const allDone = phase.total > 0 && phase.done === phase.total;
   // Phase events can carry a structured `details` info object (e.g. {angleCount, maxSources}).
@@ -304,6 +437,8 @@ const WorkflowPhaseSection: React.FC<{ phase: WorkflowPhaseView }> = (props) => 
               key={step.stepId}
               step={step}
               isLast={index === phase.steps.length - 1}
+              workspaceId={props.workspaceId}
+              nestedDepth={props.nestedDepth}
             />
           ))}
         </div>
@@ -383,8 +518,9 @@ const WorkflowFinalReport: React.FC<{ view: WorkflowRunView }> = (props) => {
 };
 
 /** "Timeline" run body: a vertical stream of phases and their agent steps. */
-export const WorkflowTimeline: React.FC<{ view: WorkflowRunView }> = (props) => {
+export const WorkflowTimeline: React.FC<WorkflowTimelineProps> = (props) => {
   const view = props.view;
+  const nestedDepth = props.nestedDepth ?? 0;
   return (
     <div className="flex flex-col gap-4">
       {/* Surface a run-level failure (e.g. setup/compile/eval errors that occur before any step)
@@ -411,7 +547,12 @@ export const WorkflowTimeline: React.FC<{ view: WorkflowRunView }> = (props) => 
           <div className="text-muted px-2 py-3 text-xs">No steps yet.</div>
         ) : (
           view.phases.map((phase) => (
-            <WorkflowPhaseSection key={phase.name || "__ungrouped"} phase={phase} />
+            <WorkflowPhaseSection
+              key={phase.name || "__ungrouped"}
+              phase={phase}
+              workspaceId={props.workspaceId}
+              nestedDepth={nestedDepth}
+            />
           ))
         )}
       </div>

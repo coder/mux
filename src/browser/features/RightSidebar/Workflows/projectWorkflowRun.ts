@@ -55,6 +55,10 @@ export interface WorkflowStepView {
   error?: string;
   /** Optional usage overlay resolved from the step's task workspace. */
   usage?: WorkflowStepUsage;
+  /** Nested workflow run spawned by this step, when the step delegates to another workflow. */
+  nestedWorkflowRunId?: string;
+  nestedWorkflowName?: string;
+  nestedWorkflowStatus?: Extract<WorkflowRunEvent, { type: "workflow" }>["status"];
 }
 
 export interface WorkflowPhaseView {
@@ -242,6 +246,10 @@ export function projectWorkflowRun(
   const stepFirstEventSeq = new Map<string, number>();
   const stepTitle = new Map<string, string>();
   const stepTaskEventIds = new Map<string, Set<string>>();
+  const stepNestedWorkflowEvents = new Map<
+    string,
+    Extract<WorkflowRunEvent, { type: "workflow" }>
+  >();
   for (const event of events) {
     const stepId = stepBearingEventStepId(event);
     if (stepId == null) {
@@ -257,6 +265,11 @@ export function projectWorkflowRun(
       } else {
         stepTaskEventIds.set(stepId, new Set([event.taskId]));
       }
+    }
+    if (event.type === "workflow") {
+      // Keep the latest event for the row so the sidebar can show the current nested-run status
+      // and fetch the child run at the exact point where the parent delegated to it.
+      stepNestedWorkflowEvents.set(stepId, event);
     }
     if (!stepTitle.has(stepId)) {
       if (event.type === "task" && event.title != null && event.title.length > 0) {
@@ -295,6 +308,7 @@ export function projectWorkflowRun(
       step.taskId != null && stepTaskEventIds.get(step.stepId)?.has(step.taskId) === true
         ? step.taskId
         : undefined;
+    const nestedWorkflowEvent = stepNestedWorkflowEvents.get(step.stepId);
     return {
       stepId: step.stepId,
       taskId: step.taskId,
@@ -308,6 +322,9 @@ export function projectWorkflowRun(
       result: step.result,
       error: step.error,
       usage,
+      nestedWorkflowRunId: nestedWorkflowEvent?.runId,
+      nestedWorkflowName: nestedWorkflowEvent?.name,
+      nestedWorkflowStatus: nestedWorkflowEvent?.status,
     };
   });
 
