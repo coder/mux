@@ -131,6 +131,8 @@ const NestedWorkflowStepPanel: React.FC<{
   const nestedRunId = props.step.nestedWorkflowRunId;
   const withinDepthLimit = props.nestedDepth < MAX_INLINE_NESTED_WORKFLOW_DEPTH;
   const fallbackActive = isWorkflowStepNestedStatusActive(props.step.nestedWorkflowStatus);
+  // Poll while the panel is mounted: checkpoint retries can reuse the child run id without a new
+  // parent started event, so the durable child record is the source of truth for live progress.
   const childRunState = useWorkflowRunById({
     workspaceId: props.workspaceId,
     runId: nestedRunId,
@@ -139,7 +141,7 @@ const NestedWorkflowStepPanel: React.FC<{
       props.workspaceId != null &&
       withinDepthLimit &&
       (props.parentOpen || fallbackActive),
-    pollWhileActive: fallbackActive,
+    pollWhileActive: true,
   });
   const childRun = childRunState.run;
   const childView = childRun != null ? projectWorkflowRun(childRun) : null;

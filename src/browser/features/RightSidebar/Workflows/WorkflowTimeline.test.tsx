@@ -389,6 +389,27 @@ describe("WorkflowTimeline", () => {
     expect(view.getByText("running · 0/1 steps · child-phase")).toBeDefined();
   });
 
+  test("uses active child run progress when the parent nested event is terminal", async () => {
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(makeChildWorkflowRun()),
+      },
+    };
+    const staleParentView = makeNestedWorkflowParentView();
+    staleParentView.phases[0].failed = true;
+    staleParentView.phases[0].steps[0].status = "failed";
+    staleParentView.phases[0].steps[0].nestedWorkflowStatus = "failed";
+
+    const view = renderWithWorkflowApi(
+      <WorkflowTimeline view={staleParentView} workspaceId="workspace-main" />,
+      client
+    );
+
+    await waitFor(() => {
+      expect(view.getByText("running · 0/1 steps · child-phase")).toBeDefined();
+    });
+  });
+
   test("auto-opens an active nested workflow when the child event arrives after mount", async () => {
     const client = {
       workflows: {
