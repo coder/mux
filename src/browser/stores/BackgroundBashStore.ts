@@ -9,6 +9,25 @@ const EMPTY_PROCESSES: BackgroundProcessInfo[] = [];
 const BASH_RETRY_BASE_MS = 250;
 const BASH_RETRY_MAX_MS = 5_000;
 
+function areMonitorSnapshotsEqual(
+  a: BackgroundProcessInfo["monitor"],
+  b: BackgroundProcessInfo["monitor"]
+): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  return (
+    a.filter === b.filter &&
+    a.filter_exclude === b.filter_exclude &&
+    a.cooldown_ms === b.cooldown_ms &&
+    a.max_events === b.max_events &&
+    a.totalMatches === b.totalMatches &&
+    a.droppedLines === b.droppedLines &&
+    a.stopped === b.stopped &&
+    a.lastLines.length === b.lastLines.length &&
+    a.lastLines.every((line, index) => line === b.lastLines[index])
+  );
+}
+
 function areProcessesEqual(a: BackgroundProcessInfo[], b: BackgroundProcessInfo[]): boolean {
   if (a === b) return true;
   if (a.length !== b.length) return false;
@@ -21,6 +40,7 @@ function areProcessesEqual(a: BackgroundProcessInfo[], b: BackgroundProcessInfo[
       proc.displayName === other.displayName &&
       proc.startTime === other.startTime &&
       proc.status === other.status &&
+      areMonitorSnapshotsEqual(proc.monitor, other.monitor) &&
       proc.exitCode === other.exitCode
     );
   });

@@ -47,6 +47,16 @@ export const BackgroundProcesses: AppStory = {
               script: "npm run dev",
               displayName: "Dev Server",
               startTime: Date.now() - 45000, // 45 seconds ago
+              monitor: {
+                filter: "FAILED|ERROR",
+                filter_exclude: false,
+                cooldown_ms: 1000,
+                max_events: 3,
+                totalMatches: 2,
+                droppedLines: 0,
+                lastLines: ["ERROR database unavailable", "FAILED health check"],
+                stopped: false,
+              },
               status: "running",
             },
             {

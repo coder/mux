@@ -215,6 +215,84 @@ function createFrontendWorkspaceMetadata(
   };
 }
 
+describe("WorkspaceService bash monitor wakes", () => {
+  test("sends a synthetic wake and marks the record delivered when monitor output matches", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED one"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][0]).toBe(workspaceId);
+      expect(sendSpy.mock.calls[0][1]).toContain("A background bash monitor matched output.");
+      expect(sendSpy.mock.calls[0][1]).toContain("FAILED one");
+      expect(sendSpy.mock.calls[0][3]).toMatchObject({
+        synthetic: true,
+        agentInitiated: true,
+        requireIdle: true,
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("does not send monitor wakes when the owner workspace is missing", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({ config, backgroundProcessManager });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+
+      backgroundProcessManager.emit("monitor:match", "missing-owner", {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId: "missing-owner",
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED one"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+
+      await drainPendingDispatches();
+      expect(sendSpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe("WorkspaceService workflow activity", () => {
   test("caches active workflow run counts and updates emitted activity from status events", async () => {
     const { config, historyService, cleanup } = await createTestHistoryService();
