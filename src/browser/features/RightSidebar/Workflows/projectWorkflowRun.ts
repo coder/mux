@@ -214,6 +214,63 @@ function stepBearingEventStepId(event: WorkflowRunEvent): string | null {
   }
 }
 
+type WorkflowChildEvent = Extract<WorkflowRunEvent, { type: "workflow" }>;
+
+interface WorkflowChildAttempt {
+  firstEvent: WorkflowChildEvent;
+  latestEvent: WorkflowChildEvent;
+}
+
+function getWorkflowChildAttempts(events: readonly WorkflowRunEvent[]): WorkflowChildAttempt[] {
+  const attempts: WorkflowChildAttempt[] = [];
+  const attemptsByKey = new Map<string, WorkflowChildAttempt>();
+  for (const event of events) {
+    if (event.type !== "workflow") {
+      continue;
+    }
+    const key = `${event.stepId}:${event.runId}`;
+    const existing = attemptsByKey.get(key);
+    if (existing != null) {
+      existing.latestEvent = event;
+      continue;
+    }
+    const attempt = { firstEvent: event, latestEvent: event };
+    attemptsByKey.set(key, attempt);
+    attempts.push(attempt);
+  }
+  return attempts;
+}
+
+function workflowChildAttemptOverlapsStep(
+  attempt: WorkflowChildAttempt,
+  step: WorkflowRunRecord["steps"][number]
+): boolean {
+  const childStartedAt = parseTime(attempt.firstEvent.at);
+  const stepStartedAt = parseTime(step.startedAt);
+  const stepCompletedAt =
+    step.completedAt != null ? parseTime(step.completedAt) : Number.POSITIVE_INFINITY;
+  return childStartedAt >= stepStartedAt && childStartedAt <= stepCompletedAt;
+}
+
+function findNestedWorkflowAttemptForStep(
+  step: WorkflowRunRecord["steps"][number],
+  attempts: readonly WorkflowChildAttempt[]
+): WorkflowChildAttempt | null {
+  const matchingAttempts = attempts.filter(
+    (attempt) =>
+      attempt.firstEvent.stepId === step.stepId && workflowChildAttemptOverlapsStep(attempt, step)
+  );
+  if (matchingAttempts.length > 0) {
+    return (
+      [...matchingAttempts].sort((a, b) => b.latestEvent.sequence - a.latestEvent.sequence)[0] ??
+      null
+    );
+  }
+
+  const sameStepAttempts = attempts.filter((attempt) => attempt.firstEvent.stepId === step.stepId);
+  return sameStepAttempts.length === 1 ? (sameStepAttempts[0] ?? null) : null;
+}
+
 export function projectWorkflowRun(
   run: WorkflowRunRecord,
   options: ProjectWorkflowRunOptions = {}
@@ -246,10 +303,7 @@ export function projectWorkflowRun(
   const stepFirstEventSeq = new Map<string, number>();
   const stepTitle = new Map<string, string>();
   const stepTaskEventIds = new Map<string, Set<string>>();
-  const stepNestedWorkflowEvents = new Map<
-    string,
-    Extract<WorkflowRunEvent, { type: "workflow" }>
-  >();
+  const nestedWorkflowAttempts = getWorkflowChildAttempts(events);
   for (const event of events) {
     const stepId = stepBearingEventStepId(event);
     if (stepId == null) {
@@ -265,11 +319,6 @@ export function projectWorkflowRun(
       } else {
         stepTaskEventIds.set(stepId, new Set([event.taskId]));
       }
-    }
-    if (event.type === "workflow") {
-      // Keep the latest event for the row so the sidebar can show the current nested-run status
-      // and fetch the child run at the exact point where the parent delegated to it.
-      stepNestedWorkflowEvents.set(stepId, event);
     }
     if (!stepTitle.has(stepId)) {
       if (event.type === "task" && event.title != null && event.title.length > 0) {
@@ -308,7 +357,10 @@ export function projectWorkflowRun(
       step.taskId != null && stepTaskEventIds.get(step.stepId)?.has(step.taskId) === true
         ? step.taskId
         : undefined;
-    const nestedWorkflowEvent = stepNestedWorkflowEvents.get(step.stepId);
+    const nestedWorkflowEvent = findNestedWorkflowAttemptForStep(
+      step,
+      nestedWorkflowAttempts
+    )?.latestEvent;
     return {
       stepId: step.stepId,
       taskId: step.taskId,

@@ -94,21 +94,28 @@ const WorkflowStepNode: React.FC<{ step: WorkflowStepView; color: string }> = (p
 };
 
 /**
- * Disclosure state that opens when `failed` is initially true AND auto-opens if the value
- * transitions to true later — e.g. a live run whose phase/step fails after it first mounted while
- * running, where a plain `useState(failed)` would keep the stale collapsed state. Uses React's
- * "adjust state during render" pattern (no effect). The user can still collapse it afterward;
- * only a fresh false→true transition forces it open.
+ * Disclosure state that opens when a signal is initially true AND auto-opens if the value
+ * transitions to true later — e.g. a live run whose phase/step fails, or a nested workflow event
+ * arriving after the parent row has already mounted. Uses React's "adjust state during render"
+ * pattern (no effect). The user can still collapse it afterward; only a fresh false→true
+ * transition forces it open.
  */
-function useDisclosureOpenOnFailure(
+function useDisclosureOpenOnSignal(
   failed: boolean,
   defaultOpen = false
 ): readonly [boolean, React.Dispatch<React.SetStateAction<boolean>>] {
   const [open, setOpen] = React.useState(failed || defaultOpen);
   const [prevFailed, setPrevFailed] = React.useState(failed);
+  const [prevDefaultOpen, setPrevDefaultOpen] = React.useState(defaultOpen);
   if (failed !== prevFailed) {
     setPrevFailed(failed);
     if (failed) {
+      setOpen(true);
+    }
+  }
+  if (defaultOpen !== prevDefaultOpen) {
+    setPrevDefaultOpen(defaultOpen);
+    if (defaultOpen) {
       setOpen(true);
     }
   }
@@ -188,7 +195,7 @@ const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
   const expandable = step.status === "completed" || step.status === "failed" || hasNestedWorkflow;
   // Surface failures by default (including live failures that arrive after the row mounted while
   // running); active nested workflows also start open so their child progress is visible.
-  const [open, setOpen] = useDisclosureOpenOnFailure(
+  const [open, setOpen] = useDisclosureOpenOnSignal(
     step.status === "failed",
     hasNestedWorkflow &&
       (step.status === "running" || isWorkflowStepNestedStatusActive(step.nestedWorkflowStatus))
@@ -361,7 +368,7 @@ const WorkflowPhaseSection: React.FC<WorkflowPhaseSectionProps> = (props) => {
   // default to keep a fanned-out run (20+ steps) scannable — except failed phases, which start
   // open so the failure (and the failed step's error) is visible without a manual expand.
   const hasBody = phase.steps.length > 0 || hasInfo;
-  const [open, setOpen] = useDisclosureOpenOnFailure(phase.failed);
+  const [open, setOpen] = useDisclosureOpenOnSignal(phase.failed);
 
   const headerContent = (
     <>

@@ -389,6 +389,41 @@ describe("WorkflowTimeline", () => {
     expect(view.getByText("running · 0/1 steps · child-phase")).toBeDefined();
   });
 
+  test("auto-opens an active nested workflow when the child event arrives after mount", async () => {
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(makeChildWorkflowRun()),
+      },
+    };
+    const initialView = makeNestedWorkflowParentView();
+    delete initialView.phases[0].steps[0].nestedWorkflowRunId;
+    delete initialView.phases[0].steps[0].nestedWorkflowName;
+    delete initialView.phases[0].steps[0].nestedWorkflowStatus;
+    const withApi = (timelineView: WorkflowRunView) => (
+      <APIContext.Provider
+        value={{
+          status: "connected",
+          api: client as never,
+          error: null,
+          authenticate: () => undefined,
+          retry: () => undefined,
+        }}
+      >
+        <WorkflowTimeline view={timelineView} workspaceId="workspace-main" />
+      </APIContext.Provider>
+    );
+
+    const view = render(withApi(initialView));
+    fireEvent.click(view.getByRole("button", { name: "delegate 0/1" }));
+    expect(view.queryByText("Nested workflow implementation-loop")).toBeNull();
+
+    view.rerender(withApi(makeNestedWorkflowParentView()));
+
+    await waitFor(() => {
+      expect(view.getByText("Nested workflow implementation-loop")).toBeDefined();
+    });
+  });
+
   test("renders final report stat chips as bold key before value", () => {
     const { container } = render(<WorkflowTimeline view={makeCompletedView()} />);
 
