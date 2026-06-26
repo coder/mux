@@ -77,6 +77,23 @@ describe("BashMonitorWakeStore", () => {
     expect(pending.map((record) => record.lines)).toEqual([["ERROR two"]]);
   });
 
+  test("markDeliveredSnapshot preserves matches merged during delivery", async () => {
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR one"], totalMatches: 1 }));
+    const snapshot = (await store.listPending("owner-1"))[0];
+    expect(snapshot).toBeDefined();
+    if (!snapshot) throw new Error("Expected pending snapshot");
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR two"], totalMatches: 2 }));
+
+    const delivered = await store.markDeliveredSnapshot("owner-1", snapshot);
+
+    expect(delivered).toBe(false);
+    const pending = await store.listPending("owner-1");
+    expect(pending).toHaveLength(1);
+    expect(pending[0].lines).toEqual(["ERROR two"]);
+    expect(pending[0].status).toBe("pending");
+  });
+
   test("listPendingOwnerWorkspaceIds finds pending wakes across session dirs", async () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
     await store.enqueueOrMergePending(payload({ workspaceId: "owner-b" }));

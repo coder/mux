@@ -99,6 +99,18 @@ function boundLines(lines: readonly string[]): { lines: string[]; droppedLines: 
   return { lines: sanitized.slice(-MAX_WAKE_LINES), droppedLines };
 }
 
+function removeDeliveredLinePrefix(
+  currentLines: readonly string[],
+  deliveredLines: readonly string[]
+): string[] {
+  const hasDeliveredPrefix = deliveredLines.every((line, index) => currentLines[index] === line);
+  if (!hasDeliveredPrefix) {
+    return [...currentLines];
+  }
+
+  return currentLines.slice(deliveredLines.length);
+}
+
 export function buildBashMonitorWakePrompt(records: readonly BashMonitorWakeRecord[]): string {
   assert(records.length > 0, "buildBashMonitorWakePrompt requires at least one record");
   const sections = records.map((record) => {
@@ -231,6 +243,48 @@ export class BashMonitorWakeStore {
     }
     ownerWorkspaceIds.sort();
     return ownerWorkspaceIds;
+  }
+
+  async markDeliveredSnapshot(
+    ownerWorkspaceId: string,
+    snapshot: BashMonitorWakeRecord
+  ): Promise<boolean> {
+    assert(snapshot.id.trim().length > 0, "markDeliveredSnapshot requires snapshot id");
+    const key = `${ownerWorkspaceId}:${snapshot.id}`;
+    return this.locks.withLock(key, async () => {
+      const current = await this.get(ownerWorkspaceId, snapshot.id);
+      if (current?.status !== "pending") return true;
+
+      if (current.updatedAt === snapshot.updatedAt) {
+        await this.write({
+          ...current,
+          status: "delivered",
+          updatedAt: new Date().toISOString(),
+          deliveredAt: new Date().toISOString(),
+        });
+        return true;
+      }
+
+      const remainingLines = removeDeliveredLinePrefix(current.lines, snapshot.lines);
+      const remainingDroppedLines = Math.max(0, current.droppedLines - snapshot.droppedLines);
+      if (remainingLines.length === 0 && remainingDroppedLines === 0) {
+        await this.write({
+          ...current,
+          status: "delivered",
+          updatedAt: new Date().toISOString(),
+          deliveredAt: new Date().toISOString(),
+        });
+        return true;
+      }
+
+      await this.write({
+        ...current,
+        lines: remainingLines,
+        droppedLines: remainingDroppedLines,
+        updatedAt: new Date().toISOString(),
+      });
+      return false;
+    });
   }
 
   async markDelivered(ownerWorkspaceId: string, id: string): Promise<void> {

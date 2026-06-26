@@ -1727,10 +1727,18 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const prompt = buildBashMonitorWakePrompt(pending);
-    const markDelivered = async (records: readonly BashMonitorWakeRecord[]) => {
+    const markDelivered = async (records: readonly BashMonitorWakeRecord[]): Promise<boolean> => {
+      let hasUndeliveredMergedMatches = false;
       for (const record of records) {
-        await this.bashMonitorWakeStore.markDelivered(ownerWorkspaceId, record.id);
+        const delivered = await this.bashMonitorWakeStore.markDeliveredSnapshot(
+          ownerWorkspaceId,
+          record
+        );
+        if (!delivered) {
+          hasUndeliveredMergedMatches = true;
+        }
       }
+      return hasUndeliveredMergedMatches;
     };
 
     const sendResult = await this.sendMessage(ownerWorkspaceId, prompt, sendOptions, {
@@ -1751,7 +1759,10 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    await markDelivered(pending);
+    const hasUndeliveredMergedMatches = await markDelivered(pending);
+    if (hasUndeliveredMergedMatches) {
+      this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+    }
   }
 
   private readonly policyService?: PolicyService;
