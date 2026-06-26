@@ -244,6 +244,54 @@ describe("projectWorkflowRun — phase grouping & step folding", () => {
     expect(verify2?.taskWorkspaceId).toBe("ws-verify-2");
   });
 
+  test("uses the current retried task id for row navigation", () => {
+    const events: WorkflowRunEvent[] = [
+      { sequence: 1, type: "phase", at: at(1), name: "Verify" },
+      {
+        sequence: 2,
+        type: "task",
+        at: at(1),
+        stepId: "verify",
+        taskId: "ws-verify-old",
+        status: "started",
+        title: "Verify claim",
+      },
+      {
+        sequence: 3,
+        type: "task",
+        at: at(5),
+        stepId: "verify",
+        taskId: "ws-verify-old",
+        status: "failed",
+        title: "Verify claim",
+      },
+      {
+        sequence: 4,
+        type: "task",
+        at: at(8),
+        stepId: "verify",
+        taskId: "ws-verify-new",
+        status: "started",
+        title: "Verify claim",
+      },
+    ];
+    const steps: WorkflowStepRecord[] = [
+      {
+        stepId: "verify",
+        inputHash: "h-new",
+        status: "started",
+        taskId: "ws-verify-new",
+        startedAt: at(8),
+      },
+    ];
+
+    const view = projectWorkflowRun(makeRun({ events, steps }));
+
+    const verify = view.steps.find((step) => step.stepId === "verify");
+    expect(verify?.taskId).toBe("ws-verify-new");
+    expect(verify?.taskWorkspaceId).toBe("ws-verify-new");
+  });
+
   test("aggregates run stats and arg entries", () => {
     expect(view.stats).toMatchObject({ total: 5, done: 4, running: 1, failed: 0 });
     expect(view.stats.elapsedMs).toBe(74_000);

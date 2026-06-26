@@ -241,7 +241,7 @@ export function projectWorkflowRun(
   // the ungrouped bucket even when a phase was active.
   const stepFirstEventSeq = new Map<string, number>();
   const stepTitle = new Map<string, string>();
-  const stepTaskWorkspaceId = new Map<string, string>();
+  const stepTaskEventIds = new Map<string, Set<string>>();
   for (const event of events) {
     const stepId = stepBearingEventStepId(event);
     if (stepId == null) {
@@ -250,8 +250,13 @@ export function projectWorkflowRun(
     if (!stepFirstEventSeq.has(stepId)) {
       stepFirstEventSeq.set(stepId, event.sequence);
     }
-    if (event.type === "task" && !stepTaskWorkspaceId.has(stepId)) {
-      stepTaskWorkspaceId.set(stepId, event.taskId);
+    if (event.type === "task") {
+      const taskEventIds = stepTaskEventIds.get(stepId);
+      if (taskEventIds != null) {
+        taskEventIds.add(event.taskId);
+      } else {
+        stepTaskEventIds.set(stepId, new Set([event.taskId]));
+      }
     }
     if (!stepTitle.has(stepId)) {
       if (event.type === "task" && event.title != null && event.title.length > 0) {
@@ -286,10 +291,14 @@ export function projectWorkflowRun(
         ? Math.max(0, parseTime(step.completedAt) - parseTime(step.startedAt))
         : undefined;
     const usage = step.taskId != null ? usageByTaskId?.get(step.taskId) : undefined;
+    const taskWorkspaceId =
+      step.taskId != null && stepTaskEventIds.get(step.stepId)?.has(step.taskId) === true
+        ? step.taskId
+        : undefined;
     return {
       stepId: step.stepId,
       taskId: step.taskId,
-      taskWorkspaceId: stepTaskWorkspaceId.get(step.stepId),
+      taskWorkspaceId,
       status: STEP_STATUS_TO_DISPLAY[step.status],
       title: stepTitle.get(step.stepId) ?? step.result?.title ?? step.stepId,
       phaseName,
