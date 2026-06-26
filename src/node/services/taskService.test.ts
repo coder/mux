@@ -29,6 +29,7 @@ import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataServi
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { IdleDispatcher } from "@/node/services/idleDispatcher";
+import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
 import { TaskHandleStore } from "@/node/services/taskHandleStore";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
@@ -369,6 +370,8 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages: ReturnType<typeof mock>;
     isBusyForMessage: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+    waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
+    waitForIdle: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
     archive: ReturnType<typeof mock>;
     deleteWorktree: ReturnType<typeof mock>;
@@ -390,6 +393,8 @@ function createWorkspaceServiceMocks(
   hasQueuedWorkspaceTurn: ReturnType<typeof mock>;
   hasQueuedMessages: ReturnType<typeof mock>;
   isBusyForMessage: ReturnType<typeof mock>;
+  waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
+  waitForIdle: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   archive: ReturnType<typeof mock>;
@@ -415,6 +420,9 @@ function createWorkspaceServiceMocks(
   const isBusyForMessage = overrides?.isBusyForMessage ?? mock(() => false);
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
+  const waitForIdleAndNoQueuedMessages =
+    overrides?.waitForIdleAndNoQueuedMessages ?? mock((): Promise<void> => Promise.resolve());
+  const waitForIdle = overrides?.waitForIdle ?? mock((): Promise<void> => Promise.resolve());
   const waitForPendingStreamErrorRecoveryDecision =
     overrides?.waitForPendingStreamErrorRecoveryDecision ??
     mock((): Promise<void> => Promise.resolve());
@@ -453,6 +461,8 @@ function createWorkspaceServiceMocks(
       hasQueuedWorkspaceTurn,
       hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
+      waitForIdleAndNoQueuedMessages,
+      waitForIdle,
       waitForPendingStreamErrorRecoveryDecision,
       archive,
       deleteWorktree,
@@ -473,6 +483,8 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages,
     isBusyForMessage,
     hasPendingQueuedOrPreparingTurn,
+    waitForIdleAndNoQueuedMessages,
+    waitForIdle,
     waitForPendingStreamErrorRecoveryDecision,
     archive,
     deleteWorktree,
@@ -1886,6 +1898,899 @@ describe("TaskService", () => {
     expect(childConfig?.taskStatus).toBeUndefined();
   });
 
+  test("notify_on_terminal workspace turn wakes the owner via task_await on completion", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["handle", "turn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+
+    // Register the child workspace the handle points at.
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "workspace-turn"),
+        id: "childworkspace",
+        name: "workspace-turn",
+        title: "Workspace turn",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+      return cfg;
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const workspaceMocks = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const createdAt = "2026-06-19T00:00:00.000Z";
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      pendingTerminalAttentionDrains: Set<Promise<void>>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_1",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Done" }],
+    });
+
+    // Drain runs asynchronously; await any in-flight drains before asserting.
+    await Promise.all([...internal.pendingTerminalAttentionDrains]);
+
+    const wakeCall = sendMessage.mock.calls.find(
+      (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
+    );
+    expect(wakeCall).toBeDefined();
+    const prompt = wakeCall?.[1] as string;
+    expect(prompt).toContain("task_await");
+    expect(prompt).toContain("timeout_secs: 0");
+    expect(wakeCall?.[3]).toMatchObject({ synthetic: true, requireIdle: true });
+
+    // Restart-safe dedupe marker is persisted.
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+  });
+
+  test("notify_on_terminal workspace turn defers wake-up while owner has a queued turn", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["handle", "turn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "workspace-turn"),
+        id: "childworkspace",
+        name: "workspace-turn",
+        title: "Workspace turn",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+      return cfg;
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    // Owner is preparing/queuing a user turn: terminal wake-up must NOT inject ahead of it.
+    const hasPendingQueuedOrPreparingTurn = mock(() => true);
+    const workspaceMocks = createWorkspaceServiceMocks({
+      sendMessage,
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const createdAt = "2026-06-19T00:00:00.000Z";
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "running",
+      createdAt,
+      updatedAt: createdAt,
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      pendingTerminalAttentionDrains: Set<Promise<void>>;
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_1",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Done" }],
+    });
+    await Promise.all([...internal.pendingTerminalAttentionDrains]);
+
+    // No wake-up sent while a queued/preparing turn exists.
+    const wakeCall = sendMessage.mock.calls.find(
+      (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
+    );
+    expect(wakeCall).toBeUndefined();
+
+    // Notification remains pending; once the owner is idle, draining delivers it.
+    hasPendingQueuedOrPreparingTurn.mockImplementation(() => false);
+    await internal.drainTerminalAttention(parentId);
+    const drained = sendMessage.mock.calls.find(
+      (call) => typeof call[1] === "string" && call[1].includes("wst_handle")
+    );
+    expect(drained).toBeDefined();
+  });
+
+  test("coalesced workspace-turn errors do not turn completed sub-agent handoff into failure", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_error",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "error",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const prompt = String(sendMessage.mock.calls[0]?.[1]);
+    expect(prompt).toContain("Background sub-agent task(s) have completed");
+    expect(prompt).not.toContain("failed terminally");
+    expect(prompt).toContain("wst_error");
+    expect(prompt).toContain("task_await");
+  });
+
+  test("terminal wake-up waits for queued owner turn to clear", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let ownerPending = true;
+    const hasPendingQueuedOrPreparingTurn = mock(() => ownerPending);
+    const hasQueuedMessages = mock(() => ownerPending);
+    let releaseIdle!: () => void;
+    const waitForIdleAndNoQueuedMessages = mock(
+      (): Promise<void> =>
+        new Promise((resolve) => {
+          releaseIdle = resolve;
+        })
+    );
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage,
+      hasPendingQueuedOrPreparingTurn,
+      hasQueuedMessages,
+      waitForIdleAndNoQueuedMessages,
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+    await Promise.resolve();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+
+    ownerPending = false;
+    releaseIdle();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("terminal wake-up waits for pending auto-retry to clear", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let ownerPendingAutoRetry = true;
+    const hasPendingQueuedOrPreparingTurn = mock(() => ownerPendingAutoRetry);
+    let releaseRetryCleared!: () => void;
+    const waitForIdleAndNoQueuedMessages = mock(
+      (): Promise<void> =>
+        new Promise((resolve) => {
+          releaseRetryCleared = resolve;
+        })
+    );
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage,
+      hasPendingQueuedOrPreparingTurn,
+      waitForIdleAndNoQueuedMessages,
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+    await Promise.resolve();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(waitForIdleAndNoQueuedMessages).toHaveBeenCalledWith(parentId);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+
+    ownerPendingAutoRetry = false;
+    releaseRetryCleared();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("terminal wake-up retries without idle-only flag after completion-phase busy", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let acceptQueuedFallback: (() => Promise<void> | void) | undefined;
+    const sendMessage = mock(
+      (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: { requireIdle?: boolean; onAccepted?: () => Promise<void> | void }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        if (internal?.requireIdle === true) {
+          return Promise.resolve(
+            Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+          );
+        }
+        acceptQueuedFallback = internal?.onAccepted;
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({ requireIdle: true });
+    expect(sendMessage.mock.calls[1]?.[3]).not.toMatchObject({ requireIdle: true });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+    expect(acceptQueuedFallback).toBeDefined();
+    await acceptQueuedFallback?.();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("terminal wake-up reschedules when queued fallback is canceled", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let idleFailuresRemaining = 1;
+    let cancelQueuedFallback: ((reason: string) => Promise<void> | void) | undefined;
+    const sendMessage = mock(
+      (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: {
+          requireIdle?: boolean;
+          onCanceled?: (reason: string) => Promise<void> | void;
+        }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        if (internal?.requireIdle === true && idleFailuresRemaining > 0) {
+          idleFailuresRemaining -= 1;
+          return Promise.resolve(
+            Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+          );
+        }
+        if (internal?.requireIdle !== true) {
+          cancelQueuedFallback = internal?.onCanceled;
+        }
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+    expect(cancelQueuedFallback).toBeDefined();
+
+    await cancelQueuedFallback?.("cleared");
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage.mock.calls[2]?.[3]).toMatchObject({ requireIdle: true });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("terminal wake-up re-pends when queued fallback fails before stream", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    let idleFailuresRemaining = 1;
+    let acceptQueuedFallback: (() => Promise<void> | void) | undefined;
+    let failQueuedFallback: ((error: SendMessageError) => Promise<void> | void) | undefined;
+    const sendMessage = mock(
+      (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: {
+          requireIdle?: boolean;
+          onAccepted?: () => Promise<void> | void;
+          onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+        }
+      ): Promise<Result<void, { type: string; raw: string }>> => {
+        if (internal?.requireIdle === true && idleFailuresRemaining > 0) {
+          idleFailuresRemaining -= 1;
+          return Promise.resolve(
+            Err({ type: "unknown", raw: "Workspace is busy; idle-only send was skipped." })
+          );
+        }
+        if (internal?.requireIdle !== true) {
+          acceptQueuedFallback = internal?.onAccepted;
+          failQueuedFallback = internal?.onAcceptedPreStreamFailure;
+        }
+        return Promise.resolve(Ok(undefined));
+      }
+    );
+    let releaseIdle!: () => void;
+    const waitForIdleAndNoQueuedMessages = mock(
+      (): Promise<void> =>
+        new Promise((resolve) => {
+          releaseIdle = resolve;
+        })
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage,
+      waitForIdleAndNoQueuedMessages,
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+    await acceptQueuedFallback?.();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+
+    await failQueuedFallback?.({ type: "unknown", raw: "pre-stream failure" });
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+
+    releaseIdle();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sendMessage.mock.calls[2]?.[3]).toMatchObject({ requireIdle: true });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("terminal wake-up drains are serialized per owner", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    let releaseSend!: () => void;
+    const sendReleased = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    let sawFirstSend!: () => void;
+    const firstSendSeen = new Promise<void>((resolve) => {
+      sawFirstSend = resolve;
+    });
+    const sendMessage = mock(async (..._args: unknown[]): Promise<Result<void>> => {
+      sawFirstSend();
+      await sendReleased;
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      enqueueTerminalAttention: (params: {
+        ownerWorkspaceId: string;
+        sourceKind: "agent_task";
+        sourceId: string;
+        outputDelivery: "already_injected";
+        terminalOutcome: "completed";
+      }) => Promise<void>;
+    };
+
+    await Promise.all([
+      internal.enqueueTerminalAttention({
+        ownerWorkspaceId: parentId,
+        sourceKind: "agent_task",
+        sourceId: "task-a",
+        outputDelivery: "already_injected",
+        terminalOutcome: "completed",
+      }),
+      internal.enqueueTerminalAttention({
+        ownerWorkspaceId: parentId,
+        sourceKind: "agent_task",
+        sourceId: "task-b",
+        outputDelivery: "already_injected",
+        terminalOutcome: "completed",
+      }),
+    ]);
+    await firstSendSeen;
+    await Promise.resolve();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    releaseSend();
+    await flushTerminalAttentionDrains(taskService);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  test("terminal wake-up drain ignores nested workflow runs", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: "wfr_top_notify",
+      workspaceId: parentId,
+      workflow: {
+        name: "top",
+        description: "Top workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'top' }; }\n",
+      args: {},
+      attentionPolicy: "notify_on_terminal",
+      now: "2026-06-19T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_top_notify", "running", "2026-06-19T00:00:01.000Z");
+    await runStore.createRun({
+      id: "wfr_nested_internal",
+      workspaceId: parentId,
+      workflow: {
+        name: "nested",
+        description: "Nested workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'nested' }; }\n",
+      args: {},
+      parentWorkflow: { runId: "wfr_top_notify", stepId: "nested", inputHash: "hash", depth: 0 },
+      now: "2026-06-19T00:00:02.000Z",
+    });
+    await runStore.appendStatus("wfr_nested_internal", "running", "2026-06-19T00:00:03.000Z");
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(
+      "Background sub-agent task(s) have completed"
+    );
+  });
+
+  test("terminal workflow wake-up reconstructs durable result context", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const runId = "wfr_terminal_notify";
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: runId,
+      workspaceId: parentId,
+      workflow: {
+        name: "research",
+        description: "Research workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      attentionPolicy: "notify_on_terminal",
+      now: "2026-06-19T00:00:00.000Z",
+    });
+    await runStore.appendStatus(runId, "running", "2026-06-19T00:00:01.000Z");
+    await runStore.appendNextEvent(runId, {
+      type: "result",
+      at: "2026-06-19T00:00:02.000Z",
+      result: { reportMarkdown: "Workflow finished", structuredOutput: { ok: true } },
+    });
+    await runStore.appendStatus(runId, "completed", "2026-06-19T00:00:03.000Z");
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.enqueueWorkflowRunTerminalAttention({
+      ownerWorkspaceId: parentId,
+      runId,
+      status: "completed",
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const prompt = String(sendMessage.mock.calls[0]?.[1]);
+    expect(prompt).toContain("mux_workflow_result");
+    expect(prompt).toContain("Workflow finished");
+    expect(prompt).toContain(runId);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("workflow task_await consumption tombstones later terminal wake-ups", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const runId = "wfr_consumed_terminal_notify";
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: runId,
+      workspaceId: parentId,
+      workflow: {
+        name: "consumed",
+        description: "Consumed workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'consumed' }; }\n",
+      args: {},
+      attentionPolicy: "notify_on_terminal",
+      now: "2026-06-19T00:00:00.000Z",
+    });
+    await runStore.appendStatus(runId, "running", "2026-06-19T00:00:01.000Z");
+    await runStore.appendNextEvent(runId, {
+      type: "result",
+      at: "2026-06-19T00:00:02.000Z",
+      result: { reportMarkdown: "Already consumed" },
+    });
+    await runStore.appendStatus(runId, "completed", "2026-06-19T00:00:03.000Z");
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.markWorkflowRunTerminalAttentionConsumed({
+      ownerWorkspaceId: parentId,
+      runId,
+      status: "completed",
+    });
+    await taskService.enqueueWorkflowRunTerminalAttention({
+      ownerWorkspaceId: parentId,
+      runId,
+      status: "completed",
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+
+    await taskService.resetWorkflowRunTerminalAttention({ ownerWorkspaceId: parentId, runId });
+    await taskService.enqueueWorkflowRunTerminalAttention({
+      ownerWorkspaceId: parentId,
+      runId,
+      status: "completed",
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("Already consumed");
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("startup recovery persists terminal workflow wake-ups", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const runId = "wfr_recovered_terminal_notify";
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: runId,
+      workspaceId: parentId,
+      workflow: {
+        name: "recovered",
+        description: "Recovered workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'recovered' }; }\n",
+      args: {},
+      attentionPolicy: "notify_on_terminal",
+      now: "2026-06-19T00:00:00.000Z",
+    });
+    await runStore.appendStatus(runId, "running", "2026-06-19T00:00:01.000Z");
+    await runStore.appendNextEvent(runId, {
+      type: "result",
+      at: "2026-06-19T00:00:02.000Z",
+      result: { reportMarkdown: "Recovered workflow result" },
+    });
+    await runStore.appendStatus(runId, "completed", "2026-06-19T00:00:03.000Z");
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      recoverTerminalWorkflowRunAttentionNotifications: () => Promise<number>;
+    };
+
+    expect(await internal.recoverTerminalWorkflowRunAttentionNotifications()).toBe(1);
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("Recovered workflow result");
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("initialize drains persisted terminal wake-ups from before restart", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_restart_pending",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("wst_restart_pending");
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("timeout_secs: 0");
+    expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({
+      synthetic: true,
+      agentInitiated: true,
+      requireIdle: true,
+    });
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+  });
+
+  test("initialize recovers terminal notify workspace turns without pending notification", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const handleId = "wst_restart_missing_notification";
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "completed",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+      reportMarkdown: "Done before notification persisted",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(handleId);
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, handleId);
+    expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+  });
+
+  test("initialize defers terminal wake-up while blocking task-owned work is active", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "task_done",
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_blocking_active",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
+      handleId: "wst_blocking_active",
+      ownerWorkspaceId: parentId,
+    });
+
+    await taskService.initialize();
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+  });
+
   test("workspace-turn stream-end with non-stop finish marks the handle error", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
@@ -1986,6 +2891,50 @@ describe("TaskService", () => {
     expect(snapshot).toMatchObject({ status: "running", workspaceId: "childworkspace" });
     expect(workspaceMocks.sendMessage).toHaveBeenCalledTimes(2);
     expect(workspaceMocks.sendMessage.mock.calls[1]?.[0]).toBe("childworkspace");
+  });
+
+  test("workspace-turn stream-end ignores nonblocking notify descendants", async () => {
+    const { config, parentId, projectPath, taskService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const project = Array.from(cfg.projects.values())[0];
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "notify-descendant-task"),
+        id: "notify-descendant-task",
+        name: "notify-descendant-task",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        taskAttentionPolicy: "notify_on_terminal",
+      });
+      return cfg;
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_notify_only",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Final text despite background work" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({ status: "completed", workspaceId: "childworkspace" });
+    expect(snapshot).not.toMatchObject({ deferredMessageIds: ["msg_notify_only"] });
   });
 
   test("workspace-turn deferred stream-end does not finalize the handle", async () => {
@@ -6515,7 +7464,99 @@ describe("TaskService", () => {
     );
   });
 
-  test("one-shot exemption — first stream-end suppressed, second stream-end nudges", async () => {
+  test("notify_on_terminal child does not force await across multiple stream-ends", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-notify";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-notify", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    for (const messageId of ["assistant-root-1", "assistant-root-2"]) {
+      await handleTaskServiceStreamEndForTest(taskService, {
+        type: "stream-end",
+        workspaceId: rootWorkspaceId,
+        messageId,
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+    }
+
+    // notify_on_terminal is durable: neither stream-end forces a task_await nudge.
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("notify_on_terminal child subtree does not leak blocking grandchildren to owner", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-notify";
+    const grandchildTaskId = "task-grandchild";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-notify", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+        projectWorkspace(projectPath, "grandchild-task", grandchildTaskId, {
+          name: "agent_explore_grandchild",
+          parentWorkspaceId: childTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("queue-backgrounded foreground wait stays suppressed across multiple stream-ends", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6553,39 +7594,29 @@ describe("TaskService", () => {
     const waitError = await waitPromise.catch((error: unknown) => error);
     expect(waitError).toBeInstanceOf(ForegroundWaitBackgroundedError);
 
-    await handleTaskServiceStreamEndForTest(taskService, {
-      type: "stream-end",
-      workspaceId: rootWorkspaceId,
-      messageId: "assistant-root-1",
-      metadata: { model: "openai:gpt-5.2" },
-      parts: [],
-    });
+    for (const messageId of ["assistant-root-1", "assistant-root-2"]) {
+      await handleTaskServiceStreamEndForTest(taskService, {
+        type: "stream-end",
+        workspaceId: rootWorkspaceId,
+        messageId,
+        metadata: { model: "openai:gpt-5.2" },
+        parts: [],
+      });
+    }
 
-    // First stream-end: exemption active → no nudge.
+    // Detaching a foreground wait via a queued message now persists notify_on_terminal,
+    // so neither stream-end re-forces a task_await nudge (durable, not one-shot).
     expect(sendMessage).not.toHaveBeenCalled();
 
-    await handleTaskServiceStreamEndForTest(taskService, {
-      type: "stream-end",
-      workspaceId: rootWorkspaceId,
-      messageId: "assistant-root-2",
-      metadata: { model: "openai:gpt-5.2" },
-      parts: [],
-    });
-
-    // Second stream-end: exemption consumed → nudge fires.
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(childTaskId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    // The persisted policy is durable.
+    const persisted = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((w) => w.id === childTaskId);
+    expect(persisted?.taskAttentionPolicy).toBe("notify_on_terminal");
   });
 
-  test("multiple queue-backgrounded tasks — one-shot exemptions consumed together", async () => {
+  test("multiple queue-backgrounded tasks stay durably non-blocking", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6659,28 +7690,111 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(taskAId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(taskBId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    // Both detached waits persist notify_on_terminal, so a later stream-end never re-forces await.
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("renewed foreground wait clears stale queue-backgrounded exemption", async () => {
+  test("markBackgroundWorkNotifyOnTerminal makes a timed-out wait durably non-blocking", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "task-timeout";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child-task-timeout", childTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    // Simulate the task tool's timeout-detach: the foreground wait exceeded its budget but the task
+    // keeps running, so it is marked notify_on_terminal.
+    await taskService.markBackgroundWorkNotifyOnTerminal(childTaskId, rootWorkspaceId);
+
+    const persisted = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((w) => w.id === childTaskId);
+    expect(persisted?.taskAttentionPolicy).toBe("notify_on_terminal");
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: rootWorkspaceId,
+      messageId: "assistant-root",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [],
+    });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("markBackgroundWorkNotifyOnTerminal wakes for terminal workspace-turn records", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const handleId = "wst_timeout_race";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: rootWorkspaceId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "completed",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "Done before notify policy persisted",
+    });
+
+    // Simulates the race Codex caught: the workspace turn settled before the queued/timeout detach
+    // persisted notify_on_terminal, so the persistence helper must enqueue the missing wake-up.
+    await taskService.markBackgroundWorkNotifyOnTerminal(handleId, rootWorkspaceId);
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(handleId);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("timeout_secs: 0");
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(rootWorkspaceId, handleId);
+    expect(snapshot?.attentionPolicy).toBe("notify_on_terminal");
+    expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+  });
+
+  test("renewed foreground wait does not re-promote durable notify policy to blocking", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -6737,16 +7851,15 @@ describe("TaskService", () => {
       parts: [],
     });
 
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      rootWorkspaceId,
-      expect.stringContaining(childTaskId),
-      expect.objectContaining({
-        model: "openai:gpt-5.2",
-        thinkingLevel: "medium",
-      }),
-      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
-    );
+    // The first detachment persisted notify_on_terminal durably. A later explicit foreground
+    // wait (even though it times out) must NOT re-promote the work to blocking, so no nudge fires.
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const persisted = config
+      .loadConfigOrDefault()
+      .projects.get(projectPath)
+      ?.workspaces.find((w) => w.id === childTaskId);
+    expect(persisted?.taskAttentionPolicy).toBe("notify_on_terminal");
   });
 
   test("mixed descendants — nudges only for non-queue-backgrounded tasks", async () => {
@@ -7055,6 +8168,12 @@ describe("TaskService", () => {
       ],
     });
 
+    // The completed-subagent wake-up is delivered by the async terminal-attention drain.
+    await Promise.all([
+      ...(taskService as unknown as { pendingTerminalAttentionDrains: Set<Promise<void>> })
+        .pendingTerminalAttentionDrains,
+    ]);
+
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const handoffPrompt = (sendMessage as unknown as { mock: { calls: Array<[string, string]> } })
       .mock.calls[0]?.[1];
@@ -7133,6 +8252,104 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
     const parentHistory = await collectFullHistory(historyService, parentWorkspaceId);
     expect(JSON.stringify(parentHistory)).not.toContain("<mux_subagent_report>");
+  });
+
+  test("pending injected report wake-up drains after foreground-awaited sibling completes", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-pending-sibling-report";
+    const backgroundChildId = "task-background-report";
+    const foregroundChildId = "task-foreground-report";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "background-child", backgroundChildId, {
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+        projectWorkspace(projectPath, "foreground-child", foregroundChildId, {
+          parentWorkspaceId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const foregroundWaiter = taskService.waitForAgentReport(foregroundChildId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentWorkspaceId,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: backgroundChildId,
+      messageId: "assistant-background-output",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-background",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Background result", title: "Background" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(await terminalAttentionStore.listPending(parentWorkspaceId)).toHaveLength(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: foregroundChildId,
+      messageId: "assistant-foreground-output",
+      metadata: { model: "openai:gpt-5.2" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-foreground",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Foreground result", title: "Foreground" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    const foregroundReport = await foregroundWaiter;
+    expect(foregroundReport.reportMarkdown).toBe("Foreground result");
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      parentWorkspaceId,
+      expect.stringContaining("Background sub-agent task(s) have completed"),
+      expect.anything(),
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
+    );
+    expect(await terminalAttentionStore.listPending(parentWorkspaceId)).toHaveLength(0);
   });
 
   test("foreground waiter suppresses tasks-completed auto-resume notification", async () => {
@@ -9463,6 +10680,110 @@ describe("TaskService", () => {
     expect(ws?.taskStatus).toBe("running");
   });
 
+  test("does not force await or report while task-owned notify_on_terminal descendants are active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const descendantTaskId = "task-333";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+        projectWorkspace(projectPath, "child-task", descendantTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
+  });
+
+  test("keeps agent_report blocked while task-owned notify_on_terminal descendants are active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const descendantTaskId = "task-333";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+        projectWorkspace(projectPath, "child-task", descendantTaskId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Premature report", title: "Too early" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(
+      await readSubagentReportArtifact(config.getSessionDir(rootWorkspaceId), parentTaskId)
+    ).toBeNull();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
+  });
+
   test("does not accept agent_report while task-owned workspace turns are still active", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -9543,6 +10864,186 @@ describe("TaskService", () => {
       .flatMap((p) => p.workspaces)
       .find((w) => w.id === parentTaskId);
     expect(ws?.taskStatus).toBe("running");
+  });
+
+  test("does not force await or report while task-owned notify_on_terminal workspace turns are active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const workspaceTurnId = "workspace-turn-child";
+    const workspaceTurnHandleId = "wst_childturn_notify";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+      ],
+      testTaskSettings()
+    );
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: workspaceTurnHandleId,
+      ownerWorkspaceId: parentTaskId,
+      workspaceId: workspaceTurnId,
+      turnId: "turn-1",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set(workspaceTurnId, {
+      handleId: workspaceTurnHandleId,
+      ownerWorkspaceId: parentTaskId,
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
+  });
+
+  test("does not force await or report while task-owned notify_on_terminal workflow runs are active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const workflowRunId = "wfr_task_notify";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentTaskId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentTaskId,
+      workflow: {
+        name: "child-workflow",
+        description: "Child workflow",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+      args: {},
+      attentionPolicy: "notify_on_terminal",
+      now: "2026-06-19T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-19T00:00:01.000Z");
+    await recordAgentWorkflowRunReference({
+      workspaceSessionDir: config.getSessionDir(parentTaskId),
+      runId: workflowRunId,
+      createdAtMs: 1_000,
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: parentTaskId,
+      messageId: "assistant-parent-task",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const ws = findWorkspaceInConfig(config, parentTaskId);
+    expect(ws?.taskStatus).toBe("running");
+  });
+
+  test("initialize does not request agent_report while task-owned notify_on_terminal work is active", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-222";
+    const workspaceTurnId = "workspace-turn-child";
+    const workspaceTurnHandleId = "wst_childturn_notify";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+        }),
+      ],
+      testTaskSettings()
+    );
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: workspaceTurnHandleId,
+      ownerWorkspaceId: parentTaskId,
+      workspaceId: workspaceTurnId,
+      turnId: "turn-1",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    (
+      taskService as unknown as {
+        activeWorkspaceTurnHandleByWorkspaceId: Map<
+          string,
+          { handleId: string; ownerWorkspaceId: string }
+        >;
+      }
+    ).activeWorkspaceTurnHandleByWorkspaceId.set(workspaceTurnId, {
+      handleId: workspaceTurnHandleId,
+      ownerWorkspaceId: parentTaskId,
+    });
+
+    await taskService.initialize();
+
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("reverts awaiting_report to running on stream end while task has active descendants", async () => {
@@ -9963,6 +11464,18 @@ describe("TaskService", () => {
         handleStreamEnd: (streamEndEvent: StreamEndEvent) => Promise<void>;
       }
     ).handleStreamEnd(event);
+  }
+
+  async function flushTerminalAttentionDrains(taskService: TaskService): Promise<void> {
+    // Terminal wake-ups are delivered by an async drain; await any in-flight drains, then await
+    // again in case a drain scheduled another (idempotent, settles quickly).
+    for (let i = 0; i < 3; i++) {
+      const drains = (
+        taskService as unknown as { pendingTerminalAttentionDrains: Set<Promise<void>> }
+      ).pendingTerminalAttentionDrains;
+      if (drains.size === 0) break;
+      await Promise.all([...drains]);
+    }
   }
 
   async function finalizeReportedChildTaskForTest(params: {
@@ -14141,6 +15654,7 @@ describe("TaskService", () => {
 
     // One recovery prompt to the child (stream-end), then — after the terminal
     // settlement — one failure handoff waking the idle parent (no waiter).
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
@@ -14281,6 +15795,7 @@ describe("TaskService", () => {
 
     // No agent_report recovery prompt goes to the child. The only send is the
     // failure handoff waking the idle parent (no foreground waiter existed).
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
     expect(String(sendMessage.mock.calls[0]?.[1])).toContain("failed terminally");
@@ -14519,6 +16034,7 @@ describe("TaskService", () => {
     expect(messagesAfterSecondFailure).toHaveLength(2);
     expect(messagesAfterSecondFailure[1]).toContain(childBId);
 
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
     expect(String(sendMessage.mock.calls[0]?.[1])).toContain("failed terminally");
@@ -14628,6 +16144,7 @@ describe("TaskService", () => {
 
     // Breaker tripped: no further recovery prompt to the child; the task
     // settles terminally and the only send wakes the idle parent.
+    await flushTerminalAttentionDrains(taskService);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
 

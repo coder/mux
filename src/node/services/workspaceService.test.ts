@@ -1106,6 +1106,68 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     return { aiService, config, historyService, workspaceService, goalService, cleanup };
   }
 
+  test("idle wait follows auto-retry startup into the resumed stream", async () => {
+    const { workspaceService, cleanup } = await createServices();
+    const workspaceId = "idle-wait-auto-retry-starting";
+    const chatEvents = new EventEmitter();
+    let busy = false;
+    let pendingAutoRetry = true;
+    const idleWaiters: Array<() => void> = [];
+    const waitForIdle = mock(() => {
+      if (!busy) {
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        idleWaiters.push(resolve);
+      });
+    });
+    interface WaitSessionEvent {
+      message: { type: string };
+    }
+    const session = {
+      isBusy: mock(() => busy),
+      hasQueuedMessages: mock(() => false),
+      hasPendingAutoRetry: mock(() => pendingAutoRetry),
+      waitForIdle,
+      onChatEvent: mock((listener: (event: WaitSessionEvent) => void) => {
+        chatEvents.on("chat-event", listener);
+        return () => chatEvents.off("chat-event", listener);
+      }),
+    } as unknown as AgentSession;
+    const internalWorkspaceService = workspaceService as unknown as {
+      sessions: Map<string, AgentSession>;
+    };
+
+    try {
+      internalWorkspaceService.sessions.set(workspaceId, session);
+      let resolved = false;
+      const waitPromise = workspaceService.waitForIdleAndNoQueuedMessages(workspaceId).then(() => {
+        resolved = true;
+      });
+      await Promise.resolve();
+
+      chatEvents.emit("chat-event", { message: { type: "auto-retry-starting" } });
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+
+      busy = true;
+      chatEvents.emit("chat-event", { message: { type: "stream-lifecycle" } });
+      await waitForCondition(() => idleWaiters.length === 1);
+      expect(resolved).toBe(false);
+
+      busy = false;
+      pendingAutoRetry = false;
+      idleWaiters.splice(0).forEach((resolve) => resolve());
+      await waitPromise;
+
+      expect(resolved).toBe(true);
+      expect(waitForIdle).toHaveBeenCalledTimes(1);
+    } finally {
+      internalWorkspaceService.sessions.delete(workspaceId);
+      await cleanup();
+    }
+  });
+
   test("full chat clear preserves the goal and requires user acknowledgment", async () => {
     const { config, historyService, workspaceService, goalService, cleanup } =
       await createServices();

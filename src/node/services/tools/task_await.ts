@@ -405,12 +405,26 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         return parseWorkflowRun(run);
       };
 
+      const markWorkflowTerminalAttentionConsumed = async (
+        run: WorkflowRunRecord
+      ): Promise<void> => {
+        if (!isTerminalWorkflowRunStatus(run.status)) {
+          return;
+        }
+        await taskService.markWorkflowRunTerminalAttentionConsumed?.({
+          ownerWorkspaceId: workspaceId,
+          status: run.status,
+          runId: run.id,
+        });
+      };
+
       const awaitWorkflowRun = async (runId: string, taskSignal: AbortSignal) => {
         let run = await getWorkflowRun(runId);
         if (run == null) {
           return { status: "not_found" as const, taskId: runId };
         }
         if (timeoutMs === 0 || isTerminalWorkflowRunStatus(run.status)) {
+          await markWorkflowTerminalAttentionConsumed(run);
           return buildWorkflowAwaitResult(run);
         }
 
@@ -439,6 +453,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           run = nextRun;
         }
 
+        await markWorkflowTerminalAttentionConsumed(run);
         return buildWorkflowAwaitResult(run);
       };
 

@@ -3,6 +3,7 @@ import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 import assert from "@/common/utils/assert";
+import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflowRetryEligibility";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
@@ -194,6 +195,159 @@ export default function workflow() { return { reportMarkdown: "done" }; }
       { workspaceId: "workspace-1", runId: "wfr_demo", status: "pending" },
       { workspaceId: "workspace-1", runId: "wfr_demo", status: "completed" },
     ]);
+  });
+
+  test("background workflow starts persist notify_on_terminal policy", async () => {
+    using tmp = new DisposableTempDir("workflow-service-background-notify");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      generateRunId: () => "wfr_background_notify",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startWorkflowInBackground({
+      script: createScript(
+        `export default function workflow() { return { reportMarkdown: "done" }; }\n`
+      ),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    expect(result).toMatchObject({
+      runId: "wfr_background_notify",
+      status: "running",
+      result: null,
+    });
+    await expect(runStore.getRun("wfr_background_notify")).resolves.toMatchObject({
+      attentionPolicy: "notify_on_terminal",
+    });
+  });
+
+  test("foreground workflows that self-background persist notify_on_terminal policy", async () => {
+    using tmp = new DisposableTempDir("workflow-service-self-background-notify");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    let agentCalls = 0;
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          agentCalls += 1;
+          if (agentCalls === 1) {
+            throw new ForegroundWaitBackgroundedError();
+          }
+          return {
+            taskId: "task-resumed",
+            reportMarkdown: "resumed",
+            structuredOutput: { summary: "resumed" },
+          };
+        },
+      },
+      generateRunId: () => "wfr_self_background_notify",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startWorkflow({
+      script: createScript(`export default async function workflow({ agent }) {
+  const child = await agent("Wait for queued message", {
+    id: "wait-for-queue",
+    schema: { type: "object", required: ["summary"], properties: { summary: { type: "string" } } },
+  });
+  return { reportMarkdown: child.summary };
+}
+`),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+    });
+
+    expect(result).toEqual({
+      runId: "wfr_self_background_notify",
+      status: "backgrounded",
+      result: null,
+    });
+    await expect(runStore.getRun("wfr_self_background_notify")).resolves.toMatchObject({
+      attentionPolicy: "notify_on_terminal",
+    });
+  });
+
+  test("background checkpoint retry persists notify_on_terminal policy", async () => {
+    using tmp = new DisposableTempDir("workflow-service-checkpoint-retry-notify");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_checkpoint_retry_notify",
+      workspaceId: "workspace-1",
+      workflow: {
+        name: "demo",
+        description: "Workflow script ./workflows/demo.js",
+        scope: "project",
+        executable: true,
+      },
+      source: `export default function workflow() { return { reportMarkdown: "retried" }; }\n`,
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(
+      "wfr_checkpoint_retry_notify",
+      "running",
+      "2026-05-29T00:00:01.000Z"
+    );
+    await runStore.appendNextEvent("wfr_checkpoint_retry_notify", {
+      type: "error",
+      at: "2026-05-29T00:00:02.000Z",
+      message: WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE,
+    });
+    await runStore.appendStatus(
+      "wfr_checkpoint_retry_notify",
+      "failed",
+      "2026-05-29T00:00:03.000Z"
+    );
+
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:04.000Z",
+        nowMs: () => 4_000,
+      },
+    });
+
+    const result = await service.retryRunFromCheckpointInBackground({
+      workspaceId: "workspace-1",
+      runId: "wfr_checkpoint_retry_notify",
+      projectTrusted: true,
+    });
+
+    expect(result).toMatchObject({
+      runId: "wfr_checkpoint_retry_notify",
+      status: "running",
+      result: null,
+    });
+    await expect(runStore.getRun("wfr_checkpoint_retry_notify")).resolves.toMatchObject({
+      attentionPolicy: "notify_on_terminal",
+    });
   });
 
   test("does not continue canceled foreground workflows in the background", async () => {

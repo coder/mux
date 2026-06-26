@@ -250,6 +250,7 @@ describe("agentSkillsService", () => {
     // Should include project/global skills plus built-in skills
     // Note: deep-review skill is a project skill in the Mux repo, not a built-in
     expect(skills.map((s) => s.name)).toEqual([
+      "background-monitors",
       "bar",
       "deep-research",
       "foo",
@@ -661,6 +662,7 @@ describe("agentSkillsService", () => {
     const diagnostics = await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
 
     expect(diagnostics.skills.map((s) => s.name)).toEqual([
+      "background-monitors",
       "deep-research",
       "foo",
       "init",

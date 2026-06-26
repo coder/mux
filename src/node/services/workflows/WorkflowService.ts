@@ -7,6 +7,7 @@ import {
   type WorkflowRunRecord,
   type WorkflowRunStatus,
 } from "@/common/types/workflow";
+import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getWorkflowCheckpointRetryEligibility } from "@/common/utils/workflowRetryEligibility";
@@ -85,6 +86,12 @@ export interface StartWorkflowInput {
   onBackgroundRunCreated?: (event: WorkflowBackgroundRunCreatedEvent) => Promise<void> | void;
   abortSignal?: AbortSignal;
   backgroundOnMessageQueued?: boolean;
+  /**
+   * Background runs persist "notify_on_terminal" so the owner's stream-end does not force a
+   * task_await; foreground/default runs omit this (blocking). Terminal wake-up for background runs
+   * is handled by AIService.onBackgroundRunTerminal.
+   */
+  attentionPolicy?: BackgroundWorkAttentionPolicy;
 }
 
 export interface StartNamedWorkflowResult {
@@ -314,6 +321,9 @@ export class WorkflowService {
     const run = await this.requireRunForWorkspace(input);
     assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
     assertWorkflowRunCanRetryFromCheckpoint(run);
+    // A checkpoint retry dispatched in the background is non-blocking just like background resume:
+    // persist notify_on_terminal before starting the background runner.
+    await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
     await this.runInBackground(input.runId, "Background workflow checkpoint retry failed:", {
       allowRetryFromFailedCheckpoint: true,
       projectTrusted: input.projectTrusted,
@@ -330,6 +340,9 @@ export class WorkflowService {
     const run = await this.requireRunForWorkspace(input);
     assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
     assertWorkflowRunCanTransition(run.status, "running");
+    // A run resumed in the background becomes non-blocking; persist so future stream-ends do not
+    // re-force a task_await even if the run was originally started in the foreground.
+    await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
     await this.runInBackground(input.runId, "Background workflow resume failed:", {
       allowResumeFromInterrupted: run.status === "interrupted",
       projectTrusted: input.projectTrusted,
@@ -432,6 +445,7 @@ export class WorkflowService {
         // silently reverted back to `running`. Likewise skip the continuation entirely
         // when this call was aborted (interruptRunOnAbort aborts our runner controller and
         // is concurrently transitioning the run to `interrupted`).
+        await this.runStore.setAttentionPolicy(runId, "notify_on_terminal");
         await this.notifyRunStatusChanged(input.run, "backgrounded");
         if (!runnerAbortController.signal.aborted) {
           void this.runInBackground(runId, input.backgroundedFailureMessage, {
@@ -454,7 +468,10 @@ export class WorkflowService {
   }
 
   async startWorkflowInBackground(input: StartWorkflowInput): Promise<StartNamedWorkflowResult> {
-    const createdRun = await this.createWorkflowRun(input);
+    const createdRun = await this.createWorkflowRun({
+      ...input,
+      attentionPolicy: "notify_on_terminal",
+    });
     const runId = createdRun.id;
     await this.notifyRunStatusChanged(createdRun);
     await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
@@ -507,6 +524,7 @@ export class WorkflowService {
       return { runId, status: "completed", result };
     } catch (error) {
       if (error instanceof WorkflowRunBackgroundedError) {
+        await this.runStore.setAttentionPolicy(runId, "notify_on_terminal");
         await this.notifyRunStatusChanged(createdRun, "backgrounded");
         if (!runnerAbortController.signal.aborted) {
           void this.runInBackground(runId, "Backgrounded workflow run failed:", {
@@ -679,6 +697,7 @@ export class WorkflowService {
       workflow: buildWorkflowScriptDescriptor(input.script),
       source: input.script.source,
       args: normalized.args,
+      ...(input.attentionPolicy != null ? { attentionPolicy: input.attentionPolicy } : {}),
       now: this.clock?.nowIso() ?? new Date().toISOString(),
     });
   }

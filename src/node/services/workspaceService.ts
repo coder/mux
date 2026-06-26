@@ -7449,6 +7449,54 @@ export class WorkspaceService extends EventEmitter {
     await session?.waitForPendingStreamErrorRecoveryDecision();
   }
 
+  async waitForIdle(workspaceId: string): Promise<void> {
+    const session = this.sessions.get(workspaceId.trim());
+    await session?.waitForIdle();
+  }
+
+  async waitForIdleAndNoQueuedMessages(workspaceId: string): Promise<void> {
+    const session = this.sessions.get(workspaceId.trim());
+    if (!session) {
+      return;
+    }
+
+    while (session.isBusy() || session.hasQueuedMessages() || session.hasPendingAutoRetry()) {
+      if (session.isBusy()) {
+        await session.waitForIdle();
+        continue;
+      }
+
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          unsubscribe();
+          resolve();
+        };
+        const unsubscribe = session.onChatEvent((event) => {
+          const eventType = event.message.type;
+          const retryStartedOrTurnPhaseChanged =
+            eventType === "auto-retry-starting" ||
+            eventType === "auto-retry-scheduled" ||
+            eventType === "stream-lifecycle";
+          const queuedOrRetryCleared =
+            (eventType === "queued-message-changed" || eventType === "auto-retry-abandoned") &&
+            !session.hasQueuedMessages() &&
+            !session.hasPendingAutoRetry();
+          if (retryStartedOrTurnPhaseChanged || queuedOrRetryCleared) {
+            finish();
+          }
+        });
+        if (!session.hasQueuedMessages() && !session.hasPendingAutoRetry()) {
+          finish();
+        }
+      });
+    }
+  }
+
   hasPendingQueuedOrPreparingTurn(workspaceId: string): boolean {
     const session = this.sessions.get(workspaceId.trim());
     if (!session) {

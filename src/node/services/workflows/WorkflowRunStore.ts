@@ -23,6 +23,7 @@ import {
   type WorkflowRunStatus,
   type WorkflowStepRecord,
 } from "@/common/types/workflow";
+import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
@@ -54,6 +55,8 @@ export interface CreateWorkflowRunInput {
   /** Existing persisted source snapshots may still contain agentType; new runs default to false. */
   agentTypeAliasAllowed?: boolean;
   parentWorkflow?: WorkflowRunParent;
+  /** Background runs persist "notify_on_terminal"; foreground/default omit (defaults to blocking). */
+  attentionPolicy?: BackgroundWorkAttentionPolicy;
   now: string;
 }
 
@@ -119,6 +122,7 @@ export class WorkflowRunStore {
       agentOutputSchemaRequired: input.agentOutputSchemaRequired ?? true,
       agentTypeAliasAllowed: input.agentTypeAliasAllowed ?? false,
       ...(input.parentWorkflow != null ? { parentWorkflow: input.parentWorkflow } : {}),
+      ...(input.attentionPolicy != null ? { attentionPolicy: input.attentionPolicy } : {}),
       status: "pending",
       createdAt: input.now,
       updatedAt: input.now,
@@ -326,6 +330,24 @@ export class WorkflowRunStore {
     options: AppendWorkflowRunEventOptions = {}
   ): Promise<WorkflowRunRecord> {
     return await this.appendNextEvent(runId, { type: "status", at, status }, options);
+  }
+
+  /**
+   * Persist the attention policy on an existing run record. Used when a foreground/default run is
+   * resumed in the background and must become non-blocking (notify_on_terminal) for future
+   * stream-ends. No-op when the policy already matches.
+   */
+  async setAttentionPolicy(
+    runId: string,
+    attentionPolicy: BackgroundWorkAttentionPolicy
+  ): Promise<void> {
+    await this.withWorkflowMutationLock(runId, async () => {
+      const run = await this.getRunUnlocked(runId);
+      if (run.attentionPolicy === attentionPolicy) {
+        return;
+      }
+      await this.writeRunFile(runId, { ...run, attentionPolicy });
+    });
   }
 
   async recordStepStarted(

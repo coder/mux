@@ -137,6 +137,7 @@ import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAs
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
 import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
+import { isTerminalWorkflowRunStatus } from "@/common/types/workflow";
 import {
   WORKFLOW_RESULT_METADATA_TYPE,
   buildWorkflowResultContextMessage,
@@ -1775,9 +1776,15 @@ export class AIService extends EventEmitter {
               runStore: new WorkflowRunStore({
                 sessionDir: this.config.getSessionDir(workspaceId),
               }),
-              ...(this.onWorkflowRunStatusChanged != null
-                ? { onRunStatusChanged: this.onWorkflowRunStatusChanged }
-                : {}),
+              onRunStatusChanged: async (event) => {
+                if (!isTerminalWorkflowRunStatus(event.status)) {
+                  await this.taskService?.resetWorkflowRunTerminalAttention({
+                    ownerWorkspaceId: event.workspaceId,
+                    runId: event.runId,
+                  });
+                }
+                await this.onWorkflowRunStatusChanged?.(event);
+              },
               runtimeFactory: new QuickJSRuntimeFactory(),
               taskAdapterFactory: (runId, workflowName) =>
                 new WorkflowTaskServiceAdapter({
@@ -1812,6 +1819,18 @@ export class AIService extends EventEmitter {
               // terminal result back as a hidden user turn so the parent agent continues
               // instead of leaving the user staring at the workflow report payload.
               onBackgroundRunTerminal: async ({ runId, status, result, run }) => {
+                if (run.parentWorkflow != null) {
+                  return;
+                }
+                if (this.taskService != null) {
+                  await this.taskService.enqueueWorkflowRunTerminalAttention({
+                    ownerWorkspaceId: workspaceId,
+                    runId,
+                    status,
+                  });
+                  return;
+                }
+
                 const continuationSender = this.workflowResultContinuationSender;
                 if (continuationSender == null) {
                   log.warn("Workflow completed but no continuation sender is configured", {

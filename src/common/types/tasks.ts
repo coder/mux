@@ -25,6 +25,14 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   preserveSubagentsUntilArchive: false,
 };
 
+export {
+  BACKGROUND_WORK_ATTENTION_POLICIES,
+  BackgroundWorkAttentionPolicySchema,
+  DEFAULT_BACKGROUND_WORK_ATTENTION_POLICY,
+  resolveBackgroundWorkAttentionPolicy,
+  type BackgroundWorkAttentionPolicy,
+} from "./backgroundWorkAttention";
+
 const AGENT_DEFAULT_IDS_EXCLUDED_FROM_LEGACY_SUBAGENTS: ReadonlySet<string> = new Set([
   "plan",
   "exec",
