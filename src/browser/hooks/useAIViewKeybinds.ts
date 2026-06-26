@@ -26,11 +26,16 @@ interface UseAIViewKeybindsParams {
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
   setEditingMessage: (editing: EditingMessageState | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
+  // RESUME_STREAM keybind: continue an interrupted stream. Optional so the hook
+  // stays drop-in for callers/tests that don't surface a resume affordance.
+  canResumeInterruptedStream?: boolean; // Whether a resumable interrupted turn is shown
+  resumeInterruptedStream?: () => void; // Continue the interrupted stream
 }
 
 /**
  * Manages keyboard shortcuts for AIView:
  * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (Escape skips text inputs by default)
+ * - Ctrl/Cmd+Shift+Enter: Resume an interrupted stream (when a resumable turn is shown)
  * - Ctrl+I: Focus chat input
  * - Shift+H: Load older transcript messages (when available)
  * - Shift+G: Jump to bottom
@@ -52,6 +57,8 @@ export function useAIViewKeybinds({
   aggregator,
   setEditingMessage,
   vimEnabled,
+  canResumeInterruptedStream = false,
+  resumeInterruptedStream,
 }: UseAIViewKeybindsParams): void {
   const { api } = useAPI();
 
@@ -140,6 +147,18 @@ export function useAIViewKeybinds({
         return;
       }
 
+      // Resume an interrupted stream (inverse of the interrupt keybind). Only
+      // acts when a resumable interrupted turn is shown; otherwise falls through.
+      if (
+        matchesKeybind(e, KEYBINDS.RESUME_STREAM) &&
+        canResumeInterruptedStream &&
+        resumeInterruptedStream
+      ) {
+        e.preventDefault();
+        if (!dialogOpen) resumeInterruptedStream();
+        return;
+      }
+
       // Don't handle other shortcuts if user is typing in an input field
       if (dialogOpen || isEditableElement(e.target)) {
         return;
@@ -180,6 +199,8 @@ export function useAIViewKeybinds({
     aggregator,
     setEditingMessage,
     vimEnabled,
+    canResumeInterruptedStream,
+    resumeInterruptedStream,
     api,
   ]);
 }

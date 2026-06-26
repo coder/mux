@@ -18,6 +18,7 @@ import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import { useTranscriptContextMenu } from "@/browser/features/Messages/useTranscriptContextMenu";
 import type { UserMessageNavigation } from "@/browser/features/Messages/UserMessage";
 import { InterruptedBarrier } from "@/browser/features/Messages/ChatBarrier/InterruptedBarrier";
+import { useResumeStream } from "@/browser/hooks/useResumeStream";
 import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "@/browser/features/Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "@/browser/features/Messages/ChatBarrier/RetryBarrier";
@@ -1056,6 +1057,22 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       interruptedBarrierMessageIds.add(message.id);
     }
   }
+
+  // Resume is owned here (not in the divider) so the click and keybind paths
+  // share one instance/error, and so unmounting a transient divider can't cancel
+  // an in-flight retry. autoRetryOnFailure:false keeps the user-abort "continue
+  // once" semantic. resumeStream always continues the history tail, so only the
+  // divider on the writable resume target is interactive.
+  const { resume: resumeInterruptedStreamAsync, error: resumeInterruptedError } = useResumeStream(
+    workspaceId,
+    { autoRetryOnFailure: false }
+  );
+  // Adapt the async resume to the void-returning shape the click/keybind props expect.
+  const resumeInterruptedStream = () => void resumeInterruptedStreamAsync();
+  const interruptedTailResumable =
+    !transcriptOnly &&
+    lastRetryCandidateMessage != null &&
+    interruptedBarrierMessageIds.has(lastRetryCandidateMessage.id);
   const transcriptTailItems: TranscriptTailStackItem[] = [];
   if (shouldMountRetryBarrier) {
     transcriptTailItems.push(
@@ -1126,6 +1143,8 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     aggregator,
     setEditingMessage,
     vimEnabled,
+    canResumeInterruptedStream: interruptedTailResumable,
+    resumeInterruptedStream,
   });
 
   // Clear editing state if the message being edited no longer exists
@@ -1260,13 +1279,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
         )}
         {isAtCutoff && <EditCutoffBarrier />}
         {interruptedBarrierMessageIds.has(message.id) && (
-          // Only the divider on the resume target (history tail) is clickable;
-          // resumeStream always continues the tail, so older partial dividers
-          // must stay decorative to avoid resuming the wrong turn. Transcript-only
-          // (archived, no-checkout) workspaces are read-only, so resume stays off.
           <InterruptedBarrier
-            workspaceId={workspaceId}
-            resumable={!transcriptOnly && message.id === lastRetryCandidateMessage?.id}
+            resumable={interruptedTailResumable && message.id === lastRetryCandidateMessage?.id}
+            onResume={resumeInterruptedStream}
+            error={resumeInterruptedError}
           />
         )}
       </React.Fragment>

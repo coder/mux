@@ -1,85 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
-
-import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
-
-interface MockWorkspaceState {
-  autoRetryStatus: null;
-  isStreamStarting: boolean;
-  canInterrupt: boolean;
-  messages: Array<Record<string, unknown>>;
-}
-
-function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): MockWorkspaceState {
-  return {
-    autoRetryStatus: null,
-    isStreamStarting: false,
-    canInterrupt: false,
-    messages: [
-      {
-        type: "user",
-        id: "user-1",
-        historyId: "user-1",
-        content: "Hello",
-        historySequence: 1,
-      },
-    ],
-    ...overrides,
-  };
-}
-
-let currentWorkspaceState = createWorkspaceState();
-
-type ResumeStreamResult =
-  | { success: true; data: { started: boolean } }
-  | { success: false; error: { type: "runtime_start_failed"; message: string } };
-
-let resumeStreamResult: ResumeStreamResult = {
-  success: true,
-  data: { started: true },
-};
-const resumeStream = mock((_input: unknown) => Promise.resolve(resumeStreamResult));
-const setAutoRetryEnabled = mock((input: unknown) =>
-  Promise.resolve({
-    success: true as const,
-    data: {
-      previousEnabled: true,
-      enabled:
-        typeof input === "object" && input !== null && "enabled" in input
-          ? ((input as { enabled?: boolean }).enabled ?? true)
-          : true,
-    },
-  })
-);
-
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: {
-      workspace: {
-        resumeStream,
-        setAutoRetryEnabled,
-      },
-    },
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
-
-/* eslint-disable @typescript-eslint/no-require-imports */
-const actualWorkspaceStore =
-  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
-/* eslint-enable @typescript-eslint/no-require-imports */
-
-void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  ...actualWorkspaceStore,
-  useWorkspaceState: () => currentWorkspaceState,
-  useWorkspaceStoreRaw: () => ({
-    getWorkspaceState: (_workspaceId: string) => currentWorkspaceState,
-  }),
-}));
 
 import { InterruptedBarrier } from "./InterruptedBarrier";
 
@@ -87,57 +8,44 @@ describe("InterruptedBarrier", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
-
-    currentWorkspaceState = createWorkspaceState();
-    resumeStreamResult = { success: true, data: { started: true } };
-    resumeStream.mockClear();
-    setAutoRetryEnabled.mockClear();
   });
 
   afterEach(() => {
     cleanup();
-    mock.restore();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("clicking the resumable interrupted label resumes the tail without touching auto-retry", async () => {
-    const view = render(<InterruptedBarrier workspaceId="ws-1" resumable />);
-
-    const label = view.getByRole("button", { name: "Continue interrupted response" });
-    fireEvent.click(label);
-
-    await waitFor(() => {
-      expect(resumeStream).toHaveBeenCalledTimes(1);
-    });
-
-    // A user-initiated (Esc) interrupt means "continue once" — it must NOT flip
-    // the auto-retry preference, so the unmount-on-auto-retry path can't cancel
-    // an in-flight scheduled retry.
-    expect(setAutoRetryEnabled).not.toHaveBeenCalled();
-    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({ workspaceId: "ws-1" });
-  });
-
-  test("a non-resumable divider renders no clickable control", () => {
-    const view = render(<InterruptedBarrier workspaceId="ws-1" resumable={false} />);
-
-    expect(view.queryByRole("button")).toBeNull();
-    expect(view.getByText("interrupted")).toBeTruthy();
-  });
-
-  test("surfaces a resume failure so the click is not a silent no-op", async () => {
-    resumeStreamResult = {
-      success: false,
-      error: { type: "runtime_start_failed", message: "Runtime failed to start" },
-    };
-
-    const view = render(<InterruptedBarrier workspaceId="ws-1" resumable />);
+  test("clicking the resumable label invokes onResume", () => {
+    const onResume = mock(() => undefined);
+    const view = render(<InterruptedBarrier resumable onResume={onResume} />);
 
     fireEvent.click(view.getByRole("button", { name: "Continue interrupted response" }));
 
-    await waitFor(() => {
-      expect(view.getByText("Couldn't continue:")).toBeTruthy();
-    });
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  test("a non-resumable divider renders no clickable control", () => {
+    const onResume = mock(() => undefined);
+    const view = render(<InterruptedBarrier resumable={false} onResume={onResume} />);
+
+    expect(view.queryByRole("button")).toBeNull();
+    expect(view.getByText("interrupted")).toBeTruthy();
+    expect(onResume).not.toHaveBeenCalled();
+  });
+
+  test("surfaces a resume failure so the action is not a silent no-op", () => {
+    const view = render(
+      <InterruptedBarrier resumable onResume={() => undefined} error="Runtime failed to start" />
+    );
+
+    expect(view.getByText("Couldn't continue:")).toBeTruthy();
     expect(view.getByText(/Runtime failed to start/)).toBeTruthy();
+  });
+
+  test("does not surface an error on a non-resumable divider", () => {
+    const view = render(<InterruptedBarrier resumable={false} error="ignored" />);
+
+    expect(view.queryByText("Couldn't continue:")).toBeNull();
   });
 });

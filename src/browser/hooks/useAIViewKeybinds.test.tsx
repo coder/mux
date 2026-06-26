@@ -421,4 +421,70 @@ describe("useAIViewKeybinds", () => {
 
     expect(interruptStream.mock.calls.length).toBe(0);
   });
+
+  test("Ctrl+Shift+Enter resumes when a resumable interrupted turn is shown", () => {
+    const resumeInterruptedStream = mock(() => undefined);
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: false,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+      canResumeInterruptedStream: true,
+      resumeInterruptedStream,
+    });
+
+    document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(resumeInterruptedStream.mock.calls.length).toBe(1);
+  });
+
+  test("Ctrl+Shift+Enter does nothing when no resumable turn is shown", () => {
+    const resumeInterruptedStream = mock(() => undefined);
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderUseAIViewKeybinds({
+      workspaceId: "ws",
+      canInterrupt: false,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: () => undefined,
+      handleOpenInEditor: () => undefined,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+      canResumeInterruptedStream: false,
+      resumeInterruptedStream,
+    });
+
+    document.body.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    expect(resumeInterruptedStream.mock.calls.length).toBe(0);
+  });
 });
