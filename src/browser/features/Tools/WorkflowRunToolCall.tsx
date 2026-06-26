@@ -20,6 +20,7 @@ import { WorkflowTimeline } from "@/browser/features/RightSidebar/Workflows/Work
 import { projectWorkflowRun } from "@/browser/features/RightSidebar/Workflows/projectWorkflowRun";
 import { useWorkflowRunById } from "@/browser/hooks/useWorkflowRunById";
 import {
+  isActiveWorkflowChildEventStatus,
   isActiveWorkflowRunStatus,
   type WorkflowRunEvent,
   type WorkflowRunRecord,
@@ -250,10 +251,6 @@ type WorkflowChildDisplayRow = Extract<WorkflowDisplayRow, { kind: "workflow" }>
 type WorkflowPatchRow = Extract<WorkflowDisplayRow, { kind: "patch" }>;
 
 const MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH = 3;
-
-function isWorkflowChildEventActive(status: WorkflowChildEvent["status"]): boolean {
-  return status === "started" || status === "running" || status === "backgrounded";
-}
 
 function getWorkflowChildProgressSummary(run: WorkflowRunRecord | null): string | null {
   if (run == null) {
@@ -666,10 +663,10 @@ function WorkflowChildRunRow(props: {
   const [open, setOpen] = useState(
     () =>
       props.depth < MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH &&
-      isWorkflowChildEventActive(event.status)
+      isActiveWorkflowChildEventStatus(event.status)
   );
   const withinDepthLimit = props.depth < MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH;
-  const fallbackActive = isWorkflowChildEventActive(event.status);
+  const fallbackActive = isActiveWorkflowChildEventStatus(event.status);
   const shouldPollChildRun = open || fallbackActive || props.parentRunActive;
   // Fetch collapsed terminal-looking rows while the parent run is active: checkpoint retries reuse
   // the child run id and may not emit another parent started event. Once the parent is terminal,

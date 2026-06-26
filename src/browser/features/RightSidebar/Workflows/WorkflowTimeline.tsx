@@ -18,7 +18,10 @@ import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import { WorkflowJsonBlock } from "@/browser/features/Tools/WorkflowToolShared";
 import { useWorkflowRunById } from "@/browser/hooks/useWorkflowRunById";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { isActiveWorkflowRunStatus } from "@/common/types/workflow";
+import {
+  isActiveWorkflowChildEventStatus,
+  isActiveWorkflowRunStatus,
+} from "@/common/types/workflow";
 
 import { WorkflowLiveDot } from "./WorkflowBadges";
 import {
@@ -57,12 +60,6 @@ interface WorkflowStepRowProps {
   isLast: boolean;
   workspaceId?: string;
   nestedDepth: number;
-}
-
-function isWorkflowStepNestedStatusActive(
-  status: WorkflowStepView["nestedWorkflowStatus"]
-): boolean {
-  return status === "started" || status === "running" || status === "backgrounded";
 }
 
 function getNestedWorkflowSummary(input: {
@@ -130,7 +127,7 @@ const NestedWorkflowStepPanel: React.FC<{
 }> = (props) => {
   const nestedRunId = props.step.nestedWorkflowRunId;
   const withinDepthLimit = props.nestedDepth < MAX_INLINE_NESTED_WORKFLOW_DEPTH;
-  const fallbackActive = isWorkflowStepNestedStatusActive(props.step.nestedWorkflowStatus);
+  const fallbackActive = isActiveWorkflowChildEventStatus(props.step.nestedWorkflowStatus);
   // Poll while the panel is mounted: checkpoint retries can reuse the child run id without a new
   // parent started event, so the durable child record is the source of truth for live progress.
   const childRunState = useWorkflowRunById({
@@ -201,7 +198,7 @@ const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
   const [open, setOpen] = useDisclosureOpenOnSignal(
     step.status === "failed",
     hasNestedWorkflow &&
-      (step.status === "running" || isWorkflowStepNestedStatusActive(step.nestedWorkflowStatus))
+      (step.status === "running" || isActiveWorkflowChildEventStatus(step.nestedWorkflowStatus))
   );
   const color = WORKFLOW_TONE_VAR[getWorkflowStepTone(step.status)];
   const showReport = hasDisplayableWorkflowReport(

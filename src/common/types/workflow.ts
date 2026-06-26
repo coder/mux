@@ -51,6 +51,29 @@ export function isTerminalWorkflowRunStatus(status: WorkflowRunStatus): boolean 
   return status === "completed" || status === "failed" || status === "interrupted";
 }
 
+/**
+ * Status of a nested-workflow ("child") run event embedded in a parent run's event stream.
+ * Distinct from {@link WorkflowRunStatus}: an in-progress child event reports "started" rather
+ * than the persisted run's "pending".
+ */
+export type WorkflowChildEventStatus = Extract<WorkflowRunEvent, { type: "workflow" }>["status"];
+
+const ACTIVE_WORKFLOW_CHILD_EVENT_STATUSES = new Set<WorkflowChildEventStatus>([
+  "started",
+  "running",
+  "backgrounded",
+]);
+
+/**
+ * Whether a nested-workflow event status represents an in-progress child run. Accepts
+ * null/undefined so callers can pass an optional projected status without their own guard.
+ */
+export function isActiveWorkflowChildEventStatus(
+  status: WorkflowChildEventStatus | null | undefined
+): boolean {
+  return status != null && ACTIVE_WORKFLOW_CHILD_EVENT_STATUSES.has(status);
+}
+
 export function isNestedWorkflowRun(run: { parentWorkflow?: WorkflowRunParent | null }): boolean {
   return run.parentWorkflow != null;
 }
