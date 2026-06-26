@@ -25,14 +25,24 @@ import { isErrnoWithCode } from "@/node/utils/fs";
  */
 export const TERMINAL_ATTENTION_DIR = "terminal-attention";
 
-export type TerminalAttentionOutputDelivery =
-  | "already_injected"
-  | "requires_task_await"
-  | "workflow_result_context";
+// Single-source each notification enum so the exported TS type and the runtime
+// Zod validator below can't drift. Mirrors the `as const` tuple pattern used by
+// the sibling backgroundWorkAttention policy enum.
+const TERMINAL_ATTENTION_OUTPUT_DELIVERIES = [
+  "already_injected",
+  "requires_task_await",
+  "workflow_result_context",
+] as const;
+export type TerminalAttentionOutputDelivery = (typeof TERMINAL_ATTENTION_OUTPUT_DELIVERIES)[number];
 
-export type TerminalAttentionSourceKind = "agent_task" | "workspace_turn" | "workflow_run";
+const TERMINAL_ATTENTION_SOURCE_KINDS = ["agent_task", "workspace_turn", "workflow_run"] as const;
+export type TerminalAttentionSourceKind = (typeof TERMINAL_ATTENTION_SOURCE_KINDS)[number];
 
-export type TerminalAttentionOutcome = "completed" | "failed" | "interrupted" | "error";
+const TERMINAL_ATTENTION_OUTCOMES = ["completed", "failed", "interrupted", "error"] as const;
+export type TerminalAttentionOutcome = (typeof TERMINAL_ATTENTION_OUTCOMES)[number];
+
+const TERMINAL_ATTENTION_STATUSES = ["pending", "delivered", "superseded"] as const;
+export type TerminalAttentionStatus = (typeof TERMINAL_ATTENTION_STATUSES)[number];
 
 export interface TerminalAttentionNotification {
   id: string;
@@ -41,7 +51,7 @@ export interface TerminalAttentionNotification {
   sourceId: string;
   outputDelivery: TerminalAttentionOutputDelivery;
   terminalOutcome: TerminalAttentionOutcome;
-  status: "pending" | "delivered" | "superseded";
+  status: TerminalAttentionStatus;
   title?: string;
   createdAt: string;
   deliveredAt?: string;
@@ -51,11 +61,11 @@ const TerminalAttentionNotificationSchema = z
   .object({
     id: z.string().min(1),
     ownerWorkspaceId: z.string().min(1),
-    sourceKind: z.enum(["agent_task", "workspace_turn", "workflow_run"]),
+    sourceKind: z.enum(TERMINAL_ATTENTION_SOURCE_KINDS),
     sourceId: z.string().min(1),
-    outputDelivery: z.enum(["already_injected", "requires_task_await", "workflow_result_context"]),
-    terminalOutcome: z.enum(["completed", "failed", "interrupted", "error"]),
-    status: z.enum(["pending", "delivered", "superseded"]),
+    outputDelivery: z.enum(TERMINAL_ATTENTION_OUTPUT_DELIVERIES),
+    terminalOutcome: z.enum(TERMINAL_ATTENTION_OUTCOMES),
+    status: z.enum(TERMINAL_ATTENTION_STATUSES),
     title: z.string().optional(),
     createdAt: z.string().min(1),
     deliveredAt: z.string().optional(),
