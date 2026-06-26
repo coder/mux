@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 import { installDom } from "../../../../../tests/ui/dom";
@@ -9,6 +8,21 @@ void mock.module("@/browser/features/Tools/WorkflowToolShared", () => ({
   WorkflowJsonBlock: (props: { value: unknown; ariaLabel: string }) => (
     <pre aria-label={props.ariaLabel}>{JSON.stringify(props.value)}</pre>
   ),
+}));
+
+let workflowTaskWorkspaces = new Map<string, FrontendWorkspaceMetadata>();
+let navigateToWorkspace: (workspaceId: string) => void = () => undefined;
+const workspaceStoreSubscribers = new Set<() => void>();
+
+void mock.module("@/browser/stores/WorkspaceStore", () => ({
+  useWorkspaceStoreRaw: () => ({
+    subscribeDerived: (listener: () => void) => {
+      workspaceStoreSubscribers.add(listener);
+      return () => workspaceStoreSubscribers.delete(listener);
+    },
+    getWorkspaceMetadata: (workspaceId: string) => workflowTaskWorkspaces.get(workspaceId),
+    navigateToWorkspace: (workspaceId: string) => navigateToWorkspace(workspaceId),
+  }),
 }));
 
 import type { WorkflowRunView } from "./projectWorkflowRun";
@@ -25,6 +39,13 @@ function createWorkflowTaskWorkspaceMetadata(workspaceId: string): FrontendWorks
     createdAt: "2026-05-29T00:00:00.000Z",
     runtimeConfig: { type: "local", srcBaseDir: "/tmp/mux-src" },
   };
+}
+
+function syncWorkflowTaskWorkspaces(nextWorkspaces: Map<string, FrontendWorkspaceMetadata>): void {
+  workflowTaskWorkspaces = nextWorkspaces;
+  for (const subscriber of workspaceStoreSubscribers) {
+    subscriber();
+  }
 }
 
 function normalizeText(element: Element): string {
@@ -154,19 +175,20 @@ describe("WorkflowTimeline", () => {
   });
 
   afterEach(() => {
-    useWorkspaceStoreRaw().setNavigateToWorkspace(() => undefined);
-    useWorkspaceStoreRaw().syncWorkspaces(new Map());
     cleanup();
+    navigateToWorkspace = () => undefined;
+    syncWorkflowTaskWorkspaces(new Map());
+    workspaceStoreSubscribers.clear();
     cleanupDom?.();
     cleanupDom = null;
   });
 
   test("opens an available child task workspace from a workflow step", () => {
     const navigatedTo: string[] = [];
-    useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
+    navigateToWorkspace = (workspaceId) => {
       navigatedTo.push(workspaceId);
-    });
-    useWorkspaceStoreRaw().syncWorkspaces(
+    };
+    syncWorkflowTaskWorkspaces(
       new Map([["task_live", createWorkflowTaskWorkspaceMetadata("task_live")]])
     );
 
@@ -192,10 +214,10 @@ describe("WorkflowTimeline", () => {
 
   test("opens completed step details independently from workspace navigation", () => {
     const navigatedTo: string[] = [];
-    useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {
+    navigateToWorkspace = (workspaceId) => {
       navigatedTo.push(workspaceId);
-    });
-    useWorkspaceStoreRaw().syncWorkspaces(
+    };
+    syncWorkflowTaskWorkspaces(
       new Map([["task_completed", createWorkflowTaskWorkspaceMetadata("task_completed")]])
     );
     const view = render(<WorkflowTimeline view={makeCompletedStepView("task_completed")} />);
