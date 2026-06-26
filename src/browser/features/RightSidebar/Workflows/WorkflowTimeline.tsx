@@ -141,6 +141,7 @@ const NestedWorkflowStepPanel: React.FC<{
       props.workspaceId != null &&
       withinDepthLimit &&
       (props.parentOpen || fallbackActive),
+    pollAfterTerminal: true,
     pollWhileActive: true,
   });
   const childRun = childRunState.run;

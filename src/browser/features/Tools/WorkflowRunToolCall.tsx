@@ -675,6 +675,7 @@ function WorkflowChildRunRow(props: {
     workspaceId: props.workspaceId,
     runId: event.runId,
     enabled: props.workspaceId != null && withinDepthLimit,
+    pollAfterTerminal: true,
     pollWhileActive: true,
   });
   const childRun = childRunState.run;

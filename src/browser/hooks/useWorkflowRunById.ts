@@ -53,6 +53,7 @@ export function useWorkflowRunById(input: {
   runId?: string;
   enabled?: boolean;
   pollWhileActive?: boolean;
+  pollAfterTerminal?: boolean;
 }): UseWorkflowRunByIdResult {
   const apiState = useContext(APIContext);
   const [run, setRun] = useState<WorkflowRunRecord | null>(null);
@@ -85,6 +86,7 @@ export function useWorkflowRunById(input: {
         setLoading(false);
         if (
           input.pollWhileActive === true &&
+          input.pollAfterTerminal !== true &&
           nextRun != null &&
           !isActiveWorkflowRunStatus(nextRun.status) &&
           interval != null
@@ -114,7 +116,7 @@ export function useWorkflowRunById(input: {
         window.clearInterval(interval);
       }
     };
-  }, [api, enabled, input.pollWhileActive, runId, workspaceId]);
+  }, [api, enabled, input.pollAfterTerminal, input.pollWhileActive, runId, workspaceId]);
 
   if (run != null && run.id !== runId) {
     return { run: null, loading, error };
