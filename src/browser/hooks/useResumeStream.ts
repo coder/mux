@@ -32,6 +32,15 @@ export interface UseResumeStreamOptions {
    * backend consults the persisted preference on failure regardless.
    */
   autoRetryOnFailure?: boolean;
+
+  /**
+   * Extra identity for the transient UI state (error/isResuming) beyond
+   * workspaceId. When this changes, the hook resets that state so a stale error
+   * can't appear against a different target. The divider passes the resume
+   * target message id, so a failed continue on one interrupted turn never bleeds
+   * onto a later interrupted turn in the same workspace.
+   */
+  resetKey?: string | null;
 }
 
 /**
@@ -56,16 +65,18 @@ export function useResumeStream(
   const [error, setError] = useState<string | null>(null);
   const [isResuming, setIsResuming] = useState(false);
 
-  // ChatPane owns this hook and stays mounted across workspace switches, so
-  // transient per-workspace UI state (error, isResuming) must not bleed into the
-  // next workspace. Reset during render on workspaceId change (React's
-  // "adjust state during render" pattern — no effect needed), and track the
-  // latest id so a resume that resolves after a switch can't write onto it.
-  const latestWorkspaceIdRef = useRef(workspaceId);
-  latestWorkspaceIdRef.current = workspaceId;
-  const [trackedWorkspaceId, setTrackedWorkspaceId] = useState(workspaceId);
-  if (workspaceId !== trackedWorkspaceId) {
-    setTrackedWorkspaceId(workspaceId);
+  // ChatPane owns this hook and stays mounted across workspace switches (and
+  // across changing resume targets), so transient UI state (error, isResuming)
+  // must not bleed across either. Identity = workspaceId + optional resetKey.
+  // Reset during render when identity changes (React's "adjust state during
+  // render" pattern — no effect needed), and track the latest identity so a
+  // resume that resolves after a switch/target change can't write onto it.
+  const identity = `${workspaceId}\u0000${options?.resetKey ?? ""}`;
+  const latestIdentityRef = useRef(identity);
+  latestIdentityRef.current = identity;
+  const [trackedIdentity, setTrackedIdentity] = useState(identity);
+  if (identity !== trackedIdentity) {
+    setTrackedIdentity(identity);
     setError(null);
     setIsResuming(false);
   }
@@ -186,11 +197,12 @@ export function useResumeStream(
       return;
     }
 
-    const startedFor = workspaceId;
-    // Drop state updates if the user switched workspaces before this resolved,
-    // so a stale resume can't surface its error/spinner on a different workspace.
+    const startedForIdentity = identity;
+    // Drop state updates if the workspace or resume target changed before this
+    // resolved, so a stale resume can't surface its error/spinner on a different
+    // workspace or interrupted turn.
     const applyIfCurrent = (apply: () => void): void => {
-      if (latestWorkspaceIdRef.current === startedFor) apply();
+      if (latestIdentityRef.current === startedForIdentity) apply();
     };
 
     setIsResuming(true);

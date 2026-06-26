@@ -53,6 +53,7 @@ import { useResumeStream, type UseResumeStreamOptions } from "./useResumeStream"
 
 const Harness: React.FC<{ workspaceId?: string; options?: UseResumeStreamOptions }> = (props) => {
   const { resume, error } = useResumeStream(props.workspaceId ?? "ws-1", props.options);
+  // (workspaceId/options come straight from props so tests can rerender with new identity)
   return (
     <div>
       <button type="button" onClick={() => void resume()}>
@@ -122,6 +123,29 @@ describe("useResumeStream", () => {
 
     // Same always-mounted hook now serves a different workspace: its error must reset.
     view.rerender(<Harness workspaceId="ws-B" options={{ autoRetryOnFailure: false }} />);
+
+    expect(view.queryByTestId("resume-error")).toBeNull();
+  });
+
+  test("clears the error when the resume target (resetKey) changes in the same workspace", async () => {
+    resumeStreamResult = {
+      success: false,
+      error: { type: "runtime_start_failed", message: "Runtime failed to start" },
+    };
+
+    const view = render(
+      <Harness workspaceId="ws-1" options={{ autoRetryOnFailure: false, resetKey: "turn-1" }} />
+    );
+    fireEvent.click(view.getByText("resume"));
+
+    await waitFor(() => {
+      expect(view.getByTestId("resume-error")).toBeTruthy();
+    });
+
+    // A later interrupted turn in the same workspace must not inherit the old error.
+    view.rerender(
+      <Harness workspaceId="ws-1" options={{ autoRetryOnFailure: false, resetKey: "turn-2" }} />
+    );
 
     expect(view.queryByTestId("resume-error")).toBeNull();
   });

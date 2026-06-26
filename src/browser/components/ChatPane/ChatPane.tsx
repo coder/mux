@@ -1065,12 +1065,17 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // divider on the writable resume target is interactive.
   const { resume: resumeInterruptedStreamAsync, error: resumeInterruptedError } = useResumeStream(
     workspaceId,
-    { autoRetryOnFailure: false }
+    { autoRetryOnFailure: false, resetKey: lastRetryCandidateMessage?.id }
   );
   // Adapt the async resume to the void-returning shape the click/keybind props expect.
   const resumeInterruptedStream = () => void resumeInterruptedStreamAsync();
+  // The divider is the resume affordance only when the warning RetryBarrier is
+  // NOT shown (the user-aborted / suppressed case). When RetryBarrier is visible,
+  // its Retry button owns resume — with temporary auto-retry-on-failure recovery —
+  // so the divider stays decorative to avoid bypassing that recovery.
   const interruptedTailResumable =
     !transcriptOnly &&
+    !showRetryBarrierUI &&
     lastRetryCandidateMessage != null &&
     interruptedBarrierMessageIds.has(lastRetryCandidateMessage.id);
   const transcriptTailItems: TranscriptTailStackItem[] = [];
