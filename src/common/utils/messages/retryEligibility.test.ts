@@ -4,6 +4,7 @@ import {
   hasInterruptedStream,
   isEligibleForAutoRetry,
   isNonRetryableSendError,
+  isPreTokenInterruptedUserTurn,
   PENDING_STREAM_START_GRACE_PERIOD_MS,
 } from "./retryEligibility";
 import type { DisplayedMessage } from "@/common/types/message";
@@ -569,4 +570,39 @@ describe("isNonRetryableSendError", () => {
       expect(isNonRetryableSendError(error)).toBe(expected);
     });
   }
+});
+
+describe("isPreTokenInterruptedUserTurn", () => {
+  it("is true for a trailing user message aborted by the user (pre-token interrupt)", () => {
+    // No assistant row yet, so the partial-message divider path can't fire; the
+    // user must still be able to continue the stopped turn.
+    expect(isPreTokenInterruptedUserTurn(userMessage(), { reason: "user", at: Date.now() })).toBe(
+      true
+    );
+  });
+
+  it("is true for a startup abort (also suppresses RetryBarrier)", () => {
+    expect(
+      isPreTokenInterruptedUserTurn(userMessage(), { reason: "startup", at: Date.now() })
+    ).toBe(true);
+  });
+
+  it("is false for a system abort (RetryBarrier owns recovery)", () => {
+    expect(isPreTokenInterruptedUserTurn(userMessage(), { reason: "system", at: Date.now() })).toBe(
+      false
+    );
+  });
+
+  it("is false with no abort reason (app-restart case; RetryBarrier owns it)", () => {
+    expect(isPreTokenInterruptedUserTurn(userMessage(), null)).toBe(false);
+  });
+
+  it("is false when the tail is an assistant message (partial path handles it)", () => {
+    expect(
+      isPreTokenInterruptedUserTurn(assistantMessage({ isPartial: true }), {
+        reason: "user",
+        at: Date.now(),
+      })
+    ).toBe(false);
+  });
 });

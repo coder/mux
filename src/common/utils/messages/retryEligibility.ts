@@ -96,6 +96,19 @@ function shouldSuppressAutoRetry(
   return lastAbortReason?.reason === "user" || lastAbortReason?.reason === "startup";
 }
 
+/**
+ * True when a turn was interrupted before its first token: the transcript tail is
+ * the user message (no assistant/tool row yet) and the abort was user/startup
+ * (RetryBarrier suppressed). shouldShowInterruptedBarrier never marks a user
+ * message, so callers use this to still offer "continue" on the interrupted tail.
+ */
+export function isPreTokenInterruptedUserTurn(
+  tail: DisplayedMessage | undefined,
+  lastAbortReason: StreamAbortReasonSnapshot | null | undefined
+): boolean {
+  return tail?.type === "user" && shouldSuppressAutoRetry(lastAbortReason);
+}
+
 function isDecorativeTranscriptMessage(message: DisplayedMessage): boolean {
   return (
     message.type === "history-hidden" ||

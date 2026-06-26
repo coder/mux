@@ -48,6 +48,7 @@ import {
   getInterruptionContext,
   getLastMainRetryCandidateMessage,
   getLastNonDecorativeMessage,
+  isPreTokenInterruptedUserTurn,
 } from "@/common/utils/messages/retryEligibility";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -1056,6 +1057,19 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     ) {
       interruptedBarrierMessageIds.add(message.id);
     }
+  }
+  // A turn interrupted before its first token leaves the user message as the tail
+  // with no assistant row, so the loop above never marks it. Mark it here (subject
+  // to the same hydration/auto-retry/streaming suppression) so the divider still
+  // offers to continue. interruptedTailResumable/render both key off this set.
+  if (
+    !isHydratingTranscript &&
+    !isAutoRetryActive &&
+    !shouldShowStreamingBarrier &&
+    lastRetryCandidateMessage != null &&
+    isPreTokenInterruptedUserTurn(lastRetryCandidateMessage, workspaceState.lastAbortReason)
+  ) {
+    interruptedBarrierMessageIds.add(lastRetryCandidateMessage.id);
   }
 
   // Owned here so the click and keybind paths share one resume/error. resetKey is
