@@ -51,6 +51,7 @@ async function buildReadyProjectArtifact(params: {
   childRepo: string;
   baseSha: string;
   headSha: string;
+  formatPatchArgs?: string;
 }) {
   const patchPath = getSubagentGitPatchMboxPath(
     params.sessionDir,
@@ -58,7 +59,9 @@ async function buildReadyProjectArtifact(params: {
     params.storageKey
   );
   const patch = execSync(
-    `git format-patch --stdout --binary ${params.baseSha}..${params.headSha}`,
+    `git format-patch --stdout --binary ${params.formatPatchArgs ?? ""} ${params.baseSha}..${
+      params.headSha
+    }`,
     {
       cwd: params.childRepo,
       encoding: "buffer",
@@ -358,6 +361,522 @@ describe("task_apply_git_patch tool", () => {
     expect(execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
       ""
     );
+  }, 20_000);
+
+  it("lets git am apply when dirty files are unrelated to the patch", async () => {
+    const childRepo = path.join(rootDir, "child-unrelated-dirty");
+    const targetRepo = path.join(rootDir, "target-unrelated-dirty");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "notes.txt", "local base", "local notes");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await fsPromises.writeFile(path.join(childRepo, "README.md"), "hello\nchild", "utf-8");
+    execSync("git add README.md", { cwd: childRepo, stdio: "ignore" });
+    execSync(
+      'git -c core.hooksPath=/dev/null commit --cleanup=verbatim -m "child change" -m "rename from notes.txt"',
+      {
+        cwd: childRepo,
+        stdio: "ignore",
+      }
+    );
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-unrelated-dirty");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-unrelated-dirty";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    await fsPromises.writeFile(
+      path.join(targetRepo, "notes.txt"),
+      "local base\nworktree edit",
+      "utf-8"
+    );
+    await fsPromises.writeFile(path.join(targetRepo, "temp.log"), "scratch", "utf-8");
+    const headBeforeDryRun = execSync("git rev-parse HEAD", {
+      cwd: targetRepo,
+      encoding: "utf-8",
+    }).trim();
+
+    const config = {
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: path.join(rootDir, "runtime-tmp-unrelated-dirty"),
+      workspaceSessionDir: sessionDir,
+    };
+
+    const dryRun = await applyTaskGitPatchArtifact(
+      config,
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+    expect(dryRun.success).toBe(true);
+    expect(execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      headBeforeDryRun
+    );
+
+    const realApply = await applyTaskGitPatchArtifact(
+      config,
+      { task_id: childTaskId, three_way: true },
+      {}
+    );
+
+    expect(realApply.success).toBe(true);
+    expect(execSync("git log -1 --pretty=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      "child change"
+    );
+    expect(await fsPromises.readFile(path.join(targetRepo, "README.md"), "utf-8")).toBe(
+      "hello\nchild"
+    );
+    expect(await fsPromises.readFile(path.join(targetRepo, "notes.txt"), "utf-8")).toBe(
+      "local base\nworktree edit"
+    );
+    expect(await fsPromises.readFile(path.join(targetRepo, "temp.log"), "utf-8")).toBe("scratch");
+    const status = execSync("git status --porcelain", { cwd: targetRepo, encoding: "utf-8" });
+    expect(status).toContain(" M notes.txt");
+    expect(status).toContain("?? temp.log");
+  }, 20_000);
+
+  it("rejects staged unrelated changes before git am", async () => {
+    const childRepo = path.join(rootDir, "child-staged-unrelated");
+    const targetRepo = path.join(rootDir, "target-staged-unrelated");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "notes.txt", "local base", "local notes");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-staged-unrelated");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-staged-unrelated";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    await fsPromises.writeFile(path.join(targetRepo, "notes.txt"), "local base\nstaged", "utf-8");
+    execSync("git add notes.txt", { cwd: targetRepo, stdio: "ignore" });
+    const headBeforeApply = execSync("git rev-parse HEAD", {
+      cwd: targetRepo,
+      encoding: "utf-8",
+    }).trim();
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        ...getTestDeps(),
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: path.join(rootDir, "runtime-tmp-staged-unrelated"),
+        workspaceSessionDir: sessionDir,
+      },
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected staged change failure");
+    }
+    expect(result.error).toContain("staged changes");
+    expect(result.conflictPaths).toEqual(["notes.txt"]);
+    expect(execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      headBeforeApply
+    );
+  }, 20_000);
+
+  it("rejects intent-to-add entries before git am", async () => {
+    const childRepo = path.join(rootDir, "child-intent-to-add");
+    const targetRepo = path.join(rootDir, "target-intent-to-add");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-intent-to-add");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-intent-to-add";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    await fsPromises.writeFile(path.join(targetRepo, "notes.txt"), "intent", "utf-8");
+    execSync("git add -N notes.txt", { cwd: targetRepo, stdio: "ignore" });
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        ...getTestDeps(),
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: path.join(rootDir, "runtime-tmp-intent-to-add"),
+        workspaceSessionDir: sessionDir,
+      },
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected intent-to-add failure");
+    }
+    expect(result.error).toContain("staged changes");
+    expect(result.conflictPaths).toEqual(["notes.txt"]);
+  }, 20_000);
+
+  it("rejects overlapping dirty paths before a multi-commit patch can partially apply", async () => {
+    const childRepo = path.join(rootDir, "child-overlapping-dirty");
+    const targetRepo = path.join(rootDir, "target-overlapping-dirty");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+      await fsPromises.writeFile(path.join(repo, "README.md"), "hello", "utf-8");
+      await fsPromises.writeFile(path.join(repo, "f.txt"), "base", "utf-8");
+      execSync("git add README.md f.txt", { cwd: repo, stdio: "ignore" });
+      execSync('git commit -m "base"', { cwd: repo, stdio: "ignore" });
+    }
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child readme change");
+    await commitFile(childRepo, "f.txt", "base\nchild", "child f change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-overlapping-dirty");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-overlapping-dirty";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    await fsPromises.writeFile(path.join(targetRepo, "f.txt"), "base\nlocal", "utf-8");
+    const headBeforeApply = execSync("git rev-parse HEAD", {
+      cwd: targetRepo,
+      encoding: "utf-8",
+    }).trim();
+
+    const config = {
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: path.join(rootDir, "runtime-tmp-overlapping-dirty"),
+      workspaceSessionDir: sessionDir,
+    };
+
+    const dryRun = await applyTaskGitPatchArtifact(
+      config,
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+    expect(dryRun.success).toBe(false);
+    if (dryRun.success) {
+      throw new Error("expected overlapping dirty path dry-run failure");
+    }
+    expect(dryRun.error).toContain("overlap patch paths");
+    expect(dryRun.conflictPaths).toEqual(["f.txt"]);
+    expect(execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      headBeforeApply
+    );
+
+    const result = await applyTaskGitPatchArtifact(
+      config,
+      { task_id: childTaskId, three_way: true },
+      {}
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected overlapping dirty path failure");
+    }
+    expect(result.error).toContain("overlap patch paths");
+    expect(result.conflictPaths).toEqual(["f.txt"]);
+    expect(execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      headBeforeApply
+    );
+    expect(await fsPromises.readFile(path.join(targetRepo, "README.md"), "utf-8")).toBe("hello");
+    expect(await fsPromises.readFile(path.join(targetRepo, "f.txt"), "utf-8")).toBe("base\nlocal");
+  }, 20_000);
+
+  it("treats dirty rename sources as overlapping patch paths", async () => {
+    const childRepo = path.join(rootDir, "child-rename-source-dirty");
+    const targetRepo = path.join(rootDir, "target-rename-source-dirty");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+      await fsPromises.writeFile(path.join(repo, "README.md"), "hello", "utf-8");
+      await fsPromises.mkdir(path.join(repo, "é b"), { recursive: true });
+      await fsPromises.writeFile(path.join(repo, "é b", "old.txt"), "base", "utf-8");
+      execSync("git add README.md 'é b/old.txt'", { cwd: repo, stdio: "ignore" });
+      execSync('git commit -m "base"', { cwd: repo, stdio: "ignore" });
+    }
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child readme change");
+    execSync("git mv 'é b/old.txt' 'é b/new.txt'", { cwd: childRepo, stdio: "ignore" });
+    execSync('git commit -m "rename old"', { cwd: childRepo, stdio: "ignore" });
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-rename-source-dirty");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-rename-source-dirty";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    await fsPromises.writeFile(path.join(targetRepo, "é b", "old.txt"), "base\nlocal", "utf-8");
+    const headBeforeApply = execSync("git rev-parse HEAD", {
+      cwd: targetRepo,
+      encoding: "utf-8",
+    }).trim();
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        ...getTestDeps(),
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: path.join(rootDir, "runtime-tmp-rename-source-dirty"),
+        workspaceSessionDir: sessionDir,
+      },
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected rename source overlap failure");
+    }
+    expect(result.conflictPaths).toEqual(["é b/old.txt"]);
+    expect(execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      headBeforeApply
+    );
+  }, 20_000);
+
+  it("treats dirty ancestor paths as overlapping patch paths", async () => {
+    const childRepo = path.join(rootDir, "child-ancestor-dirty");
+    const targetRepo = path.join(rootDir, "target-ancestor-dirty");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+      await commitFile(repo, "README.md", "hello", "base");
+    }
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nchild", "child readme change");
+    await fsPromises.mkdir(path.join(childRepo, "dir"), { recursive: true });
+    await fsPromises.writeFile(path.join(childRepo, "dir", "file.txt"), "child", "utf-8");
+    execSync("git add dir/file.txt", { cwd: childRepo, stdio: "ignore" });
+    execSync('git commit -m "add nested file"', { cwd: childRepo, stdio: "ignore" });
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-ancestor-dirty");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-ancestor-dirty";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    await fsPromises.writeFile(
+      path.join(targetRepo, "dir"),
+      "local file blocks directory",
+      "utf-8"
+    );
+    const headBeforeApply = execSync("git rev-parse HEAD", {
+      cwd: targetRepo,
+      encoding: "utf-8",
+    }).trim();
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        ...getTestDeps(),
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: path.join(rootDir, "runtime-tmp-ancestor-dirty"),
+        workspaceSessionDir: sessionDir,
+      },
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected ancestor path overlap failure");
+    }
+    expect(result.conflictPaths).toEqual(["dir"]);
+    expect(execSync("git rev-parse HEAD", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      headBeforeApply
+    );
+  }, 20_000);
+
+  it("treats dirty deleted copy sources as overlapping patch paths", async () => {
+    const childRepo = path.join(rootDir, "child-copy-source-dirty");
+    const targetRepo = path.join(rootDir, "target-copy-source-dirty");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+      await commitFile(repo, "src.txt", "source", "base");
+    }
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await fsPromises.copyFile(path.join(childRepo, "src.txt"), path.join(childRepo, "dst.txt"));
+    execSync("git add dst.txt", { cwd: childRepo, stdio: "ignore" });
+    execSync('git commit -m "copy source"', { cwd: childRepo, stdio: "ignore" });
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const sessionDir = path.join(rootDir, "session-copy-source-dirty");
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const childTaskId = "child-task-copy-source-dirty";
+    await writePatchArtifact({
+      sessionDir,
+      workspaceId: getTestDeps().workspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir,
+          childTaskId,
+          storageKey: "target",
+          projectPath: targetRepo,
+          projectName: "target",
+          childRepo,
+          baseSha,
+          headSha,
+          formatPatchArgs: "-C --find-copies-harder",
+        }),
+      ],
+    });
+
+    const config = {
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: path.join(rootDir, "runtime-tmp-copy-source-dirty"),
+      workspaceSessionDir: sessionDir,
+    };
+
+    await fsPromises.rm(path.join(targetRepo, "src.txt"));
+
+    const result = await applyTaskGitPatchArtifact(
+      config,
+      { task_id: childTaskId, dry_run: true, three_way: true },
+      {}
+    );
+
+    expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected dirty copy source failure");
+    }
+    expect(result.conflictPaths).toEqual(["src.txt"]);
+
+    execSync("git checkout -- src.txt", { cwd: targetRepo, stdio: "ignore" });
+    await fsPromises.writeFile(path.join(targetRepo, "src.txt"), "source\nlocal", "utf-8");
+    const withoutThreeWay = await applyTaskGitPatchArtifact(
+      config,
+      { task_id: childTaskId, dry_run: true, three_way: false },
+      {}
+    );
+    expect(withoutThreeWay.success).toBe(false);
+    if (withoutThreeWay.success) {
+      throw new Error("expected dirty copy source failure without three-way");
+    }
+    expect(withoutThreeWay.conflictPaths).toEqual(["src.txt"]);
   }, 20_000);
 
   it("cleans repo-local patch files when the runtime copy fails", async () => {

@@ -890,9 +890,7 @@ export const TaskApplyGitPatchToolArgsSchema = z
     force: z
       .boolean()
       .nullish()
-      .describe(
-        "When true, allow apply even if the patch was previously applied (and skip clean-tree checks)."
-      ),
+      .describe("When true, allow apply even if the patch was previously applied."),
   })
   .strict();
 

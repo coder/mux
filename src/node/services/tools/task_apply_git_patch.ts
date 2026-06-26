@@ -688,6 +688,345 @@ function buildRuntimeTempPath(params: {
   return runtimePath;
 }
 
+interface GitStatusPorcelainEntry {
+  path: string;
+  status: string;
+}
+
+function parseGitStatusPorcelainZ(stdout: string): GitStatusPorcelainEntry[] {
+  const entriesByPath: GitStatusPorcelainEntry[] = [];
+  const entries = stdout.split("\0");
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i];
+    if (entry.length < 4) continue;
+
+    const status = entry.slice(0, 2);
+    const filePath = entry.slice(3);
+    if (filePath.length > 0) {
+      entriesByPath.push({ path: filePath, status });
+    }
+
+    if (status.includes("R") || status.includes("C")) {
+      i += 1;
+      const sourcePath = entries[i];
+      if (sourcePath != null && sourcePath.length > 0) {
+        entriesByPath.push({ path: sourcePath, status });
+      }
+    }
+  }
+  return entriesByPath;
+}
+
+function parseGitApplyNumstatZ(stdout: string): string[] {
+  return stdout
+    .split("\0")
+    .map((entry) => {
+      const firstTabIndex = entry.indexOf("\t");
+      const secondTabIndex = entry.indexOf("\t", firstTabIndex + 1);
+      return secondTabIndex === -1 ? "" : entry.slice(secondTabIndex + 1);
+    })
+    .filter((filePath) => filePath.length > 0);
+}
+
+interface PatchMetadataPaths {
+  renamePaths: string[];
+  copySourcePaths: string[];
+}
+
+function parsePatchMetadataPaths(stdout: string): PatchMetadataPaths {
+  const renamePaths: string[] = [];
+  const copySourcePaths: string[] = [];
+  for (const line of stdout.split(/\r?\n/)) {
+    const renamePrefix = line.startsWith("rename from ")
+      ? "rename from "
+      : line.startsWith("rename to ")
+        ? "rename to "
+        : undefined;
+    if (renamePrefix != null) {
+      const filePath = parsePatchMetadataPath(line.slice(renamePrefix.length));
+      if (filePath.length > 0) {
+        renamePaths.push(filePath);
+      }
+      continue;
+    }
+
+    if (line.startsWith("copy from ")) {
+      const filePath = parsePatchMetadataPath(line.slice("copy from ".length));
+      if (filePath.length > 0) {
+        copySourcePaths.push(filePath);
+      }
+    }
+  }
+  return { renamePaths, copySourcePaths };
+}
+
+function parseDiffGitHeaderPaths(stdout: string): string[] {
+  const paths = new Set<string>();
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.startsWith("diff --git ")) continue;
+    for (const filePath of parseDiffGitHeaderLine(line.slice("diff --git ".length))) {
+      paths.add(filePath);
+    }
+  }
+  return [...paths].filter((filePath) => filePath.length > 0);
+}
+
+function parseDiffGitHeaderLine(line: string): string[] {
+  if (line.startsWith('"')) {
+    const first = parseGitQuotedPath(line, 0);
+    if (first == null) return [];
+    let secondStartOffset = first.nextOffset;
+    while (line[secondStartOffset] === " ") {
+      secondStartOffset += 1;
+    }
+    const second = parseGitQuotedPath(line, secondStartOffset);
+    return [stripDiffPathPrefix(first.path), stripDiffPathPrefix(second?.path)].filter(
+      (filePath): filePath is string => filePath != null && filePath.length > 0
+    );
+  }
+
+  if (!line.startsWith("a/")) {
+    return [];
+  }
+
+  const paths = new Set<string>();
+  let separatorIndex = line.indexOf(" b/", "a/".length);
+  while (separatorIndex !== -1) {
+    paths.add(line.slice("a/".length, separatorIndex));
+    paths.add(line.slice(separatorIndex + " b/".length));
+    separatorIndex = line.indexOf(" b/", separatorIndex + 1);
+  }
+  return [...paths];
+}
+
+function stripDiffPathPrefix(filePath: string | undefined): string | undefined {
+  if (filePath == null) return undefined;
+  return filePath.startsWith("a/") || filePath.startsWith("b/") ? filePath.slice(2) : filePath;
+}
+
+function parsePatchMetadataPath(value: string): string {
+  if (!value.startsWith('"')) {
+    return value;
+  }
+  return parseGitQuotedPath(value, 0)?.path ?? "";
+}
+
+function parseGitQuotedPath(
+  value: string,
+  startOffset: number
+): { path: string; nextOffset: number } | undefined {
+  if (value[startOffset] !== '"') {
+    return undefined;
+  }
+
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  let offset = startOffset + 1;
+  while (offset < value.length) {
+    const char = value[offset];
+    if (char === '"') {
+      return { path: new TextDecoder().decode(Uint8Array.from(bytes)), nextOffset: offset + 1 };
+    }
+
+    if (char !== "\\") {
+      const codePoint = value.codePointAt(offset);
+      if (codePoint == null) {
+        return undefined;
+      }
+      const codePointString = String.fromCodePoint(codePoint);
+      bytes.push(...encoder.encode(codePointString));
+      offset += codePointString.length;
+      continue;
+    }
+
+    offset += 1;
+    if (offset >= value.length) {
+      return undefined;
+    }
+
+    const escaped = value[offset];
+    if (/[0-7]/.test(escaped)) {
+      let octal = escaped;
+      offset += 1;
+      while (offset < value.length && octal.length < 3 && /[0-7]/.test(value[offset])) {
+        octal += value[offset];
+        offset += 1;
+      }
+      bytes.push(Number.parseInt(octal, 8));
+      continue;
+    }
+
+    const escapedByte = decodeGitQuotedEscapedByte(escaped);
+    if (escapedByte == null) {
+      bytes.push(...encoder.encode(escaped));
+    } else {
+      bytes.push(escapedByte);
+    }
+    offset += 1;
+  }
+
+  return undefined;
+}
+
+function decodeGitQuotedEscapedByte(char: string): number | undefined {
+  switch (char) {
+    case "a":
+      return 0x07;
+    case "b":
+      return 0x08;
+    case "t":
+      return 0x09;
+    case "n":
+      return 0x0a;
+    case "v":
+      return 0x0b;
+    case "f":
+      return 0x0c;
+    case "r":
+      return 0x0d;
+    case '"':
+      return 0x22;
+    case "\\":
+      return 0x5c;
+    default:
+      return undefined;
+  }
+}
+
+function patchPathOverlapsDirtyPath(patchPath: string, dirtyPath: string): boolean {
+  const normalizedPatchPath = patchPath.replace(/\/+$/, "");
+  const normalizedDirtyPath = dirtyPath.replace(/\/+$/, "");
+  return (
+    normalizedPatchPath === normalizedDirtyPath ||
+    normalizedPatchPath.startsWith(`${normalizedDirtyPath}/`) ||
+    normalizedDirtyPath.startsWith(`${normalizedPatchPath}/`)
+  );
+}
+
+async function checkDirtyPatchPathOverlap(params: {
+  runtime: ToolConfiguration["runtime"];
+  cwd: string;
+  remotePatchPath: string;
+  threeWay: boolean;
+}): Promise<{ error: string; conflictPaths?: string[] } | undefined> {
+  const statusResult = await execBuffered(
+    params.runtime,
+    "git status --porcelain -z --untracked-files=all",
+    {
+      cwd: params.cwd,
+      timeout: 10,
+    }
+  );
+  if (statusResult.exitCode !== 0) {
+    return { error: statusResult.stderr.trim() || "git status failed" };
+  }
+
+  const dirtyEntries = parseGitStatusPorcelainZ(statusResult.stdout);
+  if (dirtyEntries.length === 0) {
+    return undefined;
+  }
+
+  const cachedResult = await execBuffered(
+    params.runtime,
+    "git diff-index --cached --name-only -z HEAD --",
+    {
+      cwd: params.cwd,
+      timeout: 10,
+    }
+  );
+  if (cachedResult.exitCode !== 0) {
+    return { error: cachedResult.stderr.trim() || "git diff-index failed" };
+  }
+  const stagedPaths = cachedResult.stdout
+    .split("\0")
+    .filter((filePath) => filePath.length > 0)
+    .sort();
+  if (stagedPaths.length > 0) {
+    return {
+      error: "Index has staged changes; git am requires a clean index.",
+      conflictPaths: stagedPaths,
+    };
+  }
+
+  const dirtyPaths = new Set(dirtyEntries.map((entry) => entry.path));
+
+  const patchBodyCommand = `awk '/^From / { in_patch=0 } /^---$/ { in_patch=1; next } in_patch { print }' ${shellQuote(
+    params.remotePatchPath
+  )}`;
+  const numstatResult = await execBuffered(
+    params.runtime,
+    `${patchBodyCommand} | git apply --numstat -z`,
+    {
+      cwd: params.cwd,
+      timeout: 30,
+    }
+  );
+  const numstatPaths = parseGitApplyNumstatZ(numstatResult.stdout);
+
+  const diffHeaderResult = await execBuffered(
+    params.runtime,
+    `awk '/^From / { in_patch=0 } /^---$/ { in_patch=1; next } in_patch && /^diff --git / { print }' ${shellQuote(
+      params.remotePatchPath
+    )}`,
+    {
+      cwd: params.cwd,
+      timeout: 30,
+    }
+  );
+
+  if (numstatResult.exitCode !== 0 && !numstatResult.stderr.includes("No valid patches")) {
+    return {
+      error:
+        numstatResult.stderr.trim() ||
+        numstatResult.stdout.trim() ||
+        "Could not determine patch paths before applying in dirty worktree.",
+    };
+  }
+
+  const metadataResult = await execBuffered(
+    params.runtime,
+    `awk '/^From / { in_patch=0; in_diff=0 } /^---$/ { in_patch=1; next } in_patch && /^diff --git / { in_diff=1; next } in_patch && in_diff && (/^rename from / || /^rename to / || /^copy from /) { print }' ${shellQuote(
+      params.remotePatchPath
+    )}`,
+    {
+      cwd: params.cwd,
+      timeout: 30,
+    }
+  );
+  const metadataPaths = parsePatchMetadataPaths(metadataResult.stdout);
+  const patchPaths = new Set([
+    ...(numstatResult.exitCode === 0
+      ? numstatPaths
+      : parseDiffGitHeaderPaths(diffHeaderResult.stdout)),
+    ...metadataPaths.renamePaths,
+  ]);
+  const conflictPaths = [
+    ...new Set([
+      ...[...dirtyPaths].filter((dirtyPath) =>
+        [...patchPaths].some((patchPath) => patchPathOverlapsDirtyPath(patchPath, dirtyPath))
+      ),
+      ...dirtyEntries
+        .filter(
+          (entry) => !params.threeWay || entry.status.includes("D") || entry.status.includes("T")
+        )
+        .filter((entry) =>
+          metadataPaths.copySourcePaths.some((copySourcePath) =>
+            patchPathOverlapsDirtyPath(copySourcePath, entry.path)
+          )
+        )
+        .map((entry) => entry.path),
+    ]),
+  ].sort();
+  if (conflictPaths.length === 0) {
+    return undefined;
+  }
+
+  return {
+    error: "Working tree has local changes that overlap patch paths.",
+    conflictPaths,
+  };
+}
+
 async function checkExpectedHead(params: {
   runtime: ToolConfiguration["runtime"];
   cwd: string;
@@ -774,41 +1113,6 @@ async function applyProjectPatch(params: {
     };
   }
 
-  if (!params.force) {
-    const statusResult = await execBuffered(params.runtime, "git status --porcelain", {
-      cwd: params.repoCwd,
-      timeout: 10,
-    });
-    if (statusResult.exitCode !== 0) {
-      return {
-        success: false,
-        projectResult: {
-          projectPath: params.projectArtifact.projectPath,
-          projectName: params.projectArtifact.projectName,
-          status: "failed",
-          error: statusResult.stderr.trim() || "git status failed",
-          note: patchResolution.note,
-        },
-      };
-    }
-
-    if (statusResult.stdout.trim().length > 0) {
-      return {
-        success: false,
-        projectResult: {
-          projectPath: params.projectArtifact.projectPath,
-          projectName: params.projectArtifact.projectName,
-          status: "failed",
-          error: "Working tree is not clean.",
-          note: mergeNotes(
-            patchResolution.note,
-            "Commit/stash your changes (or pass force=true) before applying patches."
-          ),
-        },
-      };
-    }
-  }
-
   const expectedHeadError = await checkExpectedHead({
     runtime: params.runtime,
     cwd: params.repoCwd,
@@ -841,6 +1145,29 @@ async function applyProjectPatch(params: {
     const nhp = gitNoHooksPrefix(params.trusted);
 
     if (params.dryRun) {
+      const dryRunDirtyOverlap = await checkDirtyPatchPathOverlap({
+        runtime: params.runtime,
+        cwd: params.repoCwd,
+        remotePatchPath,
+        threeWay: params.threeWay,
+      });
+      if (dryRunDirtyOverlap != null) {
+        return {
+          success: false,
+          projectResult: {
+            projectPath: params.projectArtifact.projectPath,
+            projectName: params.projectArtifact.projectName,
+            status: "failed",
+            error: dryRunDirtyOverlap.error,
+            conflictPaths: dryRunDirtyOverlap.conflictPaths,
+            note: mergeNotes(
+              patchResolution.note,
+              "Commit or stash local changes on overlapping patch paths before applying. Unrelated dirty files can remain in place."
+            ),
+          },
+        };
+      }
+
       const dryRunHeadError = await checkExpectedHead({
         runtime: params.runtime,
         cwd: params.repoCwd,
@@ -1024,6 +1351,32 @@ async function applyProjectPatch(params: {
           });
         }
       }
+    }
+
+    // Let `git am --3way` handle unrelated dirty files, but reject dirty paths
+    // that overlap the patch series before a multi-commit `git am` can partially
+    // advance HEAD and then fail on a later commit.
+    const dirtyOverlap = await checkDirtyPatchPathOverlap({
+      runtime: params.runtime,
+      cwd: params.repoCwd,
+      remotePatchPath,
+      threeWay: params.threeWay,
+    });
+    if (dirtyOverlap != null) {
+      return {
+        success: false,
+        projectResult: {
+          projectPath: params.projectArtifact.projectPath,
+          projectName: params.projectArtifact.projectName,
+          status: "failed",
+          error: dirtyOverlap.error,
+          conflictPaths: dirtyOverlap.conflictPaths,
+          note: mergeNotes(
+            patchResolution.note,
+            "Commit or stash local changes on overlapping patch paths before applying. Unrelated dirty files can remain in place."
+          ),
+        },
+      };
     }
 
     const applyHeadError = await checkExpectedHead({

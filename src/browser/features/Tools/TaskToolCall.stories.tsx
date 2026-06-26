@@ -184,8 +184,8 @@ export const TaskApplyGitPatchStates: Story = {
         result={{
           success: false,
           taskId: "task-fe-001",
-          error: "Working tree is not clean.",
-          note: "Commit/stash your changes (or pass force=true) before applying patches.",
+          error: "fatal: Dirty index: cannot apply patches (dirty: src/App.tsx)",
+          note: "git am failed before entering conflict-recovery state. Review the error output above and fix the patch/input before retrying.",
         }}
         status="completed"
       />
