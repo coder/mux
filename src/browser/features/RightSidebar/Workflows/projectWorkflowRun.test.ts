@@ -422,7 +422,7 @@ describe("projectWorkflowRun — non-task step events", () => {
       {
         sequence: 4,
         type: "workflow",
-        at: at(11),
+        at: at(4),
         stepId: "wf-repeat",
         runId: "wfr_child_second",
         name: "implementation-loop",
@@ -441,10 +441,12 @@ describe("projectWorkflowRun — non-task step events", () => {
         stepId: "wf-repeat",
         inputHash: "h-second",
         status: "started",
-        startedAt: at(10),
+        startedAt: at(4),
       },
     ];
 
+    // The second child starts at the exact timestamp the first attempt completed; the end of
+    // a completed attempt must be exclusive so the older row does not steal the newer child.
     const view = projectWorkflowRun(makeRun({ events, steps }));
 
     expect(view.steps.map((step) => step.nestedWorkflowRunId)).toEqual([

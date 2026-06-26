@@ -249,7 +249,7 @@ function workflowChildAttemptOverlapsStep(
   const stepStartedAt = parseTime(step.startedAt);
   const stepCompletedAt =
     step.completedAt != null ? parseTime(step.completedAt) : Number.POSITIVE_INFINITY;
-  return childStartedAt >= stepStartedAt && childStartedAt <= stepCompletedAt;
+  return childStartedAt >= stepStartedAt && childStartedAt < stepCompletedAt;
 }
 
 function findNestedWorkflowAttemptForStep(
