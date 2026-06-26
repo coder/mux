@@ -6,11 +6,7 @@ interface BaseBarrierProps {
   color: string;
   animate?: boolean;
   className?: string;
-  /**
-   * When provided, the centered label becomes a clickable affordance (the
-   * gradient lines stay inert). The label gains a hover underline and pointer
-   * cursor; nothing else about the barrier changes visually.
-   */
+  /** When set, the centered label becomes a clickable button (gradient lines stay inert). */
   onClick?: () => void;
   /** Accessible label for the clickable variant (defaults to `text`). */
   ariaLabel?: string;

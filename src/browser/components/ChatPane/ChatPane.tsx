@@ -1058,21 +1058,15 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     }
   }
 
-  // Resume is owned here (not in the divider) so the click and keybind paths
-  // share one instance/error, and so unmounting a transient divider can't cancel
-  // an in-flight retry. autoRetryOnFailure:false keeps the user-abort "continue
-  // once" semantic. resumeStream always continues the history tail, so only the
-  // divider on the writable resume target is interactive.
+  // Owned here so the click and keybind paths share one resume/error. resetKey is
+  // the resume target, so error/spinner reset when the interrupted turn changes.
   const { resume: resumeInterruptedStreamAsync, error: resumeInterruptedError } = useResumeStream(
     workspaceId,
-    { autoRetryOnFailure: false, resetKey: lastRetryCandidateMessage?.id }
+    lastRetryCandidateMessage?.id
   );
-  // Adapt the async resume to the void-returning shape the click/keybind props expect.
   const resumeInterruptedStream = () => void resumeInterruptedStreamAsync();
-  // The divider is the resume affordance only when the warning RetryBarrier is
-  // NOT shown (the user-aborted / suppressed case). When RetryBarrier is visible,
-  // its Retry button owns resume — with temporary auto-retry-on-failure recovery —
-  // so the divider stays decorative to avoid bypassing that recovery.
+  // Resumable only on the writable tail and only when RetryBarrier is suppressed
+  // (user-aborted case). When RetryBarrier is visible, its button owns resume.
   const interruptedTailResumable =
     !transcriptOnly &&
     !showRetryBarrierUI &&

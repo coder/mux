@@ -323,9 +323,7 @@ export const KEYBINDS = {
   INTERRUPT_STREAM_VIM: { key: "c", ctrl: true, macCtrlBehavior: "control" },
   INTERRUPT_STREAM_NORMAL: { key: "Escape" },
 
-  /** Continue/resume an interrupted stream from where it stopped */
-  // The inverse of the interrupt keybind: continues a user-aborted (Esc) turn,
-  // matching the interrupted divider's click action.
+  /** Continue an interrupted stream (inverse of the interrupt keybind) */
   RESUME_STREAM: { key: "Enter", ctrl: true, shift: true, macCtrlBehavior: "command" },
 
   /** Focus chat input */

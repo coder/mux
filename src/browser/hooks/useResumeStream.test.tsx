@@ -49,11 +49,11 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   useWorkspaceStoreRaw: () => ({ getWorkspaceState: () => currentWorkspaceState }),
 }));
 
-import { useResumeStream, type UseResumeStreamOptions } from "./useResumeStream";
+import { useResumeStream } from "./useResumeStream";
 
-const Harness: React.FC<{ workspaceId?: string; options?: UseResumeStreamOptions }> = (props) => {
-  const { resume, error } = useResumeStream(props.workspaceId ?? "ws-1", props.options);
-  // (workspaceId/options come straight from props so tests can rerender with new identity)
+// workspaceId/resetKey come straight from props so tests can rerender with new identity.
+const Harness: React.FC<{ workspaceId?: string; resetKey?: string | null }> = (props) => {
+  const { resume, error } = useResumeStream(props.workspaceId ?? "ws-1", props.resetKey);
   return (
     <div>
       <button type="button" onClick={() => void resume()}>
@@ -80,20 +80,7 @@ describe("useResumeStream", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("autoRetryOnFailure:false resumes without touching the auto-retry preference", async () => {
-    const view = render(<Harness options={{ autoRetryOnFailure: false }} />);
-
-    fireEvent.click(view.getByText("resume"));
-
-    await waitFor(() => {
-      expect(resumeStream).toHaveBeenCalledTimes(1);
-    });
-    // The whole point of the option: never enable/disable auto-retry, so the
-    // caller (e.g. a transient divider) can't cancel a scheduled retry on unmount.
-    expect(setAutoRetryEnabled).not.toHaveBeenCalled();
-  });
-
-  test("default enables auto-retry for the resumed attempt", async () => {
+  test("resumes the stream without touching the auto-retry preference", async () => {
     const view = render(<Harness />);
 
     fireEvent.click(view.getByText("resume"));
@@ -101,11 +88,10 @@ describe("useResumeStream", () => {
     await waitFor(() => {
       expect(resumeStream).toHaveBeenCalledTimes(1);
     });
-    expect(setAutoRetryEnabled).toHaveBeenCalledWith({
-      workspaceId: "ws-1",
-      enabled: true,
-      persist: false,
-    });
+    // A user-initiated (Esc) interrupt means "continue once": never enable/disable
+    // auto-retry, so a transient divider can't cancel a scheduled retry on unmount.
+    expect(setAutoRetryEnabled).not.toHaveBeenCalled();
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({ workspaceId: "ws-1" });
   });
 
   test("clears the error when workspaceId changes (no cross-workspace bleed)", async () => {
@@ -114,7 +100,7 @@ describe("useResumeStream", () => {
       error: { type: "runtime_start_failed", message: "Runtime failed to start" },
     };
 
-    const view = render(<Harness workspaceId="ws-A" options={{ autoRetryOnFailure: false }} />);
+    const view = render(<Harness workspaceId="ws-A" />);
     fireEvent.click(view.getByText("resume"));
 
     await waitFor(() => {
@@ -122,7 +108,7 @@ describe("useResumeStream", () => {
     });
 
     // Same always-mounted hook now serves a different workspace: its error must reset.
-    view.rerender(<Harness workspaceId="ws-B" options={{ autoRetryOnFailure: false }} />);
+    view.rerender(<Harness workspaceId="ws-B" />);
 
     expect(view.queryByTestId("resume-error")).toBeNull();
   });
@@ -133,9 +119,7 @@ describe("useResumeStream", () => {
       error: { type: "runtime_start_failed", message: "Runtime failed to start" },
     };
 
-    const view = render(
-      <Harness workspaceId="ws-1" options={{ autoRetryOnFailure: false, resetKey: "turn-1" }} />
-    );
+    const view = render(<Harness workspaceId="ws-1" resetKey="turn-1" />);
     fireEvent.click(view.getByText("resume"));
 
     await waitFor(() => {
@@ -143,9 +127,7 @@ describe("useResumeStream", () => {
     });
 
     // A later interrupted turn in the same workspace must not inherit the old error.
-    view.rerender(
-      <Harness workspaceId="ws-1" options={{ autoRetryOnFailure: false, resetKey: "turn-2" }} />
-    );
+    view.rerender(<Harness workspaceId="ws-1" resetKey="turn-2" />);
 
     expect(view.queryByTestId("resume-error")).toBeNull();
   });
