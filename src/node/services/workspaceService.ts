@@ -2069,6 +2069,7 @@ export class WorkspaceService extends EventEmitter {
           });
         }
         void this.stopStreamingStatus(data.workspaceId);
+        this.scheduleBashMonitorWakeDrain(data.workspaceId);
         void this.workspaceGoalService?.applyPendingAfterStreamEnd(data.workspaceId);
       }
     });

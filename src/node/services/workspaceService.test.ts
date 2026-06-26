@@ -292,6 +292,57 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("drains monitor wakes after stream errors", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-error-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      let streaming = true;
+      const aiService = Object.assign(new EventEmitter(), {
+        isStreaming: mock(() => streaming),
+      }) as unknown as AIService & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService,
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED one"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+      await drainPendingDispatches();
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      streaming = false;
+      aiService.emit("error", { workspaceId, error: "provider failed" });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][1]).toContain("FAILED one");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("does not spin idle waiters when only aiService reports an owner stream", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
