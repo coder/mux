@@ -100,6 +100,7 @@ function makeRunningStepView(taskId: string): WorkflowRunView {
           {
             stepId: "implement",
             taskId,
+            taskWorkspaceId: taskId,
             status: "running",
             title: "Implement #160",
             phaseName: "implementation",
@@ -137,6 +138,7 @@ function makeCompletedStepView(taskId: string): WorkflowRunView {
           {
             stepId: "review",
             taskId,
+            taskWorkspaceId: taskId,
             status: "completed",
             title: "Review implementation",
             phaseName: "review",
@@ -204,6 +206,21 @@ describe("WorkflowTimeline", () => {
 
   test("hides child task workspace action when workspace metadata is missing", () => {
     const view = render(<WorkflowTimeline view={makeRunningStepView("task_deleted")} />);
+
+    fireEvent.click(view.getByRole("button", { name: "Implementation 0/1" }));
+
+    expect(
+      view.queryByRole("button", { name: "Open workspace for workflow step Implement #160" })
+    ).toBeNull();
+  });
+
+  test("hides workspace action when a step only references another task id", () => {
+    syncWorkflowTaskWorkspaces(
+      new Map([["task_source", createWorkflowTaskWorkspaceMetadata("task_source")]])
+    );
+    const workflowView = makeRunningStepView("task_source");
+    delete workflowView.phases[0].steps[0].taskWorkspaceId;
+    const view = render(<WorkflowTimeline view={workflowView} />);
 
     fireEvent.click(view.getByRole("button", { name: "Implementation 0/1" }));
 

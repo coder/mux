@@ -88,14 +88,14 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
     step.result?.structuredOutput !== undefined
   );
   const workspaceStore = useWorkspaceStoreRaw();
-  const taskWorkspaceAvailable = useWorkflowTaskWorkspaceAvailable(step.taskId);
-  const canOpenWorkspace = step.taskId != null && taskWorkspaceAvailable;
+  const taskWorkspaceAvailable = useWorkflowTaskWorkspaceAvailable(step.taskWorkspaceId);
+  const canOpenWorkspace = step.taskWorkspaceId != null && taskWorkspaceAvailable;
   const openTaskWorkspace = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (step.taskId == null) {
+    if (step.taskWorkspaceId == null) {
       return;
     }
-    workspaceStore.navigateToWorkspace(step.taskId);
+    workspaceStore.navigateToWorkspace(step.taskWorkspaceId);
   };
   const headerContent = (
     <>

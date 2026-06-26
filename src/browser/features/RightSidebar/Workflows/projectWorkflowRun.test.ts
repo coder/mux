@@ -237,6 +237,13 @@ describe("projectWorkflowRun — phase grouping & step folding", () => {
     expect(view.steps.find((step) => step.stepId === "fetch-1a")?.title).toBe("Fetch: arxiv.org");
   });
 
+  test("exposes direct task event workspaces for row navigation", () => {
+    const verify2 = view.steps.find((step) => step.stepId === "verify-2");
+
+    expect(verify2?.taskId).toBe("ws-verify-2");
+    expect(verify2?.taskWorkspaceId).toBe("ws-verify-2");
+  });
+
   test("aggregates run stats and arg entries", () => {
     expect(view.stats).toMatchObject({ total: 5, done: 4, running: 1, failed: 0 });
     expect(view.stats.elapsedMs).toBe(74_000);
@@ -315,6 +322,7 @@ describe("projectWorkflowRun — non-task step events", () => {
         stepId: "patch-1",
         inputHash: "h",
         status: "completed",
+        taskId: "ws-src",
         startedAt: at(1),
         completedAt: at(4),
       },
@@ -328,6 +336,11 @@ describe("projectWorkflowRun — non-task step events", () => {
     expect(view.steps.find((step) => step.stepId === "wf-1")?.phaseName).toBe("delegate");
     // Nested-workflow steps take their title from the child workflow name.
     expect(view.steps.find((step) => step.stepId === "wf-1")?.title).toBe("deep-research");
+    // Patch steps may store the source task id for persistence/usage, but only direct task
+    // events represent a child workspace created by that row.
+    const patchStep = view.steps.find((step) => step.stepId === "patch-1");
+    expect(patchStep?.taskId).toBe("ws-src");
+    expect(patchStep?.taskWorkspaceId).toBeUndefined();
     // Nothing falls into the implicit ungrouped bucket.
     expect(view.phases.some((phase) => phase.name === "")).toBe(false);
   });

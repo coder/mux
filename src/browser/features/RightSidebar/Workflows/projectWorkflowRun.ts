@@ -11,8 +11,9 @@
  *   - the step title comes from its `task` event (falling back to the step's
  *     result title, then the stepId);
  *   - duration is derived from the step timestamps;
- *   - per-step token/cost usage is an optional overlay (a step's `taskId` is
- *     the child task workspace id, so the caller can resolve usage by task id).
+ *   - per-step token/cost usage is an optional overlay keyed by the persisted
+ *     step `taskId`. UI navigation uses `taskWorkspaceId`, which is present only
+ *     for direct agent-task events so patch rows do not link to their source task.
  *
  * Keeping this pure (no React, no IPC) makes the non-trivial folding logic unit
  * testable and keeps the components dumb.
@@ -37,8 +38,10 @@ export interface WorkflowStepUsage {
 
 export interface WorkflowStepView {
   stepId: string;
-  /** Child task workspace id, when the step spawned a sub-agent. */
+  /** Persisted task id associated with the step; patch steps may reference their source task. */
   taskId?: string;
+  /** Child workspace id created by this step's direct agent task event. */
+  taskWorkspaceId?: string;
   status: WorkflowStepDisplayStatus;
   /** Human title (task title or nested-workflow name → step result title → stepId). */
   title: string;
@@ -108,7 +111,7 @@ export interface WorkflowRunView {
 }
 
 export interface ProjectWorkflowRunOptions {
-  /** Per-task usage keyed by the step's `taskId` (child task workspace id). */
+  /** Per-task usage keyed by the persisted step `taskId`. */
   usageByTaskId?: ReadonlyMap<string, WorkflowStepUsage>;
 }
 
@@ -238,6 +241,7 @@ export function projectWorkflowRun(
   // the ungrouped bucket even when a phase was active.
   const stepFirstEventSeq = new Map<string, number>();
   const stepTitle = new Map<string, string>();
+  const stepTaskWorkspaceId = new Map<string, string>();
   for (const event of events) {
     const stepId = stepBearingEventStepId(event);
     if (stepId == null) {
@@ -245,6 +249,9 @@ export function projectWorkflowRun(
     }
     if (!stepFirstEventSeq.has(stepId)) {
       stepFirstEventSeq.set(stepId, event.sequence);
+    }
+    if (event.type === "task" && !stepTaskWorkspaceId.has(stepId)) {
+      stepTaskWorkspaceId.set(stepId, event.taskId);
     }
     if (!stepTitle.has(stepId)) {
       if (event.type === "task" && event.title != null && event.title.length > 0) {
@@ -282,6 +289,7 @@ export function projectWorkflowRun(
     return {
       stepId: step.stepId,
       taskId: step.taskId,
+      taskWorkspaceId: stepTaskWorkspaceId.get(step.stepId),
       status: STEP_STATUS_TO_DISPLAY[step.status],
       title: stepTitle.get(step.stepId) ?? step.result?.title ?? step.stepId,
       phaseName,
