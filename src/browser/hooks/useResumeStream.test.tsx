@@ -19,9 +19,11 @@ const currentWorkspaceState: MockWorkspaceState = {
   messages: [{ type: "user", id: "user-1", content: "Hi", historySequence: 1 }],
 };
 
-const resumeStream = mock((_input: unknown) =>
-  Promise.resolve({ success: true as const, data: { started: true } })
-);
+type ResumeStreamResult =
+  | { success: true; data: { started: boolean } }
+  | { success: false; error: { type: "runtime_start_failed"; message: string } };
+let resumeStreamResult: ResumeStreamResult = { success: true, data: { started: true } };
+const resumeStream = mock((_input: unknown) => Promise.resolve(resumeStreamResult));
 const setAutoRetryEnabled = mock((_input: unknown) =>
   Promise.resolve({ success: true as const, data: { previousEnabled: false, enabled: true } })
 );
@@ -49,12 +51,15 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
 
 import { useResumeStream, type UseResumeStreamOptions } from "./useResumeStream";
 
-const Harness: React.FC<{ options?: UseResumeStreamOptions }> = (props) => {
-  const { resume } = useResumeStream("ws-1", props.options);
+const Harness: React.FC<{ workspaceId?: string; options?: UseResumeStreamOptions }> = (props) => {
+  const { resume, error } = useResumeStream(props.workspaceId ?? "ws-1", props.options);
   return (
-    <button type="button" onClick={() => void resume()}>
-      resume
-    </button>
+    <div>
+      <button type="button" onClick={() => void resume()}>
+        resume
+      </button>
+      {error && <div data-testid="resume-error">{error}</div>}
+    </div>
   );
 };
 
@@ -62,6 +67,7 @@ describe("useResumeStream", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+    resumeStreamResult = { success: true, data: { started: true } };
     resumeStream.mockClear();
     setAutoRetryEnabled.mockClear();
   });
@@ -99,5 +105,24 @@ describe("useResumeStream", () => {
       enabled: true,
       persist: false,
     });
+  });
+
+  test("clears the error when workspaceId changes (no cross-workspace bleed)", async () => {
+    resumeStreamResult = {
+      success: false,
+      error: { type: "runtime_start_failed", message: "Runtime failed to start" },
+    };
+
+    const view = render(<Harness workspaceId="ws-A" options={{ autoRetryOnFailure: false }} />);
+    fireEvent.click(view.getByText("resume"));
+
+    await waitFor(() => {
+      expect(view.getByTestId("resume-error")).toBeTruthy();
+    });
+
+    // Same always-mounted hook now serves a different workspace: its error must reset.
+    view.rerender(<Harness workspaceId="ws-B" options={{ autoRetryOnFailure: false }} />);
+
+    expect(view.queryByTestId("resume-error")).toBeNull();
   });
 });

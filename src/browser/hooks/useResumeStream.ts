@@ -56,6 +56,20 @@ export function useResumeStream(
   const [error, setError] = useState<string | null>(null);
   const [isResuming, setIsResuming] = useState(false);
 
+  // ChatPane owns this hook and stays mounted across workspace switches, so
+  // transient per-workspace UI state (error, isResuming) must not bleed into the
+  // next workspace. Reset during render on workspaceId change (React's
+  // "adjust state during render" pattern — no effect needed), and track the
+  // latest id so a resume that resolves after a switch can't write onto it.
+  const latestWorkspaceIdRef = useRef(workspaceId);
+  latestWorkspaceIdRef.current = workspaceId;
+  const [trackedWorkspaceId, setTrackedWorkspaceId] = useState(workspaceId);
+  if (workspaceId !== trackedWorkspaceId) {
+    setTrackedWorkspaceId(workspaceId);
+    setError(null);
+    setIsResuming(false);
+  }
+
   const autoRetryStatus = workspaceState.autoRetryStatus;
 
   // Manual resume temporarily enables auto-retry (persist:false) so the resumed
@@ -172,6 +186,13 @@ export function useResumeStream(
       return;
     }
 
+    const startedFor = workspaceId;
+    // Drop state updates if the user switched workspaces before this resolved,
+    // so a stale resume can't surface its error/spinner on a different workspace.
+    const applyIfCurrent = (apply: () => void): void => {
+      if (latestWorkspaceIdRef.current === startedFor) apply();
+    };
+
     setIsResuming(true);
     setError(null);
 
@@ -194,7 +215,7 @@ export function useResumeStream(
           persist: false,
         });
         if (enableResult && !enableResult.success) {
-          setError(enableResult.error);
+          applyIfCurrent(() => setError(enableResult.error));
           return;
         }
 
@@ -218,7 +239,7 @@ export function useResumeStream(
         const details = formatted.resolutionHint
           ? `${formatted.message} ${formatted.resolutionHint}`
           : formatted.message;
-        setError(details);
+        applyIfCurrent(() => setError(details));
 
         // Keep preference consistent when resume fails before retry/stream events.
         await rollbackAutoRetryIfNeeded();
@@ -233,10 +254,10 @@ export function useResumeStream(
         await rollbackAutoRetryIfNeeded();
       }
     } catch (err) {
-      setError(getErrorMessage(err));
+      applyIfCurrent(() => setError(getErrorMessage(err)));
       await rollbackAutoRetryIfNeeded();
     } finally {
-      setIsResuming(false);
+      applyIfCurrent(() => setIsResuming(false));
     }
   };
 

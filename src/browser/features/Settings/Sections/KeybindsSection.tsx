@@ -118,6 +118,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "CANCEL",
       "INTERRUPT_STREAM_NORMAL",
       "INTERRUPT_STREAM_VIM",
+      "RESUME_STREAM",
       "TOGGLE_VOICE_INPUT",
     ],
   },
