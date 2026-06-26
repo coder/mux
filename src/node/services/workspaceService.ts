@@ -201,7 +201,15 @@ import type {
   GoalContinuationRuntimeState,
   WorkspaceGoalService,
 } from "@/node/services/workspaceGoalService";
-import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type {
+  BackgroundProcessManager,
+  MonitorMatchPayload,
+} from "@/node/services/backgroundProcessManager";
+import {
+  BashMonitorWakeStore,
+  buildBashMonitorWakePrompt,
+  type BashMonitorWakeRecord,
+} from "@/node/services/bashMonitorWakeStore";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
 import { findWorkspaceEntry } from "@/node/services/taskUtils";
@@ -395,6 +403,17 @@ function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: st
       return isTerminalWorkflowTaskAwaitRecord(result as Record<string, unknown>, runId);
     });
   });
+}
+
+function isWorkspaceBusyIdleOnlySend(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "type" in error &&
+    error.type === "unknown" &&
+    "raw" in error &&
+    error.raw === IDLE_ONLY_BUSY_SKIP_MESSAGE
+  );
 }
 
 function sanitizeHeartbeatMessage(message: unknown): string | undefined {
@@ -1516,6 +1535,17 @@ export class WorkspaceService extends EventEmitter {
     { chat: () => void; metadata: () => void }
   >();
 
+  private readonly bashMonitorWakeStore: BashMonitorWakeStore;
+  private readonly pendingBashMonitorWakeDrainsByOwner = new Map<string, Promise<void>>();
+  private readonly pendingBashMonitorWakeIdleWaitsByOwner = new Map<string, Promise<void>>();
+  private readonly pendingBashMonitorWakeDrains = new Set<Promise<void>>();
+  private readonly bashMonitorMatchListener = (
+    _workspaceId: string,
+    payload: MonitorMatchPayload
+  ) => {
+    void this.handleBashMonitorMatch(payload);
+  };
+
   // Lazily bootstrapped workflow activity cache so sidebar refreshes don't rescan run history.
   private readonly activeWorkflowRunIdBootstrapsByWorkspace = new Map<
     string,
@@ -1597,12 +1627,152 @@ export class WorkspaceService extends EventEmitter {
     private readonly opResolver?: ExternalSecretResolver
   ) {
     super();
+    this.bashMonitorWakeStore = new BashMonitorWakeStore(config);
+    if (typeof this.backgroundProcessManager.on === "function") {
+      this.backgroundProcessManager.on("monitor:match", this.bashMonitorMatchListener);
+    }
+    void this.schedulePersistedBashMonitorWakeDrains();
     this.policyService = policyService;
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
     this.sessionTimingService = sessionTimingService;
     this.setupMetadataListeners();
     this.setupInitMetadataListeners();
+  }
+
+  private async schedulePersistedBashMonitorWakeDrains(): Promise<void> {
+    try {
+      const ownerWorkspaceIds = await this.bashMonitorWakeStore.listPendingOwnerWorkspaceIds();
+      for (const ownerWorkspaceId of ownerWorkspaceIds) {
+        this.scheduleBashMonitorWakeDrain(ownerWorkspaceId);
+      }
+    } catch (error) {
+      log.debug("Failed to schedule persisted bash monitor wake drains", { error });
+    }
+  }
+
+  private async handleBashMonitorMatch(payload: MonitorMatchPayload): Promise<void> {
+    try {
+      await this.bashMonitorWakeStore.enqueueOrMergePending(payload);
+      this.scheduleBashMonitorWakeDrain(payload.workspaceId);
+    } catch (error) {
+      log.error("Failed to enqueue bash monitor wake", { workspaceId: payload.workspaceId, error });
+    }
+  }
+
+  private scheduleBashMonitorWakeDrain(ownerWorkspaceId: string): void {
+    assert(ownerWorkspaceId.trim().length > 0, "scheduleBashMonitorWakeDrain requires workspaceId");
+    const previous = this.pendingBashMonitorWakeDrainsByOwner.get(ownerWorkspaceId);
+    const promise = (previous ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.drainBashMonitorWakes(ownerWorkspaceId))
+      .catch((error: unknown) => {
+        log.error("Bash monitor wake drain failed", { ownerWorkspaceId, error });
+      })
+      .finally(() => {
+        this.pendingBashMonitorWakeDrains.delete(promise);
+        if (this.pendingBashMonitorWakeDrainsByOwner.get(ownerWorkspaceId) === promise) {
+          this.pendingBashMonitorWakeDrainsByOwner.delete(ownerWorkspaceId);
+        }
+      });
+    this.pendingBashMonitorWakeDrainsByOwner.set(ownerWorkspaceId, promise);
+    this.pendingBashMonitorWakeDrains.add(promise);
+  }
+
+  private scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId: string): void {
+    if (this.pendingBashMonitorWakeIdleWaitsByOwner.has(ownerWorkspaceId)) {
+      return;
+    }
+
+    const promise = this.waitForIdleAndNoQueuedMessages(ownerWorkspaceId)
+      .catch((error: unknown) => {
+        log.debug("Bash monitor idle wait failed; retrying drain anyway", {
+          ownerWorkspaceId,
+          error,
+        });
+      })
+      .then(() => {
+        this.scheduleBashMonitorWakeDrain(ownerWorkspaceId);
+      })
+      .finally(() => {
+        this.pendingBashMonitorWakeDrains.delete(promise);
+        if (this.pendingBashMonitorWakeIdleWaitsByOwner.get(ownerWorkspaceId) === promise) {
+          this.pendingBashMonitorWakeIdleWaitsByOwner.delete(ownerWorkspaceId);
+        }
+      });
+    this.pendingBashMonitorWakeIdleWaitsByOwner.set(ownerWorkspaceId, promise);
+    this.pendingBashMonitorWakeDrains.add(promise);
+  }
+
+  private async drainBashMonitorWakes(ownerWorkspaceId: string): Promise<void> {
+    const pending = await this.bashMonitorWakeStore.listPending(ownerWorkspaceId);
+    if (pending.length === 0) return;
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, ownerWorkspaceId);
+    if (entry == null) {
+      for (const record of pending) {
+        await this.bashMonitorWakeStore.markSuperseded(ownerWorkspaceId, record.id);
+      }
+      return;
+    }
+
+    const ownerHasPendingQueuedPreparingOrRetry =
+      this.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId);
+    const ownerHasSessionBackedBusyState =
+      this.isBusyForMessage(ownerWorkspaceId) ||
+      this.hasQueuedMessages(ownerWorkspaceId) ||
+      ownerHasPendingQueuedPreparingOrRetry;
+    if (this.aiService.isStreaming(ownerWorkspaceId) || ownerHasSessionBackedBusyState) {
+      if (ownerHasSessionBackedBusyState) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      }
+      return;
+    }
+
+    const sendOptions = this.getWorkflowContinuationSendOptions(ownerWorkspaceId);
+    if (sendOptions == null) {
+      log.debug("Bash monitor wake has no send options; leaving pending", { ownerWorkspaceId });
+      return;
+    }
+
+    const prompt = buildBashMonitorWakePrompt(pending);
+    const markDelivered = async (records: readonly BashMonitorWakeRecord[]): Promise<boolean> => {
+      let hasUndeliveredMergedMatches = false;
+      for (const record of records) {
+        const delivered = await this.bashMonitorWakeStore.markDeliveredSnapshot(
+          ownerWorkspaceId,
+          record
+        );
+        if (!delivered) {
+          hasUndeliveredMergedMatches = true;
+        }
+      }
+      return hasUndeliveredMergedMatches;
+    };
+
+    const sendResult = await this.sendMessage(ownerWorkspaceId, prompt, sendOptions, {
+      skipAutoResumeReset: true,
+      synthetic: true,
+      agentInitiated: true,
+      requireIdle: true,
+    });
+
+    if (!sendResult.success) {
+      log.debug("Bash monitor wake-up not accepted; leaving pending", {
+        ownerWorkspaceId,
+        error: sendResult.error,
+      });
+      if (isWorkspaceBusyIdleOnlySend(sendResult.error)) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      }
+      return;
+    }
+
+    const hasUndeliveredMergedMatches = await markDelivered(pending);
+    if (hasUndeliveredMergedMatches) {
+      this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+    }
   }
 
   private readonly policyService?: PolicyService;
@@ -1872,12 +2042,14 @@ export class WorkspaceService extends EventEmitter {
     this.aiService.on("stream-end", (data: unknown) => {
       if (isStreamEndEvent(data)) {
         void this.handleStreamCompletion(data.workspaceId);
+        this.scheduleBashMonitorWakeDrain(data.workspaceId);
       }
     });
 
     this.aiService.on("stream-abort", (data: unknown) => {
       if (isStreamAbortEvent(data)) {
         void this.stopStreamingStatus(data.workspaceId);
+        this.scheduleBashMonitorWakeDrain(data.workspaceId);
         // Goal mutations are drained by AgentSession after any abort accounting
         // runs. Draining here would race ahead of AgentSession's stream-abort
         // listener and could charge the aborted in-flight stream to a goal that
@@ -1897,6 +2069,7 @@ export class WorkspaceService extends EventEmitter {
           });
         }
         void this.stopStreamingStatus(data.workspaceId);
+        this.scheduleBashMonitorWakeDrain(data.workspaceId);
         void this.workspaceGoalService?.applyPendingAfterStreamEnd(data.workspaceId);
       }
     });
@@ -8392,19 +8565,33 @@ export class WorkspaceService extends EventEmitter {
       displayName?: string;
       startTime: number;
       status: "running" | "exited" | "killed" | "failed";
+      monitor?: {
+        filter: string;
+        filter_exclude: boolean;
+        cooldown_ms: number;
+        max_events?: number;
+        totalMatches: number;
+        droppedLines: number;
+        lastLines: string[];
+        stopped: boolean;
+      };
       exitCode?: number;
     }>
   > {
     const processes = await this.backgroundProcessManager.list(workspaceId);
-    return processes.map((p) => ({
-      id: p.id,
-      pid: p.pid,
-      script: p.script,
-      displayName: p.displayName,
-      startTime: p.startTime,
-      status: p.status,
-      exitCode: p.exitCode,
-    }));
+    return processes.map((p) => {
+      const monitor = this.backgroundProcessManager.getMonitorSnapshot(p);
+      return {
+        id: p.id,
+        pid: p.pid,
+        script: p.script,
+        displayName: p.displayName,
+        startTime: p.startTime,
+        status: p.status,
+        ...(monitor != null ? { monitor } : {}),
+        exitCode: p.exitCode,
+      };
+    });
   }
 
   /**

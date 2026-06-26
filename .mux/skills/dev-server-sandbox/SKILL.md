@@ -40,6 +40,26 @@ make dev-server-sandbox
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
 - Runs `make dev-server` with those env overrides
 
+## Agent usage with `bash.monitor`
+
+When you need the sandbox to keep running while you continue or end the turn, start it as a monitored background bash. The monitor wakes the workspace on useful server output; call `task_await` only if you need surrounding logs.
+
+```ts
+bash({
+  script: "make dev-server-sandbox",
+  display_name: "Dev Server Sandbox",
+  run_in_background: true,
+  timeout_secs: 1800,
+  monitor: {
+    filter: "ready|listening|localhost|ERROR|EADDRINUSE|failed|Failed",
+    cooldown_ms: 1000,
+    max_events: 3,
+  },
+});
+```
+
+Use this for line-oriented server readiness/errors. For external status polling (PR checks, deployment health, remote CI), use a background task/workflow monitor instead.
+
 ## Options
 
 ```bash

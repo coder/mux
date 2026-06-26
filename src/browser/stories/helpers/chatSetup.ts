@@ -7,6 +7,7 @@ import type {
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { APIClient } from "@/browser/contexts/API";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
@@ -39,15 +40,7 @@ export function createOnChatAdapter(chatHandlers: Map<string, ChatHandler>) {
 // SIMPLE CHAT STORY SETUP
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export interface BackgroundProcessFixture {
-  id: string;
-  pid: number;
-  script: string;
-  displayName?: string;
-  startTime: number;
-  status: "running" | "exited" | "killed" | "failed";
-  exitCode?: number;
-}
+export type BackgroundProcessFixture = BackgroundProcessInfo;
 
 export interface SimpleChatSetupOptions {
   workspaceId?: string;

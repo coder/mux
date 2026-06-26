@@ -46,6 +46,26 @@ make dev-desktop-sandbox
   - `MUX_SERVER_PORT=0` by default (avoids `EADDRINUSE` if your `config.json` pins `apiServerPort`)
   - `CMUX_ALLOW_MULTIPLE_INSTANCES=1` (so you can run alongside another dev instance)
 
+## Agent usage with `bash.monitor`
+
+When launching an Electron sandbox for dogfooding, prefer a monitored background bash so Mux wakes the workspace on Vite/Electron readiness or startup failures without manual polling.
+
+```ts
+bash({
+  script: "make dev-desktop-sandbox",
+  display_name: "Desktop Sandbox",
+  run_in_background: true,
+  timeout_secs: 1800,
+  monitor: {
+    filter: "Vite|ready|localhost|Electron|ERROR|EADDRINUSE|failed|Failed",
+    cooldown_ms: 1000,
+    max_events: 5,
+  },
+});
+```
+
+After a readiness wake, use the sandbox output/ports shown in the matched logs to connect with the Electron or agent-browser workflow. Use `task_await` only when the wake line is not enough context.
+
 ## Options
 
 ```bash

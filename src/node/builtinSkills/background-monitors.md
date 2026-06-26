@@ -9,12 +9,14 @@ Use this skill when you need a long-running watcher for CI, mergeability, PR rev
 
 ## What wakes the parent
 
-Mux wakes the owning workspace when a background **task** or **workflow** reaches a terminal state (`completed`, `failed`, `interrupted`, or `error`). Use one of these forms for monitors:
+Mux wakes the owning workspace in these cases:
 
-- `task({ run_in_background: true, ... })` for an ad-hoc monitor implemented by a sub-agent.
-- `workflow_run({ run_in_background: true, ... })` for durable/reusable monitors.
+- A background **task** or **workflow** reaches a terminal state (`completed`, `failed`, `interrupted`, or `error`).
+- A raw background `bash` process is launched with a `monitor` block and a complete output line matches the monitor regex.
 
-Raw `bash({ run_in_background: true })` is different: it keeps a process running and you can retrieve output with `task_await`, but it does **not** by itself send an automatic terminal wake-up to the parent. If you need wake-on-finish or wake-on-condition, wrap the shell polling inside a background task or workflow and have that task/workflow finish when the condition is reached.
+Use `bash({ run_in_background: true, monitor: { filter: "FAILED|ERROR", max_events: 1 } })` for line-oriented shell output watchers such as dev servers, watch tests, and log tails. The process keeps running; Mux wakes the parent with the matched lines, and the parent should call `task_await` only if it needs surrounding/full output.
+
+Use background `task({ run_in_background: true, ... })` or `workflow_run({ run_in_background: true, ... })` for state polling that is not naturally a single process output stream, such as CI checks, mergeability, PR reviews, deployments, and queue state.
 
 ## Monitor contract
 
@@ -28,6 +30,30 @@ Every monitor must be bounded and idempotent. Before launching one, define:
 - **Output policy:** report only state transitions, convergence, or blockers; do not stream noisy logs into the parent.
 
 ## Preferred patterns
+
+### Raw bash output monitor
+
+Use raw background `bash` with `monitor` when the condition is a complete line printed by one long-running shell process: dev servers becoming ready, watch-test failures, compiler errors, log-tail panics, benchmark failures, or other stdout/stderr signals.
+
+```ts
+bash({
+  script: "make dev-server-sandbox",
+  display_name: "Dev server sandbox",
+  run_in_background: true,
+  timeout_secs: 1800,
+  monitor: {
+    filter: "ready|listening|compiled|ERROR|FAILED|panic|EADDRINUSE",
+    cooldown_ms: 1000,
+    max_events: 3,
+  },
+});
+```
+
+Rules for `bash.monitor`:
+
+- Keep the regex specific enough to avoid wake storms; use `max_events` for noisy logs.
+- Treat matched lines as a wake signal, not full context; call `task_await({ task_ids: ["bash:<id>"], timeout_secs: 0 })` only when you need surrounding output.
+- Do not use `bash.monitor` for GitHub checks, mergeability, review state, deploy APIs, or any state that requires polling separate commands. Use a background task/workflow monitor for those.
 
 ### Ad-hoc task monitor
 
@@ -55,7 +81,7 @@ Instructions:
 4. If a required check fails, call agent_report with the failing check names and links.
 5. If the bound expires, call agent_report with the last observed state and the next human decision needed.
 `,
-})
+});
 ```
 
 The parent may end its turn after the `task` tool returns. Mux will wake the parent when the monitor task calls `agent_report` or settles terminally.
@@ -85,7 +111,7 @@ Heartbeat is still useful as a coarse fallback reminder, but it should not repla
 ## Avoid these traps
 
 - Do not create unbounded `while true` monitors. Every monitor needs a deadline.
-- Do not launch a raw background bash process and assume the parent will be woken automatically.
+- Do not launch a raw background bash process without `monitor` and assume the parent will be woken automatically.
 - Do not have multiple monitors watch the same idempotency key unless you intentionally want duplicate reports.
 - Do not report every polling iteration. Report convergence, state transitions, failures, or timeout.
 - Do not use monitors to hide work that the current answer depends on; use foreground/default mode or `task_await` when the next decision requires the result.
