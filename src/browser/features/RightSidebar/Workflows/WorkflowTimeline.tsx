@@ -67,15 +67,6 @@ function useDisclosureOpenOnFailure(
   return [open, setOpen] as const;
 }
 
-function useWorkflowTaskWorkspaceAvailable(taskId: string | undefined): boolean {
-  const workspaceStore = useWorkspaceStoreRaw();
-  return React.useSyncExternalStore(
-    workspaceStore.subscribeDerived,
-    () => taskId != null && workspaceStore.getWorkspaceMetadata(taskId) != null,
-    () => false
-  );
-}
-
 const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (props) => {
   const step = props.step;
   const expandable = step.status === "completed" || step.status === "failed";
@@ -88,8 +79,15 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
     step.result?.structuredOutput !== undefined
   );
   const workspaceStore = useWorkspaceStoreRaw();
-  const taskWorkspaceAvailable = useWorkflowTaskWorkspaceAvailable(step.taskWorkspaceId);
-  const canOpenWorkspace = step.taskWorkspaceId != null && taskWorkspaceAvailable;
+  // Subscribe to derived workspace metadata so the Open action disappears once the
+  // child workspace is deleted; it shows only while the step's workspace still exists.
+  const canOpenWorkspace = React.useSyncExternalStore(
+    workspaceStore.subscribeDerived,
+    () =>
+      step.taskWorkspaceId != null &&
+      workspaceStore.getWorkspaceMetadata(step.taskWorkspaceId) != null,
+    () => false
+  );
   const openTaskWorkspace = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (step.taskWorkspaceId == null) {
