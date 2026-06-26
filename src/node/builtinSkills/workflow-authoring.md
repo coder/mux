@@ -59,7 +59,7 @@ Packaged reusable workflows should live inside skill directories and be invoked 
 
 ## Running workflows
 
-Default to foreground workflow runs. When a foreground `workflow_run` returns `status: "completed"`, the final result is available directly, avoiding an unnecessary `task_await` call just to discover completion. Set `run_in_background: true` only when another workflow/task or unrelated work can proceed in parallel. If any `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` with `task_await` before using the result.
+Default to foreground workflow runs. When a foreground `workflow_run` returns `status: "completed"`, the final result is available directly, avoiding an unnecessary `task_await` call just to discover completion. Set `run_in_background: true` only when another workflow/task or unrelated work can proceed in parallel, or when the user explicitly asked to be notified later instead of receiving the result in the current answer. If any `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` with `task_await` before using the result unless you are intentionally ending the turn and relying on the terminal wake-up.
 
 ### Attention policy (internal, not author-settable)
 

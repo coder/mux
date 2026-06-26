@@ -100,7 +100,7 @@ Example dependency chain (schema download → generation):
 
 1. Identify a batch of independent subtasks.
 2. Spawn one `exec` sub-agent task per subtask with `run_in_background: true`.
-3. Await the batch via `task_await`.
+3. If you can do useful setup work while they run, do it; when you are ready to integrate, call `task_await` for the pending task IDs. If no parent-side work remains, end the turn after recording task IDs; Mux will wake this workspace as each background task reaches a terminal state.
 4. For each successful implementation task, integrate patches **one at a time**:
    - Treat every successful child task with a `taskId` as pending patch integration, whether the completion arrived inline from `task` or later from `task_await`.
    - Complete each dry-run + real-apply pair before starting the next patch. Applying one patch changes `HEAD`, which can invalidate later dry-run results.
