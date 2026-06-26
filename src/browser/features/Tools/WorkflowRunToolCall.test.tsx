@@ -607,6 +607,80 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("running · 0/0 steps · child-phase");
   });
 
+  test("keeps workflow event details visible when a nested run is unavailable", async () => {
+    const timestamp = "2026-05-29T00:00:00.000Z";
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(null),
+      },
+    };
+
+    const view = renderWithStickyToolProviders(
+      <APIHarness client={client}>
+        <WorkflowRunToolCall
+          args={{
+            name: "issue-implementation-loop",
+            args: { issue: 3546 },
+            run_in_background: false,
+          }}
+          status="executing"
+          result={{
+            status: "running",
+            runId: "wfr_parent_missing_child",
+            result: null,
+            run: {
+              id: "wfr_parent_missing_child",
+              workspaceId: "workspace-1",
+              workflow: {
+                name: "issue-implementation-loop",
+                description: "Issue loop",
+                scope: "global",
+                requestedScriptPath: "skill://issue-implementation-loop/workflow.js",
+                canonicalScriptPath: "skill://issue-implementation-loop/workflow.js",
+                sourceKind: "skill",
+                sourceHash: "sha256:parent",
+                executable: true,
+              },
+              source: "export default function workflow() { return null; }",
+              sourceHash: "sha256:parent",
+              args: { issue: 3546 },
+              status: "running",
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              events: [
+                { sequence: 1, type: "phase", at: timestamp, name: "delegate" },
+                {
+                  sequence: 2,
+                  type: "workflow",
+                  at: timestamp,
+                  stepId: "implementation-loop",
+                  runId: "wfr_missing_child",
+                  name: "implementation-loop",
+                  status: "started",
+                  details: { error: "child run metadata missing" },
+                },
+              ],
+              steps: [
+                {
+                  stepId: "implementation-loop",
+                  inputHash: "hash-child",
+                  status: "started",
+                  startedAt: timestamp,
+                },
+              ],
+            },
+          }}
+        />
+      </APIHarness>
+    );
+
+    await waitFor(() => {
+      expect(view.getByText("Nested workflow run is not available.")).toBeTruthy();
+    });
+    expect(view.container.textContent).toContain("Workflow event details");
+    expect(view.container.textContent).toContain("child run metadata missing");
+  });
+
   test("coalesces task attempts, navigates active rows, expands completed outputs, opens workspaces, and opens reports", async () => {
     const navigatedTo: string[] = [];
     useWorkspaceStoreRaw().setNavigateToWorkspace((workspaceId) => {

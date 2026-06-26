@@ -643,6 +643,18 @@ function WorkflowEventRow(props: {
   );
 }
 
+function WorkflowChildEventDetailBlock(props: { detail: unknown }) {
+  if (props.detail === undefined) {
+    return null;
+  }
+  return (
+    <div className="mt-2 space-y-1">
+      <div className="text-muted text-[10px] tracking-wide uppercase">Workflow event details</div>
+      <WorkflowJsonBlock value={props.detail} className="max-h-[180px]" />
+    </div>
+  );
+}
+
 function WorkflowChildRunRow(props: {
   row: WorkflowChildDisplayRow;
   displayIndex: number;
@@ -669,6 +681,7 @@ function WorkflowChildRunRow(props: {
   const childActive =
     childRun != null ? isActiveWorkflowRunStatus(childRun.status) : fallbackActive;
   const progressSummary = getWorkflowChildProgressSummary(childRun);
+  const fallbackDetail = getWorkflowMergedRowDetail(props.row);
   const label = `${event.stepId} / ${event.name} / ${event.runId} / ${childStatus}`;
 
   return (
@@ -721,7 +734,10 @@ function WorkflowChildRunRow(props: {
               Nested workflow depth limit reached; showing summary only.
             </div>
           ) : childRunState.error != null ? (
-            <ErrorBox className="mt-2">{childRunState.error}</ErrorBox>
+            <>
+              <ErrorBox className="mt-2">{childRunState.error}</ErrorBox>
+              <WorkflowChildEventDetailBlock detail={fallbackDetail} />
+            </>
           ) : childRunState.loading && childRun == null ? (
             <div className="text-muted mt-2 text-[11px]">Loading nested workflow…</div>
           ) : childRun != null && childView != null ? (
@@ -733,7 +749,12 @@ function WorkflowChildRunRow(props: {
               />
             </div>
           ) : (
-            <div className="text-muted mt-2 text-[11px]">Nested workflow run is not available.</div>
+            <>
+              <div className="text-muted mt-2 text-[11px]">
+                Nested workflow run is not available.
+              </div>
+              <WorkflowChildEventDetailBlock detail={fallbackDetail} />
+            </>
           )}
         </div>
       </details>
