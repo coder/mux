@@ -239,7 +239,11 @@ const HeaderBadge: React.FC<{ rows: TaskWorkspaceLifecycleTargetResult[]; execut
   }
 
   const counts = summarizeOutcomeGroups(props.rows);
-  const worst: Tone = counts.failed > 0 ? "danger" : counts.blocked > 0 ? "warn" : "muted";
+  // Pick the most severe non-empty group and map it to its tone via GROUP_TONE so the
+  // group→tone mapping stays single-sourced (the dot chips below read from it too).
+  const worstGroup: OutcomeGroup =
+    counts.failed > 0 ? "failed" : counts.blocked > 0 ? "blocked" : "settled";
+  const worst: Tone = GROUP_TONE[worstGroup];
   const chips: Array<{ group: OutcomeGroup; n: number; label: string }> = [
     { group: "settled", n: counts.settled, label: "done" },
     { group: "blocked", n: counts.blocked, label: "blocked" },
