@@ -16,6 +16,7 @@ import {
 
 import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import { WorkflowJsonBlock } from "@/browser/features/Tools/WorkflowToolShared";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 
 import { WorkflowLiveDot } from "./WorkflowBadges";
 import type { WorkflowPhaseView, WorkflowRunView, WorkflowStepView } from "./projectWorkflowRun";
@@ -66,6 +67,15 @@ function useDisclosureOpenOnFailure(
   return [open, setOpen] as const;
 }
 
+function useWorkflowTaskWorkspaceAvailable(taskId: string | undefined): boolean {
+  const workspaceStore = useWorkspaceStoreRaw();
+  return React.useSyncExternalStore(
+    workspaceStore.subscribeDerived,
+    () => taskId != null && workspaceStore.getWorkspaceMetadata(taskId) != null,
+    () => false
+  );
+}
+
 const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (props) => {
   const step = props.step;
   const expandable = step.status === "completed" || step.status === "failed";
@@ -76,6 +86,40 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
   const showReport = hasDisplayableWorkflowReport(
     step.result?.reportMarkdown,
     step.result?.structuredOutput !== undefined
+  );
+  const workspaceStore = useWorkspaceStoreRaw();
+  const taskWorkspaceAvailable = useWorkflowTaskWorkspaceAvailable(step.taskWorkspaceId);
+  const canOpenWorkspace = step.taskWorkspaceId != null && taskWorkspaceAvailable;
+  const openTaskWorkspace = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (step.taskWorkspaceId == null) {
+      return;
+    }
+    workspaceStore.navigateToWorkspace(step.taskWorkspaceId);
+  };
+  const headerContent = (
+    <>
+      <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">{step.title}</span>
+      {step.status === "completed" && step.durationMs != null && (
+        <span className="text-muted shrink-0 text-[11px] tabular-nums">
+          {formatWorkflowDuration(step.durationMs)}
+        </span>
+      )}
+      {step.status === "running" && (
+        <span className="text-accent shrink-0 text-[11px]">running…</span>
+      )}
+      {step.status === "failed" && (
+        <span className="shrink-0 text-[11px]" style={{ color }}>
+          failed
+        </span>
+      )}
+      {expandable &&
+        (open ? (
+          <ChevronDown className="text-muted h-3 w-3 shrink-0" />
+        ) : (
+          <ChevronRight className="text-muted h-3 w-3 shrink-0" />
+        ))}
+    </>
   );
 
   return (
@@ -90,34 +134,32 @@ const WorkflowStepRow: React.FC<{ step: WorkflowStepView; isLast: boolean }> = (
         {!props.isLast && <span className="bg-border w-px flex-1" />}
       </div>
       <div className="min-w-0 flex-1 pt-0.5 pb-2">
-        <button
-          type="button"
-          disabled={!expandable}
-          onClick={() => setOpen((value) => !value)}
-          className="enabled:hover:bg-surface-secondary flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left disabled:cursor-default"
-          aria-expanded={expandable ? open : undefined}
-        >
-          <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">{step.title}</span>
-          {step.status === "completed" && step.durationMs != null && (
-            <span className="text-muted shrink-0 text-[11px] tabular-nums">
-              {formatWorkflowDuration(step.durationMs)}
-            </span>
+        <div className="flex min-w-0 items-center gap-1">
+          {expandable ? (
+            <button
+              type="button"
+              onClick={() => setOpen((value) => !value)}
+              className="hover:bg-surface-secondary flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left"
+              aria-expanded={open}
+            >
+              {headerContent}
+            </button>
+          ) : (
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left">
+              {headerContent}
+            </div>
           )}
-          {step.status === "running" && (
-            <span className="text-accent shrink-0 text-[11px]">running…</span>
+          {canOpenWorkspace && (
+            <button
+              type="button"
+              aria-label={`Open workspace for workflow step ${step.title}`}
+              onClick={openTaskWorkspace}
+              className="border-border bg-surface-primary text-content-secondary hover:bg-surface-secondary shrink-0 rounded-md border px-2 py-1 text-[11px] font-medium"
+            >
+              Open
+            </button>
           )}
-          {step.status === "failed" && (
-            <span className="shrink-0 text-[11px]" style={{ color }}>
-              failed
-            </span>
-          )}
-          {expandable &&
-            (open ? (
-              <ChevronDown className="text-muted h-3 w-3 shrink-0" />
-            ) : (
-              <ChevronRight className="text-muted h-3 w-3 shrink-0" />
-            ))}
-        </button>
+        </div>
 
         {open && expandable && (
           <div className="border-border bg-surface-primary mx-2 mb-1.5 rounded-lg border p-3">
