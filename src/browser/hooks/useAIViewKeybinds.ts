@@ -35,7 +35,7 @@ interface UseAIViewKeybindsParams {
 /**
  * Manages keyboard shortcuts for AIView:
  * - Esc (non-vim) or Ctrl+C (vim): Interrupt stream (Escape skips text inputs by default)
- * - Ctrl/Cmd+Shift+Enter: Resume an interrupted stream (when a resumable turn is shown)
+ * - Shift+R: Resume an interrupted stream (when a resumable turn is shown)
  * - Ctrl+I: Focus chat input
  * - Shift+H: Load older transcript messages (when available)
  * - Shift+G: Jump to bottom
@@ -147,20 +147,21 @@ export function useAIViewKeybinds({
         return;
       }
 
-      // Resume an interrupted stream (inverse of the interrupt keybind). Only
-      // acts when a resumable interrupted turn is shown; otherwise falls through.
+      // Don't handle other shortcuts if user is typing in an input field
+      if (dialogOpen || isEditableElement(e.target)) {
+        return;
+      }
+
+      // Resume an interrupted stream. Like Shift+G/Shift+H, this is a
+      // transcript-scoped key: gated below the editable guard so Shift+R types
+      // normally while composing. Only acts when a resumable turn is shown.
       if (
         matchesKeybind(e, KEYBINDS.RESUME_STREAM) &&
         canResumeInterruptedStream &&
         resumeInterruptedStream
       ) {
         e.preventDefault();
-        if (!dialogOpen) resumeInterruptedStream();
-        return;
-      }
-
-      // Don't handle other shortcuts if user is typing in an input field
-      if (dialogOpen || isEditableElement(e.target)) {
+        resumeInterruptedStream();
         return;
       }
 
