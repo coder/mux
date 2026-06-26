@@ -607,6 +607,89 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("running · 0/0 steps · child-phase");
   });
 
+  test("refreshes a collapsed terminal workflow row when the child run is active again", async () => {
+    const timestamp = "2026-05-29T00:00:00.000Z";
+    const retriedChildRun: WorkflowRunRecord = {
+      id: "wfr_retried_child",
+      workspaceId: "workspace-1",
+      workflow: {
+        name: "implementation-loop",
+        description: "Implementation loop",
+        scope: "global",
+        requestedScriptPath: "skill://implementation-loop/workflow.js",
+        canonicalScriptPath: "skill://implementation-loop/workflow.js",
+        sourceKind: "skill",
+        sourceHash: "sha256:child",
+        executable: true,
+      },
+      source: "export default function workflow() { return null; }",
+      sourceHash: "sha256:child",
+      args: {},
+      status: "running",
+      createdAt: timestamp,
+      updatedAt: "2026-05-29T00:00:01.000Z",
+      events: [{ sequence: 1, type: "status", at: timestamp, status: "running" }],
+      steps: [],
+    };
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(retriedChildRun),
+      },
+    };
+
+    const view = renderWithStickyToolProviders(
+      <APIHarness client={client}>
+        <WorkflowRunToolCall
+          args={{ name: "issue-implementation-loop", args: {}, run_in_background: false }}
+          status="completed"
+          result={{
+            status: "running",
+            runId: "wfr_parent_retried_child",
+            result: null,
+            run: {
+              id: "wfr_parent_retried_child",
+              workspaceId: "workspace-1",
+              workflow: {
+                name: "issue-implementation-loop",
+                description: "Issue loop",
+                scope: "global",
+                requestedScriptPath: "skill://issue-implementation-loop/workflow.js",
+                canonicalScriptPath: "skill://issue-implementation-loop/workflow.js",
+                sourceKind: "skill",
+                sourceHash: "sha256:parent",
+                executable: true,
+              },
+              source: "export default function workflow() { return null; }",
+              sourceHash: "sha256:parent",
+              args: {},
+              status: "running",
+              createdAt: timestamp,
+              updatedAt: timestamp,
+              events: [
+                {
+                  sequence: 1,
+                  type: "workflow",
+                  at: timestamp,
+                  stepId: "implementation-loop",
+                  runId: "wfr_retried_child",
+                  name: "implementation-loop",
+                  status: "failed",
+                },
+              ],
+              steps: [],
+            },
+          }}
+        />
+      </APIHarness>
+    );
+
+    await waitFor(() => {
+      expect(
+        view.getByText("implementation-loop / implementation-loop / wfr_retried_child / running")
+      ).toBeTruthy();
+    });
+  });
+
   test("keeps workflow event details visible when a nested run is unavailable", async () => {
     const timestamp = "2026-05-29T00:00:00.000Z";
     const client = {

@@ -669,11 +669,13 @@ function WorkflowChildRunRow(props: {
   );
   const withinDepthLimit = props.depth < MAX_TOOL_INLINE_NESTED_WORKFLOW_DEPTH;
   const fallbackActive = isWorkflowChildEventActive(event.status);
+  // Fetch even for collapsed terminal-looking rows: checkpoint retries reuse the child run id and
+  // may not emit another parent started event, so the durable child record is the source of truth.
   const childRunState = useWorkflowRunById({
     workspaceId: props.workspaceId,
     runId: event.runId,
-    enabled: props.workspaceId != null && withinDepthLimit && (open || fallbackActive),
-    pollWhileActive: fallbackActive,
+    enabled: props.workspaceId != null && withinDepthLimit,
+    pollWhileActive: true,
   });
   const childRun = childRunState.run;
   const childView = childRun != null ? projectWorkflowRun(childRun) : null;
