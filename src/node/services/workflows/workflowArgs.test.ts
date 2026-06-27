@@ -24,6 +24,17 @@ const sourceWithLegacySchemaOptions = `export const meta = {
 export default function workflow() { return { reportMarkdown: "done" }; }
 `;
 
+const sourceWithOptionalObjectSchema = `export const meta = {
+  argsSchema: {
+    type: "object",
+    properties: {
+      quick: { type: "boolean", default: false }
+    }
+  }
+};
+export default function workflow() { return { reportMarkdown: "done" }; }
+`;
+
 describe("normalizeWorkflowArgsForSource", () => {
   test("treats input as structured data instead of tokenized command text", () => {
     const result = normalizeWorkflowArgsForSource(sourceWithInputSchema, {
@@ -39,10 +50,16 @@ describe("normalizeWorkflowArgsForSource", () => {
     expect(result.args).toEqual({ input: "mux", quick: false });
   });
 
+  test("rejects non-object args for object schemas", () => {
+    expect(() => normalizeWorkflowArgsForSource(sourceWithOptionalObjectSchema, "hello")).toThrow(
+      "Workflow args must be an object for object argsSchema"
+    );
+  });
+
   test("does not map raw string args into schema fields", () => {
     expect(() =>
       normalizeWorkflowArgsForSource(sourceWithInputSchema, "review mux --quick")
-    ).toThrow("Workflow argument input is required");
+    ).toThrow("Workflow args must be an object for object argsSchema");
   });
 
   test("still validates required fields", () => {

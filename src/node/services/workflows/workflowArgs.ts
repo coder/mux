@@ -93,6 +93,10 @@ function normalizeWorkflowArgs(
     }
   }
 
+  if (rawArgs !== undefined && !isPlainObject(rawArgs)) {
+    throw validationError("Workflow args must be an object for object argsSchema");
+  }
+
   if (isPlainObject(rawArgs)) {
     for (const property of properties) {
       if (property.name in rawArgs) {
