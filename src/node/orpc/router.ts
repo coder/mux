@@ -1993,7 +1993,7 @@ export const router = (authToken?: string) => {
             script,
             workspaceId: input.workspaceId,
             projectTrusted,
-            args: input.args ?? {},
+            args: input.args === undefined ? {} : input.args,
             ...(input.rawCommand != null
               ? { defaultArgs: { projectPath: workflowExecutionProjectPath } }
               : {}),

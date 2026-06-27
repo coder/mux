@@ -478,6 +478,38 @@ export default function workflow({ args }) { return { reportMarkdown: args.topic
     expect(thrown).toHaveProperty("message", "Workflow argument topic is required");
   });
 
+  test("preserves explicit null workflow args for object-schema validation", async () => {
+    fs.writeFileSync(
+      path.join(projectPath, ".mux", "workflows", "optional-args.js"),
+      `const s = mux.schema;
+export const meta = {
+  description: "Optional args",
+  argsSchema: s.object({ quick: s.optional(s.boolean()) }),
+};
+export default function workflow({ args }) { return { reportMarkdown: String(args.quick) }; }
+`
+    );
+    const client = createRouterClient(router(), { context: createContext({ enabled: true }) });
+
+    let thrown: unknown;
+    try {
+      await client.workflows.start({
+        workspaceId: "workspace-1",
+        scriptPath: "./.mux/workflows/optional-args.js",
+        args: null,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ORPCError);
+    expect((thrown as { code?: string }).code).toBe("BAD_REQUEST");
+    expect(thrown).toHaveProperty(
+      "message",
+      "Workflow args must be an object for object argsSchema"
+    );
+  });
+
   test("reports malformed workflow argument schemas as a bad request", async () => {
     fs.writeFileSync(
       path.join(projectPath, ".mux", "workflows", "bad-args-schema.js"),
