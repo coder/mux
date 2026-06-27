@@ -4688,6 +4688,8 @@ export class AgentSession {
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
+      // A queued tool-end dispatch deliberately soft-stops the stream (abortReason "system")
+      // to preempt the turn, so that abort is intentional rather than a failure: skip auto-retry.
       if (!isQueuedToolEndAbort) {
         await this.handleStreamFailureForAutoRetry({
           type: "aborted",
