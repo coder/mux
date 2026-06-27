@@ -12,5 +12,5 @@ export const SLASH_COMMAND_HINTS = {
   heartbeat: "<minutes>|off",
   goal: "[-b <amount>] [--turns <n>] <objective>|budget <amount>|clear",
   btw: "<question>",
-  workflow: "<script_path> [args]",
+  workflow: "<script_path> [json_args]",
 } as const satisfies Readonly<Record<string, string>>;

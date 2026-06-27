@@ -61,10 +61,7 @@ import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
-export type CreationInitialSlashCommand = Extract<
-  ParsedCommand,
-  { type: "goal-set" } | { type: "workflow-run" }
->;
+export type CreationInitialSlashCommand = Extract<ParsedCommand, { type: "goal-set" }>;
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -361,15 +358,6 @@ export function useCreationWorkspace({
       initialSlashCommand?: CreationInitialSlashCommand
     ): Promise<CreationSendResult> => {
       if (!messageText.trim() || isSending || !api) {
-        return { success: false };
-      }
-
-      if (initialSlashCommand?.type === "workflow-run" && !dynamicWorkflowsEnabled) {
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: "Dynamic workflows are disabled",
-        });
         return { success: false };
       }
 

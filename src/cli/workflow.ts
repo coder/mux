@@ -45,7 +45,6 @@ const VALID_EXPERIMENT_IDS = new Set<string>(Object.values(EXPERIMENT_IDS));
 const THINKING_LABELS_LIST = [...new Set(Object.values(THINKING_DISPLAY_LABELS))].join(", ");
 
 export interface ParseWorkflowArgsInput {
-  positionalInput?: string[];
   arg?: string[];
   argsJson?: string;
   argsFile?: string;
@@ -86,7 +85,6 @@ interface WorkflowContext {
 }
 
 export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<unknown> {
-  const positionalInput = input.positionalInput ?? [];
   const structuredModes = [
     input.arg != null && input.arg.length > 0 ? "--arg" : null,
     input.argsJson != null ? "--args-json" : null,
@@ -94,9 +92,6 @@ export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<
     input.argsStdin === true ? "--args-stdin" : null,
   ].filter((mode): mode is string => mode != null);
 
-  if (structuredModes.length > 0 && positionalInput.length > 0) {
-    throw new Error("Workflow positional input cannot be combined with structured args flags");
-  }
   if (structuredModes.length > 1) {
     throw new Error(`Only one structured args mode is allowed, got: ${structuredModes.join(", ")}`);
   }
@@ -117,8 +112,7 @@ export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<
     return parseKeyValueArgs(input.arg);
   }
 
-  const inputText = positionalInput.join(" ").trim();
-  return inputText.length > 0 ? { input: inputText } : {};
+  return {};
 }
 
 function parseJsonArgs(text: string, label: string): unknown {
@@ -400,11 +394,7 @@ function createWorkflowService(input: {
   });
 }
 
-async function runWorkflow(
-  scriptPath: string,
-  positionalInput: string[],
-  options: WorkflowCLIOptions
-): Promise<number> {
+async function runWorkflow(scriptPath: string, options: WorkflowCLIOptions): Promise<number> {
   const projectDir = await resolveProjectDir({
     cwd: process.cwd(),
     explicitDir: options.dir,
@@ -412,7 +402,6 @@ async function runWorkflow(
   parseRuntimeConfig(options.runtime);
 
   const args = await parseWorkflowArgs({
-    positionalInput,
     arg: options.arg,
     argsJson: options.argsJson,
     argsFile: options.argsFile,
@@ -530,13 +519,12 @@ export async function main(): Promise<number> {
   program
     .command("run")
     .argument("<script_path>", "explicit workflow script path")
-    .argument("[input...]", "optional positional input mapped to { input }")
+    .allowExcessArguments(false)
     .description("Run a workflow in the foreground")
-    .action(async (scriptPath: string, input: unknown) => {
+    .action(async (scriptPath: string) => {
       const options = program.opts<WorkflowCLIOptions>();
       configureLogging(options);
-      assert(Array.isArray(input), "mux workflow run input must be an array");
-      process.exitCode = await runWorkflow(scriptPath, input as string[], options);
+      process.exitCode = await runWorkflow(scriptPath, options);
     });
 
   await program.parseAsync(process.argv, getParseOptions());

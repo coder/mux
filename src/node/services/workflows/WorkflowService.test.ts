@@ -409,9 +409,17 @@ export default function workflow() { return { reportMarkdown: "done" }; }
   test("runs nested workflow scripts as durable child runs", async () => {
     using tmp = new DisposableTempDir("workflow-service-nested-run");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
-    const childSource = `export const meta = { name: "Child Workflow", description: "Nested child" };
+    const childSource = `export const meta = {
+  name: "Child Workflow",
+  description: "Nested child",
+  argsSchema: {
+    type: "object",
+    properties: { input: { type: "string" } },
+    required: ["input"]
+  }
+};
 export default function workflow({ args }) {
-  return { reportMarkdown: "Child " + args.topic };
+  return { reportMarkdown: "Child " + args.input };
 }
 `;
     const childScript = createScript(childSource, {
@@ -439,9 +447,10 @@ export default function workflow({ args }) {
       },
     });
 
+    const childInput = "quoted markdown: I'm testing --not-a-flag";
     const result = await service.startWorkflow({
       script: createScript(`export default function workflow({ workflow }) {
-  const child = workflow("./workflows/child.js", { id: "child-step", args: { topic: "nested" } });
+  const child = workflow("./workflows/child.js", { id: "child-step", args: { input: "${childInput}" } });
   return { reportMarkdown: "Parent saw " + child.reportMarkdown };
 }
 `),
@@ -458,11 +467,11 @@ export default function workflow({ args }) {
     assert(childRunId != null, "nested workflow test must create one child run");
     const childRun = await runStore.getRun(childRunId);
 
-    expect(result.result).toEqual({ reportMarkdown: "Parent saw Child nested" });
+    expect(result.result).toEqual({ reportMarkdown: `Parent saw Child ${childInput}` });
     expect(childRun).toMatchObject({
       workspaceId: "workspace-1",
       status: "completed",
-      args: { topic: "nested" },
+      args: { input: childInput },
       workflow: { name: "child-workflow", sourcePath: "./workflows/child.js" },
       parentWorkflow: { runId: "wfr_parent_nested", stepId: "child-step" },
     });

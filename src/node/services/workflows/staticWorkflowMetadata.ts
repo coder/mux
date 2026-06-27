@@ -16,13 +16,10 @@ const SUPPORTED_SCHEMA_CALLS = new Set([
 ]);
 const SUPPORTED_SCHEMA_OPTION_KEYS = new Set([
   "additionalProperties",
-  "aliases",
   "default",
   "enum",
   "maximum",
   "minimum",
-  "negatedAliases",
-  "positional",
   "required",
 ]);
 

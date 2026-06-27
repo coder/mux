@@ -27,18 +27,7 @@ async function trustProject(muxRoot: string, repo: string): Promise<void> {
 }
 
 describe("mux workflow CLI helpers", () => {
-  test("maps positional workflow input to an args object", async () => {
-    const args = await parseWorkflowArgs({ positionalInput: ["review", "staged", "changes"] });
-
-    expect(args).toEqual({ input: "review staged changes" });
-  });
-
   test("rejects ambiguous structured args modes", async () => {
-    expect(
-      await getRejectedMessage(
-        parseWorkflowArgs({ positionalInput: ["hi"], argsJson: '{"base":"main"}' })
-      )
-    ).toContain("positional input cannot be combined");
     expect(
       await getRejectedMessage(parseWorkflowArgs({ argsJson: "{}", argsFile: "args.json" }))
     ).toContain("Only one structured args mode");
@@ -182,7 +171,7 @@ describe("mux workflow CLI helpers", () => {
     });
 
     const quietOutput =
-      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run ./workflows/echo-review.js --dir ${repo} "hello" --quiet`
+      await Bun.$`${BUN_EXECUTABLE} ${WORKFLOW_ENTRY} run ./workflows/echo-review.js --dir ${repo} --args-json ${'{"input":"hello"}'} --quiet`
         .env({ ...process.env, MUX_ROOT: muxRoot })
         .text();
     expect(quietOutput).toBe('Echo: {"input":"hello"}\n');

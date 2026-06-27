@@ -147,11 +147,11 @@ Run a durable workflow JavaScript file from the command line without opening the
 Use local workflow files for cheap CLI smoke tests. `skill://` paths run the packaged workflow they reference, which may require AI credentials or model budget.
 
 ```bash
-# Run a trusted local workflow file with positional text, mapped to { "input": "research workflow runners" }
-mux workflow run ./workflows/research.js "research workflow runners"
+# Run a trusted local workflow file with explicit JSON args
+mux workflow run ./workflows/research.js --args-json '{"topic":"workflow runners"}'
 
-# Same as above, using the alias
-mux wf run ./workflows/research.js --args-json '{"input":"workflow runners"}' --json
+# Same as above, using the alias and machine-readable output
+mux wf run ./workflows/research.js --args-json '{"topic":"workflow runners"}' --json
 ```
 
 ### Workflow commands
@@ -176,12 +176,13 @@ mux wf run ./workflows/research.js --args-json '{"input":"workflow runners"}' --
 
 ### Workflow arguments
 
+Workflows receive structured args. Positional prose is rejected; pass JSON, a JSON file/stdin payload, or explicit `--arg key=value` pairs instead.
+
 Only one argument mode can be used per run:
 
 | Input mode                      | Workflow args value                       |
 | ------------------------------- | ----------------------------------------- |
 | No args                         | `{}`                                      |
-| Positional text                 | `{ "input": "..." }`                      |
 | `--arg key=value`               | Object with lightly coerced scalar values |
 | `--args-json '{"base":"main"}'` | Exact JSON value                          |
 | `--args-file args.json`         | Exact JSON value read from a file         |

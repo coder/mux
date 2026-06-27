@@ -7,6 +7,7 @@ import {
   handlePlanShowCommand,
   handlePlanOpenCommand,
   handleCompactCommand,
+  WORKFLOW_FREEFORM_ARGS_ERROR_MESSAGE,
   processSlashCommand,
 } from "./chatCommands";
 import { parseCommand } from "./slashCommands/parser";
@@ -158,7 +159,11 @@ describe("processSlashCommand - workflow", () => {
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 
@@ -166,6 +171,29 @@ describe("processSlashCommand - workflow", () => {
     expect(start).not.toHaveBeenCalled();
     expect(context.setToast).toHaveBeenCalledWith(
       expect.objectContaining({ type: "error", message: "Dynamic workflows are disabled" })
+    );
+  });
+
+  test("rejects freeform workflow slash arguments", async () => {
+    const start = mock(() =>
+      Promise.resolve({ runId: "wfr_123", status: "running", result: null })
+    );
+    const context = createSlashCommandContext({
+      api: {
+        workflows: { start },
+      } as unknown as SlashCommandContext["api"],
+      dynamicWorkflowsEnabled: true,
+    });
+
+    const result = await processSlashCommand(
+      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      context
+    );
+
+    expect(result).toEqual({ clearInput: false, toastShown: true });
+    expect(start).not.toHaveBeenCalled();
+    expect(context.setToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "error", message: WORKFLOW_FREEFORM_ARGS_ERROR_MESSAGE })
     );
   });
 
@@ -223,13 +251,17 @@ describe("processSlashCommand - workflow", () => {
         workflows: { start, getRun },
         workspace: { sendMessage },
       } as unknown as SlashCommandContext["api"],
-      rawInput: "/deep-research mux",
+      rawInput: '/deep-research {"input":"mux"}',
       dynamicWorkflowsEnabled: true,
       onMessageSent,
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 
@@ -239,19 +271,19 @@ describe("processSlashCommand - workflow", () => {
       scriptPath: "skill://deep-research/workflow.js",
       runInBackground: true,
       args: { input: "mux" },
-      rawCommand: "/deep-research mux",
+      rawCommand: '/deep-research {"input":"mux"}',
       continuationOptions: context.sendMessageOptions,
     });
     expect(getRun).toHaveBeenCalledWith({ workspaceId: "test-ws", runId: "wfr_123" });
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const sendInput = sentMessages[0];
     expect(sendInput).toBeDefined();
-    expect(sendInput.message).toContain("/deep-research mux");
+    expect(sendInput.message).toContain('/deep-research {"input":"mux"}');
     expect(sendInput.message).toContain("<mux_workflow_result>");
     expect(sendInput.message).toContain("Findings");
     expect(sendInput.message).toContain("confidence");
     expect(sendInput.options.muxMetadata?.type).toBe("workflow-result");
-    expect(sendInput.options.muxMetadata?.rawCommand).toBe("/deep-research mux");
+    expect(sendInput.options.muxMetadata?.rawCommand).toBe('/deep-research {"input":"mux"}');
     expect(sendInput.options.muxMetadata?.commandPrefix).toBe("/deep-research");
     expect(context.setSendingState).toHaveBeenNthCalledWith(1, true);
     expect(context.setSendingState).toHaveBeenNthCalledWith(2, false);
@@ -276,12 +308,16 @@ describe("processSlashCommand - workflow", () => {
         workflows: { start, getRun },
         workspace: { sendMessage },
       } as unknown as SlashCommandContext["api"],
-      rawInput: "/deep-research mux",
+      rawInput: '/deep-research {"input":"mux"}',
       dynamicWorkflowsEnabled: true,
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 
@@ -291,7 +327,7 @@ describe("processSlashCommand - workflow", () => {
       scriptPath: "skill://deep-research/workflow.js",
       runInBackground: true,
       args: { input: "mux" },
-      rawCommand: "/deep-research mux",
+      rawCommand: '/deep-research {"input":"mux"}',
       continuationOptions: context.sendMessageOptions,
     });
     expect(getRun).not.toHaveBeenCalled();
@@ -343,14 +379,18 @@ describe("processSlashCommand - workflow", () => {
         workflows: { start, getRun },
         workspace: { sendMessage },
       } as unknown as SlashCommandContext["api"],
-      rawInput: "/deep-research mux",
+      rawInput: '/deep-research {"input":"mux"}',
       dynamicWorkflowsEnabled: true,
       asyncCommandToken: 1,
       isAsyncCommandCurrent: mock(() => false),
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 
@@ -393,14 +433,18 @@ describe("processSlashCommand - workflow", () => {
         workflows: { start, getRun },
         workspace: { sendMessage },
       } as unknown as SlashCommandContext["api"],
-      rawInput: "/deep-research mux",
+      rawInput: '/deep-research {"input":"mux"}',
       dynamicWorkflowsEnabled: true,
       asyncCommandToken: 1,
       isAsyncCommandCurrent: mock(() => false),
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 
@@ -443,13 +487,17 @@ describe("processSlashCommand - workflow", () => {
         workflows: { start, getRun },
         workspace: { sendMessage },
       } as unknown as SlashCommandContext["api"],
-      rawInput: "/deep-research mux",
+      rawInput: '/deep-research {"input":"mux"}',
       dynamicWorkflowsEnabled: true,
       getInput: mock(() => "newer draft"),
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 
@@ -497,13 +545,17 @@ describe("processSlashCommand - workflow", () => {
         workflows: { start, getRun },
         workspace: { sendMessage },
       } as unknown as SlashCommandContext["api"],
-      rawInput: "/deep-research mux",
+      rawInput: '/deep-research {"input":"mux"}',
       dynamicWorkflowsEnabled: true,
       onMessageSent,
     });
 
     const result = await processSlashCommand(
-      { type: "workflow-run", scriptPath: "skill://deep-research/workflow.js", argsText: "mux" },
+      {
+        type: "workflow-run",
+        scriptPath: "skill://deep-research/workflow.js",
+        argsText: '{"input":"mux"}',
+      },
       context
     );
 

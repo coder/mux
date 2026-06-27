@@ -65,7 +65,7 @@ describe("getCommandGhostHint", () => {
       isExperimentEnabled: (experimentId) => enabledExperiments.has(experimentId),
     });
 
-    expect(hint).toBe("<script_path> [args]");
+    expect(hint).toBe("<script_path> [json_args]");
     expect(hint).not.toContain("/workflow");
   });
 

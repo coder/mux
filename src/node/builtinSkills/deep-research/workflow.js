@@ -8,7 +8,6 @@ export const meta = {
     properties: {
       input: {
         type: "string",
-        positional: true,
       },
       question: {
         type: "string",
@@ -145,7 +144,7 @@ export default function workflow({ args, phase, log, agent, parallel, pipeline }
   if (question.length === 0) {
     return {
       reportMarkdown:
-        "# Deep Research\n\nNo research question provided. Pass one as `args.input`, `args.question`, `args.topic`, or positional slash text.",
+        "# Deep Research\n\nNo research question provided. Pass one as structured `args.input`, `args.question`, or `args.topic`.",
     };
   }
 

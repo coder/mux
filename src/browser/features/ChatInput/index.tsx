@@ -2368,12 +2368,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      const initialSlashCommand =
-        parsed?.type === "goal-set" ||
-        (parsed?.type === "workflow-run" && dynamicWorkflowsExperimentEnabled)
-          ? parsed
-          : undefined;
-      if (!initialSlashCommand) {
+      const initialSlashCommand = parsed?.type === "goal-set" ? parsed : undefined;
+      if (!initialSlashCommand && parsed?.type !== "workflow-run") {
         const commandHandled = await executeParsedCommand(parsed, input);
         if (commandHandled) {
           return;

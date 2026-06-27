@@ -841,54 +841,12 @@ describe("useCreationWorkspace", () => {
     });
   });
 
-  test("handleSend creates workspace and sends initial workflow result to the agent", async () => {
-    const workflowResult = {
-      reportMarkdown: "# Workflow result\n\nCreation workflow complete.",
-      structuredOutput: { confidence: "high" },
-    };
-    const workflowStartMock = mock(
-      (_args: WorkflowStartArgs): Promise<WorkflowStartResult> =>
-        Promise.resolve({
-          runId: "wfr_creation",
-          status: "completed",
-          result: workflowResult,
-        })
-    );
-    const workflowGetRunMock = mock(
-      (_args: WorkflowGetRunArgs): Promise<WorkflowGetRunResult> =>
-        Promise.resolve({
-          id: "wfr_creation",
-          workspaceId: TEST_WORKSPACE_ID,
-          workflow: {
-            name: "deep-research",
-            description: "Deep research",
-            scope: "built-in",
-            executable: true,
-          },
-          source: "export default function workflow() { return null; }",
-          sourceHash: "sha256:test",
-          args: { input: "mux workflows" },
-          status: "completed",
-          createdAt: "2026-05-29T00:00:00.000Z",
-          updatedAt: "2026-05-29T00:00:01.000Z",
-          events: [
-            {
-              sequence: 1,
-              type: "result",
-              at: "2026-05-29T00:00:01.000Z",
-              result: workflowResult,
-            },
-          ],
-          steps: [],
-        } as WorkflowGetRunResult)
-    );
+  test("handleSend sends workflow-looking creation prompts to the agent", async () => {
     const sendMessageMock = mock(
       (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
         Promise.resolve({ success: true, data: {} } as WorkspaceSendMessageResult)
     );
     const { workspaceApi, workflowsApi } = setupWindow({
-      workflowStart: workflowStartMock,
-      workflowGetRun: workflowGetRunMock,
       sendMessage: sendMessageMock,
     });
 
@@ -904,44 +862,19 @@ describe("useCreationWorkspace", () => {
 
     let handleSendResult: CreationSendResult | undefined;
     await act(async () => {
-      handleSendResult = await getHook().handleSend(
-        "/deep-research mux workflows",
-        undefined,
-        undefined,
-        {
-          type: "workflow-run",
-          scriptPath: "skill://deep-research/workflow.js",
-          argsText: "mux workflows",
-        }
-      );
+      handleSendResult = await getHook().handleSend("/deep-research mux workflows");
     });
 
     expect(handleSendResult).toEqual({ success: true });
     expect(workspaceApi.create.mock.calls.length).toBe(1);
-    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
-    const workflowStartInput = workflowsApi.start.mock.calls[0]?.[0];
-    expect(workflowStartInput).toMatchObject({
-      workspaceId: TEST_WORKSPACE_ID,
-      scriptPath: "skill://deep-research/workflow.js",
-      runInBackground: true,
-      rawCommand: "/deep-research mux workflows",
-      args: { input: "mux workflows" },
-    });
-    expect(workflowStartInput?.continuationOptions?.agentId).toBe("exec");
-    expect(workflowsApi.getRun).toHaveBeenCalledWith({
-      workspaceId: TEST_WORKSPACE_ID,
-      runId: "wfr_creation",
-    });
-    const sendInput = workspaceApi.sendMessage.mock.calls[0]?.[0];
-    expect(sendInput?.message).toContain("/deep-research mux workflows");
-    expect(sendInput?.message).toContain("<mux_workflow_result>");
-    expect(sendInput?.message).toContain("Creation workflow complete");
-    const muxMetadata: unknown = sendInput?.options.muxMetadata;
-    expect(
-      typeof muxMetadata === "object" && muxMetadata !== null && "rawCommand" in muxMetadata
-        ? muxMetadata.rawCommand
-        : undefined
-    ).toBe("/deep-research mux workflows");
+    expect(workflowsApi.start).not.toHaveBeenCalled();
+    expect(workflowsApi.getRun).not.toHaveBeenCalled();
+    expect(workspaceApi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: TEST_WORKSPACE_ID,
+        message: "/deep-research mux workflows",
+      })
+    );
   });
 
   test("handleSend uses a deterministic workspace name when AI name generation fails", async () => {

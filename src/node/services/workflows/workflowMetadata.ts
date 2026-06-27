@@ -120,13 +120,6 @@ function summarizeWorkflowArg(
     required: required.has(name),
   };
 
-  const aliases = nonEmptyStringArray(rawProperty.aliases);
-  if (aliases.length > 0) summary.aliases = aliases;
-
-  const negatedAliases = nonEmptyStringArray(rawProperty.negatedAliases);
-  if (negatedAliases.length > 0) summary.negatedAliases = negatedAliases;
-
-  if (rawProperty.positional === true) summary.positional = true;
   if (Object.prototype.hasOwnProperty.call(rawProperty, "default")) {
     summary.default = rawProperty.default;
   }

@@ -101,13 +101,16 @@ export default function workflow({
 
 ### `args`
 
-The invocation payload from `workflow_run`. Plain-text slash args are passed as `{ input: "..." }`, so normalize `args.input` for commands like:
+The invocation payload from `workflow_run` or another structured launch surface. Treat workflows like functions: choose domain-specific argument names and pass structured data, for example:
 
-```text
-/workflow ./workflows/my-workflow.js review PR #123
+```js
+workflow_run({
+  script_path: "./workflows/my-workflow.js",
+  args: { topic: "review PR #123" },
+});
 ```
 
-If the workflow declares `meta.argsSchema`, Mux normalizes slash/CLI text against that schema before `args` reaches the workflow. Slash-friendly workflows that accept free-form prose should declare either an `input` string field or one `positional: true` string field:
+If the workflow declares `meta.argsSchema`, Mux coerces and validates structured args against that schema before `args` reaches the workflow. Prefer domain-specific fields such as `topic`, `brief`, or `target`; reserve `input` for workflows that intentionally accept a single opaque text blob:
 
 ```js
 const s = mux.schema;
@@ -115,13 +118,13 @@ const s = mux.schema;
 export const meta = {
   description: "Review a topic",
   argsSchema: s.object({
-    input: s.optional(s.string()),
-    quick: s.optional(s.boolean({ default: false, aliases: ["--quick"] })),
+    topic: s.string(),
+    quick: s.optional(s.boolean({ default: false })),
   }),
 };
 ```
 
-Without an `input` or positional field, free-form text such as `/workflow ./workflows/my-workflow.js review PR #123` has nowhere to go and can fail validation as an unexpected positional argument. Recognized aliases are parsed out of `input` text; use structured JSON args (for example `{ "topic": "review --quick literally" }`) when you need to preserve flag-like text verbatim or target named fields directly.
+Direct slash/CLI workflow starts require structured args; arbitrary prose is rejected instead of being converted into `{ input: "..." }`. Use structured JSON/file/stdin args at user-facing boundaries, or ask the agent to run the workflow so it can call `workflow_run` with the right object shape. Structured args preserve flag-like text verbatim, so `{ "topic": "review --quick literally" }` stays a topic string rather than being tokenized.
 
 ### `phase(name, details?)`
 
