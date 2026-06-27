@@ -197,6 +197,43 @@ describe("processSlashCommand - workflow", () => {
     );
   });
 
+  test.each([
+    ['"hello"', "hello"],
+    ["123", 123],
+  ] as const)(
+    "passes JSON scalar workflow slash arguments from %p",
+    async (argsText, expectedArgs) => {
+      const start = mock(() =>
+        Promise.resolve({
+          runId: "wfr_123",
+          status: "running",
+          result: null,
+          invocationMessagePersisted: true,
+        })
+      );
+      const context = createSlashCommandContext({
+        api: {
+          workflows: { start },
+        } as unknown as SlashCommandContext["api"],
+        rawInput: `/workflow ./echo.js ${argsText}`,
+        dynamicWorkflowsEnabled: true,
+      });
+
+      const result = await processSlashCommand(
+        { type: "workflow-run", scriptPath: "./echo.js", argsText },
+        context
+      );
+
+      expect(result).toEqual({ clearInput: true, toastShown: true });
+      expect(start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          args: expectedArgs,
+          rawCommand: `/workflow ./echo.js ${argsText}`,
+        })
+      );
+    }
+  );
+
   test("sends completed workflow slash output to the main agent as hidden context", async () => {
     const workflowResult = {
       reportMarkdown: "# Research\n\nFindings",

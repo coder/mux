@@ -16,10 +16,15 @@ const SUPPORTED_SCHEMA_CALLS = new Set([
 ]);
 const SUPPORTED_SCHEMA_OPTION_KEYS = new Set([
   "additionalProperties",
+  // Legacy freeform parser hints are ignored by structured invocation, but still
+  // accepted so existing workflow schemas do not lose metadata/forms.
+  "aliases",
   "default",
   "enum",
   "maximum",
   "minimum",
+  "negatedAliases",
+  "positional",
   "required",
 ]);
 

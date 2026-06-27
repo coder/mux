@@ -245,11 +245,11 @@ function parseWorkflowSlashArgs(argsText: string | undefined): unknown {
     return {};
   }
 
-  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+  try {
     return JSON.parse(trimmed) as unknown;
+  } catch {
+    throw new Error(WORKFLOW_FREEFORM_ARGS_ERROR_MESSAGE);
   }
-
-  throw new Error(WORKFLOW_FREEFORM_ARGS_ERROR_MESSAGE);
 }
 
 // ============================================================================
