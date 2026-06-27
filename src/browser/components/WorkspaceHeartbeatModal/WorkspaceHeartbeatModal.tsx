@@ -218,14 +218,8 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                 them.
               </p>
 
-              {/* Keep custom heartbeat instructions in a roomy column so long prompts stay readable. */}
-              <div
-                className={
-                  draftEnabled
-                    ? "grid gap-4 lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]"
-                    : "grid gap-4"
-                }
-              >
+              {/* Keep custom heartbeat instructions visible even when disabled so prompts can be edited before scheduling resumes. */}
+              <div className="grid gap-4 lg:grid-cols-[minmax(16rem,20rem)_minmax(0,1fr)]">
                 <div className="border-border rounded-lg border p-4">
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex-1">
@@ -306,30 +300,28 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                   </div>
                 </div>
 
-                {draftEnabled && (
-                  <div className="border-border rounded-lg border p-4">
-                    <label htmlFor="workspace-heartbeat-message" className="block">
-                      <div className="text-foreground text-sm font-medium">Message</div>
-                      <div className="text-muted mt-1 text-xs">
-                        Leave empty to use the default heartbeat message.
-                      </div>
-                    </label>
-                    <textarea
-                      ref={messageTextareaRef}
-                      id="workspace-heartbeat-message"
-                      rows={10}
-                      value={draftMessage}
-                      onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
-                        setDraftMessage(event.target.value);
-                        setDraftDirty(true);
-                      }}
-                      disabled={isSaving}
-                      className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent mt-3 min-h-[240px] w-full resize-y rounded-md border p-3 text-sm leading-relaxed focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-[320px]"
-                      placeholder={globalDefaultPrompt ?? HEARTBEAT_DEFAULT_MESSAGE_BODY}
-                      aria-label="Heartbeat message"
-                    />
-                  </div>
-                )}
+                <div className="border-border rounded-lg border p-4">
+                  <label htmlFor="workspace-heartbeat-message" className="block">
+                    <div className="text-foreground text-sm font-medium">Message</div>
+                    <div className="text-muted mt-1 text-xs">
+                      Leave empty to use the default heartbeat message.
+                    </div>
+                  </label>
+                  <textarea
+                    ref={messageTextareaRef}
+                    id="workspace-heartbeat-message"
+                    rows={10}
+                    value={draftMessage}
+                    onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
+                      setDraftMessage(event.target.value);
+                      setDraftDirty(true);
+                    }}
+                    disabled={isSaving}
+                    className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent mt-3 min-h-[240px] w-full resize-y rounded-md border p-3 text-sm leading-relaxed focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 lg:min-h-[320px]"
+                    placeholder={globalDefaultPrompt ?? HEARTBEAT_DEFAULT_MESSAGE_BODY}
+                    aria-label="Heartbeat message"
+                  />
+                </div>
               </div>
 
               {errorMessages.length > 0 && (

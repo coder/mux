@@ -50,16 +50,24 @@ function createWorkspaceContextValue(): WorkspaceContextValue {
   } as unknown as WorkspaceContextValue;
 }
 
-function WorkspaceHeartbeatModalStoryShell(props: { children: ReactNode }) {
-  const settings: HeartbeatSettings = {
-    enabled: true,
-    intervalMs: 7 * 60_000,
-    contextMode: "compact",
-    message: LONG_HEARTBEAT_MESSAGE,
-  };
+const enabledLongMessageSettings: HeartbeatSettings = {
+  enabled: true,
+  intervalMs: 7 * 60_000,
+  contextMode: "compact",
+  message: LONG_HEARTBEAT_MESSAGE,
+};
 
+const disabledLongMessageSettings: HeartbeatSettings = {
+  ...enabledLongMessageSettings,
+  enabled: false,
+};
+
+function WorkspaceHeartbeatModalStoryShell(props: {
+  children: ReactNode;
+  settings: HeartbeatSettings;
+}) {
   return (
-    <APIProvider client={createHeartbeatStoryApi(settings)}>
+    <APIProvider client={createHeartbeatStoryApi(props.settings)}>
       <WorkspaceContext.Provider value={createWorkspaceContextValue()}>
         <div className="bg-background min-h-screen">{props.children}</div>
       </WorkspaceContext.Provider>
@@ -67,9 +75,9 @@ function WorkspaceHeartbeatModalStoryShell(props: { children: ReactNode }) {
   );
 }
 
-function renderOpenModal() {
+function renderOpenModal(settings: HeartbeatSettings = enabledLongMessageSettings) {
   return (
-    <WorkspaceHeartbeatModalStoryShell>
+    <WorkspaceHeartbeatModalStoryShell settings={settings}>
       <WorkspaceHeartbeatModal
         workspaceId={WORKSPACE_ID}
         open={true}
@@ -126,7 +134,7 @@ export const LongMessageDesktop: Story = {
       },
     },
   },
-  render: renderOpenModal,
+  render: () => renderOpenModal(),
   play: async ({ canvasElement }) => {
     await assertHeartbeatModalLoaded(canvasElement);
   },
@@ -143,7 +151,41 @@ export const LongMessageMobile: Story = {
       },
     },
   },
-  render: renderOpenModal,
+  render: () => renderOpenModal(),
+  play: async ({ canvasElement }) => {
+    await assertHeartbeatModalLoaded(canvasElement);
+  },
+};
+
+export const DisabledLongMessageDesktop: Story = {
+  globals: {
+    viewport: { value: "desktop", isRotated: false },
+  },
+  parameters: {
+    chromatic: {
+      modes: {
+        "dark-desktop-disabled": { theme: "dark", viewport: { width: 1280, height: 800 } },
+      },
+    },
+  },
+  render: () => renderOpenModal(disabledLongMessageSettings),
+  play: async ({ canvasElement }) => {
+    await assertHeartbeatModalLoaded(canvasElement);
+  },
+};
+
+export const DisabledLongMessageMobile: Story = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    chromatic: {
+      modes: {
+        "dark-mobile-disabled": { theme: "dark", viewport: { width: 375, height: 667 } },
+      },
+    },
+  },
+  render: () => renderOpenModal(disabledLongMessageSettings),
   play: async ({ canvasElement }) => {
     await assertHeartbeatModalLoaded(canvasElement);
   },

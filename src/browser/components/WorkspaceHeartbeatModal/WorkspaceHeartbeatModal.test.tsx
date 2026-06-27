@@ -142,7 +142,7 @@ describe("WorkspaceHeartbeatModal", () => {
     cleanupDom = null;
   });
 
-  test("reveals the message field when enabled and saves a custom message", async () => {
+  test("keeps the message field editable while heartbeats are disabled", async () => {
     settingsByWorkspaceId.set(
       "ws-1",
       createHeartbeatSettings({
@@ -155,15 +155,18 @@ describe("WorkspaceHeartbeatModal", () => {
       <WorkspaceHeartbeatModal workspaceId="ws-1" open={true} onOpenChange={onOpenChange} />
     );
 
-    expect(view.queryByLabelText("Heartbeat message")).toBeNull();
-
-    fireEvent.click(view.getByRole("switch", { name: "Enable workspace heartbeats" }));
-
     const messageField = (await waitFor(() =>
       view.getByLabelText("Heartbeat message")
     )) as HTMLTextAreaElement;
+    expect(messageField.disabled).toBe(false);
     expect(messageField.value).toBe("Review the current workspace status before acting.");
     expect(messageField.placeholder).toBe(HEARTBEAT_DEFAULT_MESSAGE_BODY);
+
+    const enableSwitch = view.getByRole("switch", { name: "Enable workspace heartbeats" });
+    fireEvent.click(enableSwitch);
+    expect(view.getByLabelText("Heartbeat message")).toBe(messageField);
+    fireEvent.click(enableSwitch);
+    expect(view.getByLabelText("Heartbeat message")).toBe(messageField);
 
     fireEvent.input(messageField, {
       target: { value: "Check the pending review queue and summarize next steps." },
@@ -178,7 +181,7 @@ describe("WorkspaceHeartbeatModal", () => {
         {
           workspaceId: "ws-1",
           next: {
-            enabled: true,
+            enabled: false,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
             contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
             message: "Check the pending review queue and summarize next steps.",
@@ -232,11 +235,7 @@ describe("WorkspaceHeartbeatModal", () => {
     expect(workspaceHeartbeatGetMock).toHaveBeenCalledWith({ workspaceId: "ws-1" });
     expect(getConfigMock).toHaveBeenCalled();
 
-    fireEvent.click(view.getByRole("switch", { name: "Enable workspace heartbeats" }));
-
-    const messageField = (await waitFor(() =>
-      view.getByLabelText("Heartbeat message")
-    )) as HTMLTextAreaElement;
+    const messageField = view.getByLabelText("Heartbeat message") as HTMLTextAreaElement;
     // Global prompt is not seeded into the form to avoid persisting it as a workspace
     // override on save. The backend handles prompt fallback at execution time.
     expect(messageField.value).toBe("");
