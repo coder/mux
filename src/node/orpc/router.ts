@@ -1993,6 +1993,9 @@ export const router = (authToken?: string) => {
             script,
             workspaceId: input.workspaceId,
             projectTrusted,
+            // Default to {} only when args is omitted; an explicit `null` is passed
+            // through verbatim (not coerced via `?? {}`) so argsSchema normalization
+            // validates it instead of silently treating it as "no args".
             args: input.args === undefined ? {} : input.args,
             ...(input.rawCommand != null
               ? { defaultArgs: { projectPath: workflowExecutionProjectPath } }
