@@ -3,21 +3,17 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
-import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import { APIProvider, type APIClient } from "@/browser/contexts/API";
+import {
+  addEphemeralMessage,
+  useWorkspaceStoreRaw,
+  workspaceStore,
+} from "@/browser/stores/WorkspaceStore";
+import type { MuxMessage } from "@/common/types/message";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { useResumeStream } from "./useResumeStream";
 
-interface MockWorkspaceState {
-  autoRetryStatus: null;
-  isStreamStarting: boolean;
-  canInterrupt: boolean;
-  messages: Array<Record<string, unknown>>;
-}
-
-const currentWorkspaceState: MockWorkspaceState = {
-  autoRetryStatus: null,
-  isStreamStarting: false,
-  canInterrupt: false,
-  messages: [{ type: "user", id: "user-1", content: "Hi", historySequence: 1 }],
-};
+const DEFAULT_WORKSPACE_ID = "ws-1";
 
 type ResumeStreamResult =
   | { success: true; data: { started: boolean } }
@@ -28,32 +24,43 @@ const setAutoRetryEnabled = mock((_input: unknown) =>
   Promise.resolve({ success: true as const, data: { previousEnabled: false, enabled: true } })
 );
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: { workspace: { resumeStream, setAutoRetryEnabled } },
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
+function createApiClient(): APIClient {
+  return {
+    workspace: { resumeStream, setAutoRetryEnabled },
+  } as unknown as APIClient;
+}
 
-/* eslint-disable @typescript-eslint/no-require-imports */
-const actualWorkspaceStore =
-  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
-/* eslint-enable @typescript-eslint/no-require-imports */
+function createWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata {
+  return {
+    id: workspaceId,
+    name: workspaceId,
+    title: workspaceId,
+    projectName: "Project",
+    projectPath: "/tmp/project",
+    namedWorkspacePath: `/tmp/project/${workspaceId}`,
+    runtimeConfig: { type: "local" },
+    createdAt: "2026-06-28T00:00:00.000Z",
+  };
+}
 
-void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  ...actualWorkspaceStore,
-  useWorkspaceState: () => currentWorkspaceState,
-  useWorkspaceStoreRaw: () => ({ getWorkspaceState: () => currentWorkspaceState }),
-}));
+function seedWorkspaceWithUserMessage(workspaceId: string): void {
+  workspaceStore.addWorkspace(createWorkspaceMetadata(workspaceId));
 
-import { useResumeStream } from "./useResumeStream";
+  const userMessage: MuxMessage = {
+    id: `${workspaceId}-user-1`,
+    role: "user",
+    parts: [{ type: "text", text: "Hi" }],
+    metadata: { historySequence: 1 },
+  };
+  addEphemeralMessage(workspaceId, userMessage);
+}
 
 // workspaceId/resetKey come straight from props so tests can rerender with new identity.
-const Harness: React.FC<{ workspaceId?: string; resetKey?: string | null }> = (props) => {
-  const { resume, error } = useResumeStream(props.workspaceId ?? "ws-1", props.resetKey);
+const ResumeHarness: React.FC<{ workspaceId?: string; resetKey?: string | null }> = (props) => {
+  const { resume, error } = useResumeStream(
+    props.workspaceId ?? DEFAULT_WORKSPACE_ID,
+    props.resetKey
+  );
   return (
     <div>
       <button type="button" onClick={() => void resume()}>
@@ -64,10 +71,18 @@ const Harness: React.FC<{ workspaceId?: string; resetKey?: string | null }> = (p
   );
 };
 
+const Harness: React.FC<{ workspaceId?: string; resetKey?: string | null }> = (props) => (
+  <APIProvider client={createApiClient()}>
+    <ResumeHarness workspaceId={props.workspaceId} resetKey={props.resetKey} />
+  </APIProvider>
+);
+
 describe("useResumeStream", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+    useWorkspaceStoreRaw().dispose();
+    seedWorkspaceWithUserMessage(DEFAULT_WORKSPACE_ID);
     resumeStreamResult = { success: true, data: { started: true } };
     resumeStream.mockClear();
     setAutoRetryEnabled.mockClear();
@@ -75,7 +90,7 @@ describe("useResumeStream", () => {
 
   afterEach(() => {
     cleanup();
-    mock.restore();
+    useWorkspaceStoreRaw().dispose();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
   });
@@ -91,10 +106,12 @@ describe("useResumeStream", () => {
     // A user-initiated (Esc) interrupt means "continue once": never enable/disable
     // auto-retry, so a transient divider can't cancel a scheduled retry on unmount.
     expect(setAutoRetryEnabled).not.toHaveBeenCalled();
-    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({ workspaceId: "ws-1" });
+    expect(resumeStream.mock.calls[0]?.[0]).toMatchObject({ workspaceId: DEFAULT_WORKSPACE_ID });
   });
 
   test("clears the error when workspaceId changes (no cross-workspace bleed)", async () => {
+    seedWorkspaceWithUserMessage("ws-A");
+    seedWorkspaceWithUserMessage("ws-B");
     resumeStreamResult = {
       success: false,
       error: { type: "runtime_start_failed", message: "Runtime failed to start" },
@@ -119,7 +136,7 @@ describe("useResumeStream", () => {
       error: { type: "runtime_start_failed", message: "Runtime failed to start" },
     };
 
-    const view = render(<Harness workspaceId="ws-1" resetKey="turn-1" />);
+    const view = render(<Harness workspaceId={DEFAULT_WORKSPACE_ID} resetKey="turn-1" />);
     fireEvent.click(view.getByText("resume"));
 
     await waitFor(() => {
@@ -127,7 +144,7 @@ describe("useResumeStream", () => {
     });
 
     // A later interrupted turn in the same workspace must not inherit the old error.
-    view.rerender(<Harness workspaceId="ws-1" resetKey="turn-2" />);
+    view.rerender(<Harness workspaceId={DEFAULT_WORKSPACE_ID} resetKey="turn-2" />);
 
     expect(view.queryByTestId("resume-error")).toBeNull();
   });

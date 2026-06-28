@@ -1652,6 +1652,77 @@ describe("WorkflowRunToolCall", () => {
     expect(workflowHeader.textContent).not.toContain("pending");
   });
 
+  test("fetches full inline run details when a completed tool output was source-redacted", async () => {
+    const inlineSource =
+      'export default function workflow({ args }) { return { reportMarkdown: "Inline workflow received " + args.value }; }\n';
+    const fullRun: WorkflowRunRecord = {
+      id: "wfr_inline_redacted_source",
+      workspaceId: TEST_WORKSPACE_ID,
+      workflow: {
+        name: "inline-c5ab4a2c0aba",
+        description: "Inline workflow",
+        scope: "project",
+        sourcePath: "inline://workflow-c5ab4a2c0aba.js",
+        requestedScriptPath: "inline://workflow-c5ab4a2c0aba.js",
+        canonicalScriptPath: "inline://workflow-c5ab4a2c0aba.js",
+        sourceKind: "inline",
+        sourceHash: "c5ab4a2c0aba",
+        executable: true,
+      },
+      source: inlineSource,
+      sourceHash: "c5ab4a2c0aba",
+      args: { value: "ok" },
+      status: "completed",
+      createdAt: "2026-06-28T00:00:00.000Z",
+      updatedAt: "2026-06-28T00:00:01.000Z",
+      events: [
+        { sequence: 1, type: "phase", at: "2026-06-28T00:00:00.000Z", name: "inline-smoke" },
+        {
+          sequence: 2,
+          type: "result",
+          at: "2026-06-28T00:00:01.000Z",
+          result: { reportMarkdown: "Inline workflow received ok" },
+        },
+        { sequence: 3, type: "status", at: "2026-06-28T00:00:01.000Z", status: "completed" },
+      ],
+      steps: [],
+    };
+    const { source: _source, ...redactedRun } = fullRun;
+    const getRun = mock(async () => fullRun);
+
+    const view = render(
+      <APIHarness client={{ workflows: { getRun } }}>
+        <ThemeProvider forcedTheme="dark">
+          <TooltipProvider>
+            <WorkflowRunToolCall
+              args={{
+                script_source: inlineSource,
+                args: { value: "ok" },
+                run_in_background: false,
+              }}
+              status="completed"
+              result={{
+                status: "completed",
+                runId: fullRun.id,
+                result: { reportMarkdown: "Inline workflow received ok" },
+                run: redactedRun as unknown as WorkflowRunRecord,
+              }}
+              workspaceId={TEST_WORKSPACE_ID}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
+      </APIHarness>
+    );
+
+    fireEvent.click(getWorkflowHeader(view));
+
+    await waitFor(() =>
+      expect(getRun).toHaveBeenCalledWith({ workspaceId: TEST_WORKSPACE_ID, runId: fullRun.id })
+    );
+    await waitFor(() => expect(view.getByText("Script source")).toBeTruthy());
+    expect(view.getByText(/Inline workflow received ok/)).toBeTruthy();
+  });
+
   test("renders attached foreground workflow runs without heuristic discovery", async () => {
     const attachedRun = {
       id: "wfr_attached",

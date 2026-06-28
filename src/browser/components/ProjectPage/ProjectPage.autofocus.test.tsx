@@ -31,6 +31,7 @@ function registerProjectPageMocks() {
       authenticate: () => undefined,
       retry: () => undefined,
     }),
+    useOptionalAPI: () => null,
   }));
 
   // Mock useProvidersConfig to return a configured provider so ChatInput renders
