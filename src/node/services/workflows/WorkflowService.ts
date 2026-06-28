@@ -930,7 +930,10 @@ function getWorkflowScriptDefinitionName(
   script: ResolvedWorkflowScript
 ): WorkflowScriptDescriptor["name"] {
   const displayName = parseWorkflowName(script.source);
-  const fallbackSource = script.relativePath ?? script.resolvedPath ?? script.canonicalScriptPath;
+  const fallbackSource =
+    script.sourceKind === "inline"
+      ? `inline-${script.sourceHash.slice(0, 12)}`
+      : (script.relativePath ?? script.resolvedPath ?? script.canonicalScriptPath);
   const basename = displayName ?? path.basename(fallbackSource, ".js");
   const normalized = basename
     .toLowerCase()

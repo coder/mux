@@ -38,6 +38,29 @@ describe("workflowRunMessages", () => {
     });
   });
 
+  test("strips durable inline run source while preserving original tool input source", () => {
+    const inlineSource = "export default function inlineSecretWorkflow() { return null; }";
+    const part = buildWorkflowRunToolPart(
+      { scriptSource: inlineSource, args: { value: "ok" } },
+      {
+        runId: run.id,
+        status: "completed",
+        result: { reportMarkdown: "done" },
+        run: { ...run, source: inlineSource },
+      },
+      1_000
+    );
+
+    expect(part.state).toBe("output-available");
+    if (part.state !== "output-available") {
+      throw new Error("Expected workflow run tool part to include output");
+    }
+    const stripped = stripWorkflowRunRecordForModel(part.toolName, part.output);
+
+    expect(part.input).toMatchObject({ script_source: inlineSource });
+    expect(JSON.stringify(stripped)).not.toContain("inlineSecretWorkflow");
+  });
+
   test("preserves run snapshots in UI workflow card tool parts", () => {
     const part = buildWorkflowRunToolPart(
       { name: "nested-parent-simple", args: {} },

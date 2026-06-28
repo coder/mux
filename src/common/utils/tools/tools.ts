@@ -128,7 +128,7 @@ export interface WorkflowServiceScriptInput {
   canonicalScriptPath: string;
   source: string;
   sourceHash: string;
-  sourceKind: "skill" | "workspace-file";
+  sourceKind: "skill" | "workspace-file" | "inline";
 }
 
 export interface ToolConfiguration {

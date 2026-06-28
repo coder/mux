@@ -11,7 +11,7 @@ import {
   type AgentSkillsRoots,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
-import { validateFileSize } from "@/node/services/tools/fileCommon";
+import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import {
   ensureRuntimePathWithinWorkspace,
   resolveContainedSkillFilePathOnRuntime,
@@ -19,7 +19,7 @@ import {
 import { isAbsolutePathAny } from "@/node/services/tools/skillFileUtils";
 import { readFileString } from "@/node/utils/runtime/helpers";
 
-export type WorkflowScriptSourceKind = "skill" | "workspace-file";
+export type WorkflowScriptSourceKind = "skill" | "workspace-file" | "inline";
 
 export interface ResolvedWorkflowScript {
   requestedScriptPath: string;
@@ -34,7 +34,8 @@ export interface ResolvedWorkflowScript {
 }
 
 export interface ResolveWorkflowScriptInput {
-  scriptPath: string;
+  scriptPath?: string | null;
+  scriptSource?: string | null;
   runtime: Runtime;
   workspacePath: string;
   projectTrusted: boolean;
@@ -42,19 +43,71 @@ export interface ResolveWorkflowScriptInput {
 }
 
 const SKILL_SCRIPT_PATH_PREFIX = "skill://";
+const INLINE_SCRIPT_PATH_PREFIX = "inline://";
 
 export async function resolveWorkflowScript(
   input: ResolveWorkflowScriptInput
 ): Promise<ResolvedWorkflowScript> {
+  const hasPath = input.scriptPath != null;
+  const hasSource = input.scriptSource != null;
+  assert(
+    hasPath !== hasSource,
+    "resolveWorkflowScript: provide exactly one of scriptPath or scriptSource"
+  );
+  assert(input.workspacePath.length > 0, "resolveWorkflowScript: workspacePath is required");
+
+  if (hasSource) {
+    assert(input.scriptSource != null, "resolveWorkflowScript: scriptSource is required");
+    return buildInlineWorkflowScript({
+      source: input.scriptSource,
+      projectTrusted: input.projectTrusted,
+    });
+  }
+
+  assert(input.scriptPath != null, "resolveWorkflowScript: scriptPath is required");
   const scriptPath = input.scriptPath.trim();
   assert(scriptPath.length > 0, "resolveWorkflowScript: scriptPath is required");
-  assert(input.workspacePath.length > 0, "resolveWorkflowScript: workspacePath is required");
+  if (scriptPath.startsWith(INLINE_SCRIPT_PATH_PREFIX)) {
+    throw new Error("inline:// workflow paths are provenance only; use script_source instead");
+  }
 
   if (scriptPath.startsWith(SKILL_SCRIPT_PATH_PREFIX)) {
     return await resolveSkillWorkflowScript({ ...input, scriptPath });
   }
 
   return await resolveWorkspaceFileWorkflowScript({ ...input, scriptPath });
+}
+
+function buildInlineWorkflowScript(input: {
+  source: string;
+  projectTrusted: boolean;
+}): ResolvedWorkflowScript {
+  if (!input.projectTrusted) {
+    throw new Error("Project trust is required to run inline workflow scripts");
+  }
+  assert(input.source.length > 0, "resolveWorkflowScript: inline source is required");
+  if (input.source.trim().length === 0) {
+    throw new Error("Inline workflow script source must not be blank");
+  }
+  validateInlineWorkflowSourceByteLength(Buffer.byteLength(input.source, "utf8"));
+  const sourceHash = hashSource(input.source);
+  const virtualPath = `${INLINE_SCRIPT_PATH_PREFIX}workflow-${sourceHash.slice(0, 12)}.js`;
+  return buildResolvedScript({
+    requestedScriptPath: virtualPath,
+    canonicalScriptPath: virtualPath,
+    source: input.source,
+    sourceKind: "inline",
+  });
+}
+
+function validateInlineWorkflowSourceByteLength(sizeBytes: number): void {
+  if (sizeBytes > MAX_FILE_SIZE) {
+    const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(2);
+    const maxMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(2);
+    throw new Error(
+      `Inline workflow script source is too large (${sizeMB}MB). The maximum workflow script size is ${maxMB}MB.`
+    );
+  }
 }
 
 async function resolveSkillWorkflowScript(

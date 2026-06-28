@@ -18,14 +18,24 @@ const BTN_BASE =
 const BTN_DEFAULT = `${BTN_BASE} border-border bg-surface-secondary text-foreground hover:bg-hover`;
 const BTN_ACCENT = `${BTN_BASE} border-accent bg-accent text-white hover:opacity-90`;
 
+function isInlineWorkflowPath(scriptPath: string): boolean {
+  return scriptPath.startsWith("inline://");
+}
+
 /** Resolvable script path to re-invoke this run with, or null when the record stores none. */
-function runScriptPath(run: WorkflowRunRecord): string | null {
-  return (
+export function getWorkflowRunRerunScriptPath(run: WorkflowRunRecord): string | null {
+  if (run.workflow.sourceKind === "inline") {
+    return null;
+  }
+  const scriptPath =
     run.workflow.canonicalScriptPath ??
     run.workflow.sourcePath ??
     run.workflow.requestedScriptPath ??
-    null
-  );
+    null;
+  if (scriptPath == null || isInlineWorkflowPath(scriptPath)) {
+    return null;
+  }
+  return scriptPath;
 }
 
 interface WorkflowRunHeaderProps {
@@ -47,7 +57,7 @@ export const WorkflowRunHeader: React.FC<WorkflowRunHeaderProps> = (props) => {
   const canRetry = run.status === "failed" && canRetryWorkflowFromCheckpoint(run);
   // Legacy/persisted records can lack a stored script path; workflows.start rejects a bare
   // workflow name, so only offer Re-run when a resolvable path exists.
-  const rerunScriptPath = runScriptPath(run);
+  const rerunScriptPath = getWorkflowRunRerunScriptPath(run);
   const canRerun = rerunScriptPath != null;
 
   const runAction = async (action: () => Promise<unknown>) => {

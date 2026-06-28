@@ -233,6 +233,89 @@ describe("workflow_run tool", () => {
     });
   });
 
+  test("starts a trusted inline script_source workflow through WorkflowService", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-inline");
+    const scriptSource =
+      "export default function workflow() { return { reportMarkdown: 'inline done' }; }\n";
+    const startWorkflow = mock(async () => ({
+      runId: "wfr_inline",
+      status: "completed" as const,
+      result: { reportMarkdown: "inline done" },
+    }));
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => null),
+      },
+    });
+
+    const result = await tool.execute!(
+      { script_source: scriptSource, args: { topic: "inline" }, run_in_background: false },
+      mockToolCallOptions
+    );
+
+    expect(startWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        script: expect.objectContaining({
+          requestedScriptPath: expect.stringMatching(/^inline:\/\/workflow-[a-f0-9]{12}\.js$/),
+          canonicalScriptPath: expect.stringMatching(/^inline:\/\/workflow-[a-f0-9]{12}\.js$/),
+          sourceKind: "inline",
+          source: scriptSource,
+        }),
+        workspaceId: "workspace-1",
+        projectTrusted: true,
+        args: { topic: "inline" },
+      })
+    );
+    expect(result).toEqual({
+      status: "completed",
+      runId: "wfr_inline",
+      result: { reportMarkdown: "inline done" },
+      note: COMPLETED_REPORT_REFETCH_NOTE,
+    });
+  });
+
+  test("rejects untrusted inline workflows and inline provenance paths", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-inline-reject");
+    const startWorkflow = mock(async () => ({
+      runId: "wfr_should_not_start",
+      status: "completed" as const,
+      result: null,
+    }));
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: false,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => null),
+      },
+    });
+
+    await expect(
+      Promise.resolve(
+        tool.execute!(
+          {
+            script_source: "export default function workflow() {}",
+            args: {},
+            run_in_background: false,
+          },
+          mockToolCallOptions
+        )
+      )
+    ).rejects.toThrow("Project trust is required to run inline workflow scripts");
+    await expect(
+      Promise.resolve(
+        tool.execute!(
+          { script_path: "inline://workflow-deadbeef.js", args: {}, run_in_background: false },
+          mockToolCallOptions
+        )
+      )
+    ).rejects.toThrow("use script_source instead");
+    expect(startWorkflow).not.toHaveBeenCalled();
+  });
+
   test("emits a workflow run attachment when the durable run is created", async () => {
     using tempDir = new TestTempDir("test-workflow-run-tool-attached");
     const scriptPath = await writeWorkflowScript(tempDir.path);

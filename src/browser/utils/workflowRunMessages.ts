@@ -33,15 +33,36 @@ function getOutputRunId(output: unknown): string | null {
   return null;
 }
 
-function getWorkflowInput(input: unknown): { scriptPath: string; args: unknown } | null {
+function getWorkflowInput(
+  input: unknown
+):
+  | { scriptPath: string; scriptSource?: never; args: unknown }
+  | { scriptSource: string; scriptPath?: never; args: unknown }
+  | null {
   if (input != null && typeof input === "object") {
     const record = input as Record<string, unknown>;
     const scriptPath = record.script_path ?? record.name;
     if (typeof scriptPath === "string" && scriptPath.length > 0) {
       return { scriptPath, args: record.args ?? {} };
     }
+    if (typeof record.script_source === "string" && record.script_source.length > 0) {
+      return { scriptSource: record.script_source, args: record.args ?? {} };
+    }
   }
   return null;
+}
+
+function workflowRunMatchesInput(
+  run: Pick<WorkflowRunRecord, "workflow" | "args" | "source">,
+  input: NonNullable<ReturnType<typeof getWorkflowInput>>
+): boolean {
+  if (!jsonEqual(input.args, run.args)) {
+    return false;
+  }
+  if (input.scriptSource != null) {
+    return run.workflow.sourceKind === "inline" && run.source === input.scriptSource;
+  }
+  return workflowScriptMatchesPath(run.workflow, input.scriptPath);
 }
 
 function jsonEqual(left: unknown, right: unknown): boolean {
@@ -120,7 +141,7 @@ export function findProjectedWorkflowRunCardMessage(
 
 export function hasWorkflowRunToolCallMessage(
   messages: readonly MuxMessage[],
-  run: Pick<WorkflowRunRecord, "id" | "workflow" | "args">
+  run: Pick<WorkflowRunRecord, "id" | "workflow" | "args" | "source">
 ): boolean {
   assert(run.id.length > 0, "hasWorkflowRunToolCallMessage: run id is required");
   return messages.some((message) =>
@@ -137,18 +158,14 @@ export function hasWorkflowRunToolCallMessage(
         return false;
       }
       const input = getWorkflowInput(part.input);
-      return (
-        input != null &&
-        workflowScriptMatchesPath(run.workflow, input.scriptPath) &&
-        jsonEqual(input.args, run.args)
-      );
+      return input != null && workflowRunMatchesInput(run, input);
     })
   );
 }
 
 export function getWorkflowRunCardProjection(
   messages: readonly MuxMessage[],
-  run: Pick<WorkflowRunRecord, "id" | "workflow" | "args" | "status">
+  run: Pick<WorkflowRunRecord, "id" | "workflow" | "args" | "status" | "source">
 ): { shouldProject: boolean; existingMessage: MuxMessage | null } {
   assert(run.id.length > 0, "getWorkflowRunCardProjection: run id is required");
   const existingMessage = findProjectedWorkflowRunCardMessage(messages, run.id);

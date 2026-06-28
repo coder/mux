@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/await-thenable, @typescript-eslint/require-await */
+import * as crypto from "node:crypto";
 import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
@@ -76,6 +77,64 @@ describe("WorkflowService", () => {
       canonicalScriptPath: "./workflows/demo.js",
       sourceKind: "workspace-file",
       sourceHash: "sha256:test",
+      executable: true,
+    });
+  });
+
+  test("persists inline workflow source with project-scoped virtual provenance", async () => {
+    using tmp = new DisposableTempDir("workflow-service-inline-source");
+    const source = `export default function workflow({ args }) {
+  return { reportMarkdown: "Inline " + args.value };
+}
+`;
+    const sourceHash = crypto.createHash("sha256").update(source).digest("hex");
+    const virtualPath = `inline://workflow-${sourceHash.slice(0, 12)}.js`;
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      generateRunId: () => "wfr_inline_source",
+      runnerId: "runner-a",
+      clock: {
+        nowIso: () => "2026-05-29T00:00:00.000Z",
+        nowMs: () => 1_000,
+      },
+    });
+
+    const result = await service.startWorkflow({
+      script: createScript(source, {
+        requestedScriptPath: virtualPath,
+        canonicalScriptPath: virtualPath,
+        sourceHash,
+        sourceKind: "inline",
+      }),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: { value: "ok" },
+    });
+
+    const loaded = await runStore.getRun("wfr_inline_source");
+    expect(result).toEqual({
+      runId: "wfr_inline_source",
+      status: "completed",
+      result: { reportMarkdown: "Inline ok" },
+    });
+    expect(loaded.source).toBe(source);
+    expect(loaded.sourceHash).toBe(`sha256:${sourceHash}`);
+    expect(loaded.workflow).toMatchObject({
+      name: `inline-${sourceHash.slice(0, 12)}`,
+      description: `Workflow script ${virtualPath}`,
+      scope: "project",
+      sourcePath: virtualPath,
+      requestedScriptPath: virtualPath,
+      canonicalScriptPath: virtualPath,
+      sourceKind: "inline",
+      sourceHash,
       executable: true,
     });
   });

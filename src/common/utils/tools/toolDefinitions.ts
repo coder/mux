@@ -1183,8 +1183,16 @@ export const WorkflowRunToolArgsSchema = z
     script_path: z
       .string()
       .min(1)
+      .nullish()
       .describe(
-        'Explicit workflow script path, such as "skill://deep-research/workflow.js" or "./workflows/research.js".'
+        'Explicit workflow script path, such as "skill://deep-research/workflow.js" or "./workflows/research.js". Use paths for reusable, reviewable, or skill-packaged workflows.'
+      ),
+    script_source: z
+      .string()
+      .min(1)
+      .nullish()
+      .describe(
+        "Inline JavaScript workflow source for compact one-off conductors. The exact source is snapshotted into the durable run for replay/resume."
       ),
     args: z.unknown().nullish(),
     run_in_background: z
@@ -1196,7 +1204,18 @@ export const WorkflowRunToolArgsSchema = z
           "Set true only when you will start another workflow/task or do independent work while it runs. If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using the result."
       ),
   })
-  .strict();
+  .strict()
+  .superRefine((args, ctx) => {
+    const hasPath = args.script_path != null;
+    const hasSource = args.script_source != null;
+    if (hasPath === hasSource) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide exactly one of script_path or script_source.",
+        path: ["script_path"],
+      });
+    }
+  });
 
 export const WorkflowRunToolResultSchema = z
   .object({
@@ -2064,7 +2083,8 @@ export const TOOL_DEFINITIONS = {
   workflow_run: {
     // Prefer foreground workflows so callers do not waste a turn polling when no other work can proceed.
     description:
-      "Start a durable workflow run from an explicit JavaScript script_path, such as skill://deep-research/workflow.js or ./workflows/research.js. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
+      "Start a durable workflow run from exactly one launch source: script_path for a JavaScript file/skill workflow, or script_source for compact one-off inline workflow source. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
+      "Prefer script_path for reusable, reviewable, shared, slash/CLI-invokable, or skill-packaged workflows; use script_source only for small one-off conductors whose exact source should be snapshotted into the durable run. " +
       "Use agent_skill_read / agent_skill_read_file to discover and inspect skill-packaged workflows; non-skill workflow files must be addressed by an explicit known path and can be inspected with normal file tools. " +
       "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
       "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +

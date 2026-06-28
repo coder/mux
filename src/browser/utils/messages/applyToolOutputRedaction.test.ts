@@ -162,9 +162,10 @@ describe("applyToolOutputRedaction", () => {
   });
 
   it("strips the embedded workflow run record from workflow_run/workflow_resume outputs", () => {
+    const inlineSource = "export default function inlineSecretWorkflow() {}\n";
     const runRecord = {
       id: "wfr_demo",
-      source: "export default function workflow() {}\n",
+      source: inlineSource,
       events: [{ sequence: 1, type: "log", at: "2026-01-01T00:00:00.000Z", message: "noisy" }],
     };
     const messages: MuxMessage[] = [
@@ -176,7 +177,7 @@ describe("applyToolOutputRedaction", () => {
             type: "dynamic-tool",
             toolCallId: "tool-1",
             toolName: "workflow_run",
-            input: { name: "demo" },
+            input: { script_source: inlineSource, args: {} },
             state: "output-available",
             output: { status: "running", runId: "wfr_demo", result: null, run: runRecord },
           },
@@ -222,7 +223,9 @@ describe("applyToolOutputRedaction", () => {
       throw new Error("Expected dynamic tool outputs");
     }
 
+    expect(runPart.input).toEqual({ script_source: inlineSource, args: {} });
     expect(runPart.output).toEqual({ status: "running", runId: "wfr_demo", result: null });
+    expect(JSON.stringify(runPart.output)).not.toContain("inlineSecretWorkflow");
     expect(resumePart.output).toEqual({
       type: "json",
       value: { status: "completed", runId: "wfr_demo", result: { ok: true } },

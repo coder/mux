@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { RUNTIME_MODE } from "@/common/types/runtime";
 import {
   buildTaskToolAgentArgsSchema,
@@ -641,7 +642,7 @@ describe("TOOL_DEFINITIONS", () => {
     expect(subAgentTools).not.toContain("review_pane_get");
   });
 
-  it("requires workflow_run calls to use script_path instead of name", () => {
+  it("requires workflow_run calls to use exactly one launch source", () => {
     expect(
       WorkflowRunToolArgsSchema.safeParse({
         script_path: "skill://deep-research/workflow.js",
@@ -652,11 +653,83 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(
       WorkflowRunToolArgsSchema.safeParse({
+        script_source: "export default function workflow() { return { reportMarkdown: 'ok' }; }",
+        args: { topic: "workflow tools" },
+        run_in_background: false,
+      }).success
+    ).toBe(true);
+
+    const both = WorkflowRunToolArgsSchema.safeParse({
+      script_path: "skill://deep-research/workflow.js",
+      script_source: "export default function workflow() {}",
+      args: { topic: "workflow tools" },
+      run_in_background: false,
+    });
+    expect(both.success).toBe(false);
+    expect(both.error?.issues.map((issue) => issue.message)).toContain(
+      "Provide exactly one of script_path or script_source."
+    );
+
+    const neither = WorkflowRunToolArgsSchema.safeParse({
+      args: { topic: "workflow tools" },
+      run_in_background: false,
+    });
+    expect(neither.success).toBe(false);
+    expect(neither.error?.issues.map((issue) => issue.message)).toContain(
+      "Provide exactly one of script_path or script_source."
+    );
+
+    expect(
+      WorkflowRunToolArgsSchema.safeParse({
+        script_path: null,
+        script_source: "export default function workflow() {}",
+      }).success
+    ).toBe(true);
+    expect(
+      WorkflowRunToolArgsSchema.safeParse({ script_path: null, script_source: null }).success
+    ).toBe(false);
+
+    expect(WorkflowRunToolArgsSchema.safeParse({ script_source: "" }).success).toBe(false);
+    expect(
+      WorkflowRunToolArgsSchema.safeParse({
         name: "deep-research",
         args: { topic: "workflow tools" },
         run_in_background: false,
       }).success
     ).toBe(false);
+  });
+
+  it("keeps workflow_run launch fields nullable in generated tool schemas", () => {
+    const workflowSchema = z.toJSONSchema(WorkflowRunToolArgsSchema);
+    const properties = workflowSchema.properties;
+    const schemaHasAnyOfEntry = (schema: unknown, expected: Record<string, unknown>) => {
+      if (schema == null || typeof schema !== "object") {
+        return false;
+      }
+      const anyOf = (schema as { anyOf?: unknown }).anyOf;
+      return (
+        Array.isArray(anyOf) &&
+        anyOf.some(
+          (entry) =>
+            entry != null &&
+            typeof entry === "object" &&
+            Object.entries(expected).every(
+              ([key, value]) => (entry as Record<string, unknown>)[key] === value
+            )
+        )
+      );
+    };
+
+    expect(schemaHasAnyOfEntry(properties?.script_path, { type: "string", minLength: 1 })).toBe(
+      true
+    );
+    expect(schemaHasAnyOfEntry(properties?.script_path, { type: "null" })).toBe(true);
+    expect(schemaHasAnyOfEntry(properties?.script_source, { type: "string", minLength: 1 })).toBe(
+      true
+    );
+    expect(schemaHasAnyOfEntry(properties?.script_source, { type: "null" })).toBe(true);
+    expect(workflowSchema.required).not.toContain("script_path");
+    expect(workflowSchema.required).not.toContain("script_source");
   });
 
   it("only includes workflow tools when dynamic workflows are enabled", () => {

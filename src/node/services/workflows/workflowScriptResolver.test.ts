@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/await-thenable */
+import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -121,6 +122,65 @@ describe("resolveWorkflowScript", () => {
     expect(resolved.scope).toBe("built-in");
     expect(resolved.relativePath).toBe("workflow.js");
     expect(resolved.canonicalScriptPath).toBe("skill://deep-research/workflow.js");
+  });
+
+  test("resolves trusted inline workflow source with virtual hash provenance", async () => {
+    using tempDir = new TestTempDir("workflow-script-inline");
+    const source = "export default function workflow() { return { reportMarkdown: 'inline' }; }\n";
+    const sourceHash = crypto.createHash("sha256").update(source).digest("hex");
+
+    const resolved = await resolveWorkflowScript({
+      scriptSource: source,
+      runtime: new LocalRuntime(tempDir.path),
+      workspacePath: tempDir.path,
+      projectTrusted: true,
+    });
+
+    expect(resolved).toMatchObject({
+      requestedScriptPath: `inline://workflow-${sourceHash.slice(0, 12)}.js`,
+      canonicalScriptPath: `inline://workflow-${sourceHash.slice(0, 12)}.js`,
+      source,
+      sourceHash,
+      sourceKind: "inline",
+    });
+  });
+
+  test("rejects unsafe inline workflow source inputs", async () => {
+    using tempDir = new TestTempDir("workflow-script-inline-invalid");
+    const runtime = new LocalRuntime(tempDir.path);
+
+    await expect(
+      resolveWorkflowScript({
+        scriptSource: "export default function workflow() {}",
+        runtime,
+        workspacePath: tempDir.path,
+        projectTrusted: false,
+      })
+    ).rejects.toThrow("Project trust is required to run inline workflow scripts");
+    await expect(
+      resolveWorkflowScript({
+        scriptSource: " \n\t ",
+        runtime,
+        workspacePath: tempDir.path,
+        projectTrusted: true,
+      })
+    ).rejects.toThrow("Inline workflow script source must not be blank");
+    await expect(
+      resolveWorkflowScript({
+        scriptPath: "inline://workflow-deadbeef.js",
+        runtime,
+        workspacePath: tempDir.path,
+        projectTrusted: true,
+      })
+    ).rejects.toThrow("use script_source instead");
+    await expect(
+      resolveWorkflowScript({
+        scriptSource: "x".repeat(1024 * 1024 + 1),
+        runtime,
+        workspacePath: tempDir.path,
+        projectTrusted: true,
+      })
+    ).rejects.toThrow("Inline workflow script source is too large");
   });
 
   test("resolves an explicit trusted workspace JavaScript file", async () => {

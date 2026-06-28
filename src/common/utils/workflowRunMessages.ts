@@ -133,6 +133,7 @@ export function buildWorkflowResultContextMessage(input: {
 
 export interface WorkflowRunCardInput {
   scriptPath?: string;
+  scriptSource?: string;
   /** Legacy persisted/test fixtures may still identify old named workflow invocations. */
   name?: string;
   args: unknown;
@@ -176,9 +177,11 @@ export function buildWorkflowRunToolPart(
   now = Date.now()
 ): WorkflowRunToolPart {
   const scriptPath = input.scriptPath ?? input.name;
+  const hasPath = scriptPath != null && scriptPath.length > 0;
+  const hasSource = input.scriptSource != null && input.scriptSource.length > 0;
   assert(
-    scriptPath != null && scriptPath.length > 0,
-    "buildWorkflowRunToolPart: workflow scriptPath is required"
+    hasPath !== hasSource,
+    "buildWorkflowRunToolPart: provide exactly one workflow scriptPath or scriptSource"
   );
   assert(result.runId.length > 0, "buildWorkflowRunToolPart: runId is required");
 
@@ -188,7 +191,7 @@ export function buildWorkflowRunToolPart(
     toolName: "workflow_run",
     state: "output-available",
     input: {
-      script_path: scriptPath,
+      ...(hasPath ? { script_path: scriptPath } : { script_source: input.scriptSource }),
       args: input.args,
       run_in_background: true,
     },

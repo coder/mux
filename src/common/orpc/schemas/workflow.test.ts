@@ -118,6 +118,22 @@ describe("workflow domain schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  test("accepts inline workflow script descriptors as project-scoped provenance", () => {
+    const result = WorkflowScriptDescriptorSchema.safeParse({
+      name: "inline-abcdef123456",
+      description: "Inline smoke test",
+      scope: "project",
+      sourcePath: "inline://workflow-abcdef123456.js",
+      requestedScriptPath: "inline://workflow-abcdef123456.js",
+      canonicalScriptPath: "inline://workflow-abcdef123456.js",
+      sourceKind: "inline",
+      sourceHash: "abcdef1234567890",
+      executable: true,
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   test("rejects out-of-order events", () => {
     const result = WorkflowEventSequenceSchema.safeParse([
       { sequence: 2, type: "log", at: "2026-05-29T00:00:00.000Z", message: "late" },

@@ -1050,19 +1050,39 @@ function getWorkflowRunScriptPath(args: WorkflowRunToolDisplayArgs): string {
   return args.script_path ?? ("name" in args ? args.name : "");
 }
 
+function getWorkflowRunDisplayName(args: WorkflowRunToolDisplayArgs): string {
+  const scriptPath = getWorkflowRunScriptPath(args);
+  if (scriptPath.length > 0) {
+    return scriptPath;
+  }
+  return args.script_source != null ? "inline workflow" : "";
+}
+
+function workflowRunMatchesLaunchArgs(
+  run: WorkflowRunRecord,
+  args: WorkflowRunToolDisplayArgs
+): boolean {
+  const invocationArgs = args.args ?? {};
+  if (!workflowArgsEqual(run.args ?? {}, invocationArgs)) {
+    return false;
+  }
+  if (args.script_source != null) {
+    return run.workflow.sourceKind === "inline" && run.source === args.script_source;
+  }
+  const scriptPath = getWorkflowRunScriptPath(args);
+  assert(scriptPath.length > 0, "workflowRunMatchesLaunchArgs requires a script path");
+  return workflowScriptMatchesPath(run.workflow, scriptPath);
+}
+
 function findForegroundWorkflowRun(input: {
   runs: readonly WorkflowRunRecord[];
   args: WorkflowRunToolDisplayArgs;
   startedAt?: number;
 }): WorkflowRunRecord | null {
-  const scriptPath = getWorkflowRunScriptPath(input.args);
-  assert(scriptPath.length > 0, "findForegroundWorkflowRun requires a script path");
-  const invocationArgs = input.args.args ?? {};
   const candidates = input.runs.filter(
     (run) =>
-      workflowScriptMatchesPath(run.workflow, scriptPath) &&
+      workflowRunMatchesLaunchArgs(run, input.args) &&
       DISCOVERABLE_FOREGROUND_WORKFLOW_STATUSES.has(run.status) &&
-      workflowArgsEqual(run.args ?? {}, invocationArgs) &&
       isFreshEnoughForToolCall(run, input.startedAt)
   );
   if (candidates.length !== 1) {
@@ -1207,7 +1227,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   const displayWorkflow = run?.workflow;
   // workflow_resume cards only know the run ID until a snapshot loads; prefer the real
   // workflow name once available.
-  const displayName = displayWorkflow?.name ?? getWorkflowRunScriptPath(args);
+  const displayName = displayWorkflow?.name ?? getWorkflowRunDisplayName(args);
   // A uniquely discovered foreground run is actionable before the blocking tool call returns.
   const discoveredForegroundRunConfirmed =
     status === "executing" &&

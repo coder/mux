@@ -24,9 +24,10 @@ Do **not** create a workflow for a small one-off edit or a single simple investi
 ## Before authoring
 
 1. Use skills to discover packaged workflows. Read a workflow skill with `agent_skill_read({ name: "<skill>" })`, then inspect its script with `agent_skill_read_file({ name: "<skill>", filePath: "workflow.js" })` when needed.
-2. For local one-off workflow drafts, write an explicit workspace-contained JavaScript file, for example `./workflows/<name>.js`.
-3. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) to author the JavaScript.
-4. Run it by explicit path with `workflow_run({ script_path: "./workflows/<name>.js", args: {} })`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
+2. For reusable, reviewable, shared, slash/CLI-invokable, or longer local workflow drafts, write an explicit workspace-contained JavaScript file, for example `./workflows/<name>.js`.
+3. Use `script_source` only for compact one-off conductors that fit comfortably in the tool call and do not need a reusable file. Inline source is snapshotted into the durable run for replay/resume.
+4. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) when authoring a JavaScript file.
+5. Run file workflows by explicit path with `workflow_run({ script_path: "./workflows/<name>.js", args: {} })`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
 
 Workflow scripts should include `meta` with a description and a default exported function:
 
@@ -60,6 +61,24 @@ Packaged reusable workflows should live inside skill directories and be invoked 
 ## Running workflows
 
 Default to foreground workflow runs. When a foreground `workflow_run` returns `status: "completed"`, the final result is available directly, avoiding an unnecessary `task_await` call just to discover completion. Set `run_in_background: true` only when another workflow/task or unrelated work can proceed in parallel, or when the user explicitly asked to be notified later instead of receiving the result in the current answer. If any `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` with `task_await` before using the result unless you are intentionally ending the turn and relying on the terminal wake-up.
+
+### Inline one-off workflows
+
+For a small conductor that is not worth saving as a file, call `workflow_run` with `script_source` instead of `script_path`:
+
+```js
+workflow_run({
+  script_source:
+    'export const meta = { description: "Inline smoke" };\n' +
+    "export default function workflow({ args, phase }) {\n" +
+    '  phase("inline-smoke", { value: args.value });\n' +
+    '  return { reportMarkdown: "Inline workflow received " + args.value };\n' +
+    "}\n",
+  args: { value: "ok" },
+});
+```
+
+Use file or skill workflows instead when the conductor should be reviewed, reused, shared, launched by slash/CLI, or kept long-term. Inline source is treated like project code and requires Project Trust.
 
 ### Attention policy (internal, not author-settable)
 

@@ -68,7 +68,7 @@ export const WorkflowScriptDescriptorSchema = z
     sourcePath: z.string().min(1).optional(),
     requestedScriptPath: z.string().min(1).optional(),
     canonicalScriptPath: z.string().min(1).optional(),
-    sourceKind: z.enum(["skill", "workspace-file"]).optional(),
+    sourceKind: z.enum(["skill", "workspace-file", "inline"]).optional(),
     sourceHash: z.string().min(1).optional(),
     executable: z.boolean(),
     blockedReason: z.string().min(1).optional(),
