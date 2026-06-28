@@ -23,7 +23,11 @@ import {
 } from "@/common/types/message";
 import type { GoalRecordV1, GoalSetError, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
-import type { WorkflowRunRecord } from "@/common/types/workflow";
+import {
+  isTerminalWorkflowRunStatus,
+  type WorkflowRunRecord,
+  type WorkflowRunStatus,
+} from "@/common/types/workflow";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost } from "@/common/types/runtime";
@@ -196,12 +200,7 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
 export const WORKFLOW_FREEFORM_ARGS_ERROR_MESSAGE =
   "Freeform workflow arguments are unsupported. Use JSON args or ask the agent to run the workflow.";
 const WORKFLOW_COMMAND_SUPERSEDED_MESSAGE = "Workflow command was superseded.";
-const WORKFLOW_TERMINAL_STATUSES = new Set(["completed", "failed", "interrupted"]);
 const WORKFLOW_POLL_INTERVAL_MS = 2_000;
-
-function isWorkflowTerminalStatus(status: string): boolean {
-  return WORKFLOW_TERMINAL_STATUSES.has(status);
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -211,7 +210,7 @@ async function waitForWorkflowTerminalRun(input: {
   client: RouterClient<AppRouter>;
   workspaceId: string;
   runId: string;
-  initialStatus: string;
+  initialStatus: WorkflowRunStatus;
   isCurrent?: () => boolean;
 }): Promise<WorkflowRunRecord | null> {
   let run = await input.client.workflows.getRun({
@@ -220,7 +219,7 @@ async function waitForWorkflowTerminalRun(input: {
   });
   let status = run?.status ?? input.initialStatus;
 
-  while (!isWorkflowTerminalStatus(status)) {
+  while (!isTerminalWorkflowRunStatus(status)) {
     if (input.isCurrent?.() === false) {
       throw new Error(WORKFLOW_COMMAND_SUPERSEDED_MESSAGE);
     }
