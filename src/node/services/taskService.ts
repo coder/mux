@@ -192,6 +192,7 @@ interface WorkspaceLifecycleOptions {
 interface ResolvedWorkspaceLifecycleTarget {
   action: WorkspaceLifecycleAction;
   taskId?: string;
+  taskTitle?: string;
   workspaceId: string;
   metadata: WorkspaceMetadata | null;
 }
@@ -6007,6 +6008,7 @@ export class TaskService {
     assert(hasTaskId !== hasWorkspaceId, "workspace lifecycle target must have exactly one ID");
 
     let taskId: string | undefined;
+    let taskTitle: string | undefined;
     let workspaceId: string;
     if (hasTaskId) {
       taskId = target.taskId;
@@ -6018,6 +6020,7 @@ export class TaskService {
       if (record == null) {
         return { status: "invalid_scope", action, taskId };
       }
+      taskTitle = record.title;
       workspaceId = record.workspaceId;
     } else {
       assert(target.workspaceId != null, "workspace lifecycle workspaceId must be resolved");
@@ -6035,16 +6038,30 @@ export class TaskService {
     }
 
     const metadata = await this.findWorkspaceLifecycleMetadata(workspaceId);
-    return { action, ...(taskId != null ? { taskId } : {}), workspaceId, metadata };
+    return {
+      action,
+      ...(taskId != null ? { taskId } : {}),
+      ...(taskTitle != null ? { taskTitle } : {}),
+      workspaceId,
+      metadata,
+    };
   }
 
   private lifecycleTargetFields(resolved: ResolvedWorkspaceLifecycleTarget): {
     taskId?: string;
     workspaceId: string;
+    displayName?: string;
   } {
+    // Match the sidebar label so completed lifecycle tool rows remain understandable after
+    // archive/remove hides the child workspace from the active list.
+    const displayName =
+      coerceNonEmptyString(resolved.metadata?.title) ??
+      coerceNonEmptyString(resolved.metadata?.name) ??
+      coerceNonEmptyString(resolved.taskTitle);
     return {
       ...(resolved.taskId != null ? { taskId: resolved.taskId } : {}),
       workspaceId: resolved.workspaceId,
+      ...(displayName != null ? { displayName } : {}),
     };
   }
 

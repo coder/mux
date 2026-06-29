@@ -125,6 +125,31 @@ describe("WorkspaceLifecycleToolCall", () => {
     expect(view.queryByText("wst_running01")).not.toBeNull();
   });
 
+  test("renders captured workspace display name while keeping identifiers visible", () => {
+    const view = renderWithProviders(
+      <WorkspaceLifecycleToolCall
+        args={{ action: "archive", targets: [{ taskId: "wst_display" }] }}
+        status="completed"
+        defaultExpanded
+        result={{
+          results: [
+            {
+              status: "archived",
+              action: "archive",
+              taskId: "wst_display",
+              workspaceId: "ws-display",
+              displayName: "Archive cleanup",
+            },
+          ],
+        }}
+      />
+    );
+
+    expect(view.queryByText("Archive cleanup")).not.toBeNull();
+    expect(view.queryByText(/ws-display/)).not.toBeNull();
+    expect(view.queryByText(/wst_display/)).not.toBeNull();
+  });
+
   test("self-heals a malformed result by falling back to the requested targets", () => {
     const view = renderWithProviders(
       <WorkspaceLifecycleToolCall

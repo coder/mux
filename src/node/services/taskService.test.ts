@@ -652,6 +652,7 @@ describe("TaskService", () => {
         path: path.join(projectPath, "child"),
         id: "childworkspace",
         name: "child",
+        title: "Child workspace",
         createdAt: new Date().toISOString(),
         runtimeConfig: { type: "local" },
         ...(options.archived ? { archivedAt: new Date().toISOString() } : {}),
@@ -698,7 +699,12 @@ describe("TaskService", () => {
     );
 
     expect(archived).toEqual(
-      Ok({ status: "archived", action: "archive", workspaceId: "childworkspace" })
+      Ok({
+        status: "archived",
+        action: "archive",
+        workspaceId: "childworkspace",
+        displayName: "Child workspace",
+      })
     );
     expect(archive).toHaveBeenCalledWith("childworkspace", undefined);
 
@@ -742,6 +748,7 @@ describe("TaskService", () => {
         action: "archive",
         taskId: "wst_existing",
         workspaceId: "childworkspace",
+        displayName: "Child workspace",
       })
     );
     expect(archive).toHaveBeenCalledWith("childworkspace", undefined);
@@ -865,10 +872,20 @@ describe("TaskService", () => {
     );
 
     expect(deleteResult).toEqual(
-      Ok({ status: "requires_archive", action: "delete_worktree", workspaceId: "childworkspace" })
+      Ok({
+        status: "requires_archive",
+        action: "delete_worktree",
+        workspaceId: "childworkspace",
+        displayName: "Child workspace",
+      })
     );
     expect(removeResult).toEqual(
-      Ok({ status: "requires_archive", action: "remove", workspaceId: "childworkspace" })
+      Ok({
+        status: "requires_archive",
+        action: "remove",
+        workspaceId: "childworkspace",
+        displayName: "Child workspace",
+      })
     );
     expect(deleteWorktree).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
@@ -923,6 +940,7 @@ describe("TaskService", () => {
         status: "requires_confirmation",
         action: "archive",
         workspaceId: "childworkspace",
+        displayName: "child",
         paths: ["scratch.txt"],
       })
     );
@@ -940,6 +958,7 @@ describe("TaskService", () => {
         action: "archive",
         taskId: "wst_created",
         workspaceId: "childworkspace",
+        displayName: "child",
         paths: ["scratch.txt"],
       })
     );
@@ -973,7 +992,12 @@ describe("TaskService", () => {
     );
 
     expect(alreadyArchived).toEqual(
-      Ok({ status: "already_archived", action: "archive", workspaceId: "childworkspace" })
+      Ok({
+        status: "already_archived",
+        action: "archive",
+        workspaceId: "childworkspace",
+        displayName: "child",
+      })
     );
     expect(confirmationArchive).toHaveBeenCalledTimes(2);
   });
@@ -1016,6 +1040,7 @@ describe("TaskService", () => {
         status: "active",
         action: "delete_worktree",
         workspaceId: "childworkspace",
+        displayName: "Child workspace",
         activeTaskIds: ["wst_running"],
       })
     );
@@ -1028,7 +1053,12 @@ describe("TaskService", () => {
     );
 
     expect(interrupted).toEqual(
-      Ok({ status: "deleted_worktree", action: "delete_worktree", workspaceId: "childworkspace" })
+      Ok({
+        status: "deleted_worktree",
+        action: "delete_worktree",
+        workspaceId: "childworkspace",
+        displayName: "Child workspace",
+      })
     );
     expect(deleteWorktree).toHaveBeenCalledWith("childworkspace");
     expect(archive).not.toHaveBeenCalled();
@@ -1046,7 +1076,12 @@ describe("TaskService", () => {
     );
 
     expect(removed).toEqual(
-      Ok({ status: "removed", action: "remove", workspaceId: "childworkspace" })
+      Ok({
+        status: "removed",
+        action: "remove",
+        workspaceId: "childworkspace",
+        displayName: "Child workspace",
+      })
     );
     expect(remove).toHaveBeenCalledWith("childworkspace", true);
 

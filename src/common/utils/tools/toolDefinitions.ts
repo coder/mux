@@ -1080,6 +1080,7 @@ const TaskWorkspaceLifecycleBaseResultSchema = z.object({
   action: TaskWorkspaceLifecycleActionSchema,
   taskId: z.string().optional(),
   workspaceId: z.string().optional(),
+  displayName: z.string().optional(),
   paths: z.array(z.string()).optional(),
   activeTaskIds: z.array(z.string()).optional(),
   note: z.string().optional(),

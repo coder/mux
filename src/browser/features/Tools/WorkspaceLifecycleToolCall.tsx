@@ -203,6 +203,11 @@ function targetIdLabel(target: { taskId?: string | null; workspaceId?: string | 
   return target.workspaceId ?? target.taskId ?? "workspace";
 }
 
+function trimToNonEmpty(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed != null && trimmed.length > 0 ? trimmed : null;
+}
+
 const Dot: React.FC<{ tone: Tone }> = (props) => (
   <span className={cn("inline-block h-1.5 w-1.5 shrink-0 rounded-full", TONE_DOT[props.tone])} />
 );
@@ -306,10 +311,16 @@ const WorkspaceRow: React.FC<{
   const row = props.row;
   const meta = STATUS_META[row.status];
   const Icon = meta.Icon;
-  const primary = targetIdLabel(row);
-  // Show the originating wst_… task id as a secondary line only when distinct from the
-  // primary (resolved) workspace id.
-  const secondary = row.taskId != null && row.taskId !== primary ? row.taskId : null;
+  const idLabel = targetIdLabel(row);
+  const displayName = trimToNonEmpty(row.displayName);
+  // Match the left-sidebar label when the backend captured one, while still keeping the
+  // stable workspace/task identifiers visible for copy/paste and debugging.
+  const primary = displayName != null && displayName !== idLabel ? displayName : idLabel;
+  const secondaryItems = [
+    primary !== idLabel ? idLabel : null,
+    row.taskId != null && row.taskId !== idLabel ? row.taskId : null,
+  ].filter((item): item is string => item != null);
+  const secondary = secondaryItems.length > 0 ? secondaryItems.join(" · ") : null;
   const hint = blockedHint(row.status, props.action);
 
   return (

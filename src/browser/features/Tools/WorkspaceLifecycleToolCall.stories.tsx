@@ -46,9 +46,24 @@ export const ArchiveMultiple: Story = {
     defaultExpanded: true,
     result: {
       results: [
-        { status: "archived", action: "archive", workspaceId: "24e33167af" },
-        { status: "archived", action: "archive", workspaceId: "4a92f76fbf" },
-        { status: "archived", action: "archive", workspaceId: "0b71c40e21" },
+        {
+          status: "archived",
+          action: "archive",
+          workspaceId: "24e33167af",
+          displayName: "Fix streaming resume",
+        },
+        {
+          status: "archived",
+          action: "archive",
+          workspaceId: "4a92f76fbf",
+          displayName: "Review settings polish",
+        },
+        {
+          status: "archived",
+          action: "archive",
+          workspaceId: "0b71c40e21",
+          displayName: "Investigate sidebar jitter",
+        },
       ],
     },
   },
@@ -142,6 +157,7 @@ export const BlockedNeedsAction: Story = {
           status: "requires_confirmation",
           action: "archive",
           workspaceId: "feature-billing-webhooks-experiment-very-long-id-001",
+          displayName: "Billing webhooks experiment",
           paths: [
             "packages/server/src/very/deeply/nested/path/to/an/untracked/file/that/is/quite/long/scratch.local.ts",
             ".env.local",
@@ -151,6 +167,7 @@ export const BlockedNeedsAction: Story = {
           status: "active",
           action: "archive",
           workspaceId: "4a92f76fbf",
+          displayName: "Running cleanup follow-up",
           activeTaskIds: ["wst_4a92f76fbf01"],
         },
       ],
