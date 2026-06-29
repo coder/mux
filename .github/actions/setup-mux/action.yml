@@ -8,6 +8,18 @@ inputs:
 runs:
   using: "composite"
   steps:
+    # Pin Node 22 (LTS) before anything installs deps. The GitHub runners now default
+    # to Node 24, whose extract-zip regression (nodejs/node#63487) hangs/corrupts zip
+    # extraction in dependency postinstalls — it breaks Electron's `node install.js`
+    # ("Electron failed to install correctly") and Playwright's browser install (stalls
+    # at 100%), which intermittently fails Test / E2E (macos) on a browser-cache miss.
+    # Node 22 is unaffected (microsoft/playwright#41092 workaround). Runs first so its
+    # `node` is on PATH for every subsequent `bun install` / `bun x` step.
+    - name: Setup Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: "22"
+
     - name: Setup Bun
       uses: oven-sh/setup-bun@b7a1c7ccf290d58743029c4f6903da283811b979 # v2.1.0
       with:
