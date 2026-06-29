@@ -56,7 +56,8 @@ export type AgentSkillReadFileToolArgs = z.infer<
 >;
 export type AgentSkillReadFileToolResult = z.infer<typeof AgentSkillReadFileToolResultSchema>;
 
-// agent_skill_list result
+// agent_skill_list args + result
+export type AgentSkillListToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_skill_list.schema>;
 export type AgentSkillListToolResult =
   | { success: true; skills: AgentSkillDescriptor[] }
   | { success: false; error: string };

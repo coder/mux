@@ -20,6 +20,7 @@ import {
   Hand,
   Keyboard,
   Layers,
+  LayoutGrid,
   Lightbulb,
   MessageCircleQuestion,
   Monitor,
@@ -245,6 +246,9 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   agent_report: FileText,
   agent_skill_read: GraduationCap,
   agent_skill_read_file: GraduationCap,
+  // LayoutGrid (a 2×2 catalog of tiles) reads as "the index of skills you can pick
+  // from" — distinct from the GraduationCap used when reading a single skill.
+  agent_skill_list: LayoutGrid,
   advisor: Lightbulb,
   ask_user_question: MessageCircleQuestion,
   file_read: BookOpen,

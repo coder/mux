@@ -18,6 +18,7 @@ import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { FileEditToolCall } from "../FileEditToolCall";
 import { AgentSkillReadToolCall } from "../AgentSkillReadToolCall";
 import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
+import { AgentSkillListToolCall } from "../AgentSkillListToolCall";
 import { FileReadToolCall } from "../FileReadToolCall";
 import { MemoryToolCall } from "../MemoryToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
@@ -129,6 +130,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   agent_skill_read_file: {
     component: AgentSkillReadFileToolCall,
     schema: TOOL_DEFINITIONS.agent_skill_read_file.schema,
+  },
+  agent_skill_list: {
+    component: AgentSkillListToolCall,
+    schema: TOOL_DEFINITIONS.agent_skill_list.schema,
   },
   file_edit_replace_string: {
     component: FileEditToolCall,

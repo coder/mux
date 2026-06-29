@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { AgentReportToolCall } from "../AgentReportToolCall";
+import { AgentSkillListToolCall } from "../AgentSkillListToolCall";
 import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
 import { AgentSkillReadToolCall } from "../AgentSkillReadToolCall";
 import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
@@ -61,6 +62,20 @@ describe("getToolComponent", () => {
       filePath: "references/README.md",
     });
     expect(component).toBe(AgentSkillReadFileToolCall);
+  });
+
+  test("returns AgentSkillListToolCall for agent_skill_list", () => {
+    expect(getToolComponent("agent_skill_list", {})).toBe(AgentSkillListToolCall);
+    expect(getToolComponent("agent_skill_list", { includeUnadvertised: true })).toBe(
+      AgentSkillListToolCall
+    );
+  });
+
+  test("agent_skill_list falls back to GenericToolCall when args don't conform", () => {
+    // includeUnadvertised is boolean.nullish(); a string fails the schema.
+    expect(getToolComponent("agent_skill_list", { includeUnadvertised: "yes" })).toBe(
+      GenericToolCall
+    );
   });
 
   test("returns DesktopScreenshotToolCall for desktop_screenshot", () => {
