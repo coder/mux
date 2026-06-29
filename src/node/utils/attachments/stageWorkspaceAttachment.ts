@@ -148,10 +148,21 @@ export async function copyStagedWorkspaceAttachments(input: {
       return Err(`Could not mark staged attachments as ignored: ${excludeResult.error}`);
     }
 
+    const shouldSkipUnreadableSource = input.stagedPaths != null;
     for (const stagedPath of stagedPaths.data) {
-      const bytes = await readStreamToBuffer(
-        input.sourceRuntime.readFile(`${input.sourceWorkspacePath}/${stagedPath}`)
-      );
+      let bytes: Buffer;
+      try {
+        bytes = await readStreamToBuffer(
+          input.sourceRuntime.readFile(`${input.sourceWorkspacePath}/${stagedPath}`)
+        );
+      } catch (error) {
+        // Fork history can contain stale generated attachment notices after users clean up
+        // staged files manually. Preserve the fork rather than failing the whole workspace copy.
+        if (shouldSkipUnreadableSource) {
+          continue;
+        }
+        throw error;
+      }
       if (bytes.byteLength > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
         return Err(
           `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`

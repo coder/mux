@@ -167,6 +167,38 @@ describe("stageWorkspaceAttachment", () => {
     expect(status).toBe("");
   });
 
+  test("skips stale referenced staged zip attachments during fork copy", async () => {
+    const sourceRepo = await makeTempDir("mux-stage-attachment-stale-source-");
+    const targetRepo = await makeTempDir("mux-stage-attachment-stale-target-");
+    execFileSync("git", ["init", "-b", "main"], { cwd: sourceRepo, stdio: "ignore" });
+    execFileSync("git", ["init", "-b", "main"], { cwd: targetRepo, stdio: "ignore" });
+    const sourceRuntime = new LocalRuntime(sourceRepo);
+    const targetRuntime = new LocalRuntime(targetRepo);
+    const bytes = Buffer.from("still present");
+
+    const staged = await stageWorkspaceAttachment({
+      runtime: sourceRuntime,
+      workspacePath: sourceRepo,
+      filename: "present.zip",
+      mediaType: "application/zip",
+      sizeBytes: bytes.byteLength,
+      dataBase64: bytes.toString("base64"),
+    });
+    expect(staged.success).toBe(true);
+    if (!staged.success) return;
+
+    const copied = await copyStagedWorkspaceAttachments({
+      sourceRuntime,
+      targetRuntime,
+      sourceWorkspacePath: sourceRepo,
+      targetWorkspacePath: targetRepo,
+      stagedPaths: [staged.data.stagedPath, ".mux/user-attachments/missing/deleted.zip"],
+    });
+
+    expect(copied).toEqual({ success: true, data: undefined });
+    expect(await readFile(path.join(targetRepo, staged.data.stagedPath))).toEqual(bytes);
+  });
+
   test("extracts referenced staged attachment paths from persisted text", () => {
     const text =
       "before `.mux/user-attachments/one/ARCHIVE.ZIP` middle `.mux/user-attachments/two/future.zip` after";
