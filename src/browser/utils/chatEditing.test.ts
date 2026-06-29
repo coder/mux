@@ -9,6 +9,7 @@ import {
   buildEditingStateFromCompaction,
   buildEditingStateFromDisplayed,
   buildPendingFromDisplayed,
+  buildPendingFromRestoredInput,
   canEditDisplayedUserMessage,
   normalizeQueuedMessage,
 } from "./chatEditing";
@@ -94,6 +95,39 @@ describe("canEditDisplayedUserMessage", () => {
         id: "queued-queued-1-staged-0",
       },
     ]);
+  });
+
+  test("restores staged ZIPs from restore-to-input payloads with attachments", () => {
+    const filePart = {
+      url: "data:text/plain;base64,ZGF0YQ==",
+      mediaType: "text/plain",
+      filename: "context.txt",
+    };
+    const review = {
+      filePath: "src/app.ts",
+      lineRange: "+1",
+      selectedCode: "const value = 1;",
+      userNote: "Review this",
+    };
+
+    const pending = buildPendingFromRestoredInput({
+      content: appendStagedAttachmentNotice("Restore queued work.", [STAGED_ATTACHMENT]),
+      fileParts: [filePart],
+      reviews: [review],
+      idPrefix: "restored-queue",
+    });
+
+    expect(pending).toEqual({
+      content: "Restore queued work.",
+      fileParts: [filePart],
+      stagedAttachments: [
+        {
+          ...STAGED_ATTACHMENT,
+          id: "restored-queue-staged-0",
+        },
+      ],
+      reviews: [review],
+    });
   });
 
   test("restores staged ZIPs from compaction follow-up content", () => {

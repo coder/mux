@@ -43,18 +43,31 @@ function stagedAttachmentsFromText(
   return displayStagedAttachmentsToChatAttachments(parsed.attachments, idPrefix);
 }
 
-export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => {
-  const parsed = parseStagedAttachmentNotice(queued.content);
+export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage =>
+  buildPendingFromRestoredInput({
+    content: queued.content,
+    fileParts: queued.fileParts ?? [],
+    reviews: queued.reviews ?? [],
+    idPrefix: `queued-${queued.id}`,
+  });
+
+export function buildPendingFromRestoredInput(params: {
+  content: string;
+  fileParts: FilePart[];
+  reviews: ReviewNoteDataForDisplay[];
+  idPrefix: string;
+}): PendingUserMessage {
+  const parsed = parseStagedAttachmentNotice(params.content);
   return {
     content: parsed.text,
-    fileParts: queued.fileParts ?? [],
+    fileParts: params.fileParts,
     stagedAttachments: displayStagedAttachmentsToChatAttachments(
       parsed.attachments,
-      `queued-${queued.id}`
+      params.idPrefix
     ),
-    reviews: queued.reviews ?? [],
+    reviews: params.reviews,
   };
-};
+}
 
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";

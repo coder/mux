@@ -137,7 +137,10 @@ import {
   chatAttachmentsToFileParts,
   processAttachmentFiles,
 } from "@/browser/utils/attachmentsHandling";
-import type { PendingUserMessage } from "@/browser/utils/chatEditing";
+import {
+  buildPendingFromRestoredInput,
+  type PendingUserMessage,
+} from "@/browser/utils/chatEditing";
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -1741,38 +1744,38 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }>;
 
       const { text, mode = "append", fileParts, reviews } = customEvent.detail;
-      const hasFileParts = !!fileParts && fileParts.length > 0;
-      const hasReviews = !!reviews && reviews.length > 0;
+      const restoredIdPrefix = `restored-${Date.now()}`;
+      const restoredPending = buildPendingFromRestoredInput({
+        content: text,
+        fileParts: fileParts ?? [],
+        reviews: reviews ?? [],
+        idPrefix: restoredIdPrefix,
+      });
+      const hasFileParts = restoredPending.fileParts.length > 0;
+      const hasStagedAttachments = restoredPending.stagedAttachments.length > 0;
+      const hasReviews = restoredPending.reviews.length > 0;
 
       if (mode === "replace") {
         if (editingMessageForUi) {
           return;
         }
-        if (hasFileParts || hasReviews) {
-          restoreDraft({
-            content: text,
-            fileParts: fileParts ?? [],
-            stagedAttachments: [],
-            reviews: reviews ?? [],
-          });
+        if (hasFileParts || hasStagedAttachments || hasReviews) {
+          restoreDraft(restoredPending);
         } else {
-          restoreText(text);
+          restoreText(restoredPending.content);
         }
-      } else if (hasFileParts || hasReviews) {
+      } else if (hasFileParts || hasStagedAttachments || hasReviews) {
         const currentText = getDraft().text;
         const separator = currentText.trim() ? "\n\n" : "";
-        const nextText = currentText + separator + text;
         applyDraftFromPending(
           {
-            content: nextText,
-            fileParts: fileParts ?? [],
-            stagedAttachments: [],
-            reviews: reviews ?? [],
+            ...restoredPending,
+            content: currentText + separator + restoredPending.content,
           },
-          `restored-${Date.now()}`
+          restoredIdPrefix
         );
       } else {
-        appendText(text);
+        appendText(restoredPending.content);
       }
     };
     window.addEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
