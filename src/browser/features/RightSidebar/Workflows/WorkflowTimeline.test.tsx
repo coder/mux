@@ -389,6 +389,46 @@ describe("WorkflowTimeline", () => {
     expect(view.getByText("running · 0/1 steps · child-phase")).toBeDefined();
   });
 
+  test("keeps completed nested workflow duration out of the generic details card", async () => {
+    const client = {
+      workflows: {
+        getRun: () => Promise.resolve(makeChildWorkflowRun()),
+      },
+    };
+    const completedParentView = makeNestedWorkflowParentView();
+    completedParentView.phases[0].done = 1;
+    completedParentView.phases[0].running = false;
+    completedParentView.phases[0].steps[0].status = "completed";
+    completedParentView.phases[0].steps[0].completedAt = "2026-06-25T12:00:02.000Z";
+    completedParentView.phases[0].steps[0].durationMs = 2000;
+    completedParentView.phases[0].steps[0].nestedWorkflowStatus = "completed";
+    completedParentView.phases[0].steps[0].result = {
+      reportMarkdown: "Nested parent result should stay hidden.",
+      structuredOutput: { nestedResult: true },
+    };
+    completedParentView.stats.done = 1;
+    completedParentView.stats.running = 0;
+
+    const view = renderWithWorkflowApi(
+      <WorkflowTimeline view={completedParentView} workspaceId="workspace-main" />,
+      client
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "delegate 1/1" }));
+    fireEvent.click(view.getByRole("button", { name: "implementation-loop 2s nested" }));
+
+    await waitFor(() => {
+      expect(view.getByText("Nested workflow implementation-loop")).toBeDefined();
+    });
+    expect(view.queryByText("Nested parent result should stay hidden.")).toBeNull();
+
+    const durationLabels = Array.from(
+      view.container.querySelectorAll("span"),
+      normalizeText
+    ).filter((text) => text === "2s");
+    expect(durationLabels).toHaveLength(1);
+  });
+
   test("uses active child run progress when the parent nested event is terminal", async () => {
     const client = {
       workflows: {

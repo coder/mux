@@ -154,7 +154,7 @@ const NestedWorkflowStepPanel: React.FC<{
   }
 
   return (
-    <div className="border-border bg-surface-secondary/40 mt-2.5 rounded-lg border p-2.5">
+    <div className="border-border bg-surface-secondary/40 mt-2.5 flex flex-col gap-2 rounded-lg border p-2.5">
       <div className="flex min-w-0 items-center gap-2">
         {childActive || (childRun == null && fallbackActive) ? <WorkflowLiveDot /> : null}
         <span className="text-content-primary min-w-0 truncate text-xs font-semibold">
@@ -164,18 +164,18 @@ const NestedWorkflowStepPanel: React.FC<{
           {nestedRunId}
         </span>
       </div>
-      <div className="text-muted mt-1 text-[11px]">{childSummary}</div>
+      <div className="text-muted text-[11px]">{childSummary}</div>
 
       {!withinDepthLimit ? (
-        <div className="text-muted mt-2 text-[11px]">
+        <div className="text-muted text-[11px]">
           Nested workflow depth limit reached; showing summary only.
         </div>
       ) : childRunState.error != null ? (
-        <div className="text-danger mt-2 text-[11px]">{childRunState.error}</div>
+        <div className="text-danger text-[11px]">{childRunState.error}</div>
       ) : childRunState.loading && childRun == null ? (
-        <div className="text-muted mt-2 text-[11px]">Loading nested workflow…</div>
+        <div className="text-muted text-[11px]">Loading nested workflow…</div>
       ) : childRun != null && childView != null ? (
-        <div className="border-border/70 mt-2 border-l pl-3">
+        <div className="border-border/70 border-l pl-3">
           <WorkflowTimeline
             view={childView}
             workspaceId={childRun.workspaceId}
@@ -183,7 +183,7 @@ const NestedWorkflowStepPanel: React.FC<{
           />
         </div>
       ) : (
-        <div className="text-muted mt-2 text-[11px]">Nested workflow run is not available.</div>
+        <div className="text-muted text-[11px]">Nested workflow run is not available.</div>
       )}
     </div>
   );
@@ -192,7 +192,26 @@ const NestedWorkflowStepPanel: React.FC<{
 const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
   const step = props.step;
   const hasNestedWorkflow = step.nestedWorkflowRunId != null;
-  const expandable = step.status === "completed" || step.status === "failed" || hasNestedWorkflow;
+  const showReport = hasDisplayableWorkflowReport(
+    step.result?.reportMarkdown,
+    step.result?.structuredOutput !== undefined
+  );
+  const hasResultTitle = step.result?.title != null && step.result.title.length > 0;
+  const hasStructuredOutput = step.result?.structuredOutput !== undefined;
+  const hasStepMetadata =
+    step.durationMs != null ||
+    step.usage?.tokens != null ||
+    step.usage?.costUsd != null ||
+    step.taskId != null;
+  const hasStandaloneStepResult =
+    !hasNestedWorkflow && (hasResultTitle || showReport || hasStructuredOutput);
+  const hasStandaloneStepMetadata = hasStepMetadata && !hasNestedWorkflow;
+  const hasStepDetailContent =
+    step.status === "failed" || hasStandaloneStepResult || hasStandaloneStepMetadata;
+  const expandable =
+    step.status === "failed" ||
+    hasNestedWorkflow ||
+    (step.status === "completed" && hasStepDetailContent);
   // Surface failures by default (including live failures that arrive after the row mounted while
   // running); active nested workflows also start open so their child progress is visible.
   const [open, setOpen] = useDisclosureOpenOnSignal(
@@ -201,10 +220,6 @@ const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
       (step.status === "running" || isActiveWorkflowChildEventStatus(step.nestedWorkflowStatus))
   );
   const color = WORKFLOW_TONE_VAR[getWorkflowStepTone(step.status)];
-  const showReport = hasDisplayableWorkflowReport(
-    step.result?.reportMarkdown,
-    step.result?.structuredOutput !== undefined
-  );
   const workspaceStore = useWorkspaceStoreRaw();
   // Subscribe to derived workspace metadata so the Open action disappears once the
   // child workspace is deleted; it shows only while the step's workspace still exists.
@@ -252,6 +267,15 @@ const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
     </>
   );
 
+  const nestedWorkflowPanel = hasNestedWorkflow ? (
+    <NestedWorkflowStepPanel
+      step={step}
+      workspaceId={props.workspaceId}
+      nestedDepth={props.nestedDepth}
+      parentOpen={open}
+    />
+  ) : null;
+
   return (
     <div className="flex gap-3">
       <div className="relative flex w-[18px] shrink-0 flex-col items-center">
@@ -291,67 +315,66 @@ const WorkflowStepRow: React.FC<WorkflowStepRowProps> = (props) => {
           )}
         </div>
 
-        {open && expandable && (
-          <div className="border-border bg-surface-primary mx-2 mb-1.5 rounded-lg border p-3">
-            {step.status === "failed" ? (
-              <div className="flex gap-2 text-[12.5px] leading-relaxed" style={{ color }}>
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{step.error ?? "Sub-agent failed"}</span>
-              </div>
-            ) : (
-              <>
-                {step.result?.title != null && step.result.title.length > 0 && (
-                  <div className="text-content-primary mb-1.5 text-xs font-semibold">
-                    {step.result.title}
-                  </div>
-                )}
-                {showReport && (
-                  <div className="text-content-secondary text-[12.5px]">
-                    <MarkdownRenderer content={step.result!.reportMarkdown} />
-                  </div>
-                )}
-                {step.result?.structuredOutput !== undefined && (
-                  <div className="mt-2.5 flex flex-col gap-1">
-                    <div className="text-muted text-[10px] font-semibold tracking-wide uppercase">
-                      Structured output
-                    </div>
-                    <WorkflowJsonBlock
-                      value={step.result.structuredOutput}
-                      className="max-h-[220px]"
-                      ariaLabel={`Structured output for ${step.title}`}
-                    />
-                  </div>
-                )}
-                <div className="border-border text-muted mt-2.5 flex flex-wrap gap-3 border-t pt-2 text-[11px] tabular-nums">
-                  {step.durationMs != null && (
-                    <span className="inline-flex items-center gap-1">
-                      <Clock className="h-3 w-3" /> {formatWorkflowDuration(step.durationMs)}
-                    </span>
-                  )}
-                  {step.usage?.tokens != null && (
-                    <span className="inline-flex items-center gap-1">
-                      <Zap className="h-3 w-3" /> {formatWorkflowTokens(step.usage.tokens)} tok
-                    </span>
-                  )}
-                  {step.usage?.costUsd != null && (
-                    <span className="inline-flex items-center gap-1">
-                      <Coins className="h-3 w-3" /> {formatWorkflowCost(step.usage.costUsd)}
-                    </span>
-                  )}
-                  {step.taskId != null && <span className="font-mono">task {step.taskId}</span>}
+        {open &&
+          expandable &&
+          (hasStepDetailContent ? (
+            <div className="border-border bg-surface-primary mx-2 mb-1.5 rounded-lg border p-3">
+              {step.status === "failed" ? (
+                <div className="flex gap-2 text-[12.5px] leading-relaxed" style={{ color }}>
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{step.error ?? "Sub-agent failed"}</span>
                 </div>
-              </>
-            )}
-            {hasNestedWorkflow && (
-              <NestedWorkflowStepPanel
-                step={step}
-                workspaceId={props.workspaceId}
-                nestedDepth={props.nestedDepth}
-                parentOpen={open}
-              />
-            )}
-          </div>
-        )}
+              ) : (
+                <>
+                  {hasResultTitle && (
+                    <div className="text-content-primary mb-1.5 text-xs font-semibold">
+                      {step.result?.title}
+                    </div>
+                  )}
+                  {showReport && (
+                    <div className="text-content-secondary text-[12.5px]">
+                      <MarkdownRenderer content={step.result!.reportMarkdown} />
+                    </div>
+                  )}
+                  {hasStructuredOutput && (
+                    <div className="mt-2.5 flex flex-col gap-1">
+                      <div className="text-muted text-[10px] font-semibold tracking-wide uppercase">
+                        Structured output
+                      </div>
+                      <WorkflowJsonBlock
+                        value={step.result?.structuredOutput}
+                        className="max-h-[220px]"
+                        ariaLabel={`Structured output for ${step.title}`}
+                      />
+                    </div>
+                  )}
+                  {hasStepMetadata && (
+                    <div className="border-border text-muted mt-2.5 flex flex-wrap gap-3 border-t pt-2 text-[11px] tabular-nums">
+                      {step.durationMs != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Clock className="h-3 w-3" /> {formatWorkflowDuration(step.durationMs)}
+                        </span>
+                      )}
+                      {step.usage?.tokens != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Zap className="h-3 w-3" /> {formatWorkflowTokens(step.usage.tokens)} tok
+                        </span>
+                      )}
+                      {step.usage?.costUsd != null && (
+                        <span className="inline-flex items-center gap-1">
+                          <Coins className="h-3 w-3" /> {formatWorkflowCost(step.usage.costUsd)}
+                        </span>
+                      )}
+                      {step.taskId != null && <span className="font-mono">task {step.taskId}</span>}
+                    </div>
+                  )}
+                </>
+              )}
+              {nestedWorkflowPanel}
+            </div>
+          ) : (
+            <div className="mx-2 mb-1.5">{nestedWorkflowPanel}</div>
+          ))}
       </div>
     </div>
   );
