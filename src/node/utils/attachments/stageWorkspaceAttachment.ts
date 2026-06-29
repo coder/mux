@@ -10,7 +10,9 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { getSupportedStagedAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import { getErrorMessage } from "@/common/utils/errors";
+import { shellQuote } from "@/common/utils/shell";
 import type { Runtime } from "@/node/runtime/Runtime";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 import { ensureGitInfoExclude } from "@/node/utils/git/ensureGitInfoExclude";
 
 export interface StagedWorkspaceAttachment {
@@ -116,6 +118,57 @@ export async function readStagedWorkspaceAttachment(input: {
   }
 }
 
+export async function copyStagedWorkspaceAttachments(input: {
+  sourceRuntime: Runtime;
+  targetRuntime: Runtime;
+  sourceWorkspacePath: string;
+  targetWorkspacePath: string;
+}): Promise<Result<void, string>> {
+  try {
+    assert(input.sourceWorkspacePath.trim().length > 0, "sourceWorkspacePath is required");
+    assert(input.targetWorkspacePath.trim().length > 0, "targetWorkspacePath is required");
+
+    const stagedPaths = await listStagedAttachmentPaths(
+      input.sourceRuntime,
+      input.sourceWorkspacePath
+    );
+    if (!stagedPaths.success) {
+      return stagedPaths;
+    }
+    if (stagedPaths.data.length === 0) {
+      return Ok(undefined);
+    }
+
+    const excludeResult = await ensureGitInfoExclude({
+      runtime: input.targetRuntime,
+      workspacePath: input.targetWorkspacePath,
+      relativeDir: STAGED_ATTACHMENT_DIR,
+    });
+    if (excludeResult.status === "failed") {
+      return Err(`Could not mark staged attachments as ignored: ${excludeResult.error}`);
+    }
+
+    for (const stagedPath of stagedPaths.data) {
+      const bytes = await readStreamToBuffer(
+        input.sourceRuntime.readFile(`${input.sourceWorkspacePath}/${stagedPath}`)
+      );
+      if (bytes.byteLength > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
+        return Err(
+          `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`
+        );
+      }
+      await input.targetRuntime.ensureDir(
+        `${input.targetWorkspacePath}/${stagedPath.split("/").slice(0, -1).join("/")}`
+      );
+      await writeBytes(input.targetRuntime, `${input.targetWorkspacePath}/${stagedPath}`, bytes);
+    }
+
+    return Ok(undefined);
+  } catch (error) {
+    return Err(getErrorMessage(error));
+  }
+}
+
 export function sanitizeZipFilename(filename: string): string {
   const rawBase = filename.split(/[\\/]/u).pop()?.trim() ?? "";
   const withoutControls = Array.from(rawBase)
@@ -150,6 +203,29 @@ function normalizeReadableStagedPath(stagedPath: string): string | null {
     return null;
   }
   return normalized;
+}
+
+async function listStagedAttachmentPaths(
+  runtime: Runtime,
+  workspacePath: string
+): Promise<Result<string[], string>> {
+  const result = await execBuffered(
+    runtime,
+    `if [ ! -d ${shellQuote(STAGED_ATTACHMENT_DIR)} ]; then exit 0; fi; find ${shellQuote(STAGED_ATTACHMENT_DIR)} -type f -name '*.zip' -print`,
+    { cwd: workspacePath, timeout: 30 }
+  );
+  if (result.exitCode !== 0) {
+    return Err(result.stderr.trim() || "Failed to list staged attachments.");
+  }
+
+  const stagedPaths: string[] = [];
+  for (const line of result.stdout.split("\n")) {
+    const stagedPath = normalizeReadableStagedPath(line.trim());
+    if (stagedPath != null) {
+      stagedPaths.push(stagedPath);
+    }
+  }
+  return Ok(stagedPaths);
 }
 
 async function readStreamToBuffer(stream: ReadableStream<Uint8Array>): Promise<Buffer> {

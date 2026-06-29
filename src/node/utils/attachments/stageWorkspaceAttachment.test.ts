@@ -8,6 +8,7 @@ import { STAGED_ATTACHMENT_DIR } from "@/common/constants/stagedAttachments";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 import {
+  copyStagedWorkspaceAttachments,
   readStagedWorkspaceAttachment,
   stageWorkspaceAttachment,
 } from "./stageWorkspaceAttachment";
@@ -108,6 +109,42 @@ describe("stageWorkspaceAttachment", () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(await readFile(path.join(dir, result.data.stagedPath), "utf8")).toBe("zip");
+  });
+
+  test("copies staged zip attachments into a fork target and keeps git clean", async () => {
+    const sourceRepo = await makeTempDir("mux-stage-attachment-copy-source-");
+    const targetRepo = await makeTempDir("mux-stage-attachment-copy-target-");
+    execFileSync("git", ["init", "-b", "main"], { cwd: sourceRepo, stdio: "ignore" });
+    execFileSync("git", ["init", "-b", "main"], { cwd: targetRepo, stdio: "ignore" });
+    const sourceRuntime = new LocalRuntime(sourceRepo);
+    const targetRuntime = new LocalRuntime(targetRepo);
+    const bytes = Buffer.from("forked zip bytes");
+
+    const staged = await stageWorkspaceAttachment({
+      runtime: sourceRuntime,
+      workspacePath: sourceRepo,
+      filename: "archive.zip",
+      mediaType: "application/zip",
+      sizeBytes: bytes.byteLength,
+      dataBase64: bytes.toString("base64"),
+    });
+    expect(staged.success).toBe(true);
+    if (!staged.success) return;
+
+    const copied = await copyStagedWorkspaceAttachments({
+      sourceRuntime,
+      targetRuntime,
+      sourceWorkspacePath: sourceRepo,
+      targetWorkspacePath: targetRepo,
+    });
+
+    expect(copied).toEqual({ success: true, data: undefined });
+    expect(await readFile(path.join(targetRepo, staged.data.stagedPath))).toEqual(bytes);
+    const status = execFileSync("git", ["status", "--porcelain"], {
+      cwd: targetRepo,
+      encoding: "utf8",
+    });
+    expect(status).toBe("");
   });
 
   test("rejects invalid base64 before writing", async () => {

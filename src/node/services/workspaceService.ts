@@ -91,6 +91,7 @@ import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktree";
 
 import {
+  copyStagedWorkspaceAttachments,
   readStagedWorkspaceAttachment,
   stageWorkspaceAttachment,
   type DownloadedStagedWorkspaceAttachment,
@@ -6594,6 +6595,25 @@ export class WorkspaceService extends EventEmitter {
         log
       );
 
+      // Create a fresh source runtime handle because DockerRuntime.forkWorkspace() can
+      // mutate the original runtime's container identity to target the new workspace.
+      const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
+        projectPath: foundProjectPath,
+        workspaceName: sourceMetadata.name,
+        workspacePath: sourceWorkspace?.workspacePath,
+      });
+      const sourceWorkspacePath = resolveWorkspaceExecutionPath(sourceMetadata, freshSourceRuntime);
+      const targetWorkspacePath = resolveWorkspaceExecutionPath(
+        {
+          ...sourceMetadata,
+          name: resolvedName,
+          namedWorkspacePath: workspacePath,
+          projectPath: foundProjectPath,
+          runtimeConfig: forkedRuntimeConfig,
+        },
+        targetRuntime
+      );
+
       const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
 
@@ -6647,6 +6667,16 @@ export class WorkspaceService extends EventEmitter {
           targetWorkspaceId: newWorkspaceId,
         });
 
+        const copyStagedAttachmentsResult = await copyStagedWorkspaceAttachments({
+          sourceRuntime: freshSourceRuntime,
+          targetRuntime,
+          sourceWorkspacePath,
+          targetWorkspacePath,
+        });
+        if (!copyStagedAttachmentsResult.success) {
+          throw new Error(copyStagedAttachmentsResult.error);
+        }
+
         // Forks inherit chat history, but their cost ledger must start fresh.
         // Persist an explicit empty usage file so later reads do not rebuild
         // historical costs from the copied messages.
@@ -6667,17 +6697,10 @@ export class WorkspaceService extends EventEmitter {
         }
         initLogger.logComplete(-1);
         const message = getErrorMessage(copyError);
-        return Err(`Failed to copy chat history: ${message}`);
+        return Err(`Failed to copy fork state: ${message}`);
       }
 
       // Copy plan file using explicit source/target runtimes for cross-runtime safety.
-      // Create a fresh source runtime handle because DockerRuntime.forkWorkspace() can
-      // mutate the original runtime's container identity to target the new workspace.
-      const freshSourceRuntime = createRuntime(sourceRuntimeConfig, {
-        projectPath: foundProjectPath,
-        workspaceName: sourceMetadata.name,
-        workspacePath: sourceWorkspace?.workspacePath,
-      });
       await copyPlanFileAcrossRuntimes(
         freshSourceRuntime,
         targetRuntime,
