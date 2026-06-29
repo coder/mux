@@ -2553,7 +2553,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend = modelOneShot?.message ?? skillInvocation?.userText ?? messageText;
       const skillMuxMetadata = skillInvocation
-        ? buildSkillInvocationMetadata(messageText, skillInvocation.descriptor)
+        ? buildSkillInvocationMetadata(
+            appendStagedAttachmentNotice(messageText, attachments),
+            skillInvocation.descriptor
+          )
         : undefined;
 
       if (!api) {

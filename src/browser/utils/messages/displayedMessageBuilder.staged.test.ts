@@ -71,4 +71,31 @@ describe("buildDisplayedMessagesForMessage staged attachments", () => {
     expect(userMessage.content).toContain("<attached-files>");
     expect(userMessage.content).toContain(".mux/user-attachments/id/archive.zip");
   });
+
+  test("preserves staged notices in skill raw commands for chip rendering", () => {
+    const rawCommand = appendStagedAttachmentNotice("/review inspect this", [STAGED_ATTACHMENT]);
+    const message = createMuxMessage("msg-3", "user", "Using skill review: inspect this", {
+      historySequence: 3,
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand,
+        skillName: "review",
+        scope: "project",
+      },
+    });
+
+    const displayed = buildDisplayedMessagesForMessage({
+      message,
+      hasActiveStream: false,
+      isContextBoundaryMessage: () => false,
+    });
+
+    expect(displayed).toHaveLength(1);
+    const userMessage = displayed[0];
+    expect(userMessage?.type).toBe("user");
+    if (userMessage?.type !== "user") return;
+    expect(userMessage.content).toContain("/review inspect this");
+    expect(userMessage.content).toContain("<attached-files>");
+    expect(userMessage.content).toContain(".mux/user-attachments/id/archive.zip");
+  });
 });
