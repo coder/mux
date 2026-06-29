@@ -342,12 +342,9 @@ export class BashMonitorWakeStore {
     await this.locks.withLock(key, async () => {
       const record = await this.get(ownerWorkspaceId, id);
       if (record?.status !== "pending") return;
-      await this.write({
-        ...record,
-        status,
-        updatedAt: new Date().toISOString(),
-        ...(status === "delivered" ? { deliveredAt: new Date().toISOString() } : {}),
-      });
+      // Reuse the shared terminal-status writer (also used by transitionSnapshot) so the
+      // delivered/superseded record shape stays single-sourced instead of re-inlined here.
+      await this.write(this.withTerminalStatus(record, status));
     });
   }
 
