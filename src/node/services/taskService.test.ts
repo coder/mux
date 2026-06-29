@@ -3181,6 +3181,57 @@ describe("TaskService", () => {
     expect(workspaceMocks.remove).toHaveBeenCalledWith("childworkspace", true);
   });
 
+  test("listWorkspaceTurnTasks repairs restart-interrupted deferred handles before filtering", async () => {
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    const appendResult = await historyService.appendToHistory(
+      "childworkspace",
+      createMuxMessage("msg_recovered_list", "assistant", "Recovered list text", {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata,
+      })
+    );
+    expect(appendResult.success).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "interrupted",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      deferredMessageIds: ["msg_recovered_list"],
+      error: "Workspace turn interrupted after restart",
+    });
+
+    const listed = await taskService.listWorkspaceTurnTasks(parentId, {
+      statuses: ["interrupted", "completed"],
+    });
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({
+      handleId: "wst_handle",
+      status: "completed",
+      messageId: "msg_recovered_list",
+      reportMarkdown: "Recovered list text",
+    });
+    expect(listed[0]?.error).toBeUndefined();
+
+    const interruptedOnly = await taskService.listWorkspaceTurnTasks(parentId, {
+      statuses: ["interrupted"],
+    });
+    expect(interruptedOnly.map((record) => record.handleId)).not.toContain("wst_handle");
+  });
+
   test("workspace-turn stale recovery repairs restart-interrupted deferred error handles", async () => {
     const { config, parentId, projectPath, taskService, historyService } =
       await startWorkspaceTurnForTest();

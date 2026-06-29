@@ -5658,18 +5658,17 @@ export class TaskService {
     return result;
   }
 
-  async getWorkspaceTurnSnapshot(
-    ownerWorkspaceId: string,
-    handleId: string
+  private async normalizeWorkspaceTurnRecord(
+    record: WorkspaceTurnTaskHandleRecord
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
-    if (!isWorkspaceTurnTaskId(handleId)) {
-      return null;
-    }
-    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    assert(record.ownerWorkspaceId.length > 0, "normalizeWorkspaceTurnRecord requires owner id");
+    assert(record.handleId.length > 0, "normalizeWorkspaceTurnRecord requires handle id");
+
     // Older recovery skipped deferred stream-end history and could mark a completed workspace turn
-    // interrupted. Re-check the durable child history so affected handles self-heal on next await.
+    // interrupted. Re-check the durable child history anywhere handles are observed so task_list and
+    // task_await agree on the self-healed terminal status.
     if (
-      record?.status === "interrupted" &&
+      record.status === "interrupted" &&
       record.error === "Workspace turn interrupted after restart" &&
       (record.deferredMessageIds?.length ?? 0) > 0
     ) {
@@ -5684,46 +5683,50 @@ export class TaskService {
         ) {
           this.activeWorkspaceTurnHandleByWorkspaceId.delete(record.workspaceId);
         }
-        return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+        return await this.taskHandleStore.getWorkspaceTurn(
+          record.ownerWorkspaceId,
+          record.handleId
+        );
       }
     }
 
     if (
-      record != null &&
       (record.status === "queued" || record.status === "starting" || record.status === "running") &&
       !(await this.isLiveWorkspaceTurn(record))
     ) {
       await this.settleStaleWorkspaceTurn(record);
-      return await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+      return await this.taskHandleStore.getWorkspaceTurn(record.ownerWorkspaceId, record.handleId);
     }
+
     return record;
+  }
+
+  async getWorkspaceTurnSnapshot(
+    ownerWorkspaceId: string,
+    handleId: string
+  ): Promise<WorkspaceTurnTaskHandleRecord | null> {
+    if (!isWorkspaceTurnTaskId(handleId)) {
+      return null;
+    }
+    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    if (record == null) {
+      return null;
+    }
+    return await this.normalizeWorkspaceTurnRecord(record);
   }
 
   async listWorkspaceTurnTasks(
     ownerWorkspaceId: string,
     options: { statuses?: readonly WorkspaceTurnTaskStatus[] } = {}
   ): Promise<WorkspaceTurnTaskHandleRecord[]> {
-    const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId, options);
+    const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId);
     const statuses = options.statuses != null ? new Set(options.statuses) : null;
     const result: WorkspaceTurnTaskHandleRecord[] = [];
     for (const record of records) {
-      if (
-        (record.status === "queued" ||
-          record.status === "starting" ||
-          record.status === "running") &&
-        !(await this.isLiveWorkspaceTurn(record))
-      ) {
-        await this.settleStaleWorkspaceTurn(record);
-        const latest = await this.taskHandleStore.getWorkspaceTurn(
-          record.ownerWorkspaceId,
-          record.handleId
-        );
-        if (latest != null && (statuses == null || statuses.has(latest.status))) {
-          result.push(latest);
-        }
-        continue;
+      const latest = await this.normalizeWorkspaceTurnRecord(record);
+      if (latest != null && (statuses == null || statuses.has(latest.status))) {
+        result.push(latest);
       }
-      result.push(record);
     }
     return result;
   }
