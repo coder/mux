@@ -1,6 +1,12 @@
 import React from "react";
+import { APIContext } from "@/browser/contexts/API";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
+import {
+  stripStagedAttachmentNotice,
+  type DisplayStagedAttachment,
+} from "@/browser/features/ChatInput/stagedAttachments";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
@@ -30,6 +36,26 @@ import {
   SIDE_QUESTION_MESSAGE_WINDOW_CLASS,
   SIDE_QUESTION_USER_BLOCK_CLASS,
 } from "./sideQuestionStyles";
+
+function base64ToBlob(dataBase64: string, mediaType: string): Blob {
+  const binary = atob(dataBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mediaType });
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const blobUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
 
 /** Navigation info for navigating between user messages */
 export interface UserMessageNavigation {
@@ -63,10 +89,37 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const isGoalContinuation = message.isGoalContinuation === true;
   const isBudgetLimitWrapup = message.isBudgetLimitWrapup === true;
   const content = message.content;
+  const visibleContent = stripStagedAttachmentNotice(content);
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
   const isMobileTouch =
     typeof window !== "undefined" &&
     window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+
+  const apiState = React.useContext(APIContext);
+  const api = apiState?.api ?? null;
+  const workspaceContext = useOptionalWorkspaceContext();
+  const workspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
+
+  const handleDownloadStagedAttachment = async (attachment: DisplayStagedAttachment) => {
+    if (api == null || workspaceId == null) {
+      console.warn("Cannot download staged attachment without an active workspace connection.");
+      return;
+    }
+
+    const result = await api.workspace.downloadStagedAttachment({
+      workspaceId,
+      stagedPath: attachment.stagedPath,
+    });
+    if (!result.success) {
+      console.error("Failed to download staged attachment:", result.error);
+      return;
+    }
+
+    downloadBlob(
+      base64ToBlob(result.data.dataBase64, result.data.mediaType),
+      result.data.filename || attachment.filename
+    );
+  };
 
   console.assert(
     typeof clipboardWriteText === "function",
@@ -148,7 +201,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       : []),
     {
       label: copied ? "Copied" : "Copy",
-      onClick: () => void copyToClipboard(content),
+      onClick: () => void copyToClipboard(visibleContent),
       icon: copied ? <ClipboardCheck /> : <Clipboard />,
     },
   ];
@@ -206,6 +259,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         inlineSkillSnapshots={message.inlineSkillSnapshots}
         reviews={message.reviews}
         fileParts={message.fileParts}
+        onDownloadStagedAttachment={(attachment) => void handleDownloadStagedAttachment(attachment)}
         variant="sent"
       />
     );

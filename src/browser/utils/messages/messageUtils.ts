@@ -1,3 +1,4 @@
+import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import type { DisplayedMessage } from "@/common/types/message";
 import { formatReviewForModel } from "@/common/types/review";
 import type { BashOutputToolArgs } from "@/common/types/tools";
@@ -9,17 +10,18 @@ export function getEditableUserMessageText(
   message: Extract<DisplayedMessage, { type: "user" }>
 ): string {
   const reviews = message.reviews;
+  const content = stripStagedAttachmentNotice(message.content);
   if (!reviews || reviews.length === 0) {
-    return message.content;
+    return content;
   }
 
   // Reviews are already stored in metadata; strip their rendered tags to avoid duplication on edit.
   const reviewText = reviews.map(formatReviewForModel).join("\n\n");
-  if (!message.content.startsWith(reviewText)) {
-    return message.content;
+  if (!content.startsWith(reviewText)) {
+    return content;
   }
 
-  const remainder = message.content.slice(reviewText.length);
+  const remainder = content.slice(reviewText.length);
   if (remainder.startsWith("\n\n")) {
     return remainder.slice(2);
   }

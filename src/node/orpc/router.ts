@@ -4179,6 +4179,18 @@ export const router = (authToken?: string) => {
             projectPath: result.data.projectPath,
           };
         }),
+      stageAttachment: t
+        .input(schemas.workspace.stageAttachment.input)
+        .output(schemas.workspace.stageAttachment.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.stageAttachment(input);
+        }),
+      downloadStagedAttachment: t
+        .input(schemas.workspace.downloadStagedAttachment.input)
+        .output(schemas.workspace.downloadStagedAttachment.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.downloadStagedAttachment(input);
+        }),
       sendMessage: t
         .input(schemas.workspace.sendMessage.input)
         .output(schemas.workspace.sendMessage.output)

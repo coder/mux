@@ -6,6 +6,10 @@ import { WORKTREE_ARCHIVE_BEHAVIORS } from "@/common/config/worktreeArchiveBehav
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import {
+  MAX_STAGED_ATTACHMENT_BASE64_CHARS,
+  MAX_STAGED_ATTACHMENT_SIZE_BYTES,
+} from "@/common/constants/stagedAttachments";
 import { ChatStatsSchema, SessionUsageFileSchema } from "./chatStats";
 import { AdditionalSystemContextSchema, WorkspaceInstructionsSchema } from "./instructions";
 import {
@@ -1248,6 +1252,39 @@ export const workspace = {
       }),
       z.object({ success: z.literal(false), error: z.string() }),
     ]),
+  },
+  stageAttachment: {
+    input: z.object({
+      workspaceId: z.string(),
+      filename: z.string(),
+      mediaType: z.string().nullish(),
+      sizeBytes: z.number().int().nonnegative().max(MAX_STAGED_ATTACHMENT_SIZE_BYTES),
+      dataBase64: z.string().max(MAX_STAGED_ATTACHMENT_BASE64_CHARS),
+    }),
+    output: ResultSchema(
+      z.object({
+        filename: z.string(),
+        mediaType: z.string(),
+        sizeBytes: z.number().int().nonnegative(),
+        stagedPath: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  downloadStagedAttachment: {
+    input: z.object({
+      workspaceId: z.string(),
+      stagedPath: z.string(),
+    }),
+    output: ResultSchema(
+      z.object({
+        filename: z.string(),
+        mediaType: z.string(),
+        sizeBytes: z.number().int().nonnegative().max(MAX_STAGED_ATTACHMENT_SIZE_BYTES),
+        dataBase64: z.string().max(MAX_STAGED_ATTACHMENT_BASE64_CHARS),
+      }),
+      z.string()
+    ),
   },
   sendMessage: {
     input: z.object({

@@ -220,6 +220,7 @@ export function filePartsToChatAttachments(
   idPrefix: string
 ): ChatAttachment[] {
   return fileParts.map((part, index) => ({
+    kind: "provider",
     id: `${idPrefix}-${index}`,
     url: part.url,
     mediaType: part.mediaType,

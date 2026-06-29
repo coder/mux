@@ -2,6 +2,10 @@ import React from "react";
 import { FileText } from "lucide-react";
 import type { InlineSkillSnapshotMap, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
+import {
+  parseStagedAttachmentNotice,
+  type DisplayStagedAttachment,
+} from "@/browser/features/ChatInput/stagedAttachments";
 import { ReviewBlockFromData } from "../Shared/ReviewBlock";
 import {
   HoverCard,
@@ -25,6 +29,7 @@ interface UserMessageContentProps {
   inlineSkillSnapshots?: InlineSkillSnapshotMap;
   reviews?: ReviewNoteDataForDisplay[];
   fileParts?: FilePart[];
+  onDownloadStagedAttachment?: (attachment: DisplayStagedAttachment) => void;
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
   variant: "sent" | "queued";
 }
@@ -98,13 +103,15 @@ const imageStyles = {
 export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => {
   const reviews = props.reviews ?? [];
   const fileParts = props.fileParts ?? [];
+  const parsedStagedNotice = parseStagedAttachmentNotice(props.content);
+  const stagedAttachments = parsedStagedNotice.attachments;
 
   const hasReviews = reviews.length > 0;
 
-  // Strip review tags from text when displaying alongside review blocks
+  // Strip model-only attachment/review tags from text when displaying alongside rich UI blocks.
   const textContent = hasReviews
-    ? props.content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
-    : props.content;
+    ? parsedStagedNotice.text.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
+    : parsedStagedNotice.text;
 
   // Check if content starts with the command prefix
   const shouldHighlightPrefix =
@@ -263,6 +270,28 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
               </a>
             );
           })}
+        </div>
+      )}
+      {stagedAttachments.length > 0 && (
+        <div className={imageContainerStyles[props.variant]}>
+          {stagedAttachments.map((attachment) => (
+            <button
+              key={attachment.stagedPath}
+              type="button"
+              aria-label={`Download ${attachment.filename}`}
+              disabled={!props.onDownloadStagedAttachment}
+              className={`${fileAttachmentStyles[props.variant]} ${
+                props.onDownloadStagedAttachment
+                  ? "cursor-pointer hover:bg-[var(--color-hover)]"
+                  : "cursor-default opacity-70"
+              }`}
+              onClick={() => props.onDownloadStagedAttachment?.(attachment)}
+            >
+              <FileText className="h-4 w-4 shrink-0" />
+              <span className="truncate">{attachment.filename}</span>
+              <span className="text-[var(--color-text-muted)]">{attachment.sizeLabel}</span>
+            </button>
+          ))}
         </div>
       )}
     </>

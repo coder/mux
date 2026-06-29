@@ -1,7 +1,10 @@
 import React from "react";
 import { FileText, X } from "lucide-react";
 
-export interface ChatAttachment {
+import { formatBytes } from "./stagedAttachments";
+
+export interface ProviderChatAttachment {
+  kind: "provider";
   id: string;
   url: string;
   mediaType: string;
@@ -14,6 +17,17 @@ export interface ChatAttachment {
     newHeight: number;
   };
 }
+
+export interface StagedChatAttachment {
+  kind: "staged";
+  id: string;
+  mediaType: string;
+  filename: string;
+  sizeBytes: number;
+  stagedPath: string;
+}
+
+export type ChatAttachment = ProviderChatAttachment | StagedChatAttachment;
 
 interface ChatAttachmentsProps {
   attachments: ChatAttachment[];
@@ -34,7 +48,7 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
     <div className="flex flex-wrap gap-2 py-2">
       {props.attachments.map((attachment) => {
         const baseMediaType = getBaseMediaType(attachment.mediaType);
-        const isImage = baseMediaType.startsWith("image/");
+        const isImage = attachment.kind === "provider" && baseMediaType.startsWith("image/");
 
         if (isImage) {
           return (
@@ -68,6 +82,10 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
 
         const label =
           attachment.filename ?? (baseMediaType === "application/pdf" ? "PDF" : baseMediaType);
+        const detail =
+          attachment.kind === "staged"
+            ? `workspace file • ${formatBytes(attachment.sizeBytes)}`
+            : null;
 
         return (
           <div
@@ -75,7 +93,12 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
             className="border-border-light bg-dark flex max-w-[260px] items-center gap-2 rounded border px-2 py-1"
           >
             <FileText className="h-4 w-4 shrink-0 text-[var(--color-subtle)]" />
-            <span className="truncate text-xs text-[var(--color-subtle)]">{label}</span>
+            <span className="min-w-0 truncate text-xs text-[var(--color-subtle)]">
+              {label}
+              {detail ? (
+                <span className="ml-1 text-[var(--color-text-muted)]">{detail}</span>
+              ) : null}
+            </span>
             {handleRemove && (
               <button
                 onClick={() => handleRemove(attachment.id)}

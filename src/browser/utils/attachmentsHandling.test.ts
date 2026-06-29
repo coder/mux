@@ -7,6 +7,7 @@ import {
   extractAttachmentsFromClipboard,
   extractAttachmentsFromDrop,
   processAttachmentFiles,
+  chatAttachmentsToFileParts,
 } from "./attachmentsHandling";
 
 // Mock FileReader for Node.js environment
@@ -102,6 +103,8 @@ describe("attachmentsHandling", () => {
 
       const attachment = await fileToChatAttachment(file);
 
+      expect(attachment.kind).toBe("provider");
+      if (attachment.kind !== "provider") throw new Error("Expected provider attachment");
       expect(attachment.mediaType).toBe("image/jpeg");
       expect(attachment.url).toContain("data:image/jpeg;base64,");
     });
@@ -219,6 +222,50 @@ describe("attachmentsHandling", () => {
     });
   });
 
+  describe("staged attachments", () => {
+    test("stages zip files through the provided callback", async () => {
+      const file = new File(["zip bytes"], "archive.zip", { type: "" });
+
+      const attachments = await processAttachmentFiles([file], {
+        stageAttachment: (zipFile, dataBase64) => {
+          expect(dataBase64).toBe("emlwIGJ5dGVz");
+          return Promise.resolve({
+            filename: zipFile.name,
+            mediaType: "application/zip",
+            sizeBytes: zipFile.size,
+            stagedPath: `.mux/user-attachments/id/${zipFile.name}`,
+          });
+        },
+      });
+
+      expect(attachments).toEqual([
+        {
+          kind: "staged",
+          id: expect.stringMatching(/^\d+-[a-z0-9]+$/),
+          filename: "archive.zip",
+          mediaType: "application/zip",
+          sizeBytes: 9,
+          stagedPath: ".mux/user-attachments/id/archive.zip",
+        },
+      ]);
+    });
+
+    test("does not convert staged zip attachments to provider file parts", () => {
+      expect(
+        chatAttachmentsToFileParts([
+          {
+            kind: "staged",
+            id: "zip-1",
+            filename: "archive.zip",
+            mediaType: "application/zip",
+            sizeBytes: 1,
+            stagedPath: ".mux/user-attachments/id/archive.zip",
+          },
+        ])
+      ).toEqual([]);
+    });
+  });
+
   describe("processAttachmentFiles", () => {
     test("converts multiple files to attachments", async () => {
       const file1 = new File(["image 1"], "test1.png", { type: "image/png" });
@@ -227,6 +274,9 @@ describe("attachmentsHandling", () => {
       const attachments = await processAttachmentFiles([file1, file2]);
 
       expect(attachments).toHaveLength(2);
+      if (attachments[0].kind !== "provider" || attachments[1].kind !== "provider") {
+        throw new Error("Expected provider attachments");
+      }
       expect(attachments[0].mediaType).toBe("image/png");
       expect(attachments[1].mediaType).toBe("image/jpeg");
       expect(attachments[0].url).toContain("data:image/png;base64,");

@@ -1,4 +1,5 @@
 import { SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
+import { ZIP_MEDIA_TYPE, ZIP_MEDIA_TYPES } from "@/common/constants/stagedAttachments";
 
 export const PDF_MEDIA_TYPE = "application/pdf";
 export const MARKDOWN_MEDIA_TYPE = "text/markdown";
@@ -46,4 +47,27 @@ export function getSupportedAttachmentMediaType(args: {
 
   const normalized = normalizeAttachmentMediaType(rawMediaType);
   return isSupportedAttachmentMediaType(normalized) ? normalized : null;
+}
+
+export function isSupportedStagedAttachmentMediaType(mediaType: string): boolean {
+  const normalized = normalizeAttachmentMediaType(mediaType);
+  return ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number]);
+}
+
+export function getSupportedStagedAttachmentMediaType(args: {
+  mediaType?: string | null;
+  filename?: string | null;
+}): string | null {
+  const trimmedMediaType = args.mediaType?.trim();
+  const mediaType =
+    trimmedMediaType != null && trimmedMediaType.length > 0 ? trimmedMediaType : null;
+  if (mediaType != null && isSupportedStagedAttachmentMediaType(mediaType)) {
+    return ZIP_MEDIA_TYPE;
+  }
+
+  if (args.filename?.toLowerCase().endsWith(".zip") === true) {
+    return ZIP_MEDIA_TYPE;
+  }
+
+  return null;
 }

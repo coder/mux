@@ -68,6 +68,10 @@ import { getProviderModelEntryId } from "@/common/utils/providers/modelEntries";
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isValidProvider } from "@/common/constants/providers";
 import { openInEditor } from "@/browser/utils/openInEditor";
+import {
+  appendStagedAttachmentNotice,
+  getStagedAttachments,
+} from "@/browser/features/ChatInput/stagedAttachments";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 // ============================================================================
@@ -1635,6 +1639,7 @@ export interface CommandHandlerContext {
   workspaceId: string;
   currentModel?: string | null;
   sendMessageOptions: SendMessageOptions;
+  attachments?: ChatAttachment[];
   fileParts?: FilePart[];
   /** Reviews attached to the message (from code review panel) */
   reviews?: ReviewNoteData[];
@@ -1772,12 +1777,16 @@ export async function handleCompactCommand(
   setSendingState(true);
 
   try {
-    // Build followUpContent directly from parsed command + context
+    // Build followUpContent directly from parsed command + context.
+    const stagedAttachments = context.attachments ? getStagedAttachments(context.attachments) : [];
     const hasContent =
-      parsed.continueMessage ?? context.fileParts?.length ?? context.reviews?.length;
+      parsed.continueMessage ??
+      context.fileParts?.length ??
+      context.reviews?.length ??
+      stagedAttachments.length;
     const followUpContent: CompactionFollowUpInput | undefined = hasContent
       ? {
-          text: parsed.continueMessage ?? "",
+          text: appendStagedAttachmentNotice(parsed.continueMessage ?? "", stagedAttachments),
           fileParts: context.fileParts,
           reviews: context.reviews,
         }

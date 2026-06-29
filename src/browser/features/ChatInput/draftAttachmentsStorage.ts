@@ -5,13 +5,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isChatAttachment(value: unknown): value is ChatAttachment {
+function isProviderChatAttachment(value: unknown): value is {
+  kind?: "provider";
+  id: string;
+  url: string;
+  mediaType: string;
+  filename?: string;
+} {
   if (!isRecord(value)) return false;
   return (
+    (value.kind === undefined || value.kind === "provider") &&
     typeof value.id === "string" &&
     typeof value.url === "string" &&
     typeof value.mediaType === "string" &&
     (value.filename === undefined || typeof value.filename === "string")
+  );
+}
+
+function isStagedChatAttachment(value: unknown): value is {
+  kind: "staged";
+  id: string;
+  mediaType: string;
+  filename: string;
+  sizeBytes: number;
+  stagedPath: string;
+} {
+  if (!isRecord(value)) return false;
+  return (
+    value.kind === "staged" &&
+    typeof value.id === "string" &&
+    typeof value.mediaType === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.sizeBytes === "number" &&
+    Number.isInteger(value.sizeBytes) &&
+    value.sizeBytes >= 0 &&
+    typeof value.stagedPath === "string"
   );
 }
 
@@ -22,16 +50,30 @@ export function parsePersistedChatAttachments(raw: unknown): ChatAttachment[] {
 
   const attachments: ChatAttachment[] = [];
   for (const item of raw) {
-    if (!isChatAttachment(item)) {
-      return [];
+    if (isProviderChatAttachment(item)) {
+      attachments.push({
+        kind: "provider",
+        id: item.id,
+        url: item.url,
+        mediaType: item.mediaType,
+        filename: item.filename,
+      });
+      continue;
     }
 
-    attachments.push({
-      id: item.id,
-      url: item.url,
-      mediaType: item.mediaType,
-      filename: item.filename,
-    });
+    if (isStagedChatAttachment(item)) {
+      attachments.push({
+        kind: "staged",
+        id: item.id,
+        mediaType: item.mediaType,
+        filename: item.filename,
+        sizeBytes: item.sizeBytes,
+        stagedPath: item.stagedPath,
+      });
+      continue;
+    }
+
+    return [];
   }
 
   return attachments;

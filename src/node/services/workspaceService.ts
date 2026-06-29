@@ -90,6 +90,12 @@ import { isWorktreeRuntime } from "@/node/runtime/worktreeLifecycleHooks";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktree";
 
+import {
+  readStagedWorkspaceAttachment,
+  stageWorkspaceAttachment,
+  type DownloadedStagedWorkspaceAttachment,
+  type StagedWorkspaceAttachment,
+} from "@/node/utils/attachments/stageWorkspaceAttachment";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
@@ -6904,6 +6910,46 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return foundDecision && current;
+  }
+
+  async stageAttachment(input: {
+    workspaceId: string;
+    filename: string;
+    mediaType?: string | null;
+    sizeBytes: number;
+    dataBase64: string;
+  }): Promise<Result<StagedWorkspaceAttachment, string>> {
+    const metadata = await this.getInfo(input.workspaceId);
+    if (metadata == null) {
+      return Err("Workspace not found");
+    }
+
+    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+    return stageWorkspaceAttachment({
+      runtime,
+      workspacePath,
+      filename: input.filename,
+      mediaType: input.mediaType,
+      sizeBytes: input.sizeBytes,
+      dataBase64: input.dataBase64,
+    });
+  }
+
+  async downloadStagedAttachment(input: {
+    workspaceId: string;
+    stagedPath: string;
+  }): Promise<Result<DownloadedStagedWorkspaceAttachment, string>> {
+    const metadata = await this.getInfo(input.workspaceId);
+    if (metadata == null) {
+      return Err("Workspace not found");
+    }
+
+    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+    return readStagedWorkspaceAttachment({
+      runtime,
+      workspacePath,
+      stagedPath: input.stagedPath,
+    });
   }
 
   async sendMessage(
