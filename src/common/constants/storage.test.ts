@@ -87,6 +87,33 @@ describe("storage workspace-scoped keys", () => {
     expect(localStorage.getItem(destKey)).toBe(value);
   });
 
+  test("copyWorkspaceStorage drops staged draft attachments", () => {
+    const source = "ws-source";
+    const dest = "ws-dest";
+
+    const sourceKey = getInputAttachmentsKey(source);
+    const destKey = getInputAttachmentsKey(dest);
+    const providerAttachment = {
+      kind: "provider",
+      id: "img-1",
+      url: "data:image/png;base64,AAA",
+      mediaType: "image/png",
+    };
+    const stagedAttachment = {
+      kind: "staged",
+      id: "zip-1",
+      filename: "archive.zip",
+      mediaType: "application/zip",
+      sizeBytes: 128,
+      stagedPath: ".mux/user-attachments/id/archive.zip",
+    };
+    localStorage.setItem(sourceKey, JSON.stringify([providerAttachment, stagedAttachment]));
+
+    copyWorkspaceStorage(source, dest);
+
+    expect(JSON.parse(localStorage.getItem(destKey) ?? "null")).toEqual([providerAttachment]);
+  });
+
   test("deleteWorkspaceStorage removes inputAttachments key", () => {
     const workspaceId = "ws-delete";
     const key = getInputAttachmentsKey(workspaceId);

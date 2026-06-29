@@ -785,6 +785,26 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
   getPostCompactionStateKey, // Cache only, no need to preserve on fork
 ];
 
+function isStagedPersistedAttachment(value: unknown): boolean {
+  return (
+    typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "staged"
+  );
+}
+
+function stripStagedDraftAttachments(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return value;
+    }
+    // Forked worktrees do not share staged draft files. Keep provider attachments, but drop
+    // workspace-local staged ZIP chips so the fork cannot point at missing source-worktree paths.
+    return JSON.stringify(parsed.filter((attachment) => !isStagedPersistedAttachment(attachment)));
+  } catch {
+    return value;
+  }
+}
+
 /**
  * Copy all workspace-specific localStorage keys from source to destination workspace.
  * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/attachments, etc).
@@ -795,7 +815,10 @@ export function copyWorkspaceStorage(sourceWorkspaceId: string, destWorkspaceId:
     const destKey = getKey(destWorkspaceId);
     const value = localStorage.getItem(sourceKey);
     if (value !== null) {
-      localStorage.setItem(destKey, value);
+      localStorage.setItem(
+        destKey,
+        getKey === getInputAttachmentsKey ? stripStagedDraftAttachments(value) : value
+      );
     }
   }
 }
