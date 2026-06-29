@@ -5,6 +5,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { BASH_MAX_LINE_BYTES } from "@/common/constants/toolLimits";
+import { stripAnsiControlChars } from "@/node/utils/ansi";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 
 const DEFAULT_BACKGROUND_BASH_TAIL_BYTES = 64_000;
@@ -16,10 +17,6 @@ const MONITOR_MAX_LAST_LINES = 20;
 const MONITOR_MAX_PROMPT_LINE_BYTES = Math.min(BASH_MAX_LINE_BYTES, 8_192);
 const MONITOR_MAX_INCOMPLETE_MATCH_BYTES = 1_000_000;
 const MONITOR_TRUNCATION_MARKER = "… [truncated] …";
-const ANSI_ESCAPE_PATTERN = new RegExp(
-  `[${String.fromCharCode(27)}${String.fromCharCode(155)}][[\\]\\()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?${String.fromCharCode(7)})|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))`,
-  "g"
-);
 
 export function computeTailStartOffset(fileSizeBytes: number, tailBytes: number): number {
   assert(
@@ -383,12 +380,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   private sanitizeMonitorLine(line: string): string {
-    return [...line.replace(ANSI_ESCAPE_PATTERN, "")]
-      .filter((char) => {
-        const code = char.charCodeAt(0);
-        return code === 9 || code >= 32;
-      })
-      .join("");
+    return stripAnsiControlChars(line);
   }
 
   private truncateMonitorLine(line: string): string {

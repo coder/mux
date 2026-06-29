@@ -9,14 +9,11 @@ import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import { isErrnoWithCode } from "@/node/utils/fs";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import { stripAnsiControlChars } from "@/node/utils/ansi";
 
 export const BASH_MONITOR_WAKE_DIR = "bash-monitor-wakes";
 const MAX_WAKE_LINES = 50;
 const MAX_WAKE_LINE_BYTES = 8_192;
-const ANSI_ESCAPE_PATTERN = new RegExp(
-  `[${String.fromCharCode(27)}${String.fromCharCode(155)}][[\\]\\()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?${String.fromCharCode(7)})|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]))`,
-  "g"
-);
 
 // Single-source the wake status enum so the exported TS type and the runtime
 // Zod validator below can't drift. Mirrors the `as const` tuple pattern used by
@@ -87,12 +84,7 @@ function truncateUtf8Prefix(value: string, maxBytes: number): string {
 }
 
 export function sanitizeBashMonitorWakeLine(line: string): string {
-  const sanitized = [...line.replace(ANSI_ESCAPE_PATTERN, "")]
-    .filter((char) => {
-      const code = char.charCodeAt(0);
-      return code === 9 || code >= 32;
-    })
-    .join("");
+  const sanitized = stripAnsiControlChars(line);
   if (Buffer.byteLength(sanitized, "utf8") <= MAX_WAKE_LINE_BYTES) return sanitized;
   return `${truncateUtf8Prefix(sanitized, MAX_WAKE_LINE_BYTES)}… [truncated]`;
 }
