@@ -47,7 +47,9 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
   const muxMeta = compactionMsg.metadata?.muxMetadata;
   if (muxMeta?.type !== "compaction-request") return null;
 
-  const followUpText = getFollowUpContentText(getCompactionFollowUpContent(muxMeta));
+  const followUpText = getFollowUpContentText(getCompactionFollowUpContent(muxMeta), {
+    stripStagedAttachmentNotice: true,
+  });
   if (followUpText && !muxMeta.rawCommand.includes("\n")) {
     return `${muxMeta.rawCommand}\n${followUpText}`;
   }
