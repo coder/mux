@@ -2694,19 +2694,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               .slice(0, messageText.trim().length - modelOneShot.message.length)
               .trimEnd()
           : undefined;
+        const oneshotRawCommand = oneshotCommandPrefix
+          ? appendStagedAttachmentNotice(messageText.trim(), attachments)
+          : undefined;
         muxMetadata = muxMetadata
           ? {
               ...muxMetadata,
               requestedModel: effectiveModel,
-              ...(oneshotCommandPrefix
-                ? { rawCommand: messageText.trim(), commandPrefix: oneshotCommandPrefix }
+              ...(oneshotRawCommand
+                ? { rawCommand: oneshotRawCommand, commandPrefix: oneshotCommandPrefix }
                 : {}),
             }
           : {
               type: "normal",
               requestedModel: effectiveModel,
-              ...(oneshotCommandPrefix
-                ? { rawCommand: messageText.trim(), commandPrefix: oneshotCommandPrefix }
+              ...(oneshotRawCommand
+                ? { rawCommand: oneshotRawCommand, commandPrefix: oneshotCommandPrefix }
                 : {}),
             };
 

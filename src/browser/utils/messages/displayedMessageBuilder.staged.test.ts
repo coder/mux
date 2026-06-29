@@ -45,4 +45,30 @@ describe("buildDisplayedMessagesForMessage staged attachments", () => {
     expect(userMessage.content).toContain("<attached-files>");
     expect(userMessage.content).toContain(".mux/user-attachments/id/archive.zip");
   });
+
+  test("preserves staged notices in one-shot raw commands for chip rendering", () => {
+    const rawCommand = appendStagedAttachmentNotice("/opus inspect this", [STAGED_ATTACHMENT]);
+    const message = createMuxMessage("msg-2", "user", "inspect this", {
+      historySequence: 2,
+      muxMetadata: {
+        type: "normal",
+        rawCommand,
+        commandPrefix: "/opus",
+      },
+    });
+
+    const displayed = buildDisplayedMessagesForMessage({
+      message,
+      hasActiveStream: false,
+      isContextBoundaryMessage: () => false,
+    });
+
+    expect(displayed).toHaveLength(1);
+    const userMessage = displayed[0];
+    expect(userMessage?.type).toBe("user");
+    if (userMessage?.type !== "user") return;
+    expect(userMessage.content).toContain("/opus inspect this");
+    expect(userMessage.content).toContain("<attached-files>");
+    expect(userMessage.content).toContain(".mux/user-attachments/id/archive.zip");
+  });
 });
