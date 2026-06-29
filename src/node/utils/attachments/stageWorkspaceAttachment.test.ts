@@ -9,6 +9,7 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 import {
   copyStagedWorkspaceAttachments,
+  extractStagedAttachmentPathsFromText,
   readStagedWorkspaceAttachment,
   stageWorkspaceAttachment,
 } from "./stageWorkspaceAttachment";
@@ -131,20 +132,49 @@ describe("stageWorkspaceAttachment", () => {
     expect(staged.success).toBe(true);
     if (!staged.success) return;
 
+    const futureStaged = await stageWorkspaceAttachment({
+      runtime: sourceRuntime,
+      workspacePath: sourceRepo,
+      filename: "future.zip",
+      mediaType: "application/zip",
+      sizeBytes: bytes.byteLength,
+      dataBase64: bytes.toString("base64"),
+    });
+    expect(futureStaged.success).toBe(true);
+    if (!futureStaged.success) return;
+
     const copied = await copyStagedWorkspaceAttachments({
       sourceRuntime,
       targetRuntime,
       sourceWorkspacePath: sourceRepo,
       targetWorkspacePath: targetRepo,
+      stagedPaths: [staged.data.stagedPath],
     });
 
     expect(copied).toEqual({ success: true, data: undefined });
     expect(await readFile(path.join(targetRepo, staged.data.stagedPath))).toEqual(bytes);
+    let futureAttachmentExists = true;
+    try {
+      await readFile(path.join(targetRepo, futureStaged.data.stagedPath));
+    } catch {
+      futureAttachmentExists = false;
+    }
+    expect(futureAttachmentExists).toBe(false);
     const status = execFileSync("git", ["status", "--porcelain"], {
       cwd: targetRepo,
       encoding: "utf8",
     });
     expect(status).toBe("");
+  });
+
+  test("extracts referenced staged attachment paths from persisted text", () => {
+    const text =
+      "before `.mux/user-attachments/one/ARCHIVE.ZIP` middle `.mux/user-attachments/two/future.zip` after";
+
+    expect(extractStagedAttachmentPathsFromText(text)).toEqual([
+      ".mux/user-attachments/one/ARCHIVE.ZIP",
+      ".mux/user-attachments/two/future.zip",
+    ]);
   });
 
   test("rejects invalid base64 before writing", async () => {

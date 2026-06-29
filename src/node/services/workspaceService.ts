@@ -92,6 +92,7 @@ import { removeManagedGitWorktree } from "@/node/worktree/removeManagedGitWorktr
 
 import {
   copyStagedWorkspaceAttachments,
+  extractStagedAttachmentPathsFromText,
   readStagedWorkspaceAttachment,
   stageWorkspaceAttachment,
   type DownloadedStagedWorkspaceAttachment,
@@ -1072,6 +1073,23 @@ function rollUpAncestorWorkspaceIds(params: {
     params.newParentWorkspaceId,
     ...filtered.filter((id) => id !== params.newParentWorkspaceId),
   ];
+}
+
+async function collectReferencedStagedAttachmentPaths(sessionDir: string): Promise<string[]> {
+  const paths = new Set<string>();
+  for (const fileName of [CHAT_ARCHIVE_FILE_NAME, CHAT_FILE_NAME, "partial.json"] as const) {
+    try {
+      const content = await fsPromises.readFile(path.join(sessionDir, fileName), "utf8");
+      for (const stagedPath of extractStagedAttachmentPathsFromText(content)) {
+        paths.add(stagedPath);
+      }
+    } catch (error) {
+      if (!isErrnoWithCode(error, "ENOENT")) {
+        throw error;
+      }
+    }
+  }
+  return [...paths];
 }
 
 async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
@@ -6667,10 +6685,13 @@ export class WorkspaceService extends EventEmitter {
           targetWorkspaceId: newWorkspaceId,
         });
 
+        const referencedStagedAttachmentPaths =
+          await collectReferencedStagedAttachmentPaths(newSessionDir);
         const copyStagedAttachmentsResult = await copyStagedWorkspaceAttachments({
           sourceRuntime: freshSourceRuntime,
           targetRuntime,
           sourceWorkspacePath,
+          stagedPaths: referencedStagedAttachmentPaths,
           targetWorkspacePath,
         });
         if (!copyStagedAttachmentsResult.success) {

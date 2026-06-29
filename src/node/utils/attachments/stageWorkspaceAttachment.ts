@@ -123,15 +123,15 @@ export async function copyStagedWorkspaceAttachments(input: {
   targetRuntime: Runtime;
   sourceWorkspacePath: string;
   targetWorkspacePath: string;
+  stagedPaths?: readonly string[];
 }): Promise<Result<void, string>> {
   try {
     assert(input.sourceWorkspacePath.trim().length > 0, "sourceWorkspacePath is required");
     assert(input.targetWorkspacePath.trim().length > 0, "targetWorkspacePath is required");
 
-    const stagedPaths = await listStagedAttachmentPaths(
-      input.sourceRuntime,
-      input.sourceWorkspacePath
-    );
+    const stagedPaths = input.stagedPaths
+      ? Ok(normalizeStagedAttachmentPaths(input.stagedPaths))
+      : await listStagedAttachmentPaths(input.sourceRuntime, input.sourceWorkspacePath);
     if (!stagedPaths.success) {
       return stagedPaths;
     }
@@ -169,6 +169,18 @@ export async function copyStagedWorkspaceAttachments(input: {
   }
 }
 
+export function extractStagedAttachmentPathsFromText(text: string): string[] {
+  const paths = new Set<string>();
+  const pattern = /`(?<path>\.mux\/user-attachments\/[^`]+?\.zip)`/giu;
+  for (const match of text.matchAll(pattern)) {
+    const stagedPath = match.groups?.path ? normalizeReadableStagedPath(match.groups.path) : null;
+    if (stagedPath != null) {
+      paths.add(stagedPath);
+    }
+  }
+  return [...paths];
+}
+
 export function sanitizeZipFilename(filename: string): string {
   const rawBase = filename.split(/[\\/]/u).pop()?.trim() ?? "";
   const withoutControls = Array.from(rawBase)
@@ -203,6 +215,17 @@ function normalizeReadableStagedPath(stagedPath: string): string | null {
     return null;
   }
   return normalized;
+}
+
+function normalizeStagedAttachmentPaths(stagedPaths: readonly string[]): string[] {
+  const normalized = new Set<string>();
+  for (const stagedPath of stagedPaths) {
+    const readablePath = normalizeReadableStagedPath(stagedPath);
+    if (readablePath != null) {
+      normalized.add(readablePath);
+    }
+  }
+  return [...normalized];
 }
 
 async function listStagedAttachmentPaths(
