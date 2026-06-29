@@ -1231,6 +1231,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     runId != null && (resumingRunId === runId || workflowControlInFlightRunId === runId);
   const displayWorkflow = run?.workflow;
   const runSource = getWorkflowRunSource(run);
+  const workflowWorkspaceId = run?.workspaceId ?? workspaceId;
   // workflow_resume cards only know the run ID until a snapshot loads; prefer the real
   // workflow name once available.
   const displayName = displayWorkflow?.name ?? getWorkflowRunDisplayName(args);
@@ -1457,7 +1458,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       !expanded ||
       apiState?.api == null ||
       runId == null ||
-      run?.workspaceId == null ||
+      workflowWorkspaceId == null ||
       runSource != null
     ) {
       return;
@@ -1467,7 +1468,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     const refresh = async () => {
       try {
         const nextRun = await apiState.api.workflows.getRun({
-          workspaceId: run.workspaceId,
+          workspaceId: workflowWorkspaceId,
           runId,
         });
         if (!ignore && nextRun != null) {
@@ -1482,7 +1483,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     return () => {
       ignore = true;
     };
-  }, [apiState?.api, expanded, run?.workspaceId, runId, runSource]);
+  }, [apiState?.api, expanded, runId, runSource, workflowWorkspaceId]);
 
   useEffect(() => {
     if (

@@ -1687,7 +1687,6 @@ describe("WorkflowRunToolCall", () => {
       ],
       steps: [],
     };
-    const { source: _source, ...redactedRun } = fullRun;
     const getRun = mock(async () => fullRun);
 
     const view = render(
@@ -1705,7 +1704,6 @@ describe("WorkflowRunToolCall", () => {
                 status: "completed",
                 runId: fullRun.id,
                 result: { reportMarkdown: "Inline workflow received ok" },
-                run: redactedRun as unknown as WorkflowRunRecord,
               }}
               workspaceId={TEST_WORKSPACE_ID}
             />
