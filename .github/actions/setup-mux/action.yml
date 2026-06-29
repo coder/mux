@@ -30,14 +30,24 @@ runs:
       shell: bash
       run: echo "version=$(bun --version)" >> $GITHUB_OUTPUT
 
+    # Capture the Node version to key the node_modules cache below. Without it, changing
+    # the pinned Node (e.g. from the runner default to the version pinned above) would hit
+    # a cache built under the old Node and skip `bun install`, keeping modules whose
+    # postinstalls (Electron) ran — and whose native ABI was built — under the wrong Node,
+    # which defeats this pin. (Codex review, PR #3656.)
+    - name: Get Node version
+      id: node-version
+      shell: bash
+      run: echo "version=$(node --version)" >> $GITHUB_OUTPUT
+
     - name: Cache node_modules
       id: cache-node-modules
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: node_modules
-        key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ steps.bun-version.outputs.version }}-node-modules-${{ hashFiles('**/bun.lock') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ steps.bun-version.outputs.version }}-node-${{ steps.node-version.outputs.version }}-node-modules-${{ hashFiles('**/bun.lock') }}
         restore-keys: |
-          ${{ runner.os }}-${{ runner.arch }}-bun-${{ steps.bun-version.outputs.version }}-node-modules-
+          ${{ runner.os }}-${{ runner.arch }}-bun-${{ steps.bun-version.outputs.version }}-node-${{ steps.node-version.outputs.version }}-node-modules-
 
     - name: Check if node_modules exists
       id: check-node-modules
