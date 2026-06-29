@@ -1138,8 +1138,9 @@ export const TaskListToolArgsSchema = z
       .array(TaskListStatusSchema)
       .nullish()
       .describe(
-        "Task statuses to include. Defaults to active tasks: queued, starting, running, awaiting_report, pending, backgrounded. " +
-          "Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume."
+        "Task statuses to include. Defaults to unfinished tasks and workflow runs: queued, starting, running, awaiting_report, pending, backgrounded. " +
+          "Omitting statuses is the safe recovery default after an uncertain workflow_run because it includes unfinished workflow runs. " +
+          "Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume, but do not use only terminal/resumable statuses when checking for a still-running workflow."
       ),
     includeArchived: z
       .boolean()
@@ -2055,7 +2056,8 @@ export const TOOL_DEFINITIONS = {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
       "This includes sub-agent tasks, background bash tasks, and top-level workflow runs, but omits workflow-owned sub-agents/background bash tasks whose reports are consumed through parent workflow runs. " +
-      "Use this after compaction, interruptions, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
+      "Use this after compaction, interruptions, workflow_run errors/aborts, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
+      "When recovering an uncertain workflow_run, omit statuses first or include pending/running/backgrounded as well as interrupted/failed/completed; terminal-only filters can hide unfinished workflow runs. Pending runs may need workflow_resume because no runner may be active yet. " +
       "Workflow rows may include compact `workflowProgress` so callers can see the latest phase before deciding whether to await, resume, or leave the run alone. " +
       "Archived non-actionable child workspace tasks are hidden by default; pass includeArchived: true to inspect them. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
@@ -2068,6 +2070,8 @@ export const TOOL_DEFINITIONS = {
       "Use agent_skill_read / agent_skill_read_file to discover and inspect skill-packaged workflows; non-skill workflow files must be addressed by an explicit known path and can be inspected with normal file tools. " +
       "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
       "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +
+      "After a previous workflow_run error, abort, timeout, or uncertain result, do not start a fresh run until you rediscover existing workflow runs: either omit task_list statuses first, or query pending/running/backgrounded/interrupted/failed/completed together. " +
+      "Use task_await for running/backgrounded runs, workflow_resume for pending/interrupted runs, workflow_resume({ mode: 'retry_from_checkpoint' }) only for eligible failed runs, and inspect/refetch completed results instead of rerunning. " +
       "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs; a background run is non-blocking and Mux wakes this workspace with the terminal workflow result, so call task_await only when the current request depends on the output before you can answer.",
     schema: WorkflowRunToolArgsSchema,
   },
@@ -2075,7 +2079,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Resume an existing durable workflow run by run ID (wfr_...). Use this for runs that were interrupted (by the user, task_terminate, or an app crash/restart) — " +
       "resume replays the durable event log and continues from the last checkpoint without re-executing completed steps. " +
-      "Discover resumable runs with task_list (statuses interrupted/failed). " +
+      "Discover resumable runs with task_list (statuses pending/interrupted/failed). Pending runs left by post-create aborts and interrupted runs can be resumed in default mode; running/backgrounded workflows do not need resume, await them with task_await. " +
       "For failed runs, pass mode='retry_from_checkpoint' explicitly; it re-executes work after the last checkpoint, so only use it when that is acceptable, and start a fresh workflow_run when it is rejected as unsafe. " +
       "Calling this on a completed run returns its existing result without re-running anything. " +
       "Prefer foreground mode (run_in_background omitted or false) to get the final result directly; " +

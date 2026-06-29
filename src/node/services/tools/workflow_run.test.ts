@@ -4,7 +4,10 @@ import * as path from "node:path";
 
 import { describe, expect, mock, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
-import { COMPLETED_REPORT_REFETCH_NOTE } from "@/common/utils/tools/toolDefinitions";
+import {
+  COMPLETED_REPORT_REFETCH_NOTE,
+  WorkflowRunToolResultSchema,
+} from "@/common/utils/tools/toolDefinitions";
 import { createWorkflowRunTool } from "./workflow_run";
 import { TestTempDir, createIsolatedAgentSkillsRoots, createTestToolConfig } from "./testHelpers";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
@@ -290,6 +293,210 @@ describe("workflow_run tool", () => {
       run: expect.objectContaining({ id: "wfr_attached", status: "pending" }),
     });
     expect(typeof emittedEvents[0]?.timestamp).toBe("number");
+  });
+
+  test("returns a recoverable run when foreground start throws after durable creation", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-recover-created-run");
+    const scriptPath = await writeWorkflowScript(tempDir.path);
+    const createdRun = createWorkflowRunRecord({
+      id: "wfr_created_then_aborted",
+      status: "running",
+    });
+    const startWorkflow = mock(
+      async (input: {
+        onRunCreated?: (event: {
+          runId: string;
+          status: "pending";
+          result: null;
+          run: unknown;
+        }) => Promise<void> | void;
+      }) => {
+        await input.onRunCreated?.({
+          runId: createdRun.id,
+          status: "pending",
+          result: null,
+          run: createdRun,
+        });
+        throw new Error("Execution aborted");
+      }
+    );
+    const getRun = mock(async () => createdRun);
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun,
+      },
+    });
+
+    const result = await tool.execute!(
+      { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: false },
+      mockToolCallOptions
+    );
+
+    const references = await readAgentWorkflowRunReferences(tempDir.path);
+    expect(references.map((reference) => reference.runId)).toContain(createdRun.id);
+    expect(getRun).toHaveBeenCalledWith({ workspaceId: "workspace-1", runId: createdRun.id });
+    expect(result).toEqual({
+      status: "running",
+      runId: createdRun.id,
+      result: null,
+      run: expect.objectContaining({ id: createdRun.id, status: "running" }),
+      note: expect.stringContaining("Execution aborted"),
+    });
+    const note = WorkflowRunToolResultSchema.parse(result).note;
+    expect(note).toContain("Do not start another copy");
+    expect(note).toContain("running");
+    expect(note).toContain("task_await");
+  });
+
+  test("returns pending post-create failures as resumable instead of awaitable", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-recover-pending-run");
+    const scriptPath = await writeWorkflowScript(tempDir.path);
+    const pendingRun = createWorkflowRunRecord({
+      id: "wfr_pending_then_aborted",
+      status: "pending",
+    });
+    const startWorkflow = mock(
+      async (input: {
+        onRunCreated?: (event: {
+          runId: string;
+          status: "pending";
+          result: null;
+          run: unknown;
+        }) => Promise<void> | void;
+      }) => {
+        await input.onRunCreated?.({
+          runId: pendingRun.id,
+          status: "pending",
+          result: null,
+          run: pendingRun,
+        });
+        throw new Error("Execution aborted");
+      }
+    );
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => pendingRun),
+      },
+    });
+
+    const result = await tool.execute!(
+      { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: false },
+      mockToolCallOptions
+    );
+
+    const references = await readAgentWorkflowRunReferences(tempDir.path);
+    expect(references).toEqual([]);
+    expect(result).toEqual({
+      status: "pending",
+      runId: pendingRun.id,
+      result: null,
+      run: expect.objectContaining({ id: pendingRun.id, status: "pending" }),
+      note: expect.stringContaining("workflow_resume"),
+    });
+    const note = WorkflowRunToolResultSchema.parse(result).note;
+    expect(note).toContain("pending");
+    expect(note).toContain("Do not start another copy");
+  });
+
+  test("still rejects when foreground start throws before durable creation", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-pre-create-error");
+    const scriptPath = await writeWorkflowScript(tempDir.path);
+    const startWorkflow = mock(async () => {
+      throw new Error("script failed before persistence");
+    });
+    const getRun = mock(async () => createWorkflowRunRecord());
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun,
+      },
+    });
+
+    await expect(
+      Promise.resolve(
+        tool.execute!(
+          { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: false },
+          mockToolCallOptions
+        )
+      )
+    ).rejects.toThrow("script failed before persistence");
+    expect(getRun).not.toHaveBeenCalled();
+  });
+
+  test("returns latest durable result when post-create foreground error already completed", async () => {
+    using tempDir = new TestTempDir("test-workflow-run-tool-recover-completed-run");
+    const scriptPath = await writeWorkflowScript(tempDir.path);
+    const completedRun = createWorkflowRunRecord({
+      id: "wfr_completed_then_aborted",
+      status: "completed",
+      events: [
+        {
+          sequence: 1,
+          type: "status",
+          at: "2026-05-29T00:00:00.000Z",
+          status: "running",
+        },
+        {
+          sequence: 2,
+          type: "result",
+          at: "2026-05-29T00:00:01.000Z",
+          result: { reportMarkdown: "durable report" },
+        },
+        {
+          sequence: 3,
+          type: "status",
+          at: "2026-05-29T00:00:01.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    const startWorkflow = mock(
+      async (input: {
+        onRunCreated?: (event: {
+          runId: string;
+          status: "pending";
+          result: null;
+          run: unknown;
+        }) => Promise<void> | void;
+      }) => {
+        await input.onRunCreated?.({
+          runId: completedRun.id,
+          status: "pending",
+          result: null,
+          run: completedRun,
+        });
+        throw new Error("Execution aborted");
+      }
+    );
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => completedRun),
+      },
+    });
+
+    const result = await tool.execute!(
+      { script_path: scriptPath, args: { topic: "workflow tools" }, run_in_background: false },
+      mockToolCallOptions
+    );
+
+    expect(result).toEqual({
+      status: "completed",
+      runId: completedRun.id,
+      result: { reportMarkdown: "durable report" },
+      run: expect.objectContaining({ id: completedRun.id, status: "completed" }),
+      note: expect.stringContaining("Execution aborted"),
+    });
   });
 
   test("starts an explicit script_path workflow in background mode", async () => {
