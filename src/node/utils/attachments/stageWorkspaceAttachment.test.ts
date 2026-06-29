@@ -123,7 +123,7 @@ describe("stageWorkspaceAttachment", () => {
     const staged = await stageWorkspaceAttachment({
       runtime: sourceRuntime,
       workspacePath: sourceRepo,
-      filename: "archive.zip",
+      filename: "ARCHIVE.ZIP",
       mediaType: "application/zip",
       sizeBytes: bytes.byteLength,
       dataBase64: bytes.toString("base64"),

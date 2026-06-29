@@ -211,7 +211,7 @@ async function listStagedAttachmentPaths(
 ): Promise<Result<string[], string>> {
   const result = await execBuffered(
     runtime,
-    `if [ ! -d ${shellQuote(STAGED_ATTACHMENT_DIR)} ]; then exit 0; fi; find ${shellQuote(STAGED_ATTACHMENT_DIR)} -type f -name '*.zip' -print`,
+    `if [ ! -d ${shellQuote(STAGED_ATTACHMENT_DIR)} ]; then exit 0; fi; find ${shellQuote(STAGED_ATTACHMENT_DIR)} -type f -iname '*.zip' -print`,
     { cwd: workspacePath, timeout: 30 }
   );
   if (result.exitCode !== 0) {
