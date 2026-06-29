@@ -8,6 +8,7 @@
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { APIClient } from "@/browser/contexts/API";
+import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   buildEditingStateFromCompaction,
   type EditingMessageState,
@@ -53,7 +54,7 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
   if (followUpText && !muxMeta.rawCommand.includes("\n")) {
     return `${muxMeta.rawCommand}\n${followUpText}`;
   }
-  return muxMeta.rawCommand;
+  return stripStagedAttachmentNotice(muxMeta.rawCommand);
 }
 
 /**

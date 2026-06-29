@@ -67,6 +67,55 @@ describe("cancelCompaction", () => {
     expect(calls).toEqual(["edit", "interrupt"]);
   });
 
+  test("strips generated staged notices from raw compaction commands", async () => {
+    const interruptStream = mock(() => Promise.resolve({ success: true }));
+    const client = {
+      workspace: {
+        interruptStream,
+      },
+    } as unknown as APIClient;
+
+    const aggregator = {
+      getAllMessages: () => [
+        {
+          id: "user-raw-staged",
+          role: "user",
+          metadata: {
+            muxMetadata: {
+              type: "compaction-request",
+              rawCommand: appendStagedAttachmentNotice("/compact", [STAGED_ATTACHMENT]),
+              parsed: {
+                followUpContent: {
+                  text: appendStagedAttachmentNotice("", [STAGED_ATTACHMENT]),
+                },
+              },
+            },
+          },
+        },
+      ],
+    } as unknown as Parameters<typeof cancelCompaction>[2];
+
+    const startEditingMessage = mock(() => undefined);
+
+    const result = await cancelCompaction(client, "ws-raw-staged", aggregator, startEditingMessage);
+
+    expect(result).toBe(true);
+    expect(startEditingMessage).toHaveBeenCalledWith({
+      id: "user-raw-staged",
+      pending: {
+        content: "/compact",
+        fileParts: [],
+        stagedAttachments: [
+          {
+            ...STAGED_ATTACHMENT,
+            id: "compaction-user-raw-staged-staged-0",
+          },
+        ],
+        reviews: [],
+      },
+    });
+  });
+
   test("preserves follow-up attachments and reviews on cancel", async () => {
     const calls: string[] = [];
 
