@@ -32,6 +32,17 @@ export interface EditingMessageState {
   isBeforeLatestContextBoundary?: boolean;
 }
 
+function stagedAttachmentsFromText(
+  text: string | undefined,
+  idPrefix: string
+): StagedChatAttachment[] {
+  if (!text) {
+    return [];
+  }
+  const parsed = parseStagedAttachmentNotice(text);
+  return displayStagedAttachmentsToChatAttachments(parsed.attachments, idPrefix);
+}
+
 export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => {
   const parsed = parseStagedAttachmentNotice(queued.content);
   return {
@@ -93,7 +104,7 @@ export const buildEditingStateFromCompaction = (
   pending: {
     content: command,
     fileParts: followUp?.fileParts ?? [],
-    stagedAttachments: [],
+    stagedAttachments: stagedAttachmentsFromText(followUp?.text, `compaction-${messageId}`),
     reviews: followUp?.reviews ?? [],
   },
 });

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
-import type { DisplayedUserMessage, QueuedMessage } from "@/common/types/message";
+import type {
+  CompactionFollowUpRequest,
+  DisplayedUserMessage,
+  QueuedMessage,
+} from "@/common/types/message";
 import {
+  buildEditingStateFromCompaction,
   buildEditingStateFromDisplayed,
   buildPendingFromDisplayed,
   canEditDisplayedUserMessage,
@@ -87,6 +92,24 @@ describe("canEditDisplayedUserMessage", () => {
       {
         ...STAGED_ATTACHMENT,
         id: "queued-queued-1-staged-0",
+      },
+    ]);
+  });
+
+  test("restores staged ZIPs from compaction follow-up content", () => {
+    const followUp: CompactionFollowUpRequest = {
+      text: appendStagedAttachmentNotice("Continue after compaction.", [STAGED_ATTACHMENT]),
+      model: "claude-sonnet-4-5",
+      agentId: "exec",
+    };
+
+    const editingState = buildEditingStateFromCompaction("compact-message", "/compact", followUp);
+
+    expect(editingState.pending.content).toBe("/compact");
+    expect(editingState.pending.stagedAttachments).toEqual([
+      {
+        ...STAGED_ATTACHMENT,
+        id: "compaction-compact-message-staged-0",
       },
     ]);
   });
