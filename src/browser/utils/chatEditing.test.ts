@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import type { DisplayedUserMessage } from "@/common/types/message";
-import { buildEditingStateFromDisplayed, canEditDisplayedUserMessage } from "./chatEditing";
+import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
+import type { DisplayedUserMessage, QueuedMessage } from "@/common/types/message";
+import {
+  buildEditingStateFromDisplayed,
+  buildPendingFromDisplayed,
+  canEditDisplayedUserMessage,
+  normalizeQueuedMessage,
+} from "./chatEditing";
 
 function userMessage(overrides: Partial<DisplayedUserMessage> = {}): DisplayedUserMessage {
   return {
@@ -12,6 +18,15 @@ function userMessage(overrides: Partial<DisplayedUserMessage> = {}): DisplayedUs
     ...overrides,
   };
 }
+
+const STAGED_ATTACHMENT = {
+  kind: "staged" as const,
+  id: "zip-1",
+  filename: "archive.zip",
+  mediaType: "application/zip",
+  sizeBytes: 199,
+  stagedPath: ".mux/user-attachments/id/archive.zip",
+};
 
 describe("canEditDisplayedUserMessage", () => {
   test("excludes goal-synthetic messages from all edit paths", () => {
@@ -42,6 +57,38 @@ describe("canEditDisplayedUserMessage", () => {
 
   test("excludes side-question rows from edit paths", () => {
     expect(canEditDisplayedUserMessage(userMessage({ isSideQuestion: true }))).toBe(false);
+  });
+
+  test("restores staged ZIPs as attachments when editing sent messages", () => {
+    const content = appendStagedAttachmentNotice("Inspect this archive.", [STAGED_ATTACHMENT]);
+
+    const pending = buildPendingFromDisplayed(userMessage({ content, historyId: "history-1" }));
+
+    expect(pending.content).toBe("Inspect this archive.");
+    expect(pending.fileParts).toEqual([]);
+    expect(pending.stagedAttachments).toEqual([
+      {
+        ...STAGED_ATTACHMENT,
+        id: "edited-history-1-staged-0",
+      },
+    ]);
+  });
+
+  test("restores staged ZIPs as attachments when normalizing queued messages", () => {
+    const queued: QueuedMessage = {
+      id: "queued-1",
+      content: appendStagedAttachmentNotice("Queued archive.", [STAGED_ATTACHMENT]),
+    };
+
+    const pending = normalizeQueuedMessage(queued);
+
+    expect(pending.content).toBe("Queued archive.");
+    expect(pending.stagedAttachments).toEqual([
+      {
+        ...STAGED_ATTACHMENT,
+        id: "queued-queued-1-staged-0",
+      },
+    ]);
   });
 
   test("allows normal user messages", () => {

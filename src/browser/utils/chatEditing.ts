@@ -1,11 +1,16 @@
 import type { FilePart } from "@/common/orpc/types";
+import type { StagedChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
+import {
+  displayStagedAttachmentsToChatAttachments,
+  parseStagedAttachmentNotice,
+} from "@/browser/features/ChatInput/stagedAttachments";
 import type {
   CompactionFollowUpRequest,
   DisplayedUserMessage,
   QueuedMessage,
   ReviewNoteDataForDisplay,
 } from "@/common/types/message";
-import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
+import { getEditableUserMessageDraftContent } from "@/browser/utils/messages/messageUtils";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
 export interface PendingUserMessage extends Omit<
@@ -13,6 +18,7 @@ export interface PendingUserMessage extends Omit<
   "id" | "hasCompactionRequest" | "queueDispatchMode"
 > {
   fileParts: FilePart[];
+  stagedAttachments: StagedChatAttachment[];
   reviews: ReviewNoteDataForDisplay[];
 }
 
@@ -26,11 +32,18 @@ export interface EditingMessageState {
   isBeforeLatestContextBoundary?: boolean;
 }
 
-export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => ({
-  content: queued.content,
-  fileParts: queued.fileParts ?? [],
-  reviews: queued.reviews ?? [],
-});
+export const normalizeQueuedMessage = (queued: QueuedMessage): PendingUserMessage => {
+  const parsed = parseStagedAttachmentNotice(queued.content);
+  return {
+    content: parsed.text,
+    fileParts: queued.fileParts ?? [],
+    stagedAttachments: displayStagedAttachmentsToChatAttachments(
+      parsed.attachments,
+      `queued-${queued.id}`
+    ),
+    reviews: queued.reviews ?? [],
+  };
+};
 
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
@@ -47,11 +60,15 @@ export const canEditDisplayedUserMessage = (message: DisplayedUserMessage): bool
   return true;
 };
 
-export const buildPendingFromDisplayed = (message: DisplayedUserMessage): PendingUserMessage => ({
-  content: getEditableUserMessageText(message),
-  fileParts: message.fileParts ?? [],
-  reviews: message.reviews ?? [],
-});
+export const buildPendingFromDisplayed = (message: DisplayedUserMessage): PendingUserMessage => {
+  const draft = getEditableUserMessageDraftContent(message);
+  return {
+    content: draft.text,
+    fileParts: message.fileParts ?? [],
+    stagedAttachments: draft.stagedAttachments,
+    reviews: message.reviews ?? [],
+  };
+};
 
 export const buildEditingStateFromDisplayed = (
   message: DisplayedUserMessage
@@ -76,6 +93,7 @@ export const buildEditingStateFromCompaction = (
   pending: {
     content: command,
     fileParts: followUp?.fileParts ?? [],
+    stagedAttachments: [],
     reviews: followUp?.reviews ?? [],
   },
 });

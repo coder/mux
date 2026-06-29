@@ -1,7 +1,32 @@
-import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
-import type { DisplayedMessage } from "@/common/types/message";
+import {
+  displayStagedAttachmentsToChatAttachments,
+  parseStagedAttachmentNotice,
+} from "@/browser/features/ChatInput/stagedAttachments";
+import type { StagedChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
+import type { DisplayedMessage, ReviewNoteDataForDisplay } from "@/common/types/message";
 import { formatReviewForModel } from "@/common/types/review";
 import type { BashOutputToolArgs } from "@/common/types/tools";
+
+export interface EditableUserMessageDraftContent {
+  text: string;
+  stagedAttachments: StagedChatAttachment[];
+}
+
+/**
+ * Returns the text and staged attachments that should be placed into ChatInput when editing.
+ */
+export function getEditableUserMessageDraftContent(
+  message: Extract<DisplayedMessage, { type: "user" }>
+): EditableUserMessageDraftContent {
+  const parsed = parseStagedAttachmentNotice(message.content);
+  return {
+    text: stripRenderedReviews(parsed.text, message.reviews),
+    stagedAttachments: displayStagedAttachmentsToChatAttachments(
+      parsed.attachments,
+      `edited-${message.historyId}`
+    ),
+  };
+}
 
 /**
  * Returns the text that should be placed into the ChatInput when editing a user message.
@@ -9,8 +34,10 @@ import type { BashOutputToolArgs } from "@/common/types/tools";
 export function getEditableUserMessageText(
   message: Extract<DisplayedMessage, { type: "user" }>
 ): string {
-  const reviews = message.reviews;
-  const content = stripStagedAttachmentNotice(message.content);
+  return getEditableUserMessageDraftContent(message).text;
+}
+
+function stripRenderedReviews(content: string, reviews?: ReviewNoteDataForDisplay[]): string {
   if (!reviews || reviews.length === 0) {
     return content;
   }

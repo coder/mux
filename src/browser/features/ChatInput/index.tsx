@@ -1200,9 +1200,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const applyDraftFromPending = useCallback(
     (pending: PendingUserMessage, attachmentKeyPrefix: string) => {
+      const providerAttachments = filePartsToChatAttachments(
+        pending.fileParts,
+        attachmentKeyPrefix
+      );
+      const stagedAttachments = pending.stagedAttachments.map((attachment, index) => ({
+        ...attachment,
+        id: `${attachmentKeyPrefix}-staged-${index}`,
+      }));
       setDraft({
         text: pending.content,
-        attachments: filePartsToChatAttachments(pending.fileParts, attachmentKeyPrefix),
+        attachments: [...providerAttachments, ...stagedAttachments],
       });
     },
     [setDraft]
@@ -1744,6 +1752,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           restoreDraft({
             content: text,
             fileParts: fileParts ?? [],
+            stagedAttachments: [],
             reviews: reviews ?? [],
           });
         } else {
@@ -1757,6 +1766,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {
             content: nextText,
             fileParts: fileParts ?? [],
+            stagedAttachments: [],
             reviews: reviews ?? [],
           },
           `restored-${Date.now()}`

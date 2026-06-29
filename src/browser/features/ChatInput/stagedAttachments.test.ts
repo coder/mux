@@ -58,6 +58,7 @@ describe("stagedAttachments", () => {
           filename: "archive.zip",
           mediaType: "application/zip",
           sizeLabel: "12.1 KB",
+          sizeBytes: 12_390,
           stagedPath: ".mux/user-attachments/id/archive.zip",
         },
       ],

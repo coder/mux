@@ -10,11 +10,26 @@ export interface DisplayStagedAttachment {
   filename: string;
   mediaType: string;
   sizeLabel: string;
+  sizeBytes: number;
   stagedPath: string;
 }
 
 export function getStagedAttachments(attachments: ChatAttachment[]): StagedChatAttachment[] {
   return attachments.filter((attachment) => attachment.kind === "staged");
+}
+
+export function displayStagedAttachmentsToChatAttachments(
+  attachments: DisplayStagedAttachment[],
+  idPrefix: string
+): StagedChatAttachment[] {
+  return attachments.map((attachment, index) => ({
+    kind: "staged",
+    id: `${idPrefix}-staged-${index}`,
+    mediaType: attachment.mediaType,
+    filename: attachment.filename,
+    sizeBytes: attachment.sizeBytes,
+    stagedPath: attachment.stagedPath,
+  }));
 }
 
 export function appendStagedAttachmentNotice(text: string, attachments: ChatAttachment[]): string {
@@ -65,6 +80,26 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function parseSizeLabelBytes(sizeLabel: string): number {
+  const match = /^(?<amount>\d+(?:\.\d+)?) (?<unit>B|KB|MB)$/u.exec(sizeLabel.trim());
+  if (!match?.groups) {
+    return 0;
+  }
+
+  const amount = Number(match.groups.amount);
+  if (!Number.isFinite(amount)) {
+    return 0;
+  }
+
+  if (match.groups.unit === "B") {
+    return Math.round(amount);
+  }
+  if (match.groups.unit === "KB") {
+    return Math.round(amount * 1024);
+  }
+  return Math.round(amount * 1024 * 1024);
+}
+
 function parseStagedAttachmentBlock(block: string): DisplayStagedAttachment[] {
   const parsed: DisplayStagedAttachment[] = [];
   for (const line of block.split(/\r?\n/u)) {
@@ -72,10 +107,12 @@ function parseStagedAttachmentBlock(block: string): DisplayStagedAttachment[] {
     if (!match?.groups) {
       continue;
     }
+    const sizeLabel = match.groups.sizeLabel;
     parsed.push({
       filename: match.groups.filename,
       mediaType: match.groups.mediaType,
-      sizeLabel: match.groups.sizeLabel,
+      sizeLabel,
+      sizeBytes: parseSizeLabelBytes(sizeLabel),
       stagedPath: match.groups.stagedPath,
     });
   }
