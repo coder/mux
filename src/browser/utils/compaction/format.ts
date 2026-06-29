@@ -1,3 +1,4 @@
+import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import type { CompactionRequestData } from "@/common/types/message";
 import { isDefaultSourceContent } from "@/common/types/message";
 
@@ -27,8 +28,12 @@ export function getFollowUpContentText(
 ): string | null {
   if (!followUpContent) return null;
   if (isDefaultSourceContent(followUpContent)) return null;
-  const text = followUpContent.text;
-  if (typeof text !== "string" || text.trim().length === 0) {
+  const rawText = followUpContent.text;
+  if (typeof rawText !== "string") {
+    return null;
+  }
+  const text = stripStagedAttachmentNotice(rawText);
+  if (text.trim().length === 0) {
     return null;
   }
   return text;

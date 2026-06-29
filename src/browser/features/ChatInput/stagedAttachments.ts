@@ -2,6 +2,8 @@ import type { ChatAttachment, StagedChatAttachment } from "./ChatAttachments";
 
 const ATTACHED_FILES_OPEN_TAG = "<attached-files>";
 const ATTACHED_FILES_CLOSE_TAG = "</attached-files>";
+const STAGED_ATTACHMENT_NOTICE_TEXT =
+  "The user attached file(s) that were saved into the workspace filesystem. These are not native model attachments; use filesystem tools such as `bash`, `file_read`, or archive tools to inspect them if needed.";
 const ATTACHED_FILES_BLOCK_PATTERN = /\n?<attached-files>[\s\S]*?<\/attached-files>/gu;
 const ATTACHED_FILE_LINE_PATTERN =
   /^- `(?<filename>[^`]+)` \(`(?<mediaType>[^`]+)`, (?<sizeLabel>[^)]+)\): `(?<stagedPath>[^`]+)`$/u;
@@ -46,7 +48,11 @@ export function parseStagedAttachmentNotice(text: string): {
 } {
   const attachments: DisplayStagedAttachment[] = [];
   const visibleText = text.replace(ATTACHED_FILES_BLOCK_PATTERN, (block) => {
-    attachments.push(...parseStagedAttachmentBlock(block));
+    const parsedBlock = parseStagedAttachmentBlock(block);
+    if (!isGeneratedStagedAttachmentBlock(block) || parsedBlock.length === 0) {
+      return block;
+    }
+    attachments.push(...parsedBlock);
     return "";
   });
 
@@ -67,7 +73,7 @@ export function buildStagedAttachmentNotice(attachments: StagedChatAttachment[])
       `- \`${attachment.filename}\` (\`${attachment.mediaType}\`, ${formatBytes(attachment.sizeBytes)}): \`${attachment.stagedPath}\``
   );
 
-  return `\n${ATTACHED_FILES_OPEN_TAG}\nThe user attached file(s) that were saved into the workspace filesystem. These are not native model attachments; use filesystem tools such as \`bash\`, \`file_read\`, or archive tools to inspect them if needed.\n\n${lines.join("\n")}\n${ATTACHED_FILES_CLOSE_TAG}`;
+  return `\n${ATTACHED_FILES_OPEN_TAG}\n${STAGED_ATTACHMENT_NOTICE_TEXT}\n\n${lines.join("\n")}\n${ATTACHED_FILES_CLOSE_TAG}`;
 }
 
 export function formatBytes(bytes: number): string {
@@ -78,6 +84,13 @@ export function formatBytes(bytes: number): string {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isGeneratedStagedAttachmentBlock(block: string): boolean {
+  const normalizedBlock = block.replace(/\r\n/gu, "\n").trimStart();
+  return normalizedBlock.startsWith(
+    `${ATTACHED_FILES_OPEN_TAG}\n${STAGED_ATTACHMENT_NOTICE_TEXT}\n\n`
+  );
 }
 
 function parseSizeLabelBytes(sizeLabel: string): number {

@@ -64,4 +64,13 @@ describe("stagedAttachments", () => {
       ],
     });
   });
+
+  test("preserves user-authored attached-files XML that is not a staged notice", () => {
+    const userText = "Please edit this XML:\n<attached-files><file>keep me</file></attached-files>";
+
+    expect(parseStagedAttachmentNotice(userText)).toEqual({
+      text: userText,
+      attachments: [],
+    });
+  });
 });
