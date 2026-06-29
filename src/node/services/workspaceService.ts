@@ -405,17 +405,6 @@ function isTerminalWorkflowTaskAwaitResultMessage(message: MuxMessage, runId: st
   });
 }
 
-function isWorkspaceBusyIdleOnlySend(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "type" in error &&
-    error.type === "unknown" &&
-    "raw" in error &&
-    error.raw === IDLE_ONLY_BUSY_SKIP_MESSAGE
-  );
-}
-
 function sanitizeHeartbeatMessage(message: unknown): string | undefined {
   if (typeof message !== "string") {
     return undefined;
@@ -1538,6 +1527,7 @@ export class WorkspaceService extends EventEmitter {
   private readonly bashMonitorWakeStore: BashMonitorWakeStore;
   private readonly pendingBashMonitorWakeDrainsByOwner = new Map<string, Promise<void>>();
   private readonly pendingBashMonitorWakeIdleWaitsByOwner = new Map<string, Promise<void>>();
+  private readonly cancelingBashMonitorWakeKeys = new Set<string>();
   private readonly pendingBashMonitorWakeDrains = new Set<Promise<void>>();
   private readonly bashMonitorMatchListener = (
     _workspaceId: string,
@@ -1704,8 +1694,17 @@ export class WorkspaceService extends EventEmitter {
     this.pendingBashMonitorWakeDrains.add(promise);
   }
 
+  private bashMonitorWakeKey(ownerWorkspaceId: string, wakeId: string): string {
+    assert(ownerWorkspaceId.trim().length > 0, "bashMonitorWakeKey requires ownerWorkspaceId");
+    assert(wakeId.trim().length > 0, "bashMonitorWakeKey requires wakeId");
+    return `${ownerWorkspaceId}:${wakeId}`;
+  }
+
   private async drainBashMonitorWakes(ownerWorkspaceId: string): Promise<void> {
-    const pending = await this.bashMonitorWakeStore.listPending(ownerWorkspaceId);
+    const pending = (await this.bashMonitorWakeStore.listPending(ownerWorkspaceId)).filter(
+      (record) =>
+        !this.cancelingBashMonitorWakeKeys.has(this.bashMonitorWakeKey(ownerWorkspaceId, record.id))
+    );
     if (pending.length === 0) return;
 
     const cfg = this.config.loadConfigOrDefault();
@@ -1719,14 +1718,17 @@ export class WorkspaceService extends EventEmitter {
 
     const ownerHasPendingQueuedPreparingOrRetry =
       this.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId);
-    const ownerHasSessionBackedBusyState =
-      this.isBusyForMessage(ownerWorkspaceId) ||
-      this.hasQueuedMessages(ownerWorkspaceId) ||
-      ownerHasPendingQueuedPreparingOrRetry;
-    if (this.aiService.isStreaming(ownerWorkspaceId) || ownerHasSessionBackedBusyState) {
-      if (ownerHasSessionBackedBusyState) {
-        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
-      }
+    const ownerHasSessionBackedBusyState = this.isBusyForMessage(ownerWorkspaceId);
+    const ownerHasAiServiceStream = this.aiService.isStreaming(ownerWorkspaceId);
+    if (
+      ownerHasPendingQueuedPreparingOrRetry ||
+      (ownerHasSessionBackedBusyState && !ownerHasAiServiceStream)
+    ) {
+      this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      return;
+    }
+
+    if (ownerHasAiServiceStream && !ownerHasSessionBackedBusyState) {
       return;
     }
 
@@ -1737,7 +1739,22 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const prompt = buildBashMonitorWakePrompt(pending);
-    const markDelivered = async (records: readonly BashMonitorWakeRecord[]): Promise<boolean> => {
+    const retryAfterIdleIfBusy = (reason: string): void => {
+      if (
+        this.isBusyForMessage(ownerWorkspaceId) ||
+        this.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId)
+      ) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+        return;
+      }
+      log.debug("Bash monitor wake left pending without immediate retry", {
+        ownerWorkspaceId,
+        reason,
+      });
+    };
+    const markDeliveredAfterAccepted = async (
+      records: readonly BashMonitorWakeRecord[]
+    ): Promise<void> => {
       let hasUndeliveredMergedMatches = false;
       for (const record of records) {
         const delivered = await this.bashMonitorWakeStore.markDeliveredSnapshot(
@@ -1748,30 +1765,136 @@ export class WorkspaceService extends EventEmitter {
           hasUndeliveredMergedMatches = true;
         }
       }
-      return hasUndeliveredMergedMatches;
+      if (hasUndeliveredMergedMatches) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      }
+    };
+    const markSupersededAfterCanceled = async (
+      records: readonly BashMonitorWakeRecord[]
+    ): Promise<void> => {
+      let hasNewMergedMatches = false;
+      for (const record of records) {
+        const superseded = await this.bashMonitorWakeStore.markSupersededSnapshot(
+          ownerWorkspaceId,
+          record
+        );
+        if (!superseded) {
+          hasNewMergedMatches = true;
+        }
+      }
+      if (hasNewMergedMatches) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      }
     };
 
-    const sendResult = await this.sendMessage(ownerWorkspaceId, prompt, sendOptions, {
-      skipAutoResumeReset: true,
-      synthetic: true,
-      agentInitiated: true,
-      requireIdle: true,
-    });
+    // `onAccepted` only proves the synthetic user turn reached history; keep
+    // the wake pending until the provider stream starts so startup failures can retry it.
+    let accepted = false;
+    let delivered = false;
+    let startupFailed = false;
+    let removeStreamStartListener: (() => void) | undefined;
+    const removeDeliveryListener = (): void => {
+      removeStreamStartListener?.();
+      removeStreamStartListener = undefined;
+    };
+    const isOwnerStreamStart = (data: unknown): data is { workspaceId: string } =>
+      typeof data === "object" &&
+      data !== null &&
+      "workspaceId" in data &&
+      data.workspaceId === ownerWorkspaceId;
+    const markDeliveredOnce = async (): Promise<void> => {
+      if (delivered) return;
+      delivered = true;
+      removeDeliveryListener();
+      try {
+        await markDeliveredAfterAccepted(pending);
+      } catch (error) {
+        log.error("Failed to mark bash monitor wake delivered after accepted send", {
+          ownerWorkspaceId,
+          error,
+        });
+      }
+    };
+    const armDeliveryAfterStreamStart = (): void => {
+      removeDeliveryListener();
+      const onStreamStart = (data: unknown): void => {
+        if (isOwnerStreamStart(data)) {
+          void markDeliveredOnce();
+        }
+      };
+      this.aiService.on("stream-start", onStreamStart);
+      removeStreamStartListener = () => this.aiService.off("stream-start", onStreamStart);
+    };
+
+    const sendResult = await this.sendMessage(
+      ownerWorkspaceId,
+      prompt,
+      { ...sendOptions, queueDispatchMode: "tool-end" },
+      {
+        skipAutoResumeReset: true,
+        synthetic: true,
+        agentInitiated: true,
+        onAccepted: () => {
+          accepted = true;
+          armDeliveryAfterStreamStart();
+        },
+        onAcceptedPreStreamFailure: (error) => {
+          startupFailed = true;
+          if (!accepted) {
+            removeDeliveryListener();
+          }
+          if (delivered) return;
+          log.debug("Bash monitor wake accepted send failed before stream start; leaving pending", {
+            ownerWorkspaceId,
+            error,
+          });
+          retryAfterIdleIfBusy("pre-stream failure");
+        },
+        onCanceled: async (reason) => {
+          removeDeliveryListener();
+          if (delivered) return;
+          const cancelingKeys = pending.map((record) =>
+            this.bashMonitorWakeKey(ownerWorkspaceId, record.id)
+          );
+          for (const key of cancelingKeys) {
+            this.cancelingBashMonitorWakeKeys.add(key);
+          }
+          log.debug("Bash monitor wake queue was canceled; superseding canceled snapshot", {
+            ownerWorkspaceId,
+            reason,
+          });
+          try {
+            await markSupersededAfterCanceled(pending);
+          } catch (error) {
+            log.error("Failed to supersede canceled bash monitor wake snapshot", {
+              ownerWorkspaceId,
+              error,
+            });
+          } finally {
+            for (const key of cancelingKeys) {
+              this.cancelingBashMonitorWakeKeys.delete(key);
+            }
+          }
+        },
+      }
+    );
 
     if (!sendResult.success) {
-      log.debug("Bash monitor wake-up not accepted; leaving pending", {
-        ownerWorkspaceId,
-        error: sendResult.error,
-      });
-      if (isWorkspaceBusyIdleOnlySend(sendResult.error)) {
-        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+      if (!accepted) {
+        removeDeliveryListener();
+      }
+      if (!delivered) {
+        log.debug("Bash monitor wake-up not accepted; leaving pending", {
+          ownerWorkspaceId,
+          error: sendResult.error,
+        });
+        retryAfterIdleIfBusy("sendMessage rejected");
       }
       return;
     }
 
-    const hasUndeliveredMergedMatches = await markDelivered(pending);
-    if (hasUndeliveredMergedMatches) {
-      this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+    if (accepted && !startupFailed) {
+      await markDeliveredOnce();
     }
   }
 

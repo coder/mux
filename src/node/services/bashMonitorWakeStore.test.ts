@@ -113,6 +113,49 @@ describe("BashMonitorWakeStore", () => {
     expect(pending[0].status).toBe("pending");
   });
 
+  test("markSupersededSnapshot marks an unchanged pending snapshot as superseded", async () => {
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR one"], totalMatches: 1 }));
+    const snapshot = (await store.listPending("owner-1"))[0];
+    expect(snapshot).toBeDefined();
+    if (!snapshot) throw new Error("Expected pending snapshot");
+
+    const superseded = await store.markSupersededSnapshot("owner-1", snapshot);
+
+    expect(superseded).toBe(true);
+    expect(await store.listPending("owner-1")).toHaveLength(0);
+    const stored = await store.get("owner-1", snapshot.id);
+    expect(stored?.status).toBe("superseded");
+    expect(stored?.deliveredAt).toBeUndefined();
+  });
+
+  test("markSupersededSnapshot preserves matches merged after the canceled snapshot", async () => {
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR one"], totalMatches: 1 }));
+    const snapshot = (await store.listPending("owner-1"))[0];
+    expect(snapshot).toBeDefined();
+    if (!snapshot) throw new Error("Expected pending snapshot");
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR two"], totalMatches: 2 }));
+
+    const superseded = await store.markSupersededSnapshot("owner-1", snapshot);
+
+    expect(superseded).toBe(false);
+    const pending = await store.listPending("owner-1");
+    expect(pending).toHaveLength(1);
+    expect(pending[0].lines).toEqual(["ERROR two"]);
+    expect(pending[0].status).toBe("pending");
+  });
+
+  test("markSupersededSnapshot succeeds when the snapshot is already non-pending", async () => {
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    const snapshot = await store.enqueueOrMergePending(payload({ lines: ["ERROR one"] }));
+    await store.markDelivered("owner-1", snapshot.id);
+
+    const superseded = await store.markSupersededSnapshot("owner-1", snapshot);
+    expect(superseded).toBe(true);
+    expect(await store.listPending("owner-1")).toHaveLength(0);
+  });
+
   test("listPendingOwnerWorkspaceIds finds pending wakes across session dirs", async () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
     await store.enqueueOrMergePending(payload({ workspaceId: "owner-b" }));

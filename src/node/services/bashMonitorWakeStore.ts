@@ -262,7 +262,23 @@ export class BashMonitorWakeStore {
     ownerWorkspaceId: string,
     snapshot: BashMonitorWakeRecord
   ): Promise<boolean> {
-    assert(snapshot.id.trim().length > 0, "markDeliveredSnapshot requires snapshot id");
+    return this.transitionSnapshot(ownerWorkspaceId, snapshot, "delivered");
+  }
+
+  async markSupersededSnapshot(
+    ownerWorkspaceId: string,
+    snapshot: BashMonitorWakeRecord
+  ): Promise<boolean> {
+    return this.transitionSnapshot(ownerWorkspaceId, snapshot, "superseded");
+  }
+
+  private async transitionSnapshot(
+    ownerWorkspaceId: string,
+    snapshot: BashMonitorWakeRecord,
+    status: "delivered" | "superseded"
+  ): Promise<boolean> {
+    assert(ownerWorkspaceId.trim().length > 0, "transitionSnapshot requires ownerWorkspaceId");
+    assert(snapshot.id.trim().length > 0, "transitionSnapshot requires snapshot id");
     const key = `${ownerWorkspaceId}:${snapshot.id}`;
     return this.locks.withLock(key, async () => {
       const current = await this.get(ownerWorkspaceId, snapshot.id);
@@ -275,25 +291,14 @@ export class BashMonitorWakeStore {
         current.lines.length === snapshot.lines.length &&
         current.lines.every((line, index) => line === snapshot.lines[index]);
       if (isSnapshotUnchanged) {
-        const now = new Date().toISOString();
-        await this.write({
-          ...current,
-          status: "delivered",
-          updatedAt: now,
-          deliveredAt: now,
-        });
+        await this.write(this.withTerminalStatus(current, status));
         return true;
       }
 
       const remainingLines = removeDeliveredLineOverlap(current.lines, snapshot.lines);
       const remainingDroppedLines = Math.max(0, current.droppedLines - snapshot.droppedLines);
       if (remainingLines.length === 0 && remainingDroppedLines === 0) {
-        await this.write({
-          ...current,
-          status: "delivered",
-          updatedAt: new Date().toISOString(),
-          deliveredAt: new Date().toISOString(),
-        });
+        await this.write(this.withTerminalStatus(current, status));
         return true;
       }
 
@@ -305,6 +310,19 @@ export class BashMonitorWakeStore {
       });
       return false;
     });
+  }
+
+  private withTerminalStatus(
+    record: BashMonitorWakeRecord,
+    status: "delivered" | "superseded"
+  ): BashMonitorWakeRecord {
+    const now = new Date().toISOString();
+    return {
+      ...record,
+      status,
+      updatedAt: now,
+      ...(status === "delivered" ? { deliveredAt: now } : {}),
+    };
   }
 
   async markDelivered(ownerWorkspaceId: string, id: string): Promise<void> {
