@@ -6620,17 +6620,6 @@ export class WorkspaceService extends EventEmitter {
         workspaceName: sourceMetadata.name,
         workspacePath: sourceWorkspace?.workspacePath,
       });
-      const sourceWorkspacePath = resolveWorkspaceExecutionPath(sourceMetadata, freshSourceRuntime);
-      const targetWorkspacePath = resolveWorkspaceExecutionPath(
-        {
-          ...sourceMetadata,
-          name: resolvedName,
-          namedWorkspacePath: workspacePath,
-          projectPath: foundProjectPath,
-          runtimeConfig: forkedRuntimeConfig,
-        },
-        targetRuntime
-      );
 
       const sourceSessionDir = this.config.getSessionDir(sourceWorkspaceId);
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
@@ -6687,15 +6676,31 @@ export class WorkspaceService extends EventEmitter {
 
         const referencedStagedAttachmentPaths =
           await collectReferencedStagedAttachmentPaths(newSessionDir);
-        const copyStagedAttachmentsResult = await copyStagedWorkspaceAttachments({
-          sourceRuntime: freshSourceRuntime,
-          targetRuntime,
-          sourceWorkspacePath,
-          stagedPaths: referencedStagedAttachmentPaths,
-          targetWorkspacePath,
-        });
-        if (!copyStagedAttachmentsResult.success) {
-          throw new Error(copyStagedAttachmentsResult.error);
+        if (referencedStagedAttachmentPaths.length > 0) {
+          const sourceWorkspacePath = resolveWorkspaceExecutionPath(
+            sourceMetadata,
+            freshSourceRuntime
+          );
+          const targetWorkspacePath = resolveWorkspaceExecutionPath(
+            {
+              ...sourceMetadata,
+              name: resolvedName,
+              namedWorkspacePath: workspacePath,
+              projectPath: foundProjectPath,
+              runtimeConfig: forkedRuntimeConfig,
+            },
+            targetRuntime
+          );
+          const copyStagedAttachmentsResult = await copyStagedWorkspaceAttachments({
+            sourceRuntime: freshSourceRuntime,
+            targetRuntime,
+            sourceWorkspacePath,
+            stagedPaths: referencedStagedAttachmentPaths,
+            targetWorkspacePath,
+          });
+          if (!copyStagedAttachmentsResult.success) {
+            throw new Error(copyStagedAttachmentsResult.error);
+          }
         }
 
         // Forks inherit chat history, but their cost ledger must start fresh.
