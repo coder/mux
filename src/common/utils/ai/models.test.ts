@@ -136,6 +136,14 @@ describe("Anthropic 1M context classification", () => {
     expect(hasNative1MContext("anthropic:claude-sonnet-4-6")).toBe(true);
   });
 
+  it("treats Sonnet 5 as a native 1M model", () => {
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-5")).toBe("native");
+    expect(getAnthropic1MContextMode("anthropic:claude-sonnet-5-20260630")).toBe("native");
+    expect(getAnthropic1MContextMode("mux-gateway:anthropic/claude-sonnet-5")).toBe("native");
+    expect(supports1MContext("anthropic:claude-sonnet-5")).toBe(false);
+    expect(hasNative1MContext("anthropic:claude-sonnet-5")).toBe(true);
+  });
+
   it("treats Mythos-class Fable 5 / Mythos 5 as native 1M models", () => {
     expect(getAnthropic1MContextMode("anthropic:claude-fable-5")).toBe("native");
     expect(getAnthropic1MContextMode("anthropic:claude-mythos-5")).toBe("native");

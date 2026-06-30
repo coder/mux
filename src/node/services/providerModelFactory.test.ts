@@ -1581,8 +1581,8 @@ function parseSentBody(call: CapturedFetchCall): Record<string, unknown> {
   return JSON.parse(call.init.body as string) as Record<string, unknown>;
 }
 
-describe("wrapFetchWithAnthropicCacheControl — Opus 4.7+ wire transforms", () => {
-  for (const model of ["claude-opus-4-7", "claude-opus-4-8"] as const) {
+describe("wrapFetchWithAnthropicCacheControl — Opus 4.7+ / Sonnet 5+ wire transforms", () => {
+  for (const model of ["claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"] as const) {
     it(`injects thinking.display=summarized for ${model} adaptive thinking`, async () => {
       const { calls, fakeFetch } = createCapturingFetch();
       const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);

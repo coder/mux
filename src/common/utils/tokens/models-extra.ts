@@ -155,6 +155,27 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // Claude Sonnet 5 - Released June 30, 2026
+  // Native 1M context. Standard pricing $3/M input, $15/M output (same as Sonnet 4.6).
+  // Introductory pricing of $2/$10 per MTok applies through Aug 31, 2026, but we list the
+  // standard rate so cost estimates stay correct once the promo ends.
+  // 128K max output (up from Sonnet 4.6's 64K); supports adaptive thinking + effort (incl. xhigh).
+  "claude-sonnet-5": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000003, // $3 per million input tokens
+    output_cost_per_token: 0.000015, // $15 per million output tokens
+    cache_creation_input_token_cost: 0.00000375, // $3.75 per million tokens
+    cache_read_input_token_cost: 0.0000003, // $0.30 per million tokens
+    litellm_provider: "anthropic",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // Claude Sonnet 4.6 - Released February 2026
   // Native 1M context at standard pricing: $3/M input, $15/M output.
   // 64K max output tokens, supports adaptive thinking + effort parameter.

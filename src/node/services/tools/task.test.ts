@@ -385,7 +385,7 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalledTimes(1);
     const createArgs = create.mock.calls[0]?.[0];
-    expect(createArgs?.modelString).toBe("anthropic:claude-sonnet-4-6");
+    expect(createArgs?.modelString).toBe("anthropic:claude-sonnet-5");
     expect(createArgs?.thinkingLevel).toBe("high");
     // Parent runtime hint is still forwarded so unspecified fields keep inheriting.
     expect(createArgs?.parentRuntimeAiSettings).toEqual({

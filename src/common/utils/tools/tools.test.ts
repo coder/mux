@@ -6,7 +6,11 @@ import { Ok } from "@/common/types/result";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { getToolsForModel, type WorkspaceHeartbeatToolService } from "./tools";
+import {
+  getToolsForModel,
+  supportsAnthropicNativeWebFetch,
+  type WorkspaceHeartbeatToolService,
+} from "./tools";
 
 const DESKTOP_TOOL_NAMES = [
   "desktop_screenshot",
@@ -58,6 +62,32 @@ function createDesktopSessionManager(options: { available: boolean }) {
     getCapability,
   };
 }
+
+describe("supportsAnthropicNativeWebFetch", () => {
+  test.each([
+    // Major-only "5 generation" IDs (dateless naming) — Sonnet 5, Fable 5, Mythos 5.
+    ["claude-sonnet-5", true],
+    ["claude-fable-5", true],
+    ["claude-mythos-5", true],
+    // Two-segment IDs at/after the 4.6 cutoff.
+    ["claude-sonnet-4-6", true],
+    ["claude-opus-4-6", true],
+    ["claude-opus-4-8", true],
+    ["claude-opus-4-6-20260201", true],
+    // Below the 4.6 cutoff.
+    ["claude-sonnet-4-5", false],
+    ["claude-haiku-4-5", false],
+    // Date-based pre-4.6 ID must parse as major=4 / no minor and stay unsupported,
+    // not misread the 8-digit date as a minor version.
+    ["claude-sonnet-4-20250514", false],
+    // Older Claude 3.x IDs encode the family before the variant; do not misread
+    // `3-5` or `3-7` as variant=3, major=5/7.
+    ["claude-3-5-sonnet-20241022", false],
+    ["claude-3-7-sonnet-20250219", false],
+  ] as const)("%s -> %s", (modelId, expected) => {
+    expect(supportsAnthropicNativeWebFetch(modelId)).toBe(expected);
+  });
+});
 
 describe("getToolsForModel", () => {
   test("only includes agent_report when enableAgentReport=true", async () => {

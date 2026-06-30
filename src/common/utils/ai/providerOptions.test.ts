@@ -108,7 +108,7 @@ describe("buildProviderOptions - Anthropic", () => {
     });
   });
 
-  for (const model of ["claude-opus-4-6", "claude-sonnet-4-6"] as const) {
+  for (const model of ["claude-opus-4-6", "claude-sonnet-4-6", "claude-sonnet-5"] as const) {
     describe(`${model} (adaptive thinking + effort)`, () => {
       for (const { thinking, expectedThinking, effort } of [
         { thinking: "medium", expectedThinking: { type: "adaptive" }, effort: "medium" },
@@ -981,6 +981,14 @@ describe("buildRequestHeaders", () => {
       {
         name: "emits override header for Opus 4.8",
         model: "anthropic:claude-opus-4-8",
+        routeProvider: undefined,
+        thinkingLevel: "xhigh",
+        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
+      },
+      {
+        // Sonnet 5 added native xhigh for the Sonnet tier, so it needs the wire rewrite too.
+        name: "emits override header for Sonnet 5",
+        model: "anthropic:claude-sonnet-5",
         routeProvider: undefined,
         thinkingLevel: "xhigh",
         expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },

@@ -27,9 +27,10 @@ export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
 /**
  * Display label for thinking levels, with provider-aware xhigh labeling.
  *
- * Models with a native "xhigh" effort level (OpenAI, Anthropic Opus 4.7+) show
- * "XHIGH" for the xhigh ThinkingLevel; on those providers xhigh and max are
- * distinct. On Opus 4.6 (where xhigh maps to max effort), it shows "MAX".
+ * Models with a native "xhigh" effort level (OpenAI, Anthropic Opus 4.7+,
+ * Anthropic Sonnet 5+) show "XHIGH" for the xhigh ThinkingLevel; on those
+ * providers xhigh and max are distinct. On Opus/Sonnet 4.6 (where xhigh maps
+ * to max effort), it shows "MAX".
  * Medium always displays as "MED".
  */
 export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: string): string {
@@ -164,10 +165,10 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 /**
  * Anthropic effort type - matches SDK's AnthropicProviderOptions["effort"].
  *
- * Note: Opus 4.7 introduced a native "xhigh" effort level in the API, but the
- * SDK's Zod validator still rejects "xhigh". Mux handles this by sending "max"
- * through the SDK and rewriting `output_config.effort` to "xhigh" in a fetch
- * wrapper for Opus 4.7+ when the user selected the xhigh ThinkingLevel.
+ * Note: Opus 4.7 and Sonnet 5 introduced a native "xhigh" effort level in the API,
+ * but the SDK's Zod validator still rejects "xhigh". Mux handles this by sending
+ * "max" through the SDK and rewriting `output_config.effort` to "xhigh" in a fetch
+ * wrapper for native-xhigh Anthropic models when the user selected the xhigh ThinkingLevel.
  * See `wrapFetchWithAnthropicCacheControl` and `buildRequestHeaders`.
  */
 export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
@@ -178,18 +179,18 @@ export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
  * The effort parameter controls how much computational work the model applies.
  * - Opus 4.5 supports: low, medium, high (policy clamps xhigh → high)
  * - Opus 4.6 supports: low, medium, high, max (xhigh maps to "max" effort)
- * - Opus 4.7 supports: low, medium, high, xhigh, max (xhigh requires wire override)
+ * - Opus 4.7+ and Sonnet 5+ support: low, medium, high, xhigh, max (xhigh requires wire override)
  *
  * Because the @ai-sdk/anthropic Zod schema doesn't accept "xhigh" yet, we send
- * "max" through the SDK for xhigh-on-4.7 and rewrite `output_config.effort` to
- * "xhigh" in the Anthropic fetch wrapper.
+ * "max" through the SDK for native-xhigh Anthropic models and rewrite
+ * `output_config.effort` to "xhigh" in the Anthropic fetch wrapper.
  */
 const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   off: "low",
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "max", // SDK placeholder; fetch wrapper rewrites to "xhigh" on Opus 4.7+
+  xhigh: "max", // SDK placeholder; fetch wrapper rewrites to "xhigh" on native-xhigh models
   max: "max",
 };
 
@@ -204,6 +205,8 @@ export function getAnthropicEffort(level: ThinkingLevel): AnthropicEffortLevel {
  * Matches:
  * - `claude-opus-4-7`, `claude-opus-4-8`, ... `claude-opus-4-99`, and any future Opus 5+
  *   (which we assume preserves or exceeds 4.7's capabilities).
+ * - `claude-sonnet-5` and any future Sonnet 5+ (Sonnet 5 introduced native xhigh effort for
+ *   the Sonnet tier; Sonnet 4.6 and earlier did not).
  * - Mythos-class models (`claude-fable-*`, `claude-mythos-*`), the tier above Opus.
  */
 export function anthropicSupportsNativeXhigh(modelString: string): boolean {
@@ -212,10 +215,11 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
     .toLowerCase()
     .replace(/^[a-z0-9_-]+:\s*/, "")
     .replace(/^[a-z0-9_-]+\//, "");
-  // Opus 4.7+ (4-7, 4-8, 4-9, 4-10, 4-11, ...) or any Opus 5+, plus the Mythos-class
-  // Fable / Mythos models that sit above Opus.
+  // Opus 4.7+ (4-7, 4-8, 4-9, 4-10, 4-11, ...) or any Opus 5+, Sonnet 5+ (5, 6, ... 10+),
+  // plus the Mythos-class Fable / Mythos models that sit above Opus.
   return (
     /claude-opus-(?:4-(?:[7-9]|\d{2,})|[5-9]|\d{2,})/.test(withoutPrefix) ||
+    /claude-sonnet-(?:[5-9]|\d{2,})/.test(withoutPrefix) ||
     /claude-(?:fable|mythos)-/.test(withoutPrefix)
   );
 }

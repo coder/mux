@@ -273,23 +273,24 @@ export function buildProviderOptions(
     // serializes it to a top-level cache_control block, which adds an extra
     // breakpoint on direct Anthropic requests.
 
-    // Opus 4.5+ and Sonnet 4.6 use the effort parameter for reasoning control.
-    // Opus 4.6+ / Sonnet 4.6 use adaptive thinking (model decides when/how much to think).
+    // Opus 4.5+, Sonnet 4.6, and Sonnet 5 use the effort parameter for reasoning control.
+    // Opus 4.6+ / Sonnet 4.6 / Sonnet 5 use adaptive thinking (model decides when/how much).
     // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
     const isOpus45 = capModelName?.includes("opus-4-5") ?? false;
     const isOpus46 = capModelName?.includes("opus-4-6") ?? false;
-    const isOpus47Plus = anthropicSupportsNativeXhigh(capabilityModel);
+    // Opus 4.7+ and Sonnet 5+ — the native-xhigh tier, which also uses adaptive thinking.
+    const supportsNativeXhigh = anthropicSupportsNativeXhigh(capabilityModel);
     const isSonnet46 = capModelName?.includes("sonnet-4-6") ?? false;
-    const usesAdaptiveThinking = isOpus46 || isOpus47Plus || isSonnet46;
+    const usesAdaptiveThinking = isOpus46 || supportsNativeXhigh || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
-      // Map to SDK-accepted effort. For Opus 4.7+ with xhigh ThinkingLevel, the SDK
-      // gets "max" as a placeholder and the Anthropic fetch wrapper rewrites
+      // Map to SDK-accepted effort. For Opus 4.7+ / Sonnet 5+ with xhigh ThinkingLevel, the
+      // SDK gets "max" as a placeholder and the Anthropic fetch wrapper rewrites
       // `output_config.effort` to "xhigh" via the X-Mux-Anthropic-Effort header
       // (added in buildRequestHeaders).
       const effortLevel = getAnthropicEffort(effectiveThinking);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      // Opus 4.6+ / Sonnet 4.6: adaptive thinking when on, disabled when off
+      // Opus 4.6+ / Sonnet 4.6 / Sonnet 5: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
       const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
         ? effectiveThinking === "off"
@@ -595,9 +596,9 @@ export function buildRequestHeaders(
     headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
   }
 
-  // Opus 4.7 introduced a native "xhigh" effort level that the @ai-sdk/anthropic
-  // Zod schema doesn't accept yet. Emit a Mux-internal header so the Anthropic
-  // fetch wrapper can rewrite `output_config.effort` to "xhigh" on the wire.
+  // Native-xhigh Anthropic models use an "xhigh" effort level that the
+  // @ai-sdk/anthropic Zod schema doesn't accept yet. Emit a Mux-internal header
+  // so the Anthropic fetch wrapper can rewrite `output_config.effort` to "xhigh" on the wire.
   //
   // Only emit when the route will pass through our Anthropic fetch wrapper
   // (direct Anthropic or passthrough gateways like mux-gateway). Non-passthrough

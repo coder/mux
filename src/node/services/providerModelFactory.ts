@@ -349,9 +349,9 @@ export function wrapFetchWithAnthropicCacheControl(
     try {
       const json = JSON.parse(init.body) as Record<string, unknown>;
 
-      // Opus 4.7 and newer require `thinking.display: "summarized"` to return
-      // thinking content in the response. Inject it on the wire for any adaptive
-      // thinking request when the model is Opus 4.7+ (matches 4-7..4-99 + Opus 5+).
+      // Native-xhigh adaptive-thinking models (Opus 4.7+ and Sonnet 5+) require
+      // `thinking.display: "summarized"` to return thinking content in the response.
+      // Inject it on the wire for any adaptive thinking request targeting those models.
       // See https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#summarized-thinking
       //
       // Two body shapes to handle:
@@ -360,10 +360,12 @@ export function wrapFetchWithAnthropicCacheControl(
       //   with the model exposed via the ai-model-id header.
       const directModel = typeof json.model === "string" ? json.model : "";
       const headerModelId = incomingHeaders.get("ai-model-id") ?? "";
-      // Reuse the shared Opus 4.7+ detector so the wire-level regex stays in
+      // Reuse the shared native-xhigh detector so the wire-level regex stays in
       // one place (src/common/types/thinking.ts) — it also normalizes provider
-      // prefixes (e.g., `anthropic/claude-opus-4-7`).
-      const targetsOpus47OrNewer = [directModel, headerModelId].some(anthropicSupportsNativeXhigh);
+      // prefixes (e.g., `anthropic/claude-opus-4-7`, `anthropic/claude-sonnet-5`).
+      const targetsNativeXhighModel = [directModel, headerModelId].some(
+        anthropicSupportsNativeXhigh
+      );
 
       const directThinking = isRecord(json.thinking) ? json.thinking : undefined;
       const providerOpts = isRecord(json.providerOptions) ? json.providerOptions : undefined;
@@ -372,7 +374,7 @@ export function wrapFetchWithAnthropicCacheControl(
       const gatewayThinking =
         anthropicOpts && isRecord(anthropicOpts.thinking) ? anthropicOpts.thinking : undefined;
 
-      if (targetsOpus47OrNewer) {
+      if (targetsNativeXhighModel) {
         if (directThinking?.type === "adaptive") {
           directThinking.display ??= "summarized";
           log.debug("Anthropic wrapper: injected thinking.display=summarized (direct body)");
@@ -383,7 +385,7 @@ export function wrapFetchWithAnthropicCacheControl(
         }
       }
 
-      // Opus 4.7 introduced a native "xhigh" effort level. The @ai-sdk/anthropic
+      // Native-xhigh Anthropic models use an "xhigh" effort level. The @ai-sdk/anthropic
       // Zod schema still rejects "xhigh", so providerOptions sends "max" through
       // the SDK and we rewrite effort here based on the Mux-internal override
       // header — for both direct and gateway body shapes.

@@ -49,12 +49,18 @@ const MODEL_DEFINITIONS = {
     // (Opus 4.6/4.7 also reused 4.5 — tokenization is unchanged across the 4.x line).
     tokenizerOverride: "anthropic/claude-opus-4.5",
   },
+  // Claude Sonnet 5 - released June 30, 2026. The most agentic Sonnet yet (native 1M context,
+  // 128K max output, adaptive thinking + effort including native xhigh). Standard pricing matches
+  // Sonnet 4.6 ($3/M in, $15/M out); introductory $2/$10 applies through Aug 31, 2026. API id
+  // `claude-sonnet-5`. The bare `sonnet` alias tracks the latest Sonnet tier.
   SONNET: {
     provider: "anthropic",
-    providerModelId: "claude-sonnet-4-6",
+    providerModelId: "claude-sonnet-5",
     aliases: ["sonnet"],
     warm: true,
-    // Sonnet 4.6 tokenizer not yet available upstream; reuse 4.5 for approximate counting
+    // Sonnet 5 ships an updated tokenizer (same kind of change introduced with Opus 4.7) that
+    // isn't published upstream yet; reuse Sonnet 4.5 for approximate counting. Real usage can run
+    // ~1.0-1.35x higher than this estimate depending on content type.
     tokenizerOverride: "anthropic/claude-sonnet-4.5",
   },
   HAIKU: {

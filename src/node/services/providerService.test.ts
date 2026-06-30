@@ -1168,7 +1168,7 @@ describe("ProviderService.setConfig", () => {
 
       const providersConfig = config.loadProvidersConfig();
       expect(providersConfig?.["mux-gateway"]?.models).toEqual([
-        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-sonnet-5",
         "anthropic/claude-opus-4-8",
         "openai/gpt-5.5",
       ]);

@@ -489,19 +489,25 @@ async function getDesktopTools(config: ToolConfiguration): Promise<Record<string
 /**
  * Returns true when an Anthropic model supports webFetch_20250910 (Claude 4.6+).
  *
- * Generation-based IDs: claude-{variant}-{major}-{minor} (e.g. claude-sonnet-4-6)
- * Pinned generation IDs: claude-{variant}-{major}-{minor}-{date} (e.g. claude-opus-4-6-20260201)
- * Date-based pre-4.6 IDs: claude-{variant}-{major}-{date} (e.g. claude-sonnet-4-20250514)
+ * Two-segment IDs:    claude-{variant}-{major}-{minor} (e.g. claude-sonnet-4-6, claude-opus-4-8)
+ * Pinned two-segment: claude-{variant}-{major}-{minor}-{date} (e.g. claude-opus-4-6-20260201)
+ * Date-based pre-4.6: claude-{variant}-{major}-{date} (e.g. claude-sonnet-4-20250514)
+ * Major-only IDs:     claude-{variant}-{major} (e.g. claude-sonnet-5, claude-fable-5,
+ *                     claude-mythos-5) — the dateless naming adopted for the 5 generation.
  *
- * The \d{1,2} constraint on the minor segment accepts 1-2 digit version numbers (1–99) while
- * rejecting 8-digit date suffixes. The (?:-|$) lookahead allows an optional pinned date to follow.
+ * The minor segment is optional so major-only IDs (Sonnet 5, Fable 5, Mythos 5, future Opus 5+)
+ * are recognized; those are all > 4 and qualify. The variant segment must be alphabetic so older
+ * third-generation IDs like claude-3-5-sonnet-20241022 do not get misread as major=5. The \d{1,2}
+ * constraint accepts 1-2 digit version numbers (1–99) while rejecting 8-digit date suffixes, so
+ * date-based pre-4.6 IDs like claude-sonnet-4-20250514 parse as major=4 / no minor and correctly
+ * stay unsupported. The (?:-|$) lookahead allows an optional pinned date to follow.
  */
-function supportsAnthropicNativeWebFetch(modelId: string): boolean {
-  const match = /^claude-\w+-(\d+)-(\d{1,2})(?:-|$)/.exec(modelId);
+export function supportsAnthropicNativeWebFetch(modelId: string): boolean {
+  const match = /^claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?:-|$)/.exec(modelId);
   if (!match) return false;
   const major = parseInt(match[1], 10);
-  const minor = parseInt(match[2], 10);
-  return major > 4 || (major === 4 && minor >= 6);
+  const minor = match[2] != null ? parseInt(match[2], 10) : undefined;
+  return major > 4 || (major === 4 && minor !== undefined && minor >= 6);
 }
 
 export async function getToolsForModel(
