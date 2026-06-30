@@ -395,6 +395,62 @@ describe("BackgroundProcessManager", () => {
       expect(event.payload.lines).toEqual(["ERR boom"]);
     });
 
+    it("drops the wake for a matched line even when a trailing fragment follows it", async () => {
+      // A complete matched line followed by an unterminated fragment: getOutput returns the line
+      // and buffers only the fragment, so the agent HAS seen the match. The monitor's raw scan
+      // cursor (lastReadOffset) includes the fragment, so comparing against it would wrongly wake;
+      // matchedThroughOffset (end of the matched line) must drive the suppression instead.
+      let matchCount = 0;
+      const handler = () => {
+        matchCount++;
+      };
+      manager.on("monitor:match", handler);
+
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "printf 'ERR foo\\npartial'; sleep 5",
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-line-plus-fragment",
+          monitor: {
+            filter: "ERR",
+            pattern: /ERR/,
+            exclude: false,
+            cooldownMs: 10_000,
+          },
+        }
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait until the monitor has recorded the match and parked the trailing fragment.
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 60; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if ((proc?.monitor?.pendingLines.length ?? 0) > 0 && proc?.monitor?.incompleteLineBuffer)
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(proc?.monitor?.pendingLines ?? []).toEqual(["ERR foo"]);
+      expect(proc?.monitor?.incompleteLineBuffer).toContain("partial");
+      // matchedThroughOffset ends at the matched line; the raw scan cursor sits past it.
+      expect(proc?.monitor?.matchedThroughOffset ?? 0).toBeLessThan(
+        proc?.monitor?.lastReadOffset ?? 0
+      );
+
+      // Agent reads inline: gets "ERR foo", buffers "partial".
+      const output = await manager.getOutput(result.processId, undefined, false, 1);
+      expect(output.success).toBe(true);
+      if (output.success) expect(output.output).toContain("ERR foo");
+
+      // The agent has been shown through the matched line, so the deferred flush must drop.
+      await manager.terminate(result.processId);
+      expect(matchCount).toBe(0);
+
+      manager.off("monitor:match", handler);
+    });
+
     it("strips ANSI before matching and emitting matched lines", async () => {
       const eventPromise = waitForMonitorMatch(manager);
       const result = await manager.spawn(
