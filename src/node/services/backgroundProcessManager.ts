@@ -123,6 +123,14 @@ export interface BackgroundProcess {
   isForeground: boolean;
   /** Tracks read position for incremental output retrieval */
   outputBytesRead: number;
+  /**
+   * File byte offset through the end of the last complete line an *unfiltered* getOutput call
+   * (task_await / bash_output) has delivered to the agent. Unlike outputBytesRead, this never
+   * advances for filtered reads (which may drop matched lines) or for buffered trailing fragments,
+   * so it is the faithful "agent has been shown this" signal the monitor consults. Both this and
+   * the monitor's matchedThroughOffset are absolute file offsets, so suppression is race-free.
+   */
+  shownThroughOffset: number;
   /** Mutex to serialize getOutput() calls (prevents race condition when
    * parallel tool calls read from same offset before position is updated) */
   outputLock: AsyncMutex;
@@ -268,16 +276,15 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       monitor.flushTimer = undefined;
     }
 
-    // Don't wake the agent about output it has already been shown. Both sides use "end of complete
-    // line" semantics: getOutput (task_await / bash_output) returns complete lines and keeps only a
-    // trailing unterminated fragment in incompleteLineBuffer, so shownBytes is the read cursor minus
-    // that fragment; matchedThroughOffset is where the matched lines end (excluding any trailing
-    // fragment the monitor scanned but has not matched). If the agent has been shown through the
-    // matched output, a wake would only double-report it (e.g. firing the instant a concurrent
-    // task_await returns the same line), so drop. Output not yet shown -- including a line still
-    // buffered unterminated, which matches only on exit -- stays below shownBytes and still wakes.
-    const shownBytes = proc.outputBytesRead - Buffer.byteLength(proc.incompleteLineBuffer, "utf8");
-    if (shownBytes >= monitor.matchedThroughOffset) {
+    // Don't wake the agent about output it has already been shown. shownThroughOffset is the file
+    // position an unfiltered task_await / bash_output read has delivered complete lines through;
+    // matchedThroughOffset is where the matched line ends. Both are absolute file offsets, so this
+    // is order-independent (no race between the reader and the monitor). If the agent was shown
+    // through the match, a wake would only double-report it (e.g. a concurrent task_await that just
+    // returned the same line), so drop. Anything still beyond the shown mark -- a filtered-out
+    // match (filtered reads never advance the mark), a line still buffered unterminated (matched
+    // only on exit), or genuinely new output -- stays above it and still wakes.
+    if (proc.shownThroughOffset >= monitor.matchedThroughOffset) {
       monitor.pendingLines = [];
       monitor.droppedLines = 0;
       return;
@@ -660,6 +667,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       displayName: config.displayName,
       isForeground: config.isForeground ?? false,
       outputBytesRead: 0,
+      shownThroughOffset: 0,
       outputLock: new AsyncMutex(),
       getOutputCallCount: 0,
       incompleteLineBuffer: "",
@@ -779,6 +787,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       displayName,
       isForeground: false, // Now in background
       outputBytesRead: 0,
+      shownThroughOffset: 0,
       outputLock: new AsyncMutex(),
       getOutputCallCount: 0,
       incompleteLineBuffer: "",
@@ -1108,6 +1117,16 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // Update buffer for next call (clear on exit, keep incomplete line otherwise)
     proc.incompleteLineBuffer =
       currentStatus === "running" && !hasTrailingNewline ? allLines[allLines.length - 1] : "";
+
+    // Advance the monitor's "shown through" mark only on unfiltered reads. A filtered read may have
+    // dropped matched lines, so it must not count as having shown them. End-of-last-complete-line =
+    // read cursor minus the trailing fragment we just buffered (cleared, hence 0, on exit). Offsets
+    // only grow; Math.max guards against any out-of-order/partial call regressing the mark.
+    if (!filter) {
+      const shownThrough =
+        proc.outputBytesRead - Buffer.byteLength(proc.incompleteLineBuffer, "utf8");
+      proc.shownThroughOffset = Math.max(proc.shownThroughOffset, shownThrough);
+    }
 
     log.debug(
       `BackgroundProcessManager.getOutput: read rawLen=${accumulatedRaw.length}, completeLines=${linesToReturn.length}`

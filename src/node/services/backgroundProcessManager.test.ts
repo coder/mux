@@ -490,6 +490,61 @@ describe("BackgroundProcessManager", () => {
       expect(proc?.monitor?.lastReadOffset).toBe(16);
     });
 
+    it("still wakes when a filtered read advanced past but did not show the matched line", async () => {
+      // A filtered task_await / bash_output read advances outputBytesRead past every complete line
+      // but returns only lines matching its own filter. A pending monitor match for "ERR" must still
+      // wake after the agent reads with filter="DONE": the error line was never shown to the agent.
+      let matchCount = 0;
+      const handler = () => {
+        matchCount++;
+      };
+      manager.on("monitor:match", handler);
+
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "printf 'ERR boom\\nDONE\\n'; sleep 5",
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-filtered-read",
+          monitor: {
+            filter: "ERR",
+            pattern: /ERR/,
+            exclude: false,
+            cooldownMs: 10_000, // defer the flush so the filtered read happens first
+          },
+        }
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait until the monitor has matched "ERR boom" (flush deferred by the cooldown).
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 60; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if ((proc?.monitor?.pendingLines.length ?? 0) > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(proc?.monitor?.pendingLines ?? []).toEqual(["ERR boom"]);
+
+      // Agent reads with a filter that excludes the error line: it sees only "DONE".
+      const filtered = await manager.getOutput(result.processId, "DONE", false, 1);
+      expect(filtered.success).toBe(true);
+      if (filtered.success) {
+        expect(filtered.output).toContain("DONE");
+        expect(filtered.output).not.toContain("ERR boom");
+      }
+      // The filtered read must not have advanced the shown mark.
+      proc = await manager.getProcess(result.processId);
+      expect(proc?.shownThroughOffset ?? -1).toBe(0);
+
+      // Force the deferred flush. The error was never shown, so it must still wake.
+      await manager.terminate(result.processId);
+      expect(matchCount).toBe(1);
+
+      manager.off("monitor:match", handler);
+    });
+
     it("strips ANSI before matching and emitting matched lines", async () => {
       const eventPromise = waitForMonitorMatch(manager);
       const result = await manager.spawn(
