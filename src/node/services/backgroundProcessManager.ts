@@ -260,6 +260,16 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       monitor.flushTimer = undefined;
     }
 
+    // Don't wake the agent about output it has already read. If the read cursor
+    // (proc.outputBytesRead, advanced by task_await / bash_output) has caught up to the monitor's
+    // scan position, these matched lines were already delivered inline, so a wake would
+    // double-report them (e.g. firing the instant a concurrent task_await returns the same line).
+    if (proc.outputBytesRead >= monitor.lastReadOffset) {
+      monitor.pendingLines = [];
+      monitor.droppedLines = 0;
+      return;
+    }
+
     const lines = monitor.pendingLines;
     const droppedLines = monitor.droppedLines;
     monitor.pendingLines = [];

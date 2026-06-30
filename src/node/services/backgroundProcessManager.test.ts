@@ -310,6 +310,61 @@ describe("BackgroundProcessManager", () => {
       }
     });
 
+    it("drops a deferred monitor wake once the agent reads past the matched output", async () => {
+      // Regression: a monitor must not wake the agent about output the agent has already read
+      // inline (e.g. via a concurrent task_await / bash_output on the same bash task). Without
+      // the cursor guard in emitMonitorMatch the deferred flush double-reports the matched line.
+      let matchCount = 0;
+      const handler = () => {
+        matchCount++;
+      };
+      manager.on("monitor:match", handler);
+
+      // Print a matching line, then stay alive so the only flush we trigger is the explicit
+      // terminate() below -- never the cooldown timer (kept large) nor process exit.
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "printf 'ERR boom\\n'; sleep 5",
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-already-read",
+          monitor: {
+            filter: "ERR",
+            pattern: /ERR/,
+            exclude: false,
+            cooldownMs: 10_000,
+          },
+        }
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait until the monitor has scanned and queued the match (flush deferred by the cooldown).
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 60; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if ((proc?.monitor?.pendingLines.length ?? 0) > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(proc?.monitor?.pendingLines.length ?? 0).toBeGreaterThan(0);
+
+      // Agent reads the output inline, advancing its cursor to the monitor's scan position.
+      const output = await manager.getOutput(result.processId, undefined, false, 1);
+      expect(output.success).toBe(true);
+      if (output.success) expect(output.output).toContain("ERR boom");
+
+      // Precondition for the drop: the read cursor has caught up to the monitor's scan offset.
+      proc = await manager.getProcess(result.processId);
+      expect(proc?.outputBytesRead ?? 0).toBeGreaterThanOrEqual(proc?.monitor?.lastReadOffset ?? 0);
+
+      // Force the deferred flush. The cursor has caught up, so it must drop instead of waking.
+      await manager.terminate(result.processId);
+      expect(matchCount).toBe(0);
+
+      manager.off("monitor:match", handler);
+    });
+
     it("strips ANSI before matching and emitting matched lines", async () => {
       const eventPromise = waitForMonitorMatch(manager);
       const result = await manager.spawn(
