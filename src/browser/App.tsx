@@ -314,10 +314,10 @@ function AppInner() {
       bumpScheduledPromptStorageVersion((version) => version + 1);
     };
     const unsubscribe = subscribePersistedStateWrites((event) => {
-        if (isScheduledPromptsStorageKey(event.key)) {
-          bumpVersion();
-        }
-      });
+      if (isScheduledPromptsStorageKey(event.key)) {
+        bumpVersion();
+      }
+    });
     const handleStorage = (event: StorageEvent) => {
       if (event.key && isScheduledPromptsStorageKey(event.key)) {
         bumpVersion();

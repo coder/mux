@@ -25,7 +25,9 @@ export function getScheduledPromptDispatcherTargets(
       continue;
     }
 
-    const prompts = normalizeScheduledPrompts(readStoredPrompts(getScheduledPromptsKey(workspaceId)));
+    const prompts = normalizeScheduledPrompts(
+      readStoredPrompts(getScheduledPromptsKey(workspaceId))
+    );
     if (!prompts.some((prompt) => prompt.status === "scheduled")) {
       continue;
     }
