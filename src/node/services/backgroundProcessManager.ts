@@ -260,11 +260,15 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       monitor.flushTimer = undefined;
     }
 
-    // Don't wake the agent about output it has already read. If the read cursor
-    // (proc.outputBytesRead, advanced by task_await / bash_output) has caught up to the monitor's
-    // scan position, these matched lines were already delivered inline, so a wake would
-    // double-report them (e.g. firing the instant a concurrent task_await returns the same line).
-    if (proc.outputBytesRead >= monitor.lastReadOffset) {
+    // Don't wake the agent about output it has already been shown. getOutput (task_await /
+    // bash_output) advances outputBytesRead past content it only buffers -- an unterminated
+    // trailing line is kept in incompleteLineBuffer and not returned -- so the "shown" offset is
+    // the read cursor minus that still-buffered fragment. If that has reached the monitor's scan
+    // position the matched lines were already delivered inline and a wake would double-report them
+    // (e.g. firing the instant a concurrent task_await returns the same line). The buffered-but-
+    // unshown case stays below the scan offset, so its eventual on-exit match still wakes.
+    const shownBytes = proc.outputBytesRead - Buffer.byteLength(proc.incompleteLineBuffer, "utf8");
+    if (shownBytes >= monitor.lastReadOffset) {
       monitor.pendingLines = [];
       monitor.droppedLines = 0;
       return;

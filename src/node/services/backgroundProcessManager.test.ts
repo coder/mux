@@ -365,6 +365,36 @@ describe("BackgroundProcessManager", () => {
       manager.off("monitor:match", handler);
     });
 
+    it("still wakes when the matched line was only buffered (unterminated), not shown", async () => {
+      // getOutput advances outputBytesRead past an unterminated trailing line but keeps it in
+      // incompleteLineBuffer (not returned). The monitor only matches that line on exit, when the
+      // agent still hasn't seen it -- so the wake must NOT be suppressed by the read cursor.
+      const eventPromise = waitForMonitorMatch(manager, 6_000);
+      const result = await manager.spawn(runtime, testWorkspaceId, "printf 'ERR boom'; sleep 3", {
+        cwd: process.cwd(),
+        displayName: "monitor-buffered-unterminated",
+        monitor: {
+          filter: "ERR",
+          pattern: /ERR/,
+          exclude: false,
+          cooldownMs: 0,
+        },
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Read while running: "ERR boom" has no trailing newline, so it is buffered (cursor advances)
+      // rather than returned to the agent.
+      const reading = await manager.getOutput(result.processId, undefined, false, 1);
+      expect(reading.success).toBe(true);
+      const proc = await manager.getProcess(result.processId);
+      expect(proc?.incompleteLineBuffer).toContain("ERR boom");
+
+      // On exit the monitor finalizes the buffered line; the agent never saw it, so it still wakes.
+      const event = await eventPromise;
+      expect(event.payload.lines).toEqual(["ERR boom"]);
+    });
+
     it("strips ANSI before matching and emitting matched lines", async () => {
       const eventPromise = waitForMonitorMatch(manager);
       const result = await manager.spawn(
