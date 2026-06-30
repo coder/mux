@@ -451,6 +451,45 @@ describe("BackgroundProcessManager", () => {
       manager.off("monitor:match", handler);
     });
 
+    it("anchors matchedThroughOffset to the matched line, not later output in the same chunk", async () => {
+      // A matched line followed by a non-matching complete line in one poll: matchedThroughOffset
+      // must point at the end of the matched line (byte 8 of "ERR foo\n"), not the end of the whole
+      // complete region (byte 16 of "...nomatch\n"). Otherwise an agent that read only the matched
+      // line stays below the inflated offset and gets a redundant wake.
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "printf 'ERR foo\\nnomatch\\n'; sleep 5",
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-matched-line-anchor",
+          monitor: {
+            filter: "ERR",
+            pattern: /ERR/,
+            exclude: false,
+            cooldownMs: 10_000,
+          },
+        }
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait until both lines have been scanned (cursor at 16, no fragment buffered).
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 60; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if (
+          (proc?.monitor?.lastReadOffset ?? 0) >= 16 &&
+          (proc?.monitor?.pendingLines.length ?? 0) > 0
+        )
+          break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(proc?.monitor?.pendingLines ?? []).toEqual(["ERR foo"]);
+      expect(proc?.monitor?.matchedThroughOffset).toBe(8);
+      expect(proc?.monitor?.lastReadOffset).toBe(16);
+    });
+
     it("strips ANSI before matching and emitting matched lines", async () => {
       const eventPromise = waitForMonitorMatch(manager);
       const result = await manager.spawn(
