@@ -995,9 +995,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       const rawWithBuffer = previousBuffer + accumulatedRaw;
       const allLines = rawWithBuffer.split("\n");
 
-      // Last element is incomplete if content doesn't end with newline
-      const hasTrailingNewline = rawWithBuffer.endsWith("\n");
-      const completeLines = hasTrailingNewline ? allLines.slice(0, -1) : allLines.slice(0, -1);
+      // Drop the last element: it's either empty (content ended with "\n") or the incomplete
+      // trailing fragment, which is buffered for the next read -- so it's never a complete line.
+      const completeLines = allLines.slice(0, -1);
 
       // When using filter_exclude, check if we have meaningful (non-excluded) output.
       // We only consider complete lines as "meaningful" here; fragments are buffered for the next read.
@@ -1102,9 +1102,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const linesToReturn =
       currentStatus !== "running"
         ? allLines.filter((l) => l.length > 0) // Include all non-empty lines on exit
-        : hasTrailingNewline
-          ? allLines.slice(0, -1)
-          : allLines.slice(0, -1);
+        : allLines.slice(0, -1); // While running, drop the trailing fragment (buffered for next read)
 
     // Update buffer for next call (clear on exit, keep incomplete line otherwise)
     proc.incompleteLineBuffer =
