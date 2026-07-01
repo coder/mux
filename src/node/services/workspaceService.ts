@@ -9493,6 +9493,9 @@ export class WorkspaceService extends EventEmitter {
         agentId,
         thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
         maxOutputTokens: undefined,
+        // Heartbeats are idle control loops; their prompt may ask the agent to seed a bounded
+        // goal before continuing. AIService still gates set_goal to top-level exec-like agents.
+        allowAgentSetGoal: true,
         // Heartbeats should not mutate persisted workspace AI defaults.
         skipAiSettingsPersistence: true,
       },
