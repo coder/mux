@@ -3095,6 +3095,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {/* Hide during send to avoid duplicate display with the sent message */}
           {variant === "workspace" && !hideReviewsDuringSend && (
             <AttachedReviewsPanel
+              workspaceId={props.workspaceId}
               reviews={reviewPanelItems}
               onDetachAll={
                 reviewOverrideActive
