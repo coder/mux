@@ -139,6 +139,7 @@ import {
 } from "@/browser/utils/attachmentsHandling";
 import {
   buildPendingFromRestoredInput,
+  getRestoredMuxMetadataForCurrentText,
   type PendingUserMessage,
 } from "@/browser/utils/chatEditing";
 
@@ -506,6 +507,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [draftMuxMetadataOverride, setDraftMuxMetadataOverride] = useState<
     MuxMessageMetadata | undefined
   >(undefined);
+  const draftMuxMetadataSourceTextRef = useRef<string | null>(null);
+  const setDraftMuxMetadataOverrideForContent = useCallback(
+    (metadata: MuxMessageMetadata | undefined, content: string) => {
+      draftMuxMetadataSourceTextRef.current = metadata ? content : null;
+      setDraftMuxMetadataOverride(metadata);
+    },
+    []
+  );
+  const clearDraftMuxMetadataOverride = useCallback(() => {
+    draftMuxMetadataSourceTextRef.current = null;
+    setDraftMuxMetadataOverride(undefined);
+  }, []);
+  const activeDraftMuxMetadataOverride = getRestoredMuxMetadataForCurrentText({
+    currentText: input,
+    sourceText: draftMuxMetadataSourceTextRef.current,
+    muxMetadata: draftMuxMetadataOverride,
+  });
   const attachedReviewIdsSignature = attachedReviews.map((review) => review.id).join("\u0000");
   const clearedAttachedReviewIdsRef = useRef<string | typeof AWAITING_NEW_ATTACHED_REVIEWS | null>(
     null
@@ -1259,25 +1277,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (pending: PendingUserMessage) => {
       applyDraftFromPending(pending, `restored-${Date.now()}`);
       setDraftReviews(pending.reviews);
-      setDraftMuxMetadataOverride(pending.muxMetadata);
+      setDraftMuxMetadataOverrideForContent(pending.muxMetadata, pending.content);
       focusMessageInput();
     },
-    [applyDraftFromPending, focusMessageInput, setDraftReviews]
+    [applyDraftFromPending, focusMessageInput, setDraftMuxMetadataOverrideForContent]
   );
 
   const restorePreEditDraft = useCallback(() => {
     setDraft(preEditDraftRef.current);
     setDraftReviews(preEditReviewsRef.current);
-    setDraftMuxMetadataOverride(preEditMuxMetadataOverrideRef.current);
-  }, [setDraft, setDraftReviews]);
+    setDraftMuxMetadataOverrideForContent(
+      preEditMuxMetadataOverrideRef.current,
+      preEditDraftRef.current.text
+    );
+  }, [setDraft, setDraftReviews, setDraftMuxMetadataOverrideForContent]);
 
   // Method to restore text to input (used by compaction cancel)
   const restoreText = useCallback(
     (text: string) => {
+      clearDraftMuxMetadataOverride();
       setInput(() => text);
       focusMessageInput();
     },
-    [focusMessageInput, setInput]
+    [clearDraftMuxMetadataOverride, focusMessageInput, setInput]
   );
 
   // Method to append text to input (used by Code Review notes)
@@ -1359,10 +1381,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
       preEditReviewsRef.current = draftReviews;
-      preEditMuxMetadataOverrideRef.current = draftMuxMetadataOverride;
+      preEditMuxMetadataOverrideRef.current = activeDraftMuxMetadataOverride;
       applyDraftFromPending(editingMessage.pending, `edit-${editingMessage.id}`);
       setDraftReviews(editingMessage.pending.reviews);
-      setDraftMuxMetadataOverride(editingMessage.pending.muxMetadata);
+      setDraftMuxMetadataOverrideForContent(
+        editingMessage.pending.muxMetadata,
+        editingMessage.pending.content
+      );
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -1813,7 +1838,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           restoreDraft(restoredPending);
         } else {
-          setDraftMuxMetadataOverride(undefined);
           restoreText(restoredPending.content);
         }
       } else if (hasFileParts || hasStagedAttachments || hasReviews) {
@@ -1853,7 +1877,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput("");
       setAttachments([]);
       setDraftReviews(null);
-      setDraftMuxMetadataOverride(undefined);
+      clearDraftMuxMetadataOverride();
       onDetachAllReviewsForComposerClear?.();
       if (inputRef.current) {
         inputRef.current.style.height = "";
@@ -1863,7 +1887,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     window.addEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER, handler as EventListener);
-  }, [onDetachAllReviewsForComposerClear, setAttachments, setInput, workspaceIdForComposerClear]);
+  }, [
+    clearDraftMuxMetadataOverride,
+    onDetachAllReviewsForComposerClear,
+    setAttachments,
+    setInput,
+    workspaceIdForComposerClear,
+  ]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {
@@ -2272,7 +2302,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       onCancelEdit: commandOnCancelEdit,
       reviews: reviewsData,
       attachments,
-      followUpMuxMetadata: draftMuxMetadataOverride,
+      followUpMuxMetadata: activeDraftMuxMetadataOverride,
       fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
       onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
       onDetachAllReviews: variant === "workspace" ? props.onDetachAllReviews : undefined,
@@ -2286,7 +2316,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput(restoreInput);
     } else {
       setDraftReviews(null);
-      setDraftMuxMetadataOverride(undefined);
+      clearDraftMuxMetadataOverride();
       if (variant === "workspace" && parsed.type === "compact") {
         if (reviewIdsForCheck.length > 0) {
           props.onCheckReviews?.(reviewIdsForCheck);
@@ -2683,7 +2713,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
-      const preSendMuxMetadataOverride = draftMuxMetadataOverride;
+      const preSendMuxMetadataOverride = activeDraftMuxMetadataOverride;
       const editMessageForSend = editingMessageForUi;
 
       try {
@@ -2729,7 +2759,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       text: appendStagedAttachmentNotice(parsed.continueMessage ?? "", attachments),
                       fileParts: sendFileParts,
                       reviews: reviewsData,
-                      muxMetadata: draftMuxMetadataOverride,
+                      muxMetadata: activeDraftMuxMetadataOverride,
                     }
                   : undefined,
               model: parsed.model,
@@ -2797,7 +2827,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // so they'll reappear naturally on failure (we only call onCheckReviews on success)
         setInput("");
         setDraftReviews(null);
-        setDraftMuxMetadataOverride(undefined);
+        clearDraftMuxMetadataOverride();
         setAttachments([]);
         setHideReviewsDuringSend(true);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
@@ -2857,7 +2887,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setOptimisticallyDismissedEditId(null);
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
-          setDraftMuxMetadataOverride(preSendMuxMetadataOverride);
+          setDraftMuxMetadataOverrideForContent(preSendMuxMetadataOverride, preSendDraft.text);
         } else {
           // Track telemetry for successful message send
           telemetry.messageSent(
@@ -2905,7 +2935,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setOptimisticallyDismissedEditId(null);
         setDraft(preSendDraft);
         setDraftReviews(preSendReviews);
-        setDraftMuxMetadataOverride(preSendMuxMetadataOverride);
+        setDraftMuxMetadataOverrideForContent(preSendMuxMetadataOverride, preSendDraft.text);
       } finally {
         setSendingCount((c) => c - 1);
         setHideReviewsDuringSend(false);

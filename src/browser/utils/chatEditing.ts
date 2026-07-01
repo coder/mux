@@ -73,6 +73,14 @@ export function buildPendingFromRestoredInput(params: {
   };
 }
 
+export function getRestoredMuxMetadataForCurrentText(params: {
+  currentText: string;
+  sourceText: string | null;
+  muxMetadata?: MuxMessageMetadata;
+}): MuxMessageMetadata | undefined {
+  return params.sourceText === params.currentText ? params.muxMetadata : undefined;
+}
+
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
 
