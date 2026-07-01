@@ -3,6 +3,7 @@ import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stage
 import type {
   CompactionFollowUpRequest,
   DisplayedUserMessage,
+  MuxMessageMetadata,
   QueuedMessage,
 } from "@/common/types/message";
 import {
@@ -11,6 +12,7 @@ import {
   buildPendingFromDisplayed,
   buildPendingFromRestoredInput,
   canEditDisplayedUserMessage,
+  getRestoredMuxMetadataForCurrentText,
   normalizeQueuedMessage,
 } from "./chatEditing";
 
@@ -128,6 +130,32 @@ describe("canEditDisplayedUserMessage", () => {
       ],
       reviews: [review],
     });
+  });
+
+  test("keeps restored mux metadata only while the restored text is unchanged", () => {
+    const metadata: MuxMessageMetadata = {
+      type: "agent-skill",
+      rawCommand: "/test-skill investigate",
+      commandPrefix: "/test-skill",
+      skillName: "test-skill",
+      scope: "project",
+    };
+
+    expect(
+      getRestoredMuxMetadataForCurrentText({
+        currentText: "investigate",
+        sourceText: "investigate",
+        muxMetadata: metadata,
+      })
+    ).toBe(metadata);
+
+    expect(
+      getRestoredMuxMetadataForCurrentText({
+        currentText: "plain follow-up",
+        sourceText: "investigate",
+        muxMetadata: metadata,
+      })
+    ).toBeUndefined();
   });
 
   test("restores staged ZIPs from compaction follow-up content", () => {
