@@ -39,6 +39,7 @@ const ThinkingContext = createContext<ThinkingContextType | undefined>(undefined
 interface ThinkingProviderProps {
   workspaceId?: string; // Workspace-scoped storage (highest priority)
   projectPath?: string; // Project-scoped storage (fallback if no workspaceId)
+  enableGlobalListeners?: boolean;
   children: ReactNode;
 }
 
@@ -176,6 +177,10 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   // Implemented at the ThinkingProvider level so they work in both the workspace view
   // and the "New Workspace" creation screen (which doesn't mount AIView).
   useEffect(() => {
+    if (props.enableGlobalListeners === false) {
+      return;
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const isIncrease = matchesKeybind(e, KEYBINDS.INCREASE_THINKING);
       const isDecrease = matchesKeybind(e, KEYBINDS.DECREASE_THINKING);
@@ -213,7 +218,15 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [defaultModel, getMinimum, metadataSettings.model, scopeId, thinkingLevel, setThinkingLevel]);
+  }, [
+    defaultModel,
+    getMinimum,
+    metadataSettings.model,
+    props.enableGlobalListeners,
+    scopeId,
+    thinkingLevel,
+    setThinkingLevel,
+  ]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(

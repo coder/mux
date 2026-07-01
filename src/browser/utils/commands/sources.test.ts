@@ -257,6 +257,31 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   expect(titles.includes("Open Terminal Window for Workspace…")).toBe(true);
 });
 
+test("schedule sidebar commands are hidden for transcript-only workspaces", async () => {
+  const workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
+  workspaceMetadata.set("w1", {
+    id: "w1",
+    name: "feat-x",
+    projectName: "a",
+    projectPath: "/repo/a",
+    namedWorkspacePath: "/repo/a/feat-x",
+    runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    transcriptOnly: true,
+  });
+  const actions = getActions({ workspaceMetadata });
+  const addToolAction = actions.find((action) => action.id === "nav:rightSidebar:addTool");
+  const toolField = addToolAction?.prompt?.fields[0];
+
+  if (toolField?.type !== "select") {
+    throw new Error("Expected Add Tool to use a select prompt field");
+  }
+
+  const options = await toolField.getOptions({});
+
+  expect(actions.some((action) => action.id === "nav:toggle-tab:schedule")).toBe(false);
+  expect(options.map((option) => option.id)).not.toContain("schedule");
+});
+
 test("appearance commands offer auto when a manual theme is selected", () => {
   const actions = getActions({ themePreference: "dark" });
 

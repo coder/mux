@@ -92,6 +92,7 @@ import {
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
 import { ReviewAssistedStatsReporter } from "@/browser/features/RightSidebar/CodeReview/ReviewPanel";
+import { canUseScheduledPromptsInWorkspace } from "@/browser/features/ScheduledPrompts/scheduledPromptAvailability";
 import {
   TAB_REGISTRY,
   TerminalTabLabel,
@@ -682,6 +683,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const currentWorkspaceMetadata =
     workspaceMetadataContext.workspaceMetadata.get(workspaceId) ?? null;
   const isChildWorkspaceForGoal = currentWorkspaceMetadata?.parentWorkspaceId != null;
+  const scheduleTabAvailable =
+    currentWorkspaceMetadata === null
+      ? null
+      : canUseScheduledPromptsInWorkspace(currentWorkspaceMetadata);
   // Safe variant: storybook stories may render before addWorkspace() runs; the
   // optional hook returns null instead of throwing assertGet on the unregistered
   // workspace. Real workspaces always have an aggregator by the time RightSidebar
@@ -1022,6 +1027,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [initialActiveTab, setLayoutRaw, isChildWorkspaceForGoal]);
+
+  React.useEffect(() => {
+    if (scheduleTabAvailable === null) {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasSchedule = collectAllTabs(prev.root).includes("schedule");
+
+      if (!scheduleTabAvailable && hasSchedule) {
+        return removeTabEverywhere(prev, "schedule");
+      }
+
+      return prev;
+    });
+  }, [initialActiveTab, scheduleTabAvailable, setLayoutRaw]);
 
   React.useEffect(() => {
     if (!desktopExperimentEnabled) {
