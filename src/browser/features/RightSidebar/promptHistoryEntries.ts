@@ -1,5 +1,14 @@
-import type { DisplayedMessage, MuxMessageMetadata } from "@/common/types/message";
-import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
+import {
+  isDefaultSourceContent,
+  type CompactionFollowUpRequest,
+  type DisplayedMessage,
+  type MuxMessageMetadata,
+} from "@/common/types/message";
+import {
+  appendStagedAttachmentNotice,
+  displayStagedAttachmentsToChatAttachments,
+  parseStagedAttachmentNotice,
+} from "@/browser/features/ChatInput/stagedAttachments";
 import { getEditableUserMessageDraftContent } from "@/browser/utils/messages/messageUtils";
 
 type UserMessage = Extract<DisplayedMessage, { type: "user" }>;
@@ -27,24 +36,76 @@ function isCompletedLocalCommandOutput(message: UserMessage): boolean {
   );
 }
 
+function buildSyntheticFollowUpEntry(
+  message: UserMessage,
+  followUpContent?: CompactionFollowUpRequest
+): PromptHistoryEntry | null {
+  if (!followUpContent || isDefaultSourceContent(followUpContent)) {
+    return null;
+  }
+
+  const parsed = parseStagedAttachmentNotice(followUpContent.text ?? "");
+  const stagedAttachments = displayStagedAttachmentsToChatAttachments(
+    parsed.attachments,
+    `history-${message.historyId}`
+  );
+  const fileParts = followUpContent.fileParts ?? [];
+  const reviews = followUpContent.reviews ?? [];
+
+  if (
+    parsed.text.trim().length === 0 &&
+    stagedAttachments.length === 0 &&
+    fileParts.length === 0 &&
+    reviews.length === 0
+  ) {
+    return null;
+  }
+
+  const insertContent =
+    stagedAttachments.length > 0
+      ? appendStagedAttachmentNotice(parsed.text, stagedAttachments)
+      : parsed.text;
+
+  return {
+    historyId: message.historyId,
+    content: parsed.text,
+    ...(insertContent !== parsed.text ? { insertContent } : {}),
+    historySequence: message.historySequence,
+    timestamp: message.timestamp,
+    commandPrefix: undefined,
+    isSideQuestion: false,
+    fileCount: fileParts.length + stagedAttachments.length,
+    ...(fileParts.length > 0 ? { fileParts } : {}),
+    ...(reviews.length > 0 ? { reviews } : {}),
+    ...(followUpContent.muxMetadata ? { muxMetadata: followUpContent.muxMetadata } : {}),
+  };
+}
+
 export function getPromptHistoryEntries(
   messages: readonly DisplayedMessage[]
 ): PromptHistoryEntry[] {
   return messages
-    .filter((message): message is Extract<DisplayedMessage, { type: "user" }> => {
+    .flatMap((message): PromptHistoryEntry[] => {
       if (message.type !== "user") {
-        return false;
+        return [];
       }
-      if (message.isSynthetic || message.isGoalContinuation || message.isBudgetLimitWrapup) {
-        return false;
+      if (message.isGoalContinuation || message.isBudgetLimitWrapup) {
+        return [];
       }
       if (isCompletedLocalCommandOutput(message)) {
-        return false;
+        return [];
       }
-      return message.content.trim().length > 0 || (message.fileParts?.length ?? 0) > 0;
-    })
-    .map((message) => {
+
       const followUpContent = message.compactionRequest?.parsed.followUpContent;
+      if (message.isSynthetic) {
+        const entry = buildSyntheticFollowUpEntry(message, followUpContent);
+        return entry ? [entry] : [];
+      }
+
+      if (message.content.trim().length === 0 && (message.fileParts?.length ?? 0) === 0) {
+        return [];
+      }
+
       const fileParts = followUpContent?.fileParts ?? message.fileParts ?? [];
       const reviews = followUpContent?.reviews ?? message.reviews ?? [];
       const draft = getEditableUserMessageDraftContent(message);
@@ -53,19 +114,21 @@ export function getPromptHistoryEntries(
         draft.stagedAttachments.length > 0
           ? appendStagedAttachmentNotice(content, draft.stagedAttachments)
           : content;
-      return {
-        historyId: message.historyId,
-        content,
-        ...(insertContent !== content ? { insertContent } : {}),
-        historySequence: message.historySequence,
-        timestamp: message.timestamp,
-        commandPrefix: message.commandPrefix,
-        isSideQuestion: message.isSideQuestion === true,
-        fileCount: fileParts.length + draft.stagedAttachments.length,
-        ...(fileParts.length > 0 ? { fileParts } : {}),
-        ...(reviews.length > 0 ? { reviews } : {}),
-        ...(followUpContent?.muxMetadata ? { muxMetadata: followUpContent.muxMetadata } : {}),
-      };
+      return [
+        {
+          historyId: message.historyId,
+          content,
+          ...(insertContent !== content ? { insertContent } : {}),
+          historySequence: message.historySequence,
+          timestamp: message.timestamp,
+          commandPrefix: message.commandPrefix,
+          isSideQuestion: message.isSideQuestion === true,
+          fileCount: fileParts.length + draft.stagedAttachments.length,
+          ...(fileParts.length > 0 ? { fileParts } : {}),
+          ...(reviews.length > 0 ? { reviews } : {}),
+          ...(followUpContent?.muxMetadata ? { muxMetadata: followUpContent.muxMetadata } : {}),
+        },
+      ];
     })
     .sort((left, right) => left.historySequence - right.historySequence);
 }

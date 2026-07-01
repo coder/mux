@@ -56,6 +56,37 @@ describe("getPromptHistoryEntries", () => {
     expect(getPromptHistoryEntries(messages).map((entry) => entry.historyId)).toEqual(["real"]);
   });
 
+  test("preserves synthetic auto-compaction follow-up prompts", () => {
+    const [entry] = getPromptHistoryEntries([
+      userMessage("auto-compact", "Synthetic compaction request", 1, {
+        isSynthetic: true,
+        compactionRequest: {
+          parsed: {
+            followUpContent: {
+              text: "Original prompt near the context limit",
+              model: "openai:gpt-5",
+              agentId: "exec",
+            },
+          },
+        },
+      }),
+    ]);
+
+    if (!entry) throw new Error("expected prompt history entry");
+    expect(entry).toMatchObject({
+      historyId: "auto-compact",
+      content: "Original prompt near the context limit",
+      fileCount: 0,
+      isSideQuestion: false,
+    });
+    expect(createPromptHistoryInsertPayload(entry)).toEqual({
+      text: "Original prompt near the context limit",
+      mode: "replace",
+      fileParts: [],
+      reviews: [],
+    });
+  });
+
   test("skips completed local command output rows", () => {
     const entries = getPromptHistoryEntries([
       userMessage("stdout", "<local-command-stdout>build complete</local-command-stdout>", 1),
