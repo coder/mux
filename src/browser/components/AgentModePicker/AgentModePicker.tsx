@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronDown, Route, SquareCode } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 import { useAgent } from "@/browser/contexts/AgentContext";
+import { getAgentIcon } from "@/browser/utils/agentIcons";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { normalizeAgentId as normalizeStoredAgentId } from "@/common/utils/agentIds";
@@ -41,17 +41,6 @@ interface AgentOption {
   aiDefaults?: { model?: string; thinkingLevel?: string };
   /** Whether this agent can be spawned as a subagent */
   subagentRunnable: boolean;
-}
-
-/** Maps well-known agent IDs to lucide icons for the dropdown */
-const AGENT_ICONS: Record<string, LucideIcon> = {
-  plan: Route,
-  exec: SquareCode,
-};
-const DEFAULT_AGENT_ICON: LucideIcon = Bot;
-
-function getAgentIcon(agentId: string): LucideIcon {
-  return AGENT_ICONS[agentId] ?? DEFAULT_AGENT_ICON;
 }
 
 export function formatAgentIdLabel(agentId: string): string {
