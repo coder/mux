@@ -3,6 +3,7 @@ import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stage
 import type {
   CompactionFollowUpRequest,
   DisplayedUserMessage,
+  MuxMessageMetadata,
   QueuedMessage,
 } from "@/common/types/message";
 import {
@@ -11,6 +12,9 @@ import {
   buildPendingFromDisplayed,
   buildPendingFromRestoredInput,
   canEditDisplayedUserMessage,
+  getRestoredDraftPayloadSignature,
+  getRestoredMuxMetadataForCurrentDraft,
+  mergeNewAttachedReviewsIntoDraft,
   normalizeQueuedMessage,
 } from "./chatEditing";
 
@@ -32,6 +36,13 @@ const STAGED_ATTACHMENT = {
   mediaType: "application/zip",
   sizeBytes: 199,
   stagedPath: ".mux/user-attachments/id/archive.zip",
+};
+
+const REVIEW_NOTE = {
+  filePath: "src/app.ts",
+  lineRange: "+1",
+  selectedCode: "const value = 1;",
+  userNote: "Review this",
 };
 
 describe("canEditDisplayedUserMessage", () => {
@@ -128,6 +139,116 @@ describe("canEditDisplayedUserMessage", () => {
       ],
       reviews: [review],
     });
+  });
+
+  test("keeps restored mux metadata only while the restored draft payload is unchanged", () => {
+    const metadata: MuxMessageMetadata = {
+      type: "agent-skill",
+      rawCommand: "/test-skill investigate",
+      commandPrefix: "/test-skill",
+      skillName: "test-skill",
+      scope: "project",
+    };
+    const sourceDraft = {
+      text: "investigate",
+      attachments: [STAGED_ATTACHMENT],
+      reviews: [REVIEW_NOTE],
+    };
+    const sourceSignature = getRestoredDraftPayloadSignature(sourceDraft);
+
+    expect(
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: sourceDraft,
+        sourceSignature,
+        muxMetadata: metadata,
+      })
+    ).toBe(metadata);
+
+    expect(
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: {
+          ...sourceDraft,
+          text: "plain follow-up",
+        },
+        sourceSignature,
+        muxMetadata: metadata,
+      })
+    ).toBeUndefined();
+
+    expect(
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: {
+          ...sourceDraft,
+          attachments: [],
+        },
+        sourceSignature,
+        muxMetadata: metadata,
+      })
+    ).toBeUndefined();
+
+    expect(
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: {
+          ...sourceDraft,
+          reviews: [{ ...REVIEW_NOTE, userNote: "Different review" }],
+        },
+        sourceSignature,
+        muxMetadata: metadata,
+      })
+    ).toBeUndefined();
+  });
+
+  test("merges newly attached reviews into restored draft reviews", () => {
+    const laterReview = {
+      filePath: "src/later.ts",
+      lineRange: "+8",
+      selectedCode: "const later = true;",
+      userNote: "Add this too",
+    };
+
+    const result = mergeNewAttachedReviewsIntoDraft({
+      draftReviews: [REVIEW_NOTE],
+      attachedReviews: [
+        {
+          id: "existing-parent-review",
+          data: REVIEW_NOTE,
+          status: "attached",
+          createdAt: 1,
+        },
+        {
+          id: "duplicate-parent-review",
+          data: REVIEW_NOTE,
+          status: "attached",
+          createdAt: 2,
+        },
+        {
+          id: "second-duplicate-parent-review",
+          data: REVIEW_NOTE,
+          status: "attached",
+          createdAt: 3,
+        },
+        {
+          id: "new-parent-review",
+          data: laterReview,
+          status: "attached",
+          createdAt: 4,
+        },
+      ],
+      mergedAttachedReviewIds: new Set(["existing-parent-review"]),
+    });
+
+    expect(result.reviews).toEqual([REVIEW_NOTE, laterReview]);
+    expect(result.mergedReviewIds).toEqual([
+      "duplicate-parent-review",
+      "second-duplicate-parent-review",
+      "new-parent-review",
+    ]);
+    expect([...result.mergedAttachedReviewIds].sort()).toEqual([
+      "duplicate-parent-review",
+      "existing-parent-review",
+      "new-parent-review",
+      "second-duplicate-parent-review",
+    ]);
   });
 
   test("restores staged ZIPs from compaction follow-up content", () => {

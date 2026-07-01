@@ -1,5 +1,8 @@
 import type { FilePart } from "@/common/orpc/types";
-import type { StagedChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
+import type {
+  ChatAttachment,
+  StagedChatAttachment,
+} from "@/browser/features/ChatInput/ChatAttachments";
 import {
   displayStagedAttachmentsToChatAttachments,
   parseStagedAttachmentNotice,
@@ -7,9 +10,11 @@ import {
 import type {
   CompactionFollowUpRequest,
   DisplayedUserMessage,
+  MuxMessageMetadata,
   QueuedMessage,
   ReviewNoteDataForDisplay,
 } from "@/common/types/message";
+import type { Review } from "@/common/types/review";
 import { getEditableUserMessageDraftContent } from "@/browser/utils/messages/messageUtils";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
@@ -20,6 +25,7 @@ export interface PendingUserMessage extends Omit<
   fileParts: FilePart[];
   stagedAttachments: StagedChatAttachment[];
   reviews: ReviewNoteDataForDisplay[];
+  muxMetadata?: MuxMessageMetadata;
 }
 
 export interface EditingMessageState {
@@ -56,6 +62,7 @@ export function buildPendingFromRestoredInput(params: {
   fileParts: FilePart[];
   reviews: ReviewNoteDataForDisplay[];
   idPrefix: string;
+  muxMetadata?: MuxMessageMetadata;
 }): PendingUserMessage {
   const parsed = parseStagedAttachmentNotice(params.content);
   return {
@@ -66,6 +73,110 @@ export function buildPendingFromRestoredInput(params: {
       params.idPrefix
     ),
     reviews: params.reviews,
+    muxMetadata: params.muxMetadata,
+  };
+}
+
+export interface RestoredDraftPayload {
+  text: string;
+  attachments: ChatAttachment[];
+  reviews?: ReviewNoteDataForDisplay[];
+}
+
+export function getRestoredDraftPayloadSignature(payload: RestoredDraftPayload): string {
+  return JSON.stringify({
+    text: payload.text,
+    attachments: payload.attachments.map((attachment) =>
+      attachment.kind === "staged"
+        ? {
+            kind: attachment.kind,
+            id: attachment.id,
+            filename: attachment.filename,
+            mediaType: attachment.mediaType,
+            sizeBytes: attachment.sizeBytes,
+            stagedPath: attachment.stagedPath,
+          }
+        : {
+            kind: attachment.kind,
+            id: attachment.id,
+            filename: attachment.filename,
+            mediaType: attachment.mediaType,
+            resizeInfo: attachment.resizeInfo,
+            url: attachment.url,
+          }
+    ),
+    reviews: (payload.reviews ?? []).map((review) => ({
+      filePath: review.filePath,
+      lineRange: review.lineRange,
+      newStart: review.newStart,
+      oldStart: review.oldStart,
+      selectedCode: review.selectedCode,
+      selectedDiff: review.selectedDiff,
+      userNote: review.userNote,
+    })),
+  });
+}
+
+export function getRestoredMuxMetadataForCurrentDraft(params: {
+  currentDraft: RestoredDraftPayload;
+  sourceSignature: string | null;
+  muxMetadata?: MuxMessageMetadata;
+}): MuxMessageMetadata | undefined {
+  if (!params.muxMetadata || params.sourceSignature === null) {
+    return undefined;
+  }
+  return getRestoredDraftPayloadSignature(params.currentDraft) === params.sourceSignature
+    ? params.muxMetadata
+    : undefined;
+}
+
+export function getReviewNoteSignature(review: ReviewNoteDataForDisplay): string {
+  return JSON.stringify({
+    filePath: review.filePath,
+    lineRange: review.lineRange,
+    newStart: review.newStart,
+    oldStart: review.oldStart,
+    selectedCode: review.selectedCode,
+    selectedDiff: review.selectedDiff,
+    userNote: review.userNote,
+  });
+}
+
+export function mergeNewAttachedReviewsIntoDraft(params: {
+  draftReviews: ReviewNoteDataForDisplay[];
+  attachedReviews: Review[];
+  mergedAttachedReviewIds: ReadonlySet<string>;
+}): {
+  reviews: ReviewNoteDataForDisplay[];
+  mergedAttachedReviewIds: Set<string>;
+  mergedReviewIds: string[];
+} {
+  const mergedAttachedReviewIds = new Set(params.mergedAttachedReviewIds);
+  const existingReviewSignatures = new Set(params.draftReviews.map(getReviewNoteSignature));
+  const additions: ReviewNoteDataForDisplay[] = [];
+  const mergedReviewIds: string[] = [];
+
+  for (const review of params.attachedReviews) {
+    if (mergedAttachedReviewIds.has(review.id)) {
+      continue;
+    }
+
+    mergedAttachedReviewIds.add(review.id);
+    const signature = getReviewNoteSignature(review.data);
+    if (existingReviewSignatures.has(signature)) {
+      mergedReviewIds.push(review.id);
+      continue;
+    }
+
+    existingReviewSignatures.add(signature);
+    additions.push(review.data);
+    mergedReviewIds.push(review.id);
+  }
+
+  return {
+    reviews: additions.length > 0 ? [...params.draftReviews, ...additions] : params.draftReviews,
+    mergedAttachedReviewIds,
+    mergedReviewIds,
   };
 }
 
@@ -119,5 +230,6 @@ export const buildEditingStateFromCompaction = (
     fileParts: followUp?.fileParts ?? [],
     stagedAttachments: stagedAttachmentsFromText(followUp?.text, `compaction-${messageId}`),
     reviews: followUp?.reviews ?? [],
+    muxMetadata: followUp?.muxMetadata,
   },
 });
