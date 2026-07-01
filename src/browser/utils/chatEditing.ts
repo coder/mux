@@ -1,5 +1,8 @@
 import type { FilePart } from "@/common/orpc/types";
-import type { StagedChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
+import type {
+  ChatAttachment,
+  StagedChatAttachment,
+} from "@/browser/features/ChatInput/ChatAttachments";
 import {
   displayStagedAttachmentsToChatAttachments,
   parseStagedAttachmentNotice,
@@ -73,12 +76,57 @@ export function buildPendingFromRestoredInput(params: {
   };
 }
 
-export function getRestoredMuxMetadataForCurrentText(params: {
-  currentText: string;
-  sourceText: string | null;
+export interface RestoredDraftPayload {
+  text: string;
+  attachments: ChatAttachment[];
+  reviews?: ReviewNoteDataForDisplay[];
+}
+
+export function getRestoredDraftPayloadSignature(payload: RestoredDraftPayload): string {
+  return JSON.stringify({
+    text: payload.text,
+    attachments: payload.attachments.map((attachment) =>
+      attachment.kind === "staged"
+        ? {
+            kind: attachment.kind,
+            id: attachment.id,
+            filename: attachment.filename,
+            mediaType: attachment.mediaType,
+            sizeBytes: attachment.sizeBytes,
+            stagedPath: attachment.stagedPath,
+          }
+        : {
+            kind: attachment.kind,
+            id: attachment.id,
+            filename: attachment.filename,
+            mediaType: attachment.mediaType,
+            resizeInfo: attachment.resizeInfo,
+            url: attachment.url,
+          }
+    ),
+    reviews: (payload.reviews ?? []).map((review) => ({
+      filePath: review.filePath,
+      lineRange: review.lineRange,
+      newStart: review.newStart,
+      oldStart: review.oldStart,
+      selectedCode: review.selectedCode,
+      selectedDiff: review.selectedDiff,
+      userNote: review.userNote,
+    })),
+  });
+}
+
+export function getRestoredMuxMetadataForCurrentDraft(params: {
+  currentDraft: RestoredDraftPayload;
+  sourceSignature: string | null;
   muxMetadata?: MuxMessageMetadata;
 }): MuxMessageMetadata | undefined {
-  return params.sourceText === params.currentText ? params.muxMetadata : undefined;
+  if (!params.muxMetadata || params.sourceSignature === null) {
+    return undefined;
+  }
+  return getRestoredDraftPayloadSignature(params.currentDraft) === params.sourceSignature
+    ? params.muxMetadata
+    : undefined;
 }
 
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
