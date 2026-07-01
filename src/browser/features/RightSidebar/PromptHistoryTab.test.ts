@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import { createPromptHistoryInsertPayload } from "./PromptHistoryTab";
@@ -146,6 +147,53 @@ const marker = '</review>';
     expect(entry.reviews).toEqual(reviews);
     expect(createPromptHistoryInsertPayload(entry)).toEqual({
       text: "Reuse review context",
+      mode: "replace",
+      fileParts: [],
+      reviews,
+    });
+  });
+
+  test("insert payload preserves staged attachments without duplicating review text", () => {
+    const reviews: ReviewNoteData[] = [
+      {
+        filePath: "src/example.ts",
+        lineRange: "+10-12",
+        selectedCode: "const archived = true;",
+        userNote: "Use this with the ZIP.",
+      },
+    ];
+    const serializedReview = `<review>
+Re src/example.ts:+10-12
+\`\`\`
+const archived = true;
+\`\`\`
+> Use this with the ZIP.
+</review>`;
+    const stagedAttachment = {
+      kind: "staged" as const,
+      id: "zip-1",
+      filename: "archive.zip",
+      mediaType: "application/zip",
+      sizeBytes: 128,
+      stagedPath: ".mux/user-attachments/id/archive.zip",
+    };
+    const visibleText = "Inspect the attached archive.";
+    const messageContent = appendStagedAttachmentNotice(`${serializedReview}\n\n${visibleText}`, [
+      stagedAttachment,
+    ]);
+    const [entry] = getPromptHistoryEntries([
+      userMessage("with-staged", messageContent, 1, {
+        reviews,
+      }),
+    ]);
+
+    if (!entry) throw new Error("expected prompt history entry");
+    expect(entry.content).toBe(visibleText);
+    expect(entry.fileCount).toBe(1);
+    expect(entry.insertContent).toContain("<attached-files>");
+    expect(entry.insertContent).not.toContain("<review>");
+    expect(createPromptHistoryInsertPayload(entry)).toEqual({
+      text: appendStagedAttachmentNotice(visibleText, [stagedAttachment]),
       mode: "replace",
       fileParts: [],
       reviews,
