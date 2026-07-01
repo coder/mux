@@ -208,6 +208,13 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const AWAITING_NEW_ATTACHED_REVIEWS = Symbol("awaiting-new-attached-reviews");
 const EMPTY_ATTACHED_REVIEWS: Review[] = [];
+type DraftReviewCheckIdsBySignature = Map<string, Set<string>>;
+
+function cloneDraftReviewCheckIdsBySignature(
+  source: DraftReviewCheckIdsBySignature
+): DraftReviewCheckIdsBySignature {
+  return new Map(Array.from(source, ([signature, reviewIds]) => [signature, new Set(reviewIds)]));
+}
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -535,7 +542,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     null
   );
   const draftReviewMergedAttachedIdsRef = useRef<Set<string> | null>(null);
-  const draftReviewCheckIdsBySignatureRef = useRef(new Map<string, string>());
+  const draftReviewCheckIdsBySignatureRef = useRef<DraftReviewCheckIdsBySignature>(new Map());
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
   const nextDraftReviewIdRef = useRef(0);
   const isDraftReviewData = (value: unknown): value is ReviewNoteDataForDisplay =>
@@ -628,10 +635,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     for (const reviewId of result.mergedReviewIds) {
       const review = attachedReviews.find((attachedReview) => attachedReview.id === reviewId);
       if (review) {
-        draftReviewCheckIdsBySignatureRef.current.set(
-          getReviewNoteSignature(review.data),
-          review.id
-        );
+        const signature = getReviewNoteSignature(review.data);
+        const reviewIds = draftReviewCheckIdsBySignatureRef.current.get(signature);
+        if (reviewIds) {
+          reviewIds.add(review.id);
+        } else {
+          draftReviewCheckIdsBySignatureRef.current.set(signature, new Set([review.id]));
+        }
       }
       onDetachReviewForDraftMerge?.(reviewId);
     }
@@ -1148,11 +1158,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const reviewIdsForCheck = reviewOverrideActive
     ? [
         ...new Set(
-          draftReviewItems
-            .map((review) =>
-              draftReviewCheckIdsBySignatureRef.current.get(getReviewNoteSignature(review))
+          draftReviewItems.flatMap((review) =>
+            Array.from(
+              draftReviewCheckIdsBySignatureRef.current.get(getReviewNoteSignature(review)) ?? []
             )
-            .filter((reviewId): reviewId is string => reviewId !== undefined)
+          )
         ),
       ]
     : attachedReviews.map((review) => review.id);
@@ -2803,7 +2813,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
       const preSendMuxMetadataOverride = activeDraftMuxMetadataOverride;
-      const preSendDraftReviewCheckIdsBySignature = new Map(
+      const preSendDraftReviewCheckIdsBySignature = cloneDraftReviewCheckIdsBySignature(
         draftReviewCheckIdsBySignatureRef.current
       );
       const editMessageForSend = editingMessageForUi;
@@ -2980,7 +2990,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setOptimisticallyDismissedEditId(null);
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
-          draftReviewCheckIdsBySignatureRef.current = new Map(
+          draftReviewCheckIdsBySignatureRef.current = cloneDraftReviewCheckIdsBySignature(
             preSendDraftReviewCheckIdsBySignature
           );
           draftReviewMergedAttachedIdsRef.current =
@@ -3040,7 +3050,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setOptimisticallyDismissedEditId(null);
         setDraft(preSendDraft);
         setDraftReviews(preSendReviews);
-        draftReviewCheckIdsBySignatureRef.current = new Map(preSendDraftReviewCheckIdsBySignature);
+        draftReviewCheckIdsBySignatureRef.current = cloneDraftReviewCheckIdsBySignature(
+          preSendDraftReviewCheckIdsBySignature
+        );
         draftReviewMergedAttachedIdsRef.current =
           preSendReviews && preSendReviews.length > 0
             ? new Set(attachedReviews.map((review) => review.id))
