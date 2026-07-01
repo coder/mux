@@ -85,6 +85,14 @@ function getSupportedStagedMediaType(file: File): string | null {
   });
 }
 
+// True when a file is accepted as either a provider attachment or a staged (ZIP) attachment.
+// Shared by the clipboard/drop extractors so both stay in sync on what counts as attachable.
+// Both getters return a non-empty media-type string or null, so `!= null` matches the prior
+// truthiness checks the extractors inlined.
+function isSupportedAttachmentFile(file: File): boolean {
+  return getSupportedMediaType(file) != null || getSupportedStagedMediaType(file) != null;
+}
+
 function fileBytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunkSize = 0x8000;
@@ -205,7 +213,7 @@ export function extractAttachmentsFromClipboard(items: DataTransferItemList): Fi
     const file = item?.getAsFile();
     if (!file) continue;
 
-    if (getSupportedMediaType(file) || getSupportedStagedMediaType(file)) {
+    if (isSupportedAttachmentFile(file)) {
       files.push(file);
     }
   }
@@ -220,7 +228,7 @@ export function extractAttachmentsFromDrop(dataTransfer: DataTransfer): File[] {
   const files: File[] = [];
 
   for (const file of Array.from(dataTransfer.files)) {
-    if (getSupportedMediaType(file) || getSupportedStagedMediaType(file)) {
+    if (isSupportedAttachmentFile(file)) {
       files.push(file);
     }
   }
