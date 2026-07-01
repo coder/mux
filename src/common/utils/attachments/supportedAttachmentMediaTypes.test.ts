@@ -3,19 +3,30 @@ import { describe, expect, test } from "bun:test";
 import {
   getAttachmentMediaTypeFromExtension,
   getSupportedAttachmentMediaType,
+  getSupportedChatAttachmentMediaType,
   getSupportedStagedAttachmentMediaType,
   isSupportedAttachmentMediaType,
+  isSupportedChatAttachmentMediaType,
 } from "./supportedAttachmentMediaTypes";
 
 describe("supportedAttachmentMediaTypes", () => {
-  test("supports JSON attachments by media type and extension", () => {
-    expect(isSupportedAttachmentMediaType("application/json")).toBe(true);
-    expect(isSupportedAttachmentMediaType("application/json; charset=utf-8")).toBe(true);
+  test("keeps JSON out of provider attachments while mapping its extension", () => {
+    expect(isSupportedAttachmentMediaType("application/json")).toBe(false);
+    expect(isSupportedAttachmentMediaType("application/json; charset=utf-8")).toBe(false);
     expect(getAttachmentMediaTypeFromExtension("config.json")).toBe("application/json");
   });
 
-  test("falls back to .json extension when MIME type is empty", () => {
-    expect(getSupportedAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(
+  test("supports JSON chat attachments by media type and extension", () => {
+    expect(isSupportedChatAttachmentMediaType("application/json")).toBe(true);
+    expect(isSupportedChatAttachmentMediaType("application/json; charset=utf-8")).toBe(true);
+    expect(getSupportedChatAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(
+      "application/json"
+    );
+  });
+
+  test("keeps .json extension fallback scoped to chat attachments", () => {
+    expect(getSupportedAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(null);
+    expect(getSupportedChatAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(
       "application/json"
     );
   });

@@ -360,6 +360,23 @@ describe("attach_file tool", () => {
     });
   });
 
+  it("rejects JSON files so the model can use file_read", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const jsonPath = path.join(workspaceDir.path, "package.json");
+    await fs.writeFile(jsonPath, '{"name":"demo"}\n');
+
+    const result = (await tool.execute!(
+      { path: "package.json" },
+      mockToolCallOptions
+    )) as AttachFileToolResult;
+
+    expect(result).toEqual({
+      success: false,
+      error: `Unsupported attachment type: ${jsonPath}`,
+    });
+  });
+
   it("rejects unmapped source files so the model can use file_read", async () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);
