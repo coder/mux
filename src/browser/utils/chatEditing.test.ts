@@ -216,18 +216,25 @@ describe("canEditDisplayedUserMessage", () => {
           createdAt: 1,
         },
         {
+          id: "duplicate-parent-review",
+          data: REVIEW_NOTE,
+          status: "attached",
+          createdAt: 2,
+        },
+        {
           id: "new-parent-review",
           data: laterReview,
           status: "attached",
-          createdAt: 2,
+          createdAt: 3,
         },
       ],
       mergedAttachedReviewIds: new Set(["existing-parent-review"]),
     });
 
     expect(result.reviews).toEqual([REVIEW_NOTE, laterReview]);
-    expect(result.addedReviewIds).toEqual(["new-parent-review"]);
+    expect(result.mergedReviewIds).toEqual(["duplicate-parent-review", "new-parent-review"]);
     expect([...result.mergedAttachedReviewIds].sort()).toEqual([
+      "duplicate-parent-review",
       "existing-parent-review",
       "new-parent-review",
     ]);
