@@ -1,5 +1,4 @@
 import {
-  isDefaultSourceContent,
   type CompactionFollowUpRequest,
   type DisplayedMessage,
   type MuxMessageMetadata,
@@ -36,11 +35,20 @@ function isCompletedLocalCommandOutput(message: UserMessage): boolean {
   );
 }
 
+function getMuxMetadataRawCommand(metadata?: MuxMessageMetadata): string | undefined {
+  if (!metadata || !("rawCommand" in metadata)) {
+    return undefined;
+  }
+
+  const { rawCommand } = metadata;
+  return rawCommand && rawCommand.trim().length > 0 ? rawCommand : undefined;
+}
+
 function buildSyntheticFollowUpEntry(
   message: UserMessage,
   followUpContent?: CompactionFollowUpRequest
 ): PromptHistoryEntry | null {
-  if (!followUpContent || isDefaultSourceContent(followUpContent)) {
+  if (!followUpContent || followUpContent.dispatchOptions?.source === "internal-resume") {
     return null;
   }
 
@@ -51,24 +59,27 @@ function buildSyntheticFollowUpEntry(
   );
   const fileParts = followUpContent.fileParts ?? [];
   const reviews = followUpContent.reviews ?? [];
+  const rawCommand = getMuxMetadataRawCommand(followUpContent.muxMetadata);
 
   if (
     parsed.text.trim().length === 0 &&
     stagedAttachments.length === 0 &&
     fileParts.length === 0 &&
-    reviews.length === 0
+    reviews.length === 0 &&
+    !rawCommand
   ) {
     return null;
   }
 
   const insertContent =
-    stagedAttachments.length > 0
+    rawCommand ??
+    (stagedAttachments.length > 0
       ? appendStagedAttachmentNotice(parsed.text, stagedAttachments)
-      : parsed.text;
+      : parsed.text);
 
   return {
     historyId: message.historyId,
-    content: parsed.text,
+    content: parsed.text.trim().length > 0 ? parsed.text : (rawCommand ?? parsed.text),
     ...(insertContent !== parsed.text ? { insertContent } : {}),
     historySequence: message.historySequence,
     timestamp: message.timestamp,

@@ -57,7 +57,7 @@ describe("getPromptHistoryEntries", () => {
   });
 
   test("preserves synthetic auto-compaction follow-up prompts", () => {
-    const [entry] = getPromptHistoryEntries([
+    const entries = getPromptHistoryEntries([
       userMessage("auto-compact", "Synthetic compaction request", 1, {
         isSynthetic: true,
         compactionRequest: {
@@ -70,8 +70,35 @@ describe("getPromptHistoryEntries", () => {
           },
         },
       }),
+      userMessage("internal-resume", "Internal resume compaction request", 2, {
+        isSynthetic: true,
+        compactionRequest: {
+          parsed: {
+            followUpContent: {
+              text: "Continue",
+              model: "openai:gpt-5",
+              agentId: "exec",
+              dispatchOptions: { source: "internal-resume" },
+            },
+          },
+        },
+      }),
+      userMessage("literal-continue", "Synthetic compaction request", 3, {
+        isSynthetic: true,
+        compactionRequest: {
+          parsed: {
+            followUpContent: {
+              text: "Continue",
+              model: "openai:gpt-5",
+              agentId: "exec",
+            },
+          },
+        },
+      }),
     ]);
 
+    expect(entries.map((entry) => entry.historyId)).toEqual(["auto-compact", "literal-continue"]);
+    const entry = entries[0];
     if (!entry) throw new Error("expected prompt history entry");
     expect(entry).toMatchObject({
       historyId: "auto-compact",
@@ -84,6 +111,42 @@ describe("getPromptHistoryEntries", () => {
       mode: "replace",
       fileParts: [],
       reviews: [],
+    });
+  });
+
+  test("inserts raw commands for synthetic auto-compaction slash follow-ups", () => {
+    const muxMetadata = {
+      type: "agent-skill" as const,
+      skillName: "tests",
+      scope: "global" as const,
+      rawCommand: "/tests run focused tests",
+      commandPrefix: "/tests",
+    };
+    const [entry] = getPromptHistoryEntries([
+      userMessage("auto-compact-skill", "Synthetic compaction request", 1, {
+        isSynthetic: true,
+        compactionRequest: {
+          parsed: {
+            followUpContent: {
+              text: "run focused tests",
+              model: "openai:gpt-5",
+              agentId: "exec",
+              muxMetadata,
+            },
+          },
+        },
+      }),
+    ]);
+
+    if (!entry) throw new Error("expected prompt history entry");
+    expect(entry.content).toBe("run focused tests");
+    expect(entry.muxMetadata).toEqual(muxMetadata);
+    expect(createPromptHistoryInsertPayload(entry)).toEqual({
+      text: "/tests run focused tests",
+      mode: "replace",
+      fileParts: [],
+      reviews: [],
+      muxMetadata,
     });
   });
 
