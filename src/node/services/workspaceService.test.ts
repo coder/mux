@@ -278,6 +278,67 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("marks an accepted wake delivered when stream startup fails before provider start", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-accepted-startup-failure";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const aiService = Object.assign(new EventEmitter(), {
+        isStreaming: mock(() => false),
+      }) as unknown as AIService & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService,
+      });
+      const startupError: SendMessageError = { type: "unknown", raw: "startup failed" };
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          await args[3]?.onAcceptedPreStreamFailure?.(startupError);
+          return Ok(undefined);
+        }
+      );
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED after accept"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: { listPending: (id: string) => Promise<unknown[]> };
+        }
+      ).bashMonitorWakeStore;
+      expect(await wakeStore.listPending(workspaceId)).toHaveLength(0);
+
+      aiService.emit("error", { workspaceId, error: "startup failed" });
+      await drainPendingDispatches();
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("queues monitor wakes immediately for a session-backed streaming owner", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
@@ -501,7 +562,7 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
-  test("keeps an accepted monitor wake pending when stream startup fails before streaming", async () => {
+  test("marks an accepted monitor wake delivered when sendMessage fails after acceptance", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
       const workspaceId = "bash-monitor-startup-failure-owner";
@@ -548,14 +609,15 @@ describe("WorkspaceService bash monitor wakes", () => {
           bashMonitorWakeStore: { listPending: (id: string) => Promise<unknown[]> };
         }
       ).bashMonitorWakeStore;
-      expect(await wakeStore.listPending(workspaceId)).toHaveLength(1);
+      expect(await wakeStore.listPending(workspaceId)).toHaveLength(0);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
       sendSpy.mockRestore();
     } finally {
       await cleanup();
     }
   });
 
-  test("keeps a queued monitor wake pending when accepted dispatch fails before stream start", async () => {
+  test("marks a queued monitor wake delivered when accepted dispatch fails before stream start", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
       const workspaceId = "bash-monitor-queued-startup-failure-owner";
@@ -608,14 +670,15 @@ describe("WorkspaceService bash monitor wakes", () => {
           bashMonitorWakeStore: { listPending: (id: string) => Promise<unknown[]> };
         }
       ).bashMonitorWakeStore;
-      expect(await wakeStore.listPending(workspaceId)).toHaveLength(1);
+      expect(await wakeStore.listPending(workspaceId)).toHaveLength(0);
+      expect(sendSpy).toHaveBeenCalledTimes(1);
       sendSpy.mockRestore();
     } finally {
       await cleanup();
     }
   });
 
-  test("marks an accepted monitor wake delivered when startup retry later starts streaming", async () => {
+  test("keeps an accepted monitor wake delivered when startup retry later starts streaming", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
       const workspaceId = "bash-monitor-startup-retry-owner";

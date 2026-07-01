@@ -1812,25 +1812,15 @@ export class WorkspaceService extends EventEmitter {
       }
     };
 
-    // `onAccepted` only proves the synthetic user turn reached history; keep
-    // the wake pending until the provider stream starts so startup failures can retry it.
+    // Once the synthetic wake turn is accepted into durable chat history, the wake has
+    // been delivered. If provider startup fails after acceptance, AgentSession's
+    // startup retry must resume that accepted turn instead of appending another copy
+    // of the same monitor wake.
     let accepted = false;
     let delivered = false;
-    let startupFailed = false;
-    let removeStreamStartListener: (() => void) | undefined;
-    const removeDeliveryListener = (): void => {
-      removeStreamStartListener?.();
-      removeStreamStartListener = undefined;
-    };
-    const isOwnerStreamStart = (data: unknown): data is { workspaceId: string } =>
-      typeof data === "object" &&
-      data !== null &&
-      "workspaceId" in data &&
-      data.workspaceId === ownerWorkspaceId;
     const markDeliveredOnce = async (): Promise<void> => {
       if (delivered) return;
       delivered = true;
-      removeDeliveryListener();
       try {
         await markDeliveredAfterAccepted(pending);
       } catch (error) {
@@ -1839,16 +1829,6 @@ export class WorkspaceService extends EventEmitter {
           error,
         });
       }
-    };
-    const armDeliveryAfterStreamStart = (): void => {
-      removeDeliveryListener();
-      const onStreamStart = (data: unknown): void => {
-        if (isOwnerStreamStart(data)) {
-          void markDeliveredOnce();
-        }
-      };
-      this.aiService.on("stream-start", onStreamStart);
-      removeStreamStartListener = () => this.aiService.off("stream-start", onStreamStart);
     };
 
     const sendResult = await this.sendMessage(
@@ -1859,24 +1839,23 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         synthetic: true,
         agentInitiated: true,
-        onAccepted: () => {
+        onAccepted: async () => {
           accepted = true;
-          armDeliveryAfterStreamStart();
+          await markDeliveredOnce();
         },
-        onAcceptedPreStreamFailure: (error) => {
-          startupFailed = true;
-          if (!accepted) {
-            removeDeliveryListener();
+        onAcceptedPreStreamFailure: async (error) => {
+          if (accepted) {
+            await markDeliveredOnce();
+            return;
           }
           if (delivered) return;
-          log.debug("Bash monitor wake accepted send failed before stream start; leaving pending", {
+          log.debug("Bash monitor wake send failed before acceptance; leaving pending", {
             ownerWorkspaceId,
             error,
           });
           retryAfterIdleIfBusy("pre-stream failure");
         },
         onCanceled: async (reason) => {
-          removeDeliveryListener();
           if (delivered) return;
           const cancelingKeys = pending.map((record) =>
             this.bashMonitorWakeKey(ownerWorkspaceId, record.id)
@@ -1905,8 +1884,9 @@ export class WorkspaceService extends EventEmitter {
     );
 
     if (!sendResult.success) {
-      if (!accepted) {
-        removeDeliveryListener();
+      if (accepted) {
+        await markDeliveredOnce();
+        return;
       }
       if (!delivered) {
         log.debug("Bash monitor wake-up not accepted; leaving pending", {
@@ -1918,7 +1898,7 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    if (accepted && !startupFailed) {
+    if (accepted) {
       await markDeliveredOnce();
     }
   }
