@@ -409,22 +409,19 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
 
 function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
   switch (event.type) {
+    // Every event type carrying an opaque `details` payload surfaces it as-is;
+    // group them so a new details-bearing event can't drift from the others.
     case "phase":
+    case "workflow":
+    case "patch":
+    case "agent-step":
+    case "timeout":
+    case "action":
       return event.details;
     case "log":
       return event.data;
     case "result":
       return event.result;
-    case "workflow":
-      return event.details;
-    case "patch":
-      return event.details;
-    case "agent-step":
-      return event.details;
-    case "timeout":
-      return event.details;
-    case "action":
-      return event.details;
     case "task":
     case "validation":
     case "error":
