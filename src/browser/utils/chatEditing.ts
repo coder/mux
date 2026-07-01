@@ -14,6 +14,7 @@ import type {
   QueuedMessage,
   ReviewNoteDataForDisplay,
 } from "@/common/types/message";
+import type { Review } from "@/common/types/review";
 import { getEditableUserMessageDraftContent } from "@/browser/utils/messages/messageUtils";
 
 // Keep pending edit data normalized with required arrays so edits can't drop attachments/reviews.
@@ -127,6 +128,55 @@ export function getRestoredMuxMetadataForCurrentDraft(params: {
   return getRestoredDraftPayloadSignature(params.currentDraft) === params.sourceSignature
     ? params.muxMetadata
     : undefined;
+}
+
+function getReviewNoteSignature(review: ReviewNoteDataForDisplay): string {
+  return JSON.stringify({
+    filePath: review.filePath,
+    lineRange: review.lineRange,
+    newStart: review.newStart,
+    oldStart: review.oldStart,
+    selectedCode: review.selectedCode,
+    selectedDiff: review.selectedDiff,
+    userNote: review.userNote,
+  });
+}
+
+export function mergeNewAttachedReviewsIntoDraft(params: {
+  draftReviews: ReviewNoteDataForDisplay[];
+  attachedReviews: Review[];
+  mergedAttachedReviewIds: ReadonlySet<string>;
+}): {
+  reviews: ReviewNoteDataForDisplay[];
+  mergedAttachedReviewIds: Set<string>;
+  addedReviewIds: string[];
+} {
+  const mergedAttachedReviewIds = new Set(params.mergedAttachedReviewIds);
+  const existingReviewSignatures = new Set(params.draftReviews.map(getReviewNoteSignature));
+  const additions: ReviewNoteDataForDisplay[] = [];
+  const addedReviewIds: string[] = [];
+
+  for (const review of params.attachedReviews) {
+    if (mergedAttachedReviewIds.has(review.id)) {
+      continue;
+    }
+
+    mergedAttachedReviewIds.add(review.id);
+    const signature = getReviewNoteSignature(review.data);
+    if (existingReviewSignatures.has(signature)) {
+      continue;
+    }
+
+    existingReviewSignatures.add(signature);
+    additions.push(review.data);
+    addedReviewIds.push(review.id);
+  }
+
+  return {
+    reviews: additions.length > 0 ? [...params.draftReviews, ...additions] : params.draftReviews,
+    mergedAttachedReviewIds,
+    addedReviewIds,
+  };
 }
 
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";

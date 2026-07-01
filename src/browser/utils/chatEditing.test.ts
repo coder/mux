@@ -14,6 +14,7 @@ import {
   canEditDisplayedUserMessage,
   getRestoredDraftPayloadSignature,
   getRestoredMuxMetadataForCurrentDraft,
+  mergeNewAttachedReviewsIntoDraft,
   normalizeQueuedMessage,
 } from "./chatEditing";
 
@@ -195,6 +196,41 @@ describe("canEditDisplayedUserMessage", () => {
         muxMetadata: metadata,
       })
     ).toBeUndefined();
+  });
+
+  test("merges newly attached reviews into restored draft reviews", () => {
+    const laterReview = {
+      filePath: "src/later.ts",
+      lineRange: "+8",
+      selectedCode: "const later = true;",
+      userNote: "Add this too",
+    };
+
+    const result = mergeNewAttachedReviewsIntoDraft({
+      draftReviews: [REVIEW_NOTE],
+      attachedReviews: [
+        {
+          id: "existing-parent-review",
+          data: REVIEW_NOTE,
+          status: "attached",
+          createdAt: 1,
+        },
+        {
+          id: "new-parent-review",
+          data: laterReview,
+          status: "attached",
+          createdAt: 2,
+        },
+      ],
+      mergedAttachedReviewIds: new Set(["existing-parent-review"]),
+    });
+
+    expect(result.reviews).toEqual([REVIEW_NOTE, laterReview]);
+    expect(result.addedReviewIds).toEqual(["new-parent-review"]);
+    expect([...result.mergedAttachedReviewIds].sort()).toEqual([
+      "existing-parent-review",
+      "new-parent-review",
+    ]);
   });
 
   test("restores staged ZIPs from compaction follow-up content", () => {
