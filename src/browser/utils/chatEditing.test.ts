@@ -12,7 +12,8 @@ import {
   buildPendingFromDisplayed,
   buildPendingFromRestoredInput,
   canEditDisplayedUserMessage,
-  getRestoredMuxMetadataForCurrentText,
+  getRestoredDraftPayloadSignature,
+  getRestoredMuxMetadataForCurrentDraft,
   normalizeQueuedMessage,
 } from "./chatEditing";
 
@@ -34,6 +35,13 @@ const STAGED_ATTACHMENT = {
   mediaType: "application/zip",
   sizeBytes: 199,
   stagedPath: ".mux/user-attachments/id/archive.zip",
+};
+
+const REVIEW_NOTE = {
+  filePath: "src/app.ts",
+  lineRange: "+1",
+  selectedCode: "const value = 1;",
+  userNote: "Review this",
 };
 
 describe("canEditDisplayedUserMessage", () => {
@@ -132,7 +140,7 @@ describe("canEditDisplayedUserMessage", () => {
     });
   });
 
-  test("keeps restored mux metadata only while the restored text is unchanged", () => {
+  test("keeps restored mux metadata only while the restored draft payload is unchanged", () => {
     const metadata: MuxMessageMetadata = {
       type: "agent-skill",
       rawCommand: "/test-skill investigate",
@@ -140,19 +148,50 @@ describe("canEditDisplayedUserMessage", () => {
       skillName: "test-skill",
       scope: "project",
     };
+    const sourceDraft = {
+      text: "investigate",
+      attachments: [STAGED_ATTACHMENT],
+      reviews: [REVIEW_NOTE],
+    };
+    const sourceSignature = getRestoredDraftPayloadSignature(sourceDraft);
 
     expect(
-      getRestoredMuxMetadataForCurrentText({
-        currentText: "investigate",
-        sourceText: "investigate",
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: sourceDraft,
+        sourceSignature,
         muxMetadata: metadata,
       })
     ).toBe(metadata);
 
     expect(
-      getRestoredMuxMetadataForCurrentText({
-        currentText: "plain follow-up",
-        sourceText: "investigate",
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: {
+          ...sourceDraft,
+          text: "plain follow-up",
+        },
+        sourceSignature,
+        muxMetadata: metadata,
+      })
+    ).toBeUndefined();
+
+    expect(
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: {
+          ...sourceDraft,
+          attachments: [],
+        },
+        sourceSignature,
+        muxMetadata: metadata,
+      })
+    ).toBeUndefined();
+
+    expect(
+      getRestoredMuxMetadataForCurrentDraft({
+        currentDraft: {
+          ...sourceDraft,
+          reviews: [{ ...REVIEW_NOTE, userNote: "Different review" }],
+        },
+        sourceSignature,
         muxMetadata: metadata,
       })
     ).toBeUndefined();
