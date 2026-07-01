@@ -44,11 +44,13 @@ describe("task_await tool", () => {
     using tempDir = new TestTempDir("test-task-await-workspace-turn");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
       listWorkspaceTurnTasks: mock(() => []),
       isDescendantAgentTask: mock(() => Promise.resolve(false)),
       getAgentTaskStatuses: mock(() => new Map()),
+      markWorkspaceTurnTerminalAttentionConsumed,
       getWorkspaceTurnSnapshot: mock(() =>
         Promise.resolve({
           kind: "workspace_turn",
@@ -93,6 +95,53 @@ describe("task_await tool", () => {
       },
     ]);
     expect(result.results[0]?.finalMessage).toBeUndefined();
+    expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-workspace",
+      handleId: "wst_done",
+      status: "completed",
+    });
+  });
+
+  it("does not mark active workspace-turn awaits consumed", async () => {
+    using tempDir = new TestTempDir("test-task-await-active-workspace-turn-consumption");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
+    const runningSnapshot = {
+      kind: "workspace_turn",
+      handleId: "wst_running",
+      ownerWorkspaceId: "parent-workspace",
+      workspaceId: "child-running",
+      turnId: "turn-running",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    } as const;
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      listWorkspaceTurnTasks: mock(() => Promise.resolve([runningSnapshot])),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses: mock(() => new Map()),
+      markWorkspaceTurnTerminalAttentionConsumed,
+      getWorkspaceTurnSnapshot: mock(() => Promise.resolve(runningSnapshot)),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["wst_running"], timeout_secs: 0 }, mockToolCallOptions)
+    )) as { results: Array<Record<string, unknown>> };
+
+    expect(result.results).toEqual([
+      {
+        status: "running",
+        taskId: "wst_running",
+        handleKind: "workspace_turn",
+        workspaceId: "child-running",
+        note: "Workspace turn is still running.",
+      },
+    ]);
+    expect(markWorkspaceTurnTerminalAttentionConsumed).not.toHaveBeenCalled();
   });
 
   it("returns live workspace-turn status when min_completed detaches an unfinished await", async () => {
@@ -192,12 +241,14 @@ describe("task_await tool", () => {
     } as const;
     let observedTimeoutMs: number | undefined;
 
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
       listWorkspaceTurnTasks: mock(() => Promise.resolve([runningSnapshot])),
       isDescendantAgentTask: mock(() => Promise.resolve(false)),
       getAgentTaskStatuses: mock(() => new Map()),
       getWorkspaceTurnSnapshot: mock(() => Promise.resolve(runningSnapshot)),
+      markWorkspaceTurnTerminalAttentionConsumed,
       waitForWorkspaceTurn: mock((_taskId: string, options: { timeoutMs?: number }) => {
         observedTimeoutMs = options.timeoutMs;
         return Promise.resolve({ workspaceId: "child-running", reportMarkdown: "Done" });
@@ -209,6 +260,11 @@ describe("task_await tool", () => {
       tool.execute!({ task_ids: ["wst_running"], timeout_secs: null }, mockToolCallOptions)
     );
 
+    expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-workspace",
+      handleId: "wst_running",
+      status: "completed",
+    });
     expect(observedTimeoutMs).toBe(600_000);
   });
 
@@ -237,12 +293,14 @@ describe("task_await tool", () => {
     } as const;
     const snapshots = [runningSnapshot, completedSnapshot];
 
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
       listWorkspaceTurnTasks: mock(() => Promise.resolve([runningSnapshot])),
       isDescendantAgentTask: mock(() => Promise.resolve(false)),
       getAgentTaskStatuses: mock(() => new Map()),
       getWorkspaceTurnSnapshot: mock(() => Promise.resolve(snapshots.shift() ?? completedSnapshot)),
+      markWorkspaceTurnTerminalAttentionConsumed,
       waitForWorkspaceTurn: mock(() => Promise.reject(new Error("timed out"))),
     } as unknown as TaskService;
 
@@ -263,6 +321,63 @@ describe("task_await tool", () => {
         note: COMPLETED_REPORT_REFETCH_NOTE,
       },
     ]);
+    expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-workspace",
+      handleId: "wst_race",
+      status: "completed",
+    });
+  });
+
+  it("returns terminal workspace-turn result when wait rejects after the turn fails", async () => {
+    using tempDir = new TestTempDir("test-task-await-workspace-turn-generic-terminal");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const runningSnapshot = {
+      kind: "workspace_turn",
+      handleId: "wst_failed",
+      ownerWorkspaceId: "parent-workspace",
+      workspaceId: "child-failed",
+      turnId: "turn-failed",
+      status: "running",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    } as const;
+    const errorSnapshot = {
+      ...runningSnapshot,
+      status: "error",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      error: "Child turn failed",
+    } as const;
+    const snapshots = [runningSnapshot, errorSnapshot];
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      listWorkspaceTurnTasks: mock(() => Promise.resolve([runningSnapshot])),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses: mock(() => new Map()),
+      getWorkspaceTurnSnapshot: mock(() => Promise.resolve(snapshots.shift() ?? errorSnapshot)),
+      markWorkspaceTurnTerminalAttentionConsumed,
+      waitForWorkspaceTurn: mock(() => Promise.reject(new Error("workspace turn settled"))),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["wst_failed"], timeout_secs: 1 }, mockToolCallOptions)
+    )) as { results: Array<Record<string, unknown>> };
+
+    expect(result.results).toEqual([
+      {
+        status: "error",
+        taskId: "wst_failed",
+        error: "Child turn failed",
+      },
+    ]);
+    expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-workspace",
+      handleId: "wst_failed",
+      status: "error",
+    });
   });
 
   it("includes gitFormatPatch artifacts written during waitForAgentReport", async () => {

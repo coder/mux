@@ -2662,6 +2662,76 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
+  test("workspace turn task_await consumption tombstones later terminal wake-ups", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      enqueueTerminalAttention: (params: {
+        ownerWorkspaceId: string;
+        sourceKind: "workspace_turn";
+        sourceId: string;
+        outputDelivery: "requires_task_await";
+        terminalOutcome: "completed" | "error" | "interrupted";
+      }) => Promise<void>;
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+
+    await taskService.markWorkspaceTurnTerminalAttentionConsumed({
+      ownerWorkspaceId: parentId,
+      handleId: "wst_consumed_then_enqueued",
+      status: "completed",
+    });
+    await internal.enqueueTerminalAttention({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_consumed_then_enqueued",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_pending_then_consumed",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+    await taskService.markWorkspaceTurnTerminalAttentionConsumed({
+      ownerWorkspaceId: parentId,
+      handleId: "wst_pending_then_consumed",
+      status: "completed",
+    });
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
+
+    await taskService.markWorkspaceTurnTerminalAttentionConsumed({
+      ownerWorkspaceId: parentId,
+      handleId: "wst_running_not_consumed",
+      status: "running",
+    });
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_running_not_consumed",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+  });
+
   test("startup recovery persists terminal workflow wake-ups", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);

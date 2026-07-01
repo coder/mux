@@ -4381,6 +4381,35 @@ export class TaskService {
     );
   }
 
+  async markWorkspaceTurnTerminalAttentionConsumed(params: {
+    ownerWorkspaceId: string;
+    handleId: string;
+    status: WorkspaceTurnTaskStatus;
+  }): Promise<void> {
+    assert(
+      params.ownerWorkspaceId.length > 0,
+      "markWorkspaceTurnTerminalAttentionConsumed requires ownerWorkspaceId"
+    );
+    assert(
+      params.handleId.length > 0,
+      "markWorkspaceTurnTerminalAttentionConsumed requires handleId"
+    );
+    if (!this.isTerminalWorkspaceTurnStatus(params.status)) {
+      return;
+    }
+    await this.terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: params.ownerWorkspaceId,
+      sourceKind: "workspace_turn",
+      sourceId: params.handleId,
+      outputDelivery: "requires_task_await",
+      terminalOutcome: workspaceTurnTerminalOutcome(params.status),
+    });
+    await this.terminalAttentionStore.markDelivered(
+      params.ownerWorkspaceId,
+      TerminalAttentionStore.notificationId("workspace_turn", params.handleId)
+    );
+  }
+
   private async enqueueTerminalAttention(params: {
     ownerWorkspaceId: string;
     sourceKind: TerminalAttentionNotification["sourceKind"];
