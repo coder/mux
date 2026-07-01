@@ -628,6 +628,185 @@ describe("ProviderService model normalization", () => {
   });
 });
 
+describe("ProviderService model parameter overrides", () => {
+  it("surfaces modelParameters in getConfig", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "gpt-5": {
+            max_output_tokens: 2048,
+            temperature: 0.4,
+            top_p: 0.9,
+          },
+        },
+      });
+
+      const providers = service.getConfig();
+
+      expect(providers.openai.modelParameters).toEqual({
+        "gpt-5": {
+          max_output_tokens: 2048,
+          temperature: 0.4,
+          top_p: 0.9,
+        },
+      });
+    });
+  });
+
+  it("sets model parameters while preserving unrelated model parameter keys", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "gpt-5": {
+            max_output_tokens: 1024,
+            top_k: 32,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: null,
+        temperature: 0.7,
+        top_p: 0.95,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        "gpt-5": {
+          temperature: 0.7,
+          top_p: 0.95,
+          top_k: 32,
+        },
+      });
+    });
+  });
+
+  it("clears editable keys without dropping non-editable model parameters", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        models: ["gpt-5"],
+        modelParameters: {
+          "gpt-5": {
+            temperature: 0.3,
+            top_k: 16,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: null,
+        temperature: null,
+        top_p: null,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        "gpt-5": {
+          top_k: 16,
+        },
+      });
+    });
+  });
+
+  it("retains valid model parameter entries when another entry is malformed", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "*": {
+            top_p: 0.8,
+            custom_passthrough: true,
+          },
+          "bad-model": {
+            temperature: 3,
+          },
+          "gpt-5": {
+            temperature: 0.4,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: 2048,
+        temperature: null,
+        top_p: null,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        "*": {
+          top_p: 0.8,
+          custom_passthrough: true,
+        },
+        "gpt-5": {
+          max_output_tokens: 2048,
+        },
+      });
+    });
+  });
+
+  it("renames model parameter entries while preserving non-editable overrides", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        models: ["renamed"],
+        modelParameters: {
+          legacy: {
+            temperature: 0.2,
+            top_k: 32,
+            seed: 7,
+          },
+        },
+      });
+
+      const renameResult = service.setModelParameters(
+        "openai",
+        "renamed",
+        {
+          max_output_tokens: 4096,
+          temperature: 0.5,
+          top_p: null,
+        },
+        "legacy"
+      );
+      expect(renameResult.success).toBe(true);
+
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toEqual({
+        renamed: {
+          max_output_tokens: 4096,
+          temperature: 0.5,
+          top_k: 32,
+          seed: 7,
+        },
+      });
+    });
+  });
+
+  it("removes modelParameters when the last override entry is cleared", () => {
+    withTempConfig((config, service) => {
+      saveOpenAIConfig(config, {
+        modelParameters: {
+          "gpt-5": {
+            max_output_tokens: 1024,
+          },
+        },
+      });
+
+      const result = service.setModelParameters("openai", "gpt-5", {
+        max_output_tokens: null,
+        temperature: null,
+        top_p: null,
+      });
+
+      expect(result.success).toBe(true);
+      const providersConfig = config.loadProvidersConfig();
+      expect(providersConfig?.openai?.modelParameters).toBeUndefined();
+    });
+  });
+});
+
 describe("ProviderService custom provider mutations", () => {
   it("rejects adding a built-in provider id", () => {
     withTempConfig((config, service) => {

@@ -122,6 +122,10 @@ import {
   CodexOauthDefaultAuthSchema,
   ServiceTierSchema,
 } from "../../config/schemas/providersConfig";
+import {
+  ModelParametersByModelSchema,
+  StandardModelParameterOverridesSchema,
+} from "../../config/schemas/modelParameters";
 import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
 import { UserPreferencesSchema } from "../../config/schemas/userPreferences";
 import { TaskSettingsSchema } from "../../config/schemas/taskSettings";
@@ -248,6 +252,7 @@ export const ProviderConfigInfoSchema = z.object({
   displayName: z.string().optional(),
   isCustom: z.boolean().optional(),
   models: z.array(ProviderModelEntrySchema).optional(),
+  modelParameters: ModelParametersByModelSchema.optional(),
   /** OpenAI-specific fields */
   serviceTier: ServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
@@ -321,6 +326,16 @@ export const CustomProviderMutationErrorSchema = z.discriminatedUnion("code", [
   }),
 ]);
 
+const EditableCustomModelParameterOverridesSchema = StandardModelParameterOverridesSchema.pick({
+  max_output_tokens: true,
+  temperature: true,
+  top_p: true,
+}).extend({
+  max_output_tokens: z.number().int().positive().nullish(),
+  temperature: z.number().min(0).max(2).nullish(),
+  top_p: z.number().min(0).max(1).nullish(),
+});
+
 export const providers = {
   addCustomOpenAICompatibleProvider: {
     input: z.object({
@@ -361,6 +376,15 @@ export const providers = {
     input: z.object({
       provider: z.string(),
       models: z.array(ProviderModelEntrySchema),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  setModelParameters: {
+    input: z.object({
+      provider: z.string(),
+      modelId: z.string().min(1),
+      renameFromModelId: z.string().min(1).optional(),
+      overrides: EditableCustomModelParameterOverridesSchema,
     }),
     output: ResultSchema(z.void(), z.string()),
   },
