@@ -130,7 +130,7 @@ export function getRestoredMuxMetadataForCurrentDraft(params: {
     : undefined;
 }
 
-function getReviewNoteSignature(review: ReviewNoteDataForDisplay): string {
+export function getReviewNoteSignature(review: ReviewNoteDataForDisplay): string {
   return JSON.stringify({
     filePath: review.filePath,
     lineRange: review.lineRange,
@@ -149,12 +149,12 @@ export function mergeNewAttachedReviewsIntoDraft(params: {
 }): {
   reviews: ReviewNoteDataForDisplay[];
   mergedAttachedReviewIds: Set<string>;
-  addedReviewIds: string[];
+  mergedReviewIds: string[];
 } {
   const mergedAttachedReviewIds = new Set(params.mergedAttachedReviewIds);
   const existingReviewSignatures = new Set(params.draftReviews.map(getReviewNoteSignature));
   const additions: ReviewNoteDataForDisplay[] = [];
-  const addedReviewIds: string[] = [];
+  const mergedReviewIds: string[] = [];
 
   for (const review of params.attachedReviews) {
     if (mergedAttachedReviewIds.has(review.id)) {
@@ -164,18 +164,19 @@ export function mergeNewAttachedReviewsIntoDraft(params: {
     mergedAttachedReviewIds.add(review.id);
     const signature = getReviewNoteSignature(review.data);
     if (existingReviewSignatures.has(signature)) {
+      mergedReviewIds.push(review.id);
       continue;
     }
 
     existingReviewSignatures.add(signature);
     additions.push(review.data);
-    addedReviewIds.push(review.id);
+    mergedReviewIds.push(review.id);
   }
 
   return {
     reviews: additions.length > 0 ? [...params.draftReviews, ...additions] : params.draftReviews,
     mergedAttachedReviewIds,
-    addedReviewIds,
+    mergedReviewIds,
   };
 }
 
