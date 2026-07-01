@@ -199,6 +199,23 @@ export function getAnthropicEffort(level: ThinkingLevel): AnthropicEffortLevel {
 }
 
 /**
+ * Normalize a model string to its bare model id for capability matching:
+ * trims, lowercases, and strips both a `provider:` prefix (e.g. `anthropic:`)
+ * and a `namespace/` segment (e.g. gateway-wrapped `openai/gpt-5.5-pro`).
+ *
+ * Kept in one place so capability predicates that key off the bare id
+ * (see `anthropicSupportsNativeXhigh` and the thinking policy resolver) stay
+ * consistent about how provider prefixes and gateway namespaces are removed.
+ */
+export function stripModelProviderPrefixes(modelString: string): string {
+  return modelString
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z0-9_-]+:\s*/, "")
+    .replace(/^[a-z0-9_-]+\//, "");
+}
+
+/**
  * Whether the given Anthropic model supports the native "xhigh" API effort level
  * (distinct from "max").
  *
@@ -210,11 +227,7 @@ export function getAnthropicEffort(level: ThinkingLevel): AnthropicEffortLevel {
  * - Mythos-class models (`claude-fable-*`, `claude-mythos-*`), the tier above Opus.
  */
 export function anthropicSupportsNativeXhigh(modelString: string): boolean {
-  const withoutPrefix = modelString
-    .trim()
-    .toLowerCase()
-    .replace(/^[a-z0-9_-]+:\s*/, "")
-    .replace(/^[a-z0-9_-]+\//, "");
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
   // Opus 4.7+ (4-7, 4-8, 4-9, 4-10, 4-11, ...) or any Opus 5+, Sonnet 5+ (5, 6, ... 10+),
   // plus the Mythos-class Fable / Mythos models that sit above Opus.
   return (

@@ -17,6 +17,7 @@ import {
   DEFAULT_THINKING_LEVEL,
   THINKING_LEVEL_OFF,
   anthropicSupportsNativeXhigh,
+  stripModelProviderPrefixes,
   type ThinkingLevel,
   type ParsedThinkingInput,
 } from "@/common/types/thinking";
@@ -78,13 +79,10 @@ const DEFAULT_THINKING_POLICY: ThinkingPolicy = ["off", "low", "medium", "high"]
  * which is the signal used to decide whether to apply a default thinking floor.
  */
 function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
-  // Normalize to be robust to provider prefixes, whitespace, gateway wrappers, and version suffixes
-  const normalized = modelString.trim().toLowerCase();
-  const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
-
-  // Many providers/proxies encode the upstream provider as a path segment:
-  //   mux-gateway:openai/gpt-5.5-pro -> openai/gpt-5.5-pro -> gpt-5.5-pro
-  const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
+  // Normalize to be robust to provider prefixes, whitespace, gateway wrappers, and version
+  // suffixes. Strips both a `provider:` prefix and any upstream-provider path segment that
+  // proxies encode (e.g. `mux-gateway:openai/gpt-5.5-pro` -> `gpt-5.5-pro`).
+  const withoutProviderNamespace = stripModelProviderPrefixes(modelString);
 
   // Opus 4.7+ supports all 6 levels: xhigh is a native API effort level distinct from max.
   if (anthropicSupportsNativeXhigh(modelString)) {
