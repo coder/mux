@@ -3,7 +3,13 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 export function canUseScheduledPromptsInWorkspace(
   meta: FrontendWorkspaceMetadata | null | undefined
 ): boolean {
-  if (!meta || meta.incompatibleRuntime || meta.transcriptOnly || meta.isInitializing) {
+  if (
+    !meta ||
+    meta.incompatibleRuntime ||
+    meta.transcriptOnly ||
+    meta.isInitializing ||
+    meta.isRemoving
+  ) {
     return false;
   }
 

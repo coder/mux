@@ -24,6 +24,7 @@ describe("canUseScheduledPromptsInWorkspace", () => {
     expect(canUseScheduledPromptsInWorkspace(null)).toBe(false);
     expect(canUseScheduledPromptsInWorkspace(workspace({ transcriptOnly: true }))).toBe(false);
     expect(canUseScheduledPromptsInWorkspace(workspace({ isInitializing: true }))).toBe(false);
+    expect(canUseScheduledPromptsInWorkspace(workspace({ isRemoving: true }))).toBe(false);
     expect(canUseScheduledPromptsInWorkspace(workspace({ incompatibleRuntime: "missing" }))).toBe(
       false
     );
