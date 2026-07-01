@@ -70,7 +70,7 @@ export function createPromptHistoryInsertPayload(
   entry: PromptHistoryEntry
 ): CustomEventPayloads[typeof CUSTOM_EVENTS.UPDATE_CHAT_INPUT] {
   return {
-    text: entry.content,
+    text: entry.insertContent ?? entry.content,
     mode: "replace",
     fileParts: entry.fileParts ?? [],
     reviews: entry.reviews ?? [],
