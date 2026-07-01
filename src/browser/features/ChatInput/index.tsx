@@ -542,6 +542,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     null
   );
   const draftReviewMergedAttachedIdsRef = useRef<Set<string> | null>(null);
+  const draftReviewIdsForCheckRef = useRef(new Map<string, string>());
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
   const nextDraftReviewIdRef = useRef(0);
   const isDraftReviewData = (value: unknown): value is ReviewNoteDataForDisplay =>
@@ -567,9 +568,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     });
 
   const removeDraftReview = (reviewId: string) =>
-    withDraftReview(reviewId, (prev, reviewIndex) =>
-      prev.filter((_, index) => index !== reviewIndex)
-    );
+    withDraftReview(reviewId, (prev, reviewIndex) => {
+      draftReviewIdsForCheckRef.current.delete(reviewId);
+      return prev.filter((_, index) => index !== reviewIndex);
+    });
 
   const updateDraftReviewNote = (reviewId: string, newNote: string) =>
     withDraftReview(reviewId, (prev, reviewIndex) => {
@@ -604,6 +606,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     ) {
       clearedAttachedReviewIdsRef.current = null;
       setDraftReviews(null);
+      draftReviewIdsForCheckRef.current.clear();
     }
   }, [attachedReviewIdsSignature, attachedReviews.length, draftReviews]);
 
@@ -625,6 +628,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (result.reviews !== draftReviews) {
       setDraftReviews(result.reviews);
       for (const reviewId of result.addedReviewIds) {
+        const review = attachedReviews.find((attachedReview) => attachedReview.id === reviewId);
+        if (review) {
+          draftReviewIdsForCheckRef.current.set(getDraftReviewId(review.data), review.id);
+        }
         onDetachReviewForDraftMerge?.(reviewId);
       }
     }
@@ -1148,7 +1155,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     sourceSignature: draftMuxMetadataSourceSignatureRef.current,
     muxMetadata: draftMuxMetadataOverride,
   });
-  const reviewIdsForCheck = reviewOverrideActive ? [] : attachedReviews.map((review) => review.id);
+  const reviewIdsForCheck = reviewOverrideActive
+    ? [...draftReviewIdsForCheckRef.current.values()]
+    : attachedReviews.map((review) => review.id);
   const reviewPanelItems: Review[] = reviewOverrideActive
     ? draftReviewItems.map((data) => ({
         id: getDraftReviewId(data),
@@ -1335,6 +1344,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (pending: PendingUserMessage) => {
       const restoredAttachments = applyDraftFromPending(pending, `restored-${Date.now()}`);
       setDraftReviews(pending.reviews);
+      draftReviewIdsForCheckRef.current.clear();
       draftReviewMergedAttachedIdsRef.current =
         pending.reviews.length > 0 ? new Set(attachedReviews.map((review) => review.id)) : null;
       setDraftMuxMetadataOverrideForDraft(pending.muxMetadata, {
@@ -1350,6 +1360,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const restorePreEditDraft = useCallback(() => {
     setDraft(preEditDraftRef.current);
     setDraftReviews(preEditReviewsRef.current);
+    draftReviewIdsForCheckRef.current.clear();
     draftReviewMergedAttachedIdsRef.current =
       preEditReviewsRef.current && preEditReviewsRef.current.length > 0
         ? new Set(attachedReviews.map((review) => review.id))
@@ -1456,6 +1467,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         `edit-${editingMessage.id}`
       );
       setDraftReviews(editingMessage.pending.reviews);
+      draftReviewIdsForCheckRef.current.clear();
       draftReviewMergedAttachedIdsRef.current =
         editingMessage.pending.reviews.length > 0
           ? new Set(attachedReviews.map((review) => review.id))
@@ -1963,6 +1975,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput("");
       setAttachments([]);
       setDraftReviews(null);
+      draftReviewIdsForCheckRef.current.clear();
       clearDraftMuxMetadataOverride();
       onDetachAllReviewsForComposerClear?.();
       if (inputRef.current) {
@@ -2402,6 +2415,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setInput(restoreInput);
     } else {
       setDraftReviews(null);
+      draftReviewIdsForCheckRef.current.clear();
       clearDraftMuxMetadataOverride();
       if (variant === "workspace" && parsed.type === "compact") {
         if (reviewIdsForCheck.length > 0) {
@@ -2807,6 +2821,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const preSendDraft = getDraft();
       const preSendReviews = draftReviews;
       const preSendMuxMetadataOverride = activeDraftMuxMetadataOverride;
+      const preSendDraftReviewIdsForCheck = new Map(draftReviewIdsForCheckRef.current);
       const editMessageForSend = editingMessageForUi;
 
       try {
@@ -2920,6 +2935,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // so they'll reappear naturally on failure (we only call onCheckReviews on success)
         setInput("");
         setDraftReviews(null);
+        draftReviewIdsForCheckRef.current.clear();
         clearDraftMuxMetadataOverride();
         setAttachments([]);
         setHideReviewsDuringSend(true);
@@ -2980,6 +2996,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setOptimisticallyDismissedEditId(null);
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
+          draftReviewIdsForCheckRef.current = new Map(preSendDraftReviewIdsForCheck);
           draftReviewMergedAttachedIdsRef.current =
             preSendReviews && preSendReviews.length > 0
               ? new Set(attachedReviews.map((review) => review.id))
@@ -3014,6 +3031,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           if (sentReviewIds.length > 0) {
             props.onCheckReviews?.(sentReviewIds);
           }
+          draftReviewIdsForCheckRef.current.clear();
 
           // Exit editing mode if we were editing
           if (editMessageForSend && props.onCancelEdit) {
@@ -3036,6 +3054,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setOptimisticallyDismissedEditId(null);
         setDraft(preSendDraft);
         setDraftReviews(preSendReviews);
+        draftReviewIdsForCheckRef.current = new Map(preSendDraftReviewIdsForCheck);
         draftReviewMergedAttachedIdsRef.current =
           preSendReviews && preSendReviews.length > 0
             ? new Set(attachedReviews.map((review) => review.id))
