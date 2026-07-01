@@ -2,6 +2,7 @@ import { SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import { ZIP_MEDIA_TYPE, ZIP_MEDIA_TYPES } from "@/common/constants/stagedAttachments";
 
 export const PDF_MEDIA_TYPE = "application/pdf";
+export const JSON_MEDIA_TYPE = "application/json";
 export const MARKDOWN_MEDIA_TYPE = "text/markdown";
 
 const EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
@@ -14,7 +15,11 @@ const EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
   avif: "image/avif",
   svg: SVG_MEDIA_TYPE,
   pdf: PDF_MEDIA_TYPE,
+  json: JSON_MEDIA_TYPE,
 };
+
+const SUPPORTED_PROVIDER_DOCUMENT_MEDIA_TYPES = new Set([PDF_MEDIA_TYPE]);
+const SUPPORTED_CHAT_DOCUMENT_MEDIA_TYPES = new Set([PDF_MEDIA_TYPE, JSON_MEDIA_TYPE]);
 
 export function normalizeAttachmentMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -27,7 +32,12 @@ export function getAttachmentMediaTypeFromExtension(filename: string): string | 
 
 export function isSupportedAttachmentMediaType(mediaType: string): boolean {
   const normalized = normalizeAttachmentMediaType(mediaType);
-  return normalized.startsWith("image/") || normalized === PDF_MEDIA_TYPE;
+  return normalized.startsWith("image/") || SUPPORTED_PROVIDER_DOCUMENT_MEDIA_TYPES.has(normalized);
+}
+
+export function isSupportedChatAttachmentMediaType(mediaType: string): boolean {
+  const normalized = normalizeAttachmentMediaType(mediaType);
+  return normalized.startsWith("image/") || SUPPORTED_CHAT_DOCUMENT_MEDIA_TYPES.has(normalized);
 }
 
 export function getSupportedAttachmentMediaType(args: {
@@ -47,6 +57,25 @@ export function getSupportedAttachmentMediaType(args: {
 
   const normalized = normalizeAttachmentMediaType(rawMediaType);
   return isSupportedAttachmentMediaType(normalized) ? normalized : null;
+}
+
+export function getSupportedChatAttachmentMediaType(args: {
+  mediaType?: string | null;
+  filename?: string | null;
+}): string | null {
+  const trimmedMediaType = args.mediaType?.trim();
+  const rawMediaType =
+    trimmedMediaType != null && trimmedMediaType.length > 0
+      ? trimmedMediaType
+      : args.filename != null
+        ? (getAttachmentMediaTypeFromExtension(args.filename) ?? "")
+        : "";
+  if (rawMediaType.length === 0) {
+    return null;
+  }
+
+  const normalized = normalizeAttachmentMediaType(rawMediaType);
+  return isSupportedChatAttachmentMediaType(normalized) ? normalized : null;
 }
 
 export function isSupportedStagedAttachmentMediaType(mediaType: string): boolean {
