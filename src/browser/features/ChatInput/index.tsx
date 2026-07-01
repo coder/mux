@@ -141,6 +141,7 @@ import {
   buildPendingFromRestoredInput,
   getRestoredDraftPayloadSignature,
   getRestoredMuxMetadataForCurrentDraft,
+  mergeNewAttachedReviewsIntoDraft,
   type PendingUserMessage,
   type RestoredDraftPayload,
 } from "@/browser/utils/chatEditing";
@@ -205,6 +206,7 @@ import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAtta
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 const AWAITING_NEW_ATTACHED_REVIEWS = Symbol("awaiting-new-attached-reviews");
+const EMPTY_ATTACHED_REVIEWS: Review[] = [];
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -503,9 +505,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceIdForComposerClear = variant === "workspace" ? props.workspaceId : null;
   const onDetachAllReviewsForComposerClear =
     variant === "workspace" ? props.onDetachAllReviews : undefined;
+  const onDetachReviewForDraftMerge = variant === "workspace" ? props.onDetachReview : undefined;
 
   // draftReviews takes precedence when restoring or editing message drafts.
-  const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
+  const attachedReviews =
+    variant === "workspace"
+      ? (props.attachedReviews ?? EMPTY_ATTACHED_REVIEWS)
+      : EMPTY_ATTACHED_REVIEWS;
   const [draftMuxMetadataOverride, setDraftMuxMetadataOverride] = useState<
     MuxMessageMetadata | undefined
   >(undefined);
@@ -527,6 +533,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const clearedAttachedReviewIdsRef = useRef<string | typeof AWAITING_NEW_ATTACHED_REVIEWS | null>(
     null
   );
+  const draftReviewMergedAttachedIdsRef = useRef<Set<string> | null>(null);
   const draftReviewIdsByValueRef = useRef(new WeakMap<ReviewNoteDataForDisplay, string>());
   const nextDraftReviewIdRef = useRef(0);
   const isDraftReviewData = (value: unknown): value is ReviewNoteDataForDisplay =>
@@ -591,6 +598,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setDraftReviews(null);
     }
   }, [attachedReviewIdsSignature, attachedReviews.length, draftReviews]);
+
+  // Restored drafts with review notes own their review list, but reviews attached later
+  // from the Code Review tab should still be visible and sent with that draft.
+  useEffect(() => {
+    const mergedAttachedReviewIds = draftReviewMergedAttachedIdsRef.current;
+    if (draftReviews === null || mergedAttachedReviewIds === null || attachedReviews.length === 0) {
+      return;
+    }
+
+    const result = mergeNewAttachedReviewsIntoDraft({
+      draftReviews,
+      attachedReviews,
+      mergedAttachedReviewIds,
+    });
+    draftReviewMergedAttachedIdsRef.current = result.mergedAttachedReviewIds;
+
+    if (result.reviews !== draftReviews) {
+      setDraftReviews(result.reviews);
+      for (const reviewId of result.addedReviewIds) {
+        onDetachReviewForDraftMerge?.(reviewId);
+      }
+    }
+  }, [attachedReviewIdsSignature, attachedReviews, draftReviews, onDetachReviewForDraftMerge]);
 
   // Creation sends can resolve after navigation; guard draft clears on unmounted inputs.
   const isMountedRef = useRef(true);
@@ -1287,6 +1317,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (pending: PendingUserMessage) => {
       const restoredAttachments = applyDraftFromPending(pending, `restored-${Date.now()}`);
       setDraftReviews(pending.reviews);
+      draftReviewMergedAttachedIdsRef.current =
+        pending.reviews.length > 0 ? new Set(attachedReviews.map((review) => review.id)) : null;
       setDraftMuxMetadataOverrideForDraft(pending.muxMetadata, {
         text: pending.content,
         attachments: restoredAttachments,
@@ -1294,18 +1326,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       });
       focusMessageInput();
     },
-    [applyDraftFromPending, focusMessageInput, setDraftMuxMetadataOverrideForDraft]
+    [applyDraftFromPending, attachedReviews, focusMessageInput, setDraftMuxMetadataOverrideForDraft]
   );
 
   const restorePreEditDraft = useCallback(() => {
     setDraft(preEditDraftRef.current);
     setDraftReviews(preEditReviewsRef.current);
+    draftReviewMergedAttachedIdsRef.current =
+      preEditReviewsRef.current && preEditReviewsRef.current.length > 0
+        ? new Set(attachedReviews.map((review) => review.id))
+        : null;
     setDraftMuxMetadataOverrideForDraft(preEditMuxMetadataOverrideRef.current, {
       text: preEditDraftRef.current.text,
       attachments: preEditDraftRef.current.attachments,
       reviews: preEditReviewsRef.current ?? undefined,
     });
-  }, [setDraft, setDraftReviews, setDraftMuxMetadataOverrideForDraft]);
+  }, [attachedReviews, setDraft, setDraftReviews, setDraftMuxMetadataOverrideForDraft]);
 
   // Method to restore text to input (used by compaction cancel)
   const restoreText = useCallback(
@@ -1402,6 +1438,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         `edit-${editingMessage.id}`
       );
       setDraftReviews(editingMessage.pending.reviews);
+      draftReviewMergedAttachedIdsRef.current =
+        editingMessage.pending.reviews.length > 0
+          ? new Set(attachedReviews.map((review) => review.id))
+          : null;
       setDraftMuxMetadataOverrideForDraft(editingMessage.pending.muxMetadata, {
         text: editingMessage.pending.content,
         attachments: editingAttachments,
@@ -2906,6 +2946,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setOptimisticallyDismissedEditId(null);
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
+          draftReviewMergedAttachedIdsRef.current =
+            preSendReviews && preSendReviews.length > 0
+              ? new Set(attachedReviews.map((review) => review.id))
+              : null;
           setDraftMuxMetadataOverrideForDraft(preSendMuxMetadataOverride, {
             text: preSendDraft.text,
             attachments: preSendDraft.attachments,
@@ -2958,6 +3002,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setOptimisticallyDismissedEditId(null);
         setDraft(preSendDraft);
         setDraftReviews(preSendReviews);
+        draftReviewMergedAttachedIdsRef.current =
+          preSendReviews && preSendReviews.length > 0
+            ? new Set(attachedReviews.map((review) => review.id))
+            : null;
         setDraftMuxMetadataOverrideForDraft(preSendMuxMetadataOverride, {
           text: preSendDraft.text,
           attachments: preSendDraft.attachments,
