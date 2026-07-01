@@ -1297,6 +1297,63 @@ describe("task_await tool", () => {
     expect(JSON.stringify(workflowResult.results[0])).not.toContain("child-task-id");
   });
 
+  it("surfaces reservation-only workflow progress while awaiting a run", async () => {
+    using tempDir = new TestTempDir("test-task-await-workflow-agent-reservation-progress");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const reservingRun = {
+      ...createWorkflowRun("running", [
+        {
+          sequence: 1,
+          type: "phase" as const,
+          at: "2026-01-01T00:00:01.000Z",
+          name: "before-agent",
+        },
+        {
+          sequence: 2,
+          type: "agent-step" as const,
+          at: "2026-01-01T00:00:02.000Z",
+          stepId: "slow-agent",
+          inputHash: "sha256:slow-agent",
+          status: "reserving" as const,
+          title: "Slow agent",
+        },
+      ]),
+      id: "wfr_reserving",
+    };
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      waitForAgentReport: mock(() => {
+        throw new Error("workflow run IDs should not be treated as agent tasks");
+      }),
+    } as unknown as TaskService;
+    const workflowService = { getRun: mock(() => Promise.resolve(reservingRun)) };
+    const tool = createTaskAwaitTool({
+      ...baseConfig,
+      taskService,
+      workflowService: workflowService as unknown as TestWorkflowService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_reserving"], timeout_secs: 0 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        expect.objectContaining({
+          taskId: "wfr_reserving",
+          status: "running",
+          workflowProgress: {
+            name: "demo",
+            latestPhase: { name: "before-agent", at: "2026-01-01T00:00:01.000Z" },
+            lastProgressAt: "2026-01-01T00:00:02.000Z",
+            stepCounts: { started: 0, completed: 0, failed: 0, interrupted: 0 },
+          },
+        }),
+      ],
+    });
+  });
+
   it("discovers active workflow runs when task_ids is omitted", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-workflow-discovery");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

@@ -1895,6 +1895,80 @@ describe("WorkflowRunner", () => {
     });
   });
 
+  test("records an agent reservation event before reserving a single agent task", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-reservation-event");
+    const store = await createRunStore(tmp.path);
+    const trace: string[] = [];
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("single workflow agents should use reservation-first task creation");
+      },
+      async createAgentTasks(specs, lifecycle) {
+        trace.push(`reserve:${specs.map((spec) => spec.id).join(",")}`);
+        const runDuringReservation = await store.getRun("wfr_123");
+        expect(runDuringReservation.events).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              type: "agent-step",
+              stepId: "summarize-topic",
+              status: "reserving",
+            }),
+          ])
+        );
+        await lifecycle?.onTaskCreated?.(0, "task_reserved");
+        return [{ taskId: "task_reserved", status: "starting" as const }];
+      },
+      async waitForAgentTask(taskId) {
+        trace.push(`wait:${taskId}`);
+        return { taskId, reportMarkdown: "summary", structuredOutput: { sources: 3 } };
+      },
+    });
+
+    await expect(runner.run("wfr_123")).resolves.toEqual({ reportMarkdown: "Final: summary" });
+
+    const run = await store.getRun("wfr_123");
+    expect(trace).toEqual(["reserve:summarize-topic", "wait:task_reserved"]);
+    expect(run.events.map((event) => event.type)).toEqual([
+      "status",
+      "phase",
+      "log",
+      "agent-step",
+      "task",
+      "task",
+      "result",
+      "status",
+    ]);
+  });
+
+  test("records a failed agent reservation event when reservation fails", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-agent-reservation-failed-event");
+    const store = await createRunStore(tmp.path);
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("single workflow agents should use reservation-first task creation");
+      },
+      async createAgentTasks() {
+        throw new Error("reservation failed");
+      },
+      async waitForAgentTask() {
+        throw new Error("wait should not run when reservation fails");
+      },
+    });
+
+    await expect(runner.run("wfr_123")).rejects.toThrow("reservation failed");
+
+    const run = await store.getRun("wfr_123");
+    expect(run.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "agent-step",
+          stepId: "summarize-topic",
+          status: "failed",
+        }),
+      ])
+    );
+  });
+
   test("records a started task event as soon as an agent task is created", async () => {
     using tmp = new DisposableTempDir("workflow-runner-started-task-event");
     const store = await createRunStore(tmp.path);

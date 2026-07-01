@@ -368,6 +368,8 @@ function getWorkflowEventLabel(event: WorkflowRunEvent): string {
       return event.name;
     case "log":
       return event.message;
+    case "agent-step":
+      return `${event.title ?? event.stepId} / ${event.status}`;
     case "task":
       // Prefer the human-readable sub-agent title (matches the spawned
       // workspace title); fall back to stepId for legacy events without one.
@@ -417,6 +419,8 @@ function getWorkflowEventDetail(event: WorkflowRunEvent): unknown {
       return event.details;
     case "patch":
       return event.details;
+    case "agent-step":
+      return event.details;
     case "timeout":
       return event.details;
     case "action":
@@ -442,6 +446,9 @@ function getEventTone(event: WorkflowRunEvent): "normal" | "success" | "warning"
       : event.status === "started"
         ? "normal"
         : "warning";
+  }
+  if (event.type === "agent-step") {
+    return event.status === "failed" ? "warning" : "normal";
   }
   if (event.type === "action") {
     if (

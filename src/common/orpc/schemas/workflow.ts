@@ -114,6 +114,16 @@ export const WorkflowRunEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     sequence: z.number().int().positive(),
+    type: z.literal("agent-step"),
+    at: IsoDateTimeSchema,
+    stepId: z.string().min(1),
+    inputHash: z.string().min(1),
+    status: z.enum(["reserving", "reserved", "failed"]),
+    title: z.string().min(1).optional(),
+    details: JsonValueSchema.optional(),
+  }),
+  z.object({
+    sequence: z.number().int().positive(),
     type: z.literal("task"),
     at: IsoDateTimeSchema,
     stepId: z.string().min(1),

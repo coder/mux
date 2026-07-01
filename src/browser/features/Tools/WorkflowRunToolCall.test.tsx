@@ -397,6 +397,16 @@ describe("WorkflowRunToolCall", () => {
                   },
                   {
                     sequence: 4,
+                    type: "agent-step",
+                    at: "2026-05-29T00:00:00.000Z",
+                    stepId: "scope-topic",
+                    inputHash: "sha256:scope",
+                    status: "reserving",
+                    title: "Scope topic",
+                    details: { agentId: "explore" },
+                  },
+                  {
+                    sequence: 5,
                     type: "task",
                     at: "2026-05-29T00:00:00.000Z",
                     stepId: "scope-topic",
@@ -404,26 +414,26 @@ describe("WorkflowRunToolCall", () => {
                     status: "completed",
                   },
                   {
-                    sequence: 5,
+                    sequence: 6,
                     type: "phase",
                     at: "2026-05-29T00:00:00.000Z",
                     name: "adversarial-verification",
                   },
                   {
-                    sequence: 6,
+                    sequence: 7,
                     type: "validation",
                     at: "2026-05-29T00:00:00.000Z",
                     stepId: "adversarial-verify",
                     success: true,
                   },
                   {
-                    sequence: 7,
+                    sequence: 8,
                     type: "result",
                     at: "2026-05-29T00:00:01.000Z",
                     result: { reportMarkdown: "# Final report\n\nWorkflow result body." },
                   },
                   {
-                    sequence: 8,
+                    sequence: 9,
                     type: "status",
                     at: "2026-05-29T00:00:01.000Z",
                     status: "completed",
@@ -466,6 +476,7 @@ describe("WorkflowRunToolCall", () => {
     expect(view.container.textContent).toContain("sha256:abc123");
     expect(view.container.textContent).toContain("scope");
     expect(view.container.textContent).toContain("adversarial-verification");
+    expect(view.getByText("Scope topic / reserving")).toBeTruthy();
     expect(view.container.textContent).toContain("task_scope");
     const firstEventIndex = view.getByText("#1");
     expect(firstEventIndex).toBeTruthy();
@@ -475,7 +486,7 @@ describe("WorkflowRunToolCall", () => {
     expect(view.getByText("Scoped topic").closest("div")?.className).not.toContain(
       "bg-plan-mode-alpha"
     );
-    expect(view.getByText("Workflow events (5)")).toBeTruthy();
+    expect(view.getByText("Workflow events (6)")).toBeTruthy();
     const taskEventRow = view.getByText("scope-topic / task_scope / completed");
     const taskEventIndex = view.getByText("#3");
     expect(taskEventIndex.className).toContain("cursor-help");

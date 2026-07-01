@@ -43,6 +43,16 @@ describe("workflow domain schemas", () => {
         },
         {
           sequence: 3,
+          type: "agent-step",
+          at: "2026-05-29T00:00:01.500Z",
+          stepId: "reserve-child",
+          inputHash: "sha256:reserve-child",
+          status: "reserving",
+          title: "Reserve child task",
+          details: { agentId: "explore", isolation: "none" },
+        },
+        {
+          sequence: 4,
           type: "patch",
           at: "2026-05-29T00:00:02.000Z",
           stepId: "apply-implementation",
@@ -55,7 +65,7 @@ describe("workflow domain schemas", () => {
     });
 
     expect(run.workflow.name).toBe("deep-research");
-    expect(run.events.map((event) => event.sequence)).toEqual([1, 2, 3]);
+    expect(run.events.map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
   });
 
   test("workflow run records default to no attentionPolicy and accept notify_on_terminal", () => {

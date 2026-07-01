@@ -1212,25 +1212,42 @@ export class WorkflowRunner {
     });
     const startedAt = existingStep?.startedAt ?? this.clock.nowIso();
     let recordedTaskId: string | undefined;
-    const createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
-      onTaskCreated: async (index, createdTaskId) => {
-        assert(index === 0, "WorkflowRunner.pipeline agent start lifecycle index mismatch");
-        assert(createdTaskId.length > 0, "WorkflowRunner.pipeline created taskId is required");
-        options.leaseGuard.throwIfLost();
-        recordedTaskId = createdTaskId;
-        await this.recordStepStarted(runId, {
-          stepId: spec.id,
-          inputHash,
-          taskId: createdTaskId,
-          startedAt,
-        });
-        await this.recordTaskStartedEventIfMissing(runId, sequence, {
-          stepId: spec.id,
-          taskId: createdTaskId,
-          title: spec.title,
-        });
-      },
+    await this.recordAgentReservationEventIfMissing(runId, sequence, {
+      stepId: spec.id,
+      inputHash,
+      title: spec.title,
+      spec: resultSpec,
     });
+    let createdTasks: Array<{ taskId: string; status: "queued" | "starting" | "running" }>;
+    try {
+      createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
+        onTaskCreated: async (index, createdTaskId) => {
+          assert(index === 0, "WorkflowRunner.pipeline agent start lifecycle index mismatch");
+          assert(createdTaskId.length > 0, "WorkflowRunner.pipeline created taskId is required");
+          options.leaseGuard.throwIfLost();
+          recordedTaskId = createdTaskId;
+          await this.recordStepStarted(runId, {
+            stepId: spec.id,
+            inputHash,
+            taskId: createdTaskId,
+            startedAt,
+          });
+          await this.recordTaskStartedEventIfMissing(runId, sequence, {
+            stepId: spec.id,
+            taskId: createdTaskId,
+            title: spec.title,
+          });
+        },
+      });
+    } catch (error) {
+      await this.recordAgentReservationFailedEventIfMissing(runId, sequence, {
+        stepId: spec.id,
+        inputHash,
+        title: spec.title,
+        error,
+      });
+      throw error;
+    }
     assert(createdTasks.length === 1, "pipeline agent start returned the wrong number of tasks");
     const createdTask = createdTasks[0];
     assert(createdTask != null, "pipeline agent start must return a task");
@@ -1617,6 +1634,14 @@ export class WorkflowRunner {
         await throwIfAbortPreventsQueuedWork();
         if (createAgentTasks != null && bulkCreatableSteps.length > 0) {
           try {
+            for (const step of bulkCreatableSteps) {
+              await this.recordAgentReservationEventIfMissing(runId, sequence, {
+                stepId: step.spec.id,
+                inputHash: step.inputHash,
+                title: step.spec.title,
+                spec: step.spec,
+              });
+            }
             const createdTasks = await createAgentTasks(
               bulkCreatableSteps.map((step) => step.spec),
               {
@@ -1650,6 +1675,14 @@ export class WorkflowRunner {
               bulkCreatableSteps[index].taskId = createdTask.taskId;
             }
           } catch (error) {
+            for (const step of bulkCreatableSteps) {
+              await this.recordAgentReservationFailedEventIfMissing(runId, sequence, {
+                stepId: step.spec.id,
+                inputHash: step.inputHash,
+                title: step.spec.title,
+                error,
+              });
+            }
             await applyChildFailureToBatch(error);
             throw error;
           }
@@ -2110,24 +2143,41 @@ export class WorkflowRunner {
           this.taskAdapter.createAgentTasks != null,
           "agent timeout requires workflow task adapter support for nonblocking agent starts"
         );
-        const createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
-          onTaskCreated: async (index, createdTaskId) => {
-            assert(index === 0, "WorkflowRunner timeout agent start lifecycle index mismatch");
-            taskId = createdTaskId;
-            step.leaseGuard.throwIfLost();
-            await this.recordStepStarted(runId, {
-              stepId: step.spec.id,
-              inputHash: step.inputHash,
-              taskId: createdTaskId,
-              startedAt: step.startedAt,
-            });
-            await this.recordTaskStartedEventIfMissing(runId, sequence, {
-              stepId: step.spec.id,
-              taskId: createdTaskId,
-              title: step.spec.title,
-            });
-          },
+        await this.recordAgentReservationEventIfMissing(runId, sequence, {
+          stepId: step.spec.id,
+          inputHash: step.inputHash,
+          title: step.spec.title,
+          spec: resultSpec,
         });
+        let createdTasks: Array<{ taskId: string; status: "queued" | "starting" | "running" }>;
+        try {
+          createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
+            onTaskCreated: async (index, createdTaskId) => {
+              assert(index === 0, "WorkflowRunner timeout agent start lifecycle index mismatch");
+              taskId = createdTaskId;
+              step.leaseGuard.throwIfLost();
+              await this.recordStepStarted(runId, {
+                stepId: step.spec.id,
+                inputHash: step.inputHash,
+                taskId: createdTaskId,
+                startedAt: step.startedAt,
+              });
+              await this.recordTaskStartedEventIfMissing(runId, sequence, {
+                stepId: step.spec.id,
+                taskId: createdTaskId,
+                title: step.spec.title,
+              });
+            },
+          });
+        } catch (error) {
+          await this.recordAgentReservationFailedEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            inputHash: step.inputHash,
+            title: step.spec.title,
+            error,
+          });
+          throw error;
+        }
         assert(createdTasks.length === 1, "timeout agent start returned the wrong number of tasks");
         const createdTask = createdTasks[0];
         assert(createdTask != null, "timeout agent start must return a task");
@@ -2219,6 +2269,92 @@ export class WorkflowRunner {
     const resultSpec = normalizeWorkflowAgentSpecForExecution(step.spec, {
       allowMissingOutputSchema: step.allowMissingOutputSchema,
     });
+    if (this.taskAdapter.createAgentTasks != null && this.taskAdapter.waitForAgentTask != null) {
+      // Checkpoint the workflow step before reserving the child task. Reservation can
+      // block on task-service gates, and replay needs a visible boundary instead of a
+      // phase-only run if startup stalls before a taskId exists.
+      await this.recordAgentReservationEventIfMissing(runId, sequence, {
+        stepId: step.spec.id,
+        inputHash: step.inputHash,
+        title: step.spec.title,
+        spec: resultSpec,
+      });
+      let recordedTaskId: string | undefined;
+      let createdTasks: Array<{ taskId: string; status: "queued" | "starting" | "running" }>;
+      try {
+        createdTasks = await this.taskAdapter.createAgentTasks([resultSpec], {
+          onTaskCreated: async (index, createdTaskId) => {
+            assert(index === 0, "WorkflowRunner agent start lifecycle index mismatch");
+            assert(createdTaskId.length > 0, "WorkflowRunner created taskId is required");
+            step.leaseGuard.throwIfLost();
+            recordedTaskId = createdTaskId;
+            await this.recordStepStarted(runId, {
+              stepId: step.spec.id,
+              inputHash: step.inputHash,
+              taskId: createdTaskId,
+              startedAt: step.startedAt,
+            });
+            await this.recordTaskStartedEventIfMissing(runId, sequence, {
+              stepId: step.spec.id,
+              taskId: createdTaskId,
+              title: step.spec.title,
+            });
+          },
+        });
+      } catch (error) {
+        await this.recordAgentReservationFailedEventIfMissing(runId, sequence, {
+          stepId: step.spec.id,
+          inputHash: step.inputHash,
+          title: step.spec.title,
+          error,
+        });
+        throw error;
+      }
+      assert(createdTasks.length === 1, "agent start returned the wrong number of tasks");
+      const createdTask = createdTasks[0];
+      assert(createdTask != null, "agent start must return a task");
+      assert(createdTask.taskId.length > 0, "WorkflowRunner created taskId is required");
+      if (recordedTaskId == null) {
+        recordedTaskId = createdTask.taskId;
+        await this.recordStepStarted(runId, {
+          stepId: step.spec.id,
+          inputHash: step.inputHash,
+          taskId: recordedTaskId,
+          startedAt: step.startedAt,
+        });
+        await this.recordTaskStartedEventIfMissing(runId, sequence, {
+          stepId: step.spec.id,
+          taskId: recordedTaskId,
+          title: step.spec.title,
+        });
+      } else {
+        assert(
+          recordedTaskId === createdTask.taskId,
+          "WorkflowRunner lifecycle taskId must match created taskId"
+        );
+      }
+
+      try {
+        const rawResult = await this.taskAdapter.waitForAgentTask(
+          recordedTaskId,
+          resultSpec,
+          step.waitOptions
+        );
+        return { rawResult, resultSpec };
+      } catch (error) {
+        if (!isForegroundWaitBackgroundedError(error)) {
+          step.leaseGuard.throwIfLost();
+          await this.recordTaskTerminalEventIfMissing(runId, sequence, {
+            stepId: step.spec.id,
+            taskId: recordedTaskId,
+            title: step.spec.title,
+            status: getTaskTerminalStatusForError(error, step.waitOptions?.abortSignal),
+          });
+        }
+        throw error;
+      }
+    }
+
     step.leaseGuard.throwIfLost();
     let recordedTaskId: string | undefined;
     let rawResult: WorkflowAgentResult;
@@ -2271,6 +2407,83 @@ export class WorkflowRunner {
       });
     }
     return { rawResult, resultSpec };
+  }
+
+  private async recordAgentReservationEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    agent: { stepId: string; inputHash: string; title?: string; spec: WorkflowAgentSpec }
+  ): Promise<void> {
+    assert(
+      runId.length > 0,
+      "WorkflowRunner.recordAgentReservationEventIfMissing: runId is required"
+    );
+    assert(agent.stepId.length > 0, "WorkflowRunner: agent reservation stepId is required");
+    assert(agent.inputHash.length > 0, "WorkflowRunner: agent reservation inputHash is required");
+
+    await using _lock = await this.taskEventMutex.acquire();
+    const run = await this.runStore.getRun(runId);
+    const alreadyRecorded = run.events.some(
+      (event) =>
+        event.type === "agent-step" &&
+        event.status === "reserving" &&
+        event.stepId === agent.stepId &&
+        event.inputHash === agent.inputHash
+    );
+    if (alreadyRecorded) {
+      return;
+    }
+
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "agent-step",
+      at: this.clock.nowIso(),
+      stepId: agent.stepId,
+      inputHash: agent.inputHash,
+      status: "reserving",
+      title: agent.title,
+      details: {
+        agentId: agent.spec.agentId ?? null,
+        isolation: agent.spec.isolation ?? null,
+      },
+    });
+  }
+
+  private async recordAgentReservationFailedEventIfMissing(
+    runId: string,
+    sequence: WorkflowEventSequence,
+    agent: { stepId: string; inputHash: string; title?: string; error: unknown }
+  ): Promise<void> {
+    assert(
+      runId.length > 0,
+      "WorkflowRunner.recordAgentReservationFailedEventIfMissing: runId is required"
+    );
+    assert(agent.stepId.length > 0, "WorkflowRunner: agent reservation stepId is required");
+    assert(agent.inputHash.length > 0, "WorkflowRunner: agent reservation inputHash is required");
+
+    await using _lock = await this.taskEventMutex.acquire();
+    const run = await this.runStore.getRun(runId);
+    const alreadyRecorded = run.events.some(
+      (event) =>
+        event.type === "agent-step" &&
+        event.status === "failed" &&
+        event.stepId === agent.stepId &&
+        event.inputHash === agent.inputHash
+    );
+    if (alreadyRecorded) {
+      return;
+    }
+
+    await this.appendEvent(runId, {
+      sequence: sequence.next(),
+      type: "agent-step",
+      at: this.clock.nowIso(),
+      stepId: agent.stepId,
+      inputHash: agent.inputHash,
+      status: "failed",
+      title: agent.title,
+      details: { error: getErrorMessage(agent.error) },
+    });
   }
 
   private async recordTaskStartedEventIfMissing(

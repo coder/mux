@@ -608,6 +608,63 @@ describe("task_list tool", () => {
     expect(JSON.stringify(result)).not.toContain("claimCount");
   });
 
+  it("reports agent reservation events as workflow progress before a child task exists", async () => {
+    using tempDir = new TestTempDir("test-task-list-workflow-agent-reservation-progress");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const taskService = {
+      listDescendantAgentTasks: mock(() => []),
+    } as unknown as TaskService;
+    const listRuns = mock(() =>
+      Promise.resolve([
+        {
+          ...buildWorkflowRun("wfr_reserving", "running"),
+          events: [
+            {
+              sequence: 1,
+              type: "phase" as const,
+              at: "2026-05-29T00:00:01.000Z",
+              name: "before-agent",
+            },
+            {
+              sequence: 2,
+              type: "agent-step" as const,
+              at: "2026-05-29T00:00:02.000Z",
+              stepId: "slow-agent",
+              inputHash: "sha256:slow-agent",
+              status: "reserving" as const,
+              title: "Slow agent",
+            },
+          ],
+        },
+      ])
+    );
+
+    const tool = createTaskListTool({
+      ...baseConfig,
+      taskService,
+      workflowService: { listRuns },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ includeArchived: false }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      tasks: [
+        expect.objectContaining({
+          taskId: "wfr_reserving",
+          workflowProgress: {
+            name: "deep-research",
+            latestPhase: { name: "before-agent", at: "2026-05-29T00:00:01.000Z" },
+            lastProgressAt: "2026-05-29T00:00:02.000Z",
+            stepCounts: { started: 0, completed: 0, failed: 0, interrupted: 0 },
+          },
+        }),
+      ],
+    });
+  });
+
   it("discovers resumable workflow runs without querying agent tasks", async () => {
     using tempDir = new TestTempDir("test-task-list-resumable-workflows");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });

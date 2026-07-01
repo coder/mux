@@ -203,6 +203,7 @@ function buildPhaseView(
 // assignment keys off the first of ANY of these per stepId so every step lands in its phase.
 function stepBearingEventStepId(event: WorkflowRunEvent): string | null {
   switch (event.type) {
+    case "agent-step":
     case "task":
     case "workflow":
     case "patch":
@@ -321,7 +322,11 @@ export function projectWorkflowRun(
       }
     }
     if (!stepTitle.has(stepId)) {
-      if (event.type === "task" && event.title != null && event.title.length > 0) {
+      if (
+        (event.type === "agent-step" || event.type === "task") &&
+        event.title != null &&
+        event.title.length > 0
+      ) {
         stepTitle.set(stepId, event.title);
       } else if (event.type === "workflow") {
         // Nested-workflow steps have no task title; use the child workflow's name.
