@@ -398,6 +398,40 @@ describe("projectWorkflowRun — non-task step events", () => {
     expect(view.phases.some((phase) => phase.name === "")).toBe(false);
   });
 
+  test("synthesizes a running step for reservation-only agent-step events", () => {
+    const events: WorkflowRunEvent[] = [
+      { sequence: 1, type: "phase", at: at(1), name: "branch-recon" },
+      {
+        sequence: 2,
+        type: "agent-step",
+        at: at(2),
+        stepId: "branch-recon",
+        inputHash: "h-reserving",
+        status: "reserving",
+        title: "Recon branch diff",
+        details: { agentId: "explore", isolation: "none" },
+      },
+    ];
+
+    const view = projectWorkflowRun(makeRun({ events, steps: [], updatedAt: at(4) }));
+
+    expect(view.steps).toHaveLength(1);
+    expect(view.steps[0]).toMatchObject({
+      stepId: "branch-recon",
+      status: "running",
+      title: "Recon branch diff",
+      phaseName: "branch-recon",
+      startedAt: at(2),
+    });
+    expect(view.phases.find((phase) => phase.name === "branch-recon")).toMatchObject({
+      total: 1,
+      done: 0,
+      running: true,
+      failed: false,
+    });
+    expect(view.stats).toMatchObject({ total: 1, done: 0, running: 1, failed: 0 });
+  });
+
   test("assigns repeated nested workflow ids to their matching step attempts", () => {
     const events: WorkflowRunEvent[] = [
       { sequence: 1, type: "phase", at: at(1), name: "delegate" },

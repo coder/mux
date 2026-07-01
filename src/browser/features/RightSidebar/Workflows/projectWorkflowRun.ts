@@ -385,6 +385,55 @@ export function projectWorkflowRun(
     };
   });
 
+  const recordedStepKeys = new Set(run.steps.map((step) => `${step.stepId}\0${step.inputHash}`));
+  const reservationByStepKey = new Map<
+    string,
+    {
+      first: Extract<WorkflowRunEvent, { type: "agent-step" }>;
+      latest: Extract<WorkflowRunEvent, { type: "agent-step" }>;
+    }
+  >();
+  for (const event of events) {
+    if (event.type !== "agent-step") {
+      continue;
+    }
+    const key = `${event.stepId}\0${event.inputHash}`;
+    if (recordedStepKeys.has(key)) {
+      continue;
+    }
+    const existing = reservationByStepKey.get(key);
+    if (existing != null) {
+      existing.latest = event;
+    } else {
+      reservationByStepKey.set(key, { first: event, latest: event });
+    }
+  }
+
+  for (const reservation of reservationByStepKey.values()) {
+    const status = reservation.latest.status === "failed" ? "failed" : "running";
+    const errorDetails = reservation.latest.details;
+    const error =
+      errorDetails != null &&
+      typeof errorDetails === "object" &&
+      !Array.isArray(errorDetails) &&
+      typeof (errorDetails as Record<string, unknown>).error === "string"
+        ? (errorDetails as Record<string, string>).error
+        : undefined;
+    steps.push({
+      stepId: reservation.first.stepId,
+      status,
+      title: reservation.first.title ?? reservation.first.stepId,
+      phaseName: phaseAtSequence(reservation.first.sequence),
+      startedAt: reservation.first.at,
+      completedAt: status === "failed" ? reservation.latest.at : undefined,
+      durationMs:
+        status === "failed"
+          ? Math.max(0, parseTime(reservation.latest.at) - parseTime(reservation.first.at))
+          : undefined,
+      error,
+    });
+  }
+
   // Group steps by phase, preserving declared phase order.
   const stepsByPhase = new Map<string | null, WorkflowStepView[]>();
   for (const step of steps) {
