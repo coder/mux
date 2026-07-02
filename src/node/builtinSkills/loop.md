@@ -27,6 +27,7 @@ Use this skill before acting on requests that ask you to keep doing agent/contro
 | Recurring reminder/continuation for this workspace     | `heartbeat`                                                              | Suitable for idle check-ins, not wall-clock reconciliation or hiding an unbounded polling process.                                                                                                     |
 | Wall-clock recurring reconciliation                    | Workflow schedule or product scheduler/reconciler                        | Use scheduled/workflow/product mechanisms when cadence must ignore workspace activity.                                                                                                                 |
 | Durable, resumable, reusable multi-agent orchestration | Workflow                                                                 | Read `workflow-authoring`; reuse an existing workflow before authoring one. Workflow conductors coordinate agents and patches, not arbitrary host operations directly.                                 |
+| Skill/instructions describing a multi-phase process    | One-off `script_source` workflow                                         | When prose reads like a workflow (phases, loops, lanes, verification gates) and ships no packaged `workflow.js`, codify it as an inline conductor instead of executing every phase in-context.         |
 | GUI/browser loop                                       | `agent-browser`, `dogfood`, or desktop delegation                        | Use the screenshot/action/verify loop and attach evidence when visual verification matters.                                                                                                            |
 | The app itself should keep reconciling over time       | Product scheduler/reconciler service                                     | Implement persisted desired state, actual-state observation, idempotency keys, tests, and operator-visible status.                                                                                     |
 | Existing PR must be driven to readiness                | Repo PR loop                                                             | Follow repo instructions for local gates, push, review comments, CI, and readiness scripts.                                                                                                            |
@@ -94,7 +95,7 @@ On bounded-out failure, stop spinning. Report the last observed state, attempted
 
 ## Workflow route
 
-Choose a workflow only when durability/reuse/resume or structured multi-agent phases justify the overhead. Before authoring one:
+Choose a workflow when durability/reuse/resume or structured multi-agent phases justify the overhead. A skill or instruction block that describes its process as ordered phases, loops, or parallel lanes is a strong signal to codify it as a one-off `script_source` workflow: the conductor executes the documented process more faithfully than ad-hoc in-context execution and survives interruption. Before authoring one:
 
 1. Use relevant skills (`agent_skill_list` / `agent_skill_read`) to discover packaged workflow guidance, or use a known explicit workflow script path.
 2. Read `workflow-authoring` before writing a new script.

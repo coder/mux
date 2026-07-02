@@ -1194,7 +1194,7 @@ export const WorkflowRunToolArgsSchema = z
       .min(1)
       .nullish()
       .describe(
-        "Inline JavaScript workflow source for compact one-off conductors. The exact source is snapshotted into the durable run for replay/resume."
+        "Inline JavaScript workflow source for one-off conductors, including prose-described processes codified in place. The exact source is snapshotted into the durable run for replay/resume."
       ),
     args: z.unknown().nullish(),
     run_in_background: z
@@ -2087,7 +2087,9 @@ export const TOOL_DEFINITIONS = {
     // Prefer foreground workflows so callers do not waste a turn polling when no other work can proceed.
     description:
       "Start a durable workflow run from exactly one launch source: script_path for a JavaScript file/skill workflow, or script_source for compact one-off inline workflow source. Workflows coordinate delegated agent tasks and preserve run state for replay/resume. " +
-      "Prefer script_path for reusable, reviewable, shared, slash/CLI-invokable, or skill-packaged workflows; use script_source only for small one-off conductors whose exact source should be snapshotted into the durable run. " +
+      "Prefer script_path for reusable, reviewable, shared, slash/CLI-invokable, or skill-packaged workflows; use script_source for one-off conductors whose exact source should be snapshotted into the durable run. " +
+      "When a skill, instruction block, or plan describes a multi-phase, looping, or multi-agent process in prose and ships no packaged workflow script, prefer codifying that process as a one-off script_source workflow over executing every phase in-context: " +
+      "the conductor follows the documented phases more faithfully and gains durable checkpoints, resume, and fresh delegated context per phase. " +
       "Use agent_skill_read / agent_skill_read_file to discover and inspect skill-packaged workflows; non-skill workflow files must be addressed by an explicit known path and can be inspected with normal file tools. " +
       "Prefer the default foreground mode (`run_in_background` omitted or false) so completed workflows return their result without an extra task_await round-trip. " +
       "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +

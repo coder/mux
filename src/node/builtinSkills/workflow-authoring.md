@@ -18,6 +18,7 @@ Prefer a workflow when the task is a repeatable orchestration pattern, especiall
 - Durable state so completed work is reused after resume/restart.
 - A reusable slash-invokable process, like deep research or deep review.
 - Durable patch application from workflow-owned sub-agent tasks.
+- Executing a skill or instruction block that is effectively a workflow description (ordered phases, loops, fan-out, verification gates) but ships no packaged `workflow.js` — codify the prose into a one-off conductor so execution matches the documented process instead of drifting in-context.
 
 Do **not** create a workflow for a small one-off edit or a single simple investigation. The conductor cannot run arbitrary host operations directly; delegate open-ended shell/filesystem/web investigation to sub-agents.
 
@@ -25,7 +26,7 @@ Do **not** create a workflow for a small one-off edit or a single simple investi
 
 1. Use skills to discover packaged workflows. Read a workflow skill with `agent_skill_read({ name: "<skill>" })`, then inspect its script with `agent_skill_read_file({ name: "<skill>", filePath: "workflow.js" })` when needed.
 2. For reusable, reviewable, shared, slash/CLI-invokable, or longer local workflow drafts, write an explicit workspace-contained JavaScript file, for example `./workflows/<name>.js`.
-3. Use `script_source` only for compact one-off conductors that fit comfortably in the tool call and do not need a reusable file. Inline source is snapshotted into the durable run for replay/resume.
+3. Use `script_source` for one-off conductors that fit comfortably in the tool call and do not need a reusable file — including in-place codifications of prose-described processes. Inline source is snapshotted into the durable run for replay/resume.
 4. Use normal file tools (`file_read`, `file_edit_insert`, `file_edit_replace_string`) when authoring a JavaScript file.
 5. Run file workflows by explicit path with `workflow_run({ script_path: "./workflows/<name>.js", args: {} })`; prefer foreground mode (omit `run_in_background` or set it to `false`) unless you have another workflow/task or independent work to run while it completes. If `workflow_run` returns `status: "running"` or `status: "backgrounded"`, await the returned `runId` before using the result.
 
@@ -79,6 +80,12 @@ workflow_run({
 ```
 
 Use file or skill workflows instead when the conductor should be reviewed, reused, shared, launched by slash/CLI, or kept long-term. Inline source is treated like project code and requires Project Trust.
+
+### Codifying prose-described processes
+
+Inline workflows are also the preferred way to execute a process that exists only as prose. When a skill, instruction block, or plan reads like a workflow — ordered phases, loops, parallel lanes, verification gates, structured hand-offs — and ships no `workflow.js`, translate its steps into a one-off `script_source` conductor and run that, rather than performing every phase in your own context. The codified run stays faithful to the documented process (each phase is explicit instead of drifting as context grows), gives each phase a fresh delegated context, and survives interruption via resume.
+
+Fit check before codifying: the conductor cannot run host operations directly, so every phase must be expressible as sub-agent delegation plus patch integration. If the process fundamentally needs this workspace's own working tree, uncommitted state, or interactive tools at every step, keep it in-context. If the codified conductor proves reusable, promote it to a `./workflows/<name>.js` file or a skill-packaged `workflow.js` afterwards.
 
 ### Attention policy (internal, not author-settable)
 
