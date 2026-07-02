@@ -29,21 +29,28 @@ export function parseWorkflowName(source: string): string | null {
 }
 
 export function parseWorkflowMetadataName(rawMetadata: unknown): string | null {
-  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
-    return normalizeDescription((rawMetadata as { name?: unknown }).name);
-  }
-  return null;
+  return readWorkflowMetadataString(rawMetadata, "name");
 }
 
 export function parseWorkflowMetadataDescription(rawMetadata: unknown): string | null {
-  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
-    return normalizeDescription((rawMetadata as { description?: unknown }).description);
-  }
-  return null;
+  return readWorkflowMetadataString(rawMetadata, "description");
 }
 
 export function replaceWorkflowDescription(source: string, description: string): string | null {
   return replaceStaticMetadataStringProperty(source, "description", description);
+}
+
+// `name` and `description` are both optional string fields read off the same
+// untrusted, statically-parsed metadata object; share the object guard and
+// trim/normalize so the two accessors cannot drift on how a property is validated.
+function readWorkflowMetadataString(
+  rawMetadata: unknown,
+  key: "name" | "description"
+): string | null {
+  if (rawMetadata != null && typeof rawMetadata === "object" && !Array.isArray(rawMetadata)) {
+    return normalizeDescription((rawMetadata as Record<string, unknown>)[key]);
+  }
+  return null;
 }
 
 function normalizeDescription(value: unknown): string | null {
