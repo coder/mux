@@ -774,6 +774,150 @@ describe("WorkspaceGoalService", () => {
     });
   });
 
+  // Regression: bash-monitor wake turns used to disable freshly set goals.
+  // The wake turn's synthetic user row lands before the kickoff continuation
+  // row, so chat-tail reconciliation saw the pre-goal manual user row and
+  // flipped the goal active→paused mid-window.
+  test("getGoal keeps a kickoff-window goal active while a synthetic wake turn runs", async () => {
+    await appendUserHistoryMessage(historyService, workspaceId, "Set yourself a goal and continue");
+    const busy = true;
+    const dispatcher = new IdleDispatcher();
+    const execute = mock(() => Promise.resolve(true));
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(execute),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const goal = await setGoalOk(service, {
+      workspaceId,
+      objective: "Survive a wake turn",
+      status: "active",
+      initiator: "model",
+    });
+    // Simulate a bash-monitor wake turn starting before the kickoff fires: its
+    // synthetic user row is appended and the wake turn's tool build reads the
+    // goal while the kickoff candidate is still armed.
+    await appendUserHistoryMessage(
+      historyService,
+      workspaceId,
+      "A background bash monitor matched output.",
+      { timestamp: Date.now(), synthetic: true, uiVisible: true }
+    );
+
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: goal.goalId,
+      status: "active",
+    });
+  });
+
+  test("a wake turn ending during the kickoff window does not drop the kickoff candidate", async () => {
+    await appendUserHistoryMessage(historyService, workspaceId, "Set yourself a goal and continue");
+    let busy = true;
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(async (input) => {
+        executed.push(input);
+        await appendUserHistoryMessage(historyService, workspaceId, input.message, {
+          timestamp: Date.now(),
+          synthetic: true,
+          uiVisible: true,
+          kind: input.kind ?? GOAL_CONTINUATION_KIND,
+        });
+        return true;
+      }),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    const goal = await setGoalOk(service, {
+      workspaceId,
+      objective: "Survive a wake turn end",
+      status: "active",
+      initiator: "model",
+    });
+    await appendUserHistoryMessage(
+      historyService,
+      workspaceId,
+      "A background bash monitor matched output.",
+      { timestamp: Date.now(), synthetic: true, uiVisible: true }
+    );
+    // getGoal during the wake turn must not flip the goal, and the wake turn's
+    // stream-end hook must keep the armed kickoff instead of downgrading or
+    // deleting it.
+    expect(await service.getGoal(workspaceId)).toMatchObject({ status: "active" });
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: Date.now(),
+    });
+
+    busy = false;
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(executed[0]?.startStreamInBackground).toBe(true);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: goal.goalId,
+      status: "active",
+    });
+  });
+
+  test("wake turn stream end preserves a paused kickoff candidate armed by resume", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Resume through a wake turn" });
+    await appendUserHistoryMessage(historyService, workspaceId, "Continue goal", {
+      timestamp: Date.now(),
+      synthetic: true,
+      uiVisible: true,
+      kind: GOAL_CONTINUATION_KIND,
+    });
+    let busy = true;
+    const dispatcher = new IdleDispatcher();
+    const executed: Array<Parameters<GoalContinuationRuntimeBridge["executeGoalContinuation"]>[0]> =
+      [];
+    service.registerGoalContinuationConsumer(dispatcher, {
+      ...continuationBridge(async (input) => {
+        executed.push(input);
+        await appendUserHistoryMessage(historyService, workspaceId, input.message, {
+          timestamp: Date.now(),
+          synthetic: true,
+          uiVisible: true,
+          kind: input.kind ?? GOAL_CONTINUATION_KIND,
+        });
+        return true;
+      }),
+      getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
+      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+    });
+
+    // Explicit pause appends a goal-pause-boundary row and clears candidates;
+    // resume then arms a kickoff whose continuation is deferred while busy. The
+    // chat tail still ends at the boundary, so the persisted status flaps back
+    // to paused — the armed kickoff is the durable carrier of resume intent.
+    await setGoalOk(service, { workspaceId, status: "paused" });
+    const resumed = await setGoalOk(service, { workspaceId, status: "active" });
+
+    // A wake turn's stream end must not delete that paused kickoff candidate.
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
+      streamEndedAtMs: Date.now(),
+    });
+
+    busy = false;
+    await dispatcher.requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME);
+    await waitForCondition(() => executed.length > 0, { timeoutMs: 1_000 });
+
+    expect(executed[0]?.kind).toBe(GOAL_CONTINUATION_KIND);
+    expect(await service.getGoal(workspaceId)).toMatchObject({
+      goalId: resumed.goalId,
+      status: "active",
+    });
+  });
+
   test("strips set_goal capability from synthetic goal continuations", async () => {
     const created = await setGoalOk(service, { workspaceId, objective: "Continue safely" });
     const dispatcher = new IdleDispatcher();

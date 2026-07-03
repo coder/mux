@@ -200,6 +200,13 @@ interface PendingGoalContinuationCandidate {
 
 interface ChatTailGoalModeResult {
   mode: "active" | "paused" | null;
+  /**
+   * Why the tail resolved to paused: an explicit `goal-pause-boundary` row vs
+   * an ordinary manual user row. Reconciliation uses this to distinguish an
+   * explicit pause from the implicit "no continuation appended yet" state of a
+   * freshly armed kickoff (see `applyChatTailGoalMode`).
+   */
+  pausedBy?: "pause_boundary" | "manual_user";
 }
 
 interface GoalContinuationEligibilityResult {
@@ -494,23 +501,45 @@ export class WorkspaceGoalService {
         return { mode: "active" };
       }
       if (message.metadata?.muxMetadata?.type === "goal-pause-boundary") {
-        return { mode: "paused" };
+        return { mode: "paused", pausedBy: "pause_boundary" };
       }
       if (message.metadata?.synthetic === true) {
         continue;
       }
-      return { mode: "paused" };
+      return { mode: "paused", pausedBy: "manual_user" };
     }
 
     return { mode: null };
   }
 
   private applyChatTailGoalMode(
+    workspaceId: string,
     goal: GoalRecordV1,
     chatTailMode: ChatTailGoalModeResult
   ): GoalRecordV1 {
     if (chatTailMode.mode == null || (goal.status !== "active" && goal.status !== "paused")) {
       return goal;
+    }
+
+    // Kickoff window: a freshly activated goal (model set_goal / user Resume)
+    // arms a kickoff continuation candidate before its first goal_continuation
+    // row is appended, so the chat tail still ends at a pre-goal manual user
+    // row. Reconciling active→paused here would let any concurrent read (Goal
+    // panel, tool building, a synthetic bash-monitor wake turn) pause the goal
+    // before the kickoff fires — and the wake turn's stream-end hook could then
+    // drop the kickoff candidate, stranding the goal (see
+    // requestContinuationAfterStreamEnd). Explicit pauses are unaffected: every
+    // explicit pause path deletes the candidate first and appends a
+    // goal-pause-boundary row, which is deliberately not suppressed here.
+    if (
+      goal.status === "active" &&
+      chatTailMode.mode === "paused" &&
+      chatTailMode.pausedBy === "manual_user"
+    ) {
+      const candidate = this.pendingContinuationCandidates.get(workspaceId);
+      if (candidate?.source === "kickoff" && candidate.goalId === goal.goalId) {
+        return goal;
+      }
     }
 
     const desiredStatus = chatTailMode.mode;
@@ -539,7 +568,7 @@ export class WorkspaceGoalService {
         return null;
       }
 
-      const next = this.applyChatTailGoalMode(current, chatTailMode);
+      const next = this.applyChatTailGoalMode(workspaceId, current, chatTailMode);
       if (next === current) {
         return current;
       }
@@ -912,12 +941,25 @@ export class WorkspaceGoalService {
       const kickoffGoal = await this.normalizeGoalLimits(input.workspaceId, {
         syncChatTail: false,
       });
-      if (kickoffGoal?.goalId === existingCandidate.goalId && kickoffGoal.status === "active") {
+      if (
+        kickoffGoal?.goalId === existingCandidate.goalId &&
+        (kickoffGoal.status === "active" || kickoffGoal.status === "paused")
+      ) {
         // Model-created goals arm a kickoff candidate when the queued set_goal
         // drains. The enclosing user stream also calls this stream-end hook; do
         // not downgrade that kickoff into a stream_end candidate, because
         // stream_end candidates reconcile against the pre-goal manual user row
         // and would pause the new goal before it can continue.
+        //
+        // `paused` is included because chat-tail reconciliation can flip a
+        // kickoff-window goal to paused before its first continuation row lands
+        // (e.g. when a synthetic bash-monitor wake turn runs first and its
+        // stream end lands here). Eligibility and dispatch deliberately accept
+        // paused kickoff candidates and recordContinuationFired flips the goal
+        // back to active. Every explicit pause path deletes the candidate
+        // first, so a paused goal with an armed kickoff can only be that
+        // auto-flip — dropping it here would strand the goal (issue: bash
+        // monitor wakes disabling freshly set goals).
         await this.goalContinuationDispatcher.requestDispatch(
           input.workspaceId,
           GOAL_CONTINUATION_IDLE_CONSUMER_NAME
@@ -1371,7 +1413,7 @@ export class WorkspaceGoalService {
       }
       const budgetNormalized = this.applyBudgetDrivenStatus(current);
       const next = chatTailMode
-        ? this.applyChatTailGoalMode(budgetNormalized, chatTailMode)
+        ? this.applyChatTailGoalMode(workspaceId, budgetNormalized, chatTailMode)
         : budgetNormalized;
       if (next !== current) {
         await this.writeGoal(workspaceId, next);
