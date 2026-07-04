@@ -634,6 +634,14 @@ export function getWorkspaceLastReadKey(workspaceId: string): string {
 export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 
 /**
+ * Whether the sidebar groups older workspaces under collapsible
+ * "Older than X days" age tiers (boolean, default true).
+ * When false, all workspaces render as one flat recency-sorted list.
+ * Format: "sidebarAgeGrouping"
+ */
+export const SIDEBAR_AGE_GROUPING_KEY = "sidebarAgeGrouping";
+
+/**
  * Left sidebar width
  * Format: "left-sidebar:width"
  */

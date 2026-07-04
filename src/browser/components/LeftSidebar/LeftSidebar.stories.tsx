@@ -34,6 +34,7 @@ import { buildSortedWorkspacesByProject } from "@/browser/utils/ui/workspaceFilt
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   SELECTED_WORKSPACE_KEY,
+  SIDEBAR_AGE_GROUPING_KEY,
   UI_THEME_KEY,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
@@ -730,6 +731,7 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
         // Keep this regression deterministic even when Storybook reuses localStorage
         // across stories/runs and a prior interaction expanded an old-age tier.
         localStorage.setItem("expandedOldWorkspaces", JSON.stringify({}));
+        updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, true);
         // Pre-expand completed children so this regression also covers nested reported rows.
         localStorage.setItem(
           "expandedCompletedSubAgents",
@@ -901,6 +903,93 @@ export const SingleRecentWorkspaceInTopTier: AppStory = {
         }
       }
     });
+  },
+};
+
+/**
+ * With sidebar age grouping disabled (Settings toggle), workspaces older than
+ * the first tier threshold render inline as one flat recency-sorted list:
+ * no "Older than X" toggle and no expansion needed to see old rows.
+ */
+export const FlatListWhenAgeGroupingDisabled: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      setup={() => {
+        const projectPath = "/home/user/projects/age-tier-demo";
+        const oldCreatedAt = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
+        const oldWorkspace = createWorkspace({
+          id: "ws-flat-old",
+          name: "old-workspace",
+          title: "Old workspace",
+          projectName: "age-tier-demo",
+          projectPath,
+          createdAt: oldCreatedAt,
+        });
+        const activeSubAgent = {
+          ...createWorkspace({
+            id: "ws-flat-old-active-subagent",
+            name: "active-subagent",
+            title: "Active sub-agent",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: oldCreatedAt,
+          }),
+          parentWorkspaceId: oldWorkspace.id,
+          taskStatus: "running" as const,
+        };
+        const completedSubAgent = {
+          ...createWorkspace({
+            id: "ws-flat-old-completed-subagent",
+            name: "completed-subagent",
+            title: "Completed sub-agent",
+            projectName: "age-tier-demo",
+            projectPath,
+            createdAt: oldCreatedAt,
+          }),
+          parentWorkspaceId: oldWorkspace.id,
+          taskStatus: "reported" as const,
+          reportedAt: oldCreatedAt,
+        };
+        const workspaces = [oldWorkspace, activeSubAgent, completedSubAgent];
+
+        expandProjects([projectPath]);
+        updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, false);
+        // Grouping is off, so no tier should need expansion for rows to show.
+        localStorage.setItem("expandedOldWorkspaces", JSON.stringify({}));
+        localStorage.setItem(
+          "expandedCompletedSubAgents",
+          JSON.stringify({ [oldWorkspace.id]: true })
+        );
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      for (const workspaceId of [
+        "ws-flat-old",
+        "ws-flat-old-active-subagent",
+        "ws-flat-old-completed-subagent",
+      ]) {
+        const row = canvasElement.querySelector<HTMLElement>(
+          `[data-workspace-id="${workspaceId}"]`
+        );
+        if (!row) {
+          throw new Error(`Workspace ${workspaceId} did not render inline with grouping off`);
+        }
+      }
+    });
+
+    const tierToggle = within(canvasElement).queryByRole("button", {
+      name: /workspaces older than/i,
+    });
+    if (tierToggle) {
+      throw new Error("Did not expect an age-tier toggle when grouping is disabled");
+    }
   },
 };
 
@@ -1455,6 +1544,7 @@ export const MixedAgentStatesAndAges: AppStory = {
         );
 
         // Expand age tiers so older-than-1-day and older-than-7-days rows are visible.
+        updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, true);
         updatePersistedState("expandedOldWorkspaces", {
           [`${projectPath}:0`]: true,
           [`${projectPath}:1`]: true,

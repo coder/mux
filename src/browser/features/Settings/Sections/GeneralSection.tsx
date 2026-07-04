@@ -23,6 +23,7 @@ import {
   BASH_COLLAPSED_SUMMARY_MODES,
   CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
+  SIDEBAR_AGE_GROUPING_KEY,
   TRANSCRIPT_DENSITIES,
   normalizeBashCollapsedSummaryMode,
   normalizeEditorConfig,
@@ -153,6 +154,10 @@ export function GeneralSection() {
     DEFAULT_BASH_COLLAPSED_SUMMARY_MODE
   );
   const bashCollapsedSummaryMode = normalizeBashCollapsedSummaryMode(rawBashCollapsedSummaryMode);
+  const [sidebarAgeGrouping, setSidebarAgeGrouping] = usePersistedState<boolean>(
+    SIDEBAR_AGE_GROUPING_KEY,
+    true
+  );
   const [transcriptDensity, setTranscriptDensity] = useTranscriptDensity();
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
@@ -536,6 +541,21 @@ export function GeneralSection() {
               checked={chatTranscriptFullWidth}
               onCheckedChange={handleChatTranscriptFullWidthChange}
               aria-label="Toggle full-width chat transcript"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Group sidebar workspaces by age</div>
+              <div className="text-muted text-xs">
+                Collect older workspaces under collapsible &quot;Older than X days&quot; sections.
+                When off, all workspaces are listed together.
+              </div>
+            </div>
+            <Switch
+              checked={sidebarAgeGrouping}
+              onCheckedChange={setSidebarAgeGrouping}
+              aria-label="Toggle sidebar workspace age grouping"
             />
           </div>
 

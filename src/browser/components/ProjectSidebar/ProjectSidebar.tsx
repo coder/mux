@@ -16,6 +16,7 @@ import { useWorkspaceStoreRaw, type WorkspaceStore } from "@/browser/stores/Work
 import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
+  SIDEBAR_AGE_GROUPING_KEY,
   getDraftScopeId,
   getInputAttachmentsKey,
   getInputKey,
@@ -859,6 +860,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const [expandedOldWorkspaces, setExpandedOldWorkspaces] = usePersistedState<
     Record<string, boolean>
   >("expandedOldWorkspaces", {});
+
+  // Whether workspaces are grouped under collapsible "Older than X days" tiers.
+  // Toggled from Settings → General; listener keeps the sidebar live-updated.
+  const [ageGroupingEnabled] = usePersistedState<boolean>(SIDEBAR_AGE_GROUPING_KEY, true, {
+    listener: true,
+  });
 
   // Track which sections are expanded
   const [expandedSections, setExpandedSections] = usePersistedState<Record<string, boolean>>(
@@ -2447,8 +2454,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 sectionId?: string,
                                 allRowsForTaskGroupCoalescing: FrontendWorkspaceMetadata[] = workspaces
                               ): React.ReactNode => {
-                                const { recent: topVisibleRows, buckets } =
-                                  partitionWorkspacesByAge(workspaces, workspaceRecency);
+                                // With age grouping disabled, keep every workspace in the
+                                // recent path (flat recency-sorted list); full-length empty
+                                // buckets preserve tier-index assumptions below.
+                                const { recent: topVisibleRows, buckets } = ageGroupingEnabled
+                                  ? partitionWorkspacesByAge(workspaces, workspaceRecency)
+                                  : {
+                                      recent: workspaces,
+                                      buckets: AGE_THRESHOLDS_DAYS.map(
+                                        (): FrontendWorkspaceMetadata[] => []
+                                      ),
+                                    };
 
                                 const expandedTierVisibleIds = new Set<string>();
                                 const markExpandedTierRowsVisible = (tierIndex: number): void => {
