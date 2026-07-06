@@ -1704,7 +1704,15 @@ export class WorkspaceService extends EventEmitter {
           // live manager; its own retirement events maintain their registry records.
           if (Date.parse(record.createdAt) >= this.constructedAtMs) continue;
           await this.bashMonitorWakeStore.enqueueMonitorLost(record);
-          await this.bashMonitorRegistryStore.remove(ownerWorkspaceId, record.processId);
+          // Conditional delete: this recovery runs fire-and-forget, so a workspace resumed
+          // meanwhile may have re-armed a monitor reusing this processId. Only the stale
+          // (pre-boot) record may be removed; a live replacement must survive so the *next*
+          // restart can notify about it.
+          await this.bashMonitorRegistryStore.removeIfArmedBefore(
+            ownerWorkspaceId,
+            record.processId,
+            this.constructedAtMs
+          );
         }
       }
     } catch (error) {

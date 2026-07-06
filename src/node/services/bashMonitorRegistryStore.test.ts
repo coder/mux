@@ -102,6 +102,25 @@ describe("BashMonitorRegistryStore", () => {
     expect(await store.listOwnerWorkspaceIds()).toEqual(["owner-a"]);
   });
 
+  test("removeIfArmedBefore deletes stale records but preserves live replacements", async () => {
+    const store = new BashMonitorRegistryStore(makeConfig(rootDir));
+    const cutoffMs = Date.parse("2026-06-01T00:00:00.000Z");
+
+    // Stale record (armed before cutoff) is removed.
+    await store.upsert(armedPayload({ createdAt: "2026-01-01T00:00:00.000Z" }));
+    await store.removeIfArmedBefore("owner-1", "proc-1", cutoffMs);
+    expect(await store.listAll("owner-1")).toHaveLength(0);
+
+    // Live record (re-armed at/after cutoff, e.g. by a workspace resumed during recovery)
+    // must survive so the next restart can still notify about it.
+    await store.upsert(armedPayload({ createdAt: "2026-06-01T00:00:00.000Z" }));
+    await store.removeIfArmedBefore("owner-1", "proc-1", cutoffMs);
+    expect(await store.listAll("owner-1")).toHaveLength(1);
+
+    // Missing record is a no-op.
+    await store.removeIfArmedBefore("owner-1", "proc-missing", cutoffMs);
+  });
+
   test("bounds persisted script length", async () => {
     const store = new BashMonitorRegistryStore(makeConfig(rootDir));
     await store.upsert(armedPayload({ script: "x".repeat(10_000) }));
