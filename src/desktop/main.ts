@@ -63,8 +63,10 @@ import {
 // generic "Electron" entry. Launch modes that don't expose our package.json
 // (e.g. the Nix package's `electron dist/cli/index.js`) otherwise fall back to
 // the "Electron" default. setName sets WM_CLASS (XWayland matches
-// StartupWMClass=mux); CHROME_DESKTOP sets the native-Wayland app_id. Must run
-// before the ready event.
+// StartupWMClass=mux); CHROME_DESKTOP sets the native-Wayland app_id (same var
+// Electron sets from package.json desktopName when it can read it). Must run
+// before the ready event. sanitizeMuxChildEnv strips CHROME_DESKTOP from child
+// processes so apps launched from mux terminals don't inherit our identity.
 if (process.platform === "linux") {
   app.setName("mux");
   process.env.CHROME_DESKTOP = "mux.desktop";

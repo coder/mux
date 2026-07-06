@@ -1,10 +1,15 @@
 import * as path from "node:path";
 import { getMuxHome } from "@/common/constants/paths";
 
-const BROWSER_ENV_KEYS_TO_STRIP = [
+const CHILD_ENV_KEYS_TO_STRIP = [
   "AGENT_BROWSER_SESSION",
   "AGENT_BROWSER_STREAM_PORT",
   "MUX_VENDORED_BIN_DIR",
+  // Linux desktop identity (app_id source). Electron sets it in our process env
+  // (from package.json desktopName, or main.ts for launch modes without a
+  // package.json). Chromium/Electron apps launched from a mux terminal would
+  // inherit it and group under mux's taskbar entry.
+  "CHROME_DESKTOP",
 ] as const;
 
 function normalizePathEntry(entry: string): string {
@@ -45,7 +50,7 @@ export function sanitizeMuxChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sanitizedEnv: NodeJS.ProcessEnv = { ...env };
   const sanitizedPath = sanitizeMuxChildPath(env.PATH ?? env.Path, env);
 
-  for (const key of BROWSER_ENV_KEYS_TO_STRIP) {
+  for (const key of CHILD_ENV_KEYS_TO_STRIP) {
     delete sanitizedEnv[key];
   }
 

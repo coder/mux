@@ -1,6 +1,7 @@
 {
   "name": "mux",
   "version": "0.27.0",
+  "desktopName": "mux.desktop",
   "description": "mux - coder multiplexer",
   "author": "Coder",
   "main": "dist/cli/index.js",

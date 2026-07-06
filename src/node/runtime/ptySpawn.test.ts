@@ -26,11 +26,13 @@ describe("sanitizeMuxChildEnv", () => {
       AGENT_BROWSER_SESSION: "mux-session",
       AGENT_BROWSER_STREAM_PORT: "9222",
       MUX_VENDORED_BIN_DIR: "/tmp/mux/bin",
+      CHROME_DESKTOP: "mux.desktop",
     });
 
     expect(env.AGENT_BROWSER_SESSION).toBeUndefined();
     expect(env.AGENT_BROWSER_STREAM_PORT).toBeUndefined();
     expect(env.MUX_VENDORED_BIN_DIR).toBeUndefined();
+    expect(env.CHROME_DESKTOP).toBeUndefined();
     expect(env.PATH).toBe("/usr/bin");
   });
 });
