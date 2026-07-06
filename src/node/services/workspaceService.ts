@@ -211,8 +211,11 @@ import type {
 } from "@/node/services/workspaceGoalService";
 import type {
   BackgroundProcessManager,
+  MonitorArmedPayload,
   MonitorMatchPayload,
+  MonitorStoppedPayload,
 } from "@/node/services/backgroundProcessManager";
+import { BashMonitorRegistryStore } from "@/node/services/bashMonitorRegistryStore";
 import {
   BashMonitorWakeStore,
   buildBashMonitorWakePrompt,
@@ -1550,6 +1553,10 @@ export class WorkspaceService extends EventEmitter {
   >();
 
   private readonly bashMonitorWakeStore: BashMonitorWakeStore;
+  private readonly bashMonitorRegistryStore: BashMonitorRegistryStore;
+  // Construction timestamp; registry records armed at/after this instant belong to the
+  // live manager, so startup recovery must not convert them into "monitor lost" wakes.
+  private readonly constructedAtMs = Date.now();
   private readonly pendingBashMonitorWakeDrainsByOwner = new Map<string, Promise<void>>();
   private readonly pendingBashMonitorWakeIdleWaitsByOwner = new Map<string, Promise<void>>();
   private readonly cancelingBashMonitorWakeKeys = new Set<string>();
@@ -1559,6 +1566,28 @@ export class WorkspaceService extends EventEmitter {
     payload: MonitorMatchPayload
   ) => {
     void this.handleBashMonitorMatch(payload);
+  };
+  // NOTE: these listeners must call the registry store synchronously — its MutexMap
+  // enqueues per-key work in call order, so back-to-back armed/stopped events for a
+  // fast-exiting process resolve FIFO and the registry ends deleted.
+  private readonly bashMonitorArmedListener = (
+    _workspaceId: string,
+    payload: MonitorArmedPayload
+  ) => {
+    this.bashMonitorRegistryStore.upsert(payload).catch((error: unknown) => {
+      log.error("Failed to persist armed bash monitor", {
+        workspaceId: payload.workspaceId,
+        error,
+      });
+    });
+  };
+  private readonly bashMonitorStoppedListener = (
+    workspaceId: string,
+    payload: MonitorStoppedPayload
+  ) => {
+    this.bashMonitorRegistryStore.remove(workspaceId, payload.processId).catch((error: unknown) => {
+      log.error("Failed to remove retired bash monitor registry record", { workspaceId, error });
+    });
   };
 
   // Lazily bootstrapped workflow activity cache so sidebar refreshes don't rescan run history.
@@ -1643,16 +1672,45 @@ export class WorkspaceService extends EventEmitter {
   ) {
     super();
     this.bashMonitorWakeStore = new BashMonitorWakeStore(config);
+    this.bashMonitorRegistryStore = new BashMonitorRegistryStore(config);
     if (typeof this.backgroundProcessManager.on === "function") {
       this.backgroundProcessManager.on("monitor:match", this.bashMonitorMatchListener);
+      this.backgroundProcessManager.on("monitor:armed", this.bashMonitorArmedListener);
+      this.backgroundProcessManager.on("monitor:stopped", this.bashMonitorStoppedListener);
     }
-    void this.schedulePersistedBashMonitorWakeDrains();
+    void this.recoverBashMonitorStateAfterRestart();
     this.policyService = policyService;
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
     this.sessionTimingService = sessionTimingService;
     this.setupMetadataListeners();
     this.setupInitMetadataListeners();
+  }
+
+  /**
+   * Startup recovery for bash monitors lost to a Mux restart (graceful or crash).
+   *
+   * The manager's process map is always empty at startup, so any persisted armed-monitor
+   * registry record found now describes a monitor that no longer exists: its process was
+   * terminated on shutdown (or orphaned by a crash). Convert those stale records into
+   * pending "monitor-lost" wakes *before* scheduling drains, so the existing drain
+   * machinery delivers the termination notice (merged with any undelivered match lines).
+   */
+  private async recoverBashMonitorStateAfterRestart(): Promise<void> {
+    try {
+      for (const ownerWorkspaceId of await this.bashMonitorRegistryStore.listOwnerWorkspaceIds()) {
+        for (const record of await this.bashMonitorRegistryStore.listAll(ownerWorkspaceId)) {
+          // Defensive: monitors armed after this service was constructed belong to the
+          // live manager; its own retirement events maintain their registry records.
+          if (Date.parse(record.createdAt) >= this.constructedAtMs) continue;
+          await this.bashMonitorWakeStore.enqueueMonitorLost(record);
+          await this.bashMonitorRegistryStore.remove(ownerWorkspaceId, record.processId);
+        }
+      }
+    } catch (error) {
+      log.debug("Failed to convert stale bash monitor registry records into wakes", { error });
+    }
+    await this.schedulePersistedBashMonitorWakeDrains();
   }
 
   private async schedulePersistedBashMonitorWakeDrains(): Promise<void> {

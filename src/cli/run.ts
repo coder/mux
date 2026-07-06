@@ -1423,6 +1423,9 @@ async function main(): Promise<number> {
     }
   } finally {
     unsubscribe();
+    // Suppress monitor:stopped before session.dispose() triggers cleanup() so persisted
+    // armed-monitor registry records survive shutdown (post-restart "monitor lost" wakes).
+    backgroundProcessManager.beginShutdown();
     session.dispose();
     mcpServerManager.dispose();
     await codexOauthService.dispose();

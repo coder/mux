@@ -593,6 +593,10 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    // Must run before any session teardown: AgentSession.dispose() triggers
+    // backgroundProcessManager.cleanup(), which would otherwise erase the persisted
+    // armed-monitor registry records that drive post-restart "monitor lost" wakes.
+    this.backgroundProcessManager.beginShutdown();
     // Stop the bridge before closing sessions so desktop clients get a clean disconnect.
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();

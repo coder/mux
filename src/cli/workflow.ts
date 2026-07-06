@@ -236,6 +236,9 @@ async function disposeWorkflowResources(input: {
   session?: AgentSession;
   codexOauthService?: CodexOauthService;
 }): Promise<void> {
+  // Suppress monitor:stopped before session.dispose() triggers cleanup() so persisted
+  // armed-monitor registry records survive shutdown (post-restart "monitor lost" wakes).
+  input.services?.backgroundProcessManager.beginShutdown();
   try {
     input.session?.dispose();
   } catch (error) {

@@ -29,6 +29,8 @@ import type {
 } from "@/common/types/workspace";
 import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import { BashMonitorRegistryStore } from "./bashMonitorRegistryStore";
+import { BashMonitorWakeStore } from "./bashMonitorWakeStore";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
@@ -273,6 +275,215 @@ describe("WorkspaceService bash monitor wakes", () => {
         }
       ).bashMonitorWakeStore;
       await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("converts stale armed-monitor registry records into monitor-lost wakes at startup", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-restart-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // Seed a stale registry record on disk before the service boots — as if a previous
+      // Mux run armed a monitor and was then shut down/killed.
+      const registryStore = new BashMonitorRegistryStore(config);
+      await registryStore.upsert({
+        processId: "proc-stale",
+        taskId: "bash:proc-stale",
+        workspaceId,
+        displayName: "Tick Loop",
+        filter: "NEVER_MATCHES",
+        filterExclude: false,
+        script: "while true; do echo tick; sleep 5; done",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][0]).toBe(workspaceId);
+      const prompt = sendSpy.mock.calls[0][1];
+      expect(prompt).toContain("bash:proc-stale (no longer awaitable — process was terminated)");
+      expect(prompt).toContain("> while true; do echo tick; sleep 5; done");
+      expect(prompt).not.toContain("task_await(");
+      expect(sendSpy.mock.calls[0][3]).toMatchObject({ synthetic: true, agentInitiated: true });
+
+      // Registry record consumed; wake delivered (nothing left pending).
+      expect(await registryStore.listAll(workspaceId)).toHaveLength(0);
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: { listPending: (id: string) => Promise<unknown[]> };
+        }
+      ).bashMonitorWakeStore;
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("startup recovery merges a stale registry record with a pending match wake", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-restart-merge-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // A match wake was persisted but never delivered before shutdown…
+      const seedWakeStore = new BashMonitorWakeStore(config);
+      await seedWakeStore.enqueueOrMergePending({
+        processId: "proc-stale",
+        taskId: "bash:proc-stale",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED before shutdown"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+      // …and the monitor was still armed.
+      const registryStore = new BashMonitorRegistryStore(config);
+      await registryStore.upsert({
+        processId: "proc-stale",
+        taskId: "bash:proc-stale",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        script: "run-tests --watch",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      // One message carries both the undelivered output and the termination notice.
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      const prompt = sendSpy.mock.calls[0][1];
+      expect(prompt).toContain("FAILED before shutdown");
+      expect(prompt).toContain("bash:proc-stale (no longer awaitable — process was terminated)");
+      expect(prompt).toContain("> run-tests --watch");
+      expect(await registryStore.listAll(workspaceId)).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("startup recovery skips registry records armed after service construction", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-live-registry-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // Record stamped in the future = armed by the live manager, not a stale leftover.
+      const registryStore = new BashMonitorRegistryStore(config);
+      await registryStore.upsert({
+        processId: "proc-live",
+        taskId: "bash:proc-live",
+        workspaceId,
+        filter: "READY",
+        filterExclude: false,
+        script: "echo hi",
+        createdAt: new Date(Date.now() + 60_000).toISOString(),
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(() =>
+        Promise.resolve(Ok(undefined))
+      );
+
+      // Give recovery a chance to run, then confirm it left the record alone.
+      await waitForCondition(async () => (await registryStore.listAll(workspaceId)).length === 1);
+      await drainPendingDispatches();
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect(await registryStore.listAll(workspaceId)).toHaveLength(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("maintains the armed-monitor registry from manager events", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-registry-events-owner";
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const registryStore = new BashMonitorRegistryStore(config);
+      backgroundProcessManager.emit("monitor:armed", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "ERROR",
+        filterExclude: false,
+        script: "echo hi",
+        createdAt: new Date().toISOString(),
+      });
+      await waitForCondition(async () => (await registryStore.listAll(workspaceId)).length === 1);
+
+      backgroundProcessManager.emit("monitor:stopped", workspaceId, { processId: "proc-1" });
+      await waitForCondition(async () => (await registryStore.listAll(workspaceId)).length === 0);
     } finally {
       await cleanup();
     }

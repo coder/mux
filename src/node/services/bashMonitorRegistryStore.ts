@@ -1,0 +1,176 @@
+import type { Dirent } from "node:fs";
+import * as fsPromises from "node:fs/promises";
+import * as path from "node:path";
+
+import { z } from "zod";
+
+import assert from "@/common/utils/assert";
+import type { Config } from "@/node/config";
+import type { MonitorArmedPayload } from "@/node/services/backgroundProcessManager";
+import { truncateUtf8Prefix } from "@/node/services/bashMonitorWakeStore";
+import { log } from "@/node/services/log";
+import { isErrnoWithCode } from "@/node/utils/fs";
+import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+
+export const BASH_MONITOR_REGISTRY_DIR = "bash-monitor-registry";
+// Bound the persisted script so a huge agent-authored script can't bloat the registry
+// or the eventual monitor-lost wake prompt.
+const MAX_REGISTRY_SCRIPT_BYTES = 2_048;
+
+export interface BashMonitorRegistryRecord {
+  processId: string;
+  taskId: string;
+  ownerWorkspaceId: string;
+  displayName?: string;
+  filter: string;
+  filterExclude: boolean;
+  script: string;
+  createdAt: string;
+}
+
+const BashMonitorRegistryRecordSchema = z
+  .object({
+    processId: z.string().min(1),
+    taskId: z.string().min(1),
+    ownerWorkspaceId: z.string().min(1),
+    displayName: z.string().optional(),
+    filter: z.string().min(1),
+    filterExclude: z.boolean(),
+    script: z.string(),
+    createdAt: z.string().min(1),
+  })
+  .strict();
+
+function boundScript(script: string): string {
+  if (Buffer.byteLength(script, "utf8") <= MAX_REGISTRY_SCRIPT_BYTES) return script;
+  return `${truncateUtf8Prefix(script, MAX_REGISTRY_SCRIPT_BYTES)}… [truncated]`;
+}
+
+/**
+ * Host-local, per-workspace registry of *armed* bash monitors.
+ *
+ * BackgroundProcessManager state is in-memory only, so a Mux restart silently kills every
+ * monitored background process and its monitor. This registry survives shutdown (records
+ * are only deleted when a monitor retires normally); any record found at the next startup
+ * is therefore stale by definition and is converted into a synthetic "monitor lost" wake
+ * for the owner workspace (see WorkspaceService.recoverBashMonitorStateAfterRestart).
+ *
+ * Lives beside the wake store under the session dir, so it is deleted with the workspace.
+ */
+export class BashMonitorRegistryStore {
+  private readonly locks = new MutexMap<string>();
+
+  constructor(private readonly config: Pick<Config, "getSessionDir" | "sessionsDir">) {}
+
+  private dir(ownerWorkspaceId: string): string {
+    assert(
+      ownerWorkspaceId.trim().length > 0,
+      "BashMonitorRegistryStore requires ownerWorkspaceId"
+    );
+    return path.join(this.config.getSessionDir(ownerWorkspaceId), BASH_MONITOR_REGISTRY_DIR);
+  }
+
+  private file(ownerWorkspaceId: string, processId: string): string {
+    assert(processId.trim().length > 0, "BashMonitorRegistryStore requires processId");
+    return path.join(this.dir(ownerWorkspaceId), `${encodeURIComponent(processId)}.json`);
+  }
+
+  // NOTE: upsert/remove must enter withLock synchronously (no awaits before the withLock
+  // call) so armed-then-stopped event order for fast-exiting processes maps to FIFO lock
+  // order and the registry ends deleted.
+  async upsert(payload: MonitorArmedPayload): Promise<void> {
+    assert(payload.workspaceId.trim().length > 0, "upsert requires workspaceId");
+    assert(payload.processId.trim().length > 0, "upsert requires processId");
+    assert(payload.taskId.trim().length > 0, "upsert requires taskId");
+    assert(payload.filter.trim().length > 0, "upsert requires filter");
+
+    const key = `${payload.workspaceId}:${payload.processId}`;
+    return this.locks.withLock(key, async () => {
+      const record: BashMonitorRegistryRecord = {
+        processId: payload.processId,
+        taskId: payload.taskId,
+        ownerWorkspaceId: payload.workspaceId,
+        ...(payload.displayName != null ? { displayName: payload.displayName } : {}),
+        filter: payload.filter,
+        filterExclude: payload.filterExclude,
+        script: boundScript(payload.script),
+        createdAt: payload.createdAt,
+      };
+      const dir = this.dir(record.ownerWorkspaceId);
+      await fsPromises.mkdir(dir, { recursive: true });
+      await fsPromises.writeFile(
+        this.file(record.ownerWorkspaceId, record.processId),
+        JSON.stringify(record, null, 2),
+        "utf-8"
+      );
+    });
+  }
+
+  async remove(ownerWorkspaceId: string, processId: string): Promise<void> {
+    assert(ownerWorkspaceId.trim().length > 0, "remove requires ownerWorkspaceId");
+    assert(processId.trim().length > 0, "remove requires processId");
+
+    const key = `${ownerWorkspaceId}:${processId}`;
+    return this.locks.withLock(key, async () => {
+      await fsPromises.rm(this.file(ownerWorkspaceId, processId), { force: true });
+    });
+  }
+
+  async listAll(ownerWorkspaceId: string): Promise<BashMonitorRegistryRecord[]> {
+    const dir = this.dir(ownerWorkspaceId);
+    let entries: string[];
+    try {
+      entries = await fsPromises.readdir(dir);
+    } catch (error) {
+      if (isErrnoWithCode(error, "ENOENT")) return [];
+      throw error;
+    }
+    const records: BashMonitorRegistryRecord[] = [];
+    for (const entry of entries) {
+      if (!entry.endsWith(".json")) continue;
+      const raw = await fsPromises.readFile(path.join(dir, entry), "utf-8").catch(() => null);
+      if (raw == null) continue;
+      const parsed = this.parse(raw);
+      if (parsed != null) records.push(parsed);
+    }
+    records.sort(
+      (a, b) => a.createdAt.localeCompare(b.createdAt) || a.processId.localeCompare(b.processId)
+    );
+    return records;
+  }
+
+  async listOwnerWorkspaceIds(): Promise<string[]> {
+    let entries: Dirent[];
+    try {
+      entries = await fsPromises.readdir(this.config.sessionsDir, { withFileTypes: true });
+    } catch (error) {
+      if (isErrnoWithCode(error, "ENOENT")) return [];
+      throw error;
+    }
+
+    const ownerWorkspaceIds: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if ((await this.listAll(entry.name)).length > 0) {
+        ownerWorkspaceIds.push(entry.name);
+      }
+    }
+    ownerWorkspaceIds.sort();
+    return ownerWorkspaceIds;
+  }
+
+  private parse(raw: string): BashMonitorRegistryRecord | null {
+    let json: unknown;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    const parsed = BashMonitorRegistryRecordSchema.safeParse(json);
+    if (!parsed.success) {
+      log.debug("Skipping malformed bash monitor registry record", { error: parsed.error });
+      return null;
+    }
+    return parsed.data;
+  }
+}
