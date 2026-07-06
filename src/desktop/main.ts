@@ -59,6 +59,17 @@ import {
   shell,
 } from "electron";
 
+// Pin the Linux app name so the window groups under mux.desktop instead of a
+// generic "Electron" entry. Launch modes that don't expose our package.json
+// (e.g. the Nix package's `electron dist/cli/index.js`) otherwise fall back to
+// the "Electron" default. setName sets WM_CLASS (XWayland matches
+// StartupWMClass=mux); CHROME_DESKTOP sets the native-Wayland app_id. Must run
+// before the ready event.
+if (process.platform === "linux") {
+  app.setName("mux");
+  process.env.CHROME_DESKTOP = "mux.desktop";
+}
+
 // Enable local crash dump collection so renderer SIGSEGV produces a minidump
 // at ~/.config/mux/Crashpad/completed/*.dmp — no data leaves the machine.
 // Must be called as early as possible, before app.whenReady().
