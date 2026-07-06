@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   BackgroundProcessManager,
   computeTailStartOffset,
@@ -240,6 +240,10 @@ describe("BackgroundProcessManager", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
+      // Armed monitor on a running process counts as active workspace monitoring.
+      expect(manager.getActiveMonitorCount(testWorkspaceId)).toBe(1);
+      expect(manager.getActiveMonitorCount(testWorkspaceId2)).toBe(0);
+
       const event = await eventPromise;
       expect(event.payload.lines).toEqual(["ERR1"]);
       expect(event.payload.totalMatches).toBe(1);
@@ -249,6 +253,48 @@ describe("BackgroundProcessManager", () => {
       expect(proc?.status).toBe("running");
       expect(proc ? manager.getMonitorSnapshot(proc)?.totalMatches : undefined).toBe(1);
       expect(proc ? manager.getMonitorSnapshot(proc)?.stopped : undefined).toBe(true);
+      // The monitor stopped (maxEvents) while the process kept running: no longer active.
+      expect(manager.getActiveMonitorCount(testWorkspaceId)).toBe(0);
+    });
+
+    it("emits a change event when the monitor tail fails", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "sleep 5", {
+        cwd: process.cwd(),
+        displayName: "monitor-tail-failure",
+        monitor: {
+          filter: "NEVER_MATCHES",
+          pattern: /NEVER_MATCHES/,
+          exclude: false,
+          cooldownMs: 0,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const proc = await manager.getProcess(result.processId);
+      expect(proc).not.toBeNull();
+      if (!proc) return;
+      expect(manager.getActiveMonitorCount(testWorkspaceId)).toBe(1);
+
+      const changedWorkspaceIds: string[] = [];
+      manager.on("change", (wsId) => changedWorkspaceIds.push(wsId));
+      // Simulate a runtime read failure (e.g. dropped SSH connection) inside the tail loop.
+      // Reject per-call (not mockRejectedValue) so no eagerly-created rejected promise
+      // sits unhandled before the tail loop consumes it.
+      spyOn(proc.handle, "readOutput").mockImplementation(() =>
+        Promise.reject(new Error("read failure"))
+      );
+
+      for (let attempt = 0; attempt < 40; attempt++) {
+        if (manager.getActiveMonitorCount(testWorkspaceId) === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+
+      // The failed tail must disarm the monitor AND broadcast the change so
+      // activity consumers (sidebar watching indicator) can clear.
+      expect(manager.getActiveMonitorCount(testWorkspaceId)).toBe(0);
+      expect(changedWorkspaceIds).toContain(testWorkspaceId);
     });
 
     describe("armed/stopped registry events", () => {

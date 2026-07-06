@@ -24,6 +24,7 @@ function mockSidebarState(
     skillLoadErrors: [],
     agentStatus: undefined,
     activeWorkflowRunCount: 0,
+    activeBashMonitorCount: 0,
     terminalActiveCount: 0,
     terminalSessionCount: 0,
     ...overrides,
@@ -145,6 +146,7 @@ describe("WorkspaceStatusIndicator", () => {
       skillLoadErrors: [],
       agentStatus: undefined,
       activeWorkflowRunCount: 0,
+      activeBashMonitorCount: 0,
       terminalActiveCount: 0,
       terminalSessionCount: 0,
     };
@@ -204,6 +206,7 @@ describe("WorkspaceStatusIndicator", () => {
       skillLoadErrors: [],
       agentStatus: undefined,
       activeWorkflowRunCount: 0,
+      activeBashMonitorCount: 0,
       terminalActiveCount: 0,
       terminalSessionCount: 0,
     };

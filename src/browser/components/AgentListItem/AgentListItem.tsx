@@ -221,6 +221,11 @@ function formatWorkflowRunCount(count: number): string {
   return count === 1 ? "Workflow running" : `${count} workflows running`;
 }
 
+function formatBashMonitorCount(count: number): string {
+  assert(count > 0, "formatBashMonitorCount requires a positive count");
+  return count === 1 ? "Watching background bash" : `Watching ${count} background bashes`;
+}
+
 function SidebarActivityIndicator(props: { text: string; testId: string }) {
   return (
     <div
@@ -613,6 +618,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isStarting,
     agentStatus,
     activeWorkflowRunCount,
+    activeBashMonitorCount,
     terminalActiveCount,
     lastAbortReason,
   } = useWorkspaceSidebarState(workspaceId);
@@ -628,6 +634,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const isWorking = displayStreamingStatusPhase !== null && !awaitingUserQuestion;
   const hasError = lastAbortReason?.reason === "system";
   const hasActiveWorkflowRun = activeWorkflowRunCount > 0;
+  // An armed background bash monitor means the workspace is still waiting to be
+  // woken, so keep the row on the active dot instead of letting it look finished.
+  const hasActiveBashMonitor = activeBashMonitorCount > 0;
   const hasActiveDelegatedWork = (delegatedActivity?.activeCount ?? 0) > 0;
   const delegatedStatusText = delegatedActivity
     ? formatDelegatedActivityText(delegatedActivity)
@@ -635,11 +644,19 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const hasDelegatedStatusText = delegatedStatusText != null;
   const shouldShowWorkflowStatus =
     hasActiveWorkflowRun && !agentStatus && displayStreamingStatusPhase === null;
+  const shouldShowBashMonitorStatus =
+    hasActiveBashMonitor &&
+    !agentStatus &&
+    displayStreamingStatusPhase === null &&
+    !shouldShowWorkflowStatus;
   const hasOwnLiveStatusText =
     awaitingUserQuestion ||
     displayStreamingStatusPhase !== null ||
     isRemoving ||
-    shouldShowWorkflowStatus;
+    shouldShowWorkflowStatus ||
+    // Own-workspace signals (like workflow status above) outrank delegated text so a
+    // coordinator waiting on an armed monitor still surfaces the watching state.
+    shouldShowBashMonitorStatus;
   const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const visualState = getVisualState({
     awaitingUserQuestion,
@@ -648,7 +665,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isArchiving: isArchiving === true,
     isWorking,
     isStarting: displayStreamingStatusPhase === "starting",
-    hasActiveDelegatedWork: hasActiveDelegatedWork || hasActiveWorkflowRun,
+    hasActiveDelegatedWork: hasActiveDelegatedWork || hasActiveWorkflowRun || hasActiveBashMonitor,
     isUnread,
     isSelected,
     hasError,
@@ -661,7 +678,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     awaitingUserQuestion ||
     displayStreamingStatusPhase !== null ||
     isRemoving ||
-    shouldShowWorkflowStatus;
+    shouldShowWorkflowStatus ||
+    shouldShowBashMonitorStatus;
   // Keep archiving feedback inline with the title so the row doesn't jump to a
   // two-line layout right before it disappears from the sidebar.
   const shouldShowInlineArchivingStatus = isArchiving === true && !isRemoving;
@@ -1143,6 +1161,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 <WorkflowActivityIndicator
                   workspaceId={workspaceId}
                   activeWorkflowRunCount={activeWorkflowRunCount}
+                />
+              ) : shouldShowBashMonitorStatus ? (
+                <SidebarActivityIndicator
+                  text={formatBashMonitorCount(activeBashMonitorCount)}
+                  testId={`workspace-bash-monitor-activity-${workspaceId}`}
                 />
               ) : (
                 <WorkspaceStatusIndicator
