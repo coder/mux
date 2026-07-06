@@ -110,7 +110,11 @@ import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals"
 import { mergeGoalDefaults } from "@/common/utils/goals/resolveGoalSetIntent";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy, resolveMinimumThinkingLevel } from "@/common/utils/thinking/policy";
+import {
+  enforceThinkingPolicy,
+  resolveEffectiveThinkingLevel,
+  resolveMinimumThinkingLevel,
+} from "@/common/utils/thinking/policy";
 
 import type {
   ErrorEvent,
@@ -1072,7 +1076,13 @@ export class AIService extends EventEmitter {
 
       // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
-      const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? THINKING_LEVEL_OFF;
+      // Clamp away levels the provider rejects (Mythos-class Anthropic cannot
+      // disable thinking) so provider options, replay transforms, and metadata
+      // all agree with the provider's actual thinking behavior.
+      const effectiveThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
+        modelString,
+        thinkingLevel
+      );
 
       // Resolve model string (xAI variant mapping + gateway routing) and create the model.
       const resolveAndCreateModelStartedAt = Date.now();

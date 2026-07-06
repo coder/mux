@@ -293,9 +293,10 @@ export function buildProviderOptions(
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
       // Opus 4.6+ / Sonnet 4.6 / Sonnet 5: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
-      // Mythos-class (Fable/Mythos) rejects `{ type: "disabled" }`; the thinking policy
-      // excludes "off" for them, but an unset thinking level can still reach here as
-      // "off" (defaulted upstream) — omit `thinking` so the API defaults to adaptive.
+      // Mythos-class (Fable/Mythos) rejects `{ type: "disabled" }`. The thinking policy
+      // excludes "off" for them and AIService clamps the effective level via
+      // resolveEffectiveThinkingLevel, so "off" should not reach here — but if a stray
+      // path does, omit `thinking` (API defaults to adaptive) rather than hard-erroring.
       const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
         ? effectiveThinking === "off"
           ? anthropicRejectsDisabledThinking(capabilityModel)

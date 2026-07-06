@@ -200,6 +200,28 @@ export function resolveMinimumThinkingLevel(
 }
 
 /**
+ * Resolve the effective thinking level for an outgoing stream request.
+ *
+ * Most models treat an unset level as "off". Models that reject disabled
+ * thinking (Mythos-class Anthropic, see {@link anthropicRejectsDisabledThinking})
+ * clamp unset/legacy "off" up through the thinking policy instead, so the
+ * level Mux tracks (provider options, replay transforms, metadata) matches the
+ * provider's actual always-thinking behavior. Without this, the wire request
+ * would run adaptive thinking while the message pipeline skips the Anthropic
+ * thinking replay transforms (`anthropicThinkingEnabled` keys off "off"),
+ * losing required signed thinking context on follow-up requests.
+ */
+export function resolveEffectiveThinkingLevel(
+  modelString: string,
+  requested: ThinkingLevel | null | undefined
+): ThinkingLevel {
+  const level = requested ?? THINKING_LEVEL_OFF;
+  return anthropicRejectsDisabledThinking(modelString)
+    ? enforceThinkingPolicy(modelString, level)
+    : level;
+}
+
+/**
  * Thinking levels available for a model after applying a minimum floor.
  *
  * - `minimum == null` → no floor; returns the raw capability policy.
