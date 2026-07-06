@@ -18,6 +18,7 @@ import {
 } from "@/node/runtime/runtimeHelpers";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
+import { sanitizeMuxChildEnv } from "@/node/runtime/childProcessEnv";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
@@ -676,6 +677,9 @@ export class TerminalService {
         cwd: availableTerminal.cwd,
         detached: true,
         stdio: "ignore",
+        // Strip mux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
+        // identity) so apps launched from this shell don't inherit them.
+        env: sanitizeMuxChildEnv({ ...process.env }),
       });
       child.unref();
     } else {
