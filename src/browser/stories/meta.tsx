@@ -12,7 +12,11 @@ import { AppLoader } from "../components/AppLoader/AppLoader";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import type { APIClient } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
-import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
+import {
+  SELECTED_WORKSPACE_KEY,
+  SIDEBAR_AGE_GROUPING_KEY,
+  UI_THEME_KEY,
+} from "@/common/constants/storage";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // META CONFIG
@@ -98,6 +102,9 @@ function resetStorybookPersistedStateForStory(): void {
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);
     localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+    // Stories that disable sidebar age grouping must not leak the setting
+    // into later stories via the shared localStorage origin.
+    localStorage.removeItem(SIDEBAR_AGE_GROUPING_KEY);
   }
 }
 function getStorybookRenderKey(): string | null {

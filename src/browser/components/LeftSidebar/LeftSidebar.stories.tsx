@@ -109,6 +109,9 @@ function resetStorybookPersistedStateForStory(): void {
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);
     localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+    // FlatListWhenAgeGroupingDisabled writes this key; clear it so later
+    // stories are not affected by story execution order.
+    localStorage.removeItem(SIDEBAR_AGE_GROUPING_KEY);
   }
 }
 
@@ -731,7 +734,6 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
         // Keep this regression deterministic even when Storybook reuses localStorage
         // across stories/runs and a prior interaction expanded an old-age tier.
         localStorage.setItem("expandedOldWorkspaces", JSON.stringify({}));
-        updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, true);
         // Pre-expand completed children so this regression also covers nested reported rows.
         localStorage.setItem(
           "expandedCompletedSubAgents",
@@ -1544,7 +1546,6 @@ export const MixedAgentStatesAndAges: AppStory = {
         );
 
         // Expand age tiers so older-than-1-day and older-than-7-days rows are visible.
-        updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, true);
         updatePersistedState("expandedOldWorkspaces", {
           [`${projectPath}:0`]: true,
           [`${projectPath}:1`]: true,
