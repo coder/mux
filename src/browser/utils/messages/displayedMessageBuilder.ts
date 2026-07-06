@@ -1,9 +1,11 @@
 import type {
+  BashMonitorWakeDisplayRecord,
   CompactionRequestData,
   DisplayedMessage,
   InlineSkillSnapshotMap,
   MuxFilePart,
   MuxMessage,
+  MuxMessageMetadata,
   SideQuestionDisplayBranch,
 } from "@/common/types/message";
 import { getCompactionFollowUpContent } from "@/common/types/message";
@@ -221,6 +223,28 @@ function buildPlanDisplayMessages(
   ];
 }
 
+/**
+ * muxMetadata is a black box across the oRPC boundary, so a corrupted
+ * chat.jsonl can persist `type: "bash-monitor-wake"` with missing/mistyped
+ * records. Validate the shape here and fall back to the normal full-text user
+ * message rendering (return undefined) so one malformed line can't brick the
+ * transcript (see AGENTS.md self-healing rule).
+ */
+function getValidBashMonitorWakeRecords(
+  muxMeta: MuxMessageMetadata | undefined
+): BashMonitorWakeDisplayRecord[] | undefined {
+  if (muxMeta?.type !== "bash-monitor-wake") return undefined;
+  const records: unknown = muxMeta.records;
+  if (!Array.isArray(records) || records.length === 0) return undefined;
+  const isValidRecord = (record: unknown): record is BashMonitorWakeDisplayRecord =>
+    isPlainObject(record) &&
+    (record.kind === "match" || record.kind === "monitor-lost") &&
+    typeof record.displayName === "string" &&
+    typeof record.filter === "string" &&
+    typeof record.filterExclude === "boolean";
+  return records.every(isValidRecord) ? records : undefined;
+}
+
 function buildUserDisplayedMessages(options: {
   message: MuxMessage;
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
@@ -250,6 +274,8 @@ function buildUserDisplayedMessages(options: {
           snapshot: agentSkillSnapshot,
         }
       : undefined;
+
+  const bashMonitorWakeRecords = getValidBashMonitorWakeRecords(muxMeta);
 
   const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
   const compactionRequest =
@@ -290,8 +316,7 @@ function buildUserDisplayedMessages(options: {
       reviews: muxMeta?.reviews,
       sideQuestionBranch: getStandaloneSideQuestionBranch(message),
       isSideQuestion: isSideQuestionUserMessage(message) ? true : undefined,
-      bashMonitorWake:
-        muxMeta?.type === "bash-monitor-wake" ? { records: muxMeta.records } : undefined,
+      bashMonitorWake: bashMonitorWakeRecords ? { records: bashMonitorWakeRecords } : undefined,
     },
   ];
 }
