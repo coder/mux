@@ -3,6 +3,7 @@ import * as fsPromises from "fs/promises";
 import type { Config } from "@/node/config";
 import { isDockerRuntime, isSSHRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
+import { sanitizeMuxChildEnv } from "@/node/runtime/childProcessEnv";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
@@ -136,6 +137,9 @@ export class EditorService {
         stdio: "ignore",
         shell: true,
         windowsHide: true,
+        // Strip mux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
+        // identity) so GUI editors don't inherit mux's window identity.
+        env: sanitizeMuxChildEnv({ ...process.env }),
       });
       child.unref();
 
