@@ -216,6 +216,7 @@ import type {
   MonitorStoppedPayload,
 } from "@/node/services/backgroundProcessManager";
 import { BashMonitorRegistryStore } from "@/node/services/bashMonitorRegistryStore";
+import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import {
   BashMonitorWakeStore,
   buildBashMonitorWakePrompt,
@@ -1567,26 +1568,34 @@ export class WorkspaceService extends EventEmitter {
   ) => {
     void this.handleBashMonitorMatch(payload);
   };
-  // NOTE: these listeners must call the registry store synchronously — its MutexMap
-  // enqueues per-key work in call order, so back-to-back armed/stopped events for a
-  // fast-exiting process resolve FIFO and the registry ends deleted.
+  // Serializes every registry/wake mutation for one (workspace, processId) across the
+  // armed/stopped listeners and startup recovery. The registry and wake stores each have
+  // their own internal locks, but cross-store sequences (upsert-then-supersede,
+  // consume-then-enqueue) must not interleave, or a monitor re-armed during recovery can
+  // race the stale-notice conversion (false "monitor lost" wakes, or stale notices left
+  // pending for a live process). NOTE: listeners must call withLock synchronously —
+  // MutexMap enqueues per-key work in call order, so back-to-back armed/stopped events
+  // for a fast-exiting process resolve FIFO and the registry ends deleted.
+  private readonly bashMonitorRegistryLocks = new MutexMap<string>();
   private readonly bashMonitorArmedListener = (
     _workspaceId: string,
     payload: MonitorArmedPayload
   ) => {
-    this.bashMonitorRegistryStore.upsert(payload).catch((error: unknown) => {
-      log.error("Failed to persist armed bash monitor", {
-        workspaceId: payload.workspaceId,
-        error,
-      });
-    });
-    // Re-arming a processId invalidates any undelivered "monitor lost" notice for it:
-    // post-restart IDs are generated against an empty manager map, so a relaunched
-    // display_name reuses the old ID and the pending notice would describe a live task.
-    this.bashMonitorWakeStore
-      .supersedePendingMonitorLost(payload.workspaceId, payload.processId)
+    this.bashMonitorRegistryLocks
+      .withLock(`${payload.workspaceId}:${payload.processId}`, async () => {
+        // Upsert must be durable before the supersede so no interleaving observes the
+        // live re-arm without its registry record.
+        await this.bashMonitorRegistryStore.upsert(payload);
+        // Re-arming a processId invalidates any undelivered "monitor lost" notice for it:
+        // post-restart IDs are generated against an empty manager map, so a relaunched
+        // display_name reuses the old ID and the pending notice would describe a live task.
+        await this.bashMonitorWakeStore.supersedePendingMonitorLost(
+          payload.workspaceId,
+          payload.processId
+        );
+      })
       .catch((error: unknown) => {
-        log.error("Failed to supersede stale monitor-lost wake", {
+        log.error("Failed to persist armed bash monitor", {
           workspaceId: payload.workspaceId,
           error,
         });
@@ -1596,9 +1605,13 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     payload: MonitorStoppedPayload
   ) => {
-    this.bashMonitorRegistryStore.remove(workspaceId, payload.processId).catch((error: unknown) => {
-      log.error("Failed to remove retired bash monitor registry record", { workspaceId, error });
-    });
+    this.bashMonitorRegistryLocks
+      .withLock(`${workspaceId}:${payload.processId}`, () =>
+        this.bashMonitorRegistryStore.remove(workspaceId, payload.processId)
+      )
+      .catch((error: unknown) => {
+        log.error("Failed to remove retired bash monitor registry record", { workspaceId, error });
+      });
   };
 
   // Lazily bootstrapped workflow activity cache so sidebar refreshes don't rescan run history.
@@ -1714,34 +1727,24 @@ export class WorkspaceService extends EventEmitter {
           // Defensive: monitors armed after this service was constructed belong to the
           // live manager; its own retirement events maintain their registry records.
           if (Date.parse(record.createdAt) >= this.constructedAtMs) continue;
-          // Atomic consume-then-enqueue: this recovery runs fire-and-forget, so a workspace
-          // resumed meanwhile may have re-armed a monitor reusing this processId. Taking the
-          // record out under the store's per-key lock (shared with upsert) ensures we only
-          // ever enqueue a wake for the stale pre-boot record; a live replacement is left
-          // untouched and produces no false monitor-lost notice.
-          const consumed = await this.bashMonitorRegistryStore.consumeIfArmedBefore(
-            ownerWorkspaceId,
-            record.processId,
-            this.constructedAtMs
+          // Consume-then-enqueue runs under the same per-key lock as the armed listener,
+          // so a monitor re-armed during recovery is fully ordered against this section:
+          // an earlier re-arm replaces the registry record (consume returns null, no
+          // notice); a later one runs after the notice exists and supersedes it. A match
+          // wake written by the live monitor meanwhile is protected by enqueueMonitorLost
+          // itself, which refuses to upgrade match records updated at/after boot.
+          await this.bashMonitorRegistryLocks.withLock(
+            `${ownerWorkspaceId}:${record.processId}`,
+            async () => {
+              const consumed = await this.bashMonitorRegistryStore.consumeIfArmedBefore(
+                ownerWorkspaceId,
+                record.processId,
+                this.constructedAtMs
+              );
+              if (consumed == null) return;
+              await this.bashMonitorWakeStore.enqueueMonitorLost(consumed, this.constructedAtMs);
+            }
           );
-          if (consumed == null) continue;
-          await this.bashMonitorWakeStore.enqueueMonitorLost(consumed);
-          // Double-check: the ID may have been re-armed between the consume above and this
-          // enqueue, in which case the armed listener's supersede ran before the wake
-          // existed and no-op'd. Consume deleted the old record, so any registry record
-          // present now was written by a live re-arm — supersede the notice we just wrote.
-          // (A re-arm after this get instead orders its supersede after our enqueue, so
-          // whichever side runs last sees the other's write.)
-          const rearmed = await this.bashMonitorRegistryStore.get(
-            ownerWorkspaceId,
-            record.processId
-          );
-          if (rearmed != null) {
-            await this.bashMonitorWakeStore.supersedePendingMonitorLost(
-              ownerWorkspaceId,
-              record.processId
-            );
-          }
         }
       }
     } catch (error) {

@@ -273,12 +273,21 @@ export class BashMonitorWakeStore {
    * orphaned) by a Mux restart. If a pending "match" record exists (matched lines never
    * delivered before shutdown), upgrade it in place so one message carries both the
    * undelivered output and the termination notice.
+   *
+   * `staleBefore` (ms epoch, typically boot time) guards the upgrade path: a pending match
+   * record updated at/after it was produced by a live re-armed monitor (post-restart IDs
+   * reuse display_name-based IDs), so the lost notice is skipped entirely rather than
+   * mislabeling live output as dead. Returns null in that case.
    */
-  async enqueueMonitorLost(payload: BashMonitorLostPayload): Promise<BashMonitorWakeRecord> {
+  async enqueueMonitorLost(
+    payload: BashMonitorLostPayload,
+    staleBefore: number
+  ): Promise<BashMonitorWakeRecord | null> {
     assert(payload.ownerWorkspaceId.trim().length > 0, "enqueueMonitorLost requires workspaceId");
     assert(payload.processId.trim().length > 0, "enqueueMonitorLost requires processId");
     assert(payload.taskId.trim().length > 0, "enqueueMonitorLost requires taskId");
     assert(payload.filter.trim().length > 0, "enqueueMonitorLost requires filter");
+    assert(Number.isFinite(staleBefore), "enqueueMonitorLost requires a finite staleBefore");
 
     const id = BashMonitorWakeStore.wakeId(payload.processId);
     const key = `${payload.ownerWorkspaceId}:${id}`;
@@ -286,6 +295,11 @@ export class BashMonitorWakeStore {
       const existing = await this.get(payload.ownerWorkspaceId, id);
       const now = new Date().toISOString();
       if (existing?.status === "pending") {
+        // Post-boot activity on the pending record means the process is alive again;
+        // leave the live match wake untouched and write no lost notice.
+        if (existing.kind === "match" && Date.parse(existing.updatedAt) >= staleBefore) {
+          return null;
+        }
         const record: BashMonitorWakeRecord = {
           ...existing,
           kind: "monitor-lost",

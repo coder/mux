@@ -382,6 +382,10 @@ describe("WorkspaceService bash monitor wakes", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
       });
 
+      // The seeded match wake's updatedAt must be strictly before the service's boot
+      // timestamp (ms precision), or recovery's live-record guard would skip the upgrade.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
       const backgroundProcessManager = Object.assign(new EventEmitter(), {
         cleanup: mock(() => Promise.resolve()),
       }) as unknown as BackgroundProcessManager & EventEmitter;
@@ -474,14 +478,17 @@ describe("WorkspaceService bash monitor wakes", () => {
       });
 
       const wakeStore = new BashMonitorWakeStore(config);
-      await wakeStore.enqueueMonitorLost({
-        processId: "proc-1",
-        taskId: "bash:proc-1",
-        ownerWorkspaceId: workspaceId,
-        filter: "ERROR",
-        filterExclude: false,
-        script: "echo hi",
-      });
+      await wakeStore.enqueueMonitorLost(
+        {
+          processId: "proc-1",
+          taskId: "bash:proc-1",
+          ownerWorkspaceId: workspaceId,
+          filter: "ERROR",
+          filterExclude: false,
+          script: "echo hi",
+        },
+        Date.now() + 60_000 // treat everything as stale so the seed record is written
+      );
 
       // Relaunching the same display_name after restart reuses the processId; the stale
       // "no longer awaitable" notice must not be delivered for the now-live task.

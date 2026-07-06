@@ -32,6 +32,10 @@ function payload(overrides: Partial<BashMonitorWakePayload> = {}): BashMonitorWa
   };
 }
 
+// Cutoff far in the future: every existing record counts as stale (pre-boot), so
+// enqueueMonitorLost proceeds. Tests of the live-record guard pass a past cutoff instead.
+const TREAT_ALL_AS_STALE = () => Date.now() + 60_000;
+
 describe("BashMonitorWakeStore", () => {
   let rootDir: string;
 
@@ -210,14 +214,17 @@ describe("BashMonitorWakeStore", () => {
 
   test("enqueueMonitorLost creates a pending monitor-lost record with the script", async () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
-    await store.enqueueMonitorLost({
-      processId: "proc-1",
-      taskId: "bash:proc-1",
-      ownerWorkspaceId: "owner-1",
-      filter: "ERROR",
-      filterExclude: false,
-      script: "while true; do echo tick; sleep 5; done",
-    });
+    await store.enqueueMonitorLost(
+      {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        ownerWorkspaceId: "owner-1",
+        filter: "ERROR",
+        filterExclude: false,
+        script: "while true; do echo tick; sleep 5; done",
+      },
+      TREAT_ALL_AS_STALE()
+    );
 
     const pending = await store.listPending("owner-1");
     expect(pending).toHaveLength(1);
@@ -231,14 +238,17 @@ describe("BashMonitorWakeStore", () => {
     // re-armed by a live monitor (post-restart IDs reuse display_name-based IDs). The stale
     // "no longer awaitable" notice must not absorb live output.
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
-    await store.enqueueMonitorLost({
-      processId: "proc-1",
-      taskId: "bash:proc-1",
-      ownerWorkspaceId: "owner-1",
-      filter: "ERROR",
-      filterExclude: false,
-      script: "old-generation-script",
-    });
+    await store.enqueueMonitorLost(
+      {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        ownerWorkspaceId: "owner-1",
+        filter: "ERROR",
+        filterExclude: false,
+        script: "old-generation-script",
+      },
+      TREAT_ALL_AS_STALE()
+    );
     await store.enqueueOrMergePending(payload({ lines: ["ERROR live"], totalMatches: 1 }));
 
     const pending = await store.listPending("owner-1");
@@ -252,14 +262,17 @@ describe("BashMonitorWakeStore", () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
 
     // Pending lost record is superseded (ID re-armed by a live monitor).
-    await store.enqueueMonitorLost({
-      processId: "proc-1",
-      taskId: "bash:proc-1",
-      ownerWorkspaceId: "owner-1",
-      filter: "ERROR",
-      filterExclude: false,
-      script: "echo hi",
-    });
+    await store.enqueueMonitorLost(
+      {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        ownerWorkspaceId: "owner-1",
+        filter: "ERROR",
+        filterExclude: false,
+        script: "echo hi",
+      },
+      TREAT_ALL_AS_STALE()
+    );
     await store.supersedePendingMonitorLost("owner-1", "proc-1");
     expect(await store.listPending("owner-1")).toHaveLength(0);
     expect((await store.get("owner-1", "proc-1"))?.status).toBe("superseded");
@@ -276,14 +289,17 @@ describe("BashMonitorWakeStore", () => {
   test("enqueueMonitorLost upgrades a pending match record in place, keeping its lines", async () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
     await store.enqueueOrMergePending(payload({ lines: ["ERROR one"], totalMatches: 1 }));
-    await store.enqueueMonitorLost({
-      processId: "proc-1",
-      taskId: "bash:proc-1",
-      ownerWorkspaceId: "owner-1",
-      filter: "ERROR",
-      filterExclude: false,
-      script: "echo hi",
-    });
+    await store.enqueueMonitorLost(
+      {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        ownerWorkspaceId: "owner-1",
+        filter: "ERROR",
+        filterExclude: false,
+        script: "echo hi",
+      },
+      TREAT_ALL_AS_STALE()
+    );
 
     const pending = await store.listPending("owner-1");
     expect(pending).toHaveLength(1);
@@ -291,6 +307,32 @@ describe("BashMonitorWakeStore", () => {
     expect(pending[0].script).toBe("echo hi");
     expect(pending[0].lines).toEqual(["ERROR one"]);
     expect(pending[0].totalMatches).toBe(1);
+  });
+
+  test("enqueueMonitorLost refuses to upgrade a match record updated at/after the cutoff", async () => {
+    // A pending match record touched after boot was produced (or merged into) by a live
+    // re-armed monitor; writing a lost notice over it would mislabel live output as dead.
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR live"], totalMatches: 1 }));
+
+    const result = await store.enqueueMonitorLost(
+      {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        ownerWorkspaceId: "owner-1",
+        filter: "ERROR",
+        filterExclude: false,
+        script: "echo hi",
+      },
+      Date.now() - 60_000 // boot happened a minute ago; the record above is post-boot
+    );
+
+    expect(result).toBeNull();
+    const pending = await store.listPending("owner-1");
+    expect(pending).toHaveLength(1);
+    expect(pending[0].kind).toBe("match");
+    expect(pending[0].lines).toEqual(["ERROR live"]);
+    expect(pending[0].script).toBeUndefined();
   });
 });
 
