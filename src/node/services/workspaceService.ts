@@ -1638,25 +1638,26 @@ export class WorkspaceService extends EventEmitter {
     if (this.lastEmittedBashMonitorCounts.get(workspaceId) === count) {
       return;
     }
+    // Clear the entry synchronously BEFORE the async emit: while an emit is in flight
+    // the last delivered count is unknown (the snapshot read may fail, and renderers
+    // may observe transient counts via workspace.activity.list()). Deleting up front
+    // means a concurrent change event — e.g. a stop racing a slow armed emit in a fast
+    // 0 -> 1 -> 0 sequence — can never dedupe against a stale pre-emit value and drop
+    // the clear. Cost: an occasional duplicate emit, which renderers apply idempotently.
+    this.lastEmittedBashMonitorCounts.delete(workspaceId);
     void this.extensionMetadata
       .getSnapshot(workspaceId)
       .then((snapshot) => {
         this.emitWorkspaceActivity(workspaceId, snapshot);
-        // Record only after a successful emit; recording up front would dedupe the
-        // next change event and strand the sidebar if the snapshot read failed.
-        // Re-read the count because the emit merges the live value, which may have
-        // moved past the one that triggered this listener.
+        // Record only after a successful emit. Re-read the count because the emit merges
+        // the live value, which may have moved past the one that triggered this listener.
         this.lastEmittedBashMonitorCounts.set(
           workspaceId,
           this.getActiveBashMonitorCount(workspaceId)
         );
       })
       .catch((error: unknown) => {
-        // Drop the recorded count entirely: a failed emit means we no longer know what
-        // the renderer believes (it may have observed a newer count via
-        // workspace.activity.list()), so a stale entry here could dedupe the next
-        // transition back to that value (e.g. 0 -> failed 1 -> 0) and strand the UI.
-        this.lastEmittedBashMonitorCounts.delete(workspaceId);
+        // Leave the entry absent ("unknown") so the next change event always re-emits.
         log.debug("Failed to emit activity after background bash monitor change", {
           workspaceId,
           error,

@@ -739,6 +739,73 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("emits the clear when a stop races a still-pending armed emit", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-pending-race";
+      let activeMonitorCount = 0;
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => activeMonitorCount),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const getSnapshot = mock(
+        (): Promise<WorkspaceActivitySnapshot | null> => Promise.resolve(null)
+      );
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot,
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      // Record 0 as the last successfully emitted count.
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 1);
+
+      // Armed emit hangs: its snapshot read stays pending while the stop arrives.
+      let rejectArmedSnapshot: ((error: Error) => void) | undefined;
+      getSnapshot.mockImplementation(
+        () =>
+          new Promise<WorkspaceActivitySnapshot | null>((_resolve, reject) => {
+            rejectArmedSnapshot = reject;
+          })
+      );
+      activeMonitorCount = 1;
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => rejectArmedSnapshot !== undefined);
+
+      // Stop while the armed emit is in flight: the pre-emit delete means this 0 must
+      // not dedupe against the previously recorded 0 — the clear still goes out.
+      getSnapshot.mockImplementation(() => Promise.resolve(null));
+      activeMonitorCount = 0;
+      backgroundProcessManager.emit("change", workspaceId);
+
+      await waitForCondition(() => events.length === 2);
+      expect(events[1].activity).toBeNull();
+
+      // The armed emit failing afterwards must not corrupt the recorded state: the
+      // successfully emitted 0 stays recorded, and a later re-arm still emits.
+      rejectArmedSnapshot?.(new Error("slow read failed"));
+      await drainPendingDispatches();
+      activeMonitorCount = 1;
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 3);
+      expect(events[2].activity?.activeBashMonitorCount).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("keeps a zero-count tombstone in getActivityList after a monitor stops", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
