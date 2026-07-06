@@ -11,6 +11,7 @@ import {
   resolveMinimumThinkingLevel,
 } from "@/common/utils/thinking/policy";
 import assert from "@/common/utils/assert";
+import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -458,6 +459,24 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           );
         },
       });
+      // Only live root chats are pinnable (sub-agents follow their pinned parent).
+      if (selectedMeta && isWorkspacePinnable(selectedMeta)) {
+        const pinned = isWorkspacePinned(selectedMeta);
+        list.push({
+          id: CommandIds.workspaceTogglePinned(),
+          title: pinned ? "Unpin Current Chat" : "Pin Current Chat",
+          subtitle: workspaceDisplayName,
+          shortcutHint: formatKeybind(KEYBINDS.PIN_WORKSPACE),
+          section: section.workspaces,
+          run: async () => {
+            if (!p.api) return;
+            await p.api.workspace.setPinned({
+              workspaceId: selected.workspaceId,
+              pinned: !pinned,
+            });
+          },
+        });
+      }
     }
 
     if (p.workspaceMetadata.size > 0) {

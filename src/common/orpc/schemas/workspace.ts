@@ -216,6 +216,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp when workspace was last unarchived. Used for recency calculation to bump restored workspaces to top.",
   }),
+  pinnedAt: z.string().optional().meta({
+    description:
+      "ISO 8601 timestamp when workspace was pinned. Pinned workspaces sort to the top of their project in pin order (ascending). Cleared on archive.",
+  }),
   projects: z
     .array(ProjectRefSchema)
     .optional()

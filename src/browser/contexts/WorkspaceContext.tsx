@@ -447,6 +447,10 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
     workspaceId: string,
     newTitle: string
   ) => Promise<{ success: boolean; error?: string }>;
+  setWorkspacePinned: (
+    workspaceId: string,
+    pinned: boolean
+  ) => Promise<{ success: boolean; error?: string }>;
   preflightArchiveWorkspace: (
     workspaceId: string
   ) => Promise<{ success: boolean; error?: string; data?: ArchivePreflightResult }>;
@@ -1452,6 +1456,29 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [api]
   );
 
+  /**
+   * Pin or unpin a chat. No optimistic state: the workspace metadata
+   * subscription round-trip updates all connected clients, same as title edits.
+   */
+  const setWorkspacePinned = useCallback(
+    async (workspaceId: string, pinned: boolean): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        const result = await api.workspace.setPinned({ workspaceId, pinned });
+        if (result.success) {
+          return { success: true };
+        }
+        console.error("Failed to update workspace pin state:", result.error);
+        return { success: false, error: result.error };
+      } catch (error) {
+        const errorMessage = getErrorMessage(error);
+        console.error("Failed to update workspace pin state:", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [api]
+  );
+
   const preflightArchiveWorkspace = useCallback(
     async (
       workspaceId: string
@@ -1840,6 +1867,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       createWorkspace,
       removeWorkspace,
       updateWorkspaceTitle,
+      setWorkspacePinned,
       preflightArchiveWorkspace,
       archiveWorkspace,
       unarchiveWorkspace,
@@ -1864,6 +1892,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       createWorkspace,
       removeWorkspace,
       updateWorkspaceTitle,
+      setWorkspacePinned,
       preflightArchiveWorkspace,
       archiveWorkspace,
       unarchiveWorkspace,

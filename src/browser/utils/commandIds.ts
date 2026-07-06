@@ -28,6 +28,7 @@ export const CommandIds = {
   workspaceEditTitle: () => "ws:edit-title" as const,
   workspaceEditTitleAny: () => "ws:edit-title-any" as const,
   workspaceGenerateTitle: () => "ws:generate-title" as const,
+  workspaceTogglePinned: () => "ws:toggle-pinned" as const,
   workspaceOpenTerminal: () => "ws:open-terminal" as const,
   workspaceOpenTerminalCurrent: () => "ws:open-terminal-current" as const,
   workspaceArchiveMergedInProject: () => "ws:archive-merged-in-project" as const,

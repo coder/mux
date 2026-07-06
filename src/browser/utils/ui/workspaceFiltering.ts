@@ -2,6 +2,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { assert } from "@/common/utils/assert";
+import { isWorkspacePinned } from "@/common/utils/pin";
 
 interface WorkspaceGroupConfig {
   id: string;
@@ -642,6 +643,25 @@ export function buildSortedWorkspacesByProject(
   // flip ordering when multiple workspaces have equal recency.
   for (const metadataList of result.values()) {
     metadataList.sort((a, b) => {
+      // Pinned chats float above unpinned ones in stable pin order (pinnedAt asc:
+      // new pins append at the bottom of the pinned block). Recency is intentionally
+      // ignored for pinned rows so activity never reshuffles them.
+      const aPinned = isWorkspacePinned(a);
+      const bPinned = isWorkspacePinned(b);
+      if (aPinned !== bPinned) {
+        return aPinned ? -1 : 1;
+      }
+      if (aPinned && bPinned) {
+        const aPinnedAtRaw = Date.parse(a.pinnedAt ?? "");
+        const bPinnedAtRaw = Date.parse(b.pinnedAt ?? "");
+        const aPinnedAt = Number.isFinite(aPinnedAtRaw) ? aPinnedAtRaw : 0;
+        const bPinnedAt = Number.isFinite(bPinnedAtRaw) ? bPinnedAtRaw : 0;
+        if (aPinnedAt !== bPinnedAt) {
+          return aPinnedAt - bPinnedAt;
+        }
+        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      }
+
       const aTimestamp = workspaceRecency[a.id] ?? 0;
       const bTimestamp = workspaceRecency[b.id] ?? 0;
       if (aTimestamp !== bTimestamp) {
@@ -746,6 +766,12 @@ export function partitionWorkspacesByAge(
   const visiting = new Set<string>();
 
   const classifyByOwnRecency = (workspace: FrontendWorkspaceMetadata): number => {
+    // Pinned chats never age out into the collapsed "Older than N days" buckets;
+    // children inherit this tier via resolveTierIndex so the whole subtree stays visible.
+    if (isWorkspacePinned(workspace)) {
+      return -1;
+    }
+
     const recencyTimestamp = workspaceRecency[workspace.id] ?? 0;
     const age = now - recencyTimestamp;
 

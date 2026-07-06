@@ -1740,6 +1740,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              pinnedAt: workspace.pinnedAt,
               projects: workspaceProjects,
               subProjectPath: workspace.subProjectPath,
             };
@@ -1913,6 +1914,7 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
+              pinnedAt: workspace.pinnedAt,
               projects: workspaceProjects,
               subProjectPath: workspace.subProjectPath,
             };
@@ -2039,6 +2041,7 @@ export class Config {
         taskTrunkBranch: metadata.taskTrunkBranch,
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
+        pinnedAt: metadata.pinnedAt,
         projects: metadata.projects,
         subProjectPath: metadata.subProjectPath,
       };

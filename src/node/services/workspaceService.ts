@@ -5446,6 +5446,87 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Pin or unpin a chat (root workspace) so it floats to the top of its project
+   * in the sidebar. Pin order is stable: pinnedAt ascending, new pins append at
+   * the bottom of the pinned block. Recency is intentionally untouched, so
+   * unpinning drops the chat back to its natural recency position.
+   */
+  async setPinned(workspaceId: string, pinned: boolean): Promise<Result<void>> {
+    try {
+      const workspace = this.config.findWorkspace(workspaceId);
+      if (!workspace) {
+        return Err("Workspace not found");
+      }
+      const { projectPath, workspacePath } = workspace;
+
+      let updated = false;
+      let validationError: string | undefined;
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(projectPath);
+        if (!projectConfig) {
+          validationError = "Workspace not found";
+          return config;
+        }
+
+        const workspaceEntry =
+          projectConfig.workspaces.find((entry) => entry.id === workspaceId) ??
+          projectConfig.workspaces.find((entry) => entry.path === workspacePath);
+        if (!workspaceEntry) {
+          validationError = "Workspace not found";
+          return config;
+        }
+
+        // Only root chats are pinnable; sub-agents follow their pinned parent.
+        if (workspaceEntry.parentWorkspaceId) {
+          validationError = "Sub-agent chats cannot be pinned";
+          return config;
+        }
+
+        if (pinned) {
+          if (isWorkspaceArchived(workspaceEntry.archivedAt, workspaceEntry.unarchivedAt)) {
+            validationError = "Archived chats cannot be pinned";
+            return config;
+          }
+          // Idempotent: a concurrent double-pin from another client must not move the row.
+          if (workspaceEntry.pinnedAt) {
+            return config;
+          }
+          // Server-generated monotonic timestamp: strictly greater than every existing
+          // pin in the project so rapid pins always append deterministically, even if
+          // the wall clock is skewed or several pins land within the same millisecond.
+          let pinnedAtMs = Date.now();
+          for (const entry of projectConfig.workspaces) {
+            if (!entry.pinnedAt) continue;
+            const existingMs = new Date(entry.pinnedAt).getTime();
+            if (Number.isFinite(existingMs) && existingMs >= pinnedAtMs) {
+              pinnedAtMs = existingMs + 1;
+            }
+          }
+          workspaceEntry.pinnedAt = new Date(pinnedAtMs).toISOString();
+          updated = true;
+        } else if (workspaceEntry.pinnedAt) {
+          delete workspaceEntry.pinnedAt;
+          updated = true;
+        }
+
+        return config;
+      });
+
+      if (validationError) {
+        return Err(validationError);
+      }
+
+      if (updated) {
+        await this.emitCurrentWorkspaceMetadata(workspaceId);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to update pin state: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
    * Regenerate the workspace title from chat history using AI.
    * Uses the first user message as the durable objective, plus a context block with
    * that first user message and the latest turns, then persists the generated title.
@@ -5718,6 +5799,8 @@ export class WorkspaceService extends EventEmitter {
           if (workspaceEntry) {
             // Just set archivedAt - archived state is derived from archivedAt > unarchivedAt.
             workspaceEntry.archivedAt = new Date().toISOString();
+            // Archiving clears the pin; unarchive does not restore it.
+            delete workspaceEntry.pinnedAt;
             if (capturedWorktreeSnapshot) {
               workspaceEntry.worktreeArchiveSnapshot = capturedWorktreeSnapshot;
             } else {

@@ -7544,6 +7544,186 @@ describe("WorkspaceService metadata listeners", () => {
   });
 });
 
+describe("WorkspaceService setPinned", () => {
+  const projectPath = "/tmp/project";
+  const rootId = "ws-root";
+  const otherRootId = "ws-other";
+  const childId = "ws-child";
+  const archivedId = "ws-archived";
+
+  let workspaceService: WorkspaceService;
+  let configState: ProjectsConfig;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let emittedMetadata: Array<{ workspaceId: string; metadata: FrontendWorkspaceMetadata | null }>;
+
+  const getEntry = (id: string) =>
+    configState.projects.get(projectPath)?.workspaces.find((w) => w.id === id);
+
+  beforeEach(async () => {
+    configState = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: `${projectPath}/${rootId}`, id: rootId },
+              { path: `${projectPath}/${otherRootId}`, id: otherRootId },
+              {
+                path: `${projectPath}/${childId}`,
+                id: childId,
+                parentWorkspaceId: rootId,
+              },
+              {
+                path: `${projectPath}/${archivedId}`,
+                id: archivedId,
+                archivedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock((id: string) => {
+        const entry = getEntry(id);
+        if (!entry) return null;
+        return {
+          projectPath,
+          workspacePath: entry.path,
+          parentWorkspaceId: entry.parentWorkspaceId,
+        };
+      }),
+      editConfig: mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
+        configState = fn(configState);
+        return Promise.resolve();
+      }),
+      // Project config entries back into metadata so emitted events carry pin state.
+      getAllWorkspaceMetadata: mock(() =>
+        Promise.resolve(
+          (configState.projects.get(projectPath)?.workspaces ?? [])
+            .filter((w): w is typeof w & { id: string } => w.id != null)
+            .map(
+              (w): FrontendWorkspaceMetadata => ({
+                id: w.id,
+                name: w.id,
+                projectName: "proj",
+                projectPath,
+                namedWorkspacePath: w.path,
+                runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+                parentWorkspaceId: w.parentWorkspaceId,
+                archivedAt: w.archivedAt,
+                unarchivedAt: w.unarchivedAt,
+                pinnedAt: w.pinnedAt,
+              })
+            )
+        )
+      ),
+      loadConfigOrDefault: mock(() => configState),
+    };
+
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
+      historyService,
+    });
+
+    emittedMetadata = [];
+    workspaceService.on("metadata", (payload) => {
+      emittedMetadata.push(payload as (typeof emittedMetadata)[number]);
+    });
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("pin persists pinnedAt and emits metadata; unpin clears it and emits", async () => {
+    const pinResult = await workspaceService.setPinned(rootId, true);
+    expect(pinResult.success).toBe(true);
+
+    const pinnedAt = getEntry(rootId)?.pinnedAt;
+    expect(pinnedAt).toBeDefined();
+    expect(emittedMetadata).toHaveLength(1);
+    expect(emittedMetadata[0].workspaceId).toBe(rootId);
+    expect(emittedMetadata[0].metadata?.pinnedAt).toBe(pinnedAt);
+
+    const unpinResult = await workspaceService.setPinned(rootId, false);
+    expect(unpinResult.success).toBe(true);
+    expect(getEntry(rootId)?.pinnedAt).toBeUndefined();
+    expect(emittedMetadata).toHaveLength(2);
+    expect(emittedMetadata[1].metadata?.pinnedAt).toBeUndefined();
+  });
+
+  test("pin-when-pinned and unpin-when-unpinned are no-ops without event churn", async () => {
+    const first = await workspaceService.setPinned(rootId, true);
+    expect(first.success).toBe(true);
+    const firstPinnedAt = getEntry(rootId)?.pinnedAt;
+    expect(emittedMetadata).toHaveLength(1);
+
+    // Concurrent double-pin from another client must not move the row.
+    const again = await workspaceService.setPinned(rootId, true);
+    expect(again.success).toBe(true);
+    expect(getEntry(rootId)?.pinnedAt).toBe(firstPinnedAt);
+    expect(emittedMetadata).toHaveLength(1);
+
+    // Unpinning a chat that is not pinned is also a quiet no-op.
+    const noopUnpin = await workspaceService.setPinned(otherRootId, false);
+    expect(noopUnpin.success).toBe(true);
+    expect(emittedMetadata).toHaveLength(1);
+  });
+
+  test("rejects pinning sub-agent and archived workspaces", async () => {
+    const subAgentResult = await workspaceService.setPinned(childId, true);
+    expect(subAgentResult.success).toBe(false);
+    expect(getEntry(childId)?.pinnedAt).toBeUndefined();
+
+    const archivedResult = await workspaceService.setPinned(archivedId, true);
+    expect(archivedResult.success).toBe(false);
+    expect(getEntry(archivedId)?.pinnedAt).toBeUndefined();
+
+    expect(emittedMetadata).toHaveLength(0);
+  });
+
+  test("pinning after an existing pin yields a strictly greater pinnedAt", async () => {
+    expect((await workspaceService.setPinned(otherRootId, true)).success).toBe(true);
+    expect((await workspaceService.setPinned(rootId, true)).success).toBe(true);
+
+    const firstMs = Date.parse(getEntry(otherRootId)?.pinnedAt ?? "");
+    const secondMs = Date.parse(getEntry(rootId)?.pinnedAt ?? "");
+    expect(secondMs).toBeGreaterThan(firstMs);
+  });
+
+  test("appends after an existing future pinnedAt (clock skew)", async () => {
+    const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    getEntry(otherRootId)!.pinnedAt = future;
+
+    expect((await workspaceService.setPinned(rootId, true)).success).toBe(true);
+    expect(Date.parse(getEntry(rootId)?.pinnedAt ?? "")).toBeGreaterThan(Date.parse(future));
+  });
+
+  test("archive clears pinnedAt and unarchive does not restore it", async () => {
+    expect((await workspaceService.setPinned(rootId, true)).success).toBe(true);
+    expect(getEntry(rootId)?.pinnedAt).toBeDefined();
+
+    const archiveResult = await workspaceService.archive(rootId);
+    expect(archiveResult.success).toBe(true);
+    expect(getEntry(rootId)?.pinnedAt).toBeUndefined();
+
+    const unarchiveResult = await workspaceService.unarchive(rootId);
+    expect(unarchiveResult.success).toBe(true);
+    expect(getEntry(rootId)?.pinnedAt).toBeUndefined();
+
+    // Re-pinning after unarchive works (pin state starts fresh).
+    expect((await workspaceService.setPinned(rootId, true)).success).toBe(true);
+    expect(getEntry(rootId)?.pinnedAt).toBeDefined();
+  });
+});
+
 describe("WorkspaceService archive lifecycle hooks", () => {
   const workspaceId = "ws-archive";
   const projectPath = "/tmp/project";

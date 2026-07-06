@@ -4097,6 +4097,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
         }),
+      setPinned: t
+        .input(schemas.workspace.setPinned.input)
+        .output(schemas.workspace.setPinned.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.setPinned(input.workspaceId, input.pinned);
+        }),
       updateTags: t
         .input(schemas.workspace.updateTags.input)
         .output(schemas.workspace.updateTags.output)

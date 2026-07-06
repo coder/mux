@@ -1,6 +1,15 @@
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
-import { GitBranch, HeartPulse, Maximize2, Pencil, Server, Square } from "lucide-react";
+import {
+  GitBranch,
+  HeartPulse,
+  Maximize2,
+  Pencil,
+  Pin,
+  PinOff,
+  Server,
+  Square,
+} from "lucide-react";
 import React from "react";
 
 interface WorkspaceActionButtonProps {
@@ -45,6 +54,9 @@ interface WorkspaceActionsMenuContentProps {
   onEnterImmersiveReview?: (() => void) | null;
   onStopRuntime?: (() => void) | null;
   onForkChat?: ((anchorEl: HTMLElement) => void) | null;
+  /** Pin/unpin toggle; pass null on sub-agent rows (only root chats are pinnable). */
+  onTogglePinned?: (() => void) | null;
+  isPinned?: boolean;
   onArchiveChat?: ((anchorEl: HTMLElement) => void) | null;
   onCloseMenu: () => void;
   shortcutClassName?: string;
@@ -141,6 +153,25 @@ export const WorkspaceActionsMenuContent: React.FC<WorkspaceActionsMenuContentPr
             e.stopPropagation();
             props.onCloseMenu();
             props.onForkChat?.(e.currentTarget);
+          }}
+        />
+      )}
+      {props.onTogglePinned && (
+        <WorkspaceActionButton
+          label={props.isPinned ? "Unpin chat" : "Pin chat"}
+          shortcut={formatKeybind(KEYBINDS.PIN_WORKSPACE)}
+          shortcutClassName={props.shortcutClassName}
+          icon={
+            props.isPinned ? (
+              <PinOff className="h-3 w-3 shrink-0" />
+            ) : (
+              <Pin className="h-3 w-3 shrink-0" />
+            )
+          }
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onCloseMenu();
+            props.onTogglePinned?.();
           }}
         />
       )}

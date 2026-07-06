@@ -4,6 +4,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
@@ -91,7 +92,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 }) => {
   const { api } = useAPI();
   const { disableWorkspaceAgents } = useAgent();
-  const { preflightArchiveWorkspace, archiveWorkspace } = useWorkspaceActions();
+  const { preflightArchiveWorkspace, archiveWorkspace, setWorkspacePinned } = useWorkspaceActions();
   const { workspaceMetadata } = useWorkspaceContext();
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const openTerminalPopout = useOpenTerminal();
@@ -749,6 +750,14 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               onForkChat={(anchorEl) => {
                 void handleForkChat(anchorEl);
               }}
+              onTogglePinned={
+                workspaceEntry && isWorkspacePinnable(workspaceEntry)
+                  ? () => {
+                      void setWorkspacePinned(workspaceId, !isWorkspacePinned(workspaceEntry));
+                    }
+                  : null
+              }
+              isPinned={workspaceEntry ? isWorkspacePinned(workspaceEntry) : false}
               onArchiveChat={(anchorEl) => {
                 // handleArchiveChat runs preflight and opens a confirmation dialog
                 // when streaming or untracked files are detected.

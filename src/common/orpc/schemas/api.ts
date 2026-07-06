@@ -1125,6 +1125,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  setPinned: {
+    input: z.object({ workspaceId: z.string(), pinned: z.boolean() }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   updateTags: {
     /** Merge tag updates into a workspace; a null value deletes that key. */
     input: z.object({

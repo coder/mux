@@ -62,7 +62,9 @@ import {
   EyeOff,
   ChevronDown,
   HeartPulse,
+  Pin,
 } from "lucide-react";
+import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
 import { ArchiveIcon } from "../icons/ArchiveIcon/ArchiveIcon";
 import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
@@ -514,6 +516,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       ? `${groupLabel} · ${workspaceTitle}`
       : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
+  const isPinned = isWorkspacePinned(metadata);
+  const isPinnable = isWorkspacePinnable(metadata);
   const [heartbeatModalOpen, setHeartbeatModalOpen] = useState(false);
   const overflowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const overflowMenuFrameRef = useRef<number | null>(null);
@@ -1002,6 +1006,25 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                     onForkChat={(anchorEl) => {
                       void onForkWorkspace(workspaceId, anchorEl);
                     }}
+                    onTogglePinned={
+                      isPinnable
+                        ? () => {
+                            // Fire-and-forget: the metadata subscription round-trip
+                            // reorders the sidebar on every connected client.
+                            void api?.workspace
+                              .setPinned({ workspaceId, pinned: !isPinned })
+                              .then((result) => {
+                                if (!result.success) {
+                                  console.error("Failed to toggle pin:", result.error);
+                                }
+                              })
+                              .catch((error: unknown) => {
+                                console.error("Failed to toggle pin:", error);
+                              });
+                          }
+                        : null
+                    }
+                    isPinned={isPinned}
                     onArchiveChat={(anchorEl) => {
                       void onArchiveWorkspace(workspaceId, anchorEl);
                     }}
@@ -1109,6 +1132,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
             {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
+                {isPinned && (
+                  <Pin className="text-muted h-3 w-3 shrink-0" aria-label="Pinned" role="img" />
+                )}
                 {shouldShowInlineArchivingStatus ? (
                   <div
                     className="text-muted flex shrink-0 items-center gap-1 text-xs whitespace-nowrap"

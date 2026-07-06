@@ -125,6 +125,7 @@ import { ScrollArea } from "../ScrollArea/ScrollArea";
 import { getProjectDisplayName, getSubProjectsForParent } from "@/common/utils/subProjects";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
+import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
@@ -711,6 +712,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     archiveWorkspace: onArchiveWorkspace,
     removeWorkspace,
     updateWorkspaceTitle: onUpdateTitle,
+    setWorkspacePinned,
     refreshWorkspaceMetadata,
     pendingNewWorkspaceProject,
     pendingNewWorkspaceDraftId,
@@ -1743,6 +1745,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
         void handleArchiveWorkspace(selectedWorkspace.workspaceId);
+      } else if (matchesKeybind(e, KEYBINDS.PIN_WORKSPACE) && selectedWorkspace) {
+        e.preventDefault();
+        // Only root chats are pinnable; a selected sub-agent row is a no-op.
+        const projectWorkspaces =
+          sortedWorkspacesByProject.get(selectedWorkspace.projectPath) ?? [];
+        const meta = projectWorkspaces.find((m) => m.id === selectedWorkspace.workspaceId);
+        if (meta && isWorkspacePinnable(meta)) {
+          void setWorkspacePinned(selectedWorkspace.workspaceId, !isWorkspacePinned(meta));
+        }
       }
     };
 
@@ -1753,6 +1764,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     selectedWorkspace,
     handleAddWorkspace,
     handleArchiveWorkspace,
+    setWorkspacePinned,
     sortedWorkspacesByProject,
     userProjects,
   ]);
