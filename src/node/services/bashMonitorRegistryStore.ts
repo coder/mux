@@ -117,21 +117,25 @@ export class BashMonitorRegistryStore {
   }
 
   /**
-   * Remove the record only if it was armed strictly before `cutoffMs`.
+   * Atomically take the record out of the registry if it was armed strictly before
+   * `cutoffMs`, returning the consumed record (or null when it is live, missing, or
+   * malformed).
    *
    * Startup recovery runs fire-and-forget, so a workspace resumed during recovery can
-   * re-arm a monitor that reuses a stale record's processId between the recovery scan and
-   * its delete. Re-reading the record under the same per-key lock as upsert() guarantees
-   * we never delete a live (post-boot) record that replaced the stale one.
+   * re-arm a monitor that reuses a stale record's processId (IDs are generated only
+   * against the current in-memory manager map) between the recovery scan and its
+   * conversion into a wake. Re-reading + deleting under the same per-key lock as
+   * upsert() guarantees callers only ever act on a stale (pre-boot) record: a live
+   * replacement is left untouched and never produces a false monitor-lost wake.
    */
-  async removeIfArmedBefore(
+  async consumeIfArmedBefore(
     ownerWorkspaceId: string,
     processId: string,
     cutoffMs: number
-  ): Promise<void> {
-    assert(ownerWorkspaceId.trim().length > 0, "removeIfArmedBefore requires ownerWorkspaceId");
-    assert(processId.trim().length > 0, "removeIfArmedBefore requires processId");
-    assert(Number.isFinite(cutoffMs), "removeIfArmedBefore requires a finite cutoff");
+  ): Promise<BashMonitorRegistryRecord | null> {
+    assert(ownerWorkspaceId.trim().length > 0, "consumeIfArmedBefore requires ownerWorkspaceId");
+    assert(processId.trim().length > 0, "consumeIfArmedBefore requires processId");
+    assert(Number.isFinite(cutoffMs), "consumeIfArmedBefore requires a finite cutoff");
 
     const key = `${ownerWorkspaceId}:${processId}`;
     return this.locks.withLock(key, async () => {
@@ -140,13 +144,14 @@ export class BashMonitorRegistryStore {
       try {
         raw = await fsPromises.readFile(file, "utf-8");
       } catch (error) {
-        if (isErrnoWithCode(error, "ENOENT")) return;
+        if (isErrnoWithCode(error, "ENOENT")) return null;
         throw error;
       }
       const current = this.parse(raw);
-      // Malformed records are dead weight either way; a live upsert would rewrite the file.
-      if (current != null && Date.parse(current.createdAt) >= cutoffMs) return;
+      if (current != null && Date.parse(current.createdAt) >= cutoffMs) return null;
+      // Malformed records are deleted as dead weight but yield null (nothing to enqueue).
       await fsPromises.rm(file, { force: true });
+      return current;
     });
   }
 

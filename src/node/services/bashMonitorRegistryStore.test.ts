@@ -102,23 +102,24 @@ describe("BashMonitorRegistryStore", () => {
     expect(await store.listOwnerWorkspaceIds()).toEqual(["owner-a"]);
   });
 
-  test("removeIfArmedBefore deletes stale records but preserves live replacements", async () => {
+  test("consumeIfArmedBefore takes stale records but preserves live replacements", async () => {
     const store = new BashMonitorRegistryStore(makeConfig(rootDir));
     const cutoffMs = Date.parse("2026-06-01T00:00:00.000Z");
 
-    // Stale record (armed before cutoff) is removed.
+    // Stale record (armed before cutoff) is consumed and returned.
     await store.upsert(armedPayload({ createdAt: "2026-01-01T00:00:00.000Z" }));
-    await store.removeIfArmedBefore("owner-1", "proc-1", cutoffMs);
+    const consumed = await store.consumeIfArmedBefore("owner-1", "proc-1", cutoffMs);
+    expect(consumed?.processId).toBe("proc-1");
     expect(await store.listAll("owner-1")).toHaveLength(0);
 
     // Live record (re-armed at/after cutoff, e.g. by a workspace resumed during recovery)
-    // must survive so the next restart can still notify about it.
+    // must survive and yield null so no false monitor-lost wake is enqueued for it.
     await store.upsert(armedPayload({ createdAt: "2026-06-01T00:00:00.000Z" }));
-    await store.removeIfArmedBefore("owner-1", "proc-1", cutoffMs);
+    expect(await store.consumeIfArmedBefore("owner-1", "proc-1", cutoffMs)).toBeNull();
     expect(await store.listAll("owner-1")).toHaveLength(1);
 
-    // Missing record is a no-op.
-    await store.removeIfArmedBefore("owner-1", "proc-missing", cutoffMs);
+    // Missing record yields null.
+    expect(await store.consumeIfArmedBefore("owner-1", "proc-missing", cutoffMs)).toBeNull();
   });
 
   test("bounds persisted script length", async () => {

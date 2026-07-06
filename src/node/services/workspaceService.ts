@@ -1703,16 +1703,18 @@ export class WorkspaceService extends EventEmitter {
           // Defensive: monitors armed after this service was constructed belong to the
           // live manager; its own retirement events maintain their registry records.
           if (Date.parse(record.createdAt) >= this.constructedAtMs) continue;
-          await this.bashMonitorWakeStore.enqueueMonitorLost(record);
-          // Conditional delete: this recovery runs fire-and-forget, so a workspace resumed
-          // meanwhile may have re-armed a monitor reusing this processId. Only the stale
-          // (pre-boot) record may be removed; a live replacement must survive so the *next*
-          // restart can notify about it.
-          await this.bashMonitorRegistryStore.removeIfArmedBefore(
+          // Atomic consume-then-enqueue: this recovery runs fire-and-forget, so a workspace
+          // resumed meanwhile may have re-armed a monitor reusing this processId. Taking the
+          // record out under the store's per-key lock (shared with upsert) ensures we only
+          // ever enqueue a wake for the stale pre-boot record; a live replacement is left
+          // untouched and produces no false monitor-lost notice.
+          const consumed = await this.bashMonitorRegistryStore.consumeIfArmedBefore(
             ownerWorkspaceId,
             record.processId,
             this.constructedAtMs
           );
+          if (consumed == null) continue;
+          await this.bashMonitorWakeStore.enqueueMonitorLost(consumed);
         }
       }
     } catch (error) {
