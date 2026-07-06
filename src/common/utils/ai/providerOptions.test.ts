@@ -131,6 +131,25 @@ describe("buildProviderOptions - Anthropic", () => {
     });
   }
 
+  describe("claude-fable-5 (Mythos-class: API rejects disabled thinking)", () => {
+    test("maps medium to adaptive thinking like other adaptive models", () => {
+      const anthropic = anthropicProviderOptions(
+        buildProviderOptions("anthropic:claude-fable-5", "medium")
+      );
+      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      expect(anthropic.effort).toBe("medium");
+    });
+
+    test("omits thinking instead of sending disabled when off", () => {
+      // The API errors on `thinking: { type: "disabled" }` for Mythos-class models;
+      // omitting the field lets it default to adaptive. "off" can still reach here
+      // when no thinking level was provided upstream (defaults to off).
+      expect(buildProviderOptions("anthropic:claude-fable-5", "off")).toEqual({
+        anthropic: { ...baseAnthropicOptions, effort: "low" },
+      });
+    });
+  });
+
   describe("Other Anthropic models (thinking/budgetTokens)", () => {
     for (const { model, thinking, budgetTokens } of [
       { model: "claude-sonnet-4-5", thinking: "medium", budgetTokens: 10000 },

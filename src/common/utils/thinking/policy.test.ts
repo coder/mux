@@ -365,10 +365,10 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns all 6 levels for Mythos-class Fable 5 / Mythos 5", () => {
-    // Fable / Mythos sit above Opus and support the native xhigh effort level.
+  test("excludes 'off' for Mythos-class Fable 5 / Mythos 5 (API rejects disabled thinking)", () => {
+    // Fable / Mythos sit above Opus and support the native xhigh effort level, but the
+    // API rejects `thinking: { type: "disabled" }`, so "off" is not offered.
     expect(getThinkingPolicyForModel("anthropic:claude-fable-5")).toEqual([
-      "off",
       "low",
       "medium",
       "high",
@@ -376,13 +376,18 @@ describe("getThinkingPolicyForModel", () => {
       "max",
     ]);
     expect(getThinkingPolicyForModel("anthropic:claude-mythos-5")).toEqual([
-      "off",
       "low",
       "medium",
       "high",
       "xhigh",
       "max",
     ]);
+  });
+
+  test("clamps 'off' up to 'low' for Mythos-class models", () => {
+    // A stored/legacy "off" selection must not reach the wire as disabled thinking.
+    expect(enforceThinkingPolicy("anthropic:claude-fable-5", "off")).toBe("low");
+    expect(enforceThinkingPolicy("anthropic:claude-mythos-5", "off")).toBe("low");
   });
 
   test("returns all 6 levels for Sonnet 5 (native xhigh)", () => {

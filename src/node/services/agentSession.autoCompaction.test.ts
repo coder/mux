@@ -485,6 +485,100 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("compaction thinking level prefers compact agent default over baseOptions", async () => {
+    const workspaceId = "ws-auto-compaction-compact-thinking-default";
+
+    const streamMessage = mock((_request: unknown) => Promise.resolve(Ok(undefined)));
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+      loadConfigOrDefault: () => ({
+        agentAiDefaults: {
+          compact: { modelString: "openai:gpt-5.5", thinkingLevel: "high" },
+        },
+      }),
+    } as unknown as Config;
+    const { session } = await createSessionHarness({
+      workspaceId,
+      config,
+      streamMessage: streamMessage as unknown as AIService["streamMessage"],
+    });
+
+    const baseOptions: SendMessageOptions = {
+      model: "anthropic:claude-opus-4-6",
+      agentId: "exec",
+      thinkingLevel: "low",
+    };
+    const followUpContent: CompactionFollowUpRequest = {
+      text: "Continue",
+      model: "anthropic:claude-opus-4-6",
+      agentId: "exec",
+    };
+
+    const internals = session as unknown as {
+      buildAutoCompactionRequest: (params: {
+        followUpContent: CompactionFollowUpRequest;
+        baseOptions: SendMessageOptions;
+        reason: "on-send" | "mid-stream";
+      }) => {
+        sendOptions: SendMessageOptions;
+      };
+    };
+
+    const compactionRequest = internals.buildAutoCompactionRequest({
+      followUpContent,
+      baseOptions,
+      reason: "mid-stream",
+    });
+
+    // The compact agent's configured thinking level wins over the active stream's,
+    // matching desktop /compact (applyCompactionOverrides).
+    expect(compactionRequest.sendOptions.thinkingLevel).toBe("high");
+
+    session.dispose();
+  });
+
+  test("compaction thinking level falls back to baseOptions when compact default is unset", async () => {
+    const workspaceId = "ws-auto-compaction-base-thinking-fallback";
+
+    const streamMessage = mock((_request: unknown) => Promise.resolve(Ok(undefined)));
+    const { session } = await createSessionHarness({
+      workspaceId,
+      streamMessage: streamMessage as unknown as AIService["streamMessage"],
+    });
+
+    const baseOptions: SendMessageOptions = {
+      model: "anthropic:claude-opus-4-6",
+      agentId: "exec",
+      thinkingLevel: "medium",
+    };
+    const followUpContent: CompactionFollowUpRequest = {
+      text: "Continue",
+      model: "anthropic:claude-opus-4-6",
+      agentId: "exec",
+    };
+
+    const internals = session as unknown as {
+      buildAutoCompactionRequest: (params: {
+        followUpContent: CompactionFollowUpRequest;
+        baseOptions: SendMessageOptions;
+        reason: "on-send" | "mid-stream";
+      }) => {
+        sendOptions: SendMessageOptions;
+      };
+    };
+
+    const compactionRequest = internals.buildAutoCompactionRequest({
+      followUpContent,
+      baseOptions,
+      reason: "on-send",
+    });
+
+    expect(compactionRequest.sendOptions.thinkingLevel).toBe("medium");
+
+    session.dispose();
+  });
+
   test("threads providers config into pre-send and mid-stream compaction checks", async () => {
     const workspaceId = "ws-auto-compaction-providers-config";
 

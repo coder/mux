@@ -1865,7 +1865,7 @@ export class WorkspaceGoalService {
    * field is part of the public `SendMessageOptionsSchema` and forwarded
    * verbatim by the router, so trusting it would let any oRPC caller flip a
    * single bool to disarm the gate. Internal compaction / heartbeat callers
-   * always pick a priced model via `getPreferredCompactionModel` /
+   * always pick a priced model via `getPreferredCompactionSettings` /
    * heartbeat builders, so they hit the early `modelHasPricingData` exit
    * below without touching `goal.json`.
    */

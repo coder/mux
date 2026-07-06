@@ -238,6 +238,20 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
 }
 
 /**
+ * Whether the given Anthropic model rejects `thinking: { type: "disabled" }`.
+ *
+ * Mythos-class models (Fable/Mythos) cannot turn thinking off: the API errors with
+ * '"thinking.type.disabled" is not supported for this model. Thinking defaults to
+ * adaptive mode when not specified'. Callers must either clamp "off" away via the
+ * thinking policy or omit the `thinking` field entirely (letting the API default
+ * to adaptive).
+ */
+export function anthropicRejectsDisabledThinking(modelString: string): boolean {
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
+  return /claude-(?:fable|mythos)-/.test(withoutPrefix);
+}
+
+/**
  * Default thinking level when no value is set (UI initial state, backend fallback).
  * Semantically different from DEFAULT_THINKING_LEVEL which is the level used
  * when a user opts *into* thinking (e.g., CLI `--thinking` with no explicit level).

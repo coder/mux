@@ -8934,26 +8934,43 @@ export class WorkspaceService extends EventEmitter {
         ? workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]
         : undefined;
 
-    const candidates: Array<string | undefined> = [
-      selectedAgentSettings?.model,
-      workspaceEntry?.aiSettings?.model,
-      config.agentAiDefaults?.[agentId]?.modelString,
-      execAgentSettings?.model,
+    // Each candidate pairs the model with the thinking level persisted alongside
+    // it. Dropping the thinking level here caused goal continuations to stream
+    // with an implicit "off" (aiService defaults undefined -> off), which both
+    // ignored the user's UI selection and sent `thinking: { type: "disabled" }`
+    // to Anthropic models that reject disabled thinking (e.g. Fable/Mythos).
+    const candidates: Array<{ model?: string; thinkingLevel?: ThinkingLevel }> = [
+      { model: selectedAgentSettings?.model, thinkingLevel: selectedAgentSettings?.thinkingLevel },
+      {
+        model: workspaceEntry?.aiSettings?.model,
+        thinkingLevel: workspaceEntry?.aiSettings?.thinkingLevel,
+      },
+      {
+        model: config.agentAiDefaults?.[agentId]?.modelString,
+        thinkingLevel: config.agentAiDefaults?.[agentId]?.thinkingLevel,
+      },
+      { model: execAgentSettings?.model, thinkingLevel: execAgentSettings?.thinkingLevel },
       agentId !== WORKSPACE_DEFAULTS.agentId
-        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString
-        : undefined,
-      DEFAULT_MODEL,
+        ? {
+            model: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString,
+            thinkingLevel: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.thinkingLevel,
+          }
+        : {},
+      { model: DEFAULT_MODEL },
     ];
 
-    for (const raw of candidates) {
+    for (const candidate of candidates) {
+      const raw = candidate.model;
       if (typeof raw !== "string" || raw.trim().length === 0) {
         continue;
       }
       const normalized = normalizeToCanonical(raw.trim());
       if (isValidModelFormat(normalized)) {
+        const thinkingLevel = coerceThinkingLevel(candidate.thinkingLevel);
         return {
           model: normalized,
           agentId,
+          ...(thinkingLevel != null ? { thinkingLevel } : {}),
         };
       }
     }

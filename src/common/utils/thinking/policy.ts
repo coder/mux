@@ -16,6 +16,7 @@ import {
   THINKING_LEVELS,
   DEFAULT_THINKING_LEVEL,
   THINKING_LEVEL_OFF,
+  anthropicRejectsDisabledThinking,
   anthropicSupportsNativeXhigh,
   stripModelProviderPrefixes,
   type ThinkingLevel,
@@ -83,6 +84,13 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
   // suffixes. Strips both a `provider:` prefix and any upstream-provider path segment that
   // proxies encode (e.g. `mux-gateway:openai/gpt-5.5-pro` -> `gpt-5.5-pro`).
   const withoutProviderNamespace = stripModelProviderPrefixes(modelString);
+
+  // Mythos-class models (Fable/Mythos) cannot disable thinking — the API rejects
+  // `thinking: { type: "disabled" }` and always thinks (adaptive by default) — so
+  // "off" is not offered and requests for it clamp up to "low".
+  if (anthropicRejectsDisabledThinking(modelString)) {
+    return ["low", "medium", "high", "xhigh", "max"];
+  }
 
   // Opus 4.7+ supports all 6 levels: xhigh is a native API effort level distinct from max.
   if (anthropicSupportsNativeXhigh(modelString)) {

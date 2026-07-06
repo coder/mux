@@ -3221,31 +3221,36 @@ export class AgentSession {
     return followUp;
   }
 
-  private getPreferredCompactionModel(): string | null {
+  private getPreferredCompactionSettings(): {
+    model: string | null;
+    thinkingLevel: ThinkingLevel | null;
+  } {
     try {
       const maybeConfig = this.config as Config & {
         loadConfigOrDefault?: () => {
-          agentAiDefaults?: Record<string, { modelString?: string }>;
+          agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
         } | null;
       };
       if (typeof maybeConfig.loadConfigOrDefault !== "function") {
-        return null;
+        return { model: null, thinkingLevel: null };
       }
 
-      const compactModelString =
-        maybeConfig.loadConfigOrDefault()?.agentAiDefaults?.compact?.modelString;
+      const compactDefaults = maybeConfig.loadConfigOrDefault()?.agentAiDefaults?.compact;
+      const thinkingLevel = coerceThinkingLevel(compactDefaults?.thinkingLevel) ?? null;
+
+      const compactModelString = compactDefaults?.modelString;
       if (typeof compactModelString !== "string") {
-        return null;
+        return { model: null, thinkingLevel };
       }
 
       const normalized = normalizeToCanonical(compactModelString.trim());
       if (!isValidModelFormat(normalized)) {
-        return null;
+        return { model: null, thinkingLevel };
       }
 
-      return normalized;
+      return { model: normalized, thinkingLevel };
     } catch {
-      return null;
+      return { model: null, thinkingLevel: null };
     }
   }
 
@@ -3261,7 +3266,8 @@ export class AgentSession {
   } {
     // Callers pass the stream model in baseOptions.model; avoid ambient session state
     // here because the current stream is cleared before compaction and could go stale.
-    const compactionModel = this.getPreferredCompactionModel() ?? params.baseOptions.model;
+    const compactSettings = this.getPreferredCompactionSettings();
+    const compactionModel = compactSettings.model ?? params.baseOptions.model;
     assert(
       typeof compactionModel === "string" && compactionModel.trim().length > 0,
       "auto-compaction requires a non-empty model"
@@ -3272,9 +3278,12 @@ export class AgentSession {
       agentId: "compact",
       skipAiSettingsPersistence: true,
       model: compactionModel,
+      // Prefer the compact agent's configured thinking level over the active
+      // stream's, matching desktop /compact (applyCompactionOverrides) — the
+      // stream's level was chosen for its model, not the compaction model.
       thinkingLevel: enforceThinkingPolicy(
         compactionModel,
-        params.baseOptions.thinkingLevel ?? "off"
+        compactSettings.thinkingLevel ?? params.baseOptions.thinkingLevel ?? "off"
       ),
       maxOutputTokens: undefined,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],

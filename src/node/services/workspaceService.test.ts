@@ -10621,6 +10621,43 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       expect(result).toEqual({
         model: "anthropic:claude-sonnet-4-6",
         agentId: "review",
+        thinkingLevel: "off",
+      });
+    });
+
+    test("carries the persisted thinking level with the winning model candidate", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-thinking";
+      const projects = new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                id: workspaceId,
+                path: "/tmp/proj/ws",
+                aiSettingsByAgent: {
+                  exec: { model: "anthropic:claude-fable-5", thinkingLevel: "medium" as const },
+                },
+              },
+            ],
+          },
+        ],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({ projects })),
+      });
+
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+
+      // Regression: continuations previously dropped the persisted thinking
+      // level, streaming with an implicit "off" that Fable/Mythos-class
+      // Anthropic models reject ("thinking.type.disabled" unsupported).
+      expect(result).toEqual({
+        model: "anthropic:claude-fable-5",
+        agentId: "exec",
+        thinkingLevel: "medium",
       });
     });
 
@@ -10655,6 +10692,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       expect(result).toEqual({
         model: "openai:gpt-4o",
         agentId: "exec",
+        thinkingLevel: "off",
       });
     });
 
