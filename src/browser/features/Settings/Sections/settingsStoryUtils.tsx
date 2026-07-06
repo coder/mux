@@ -19,7 +19,11 @@ import {
   getExperimentList,
   type ExperimentId,
 } from "@/common/constants/experiments";
-import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
+import {
+  SELECTED_WORKSPACE_KEY,
+  SIDEBAR_AGE_GROUPING_KEY,
+  UI_THEME_KEY,
+} from "@/common/constants/storage";
 import type { ServerAuthSession } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
@@ -44,6 +48,10 @@ export function resetStorybookPersistedStateForStory(): void {
     for (const experiment of getExperimentList()) {
       localStorage.removeItem(getExperimentKey(experiment.id));
     }
+
+    // Sidebar stories can write sidebarAgeGrouping=false into the shared
+    // origin; clear it so the GeneralSection switch snapshots its default.
+    localStorage.removeItem(SIDEBAR_AGE_GROUPING_KEY);
   }
 }
 
