@@ -40,6 +40,19 @@ const MODEL_DEFINITIONS = {
     // unchanged across the 4.x / Mythos line) for approximate counting.
     tokenizerOverride: "anthropic/claude-opus-4.5",
   },
+  // Claude Mythos 5 - released June 9, 2026 alongside Fable 5. Same underlying model,
+  // specs, and pricing as Fable 5 ($10/M input, $50/M output) but with safeguards lifted
+  // in some areas. Limited availability: restricted to approved Project Glasswing /
+  // trusted-access customers (no self-serve sign-up). API id `claude-mythos-5`.
+  // Not warmed: most users cannot access it, and its tokenizer override is already
+  // warmed via FABLE.
+  MYTHOS: {
+    provider: "anthropic",
+    providerModelId: "claude-mythos-5",
+    aliases: ["mythos"],
+    // Same tokenizer situation as Fable 5: reuse Opus 4.5 for approximate counting.
+    tokenizerOverride: "anthropic/claude-opus-4.5",
+  },
   OPUS: {
     provider: "anthropic",
     providerModelId: "claude-opus-4-8",
