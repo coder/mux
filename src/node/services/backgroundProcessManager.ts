@@ -79,6 +79,23 @@ export interface MonitorMatchPayload {
   timestamp: number;
 }
 
+/** Emitted when a spawn arms a monitor; drives the persisted armed-monitor registry. */
+export interface MonitorArmedPayload {
+  processId: string;
+  taskId: string;
+  workspaceId: string;
+  displayName?: string;
+  filter: string;
+  filterExclude: boolean;
+  script: string;
+  createdAt: string;
+}
+
+/** Emitted when a monitor retires normally (not during shutdown); deletes its registry record. */
+export interface MonitorStoppedPayload {
+  processId: string;
+}
+
 export interface BackgroundProcessMonitorState extends BackgroundProcessMonitorConfig {
   matchesCount: number;
   pendingLines: string[];
@@ -177,6 +194,8 @@ export interface ForegroundProcess {
 export interface BackgroundProcessManagerEvents {
   change: [workspaceId: string];
   "monitor:match": [workspaceId: string, payload: MonitorMatchPayload];
+  "monitor:armed": [workspaceId: string, payload: MonitorArmedPayload];
+  "monitor:stopped": [workspaceId: string, payload: MonitorStoppedPayload];
 }
 
 export class BackgroundProcessManager extends EventEmitter<BackgroundProcessManagerEvents> {
@@ -194,6 +213,11 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   private foregroundProcesses = new Map<string, ForegroundProcess>();
   // Tracks workspaces with queued messages (for bash_output to return early)
   private queuedMessageWorkspaces = new Set<string>();
+
+  // Once set, stopMonitor() suppresses "monitor:stopped" so the persisted armed-monitor
+  // registry survives shutdown and the next startup can notify owners their monitors
+  // were lost. Never reset: the manager does not outlive a shutdown.
+  private shuttingDown = false;
 
   constructor(bgOutputDir: string) {
     super();
@@ -307,6 +331,16 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     this.emitChange(proc.workspaceId);
   }
 
+  /**
+   * Mark the manager as shutting down. Must be called before any session teardown that
+   * triggers cleanup()/terminateAll() (e.g. first line of ServiceContainer.dispose()),
+   * otherwise per-workspace cleanup would emit "monitor:stopped" and erase the registry
+   * records the post-restart "monitor lost" notification depends on.
+   */
+  beginShutdown(): void {
+    this.shuttingDown = true;
+  }
+
   private stopMonitor(proc: BackgroundProcess, flushPending: boolean): void {
     const monitor = proc.monitor;
     if (!monitor || monitor.stopped) return;
@@ -318,6 +352,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     }
     if (flushPending) {
       this.emitMonitorMatch(proc, monitor);
+    }
+    // A monitor retiring while the app is alive means the agent no longer wants wakes for
+    // this process, so its armed-registry record must go. During shutdown the record must
+    // survive so the next startup can deliver the "monitor lost" notice.
+    if (!this.shuttingDown) {
+      this.emit("monitor:stopped", proc.workspaceId, { processId: proc.id });
     }
   }
 
@@ -497,7 +537,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     void this.monitorTailLoop(proc.id).catch((error: unknown) => {
       const current = this.processes.get(proc.id);
       if (current?.monitor && !current.monitor.stopped) {
-        current.monitor.stopped = true;
+        // Route through stopMonitor so the retirement also clears any pending flush timer
+        // and emits "monitor:stopped" (registry cleanup). No flush: the loop failed.
+        this.stopMonitor(current, false);
       }
       log.debug(
         `BackgroundProcessManager: monitor tail for ${proc.id} failed: ${getErrorMessage(error)}`
@@ -675,6 +717,18 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
           : MONITOR_POLL_INTERVAL_MS_REMOTE;
       proc.monitor = this.createMonitorState(config.monitor, { pollIntervalMs });
       this.startMonitorTail(proc);
+      // spawn() is the only place monitors are ever armed (registerMigratedProcess never
+      // sets one), so this single emit keeps the persisted armed-monitor registry complete.
+      this.emit("monitor:armed", workspaceId, {
+        processId,
+        taskId: `bash:${processId}`,
+        workspaceId,
+        displayName: config.displayName,
+        filter: proc.monitor.filter,
+        filterExclude: proc.monitor.exclude,
+        script,
+        createdAt: new Date().toISOString(),
+      });
     }
 
     log.debug(
@@ -1334,6 +1388,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    */
   async terminateAll(): Promise<void> {
     log.debug(`BackgroundProcessManager.terminateAll() called`);
+    // terminateAll only runs at shutdown; set the flag defensively in case a caller
+    // skipped beginShutdown(), so retiring monitors keep their registry records.
+    this.shuttingDown = true;
     const allProcesses = Array.from(this.processes.values());
     await Promise.all(allProcesses.map((p) => this.terminate(p.id)));
     this.processes.clear();

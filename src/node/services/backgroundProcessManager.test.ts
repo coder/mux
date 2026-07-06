@@ -4,7 +4,9 @@ import {
   BackgroundProcessManager,
   computeTailStartOffset,
   type BackgroundProcessMeta,
+  type MonitorArmedPayload,
   type MonitorMatchPayload,
+  type MonitorStoppedPayload,
 } from "./backgroundProcessManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -247,6 +249,120 @@ describe("BackgroundProcessManager", () => {
       expect(proc?.status).toBe("running");
       expect(proc ? manager.getMonitorSnapshot(proc)?.totalMatches : undefined).toBe(1);
       expect(proc ? manager.getMonitorSnapshot(proc)?.stopped : undefined).toBe(true);
+    });
+
+    describe("armed/stopped registry events", () => {
+      function recordEvents(target: BackgroundProcessManager): {
+        armed: Array<{ workspaceId: string; payload: MonitorArmedPayload }>;
+        stopped: Array<{ workspaceId: string; payload: MonitorStoppedPayload }>;
+      } {
+        const events: {
+          armed: Array<{ workspaceId: string; payload: MonitorArmedPayload }>;
+          stopped: Array<{ workspaceId: string; payload: MonitorStoppedPayload }>;
+        } = { armed: [], stopped: [] };
+        target.on("monitor:armed", (workspaceId, payload) => {
+          events.armed.push({ workspaceId, payload });
+        });
+        target.on("monitor:stopped", (workspaceId, payload) => {
+          events.stopped.push({ workspaceId, payload });
+        });
+        return events;
+      }
+
+      it("emits monitor:armed on monitored spawn but not on unmonitored spawn", async () => {
+        const events = recordEvents(manager);
+
+        const unmonitored = await manager.spawn(runtime, testWorkspaceId, "sleep 5", {
+          cwd: process.cwd(),
+          displayName: "no-monitor",
+        });
+        expect(unmonitored.success).toBe(true);
+        expect(events.armed).toHaveLength(0);
+
+        const monitored = await manager.spawn(runtime, testWorkspaceId, "sleep 5", {
+          cwd: process.cwd(),
+          displayName: "with-monitor",
+          monitor: { filter: "NEVER", pattern: /NEVER/, exclude: false, cooldownMs: 0 },
+        });
+        expect(monitored.success).toBe(true);
+        if (!monitored.success) return;
+        expect(events.armed).toHaveLength(1);
+        expect(events.armed[0].workspaceId).toBe(testWorkspaceId);
+        expect(events.armed[0].payload).toMatchObject({
+          processId: monitored.processId,
+          taskId: `bash:${monitored.processId}`,
+          workspaceId: testWorkspaceId,
+          filter: "NEVER",
+          filterExclude: false,
+          script: "sleep 5",
+        });
+      });
+
+      it("emits monitor:stopped on natural exit, maxEvents, and terminate", async () => {
+        const events = recordEvents(manager);
+
+        // Natural exit
+        const exiting = await manager.spawn(runtime, testWorkspaceId, "echo done", {
+          cwd: process.cwd(),
+          displayName: "stopped-on-exit",
+          monitor: { filter: "NEVER", pattern: /NEVER/, exclude: false, cooldownMs: 0 },
+        });
+        expect(exiting.success).toBe(true);
+        if (!exiting.success) return;
+        for (let attempt = 0; attempt < 60 && events.stopped.length < 1; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(events.stopped.map((e) => e.payload.processId)).toEqual([exiting.processId]);
+
+        // maxEvents (process keeps running)
+        const maxed = await manager.spawn(runtime, testWorkspaceId, "echo ERR; sleep 5", {
+          cwd: process.cwd(),
+          displayName: "stopped-on-max-events",
+          monitor: {
+            filter: "ERR",
+            pattern: /ERR/,
+            exclude: false,
+            maxEvents: 1,
+            cooldownMs: 0,
+          },
+        });
+        expect(maxed.success).toBe(true);
+        if (!maxed.success) return;
+        for (let attempt = 0; attempt < 60 && events.stopped.length < 2; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(events.stopped.map((e) => e.payload.processId)).toContain(maxed.processId);
+
+        // terminate()
+        const terminated = await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
+          cwd: process.cwd(),
+          displayName: "stopped-on-terminate",
+          monitor: { filter: "NEVER", pattern: /NEVER/, exclude: false, cooldownMs: 0 },
+        });
+        expect(terminated.success).toBe(true);
+        if (!terminated.success) return;
+        await manager.terminate(terminated.processId);
+        expect(events.stopped.map((e) => e.payload.processId)).toContain(terminated.processId);
+      });
+
+      it("suppresses monitor:stopped after beginShutdown so registry records survive restarts", async () => {
+        const events = recordEvents(manager);
+
+        const result = await manager.spawn(runtime, testWorkspaceId, "sleep 10", {
+          cwd: process.cwd(),
+          displayName: "shutdown-monitor",
+          monitor: { filter: "NEVER", pattern: /NEVER/, exclude: false, cooldownMs: 0 },
+        });
+        expect(result.success).toBe(true);
+        expect(events.armed).toHaveLength(1);
+
+        manager.beginShutdown();
+        // Both the per-workspace cleanup path (AgentSession.dispose) and terminateAll
+        // run during shutdown; neither may retire registry records.
+        await manager.cleanup(testWorkspaceId);
+        await manager.terminateAll();
+        expect(events.stopped).toHaveLength(0);
+      });
     });
 
     it("clears pending monitor timers when terminating an already-exited process", async () => {
