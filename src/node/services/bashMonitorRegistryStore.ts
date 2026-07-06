@@ -155,6 +155,20 @@ export class BashMonitorRegistryStore {
     });
   }
 
+  async get(
+    ownerWorkspaceId: string,
+    processId: string
+  ): Promise<BashMonitorRegistryRecord | null> {
+    let raw: string;
+    try {
+      raw = await fsPromises.readFile(this.file(ownerWorkspaceId, processId), "utf-8");
+    } catch (error) {
+      if (isErrnoWithCode(error, "ENOENT")) return null;
+      throw error;
+    }
+    return this.parse(raw);
+  }
+
   async listAll(ownerWorkspaceId: string): Promise<BashMonitorRegistryRecord[]> {
     const dir = this.dir(ownerWorkspaceId);
     let entries: string[];

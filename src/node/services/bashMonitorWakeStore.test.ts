@@ -226,6 +226,53 @@ describe("BashMonitorWakeStore", () => {
     expect(pending[0].lines).toEqual([]);
   });
 
+  test("enqueueOrMergePending replaces a pending monitor-lost record instead of merging", async () => {
+    // A new match for a processId with a pending monitor-lost record means the ID was
+    // re-armed by a live monitor (post-restart IDs reuse display_name-based IDs). The stale
+    // "no longer awaitable" notice must not absorb live output.
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueMonitorLost({
+      processId: "proc-1",
+      taskId: "bash:proc-1",
+      ownerWorkspaceId: "owner-1",
+      filter: "ERROR",
+      filterExclude: false,
+      script: "old-generation-script",
+    });
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR live"], totalMatches: 1 }));
+
+    const pending = await store.listPending("owner-1");
+    expect(pending).toHaveLength(1);
+    expect(pending[0].kind).toBe("match");
+    expect(pending[0].lines).toEqual(["ERROR live"]);
+    expect(pending[0].script).toBeUndefined();
+  });
+
+  test("supersedePendingMonitorLost retires only pending monitor-lost records", async () => {
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+
+    // Pending lost record is superseded (ID re-armed by a live monitor).
+    await store.enqueueMonitorLost({
+      processId: "proc-1",
+      taskId: "bash:proc-1",
+      ownerWorkspaceId: "owner-1",
+      filter: "ERROR",
+      filterExclude: false,
+      script: "echo hi",
+    });
+    await store.supersedePendingMonitorLost("owner-1", "proc-1");
+    expect(await store.listPending("owner-1")).toHaveLength(0);
+    expect((await store.get("owner-1", "proc-1"))?.status).toBe("superseded");
+
+    // Pending match record is left pending (only lost notices are invalidated by re-arm).
+    await store.enqueueOrMergePending(payload({ processId: "proc-2", taskId: "bash:proc-2" }));
+    await store.supersedePendingMonitorLost("owner-1", "proc-2");
+    expect(await store.listPending("owner-1")).toHaveLength(1);
+
+    // Missing record is a no-op.
+    await store.supersedePendingMonitorLost("owner-1", "proc-missing");
+  });
+
   test("enqueueMonitorLost upgrades a pending match record in place, keeping its lines", async () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
     await store.enqueueOrMergePending(payload({ lines: ["ERROR one"], totalMatches: 1 }));

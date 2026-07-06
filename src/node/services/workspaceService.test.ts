@@ -457,6 +457,52 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("re-arming a processId supersedes its pending monitor-lost wake", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-rearm-owner";
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      // Workspace intentionally absent from config: startup recovery finds nothing, and
+      // no drain can race the assertion below (drains for unknown workspaces supersede,
+      // but none is scheduled because the wake is seeded after construction).
+      createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const wakeStore = new BashMonitorWakeStore(config);
+      await wakeStore.enqueueMonitorLost({
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        ownerWorkspaceId: workspaceId,
+        filter: "ERROR",
+        filterExclude: false,
+        script: "echo hi",
+      });
+
+      // Relaunching the same display_name after restart reuses the processId; the stale
+      // "no longer awaitable" notice must not be delivered for the now-live task.
+      backgroundProcessManager.emit("monitor:armed", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "ERROR",
+        filterExclude: false,
+        script: "echo hi",
+        createdAt: new Date().toISOString(),
+      });
+
+      await waitForCondition(
+        async () => (await wakeStore.get(workspaceId, "proc-1"))?.status === "superseded"
+      );
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("maintains the armed-monitor registry from manager events", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {

@@ -1580,6 +1580,17 @@ export class WorkspaceService extends EventEmitter {
         error,
       });
     });
+    // Re-arming a processId invalidates any undelivered "monitor lost" notice for it:
+    // post-restart IDs are generated against an empty manager map, so a relaunched
+    // display_name reuses the old ID and the pending notice would describe a live task.
+    this.bashMonitorWakeStore
+      .supersedePendingMonitorLost(payload.workspaceId, payload.processId)
+      .catch((error: unknown) => {
+        log.error("Failed to supersede stale monitor-lost wake", {
+          workspaceId: payload.workspaceId,
+          error,
+        });
+      });
   };
   private readonly bashMonitorStoppedListener = (
     workspaceId: string,
@@ -1715,6 +1726,22 @@ export class WorkspaceService extends EventEmitter {
           );
           if (consumed == null) continue;
           await this.bashMonitorWakeStore.enqueueMonitorLost(consumed);
+          // Double-check: the ID may have been re-armed between the consume above and this
+          // enqueue, in which case the armed listener's supersede ran before the wake
+          // existed and no-op'd. Consume deleted the old record, so any registry record
+          // present now was written by a live re-arm — supersede the notice we just wrote.
+          // (A re-arm after this get instead orders its supersede after our enqueue, so
+          // whichever side runs last sees the other's write.)
+          const rearmed = await this.bashMonitorRegistryStore.get(
+            ownerWorkspaceId,
+            record.processId
+          );
+          if (rearmed != null) {
+            await this.bashMonitorWakeStore.supersedePendingMonitorLost(
+              ownerWorkspaceId,
+              record.processId
+            );
+          }
         }
       }
     } catch (error) {

@@ -226,7 +226,12 @@ export class BashMonitorWakeStore {
       const existing = await this.get(payload.workspaceId, id);
       const now = new Date().toISOString();
       const bounded = boundLines(payload.lines);
-      if (existing?.status === "pending") {
+      // Only merge into pending *match* records. A pending monitor-lost record describes a
+      // dead previous generation of this processId; a new match means the ID was re-armed
+      // by a live monitor (post-restart IDs are generated against an empty manager map, so
+      // relaunching the same display_name reuses the ID). Replace the stale notice with a
+      // fresh match record instead of mislabeling live output as lost-monitor output.
+      if (existing?.status === "pending" && existing.kind === "match") {
         const merged = boundLines([...existing.lines, ...payload.lines]);
         const record: BashMonitorWakeRecord = {
           ...existing,
@@ -430,6 +435,27 @@ export class BashMonitorWakeStore {
       updatedAt: now,
       ...(status === "delivered" ? { deliveredAt: now } : {}),
     };
+  }
+
+  /**
+   * Supersede a pending monitor-lost wake because its processId was re-armed by a live
+   * monitor. After a restart the manager's ID space is empty, so relaunching the same
+   * display_name reuses the old processId; an undelivered "no longer awaitable" notice
+   * would then describe a live task. Pending match wakes and terminal records are left
+   * untouched.
+   */
+  async supersedePendingMonitorLost(ownerWorkspaceId: string, processId: string): Promise<void> {
+    assert(
+      ownerWorkspaceId.trim().length > 0,
+      "supersedePendingMonitorLost requires ownerWorkspaceId"
+    );
+    const id = BashMonitorWakeStore.wakeId(processId);
+    const key = `${ownerWorkspaceId}:${id}`;
+    await this.locks.withLock(key, async () => {
+      const record = await this.get(ownerWorkspaceId, id);
+      if (record?.status !== "pending" || record.kind !== "monitor-lost") return;
+      await this.write(this.withTerminalStatus(record, "superseded"));
+    });
   }
 
   async markDelivered(ownerWorkspaceId: string, id: string): Promise<void> {
