@@ -2289,6 +2289,29 @@ export class WorkspaceGoalService {
     return result;
   }
 
+  /**
+   * Arm a pending continuation candidate whose request and stream-end
+   * timestamps are both "now". Shared by the kickoff and budget-wrap-up paths,
+   * which arm an otherwise-identical candidate differing only in `source`. The
+   * stream_end path is intentionally not routed through here because it carries
+   * an inbound `streamEndedAtMs` and pre-normalized `sendOptions`.
+   */
+  private armImmediateContinuationCandidate(
+    workspaceId: string,
+    goal: GoalRecordV1,
+    source: "kickoff" | "budget_wrapup",
+    sendOptions: SendMessageOptions
+  ): void {
+    const nowMs = Date.now();
+    this.pendingContinuationCandidates.set(workspaceId, {
+      goalId: goal.goalId,
+      requestedAtMs: nowMs,
+      streamEndedAtMs: nowMs,
+      source,
+      sendOptions: continuationSendOptions(sendOptions),
+    });
+  }
+
   private async armKickoffContinuationIfIdle(
     workspaceId: string,
     goal: GoalRecordV1
@@ -2327,14 +2350,7 @@ export class WorkspaceGoalService {
       return;
     }
 
-    const nowMs = Date.now();
-    this.pendingContinuationCandidates.set(workspaceId, {
-      goalId: goal.goalId,
-      requestedAtMs: nowMs,
-      streamEndedAtMs: nowMs,
-      source: "kickoff",
-      sendOptions: continuationSendOptions(sendOptions),
-    });
+    this.armImmediateContinuationCandidate(workspaceId, goal, "kickoff", sendOptions);
     try {
       await this.goalContinuationDispatcher.requestDispatch(
         workspaceId,
@@ -2438,14 +2454,7 @@ export class WorkspaceGoalService {
     }
 
     this.recordLastGoalStream(workspaceId, GOAL_CONTINUATION_KIND, goal.goalId);
-    const nowMs = Date.now();
-    this.pendingContinuationCandidates.set(workspaceId, {
-      goalId: goal.goalId,
-      requestedAtMs: nowMs,
-      streamEndedAtMs: nowMs,
-      source: "budget_wrapup",
-      sendOptions: continuationSendOptions(sendOptions),
-    });
+    this.armImmediateContinuationCandidate(workspaceId, goal, "budget_wrapup", sendOptions);
     this.goalContinuationDispatcher
       .requestDispatch(workspaceId, GOAL_CONTINUATION_IDLE_CONSUMER_NAME)
       .catch((error: unknown) => {

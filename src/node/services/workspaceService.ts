@@ -1777,40 +1777,35 @@ export class WorkspaceService extends EventEmitter {
         reason,
       });
     };
-    const markDeliveredAfterAccepted = async (
-      records: readonly BashMonitorWakeRecord[]
+    // Both terminal transitions return false when the persisted record picked up new merged
+    // matches after this drain snapshotted `pending`; in that case reschedule so the freshly
+    // merged lines get their own drain pass. The delivered/canceled callbacks differ only in
+    // which store transition they apply, so share the resolve-each-then-reschedule-on-any-miss
+    // loop rather than copy-pasting it.
+    const resolveWakeSnapshots = async (
+      records: readonly BashMonitorWakeRecord[],
+      resolve: (record: BashMonitorWakeRecord) => Promise<boolean>
     ): Promise<void> => {
-      let hasUndeliveredMergedMatches = false;
+      let hasUnresolvedMergedMatches = false;
       for (const record of records) {
-        const delivered = await this.bashMonitorWakeStore.markDeliveredSnapshot(
-          ownerWorkspaceId,
-          record
-        );
-        if (!delivered) {
-          hasUndeliveredMergedMatches = true;
+        if (!(await resolve(record))) {
+          hasUnresolvedMergedMatches = true;
         }
       }
-      if (hasUndeliveredMergedMatches) {
+      if (hasUnresolvedMergedMatches) {
         this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
       }
     };
-    const markSupersededAfterCanceled = async (
+    const markDeliveredAfterAccepted = (records: readonly BashMonitorWakeRecord[]): Promise<void> =>
+      resolveWakeSnapshots(records, (record) =>
+        this.bashMonitorWakeStore.markDeliveredSnapshot(ownerWorkspaceId, record)
+      );
+    const markSupersededAfterCanceled = (
       records: readonly BashMonitorWakeRecord[]
-    ): Promise<void> => {
-      let hasNewMergedMatches = false;
-      for (const record of records) {
-        const superseded = await this.bashMonitorWakeStore.markSupersededSnapshot(
-          ownerWorkspaceId,
-          record
-        );
-        if (!superseded) {
-          hasNewMergedMatches = true;
-        }
-      }
-      if (hasNewMergedMatches) {
-        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
-      }
-    };
+    ): Promise<void> =>
+      resolveWakeSnapshots(records, (record) =>
+        this.bashMonitorWakeStore.markSupersededSnapshot(ownerWorkspaceId, record)
+      );
 
     // Once the synthetic wake turn is accepted into durable chat history, the wake has
     // been delivered. If provider startup fails after acceptance, AgentSession's
