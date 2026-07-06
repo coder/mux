@@ -139,7 +139,8 @@ export class EditorService {
         windowsHide: true,
         // Strip mux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
         // identity) so GUI editors don't inherit mux's window identity.
-        env: sanitizeMuxChildEnv({ ...process.env }),
+        // sanitizeMuxChildEnv copies its input, so pass process.env directly.
+        env: sanitizeMuxChildEnv(process.env),
       });
       child.unref();
 

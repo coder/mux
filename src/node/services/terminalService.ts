@@ -679,7 +679,8 @@ export class TerminalService {
         stdio: "ignore",
         // Strip mux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
         // identity) so apps launched from this shell don't inherit them.
-        env: sanitizeMuxChildEnv({ ...process.env }),
+        // sanitizeMuxChildEnv copies its input, so pass process.env directly.
+        env: sanitizeMuxChildEnv(process.env),
       });
       child.unref();
     } else {
