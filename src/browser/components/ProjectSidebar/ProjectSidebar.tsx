@@ -1748,9 +1748,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       } else if (matchesKeybind(e, KEYBINDS.PIN_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
         // Only root chats are pinnable; a selected sub-agent row is a no-op.
-        const projectWorkspaces =
-          sortedWorkspacesByProject.get(selectedWorkspace.projectPath) ?? [];
-        const meta = projectWorkspaces.find((m) => m.id === selectedWorkspace.workspaceId);
+        // Look up by id in the store rather than indexing sortedWorkspacesByProject
+        // by projectPath: multi-project workspaces are bucketed under the internal
+        // multi-project config key, not their primary project path.
+        const meta = workspaceStore.getWorkspaceMetadata(selectedWorkspace.workspaceId);
         if (meta && isWorkspacePinnable(meta)) {
           void setWorkspacePinned(selectedWorkspace.workspaceId, !isWorkspacePinned(meta));
         }
@@ -1767,6 +1768,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setWorkspacePinned,
     sortedWorkspacesByProject,
     userProjects,
+    workspaceStore,
   ]);
 
   return (
