@@ -6,11 +6,8 @@ import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
 import type { CompletedMessagePart, WorkflowRunAttachedEvent } from "@/common/types/stream";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
-import {
-  StreamManager,
-  stripEncryptedContent,
-  type ModelFallbackPrepareOptions,
-} from "./streamManager";
+import { StreamManager, type ModelFallbackPrepareOptions } from "./streamManager";
+import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
 import * as aiSdk from "ai";
 import {
   APICallError,

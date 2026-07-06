@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 
 import type { AssistantModelMessage, ModelMessage, ToolResultPart } from "ai";
 
+import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
+
 type AssistantContentPart = Exclude<AssistantModelMessage["content"], string>[number];
 
 /**
@@ -47,7 +49,11 @@ function stringifyToolResultOutput(output: ToolResultPart["output"]): string {
     case "json":
     case "error-json":
     case "content":
-      return safeStringifyForPrompt(output.value);
+      // Provider-native web_search results can carry huge opaque
+      // encryptedContent blobs. The persistence path strips them before
+      // saving, but the live SDK transcript still has them — drop them here
+      // too so the advisor prompt keeps only the useful URL/title fields.
+      return safeStringifyForPrompt(stripEncryptedContent(output.value));
     default:
       // Unknown/future output shapes: self-heal with a generic stringification.
       return safeStringifyForPrompt(output);
@@ -76,7 +82,9 @@ function stringifyToolResultOutput(output: ToolResultPart["output"]): string {
  * response messages they are provider-executed by construction (client tool
  * results live in `tool`-role messages), and provider-executed `tool-error`
  * parts are normalized into `tool-result` parts with error-json output before
- * they reach the transcript, so no separate error branch is needed.
+ * they reach the transcript, so no separate error branch is needed. If an
+ * assistant message ever carries an inline *client* tool pair, the paired
+ * tool-call is flattened alongside its result so no orphaned call remains.
  *
  * Leak vectors reviewed and intentionally left untouched:
  * - Reasoning parts with foreign providerOptions: the OpenAI converter skips
@@ -101,9 +109,20 @@ export function flattenProviderExecutedToolParts(messages: ModelMessage[]): Mode
       return message;
     }
 
+    // Tool-call ids that have an inline tool-result in this assistant
+    // message. Their calls must be flattened together with the results —
+    // even when not flagged providerExecuted — or we'd leave a bare
+    // tool-call with no matching result, which providers reject.
+    const inlineResultCallIds = new Set(
+      message.content.filter((part) => part.type === "tool-result").map((part) => part.toolCallId)
+    );
+
     let changedMessage = false;
     const newContent = message.content.map((part): AssistantContentPart => {
-      if (part.type === "tool-call" && part.providerExecuted === true) {
+      if (
+        part.type === "tool-call" &&
+        (part.providerExecuted === true || inlineResultCallIds.has(part.toolCallId))
+      ) {
         changedMessage = true;
         // Build the text part fresh: drop providerOptions/toolCallId/
         // providerExecuted — provider-specific ids are exactly the leak.

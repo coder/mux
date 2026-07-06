@@ -143,6 +143,67 @@ describe("flattenProviderExecutedToolParts", () => {
     }
   });
 
+  it("flattens the paired inline client tool-call together with its result", () => {
+    // Contrived but type-legal shape: a non-providerExecuted tool-call whose
+    // result lives inline in the same assistant message. Flattening only the
+    // result would leave a bare tool-call, which providers reject.
+    const result = flattenProviderExecutedToolParts([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "toolu_inline_pair",
+            toolName: "bash",
+            input: { script: "ls" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "toolu_inline_pair",
+            toolName: "bash",
+            output: { type: "json", value: { exitCode: 0 } },
+          },
+        ],
+      },
+    ]);
+
+    const parts = getAssistantParts(result[0]);
+    expect(parts.every((part) => part.type === "text")).toBe(true);
+  });
+
+  it("strips encryptedContent from web search results before stringifying", () => {
+    const result = flattenProviderExecutedToolParts([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "srvtoolu_websearch",
+            toolName: "web_search",
+            output: {
+              type: "json",
+              value: [
+                {
+                  url: "https://example.com",
+                  title: "Result",
+                  encryptedContent: "OPAQUE_ENCRYPTED_BLOB",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+
+    const part = getAssistantParts(result[0])[0];
+    expect(part.type).toBe("text");
+    if (part.type !== "text") {
+      throw new Error("Expected flattened text part");
+    }
+    expect(part.text).toContain("https://example.com");
+    expect(part.text).not.toContain("OPAQUE_ENCRYPTED_BLOB");
+  });
+
   it("self-heals on unstringifiable payloads instead of throwing", () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
