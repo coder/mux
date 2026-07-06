@@ -1078,10 +1078,12 @@ export class AIService extends EventEmitter {
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
       // Clamp away levels the provider rejects (Mythos-class Anthropic cannot
       // disable thinking) so provider options, replay transforms, and metadata
-      // all agree with the provider's actual thinking behavior.
+      // all agree with the provider's actual thinking behavior. Providers config
+      // is passed so aliases mapped to Mythos models get the same treatment.
       const effectiveThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
         modelString,
-        thinkingLevel
+        thinkingLevel,
+        this.providerService.getConfig()
       );
 
       // Resolve model string (xAI variant mapping + gateway routing) and create the model.

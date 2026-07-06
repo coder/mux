@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   getThinkingPolicyForModel,
   enforceThinkingPolicy,
@@ -403,6 +404,28 @@ describe("getThinkingPolicyForModel", () => {
     expect(resolveEffectiveThinkingLevel("anthropic:claude-opus-4-8", undefined)).toBe("off");
     expect(resolveEffectiveThinkingLevel("openai:gpt-5-pro", undefined)).toBe("off");
     expect(resolveEffectiveThinkingLevel("anthropic:claude-sonnet-4-5", "high")).toBe("high");
+  });
+
+  test("resolveEffectiveThinkingLevel resolves mappedToModel aliases before the Mythos check", () => {
+    // A configured alias entry mapped to a Mythos-class model must follow the same
+    // no-disabled-thinking rule as the canonical id, matching buildProviderOptions'
+    // capability resolution.
+    const providersConfig: ProvidersConfigMap = {
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "internal-fable", mappedToModel: "anthropic:claude-fable-5" }],
+      },
+    };
+    expect(
+      resolveEffectiveThinkingLevel("anthropic:internal-fable", undefined, providersConfig)
+    ).toBe("low");
+    expect(resolveEffectiveThinkingLevel("anthropic:internal-fable", "off", providersConfig)).toBe(
+      "low"
+    );
+    // Without providers config the alias is unknown and keeps legacy off behavior.
+    expect(resolveEffectiveThinkingLevel("anthropic:internal-fable", undefined)).toBe("off");
   });
 
   test("returns all 6 levels for Sonnet 5 (native xhigh)", () => {

@@ -12,6 +12,7 @@
  * - Multiple elements = User can select from options
  */
 
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   THINKING_LEVELS,
   DEFAULT_THINKING_LEVEL,
@@ -22,6 +23,7 @@ import {
   type ThinkingLevel,
   type ParsedThinkingInput,
 } from "@/common/types/thinking";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 
 /**
  * Thinking policy is simply the set of allowed thinking levels for a model.
@@ -210,14 +212,21 @@ export function resolveMinimumThinkingLevel(
  * would run adaptive thinking while the message pipeline skips the Anthropic
  * thinking replay transforms (`anthropicThinkingEnabled` keys off "off"),
  * losing required signed thinking context on follow-up requests.
+ *
+ * Pass `providersConfig` so configured aliases (`mappedToModel`, e.g.
+ * `anthropic:internal-fable` -> `anthropic:claude-fable-5`) are resolved to
+ * their capability model before the Mythos check — matching how
+ * `buildProviderOptions` detects capabilities.
  */
 export function resolveEffectiveThinkingLevel(
   modelString: string,
-  requested: ThinkingLevel | null | undefined
+  requested: ThinkingLevel | null | undefined,
+  providersConfig?: ProvidersConfigMap | null
 ): ThinkingLevel {
   const level = requested ?? THINKING_LEVEL_OFF;
-  return anthropicRejectsDisabledThinking(modelString)
-    ? enforceThinkingPolicy(modelString, level)
+  const capabilityModel = resolveModelForMetadata(modelString, providersConfig ?? null);
+  return anthropicRejectsDisabledThinking(capabilityModel)
+    ? enforceThinkingPolicy(capabilityModel, level)
     : level;
 }
 
