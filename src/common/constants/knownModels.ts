@@ -36,8 +36,24 @@ const MODEL_DEFINITIONS = {
     providerModelId: "claude-fable-5",
     aliases: ["fable"],
     warm: true,
-    // Fable tokenizer not published upstream; reuse Opus 4.5 (Claude tokenization is
-    // unchanged across the 4.x / Mythos line) for approximate counting.
+    // Fable/Mythos use the newer Opus 4.7+ tokenizer, which isn't published upstream;
+    // reuse Opus 4.5 (the newest Anthropic tokenizer in ai-tokenizer) for approximate
+    // counting. Anthropic says the newer tokenizer produces ~30% more tokens for the
+    // same text, so real usage can run ~1.0-1.3x higher than this estimate.
+    tokenizerOverride: "anthropic/claude-opus-4.5",
+  },
+  // Claude Mythos 5 - released June 9, 2026 alongside Fable 5. Same underlying model,
+  // specs, and pricing as Fable 5 ($10/M input, $50/M output) but with safeguards lifted
+  // in some areas. Limited availability: restricted to approved Project Glasswing /
+  // trusted-access customers (no self-serve sign-up). API id `claude-mythos-5`.
+  // Not warmed: most users cannot access it, and its tokenizer override is already
+  // warmed via FABLE.
+  MYTHOS: {
+    provider: "anthropic",
+    providerModelId: "claude-mythos-5",
+    aliases: ["mythos"],
+    // Same tokenizer situation as Fable 5 (see FABLE above): reuse Opus 4.5 for
+    // approximate counting; real usage can run ~1.0-1.3x higher.
     tokenizerOverride: "anthropic/claude-opus-4.5",
   },
   OPUS: {
