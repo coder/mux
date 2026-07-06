@@ -356,16 +356,17 @@ lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
 	@./scripts/zizmor.sh --min-confidence high .
 
 # Shell files to lint (excludes node_modules, build artifacts, .git)
-# Prune any node_modules tree (not just ./node_modules): stale installs from removed
-# subprojects (e.g. the old mobile/ app) would otherwise be scanned on upgraded checkouts.
-SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path '*/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
+# Prune any node_modules tree (not just ./node_modules) plus the removed mobile/
+# prototype: upgraded checkouts may keep stale untracked leftovers there (e.g.
+# CocoaPods .sh scripts under mobile/ios) that would otherwise be scanned.
+SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path '*/node_modules/*' -o -path './mobile/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
 
 lint-shellcheck: ## Run shellcheck on shell scripts
 	@echo "Running shellcheck on $(words $(SHELL_SRC_FILES)) shell scripts..."
 	@shellcheck --external-sources $(SHELL_SRC_FILES)
 
 # Dockerfiles to lint (excludes node_modules, build artifacts, .git)
-DOCKERFILES := $(shell find . -not \( -path '*/.git/*' -o -path '*/node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name 'Dockerfile' 2>/dev/null)
+DOCKERFILES := $(shell find . -not \( -path '*/.git/*' -o -path '*/node_modules/*' -o -path './mobile/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name 'Dockerfile' 2>/dev/null)
 
 lint-hadolint: ## Run hadolint on Dockerfiles
 	@echo "Running hadolint on $(words $(DOCKERFILES)) Dockerfiles..."
