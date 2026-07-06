@@ -3848,10 +3848,14 @@ export class WorkspaceStore {
     const metadataIds = new Set(Array.from(workspaceMetadata.values()).map((m) => m.id));
     const currentIds = new Set(this.workspaceMetadata.keys());
 
-    // Add new workspaces
+    // Add new workspaces; refresh the metadata snapshot for existing ones so
+    // imperative readers (getWorkspaceMetadata) don't act on stale fields
+    // (e.g. the pin keybind toggling off a pinnedAt set after initial load).
     for (const metadata of workspaceMetadata.values()) {
       if (!currentIds.has(metadata.id)) {
         this.addWorkspace(metadata);
+      } else {
+        this.workspaceMetadata.set(metadata.id, metadata);
       }
     }
 
