@@ -396,6 +396,25 @@ describe("AgentListItem", () => {
     expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
+  test("armed monitor status outranks delegated activity text", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeBashMonitorCount: 1 });
+
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 0,
+        queuedCount: 1,
+        workflowActiveCount: 0,
+        workflowQueuedCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    // Own-workspace watching state wins over the delegated subtitle, mirroring
+    // the workflow-status precedence.
+    expect(rowView.getByText("Watching background bash")).toBeTruthy();
+    expect(rowView.queryByTestId(`workspace-delegated-activity-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
   test("keeps sidebar status text while an armed monitor drives the active dot", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       activeBashMonitorCount: 1,

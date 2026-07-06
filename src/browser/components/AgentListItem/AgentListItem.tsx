@@ -653,7 +653,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     awaitingUserQuestion ||
     displayStreamingStatusPhase !== null ||
     isRemoving ||
-    shouldShowWorkflowStatus;
+    shouldShowWorkflowStatus ||
+    // Own-workspace signals (like workflow status above) outrank delegated text so a
+    // coordinator waiting on an armed monitor still surfaces the watching state.
+    shouldShowBashMonitorStatus;
   const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const visualState = getVisualState({
     awaitingUserQuestion,
