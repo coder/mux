@@ -59,6 +59,7 @@ function buildState(workspaceId: string, input: SeedInput): WorkspaceState {
     skillLoadErrors: [],
     agentStatus: undefined,
     activeWorkflowRunCount: 0,
+    activeBashMonitorCount: 0,
     lastAbortReason: null,
     pendingStreamStartTime: null,
     pendingStreamModel: null,

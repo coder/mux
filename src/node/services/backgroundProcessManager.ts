@@ -289,6 +289,27 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     };
   }
 
+  /**
+   * Count running background processes whose wake-on-match monitor is still armed.
+   * Surfaced through workspace activity so the sidebar can show that a workspace is
+   * still waiting on a monitor even though no stream is active.
+   */
+  getActiveMonitorCount(workspaceId: string): number {
+    assert(workspaceId.length > 0, "getActiveMonitorCount requires a workspaceId");
+    let count = 0;
+    for (const proc of this.processes.values()) {
+      if (
+        proc.workspaceId === workspaceId &&
+        proc.status === "running" &&
+        proc.monitor !== undefined &&
+        !proc.monitor.stopped
+      ) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   private emitMonitorMatch(proc: BackgroundProcess, monitor: BackgroundProcessMonitorState): void {
     if (monitor.pendingLines.length === 0) return;
 
@@ -359,6 +380,10 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     if (!this.shuttingDown) {
       this.emit("monitor:stopped", proc.workspaceId, { processId: proc.id });
     }
+    // Armed -> stopped is workspace-visible state (sidebar "watching" indicator), and not
+    // every stop path also changes process status or flushes a match (e.g. maxEvents
+    // reached with the wake suppressed), so always notify subscribers.
+    this.emitChange(proc.workspaceId);
   }
 
   private scheduleMonitorFlush(
@@ -537,8 +562,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     void this.monitorTailLoop(proc.id).catch((error: unknown) => {
       const current = this.processes.get(proc.id);
       if (current?.monitor && !current.monitor.stopped) {
-        // Route through stopMonitor so the retirement also clears any pending flush timer
-        // and emits "monitor:stopped" (registry cleanup). No flush: the loop failed.
+        // Route through stopMonitor so the retirement also clears any pending flush timer,
+        // emits "monitor:stopped" (registry cleanup), and broadcasts the change event so
+        // activity consumers see the armed-monitor count drop. No flush: the loop failed.
         this.stopMonitor(current, false);
       }
       log.debug(

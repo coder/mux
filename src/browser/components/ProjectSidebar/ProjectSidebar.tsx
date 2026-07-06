@@ -168,7 +168,10 @@ function getWorkspaceAttentionSignal(
     const isWorking =
       (sidebarState.canInterrupt ||
         sidebarState.isStarting ||
-        sidebarState.activeWorkflowRunCount > 0) &&
+        sidebarState.activeWorkflowRunCount > 0 ||
+        // An armed background bash monitor keeps the workspace "working" so collapsed
+        // project/parent rows don't look idle while it waits to be woken.
+        sidebarState.activeBashMonitorCount > 0) &&
       !sidebarState.awaitingUserQuestion;
     return {
       isWorking,

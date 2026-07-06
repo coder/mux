@@ -542,6 +542,250 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("re-emits workspace activity when the armed monitor count changes", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-activity";
+      let activeMonitorCount = 1;
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => activeMonitorCount),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const getSnapshot = mock(() => Promise.resolve(null));
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot,
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 1);
+      expect(events[0].workspaceId).toBe(workspaceId);
+      expect(events[0].activity?.activeBashMonitorCount).toBe(1);
+      expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+      // Same count after the previous emit settled: deduped synchronously,
+      // so no extra snapshot read or emit.
+      backgroundProcessManager.emit("change", workspaceId);
+      expect(getSnapshot).toHaveBeenCalledTimes(1);
+
+      activeMonitorCount = 0;
+      backgroundProcessManager.emit("change", workspaceId);
+
+      await waitForCondition(() => events.length === 2);
+      // Monitor stopped with no other persisted activity: the snapshot clears entirely.
+      expect(events[1].activity).toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("retries the monitor-count activity emit after a failed snapshot read", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-activity-retry";
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => 1),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const getSnapshot = mock(
+        (): Promise<WorkspaceActivitySnapshot | null> =>
+          Promise.reject(new Error("transient read failure"))
+      );
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot,
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => getSnapshot.mock.calls.length === 1);
+      expect(events.length).toBe(0);
+
+      // The failed emit must not be recorded as delivered: the next change event
+      // with the same count retries instead of being deduped.
+      getSnapshot.mockImplementation(() => Promise.resolve(null));
+      backgroundProcessManager.emit("change", workspaceId);
+
+      await waitForCondition(() => events.length === 1);
+      expect(events[0].activity?.activeBashMonitorCount).toBe(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("emits the zero-count clear even when the armed emit never succeeded", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-clear-after-failure";
+      let activeMonitorCount = 1;
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => activeMonitorCount),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const getSnapshot = mock(
+        (): Promise<WorkspaceActivitySnapshot | null> =>
+          Promise.reject(new Error("transient read failure"))
+      );
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot,
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      // Armed emit fails; renderers may still have bootstrapped count=1 via getActivityList.
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => getSnapshot.mock.calls.length === 1);
+      expect(events.length).toBe(0);
+
+      // Monitor stops: the unknown->0 transition must emit the clear rather than
+      // treating the missing cache entry as an already-emitted zero.
+      getSnapshot.mockImplementation(() => Promise.resolve(null));
+      activeMonitorCount = 0;
+      backgroundProcessManager.emit("change", workspaceId);
+
+      await waitForCondition(() => events.length === 1);
+      expect(events[0].workspaceId).toBe(workspaceId);
+      expect(events[0].activity).toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("does not dedupe a clear against a zero recorded before a failed armed emit", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-stale-zero";
+      let activeMonitorCount = 0;
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => activeMonitorCount),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const getSnapshot = mock(
+        (): Promise<WorkspaceActivitySnapshot | null> => Promise.resolve(null)
+      );
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot,
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      // Monitorless churn records 0 as successfully emitted.
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 1);
+
+      // Armed transition fails to emit; renderers may still observe count=1 via
+      // workspace.activity.list(). The stale recorded 0 must not survive.
+      getSnapshot.mockImplementation(() => Promise.reject(new Error("transient read failure")));
+      activeMonitorCount = 1;
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => getSnapshot.mock.calls.length === 2);
+      expect(events.length).toBe(1);
+
+      // Stop: 0 equals the pre-failure recorded 0, but the clear must still emit.
+      getSnapshot.mockImplementation(() => Promise.resolve(null));
+      activeMonitorCount = 0;
+      backgroundProcessManager.emit("change", workspaceId);
+
+      await waitForCondition(() => events.length === 2);
+      expect(events[1].workspaceId).toBe(workspaceId);
+      expect(events[1].activity).toBeNull();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("keeps a zero-count tombstone in getActivityList after a monitor stops", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-tombstone";
+      let activeMonitorCount = 1;
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => activeMonitorCount),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot: mock(() => Promise.resolve(null)),
+        getAllSnapshots: mock(() => Promise.resolve(new Map<string, WorkspaceActivitySnapshot>())),
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 1);
+      expect(events[0].activity?.activeBashMonitorCount).toBe(1);
+
+      // Renderer disconnected: the monitor stops and the clear emit lands nowhere.
+      activeMonitorCount = 0;
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 2);
+
+      // Reconnect bootstrap: the list must include a zero-count tombstone so the
+      // renderer's last-known "watching" snapshot gets replaced rather than preserved.
+      const activityList = await workspaceService.getActivityList();
+      const entry = activityList[workspaceId];
+      expect(entry).toBeDefined();
+      expect(entry.activeBashMonitorCount).toBeUndefined();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("marks an accepted wake delivered when stream startup fails before provider start", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {

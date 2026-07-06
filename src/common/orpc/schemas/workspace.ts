@@ -290,6 +290,16 @@ export const WorkspaceActivitySnapshotSchema = z.object({
     description:
       "Number of top-level workflow runs in this workspace that are pending, running, or backgrounded.",
   }),
+  activeBashMonitorCount: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .meta({
+      description:
+        "Number of running background bash processes with an armed wake-on-match monitor. " +
+        "Signals the workspace is still waiting to be woken even though no stream is active.",
+    }),
   goal: GoalSnapshotSchema.nullable().optional().meta({
     description: "Current workspace goal snapshot for sidebar indicators and the Goal tab",
   }),

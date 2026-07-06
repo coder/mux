@@ -76,6 +76,7 @@ function createWorkspaceSidebarState(
     skillLoadErrors: [],
     agentStatus: undefined,
     activeWorkflowRunCount: 0,
+    activeBashMonitorCount: 0,
     terminalActiveCount: 0,
     terminalSessionCount: 0,
     ...overrides,
@@ -382,6 +383,31 @@ describe("AgentListItem", () => {
     expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
     expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
     expect(rowView.queryByText("Workflow running")).toBeNull();
+  });
+
+  test("shows armed background bash monitor activity on idle workspace rows", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeBashMonitorCount: 1 });
+
+    const { row } = renderWorkspaceItem();
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByText("Watching background bash")).toBeTruthy();
+    expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("keeps sidebar status text while an armed monitor drives the active dot", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeBashMonitorCount: 1,
+      agentStatus: { emoji: "⌛", message: "Awaiting PR readiness check" },
+    });
+
+    const { row } = renderWorkspaceItem();
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByText("Watching background bash")).toBeNull();
   });
 
   test("shows active delegated workflow work on idle workspace rows", () => {

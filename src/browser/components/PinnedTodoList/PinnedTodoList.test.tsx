@@ -49,6 +49,7 @@ function buildWorkspaceState(workspaceId: string, state: MockWorkspaceState): Wo
     skillLoadErrors: [],
     agentStatus: undefined,
     activeWorkflowRunCount: 0,
+    activeBashMonitorCount: 0,
     lastAbortReason: null,
     pendingStreamStartTime: null,
     pendingStreamModel: null,
