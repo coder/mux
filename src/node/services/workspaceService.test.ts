@@ -806,6 +806,59 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("keeps the zero-count tombstone in getActivityList after a failed clear emit", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-tombstone-failed-clear";
+      let activeMonitorCount = 1;
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getActiveMonitorCount: mock(() => activeMonitorCount),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const getSnapshot = mock(
+        (): Promise<WorkspaceActivitySnapshot | null> => Promise.resolve(null)
+      );
+      const extensionMetadata = {
+        ...mockExtensionMetadataService,
+        getSnapshot,
+        getAllSnapshots: mock(() => Promise.resolve(new Map<string, WorkspaceActivitySnapshot>())),
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        extensionMetadata,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+
+      const events: Array<{
+        workspaceId: string;
+        activity: WorkspaceActivitySnapshot | null;
+      }> = [];
+      workspaceService.on("activity", (event) => events.push(event));
+
+      // Armed emit succeeds: renderers now show "watching".
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => events.length === 1);
+      expect(events[0].activity?.activeBashMonitorCount).toBe(1);
+
+      // Stop transition fails to emit (snapshot read rejects).
+      getSnapshot.mockImplementation(() => Promise.reject(new Error("transient read failure")));
+      activeMonitorCount = 0;
+      backgroundProcessManager.emit("change", workspaceId);
+      await waitForCondition(() => getSnapshot.mock.calls.length === 2);
+      expect(events.length).toBe(1);
+
+      // Reconnect bootstrap must still return the zero-count tombstone even though the
+      // clear emit failed, so the renderer's stale "watching" snapshot gets replaced.
+      const activityList = await workspaceService.getActivityList();
+      const entry = activityList[workspaceId];
+      expect(entry).toBeDefined();
+      expect(entry.activeBashMonitorCount).toBeUndefined();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("keeps a zero-count tombstone in getActivityList after a monitor stops", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
