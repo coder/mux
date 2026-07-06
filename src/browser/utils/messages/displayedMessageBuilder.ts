@@ -290,6 +290,8 @@ function buildUserDisplayedMessages(options: {
       reviews: muxMeta?.reviews,
       sideQuestionBranch: getStandaloneSideQuestionBranch(message),
       isSideQuestion: isSideQuestionUserMessage(message) ? true : undefined,
+      bashMonitorWake:
+        muxMeta?.type === "bash-monitor-wake" ? { records: muxMeta.records } : undefined,
     },
   ];
 }

@@ -323,6 +323,18 @@ export interface DisplayStatus {
   message: string;
 }
 
+/**
+ * Compact per-record summary attached to bash monitor wake turns so the
+ * transcript can render a small card (process + filter) while keeping the full
+ * prompt (matched lines, task_await guidance) collapsed by default.
+ */
+export interface BashMonitorWakeDisplayRecord {
+  kind: "match" | "monitor-lost";
+  displayName: string;
+  filter: string;
+  filterExclude: boolean;
+}
+
 export type MuxMessageMetadata = MuxMessageMetadataBase &
   (
     | {
@@ -361,6 +373,14 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
       }
     | {
         type: "goal-cleared-summary";
+      }
+    | {
+        // Synthetic wake-up appended when background bash monitors match output or
+        // are lost to a Mux restart. The full prompt stays in the message text for
+        // the model; this metadata lets the transcript render the compact card.
+        type: "bash-monitor-wake";
+        /** One entry per wake record in the prompt, in prompt order. */
+        records: BashMonitorWakeDisplayRecord[];
       }
     | {
         type: "goal-pause-boundary";
@@ -733,6 +753,10 @@ export type DisplayedMessage =
       sideQuestionBranch?: SideQuestionDisplayBranch;
       /** True when this user message is a /btw side question. */
       isSideQuestion?: boolean;
+      /** Present when this synthetic turn is a background bash monitor wake-up. */
+      bashMonitorWake?: {
+        records: BashMonitorWakeDisplayRecord[];
+      };
     }
   | {
       type: "assistant";

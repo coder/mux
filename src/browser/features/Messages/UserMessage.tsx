@@ -11,6 +11,7 @@ import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
+import { BashMonitorWakeMessageContent } from "./BashMonitorWakeMessageContent";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -29,6 +30,7 @@ import {
   ClipboardCheck,
   MessageCircleQuestion,
   Pencil,
+  Radar,
   Target,
 } from "lucide-react";
 import {
@@ -88,6 +90,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const isSynthetic = message.isSynthetic === true;
   const isGoalContinuation = message.isGoalContinuation === true;
   const isBudgetLimitWrapup = message.isBudgetLimitWrapup === true;
+  const bashMonitorWake = message.bashMonitorWake;
   const content = message.content;
   const visibleContent = stripStagedAttachmentNotice(content);
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
@@ -221,6 +224,13 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         goal continuation
       </span>
     );
+  } else if (bashMonitorWake) {
+    label = (
+      <span className="bg-muted/20 text-muted flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+        <Radar aria-hidden="true" className="h-3 w-3" />
+        monitor wake
+      </span>
+    );
   } else if (isSynthetic) {
     label = (
       <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
@@ -249,6 +259,10 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         content={content}
         kind={isBudgetLimitWrapup ? "budget-limit" : "continuation"}
       />
+    );
+  } else if (bashMonitorWake) {
+    renderedContent = (
+      <BashMonitorWakeMessageContent content={content} records={bashMonitorWake.records} />
     );
   } else {
     renderedContent = (

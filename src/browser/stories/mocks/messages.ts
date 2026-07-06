@@ -1,5 +1,6 @@
 import type { ChatMuxMessage } from "@/common/orpc/types";
 import type {
+  BashMonitorWakeDisplayRecord,
   MuxMessageMetadata,
   MuxTextPart,
   MuxReasoningPart,
@@ -87,6 +88,38 @@ export function createGoalContinuationMessage(
   opts: { historySequence: number; timestamp?: number }
 ): ChatMuxMessage {
   return createGoalSyntheticMessage(id, text, opts, GOAL_CONTINUATION_KIND);
+}
+
+/**
+ * Create a synthetic bash-monitor wake message. Renders as a compact card
+ * (title + per-monitor summary) with the full prompt collapsed by default.
+ */
+export function createBashMonitorWakeMessage(
+  id: string,
+  opts: {
+    historySequence: number;
+    timestamp?: number;
+    /** Full wake prompt (message text) revealed by the "Show details" toggle. */
+    promptText: string;
+    records: BashMonitorWakeDisplayRecord[];
+  }
+): ChatMuxMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text: opts.promptText }],
+    metadata: {
+      historySequence: opts.historySequence,
+      timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
+      synthetic: true,
+      uiVisible: true,
+      muxMetadata: {
+        type: "bash-monitor-wake",
+        records: opts.records,
+      },
+    },
+  };
 }
 
 /** Create a compaction request user message (triggers shimmer effect on streaming response) */

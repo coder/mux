@@ -262,7 +262,17 @@ describe("WorkspaceService bash monitor wakes", () => {
       expect(sendSpy.mock.calls[0][0]).toBe(workspaceId);
       expect(sendSpy.mock.calls[0][1]).toContain("A background bash monitor matched output.");
       expect(sendSpy.mock.calls[0][1]).toContain("FAILED one");
-      expect(sendSpy.mock.calls[0][2]).toMatchObject({ queueDispatchMode: "tool-end" });
+      expect(sendSpy.mock.calls[0][2]).toMatchObject({
+        queueDispatchMode: "tool-end",
+        // Compact display metadata drives the collapsed transcript card;
+        // displayName falls back to processId when the payload omits it.
+        muxMetadata: {
+          type: "bash-monitor-wake",
+          records: [
+            { kind: "match", displayName: "proc-1", filter: "FAILED", filterExclude: false },
+          ],
+        },
+      });
       expect(sendSpy.mock.calls[0][3]).toMatchObject({
         synthetic: true,
         agentInitiated: true,

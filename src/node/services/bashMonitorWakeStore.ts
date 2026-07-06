@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { z } from "zod";
 
 import assert from "@/common/utils/assert";
+import type { MuxMessageMetadata } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 import { isErrnoWithCode } from "@/node/utils/fs";
@@ -138,6 +139,27 @@ function removeDeliveredLineOverlap(
   }
 
   return [...currentLines];
+}
+
+/**
+ * Compact per-record summaries stamped as muxMetadata on the wake turn so the
+ * transcript renders a small card instead of the raw prompt (which stays in the
+ * message text for the model). Mirrors the displayName fallback used by
+ * buildBashMonitorWakePrompt so both views name processes identically.
+ */
+export function buildBashMonitorWakeMetadata(
+  records: readonly BashMonitorWakeRecord[]
+): Extract<MuxMessageMetadata, { type: "bash-monitor-wake" }> {
+  assert(records.length > 0, "buildBashMonitorWakeMetadata requires at least one record");
+  return {
+    type: "bash-monitor-wake",
+    records: records.map((record) => ({
+      kind: record.kind,
+      displayName: record.displayName ?? record.processId,
+      filter: record.filter,
+      filterExclude: record.filterExclude,
+    })),
+  };
 }
 
 export function buildBashMonitorWakePrompt(records: readonly BashMonitorWakeRecord[]): string {

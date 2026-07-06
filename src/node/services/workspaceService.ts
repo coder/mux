@@ -219,6 +219,7 @@ import { BashMonitorRegistryStore } from "@/node/services/bashMonitorRegistrySto
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import {
   BashMonitorWakeStore,
+  buildBashMonitorWakeMetadata,
   buildBashMonitorWakePrompt,
   type BashMonitorWakeRecord,
 } from "@/node/services/bashMonitorWakeStore";
@@ -1927,7 +1928,12 @@ export class WorkspaceService extends EventEmitter {
     const sendResult = await this.sendMessage(
       ownerWorkspaceId,
       prompt,
-      { ...sendOptions, queueDispatchMode: "tool-end" },
+      {
+        ...sendOptions,
+        queueDispatchMode: "tool-end",
+        // Compact display summaries; the transcript collapses the raw prompt.
+        muxMetadata: buildBashMonitorWakeMetadata(pending),
+      },
       {
         skipAutoResumeReset: true,
         synthetic: true,
