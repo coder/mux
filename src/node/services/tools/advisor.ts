@@ -21,6 +21,7 @@ import type {
 import { AdvisorToolInputSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { AdvisorToolCallSnapshot, ToolConfiguration } from "@/common/utils/tools/tools";
 import { log } from "@/node/services/log";
+import { flattenProviderExecutedToolParts } from "@/node/utils/messages/flattenProviderExecutedToolParts";
 import { emitChatEventBestEffort } from "./toolUtils";
 
 type StreamTextProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
@@ -240,7 +241,12 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
       const remainingUses =
         runtime.maxUsesPerTurn !== null ? runtime.maxUsesPerTurn - usesThisTurn : null;
 
-      const transcript = runtime.getTranscriptSnapshot();
+      // Flatten provider-executed (server-side) tool parts to text: the live
+      // step transcript keeps them as assistant tool-call/tool-result parts,
+      // which cannot be replayed against a different provider (e.g. OpenAI
+      // rejects foreign `srvtoolu_...` ids as unknown item_references). See
+      // flattenProviderExecutedToolParts for details.
+      const transcript = flattenProviderExecutedToolParts(runtime.getTranscriptSnapshot());
       assert(Array.isArray(transcript), "advisor transcript snapshot must be an array");
       assert(transcript.length > 0, "advisor transcript snapshot must not be empty");
       assert(toolCallId, "advisor requires toolCallId");

@@ -308,6 +308,65 @@ describe("advisor tool", () => {
     expect(getStreamTextMessages(streamTextSpy)).toEqual(transcript);
   });
 
+  it("flattens provider-executed tool parts from the transcript before calling the advisor model", async () => {
+    using tempDir = new TestTempDir("advisor-tool-provider-executed-flatten");
+    // Anthropic-shaped server tool use: providerExecuted tool-call + assistant
+    // tool-result with a foreign srvtoolu_ id. Replaying these against a
+    // different provider fails (OpenAI 404s on unknown item_references).
+    const transcript: ModelMessage[] = [
+      { role: "user", content: "research this" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "srvtoolu_013m4MqeeoVpBWdeyQvGkvqQ",
+            toolName: "web_search",
+            input: { query: "advisor cross-provider bug" },
+            providerExecuted: true,
+          },
+          {
+            type: "tool-result",
+            toolCallId: "srvtoolu_013m4MqeeoVpBWdeyQvGkvqQ",
+            toolName: "web_search",
+            output: { type: "json", value: [{ url: "https://example.com/finding" }] },
+          },
+        ],
+      },
+    ];
+    const { config } = createToolConfig(tempDir.path, { transcript, snapshot: undefined });
+    const streamTextSpy = mockStreamTextSuccess({
+      text: "Advice based on the web findings.",
+      usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+    });
+
+    const tool = createAdvisorTool(config);
+    await Promise.resolve(
+      tool.execute!({ question: "Challenge the findings" }, mockToolCallOptions)
+    );
+
+    const messages = getStreamTextMessages(streamTextSpy);
+    // Handoff message is still appended last.
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      content: "## Advisor Handoff\n\n**Question:** Challenge the findings",
+    });
+
+    const assistantMessage = messages[1];
+    expect(assistantMessage?.role).toBe("assistant");
+    if (assistantMessage?.role !== "assistant" || !Array.isArray(assistantMessage.content)) {
+      throw new Error("Expected assistant message with array content");
+    }
+    // No tool parts survive; the web-search payload does, as text.
+    expect(
+      assistantMessage.content.every(
+        (part) => part.type !== "tool-call" && part.type !== "tool-result"
+      )
+    ).toBe(true);
+    const textParts = assistantMessage.content.filter((part) => part.type === "text");
+    expect(textParts.some((part) => part.text.includes("https://example.com/finding"))).toBe(true);
+  });
+
   it("appends a question-only advisor handoff when a normalized question is provided", async () => {
     using tempDir = new TestTempDir("advisor-tool-question-handoff");
     const question = "Should we split this refactor?";
