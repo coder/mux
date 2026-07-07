@@ -1,11 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { CopyButton } from "../CopyButton/CopyButton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../Dialog/Dialog";
-import {
-  DetailContent,
-  DetailLabel,
-  DetailSection,
-} from "@/browser/features/Tools/Shared/ToolPrimitives";
+import { DetailContent } from "@/browser/features/Tools/Shared/ToolPrimitives";
 import { useAPI } from "@/browser/contexts/API";
 import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import {
@@ -29,7 +25,7 @@ interface BackgroundBashOutputDialogProps {
 
 export const BackgroundBashOutputDialog: React.FC<BackgroundBashOutputDialogProps> = (props) => (
   <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-    <DialogContent className="max-h-[80vh] max-w-4xl overflow-hidden">
+    <DialogContent className="max-h-[80vh] max-w-4xl gap-3 overflow-hidden">
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <span className="font-mono text-sm">{props.displayName ?? props.processId}</span>
@@ -39,52 +35,29 @@ export const BackgroundBashOutputDialog: React.FC<BackgroundBashOutputDialogProp
             </code>
           )}
         </DialogTitle>
+        {/* The script sits right under the title (no label) so the user can tell what
+            the process is doing without a full labeled section eating vertical space. */}
+        {props.script && (
+          <DetailContent className="max-h-24 px-2 py-1">{props.script}</DetailContent>
+        )}
       </DialogHeader>
-
-      {props.script && (
-        <DetailSection>
-          <DetailLabel>Command</DetailLabel>
-          <DetailContent className="max-h-32 px-2 py-1.5">{props.script}</DetailContent>
-        </DetailSection>
-      )}
-
-      <BackgroundBashMonitorSection workspaceId={props.workspaceId} processId={props.processId} />
 
       <BackgroundBashOutputViewer workspaceId={props.workspaceId} processId={props.processId} />
     </DialogContent>
   </Dialog>
 );
 
-/**
- * Live monitor info (wake-on-match regex + match count) for the process, looked up
- * from the store so it stays current while the dialog is open. Rendered as its own
- * component (mounted only while the dialog is open) so tool cards that keep the
- * dialog closed don't hold a background-bash subscription.
- */
-const BackgroundBashMonitorSection: React.FC<{ workspaceId: string; processId: string }> = (
-  props
-) => {
-  const processes = useBackgroundProcesses(props.workspaceId);
-  const monitor = processes.find((p) => p.id === props.processId)?.monitor;
-
-  if (!monitor) return null;
-
-  return (
-    <DetailSection>
-      <DetailLabel>Monitor</DetailLabel>
-      <DetailContent className="px-2 py-1.5">
-        {monitor.filter_exclude ? "waking on lines not matching" : "waking on lines matching"} /
-        {monitor.filter}/ · {monitor.totalMatches} match{monitor.totalMatches === 1 ? "" : "es"}
-        {monitor.stopped ? " · stopped" : ""}
-      </DetailContent>
-    </DetailSection>
-  );
-};
-
 const BackgroundBashOutputViewer: React.FC<{ workspaceId: string; processId: string }> = (
   props
 ) => {
   const { api } = useAPI();
+
+  // Live wake-on-match monitor info, folded into the status row (banner-style
+  // phrasing) so it costs no extra vertical space. Looked up from the store so
+  // the match count stays current while the dialog is open; the viewer is only
+  // mounted while open, so closed tool cards hold no subscription.
+  const processes = useBackgroundProcesses(props.workspaceId);
+  const monitor = processes.find((p) => p.id === props.processId)?.monitor;
 
   const [output, setOutput] = useState<LiveBashOutputInternal | undefined>(undefined);
   const [status, setStatus] = useState<"running" | "exited" | "killed" | "failed">("running");
@@ -172,7 +145,17 @@ const BackgroundBashOutputViewer: React.FC<{ workspaceId: string; processId: str
   return (
     <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
       <div className="flex items-center justify-between gap-3">
-        <div className="text-muted font-mono text-[11px]">status: {status}</div>
+        <div className="text-muted min-w-0 flex-1 truncate font-mono text-[11px]">
+          status: {status}
+          {monitor && (
+            <>
+              {" · watching "}
+              {monitor.filter_exclude && "not "}/{monitor.filter}/ · {monitor.totalMatches} match
+              {monitor.totalMatches === 1 ? "" : "es"}
+              {monitor.stopped && " · stopped"}
+            </>
+          )}
+        </div>
         <CopyButton text={text} className="h-6" />
       </div>
 
