@@ -99,6 +99,14 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
     description:
       'What happens when a heartbeat fires while the workspace is busy: "skip" misses the slot, "tool-end" queues the heartbeat for the next tool boundary in the current turn, "turn-end" queues it as its own turn after the current one. Missing/null values default at read time to "skip" for the "idle" trigger and "turn-end" for the "interval" trigger.',
   }),
+  // Server-managed (never a client input): stamped by setHeartbeatSettings when a
+  // cadence-affecting field (enabled/intervalMs/resolved trigger) changes. Fixed-interval
+  // restart anchoring uses max(last persisted firing, this) so a schedule edit is not
+  // bypassed by a heartbeat that fired under the previous schedule.
+  scheduleUpdatedAt: z.number().int().nonnegative().nullish().meta({
+    description:
+      "Timestamp (epoch ms) of the last cadence-affecting heartbeat settings edit. Server-managed.",
+  }),
 });
 
 // Single source of truth for workflow task metadata on both persisted config

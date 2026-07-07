@@ -63,6 +63,7 @@ import {
   HEARTBEAT_MIN_INTERVAL_MS,
   isHeartbeatTrigger,
   isHeartbeatWhenBusy,
+  isValidHeartbeatScheduleUpdatedAt,
 } from "@/constants/heartbeat";
 import { normalizeGoalDefaults } from "@/constants/goals";
 import {
@@ -121,6 +122,9 @@ function normalizeWorkspaceMetadataHeartbeat(
   // same defaults resolveHeartbeatSchedulePolicy would apply.
   const trigger = isHeartbeatTrigger(persisted.trigger) ? persisted.trigger : undefined;
   const whenBusy = isHeartbeatWhenBusy(persisted.whenBusy) ? persisted.whenBusy : undefined;
+  const scheduleUpdatedAt = isValidHeartbeatScheduleUpdatedAt(persisted.scheduleUpdatedAt)
+    ? persisted.scheduleUpdatedAt
+    : undefined;
 
   return {
     enabled: persisted.enabled === true,
@@ -131,6 +135,7 @@ function normalizeWorkspaceMetadataHeartbeat(
     ...(contextMode != null ? { contextMode } : {}),
     ...(trigger != null ? { trigger } : {}),
     ...(whenBusy != null ? { whenBusy } : {}),
+    ...(scheduleUpdatedAt != null ? { scheduleUpdatedAt } : {}),
   };
 }
 

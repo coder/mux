@@ -26,6 +26,10 @@ function createProjectsConfig(workspace: Workspace): ProjectsConfig {
   };
 }
 
+// expect.any returns `any`; pin the matcher's type once so exact-equality object
+// literals with the server-managed stamp stay lint-clean (no-unsafe-assignment).
+const anyNumber = expect.any(Number) as number;
+
 function createWorkspace(heartbeat: {
   enabled: boolean;
   intervalMs: number;
@@ -171,6 +175,8 @@ describe("WorkspaceService heartbeat settings", () => {
       intervalMs: 45 * 60 * 1000,
       message: "Keep this custom heartbeat message.",
       contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+      // The interval changed (30m → 45m), so the cadence-edit stamp is expected.
+      scheduleUpdatedAt: anyNumber,
     });
   });
 
@@ -192,12 +198,14 @@ describe("WorkspaceService heartbeat settings", () => {
       intervalMs: 45 * 60 * 1000,
       message: LONG_HEARTBEAT_MESSAGE,
       contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+      scheduleUpdatedAt: anyNumber,
     });
     expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toEqual({
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       message: LONG_HEARTBEAT_MESSAGE,
       contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+      scheduleUpdatedAt: anyNumber,
     });
   });
 
@@ -216,6 +224,7 @@ describe("WorkspaceService heartbeat settings", () => {
       enabled: true,
       intervalMs: 45 * 60 * 1000,
       contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+      scheduleUpdatedAt: anyNumber,
     });
   });
 
@@ -314,6 +323,49 @@ describe("WorkspaceService heartbeat settings", () => {
     expect(Object.keys(readBack!)).not.toContain("whenBusy");
   });
 
+  test("stamps scheduleUpdatedAt on cadence edits and preserves it on cosmetic edits", async () => {
+    const before = Date.now();
+    // Trigger change is cadence-affecting: the fixed schedule re-anchors at the edit.
+    const triggerResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      trigger: "interval",
+    });
+    expect(triggerResult.success).toBe(true);
+    const readPersisted = () =>
+      currentProjectsConfig.projects.get(TEST_PROJECT_PATH)?.workspaces.at(0)?.heartbeat;
+    const stamped = readPersisted()?.scheduleUpdatedAt;
+    expect(typeof stamped).toBe("number");
+    expect(stamped!).toBeGreaterThanOrEqual(before);
+
+    // A message-only edit is cosmetic: the cadence anchor must survive unchanged, or a
+    // restart would defer the next firing past a schedule the user never edited.
+    const messageResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      message: "Different cosmetic message.",
+    });
+    expect(messageResult.success).toBe(true);
+    expect(readPersisted()?.scheduleUpdatedAt).toBe(stamped);
+
+    // An interval change re-stamps.
+    const intervalResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      intervalMs: 45 * 60 * 1000,
+    });
+    expect(intervalResult.success).toBe(true);
+    expect(readPersisted()?.scheduleUpdatedAt).toBeGreaterThanOrEqual(stamped!);
+  });
+
+  test("an explicit no-op trigger write does not stamp scheduleUpdatedAt", async () => {
+    // null → "idle" resolves to the same trigger, so the cadence did not change even
+    // though the persisted shape did; the live path would not re-anchor either.
+    const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      trigger: "idle",
+    });
+    expect(result.success).toBe(true);
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat;
+    expect(persistedHeartbeat).toMatchObject({ trigger: "idle" });
+    expect(Object.keys(persistedHeartbeat!)).not.toContain("scheduleUpdatedAt");
+  });
+
   test("rejects invalid trigger and whenBusy values", async () => {
     const invalidTrigger = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
       trigger: "hourly" as never,
@@ -339,6 +391,7 @@ describe("WorkspaceService heartbeat settings", () => {
       intervalMs: 45 * 60 * 1000,
       message: "Keep this custom heartbeat message.",
       contextMode: "compact",
+      scheduleUpdatedAt: anyNumber,
     });
   });
 });

@@ -181,6 +181,7 @@ import {
   formatHeartbeatInterval,
   isHeartbeatTrigger,
   isHeartbeatWhenBusy,
+  isValidHeartbeatScheduleUpdatedAt,
   resolveHeartbeatSchedulePolicy,
   type HeartbeatContextMode,
   type HeartbeatSchedulePolicy,
@@ -488,6 +489,9 @@ function normalizeHeartbeatSettings(
     // remains distinguishable from an explicit choice.
     ...(isHeartbeatTrigger(settings.trigger) ? { trigger: settings.trigger } : {}),
     ...(isHeartbeatWhenBusy(settings.whenBusy) ? { whenBusy: settings.whenBusy } : {}),
+    ...(isValidHeartbeatScheduleUpdatedAt(settings.scheduleUpdatedAt)
+      ? { scheduleUpdatedAt: settings.scheduleUpdatedAt }
+      : {}),
   };
 }
 
@@ -4677,18 +4681,36 @@ export class WorkspaceService extends EventEmitter {
       const nextWhenBusy = hasWhenBusyUpdate
         ? (settings.whenBusy ?? undefined)
         : currentSettings?.whenBusy;
+      const nextEnabled = hasEnabledUpdate ? settings.enabled! : (currentSettings?.enabled ?? true);
+      const nextIntervalMs = hasIntervalUpdate
+        ? settings.intervalMs!
+        : (currentSettings?.intervalMs ?? defaultIntervalMs);
+      // Server-managed cadence-edit stamp: fixed-interval restart anchoring uses
+      // max(last persisted firing, scheduleUpdatedAt), so a heartbeat fired under the
+      // previous schedule cannot bypass this edit (HeartbeatService's
+      // deriveInitialIntervalNextEligibleAt). Only cadence-affecting fields count —
+      // resolved trigger, not raw, so an explicit no-op like null→"idle" does not
+      // re-anchor (mirroring ensureTrackedWorkspace's live re-anchor conditions).
+      const interactionTimestamp = Date.now();
+      const cadenceChanged =
+        currentSettings?.enabled !== nextEnabled ||
+        currentSettings?.intervalMs !== nextIntervalMs ||
+        resolveHeartbeatSchedulePolicy(currentSettings ?? undefined).trigger !==
+          resolveHeartbeatSchedulePolicy({ trigger: nextTrigger, whenBusy: nextWhenBusy }).trigger;
+      const nextScheduleUpdatedAt = cadenceChanged
+        ? interactionTimestamp
+        : currentSettings?.scheduleUpdatedAt;
       // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
       const nextSettings: WorkspaceHeartbeatSettings = {
-        enabled: hasEnabledUpdate ? settings.enabled! : (currentSettings?.enabled ?? true),
-        intervalMs: hasIntervalUpdate
-          ? settings.intervalMs!
-          : (currentSettings?.intervalMs ?? defaultIntervalMs),
+        enabled: nextEnabled,
+        intervalMs: nextIntervalMs,
         contextMode: hasContextModeUpdate
           ? sanitizeHeartbeatContextMode(settings.contextMode)
           : (currentSettings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE),
         ...(nextMessage != null ? { message: nextMessage } : {}),
         ...(nextTrigger != null ? { trigger: nextTrigger } : {}),
         ...(nextWhenBusy != null ? { whenBusy: nextWhenBusy } : {}),
+        ...(nextScheduleUpdatedAt != null ? { scheduleUpdatedAt: nextScheduleUpdatedAt } : {}),
       };
 
       const changed =
@@ -4709,7 +4731,6 @@ export class WorkspaceService extends EventEmitter {
       // Changing heartbeat settings is a real user interaction. Persist that recency before
       // emitting metadata so restarts preserve the post-config-change first-fire deadline
       // instead of rebuilding from an older completed turn.
-      const interactionTimestamp = Date.now();
       await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
 

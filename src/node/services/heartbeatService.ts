@@ -7,6 +7,7 @@ import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
+  isValidHeartbeatScheduleUpdatedAt,
   resolveHeartbeatSchedulePolicy,
   type HeartbeatTrigger,
 } from "@/constants/heartbeat";
@@ -229,7 +230,8 @@ export class HeartbeatService {
                   now,
                   workspaceId,
                   trackingIntervalMs,
-                  activitySnapshots.get(workspaceId)
+                  activitySnapshots.get(workspaceId),
+                  workspace.heartbeat?.scheduleUpdatedAt
                 )
               : this.deriveInitialNextEligibleAt(
                   now,
@@ -268,19 +270,30 @@ export class HeartbeatService {
    * at 10:25 must not move a 10:30 firing to 10:55). The last firing is already persisted
    * as the heartbeat-request user message in chat history — anchor there: in-window
    * schedules keep their cadence and overdue ones fire once immediately (max with now,
-   * never a burst). Workspaces with no recorded firing (never fired, or the record was
-   * compacted away) fall back to the activity-recency approximation used by idle triggers.
+   * never a burst). A firing that predates the last cadence-affecting settings edit
+   * (scheduleUpdatedAt) loses to the edit: the live path re-anchored the fixed cadence at
+   * the edit, so an idle-era or old-interval firing must not pull the restart deadline
+   * earlier. Workspaces with no recorded firing (never fired, or the record was compacted
+   * away) fall back to the activity-recency approximation used by idle triggers, which is
+   * never earlier than the edit anchor because setHeartbeatSettings persists that recency.
    */
   private async deriveInitialIntervalNextEligibleAt(
     now: number,
     workspaceId: string,
     trackingIntervalMs: number,
-    activity: WorkspaceActivitySnapshot | undefined
+    activity: WorkspaceActivitySnapshot | undefined,
+    scheduleUpdatedAt: number | null | undefined
   ): Promise<number> {
     assert(
       Number.isFinite(now),
       "HeartbeatService.deriveInitialIntervalNextEligibleAt requires a finite timestamp"
     );
+
+    // Future timestamps (clock skew) are ignored the same way skewed firing records are.
+    const editAnchor =
+      isValidHeartbeatScheduleUpdatedAt(scheduleUpdatedAt) && scheduleUpdatedAt <= now
+        ? scheduleUpdatedAt
+        : undefined;
 
     try {
       const history = await this.workspaceService.getChatHistory(workspaceId);
@@ -300,7 +313,8 @@ export class HeartbeatService {
         if (typeof firedAt !== "number" || !Number.isFinite(firedAt) || firedAt > now) {
           break;
         }
-        return Math.max(firedAt + trackingIntervalMs, now);
+        const anchor = editAnchor != null ? Math.max(firedAt, editAnchor) : firedAt;
+        return Math.max(anchor + trackingIntervalMs, now);
       }
     } catch (error) {
       log.warn("HeartbeatService: failed to derive interval anchor from history", {

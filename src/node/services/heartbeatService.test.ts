@@ -110,6 +110,7 @@ describe("HeartbeatService", () => {
         contextMode?: "normal" | "compact" | "reset" | null;
         trigger?: "idle" | "interval" | null;
         whenBusy?: "skip" | "tool-end" | "turn-end" | null;
+        scheduleUpdatedAt?: number | null;
       };
       archivedAt: string;
       unarchivedAt: string;
@@ -1621,6 +1622,62 @@ describe("HeartbeatService", () => {
 
       // One catch-up firing at now — never a backlog of missed slots.
       expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(now);
+    });
+
+    test("a firing that predates the last cadence edit loses to the edit anchor", async () => {
+      const internals = getInternals();
+      const intervalMs = 30 * 60 * 1000;
+      const now = 4 * 60 * 60 * 1000;
+      // Fired long ago under the previous schedule (e.g. the idle trigger), then the user
+      // switched to the fixed interval and restarted before the first new-schedule firing.
+      const lastFiredAt = now - 2 * 60 * 60 * 1000;
+      const scheduleUpdatedAt = now - 5 * 60 * 1000;
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: { enabled: true, intervalMs, trigger: "interval", scheduleUpdatedAt },
+        }),
+      ]);
+      getChatHistoryMock.mockResolvedValueOnce([
+        ...makeCompletedTurnHistory(),
+        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+          timestamp: lastFiredAt,
+          muxMetadata: { type: "heartbeat-request" },
+        }),
+      ]);
+
+      await internals.resyncFromConfig(now);
+
+      // Anchored at the edit (matching the live re-anchor), not the pre-edit firing —
+      // which would have made the workspace eligible immediately.
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        scheduleUpdatedAt + intervalMs
+      );
+    });
+
+    test("a firing newer than the last cadence edit keeps the firing anchor", async () => {
+      const internals = getInternals();
+      const intervalMs = 30 * 60 * 1000;
+      const now = 4 * 60 * 60 * 1000;
+      const scheduleUpdatedAt = now - 60 * 60 * 1000;
+      const lastFiredAt = now - 10 * 60 * 1000; // fired under the current schedule
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: { enabled: true, intervalMs, trigger: "interval", scheduleUpdatedAt },
+        }),
+      ]);
+      getChatHistoryMock.mockResolvedValueOnce([
+        ...makeCompletedTurnHistory(),
+        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+          timestamp: lastFiredAt,
+          muxMetadata: { type: "heartbeat-request" },
+        }),
+      ]);
+
+      await internals.resyncFromConfig(now);
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        lastFiredAt + intervalMs
+      );
     });
 
     test("interval restart falls back to activity recency when no firing is on record", async () => {

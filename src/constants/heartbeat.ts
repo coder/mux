@@ -35,6 +35,15 @@ export function isHeartbeatWhenBusy(value: unknown): value is HeartbeatWhenBusy 
   return HEARTBEAT_WHEN_BUSY_VALUES.includes(value as HeartbeatWhenBusy);
 }
 
+/**
+ * Guard for the server-managed `scheduleUpdatedAt` cadence-edit timestamp (epoch ms).
+ * Shared by the config normalizer and settings writer so persisted garbage is dropped
+ * identically everywhere (self-healing).
+ */
+export function isValidHeartbeatScheduleUpdatedAt(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
 export interface HeartbeatSchedulePolicy {
   trigger: HeartbeatTrigger;
   whenBusy: HeartbeatWhenBusy;
