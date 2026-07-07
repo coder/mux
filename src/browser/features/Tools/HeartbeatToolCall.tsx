@@ -22,6 +22,7 @@ import {
   HEARTBEAT_DEFAULT_CONTEXT_MODE,
   formatHeartbeatInterval,
   formatHeartbeatIntervalShort,
+  resolveHeartbeatSchedulePolicy,
   type HeartbeatContextMode,
 } from "@/constants/heartbeat";
 
@@ -205,6 +206,8 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
 
   const live = settings?.enabled ?? false;
   const ctx = CONTEXT_MODES[settings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE];
+  // Effective schedule via the shared read-time resolver (unset fields resolve to defaults).
+  const schedulePolicy = resolveHeartbeatSchedulePolicy(settings);
   // Only a custom `message` is stored per workspace; an empty string means it was
   // explicitly cleared. When there's no custom text the effective prompt is the
   // app-level default (`config.heartbeatDefaultPrompt`) or the built-in body — neither
@@ -272,14 +275,25 @@ export const HeartbeatToolCall: React.FC<HeartbeatToolCallProps> = (props) => {
                   }
                 />
                 <HeartbeatStat label="Context" value={ctx.label} />
-                <HeartbeatStat label="Trigger" value="When idle" />
+                <HeartbeatStat
+                  label="Trigger"
+                  value={schedulePolicy.trigger === "interval" ? "Fixed interval" : "When idle"}
+                />
               </dl>
 
               <div className="text-muted text-[10.5px] leading-relaxed">
                 {ctx.blurb}.
                 {live
-                  ? " Fires only after the workspace goes idle for the interval — deferred while you're actively working."
+                  ? schedulePolicy.trigger === "interval"
+                    ? " Fires on a fixed schedule, regardless of activity."
+                    : " Fires only after the workspace goes idle for the interval — deferred while you're actively working."
                   : " No check-ins will run until re-enabled."}
+                {/* Surface a non-default when-busy delivery so the schedule is fully explained. */}
+                {live && schedulePolicy.whenBusy === "tool-end"
+                  ? " Queues after the current step when busy."
+                  : live && schedulePolicy.whenBusy === "turn-end"
+                    ? " Queues after the current turn when busy."
+                    : null}
               </div>
 
               {hasCustomMessage ? (

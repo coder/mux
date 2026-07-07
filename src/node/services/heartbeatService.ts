@@ -7,6 +7,7 @@ import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
+  resolveHeartbeatSchedulePolicy,
 } from "@/constants/heartbeat";
 import type { Config } from "@/node/config";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -24,6 +25,28 @@ const HEARTBEAT_IDLE_CONSUMER_PRIORITY = 50;
 interface HeartbeatEligibilityResult {
   eligible: boolean;
   reason?: string;
+}
+
+/**
+ * Next deadline for a fixed-interval (trigger: "interval") heartbeat after a firing.
+ *
+ * Anchors at `firedAt` (not dispatch end) so dispatch duration never drifts the cadence:
+ * nextDeadline = firedAt + k*intervalMs for the smallest k >= 1 with nextDeadline > now.
+ * k > 1 only when the attempt ran longer than an interval — missed slots are never
+ * burst-fired; the anchor simply advances so subsequent deadlines stay aligned.
+ */
+export function advanceAnchoredDeadline(firedAt: number, intervalMs: number, now: number): number {
+  assert(
+    Number.isFinite(firedAt) && Number.isFinite(now) && now >= firedAt,
+    "advanceAnchoredDeadline requires finite timestamps with now >= firedAt"
+  );
+  assert(
+    Number.isFinite(intervalMs) && intervalMs > 0,
+    "advanceAnchoredDeadline requires a positive interval"
+  );
+
+  const intervalsElapsed = Math.floor((now - firedAt) / intervalMs);
+  return firedAt + (intervalsElapsed + 1) * intervalMs;
 }
 
 export class HeartbeatService {
@@ -348,9 +371,24 @@ export class HeartbeatService {
     }
 
     const config = this.config.loadConfigOrDefault();
-    const intervalMs = this.getHeartbeatIntervalMs(workspaceId, config);
+    const workspace = this.findWorkspaceConfigEntry(workspaceId, config);
+    const intervalMs =
+      workspace?.heartbeat?.enabled === true
+        ? this.getSanitizedTrackingIntervalMs(
+            workspaceId,
+            workspace.heartbeat.intervalMs,
+            config,
+            "heartbeat_lookup"
+          )
+        : null;
     if (intervalMs == null) {
       this.purgeWorkspace(workspaceId, "activity_event_ineligible");
+      return;
+    }
+
+    // Fixed-interval heartbeats measure wall-clock cadence, not time-since-activity:
+    // activity must not push back the deadline.
+    if (resolveHeartbeatSchedulePolicy(workspace?.heartbeat).trigger === "interval") {
       return;
     }
 
@@ -399,20 +437,6 @@ export class HeartbeatService {
     }
 
     this.purgeWorkspace(workspaceId, "heartbeat_disabled");
-  }
-
-  private getHeartbeatIntervalMs(workspaceId: string, config: ProjectsConfig): number | null {
-    const workspace = this.findWorkspaceConfigEntry(workspaceId, config);
-    if (workspace?.heartbeat?.enabled !== true) {
-      return null;
-    }
-
-    return this.getSanitizedTrackingIntervalMs(
-      workspaceId,
-      workspace.heartbeat.intervalMs,
-      config,
-      "heartbeat_lookup"
-    );
   }
 
   private checkAllWorkspaces(now: number): void {
@@ -478,6 +502,9 @@ export class HeartbeatService {
         this.queuedWorkspaceIds.delete(workspaceId);
         this.activeWorkspaceIds.add(workspaceId);
 
+        // Capture the fire time before dispatching so fixed-interval cadences exclude
+        // dispatch duration (see advanceAnchoredDeadline).
+        const firedAt = Date.now();
         try {
           await this.idleDispatcher.requestDispatch(workspaceId, HEARTBEAT_IDLE_CONSUMER_NAME);
         } catch (error) {
@@ -486,9 +513,19 @@ export class HeartbeatService {
           this.activeWorkspaceIds.delete(workspaceId);
           if (!this.stopped) {
             const config = this.config.loadConfigOrDefault();
-            const trackingIntervalMs = this.getTrackingIntervalMs(workspaceId, config);
+            const workspace = this.findWorkspaceConfigEntry(workspaceId, config);
+            const trackingIntervalMs = workspace
+              ? this.getTrackingIntervalMsForWorkspace(workspace, config)
+              : null;
             if (trackingIntervalMs != null) {
-              this.nextEligibleAtByWorkspaceId.set(workspaceId, Date.now() + trackingIntervalMs);
+              // Every attempt (success, eligibility skip, or error) consumes its slot.
+              // Fixed-interval triggers stay anchored to the fire time; idle triggers
+              // keep today's fresh countdown from dispatch end.
+              const nextEligibleAt =
+                resolveHeartbeatSchedulePolicy(workspace?.heartbeat).trigger === "interval"
+                  ? advanceAnchoredDeadline(firedAt, trackingIntervalMs, Date.now())
+                  : Date.now() + trackingIntervalMs;
+              this.nextEligibleAtByWorkspaceId.set(workspaceId, nextEligibleAt);
               this.trackedIntervalMsByWorkspaceId.set(workspaceId, trackingIntervalMs);
             } else {
               this.purgeWorkspace(workspaceId, "post_dispatch_ineligible");
@@ -546,23 +583,41 @@ export class HeartbeatService {
       return { eligible: false, reason: "child_workspace" };
     }
 
+    // Busy-related gates depend on the whenBusy policy: "skip" (the idle-trigger default)
+    // misses the slot exactly as before, while queue modes pass through so executeHeartbeat
+    // can enqueue the heartbeat at the requested boundary.
+    const deliverWhenBusy = resolveHeartbeatSchedulePolicy(workspace.heartbeat).whenBusy !== "skip";
+
     const activity = await this.extensionMetadata.getSnapshot(workspaceId);
-    if (activity?.streaming === true) {
+    const isStreaming = activity?.streaming === true;
+    if (isStreaming && !deliverWhenBusy) {
       return { eligible: false, reason: "currently_streaming" };
     }
-    if (this.taskService.hasActiveDescendantAgentTasksForWorkspace(workspaceId)) {
+    if (
+      this.taskService.hasActiveDescendantAgentTasksForWorkspace(workspaceId) &&
+      !deliverWhenBusy
+    ) {
       return { eligible: false, reason: "active_descendant_tasks" };
     }
 
     const history = await this.workspaceService.getChatHistory(workspaceId);
+    // Defensive even under queue modes: a fresh workspace that never completed a turn
+    // should not receive scheduled maintenance messages.
     if (history.length === 0 || !history.some((message) => message.role === "assistant")) {
       return { eligible: false, reason: "no_completed_turn" };
     }
 
     const lastMessage = history[history.length - 1];
-    if (lastMessage?.role === "user") {
+    // An idle unanswered user message stays a hard gate for every whenBusy policy: injecting a
+    // scheduled message into that abnormal state risks clobbering a failed/interrupted user
+    // turn. During an active stream, however, the in-progress assistant output lives only in
+    // partial.json (committed history still ends with the user message being answered), so
+    // queue modes must carve out the streaming case or they could never deliver while busy.
+    if (lastMessage?.role === "user" && !isStreaming) {
       return { eligible: false, reason: "awaiting_response" };
     }
+    // Inert while streaming (committed history cannot end with an assistant message then), so
+    // this only guards the idle waiting-for-input state — keep it hard for every policy.
     if (lastMessage?.role === "assistant" && this.hasInteractiveToolInput(lastMessage)) {
       return { eligible: false, reason: "awaiting_interactive_input" };
     }
@@ -578,11 +633,6 @@ export class HeartbeatService {
         ...this.queuedWorkspaceIds,
       ])
     );
-  }
-
-  private getTrackingIntervalMs(workspaceId: string, config: ProjectsConfig): number | null {
-    const workspace = this.findWorkspaceConfigEntry(workspaceId, config);
-    return workspace ? this.getTrackingIntervalMsForWorkspace(workspace, config) : null;
   }
 
   private getTrackingIntervalMsForWorkspace(

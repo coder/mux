@@ -62,6 +62,15 @@ const disabledLongMessageSettings: HeartbeatSettings = {
   enabled: false,
 };
 
+// Non-default schedule: fixed wall-clock cadence with an explicit when-busy queue mode, so the
+// Trigger and When busy selects snapshot in their non-default states.
+const fixedScheduleSettings: HeartbeatSettings = {
+  ...enabledLongMessageSettings,
+  contextMode: "normal",
+  trigger: "interval",
+  whenBusy: "tool-end",
+};
+
 function WorkspaceHeartbeatModalStoryShell(props: {
   children: ReactNode;
   settings: HeartbeatSettings;
@@ -171,6 +180,38 @@ export const DisabledLongMessageDesktop: Story = {
   render: () => renderOpenModal(disabledLongMessageSettings),
   play: async ({ canvasElement }) => {
     await assertHeartbeatModalLoaded(canvasElement);
+  },
+};
+
+export const FixedScheduleDesktop: Story = {
+  globals: {
+    viewport: { value: "desktop", isRotated: false },
+  },
+  parameters: {
+    chromatic: {
+      modes: {
+        "dark-desktop-fixed-schedule": { theme: "dark", viewport: { width: 1280, height: 800 } },
+      },
+    },
+  },
+  render: () => renderOpenModal(fixedScheduleSettings),
+  play: async ({ canvasElement }) => {
+    await assertHeartbeatModalLoaded(canvasElement);
+
+    // Contract: the non-default schedule loads into the new selects before snapshotting.
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog", { name: "Configure heartbeat" });
+    const modal = within(dialog);
+    await waitFor(() => {
+      const triggerSelect = modal.getByLabelText("Heartbeat trigger");
+      if (!(triggerSelect instanceof HTMLSelectElement) || triggerSelect.value !== "interval") {
+        throw new Error("Expected fixed-schedule trigger to load before snapshotting");
+      }
+      const whenBusySelect = modal.getByLabelText("Heartbeat when busy");
+      if (!(whenBusySelect instanceof HTMLSelectElement) || whenBusySelect.value !== "tool-end") {
+        throw new Error("Expected explicit when-busy mode to load before snapshotting");
+      }
+    });
   },
 };
 

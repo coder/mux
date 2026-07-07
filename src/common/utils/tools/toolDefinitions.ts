@@ -64,6 +64,8 @@ import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
+  HEARTBEAT_TRIGGER_VALUES,
+  HEARTBEAT_WHEN_BUSY_VALUES,
 } from "@/constants/heartbeat";
 
 // -----------------------------------------------------------------------------
@@ -203,6 +205,18 @@ export const HeartbeatToolArgsSchema = z
       .nullish()
       .describe(
         'set: context preparation for heartbeat turns: "normal" uses current context, "compact" compacts first, and "reset" appends a reset boundary first. Omit to preserve the current mode.'
+      ),
+    trigger: z
+      .enum(HEARTBEAT_TRIGGER_VALUES)
+      .nullish()
+      .describe(
+        'set: countdown anchoring: "idle" resets on workspace activity (fires only after a full quiet interval), "interval" fires on a fixed wall-clock cadence regardless of activity. Omit to preserve the current value; unset resolves to "idle" at read time.'
+      ),
+    whenBusy: z
+      .enum(HEARTBEAT_WHEN_BUSY_VALUES)
+      .nullish()
+      .describe(
+        'set: behavior when a heartbeat fires while the workspace is busy: "skip" misses the slot, "tool-end" queues the heartbeat into the current turn at the next tool boundary, "turn-end" queues it as its own turn after the current one. Omit to preserve the current value; unset resolves at read time to "skip" for trigger "idle" and "turn-end" for trigger "interval".'
       ),
   })
   .strict();
@@ -2194,7 +2208,10 @@ export const TOOL_DEFINITIONS = {
     description:
       "Read or change this workspace's scheduled heartbeat. " +
       "The tool only affects the current workspace; it does not accept a workspaceId. " +
-      "Use action='set' to enable or configure the heartbeat interval, custom message, context mode, or enabled flag. " +
+      "Use action='set' to enable or configure the heartbeat interval, custom message, context mode, trigger, when-busy behavior, or enabled flag. " +
+      "trigger chooses the countdown anchor: 'idle' (default) fires only after the workspace has been quiet for a full interval; 'interval' fires on a fixed wall-clock cadence. " +
+      "whenBusy chooses what happens when a heartbeat fires while the workspace is busy: 'skip' misses the slot, 'tool-end'/'turn-end' queue the heartbeat for the matching boundary. " +
+      "Unset whenBusy defaults to 'skip' for trigger 'idle' and 'turn-end' for trigger 'interval'. " +
       "Use action='unset' to remove this workspace's heartbeat settings entirely. " +
       "Use action='get' before changing settings when you need to preserve existing values.",
     schema: HeartbeatToolArgsSchema,

@@ -377,6 +377,33 @@ describe("MessageQueue", () => {
       expect(queue.getMessages()).toEqual(["Follow up"]);
       expect(queue.getFileParts()).toEqual([image]);
     });
+
+    it("should report pending dedupe keys and reset them when the queue clears", () => {
+      expect(queue.hasDedupeKey("heartbeat-request")).toBe(false);
+
+      queue.addOnce("Heartbeat", { model: "gpt-4", agentId: "exec" }, "heartbeat-request");
+      expect(queue.hasDedupeKey("heartbeat-request")).toBe(true);
+
+      // Drain and user-clear both go through clear(), which must release the key so the
+      // next scheduled message can enqueue again.
+      queue.clear();
+      expect(queue.hasDedupeKey("heartbeat-request")).toBe(false);
+      expect(
+        queue.addOnce("Heartbeat", { model: "gpt-4", agentId: "exec" }, "heartbeat-request")
+      ).toBe(true);
+    });
+
+    it("should dedupe a keyed entry queued behind an existing plain message", () => {
+      queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
+
+      expect(
+        queue.addOnce("Heartbeat", { model: "gpt-4", agentId: "exec" }, "heartbeat-request")
+      ).toBe(true);
+      expect(
+        queue.addOnce("Heartbeat", { model: "gpt-4", agentId: "exec" }, "heartbeat-request")
+      ).toBe(false);
+      expect(queue.getMessages()).toEqual(["User follow-up", "Heartbeat"]);
+    });
   });
 
   describe("multi-message batching", () => {

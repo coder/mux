@@ -24,8 +24,49 @@ import {
   HEARTBEAT_DEFAULT_CONTEXT_MODE,
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_DEFAULT_MESSAGE_BODY,
+  HEARTBEAT_DEFAULT_TRIGGER,
+  resolveHeartbeatSchedulePolicy,
   type HeartbeatContextMode,
+  type HeartbeatTrigger,
+  type HeartbeatWhenBusy,
 } from "@/constants/heartbeat";
+import { SEND_DISPATCH_MODES } from "@/browser/features/ChatInput/sendDispatchModes";
+
+const HEARTBEAT_TRIGGER_OPTIONS: Array<{
+  value: HeartbeatTrigger;
+  label: string;
+  helperText: string;
+}> = [
+  {
+    value: "idle",
+    label: "After inactivity (default)",
+    helperText: "Fires only after the workspace has been idle for the full interval.",
+  },
+  {
+    value: "interval",
+    label: "Fixed schedule",
+    helperText: "Fires on a fixed wall-clock cadence, regardless of activity.",
+  },
+];
+
+// Reuse the composer's queue-mode vocabulary ("Send after step" / "Send after turn") so the
+// when-busy options read the same as the chat input's send dispatch modes.
+function getWhenBusyLabel(mode: HeartbeatWhenBusy): string {
+  if (mode === "skip") {
+    return "Skip";
+  }
+  return SEND_DISPATCH_MODES.find((entry) => entry.mode === mode)?.label ?? mode;
+}
+
+const HEARTBEAT_WHEN_BUSY_HELPER_TEXTS: Record<HeartbeatWhenBusy, string> = {
+  skip: "Skips the check-in when the workspace is busy and waits for the next slot.",
+  "tool-end": "Queues the check-in into the current turn at the next tool boundary.",
+  "turn-end": "Queues the check-in to run as its own turn after the current one.",
+};
+
+// "" represents the unset draft: the effective value follows the trigger via
+// resolveHeartbeatSchedulePolicy and saves as an explicit null (clear).
+type HeartbeatWhenBusyDraft = HeartbeatWhenBusy | "";
 
 const HEARTBEAT_CONTEXT_MODE_OPTIONS: Array<{
   value: HeartbeatContextMode;
@@ -92,6 +133,10 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
     }
   );
   const settingsContextMode = settings.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE;
+  // Trigger draft: unset and "idle" are semantically identical, so the modal never writes
+  // "idle" explicitly — the idle option saves `trigger: null` (clear) to keep configs sparse.
+  const settingsTrigger = settings.trigger ?? HEARTBEAT_DEFAULT_TRIGGER;
+  const settingsWhenBusy: HeartbeatWhenBusyDraft = settings.whenBusy ?? "";
   const [draftEnabled, setDraftEnabled] = useState(false);
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(
     formatIntervalMinutes(HEARTBEAT_DEFAULT_INTERVAL_MS)
@@ -99,15 +144,20 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
   const [draftContextMode, setDraftContextMode] = useState<HeartbeatContextMode>(
     HEARTBEAT_DEFAULT_CONTEXT_MODE
   );
+  const [draftTrigger, setDraftTrigger] = useState<HeartbeatTrigger>(HEARTBEAT_DEFAULT_TRIGGER);
+  const [draftWhenBusy, setDraftWhenBusy] = useState<HeartbeatWhenBusyDraft>("");
   const [draftMessage, setDraftMessage] = useState("");
   const [draftDirty, setDraftDirty] = useState(false);
   const previousOpenRef = useRef(props.open);
   const previousWorkspaceIdRef = useRef(props.workspaceId);
   const messageTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const lastSyncedSettingsRef = useRef<Pick<
-    typeof settings,
-    "enabled" | "intervalMs" | "contextMode" | "message"
-  > | null>(null);
+  const lastSyncedSettingsRef = useRef<
+    | (Pick<typeof settings, "enabled" | "intervalMs" | "contextMode" | "message"> & {
+        trigger: HeartbeatTrigger;
+        whenBusy: HeartbeatWhenBusyDraft;
+      })
+    | null
+  >(null);
 
   useEffect(() => {
     const didOpen = props.open && !previousOpenRef.current;
@@ -118,6 +168,8 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
       lastSyncedSettings.enabled !== settings.enabled ||
       lastSyncedSettings.intervalMs !== settings.intervalMs ||
       lastSyncedSettings.contextMode !== settingsContextMode ||
+      lastSyncedSettings.trigger !== settingsTrigger ||
+      lastSyncedSettings.whenBusy !== settingsWhenBusy ||
       lastSyncedSettings.message !== settings.message;
 
     previousOpenRef.current = props.open;
@@ -132,12 +184,16 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
       setDraftEnabled(settings.enabled);
       setDraftIntervalMinutes(formatIntervalMinutes(settings.intervalMs));
       setDraftContextMode(settingsContextMode);
+      setDraftTrigger(settingsTrigger);
+      setDraftWhenBusy(settingsWhenBusy);
       setDraftMessage(settings.message ?? "");
       setDraftDirty(false);
       lastSyncedSettingsRef.current = {
         enabled: settings.enabled,
         intervalMs: settings.intervalMs,
         contextMode: settingsContextMode,
+        trigger: settingsTrigger,
+        whenBusy: settingsWhenBusy,
         message: settings.message,
       };
     }
@@ -150,9 +206,16 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
     settings.intervalMs,
     settings.message,
     settingsContextMode,
+    settingsTrigger,
+    settingsWhenBusy,
   ]);
 
   const validationError = getValidationErrorMessage(draftIntervalMinutes);
+  // Effective whenBusy when left unset — follows the draft trigger live so switching to a
+  // fixed schedule immediately shows "Default (Send after turn)".
+  const effectiveDefaultWhenBusy = resolveHeartbeatSchedulePolicy({
+    trigger: draftTrigger,
+  }).whenBusy;
   const errorMessages = [validationError, error].filter(
     (message): message is string => message != null
   );
@@ -185,6 +248,11 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
       enabled: draftEnabled,
       intervalMs: intervalMinutesToMs(parsedMinutes),
       contextMode: draftContextMode,
+      // Always send both keys: an explicit value persists, null clears back to unset so the
+      // effective value keeps following the read-time defaults (see
+      // resolveHeartbeatSchedulePolicy). The idle trigger is never written explicitly.
+      trigger: draftTrigger === "interval" ? draftTrigger : null,
+      whenBusy: draftWhenBusy === "" ? null : draftWhenBusy,
       // Read directly from the textarea on save so the final keystroke is preserved even if the
       // click lands before React finishes flushing the last state update.
       message: getDraftMessageForSave(messageTextareaRef.current?.value ?? draftMessage),
@@ -264,6 +332,84 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                       />
                       <span className="text-muted text-sm">min</span>
                     </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <label htmlFor="workspace-heartbeat-trigger" className="block">
+                      <div className="text-foreground text-sm font-medium">Trigger</div>
+                      <div className="text-muted mt-1 text-xs">
+                        Choose how the heartbeat countdown is anchored.
+                      </div>
+                    </label>
+                    <select
+                      id="workspace-heartbeat-trigger"
+                      value={draftTrigger}
+                      onChange={(event: React.ChangeEvent<HTMLSelectElement>) => {
+                        const nextTrigger =
+                          HEARTBEAT_TRIGGER_OPTIONS.find(
+                            (option) => option.value === event.target.value
+                          )?.value ?? HEARTBEAT_DEFAULT_TRIGGER;
+                        setDraftTrigger(nextTrigger);
+                        setDraftDirty(true);
+                      }}
+                      disabled={isSaving}
+                      className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent h-9 w-full rounded-md border px-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Heartbeat trigger"
+                    >
+                      {HEARTBEAT_TRIGGER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-muted text-xs">
+                      {
+                        (
+                          HEARTBEAT_TRIGGER_OPTIONS.find(
+                            (option) => option.value === draftTrigger
+                          ) ?? HEARTBEAT_TRIGGER_OPTIONS[0]
+                        ).helperText
+                      }
+                    </p>
+                  </div>
+
+                  <div className="mt-4 space-y-2">
+                    <label htmlFor="workspace-heartbeat-when-busy" className="block">
+                      <div className="text-foreground text-sm font-medium">When busy</div>
+                      <div className="text-muted mt-1 text-xs">
+                        What happens when a heartbeat fires while the workspace is busy.
+                      </div>
+                    </label>
+                    <select
+                      id="workspace-heartbeat-when-busy"
+                      value={draftWhenBusy}
+                      onChange={(event: React.ChangeEvent<HTMLSelectElement>) => {
+                        const value = event.target.value;
+                        setDraftWhenBusy(
+                          value === "skip" || value === "tool-end" || value === "turn-end"
+                            ? value
+                            : ""
+                        );
+                        setDraftDirty(true);
+                      }}
+                      disabled={isSaving}
+                      className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent h-9 w-full rounded-md border px-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Heartbeat when busy"
+                    >
+                      {/* The default option's label follows the draft trigger (skip for idle,
+                          send-after-turn for interval) via the shared read-time resolver. */}
+                      <option value="">{`Default (${getWhenBusyLabel(effectiveDefaultWhenBusy)})`}</option>
+                      <option value="skip">{getWhenBusyLabel("skip")}</option>
+                      <option value="tool-end">{getWhenBusyLabel("tool-end")}</option>
+                      <option value="turn-end">{getWhenBusyLabel("turn-end")}</option>
+                    </select>
+                    <p className="text-muted text-xs">
+                      {
+                        HEARTBEAT_WHEN_BUSY_HELPER_TEXTS[
+                          draftWhenBusy === "" ? effectiveDefaultWhenBusy : draftWhenBusy
+                        ]
+                      }
+                    </p>
                   </div>
 
                   <div className="mt-4 space-y-2">

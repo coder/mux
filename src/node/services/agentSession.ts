@@ -5053,13 +5053,18 @@ export class AgentSession {
     internal?: {
       synthetic?: boolean;
       agentInitiated?: boolean;
+      /** Coalescing: drop the message when an entry with the same key is already queued. */
+      dedupeKey?: string;
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
     }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");
-    const didEnqueue = this.messageQueue.add(message, options, internal);
+    const didEnqueue =
+      internal?.dedupeKey != null
+        ? this.messageQueue.addOnce(message, options, internal.dedupeKey, internal)
+        : this.messageQueue.add(message, options, internal);
     if (!didEnqueue) {
       return null;
     }
@@ -5115,6 +5120,12 @@ export class AgentSession {
       !this.messageQueue.isEmpty() &&
       (dispatchMode == null || this.messageQueue.getQueueDispatchMode() === dispatchMode)
     );
+  }
+
+  /** Whether a message queued with this dedupe key is still pending (see MessageQueue.addOnce). */
+  hasQueuedDedupeKey(dedupeKey: string): boolean {
+    assert(dedupeKey.length > 0, "hasQueuedDedupeKey requires a dedupeKey");
+    return this.messageQueue.hasDedupeKey(dedupeKey);
   }
 
   private requestQueuedToolEndDispatchAfterCurrentTool(): void {

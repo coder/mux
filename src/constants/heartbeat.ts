@@ -6,6 +6,68 @@ export const HEARTBEAT_CONTEXT_MODE_VALUES = ["normal", "compact", "reset"] as c
 export type HeartbeatContextMode = (typeof HEARTBEAT_CONTEXT_MODE_VALUES)[number];
 export const HEARTBEAT_DEFAULT_CONTEXT_MODE: HeartbeatContextMode = "normal";
 
+// Trigger: "idle" anchors the countdown to the last activity (a heartbeat fires only after
+// the workspace has been quiet for a full interval); "interval" is a fixed wall-clock cadence
+// that ignores activity.
+export const HEARTBEAT_TRIGGER_VALUES = ["idle", "interval"] as const;
+export type HeartbeatTrigger = (typeof HEARTBEAT_TRIGGER_VALUES)[number];
+export const HEARTBEAT_DEFAULT_TRIGGER: HeartbeatTrigger = "idle";
+
+// whenBusy: what happens when the heartbeat deadline fires while the workspace is busy
+// (streaming, queued input, or active descendant tasks). "skip" misses the slot and waits
+// for the next one; "tool-end"/"turn-end" enqueue the heartbeat message with the matching
+// queue dispatch mode (SendMessageOptions.queueDispatchMode).
+export const HEARTBEAT_WHEN_BUSY_VALUES = ["skip", "tool-end", "turn-end"] as const;
+export type HeartbeatWhenBusy = (typeof HEARTBEAT_WHEN_BUSY_VALUES)[number];
+
+/**
+ * Queue dedupe key for scheduled heartbeat messages. A second heartbeat is never enqueued
+ * while a previous one is still pending in the message queue (coalescing): heartbeats are
+ * periodic check-ins, so a stacked duplicate adds noise without new information.
+ */
+export const HEARTBEAT_QUEUE_DEDUPE_KEY = "heartbeat-request";
+
+export function isHeartbeatTrigger(value: unknown): value is HeartbeatTrigger {
+  return HEARTBEAT_TRIGGER_VALUES.includes(value as HeartbeatTrigger);
+}
+
+export function isHeartbeatWhenBusy(value: unknown): value is HeartbeatWhenBusy {
+  return HEARTBEAT_WHEN_BUSY_VALUES.includes(value as HeartbeatWhenBusy);
+}
+
+export interface HeartbeatSchedulePolicy {
+  trigger: HeartbeatTrigger;
+  whenBusy: HeartbeatWhenBusy;
+}
+
+/**
+ * Resolve the effective scheduling policy from (possibly sparse) persisted heartbeat settings.
+ *
+ * Defaults are intentionally resolved at read time instead of via Zod `.default()`:
+ * strict-mode tool providers (OpenAI) send explicit `null` for omitted fields (which
+ * `.default()` does not rewrite), and the `whenBusy` default is conditional on the resolved
+ * trigger — an idle-triggered heartbeat skips busy slots (today's behavior), while a
+ * fixed-interval heartbeat defaults to delivery after the current turn. Keeping unset values
+ * unset in `~/.mux/config.json` also preserves the distinction between "user chose skip" and
+ * "user never touched it".
+ *
+ * Invalid/null/undefined values fall back to the defaults (self-healing for hand-edited or
+ * stale persisted config).
+ */
+export function resolveHeartbeatSchedulePolicy(
+  settings: { trigger?: unknown; whenBusy?: unknown } | null | undefined
+): HeartbeatSchedulePolicy {
+  const trigger = isHeartbeatTrigger(settings?.trigger)
+    ? settings.trigger
+    : HEARTBEAT_DEFAULT_TRIGGER;
+  const whenBusy = isHeartbeatWhenBusy(settings?.whenBusy)
+    ? settings.whenBusy
+    : trigger === "interval"
+      ? "turn-end"
+      : "skip";
+  return { trigger, whenBusy };
+}
+
 export const HEARTBEAT_RESET_BOUNDARY_MESSAGE =
   "Heartbeat context reset. Earlier chat history is preserved on disk, but future requests will start from this boundary without generating a compaction summary.";
 

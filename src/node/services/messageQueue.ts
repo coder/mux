@@ -145,6 +145,14 @@ export class MessageQueue {
   }
 
   /**
+   * Whether a message queued via {@link addOnce} with this dedupe key is still pending.
+   * Keys reset when the queue is cleared (drain or user clear).
+   */
+  hasDedupeKey(dedupeKey: string): boolean {
+    return this.dedupeKeys.has(dedupeKey);
+  }
+
+  /**
    * Add a message to the queue once, keyed by dedupeKey.
    * Returns true if the message was queued.
    */

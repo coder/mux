@@ -15,7 +15,7 @@ import type { AIService } from "./aiService";
 import type { AgentSession } from "./agentSession";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
-import { HeartbeatService } from "./heartbeatService";
+import { advanceAnchoredDeadline, HeartbeatService } from "./heartbeatService";
 import type { HistoryService } from "./historyService";
 import type { InitStateManager } from "./initStateManager";
 import type { TaskService } from "./taskService";
@@ -37,6 +37,15 @@ async function waitForCondition(
   }
 
   throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
+}
+
+interface HeartbeatConfigFixture {
+  enabled: boolean;
+  intervalMs: number;
+  message?: string;
+  contextMode?: "normal" | "compact" | "reset";
+  trigger?: "idle" | "interval";
+  whenBusy?: "skip" | "tool-end" | "turn-end";
 }
 
 interface HeartbeatServiceInternals {
@@ -90,11 +99,15 @@ describe("HeartbeatService", () => {
       name: string;
       path: string;
       parentWorkspaceId: string;
+      // Nullish members mirror the schema type so setIdleHeartbeatWorkspace's
+      // NonNullable<Workspace["heartbeat"]> flows through unchanged.
       heartbeat: {
         enabled: boolean;
         intervalMs?: number;
         message?: string;
-        contextMode?: "normal" | "compact" | "reset";
+        contextMode?: "normal" | "compact" | "reset" | null;
+        trigger?: "idle" | "interval" | null;
+        whenBusy?: "skip" | "tool-end" | "turn-end" | null;
       };
       archivedAt: string;
       unarchivedAt: string;
@@ -372,6 +385,108 @@ describe("HeartbeatService", () => {
     }
   });
 
+  describe("checkEligibility with whenBusy queue modes", () => {
+    function setHeartbeatConfig(heartbeat: HeartbeatConfigFixture): void {
+      currentProjectsConfig = makeProjectsConfig([makeWorkspaceEntry({ heartbeat })]);
+    }
+
+    const queueModeHeartbeat = {
+      enabled: true,
+      intervalMs: defaultHeartbeatIntervalMs,
+      whenBusy: "turn-end",
+    } as const;
+
+    test("streaming workspace is eligible under a queue mode", async () => {
+      setHeartbeatConfig({ ...queueModeHeartbeat });
+      getSnapshotMock.mockResolvedValueOnce(makeSnapshot({ streaming: true }));
+      // Streaming carve-out: committed history ends with the user message being answered
+      // (partials are excluded from committed history), which must not gate queue modes.
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createMuxMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: true });
+    });
+
+    test("active descendant tasks are eligible under a queue mode", async () => {
+      setHeartbeatConfig({ ...queueModeHeartbeat });
+      hasActiveDescendantTasksMock.mockReturnValueOnce(true);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: true });
+    });
+
+    test("interval trigger with unset whenBusy resolves to turn-end and passes busy gates", async () => {
+      setHeartbeatConfig({
+        enabled: true,
+        intervalMs: defaultHeartbeatIntervalMs,
+        trigger: "interval",
+      });
+      getSnapshotMock.mockResolvedValueOnce(makeSnapshot({ streaming: true }));
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: true });
+    });
+
+    test("explicit whenBusy skip keeps the streaming gate even for the interval trigger", async () => {
+      setHeartbeatConfig({
+        enabled: true,
+        intervalMs: defaultHeartbeatIntervalMs,
+        trigger: "interval",
+        whenBusy: "skip",
+      });
+      getSnapshotMock.mockResolvedValueOnce(makeSnapshot({ streaming: true }));
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: false, reason: "currently_streaming" });
+    });
+
+    test("an idle unanswered user message still gates queue modes", async () => {
+      setHeartbeatConfig({ ...queueModeHeartbeat });
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createMuxMessage("3", "user", "Another question?", { timestamp: staleTimestamp }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: false, reason: "awaiting_response" });
+    });
+
+    test("hard gates still block under queue modes", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: { ...queueModeHeartbeat },
+          archivedAt: new Date().toISOString(),
+        }),
+      ]);
+
+      const archived = await service.checkEligibility(testWorkspaceId, Date.now());
+      expect(archived).toEqual({ eligible: false, reason: "archived" });
+
+      setHeartbeatConfig({ ...queueModeHeartbeat });
+      getChatHistoryMock.mockResolvedValueOnce([]);
+      const noTurn = await service.checkEligibility(testWorkspaceId, Date.now());
+      expect(noTurn).toEqual({ eligible: false, reason: "no_completed_turn" });
+
+      setHeartbeatConfig({ ...queueModeHeartbeat });
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        makeInteractiveAssistantMessage(),
+      ]);
+      const interactive = await service.checkEligibility(testWorkspaceId, Date.now());
+      expect(interactive).toEqual({ eligible: false, reason: "awaiting_interactive_input" });
+    });
+  });
+
   describe("start/stop lifecycle", () => {
     test("starts with correct timer configuration", () => {
       const internals = getInternals();
@@ -450,6 +565,30 @@ describe("HeartbeatService", () => {
       expect(initialDeadline).toBe(defaultHeartbeatIntervalMs);
       expect(resetDeadline).toBeDefined();
       expect(resetDeadline).toBeGreaterThan(initialDeadline!);
+    });
+
+    test("activity event does not reset the countdown for interval-triggered workspaces", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({
+          heartbeat: {
+            enabled: true,
+            intervalMs: defaultHeartbeatIntervalMs,
+            trigger: "interval",
+          },
+        }),
+      ]);
+      service.start();
+      const internals = getInternals();
+      await internals.resyncFromConfig(0);
+
+      const initialDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      wsEmitter.emit("activity", {
+        workspaceId: testWorkspaceId,
+        activity: { recency: Date.now(), streaming: false },
+      });
+
+      // Fixed cadence: activity must not move the wall-clock deadline.
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(initialDeadline);
     });
 
     test("activity event ignores streaming=true events", async () => {
@@ -911,6 +1050,304 @@ describe("HeartbeatService", () => {
       await waitForCondition(() => executeHeartbeatMock.mock.calls.length === 1);
 
       expect(internals.queuedWorkspaceIds.size).toBe(0);
+    });
+  });
+
+  describe("interval trigger scheduling", () => {
+    const intervalHeartbeat = {
+      enabled: true,
+      intervalMs: defaultHeartbeatIntervalMs,
+      trigger: "interval",
+    } as const;
+
+    test("advanceAnchoredDeadline anchors at the fire time and never bursts missed slots", () => {
+      // Dispatch shorter than an interval: next deadline is exactly firedAt + interval.
+      expect(advanceAnchoredDeadline(1_000, 100, 1_000)).toBe(1_100);
+      expect(advanceAnchoredDeadline(1_000, 100, 1_050)).toBe(1_100);
+      // Exact boundary: deadline must be strictly in the future.
+      expect(advanceAnchoredDeadline(1_000, 100, 1_100)).toBe(1_200);
+      // Attempt ran longer than several intervals: skip missed slots, stay aligned.
+      expect(advanceAnchoredDeadline(1_000, 100, 1_350)).toBe(1_400);
+    });
+
+    test("post-fire deadline is anchored at the fire time, excluding dispatch duration", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { ...intervalHeartbeat } }),
+      ]);
+      service.start();
+      const internals = getInternals();
+      await internals.resyncFromConfig(0);
+
+      const dispatchDelayMs = 300;
+      executeHeartbeatMock.mockImplementation(
+        () => new Promise((resolve) => setTimeout(resolve, dispatchDelayMs))
+      );
+
+      const beforeQueue = Date.now();
+      internals.queueWorkspace(testWorkspaceId);
+
+      await waitForCondition(
+        () =>
+          executeHeartbeatMock.mock.calls.length === 1 &&
+          internals.activeWorkspaceIds.size === 0 &&
+          (internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId) ?? 0) > beforeQueue
+      );
+
+      const deadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)!;
+      // Anchored at firedAt (≈ beforeQueue): the idle path would instead land at
+      // dispatchEnd + interval, i.e. at least dispatchDelayMs later.
+      expect(deadline).toBeGreaterThanOrEqual(beforeQueue + defaultHeartbeatIntervalMs);
+      expect(deadline).toBeLessThan(beforeQueue + defaultHeartbeatIntervalMs + dispatchDelayMs);
+    });
+
+    test("multiple missed intervals produce exactly one firing, then an aligned future deadline", async () => {
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { ...intervalHeartbeat } }),
+      ]);
+      service.start();
+      const internals = getInternals();
+      await internals.resyncFromConfig(0);
+
+      // Simulate downtime: the tracked deadline is three intervals in the past.
+      const now = Date.now();
+      internals.nextEligibleAtByWorkspaceId.set(
+        testWorkspaceId,
+        now - 3 * defaultHeartbeatIntervalMs
+      );
+
+      internals.checkAllWorkspaces(now);
+      await waitForCondition(() => executeHeartbeatMock.mock.calls.length === 1);
+      await waitForCondition(
+        () => (internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId) ?? 0) > now
+      );
+
+      // The overdue backlog collapses into that single firing: re-checking now must not
+      // queue the workspace again.
+      internals.checkAllWorkspaces(Date.now());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(executeHeartbeatMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("executeHeartbeat whenBusy delivery", () => {
+    interface HeartbeatQueueSendOptions {
+      queueDispatchMode?: "tool-end" | "turn-end";
+      muxMetadata?: { type?: string };
+    }
+    interface HeartbeatQueueDispatchOptions {
+      synthetic?: boolean;
+      skipAutoResumeReset?: boolean;
+      requireIdle?: boolean;
+      forceQueue?: boolean;
+      queueDedupeKey?: string;
+    }
+    type HeartbeatQueueSendMessageCall = [
+      workspaceId: string,
+      heartbeatPrompt: string,
+      sendOptions: HeartbeatQueueSendOptions,
+      dispatchOptions: HeartbeatQueueDispatchOptions | undefined,
+    ];
+
+    function makeSessionStub(
+      overrides: Partial<{
+        isBusy: boolean;
+        hasQueuedMessages: boolean;
+        hasQueuedDedupeKey: boolean;
+      }> = {}
+    ): AgentSession {
+      return {
+        isBusy: () => overrides.isBusy ?? false,
+        hasQueuedMessages: () => overrides.hasQueuedMessages ?? false,
+        hasQueuedDedupeKey: () => overrides.hasQueuedDedupeKey ?? false,
+      } as unknown as AgentSession;
+    }
+
+    function setupExecuteHeartbeat(params: {
+      heartbeat: HeartbeatConfigFixture;
+      session: AgentSession;
+      hasActiveDescendantTasks?: boolean;
+    }) {
+      setIdleHeartbeatWorkspace({ heartbeat: params.heartbeat });
+      const sendMessageMock = mock(() => Promise.resolve(Ok(undefined)));
+      const workspaceService = createRealWorkspaceServiceWithOverrides({
+        getOrCreateSession: mock(() => params.session),
+        sendMessage: sendMessageMock,
+      });
+      workspaceService.setTaskService({
+        hasActiveDescendantAgentTasksForWorkspace: () => params.hasActiveDescendantTasks ?? false,
+      } as unknown as TaskService);
+      return {
+        workspaceService,
+        sendMessageMock,
+        getSendMessageCall: (index: number) =>
+          sendMessageMock.mock.calls.at(index) as HeartbeatQueueSendMessageCall | undefined,
+      };
+    }
+
+    test("busy session with interval trigger queues with turn-end, forceQueue, and the scheduled lead-in", async () => {
+      const { workspaceService, sendMessageMock, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, trigger: "interval" },
+        session: makeSessionStub({ isBusy: true }),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const call = getSendMessageCall(0);
+      expect(call).toBeDefined();
+      const [, heartbeatPrompt, sendOptions, dispatchOptions] = call!;
+      // Interval trigger takes the scheduled lead-in branch, not the idle-duration one.
+      expect(heartbeatPrompt).toContain("[Scheduled heartbeat]");
+      expect(heartbeatPrompt).not.toContain("idle for approximately");
+      expect(sendOptions.queueDispatchMode).toBe("turn-end");
+      expect(sendOptions.muxMetadata?.type).toBe("heartbeat-request");
+      expect(dispatchOptions?.forceQueue).toBe(true);
+      expect(dispatchOptions?.requireIdle).toBeUndefined();
+      expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
+      expect(dispatchOptions?.synthetic).toBe(true);
+      expect(dispatchOptions?.skipAutoResumeReset).toBe(true);
+    });
+
+    test("busy session with explicit tool-end queues at the tool boundary with the idle lead-in", async () => {
+      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "tool-end" },
+        session: makeSessionStub({ isBusy: true }),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const [, heartbeatPrompt, sendOptions, dispatchOptions] = getSendMessageCall(0)!;
+      // Idle trigger keeps the idle-duration lead-in even when busy-queued.
+      expect(heartbeatPrompt).toContain("[Heartbeat]");
+      expect(heartbeatPrompt).not.toContain("[Scheduled heartbeat]");
+      expect(sendOptions.queueDispatchMode).toBe("tool-end");
+      expect(dispatchOptions?.forceQueue).toBe(true);
+      expect(dispatchOptions?.requireIdle).toBeUndefined();
+    });
+
+    test("queued user input while idle force-queues instead of dispatching over it", async () => {
+      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
+        session: makeSessionStub({ isBusy: false, hasQueuedMessages: true }),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const [, , sendOptions, dispatchOptions] = getSendMessageCall(0)!;
+      expect(sendOptions.queueDispatchMode).toBe("turn-end");
+      expect(dispatchOptions?.forceQueue).toBe(true);
+    });
+
+    test("active descendant tasks while idle force-queue the heartbeat", async () => {
+      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
+        session: makeSessionStub(),
+        hasActiveDescendantTasks: true,
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const [, , , dispatchOptions] = getSendMessageCall(0)!;
+      expect(dispatchOptions?.forceQueue).toBe(true);
+    });
+
+    test("a pending queued heartbeat coalesces the next busy firing without throwing", async () => {
+      const { sendMessageMock, workspaceService } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
+        session: makeSessionStub({ isBusy: true, hasQueuedDedupeKey: true }),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).not.toHaveBeenCalled();
+    });
+
+    test("busy queue delivery downgrades compact contextMode to a normal queued message", async () => {
+      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: {
+          enabled: true,
+          intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+          contextMode: "compact",
+          whenBusy: "turn-end",
+        },
+        session: makeSessionStub({ isBusy: true }),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const [, , sendOptions] = getSendMessageCall(0)!;
+      // No compaction request is issued for this firing — plain queued heartbeat instead.
+      expect(sendOptions.muxMetadata?.type).toBe("heartbeat-request");
+      expect(sendOptions.queueDispatchMode).toBe("turn-end");
+    });
+
+    test("idle firing under a queue mode still honors compact contextMode", async () => {
+      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: {
+          enabled: true,
+          intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+          contextMode: "compact",
+          trigger: "interval",
+        },
+        session: makeSessionStub(),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const [, , sendOptions, dispatchOptions] = getSendMessageCall(0)!;
+      expect(sendOptions.muxMetadata?.type).toBe("compaction-request");
+      expect(dispatchOptions?.requireIdle).toBe(true);
+    });
+
+    test("idle firing under a queue mode sends without requireIdle so a busy race queues", async () => {
+      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, trigger: "interval" },
+        session: makeSessionStub(),
+      });
+
+      await workspaceService.executeHeartbeat(testWorkspaceId);
+
+      expect(sendMessageMock).toHaveBeenCalledTimes(1);
+      const [, , sendOptions, dispatchOptions] = getSendMessageCall(0)!;
+      expect(sendOptions.queueDispatchMode).toBe("turn-end");
+      expect(dispatchOptions?.requireIdle).toBeUndefined();
+      expect(dispatchOptions?.forceQueue).toBeUndefined();
+      expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
+    });
+
+    test("busy session with the default skip policy still throws", async () => {
+      const rejectionOf = (attempt: Promise<void>): Promise<unknown> =>
+        attempt.then(
+          () => {
+            throw new Error("Expected skip-policy heartbeat to throw");
+          },
+          (error: unknown) => error
+        );
+
+      const busy = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS },
+        session: makeSessionStub({ isBusy: true }),
+      });
+      const busyError = await rejectionOf(busy.workspaceService.executeHeartbeat(testWorkspaceId));
+      expect(busyError).toBeInstanceOf(Error);
+      expect((busyError as Error).message).toContain("Workspace is busy");
+      expect(busy.sendMessageMock).not.toHaveBeenCalled();
+
+      const queued = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS },
+        session: makeSessionStub({ hasQueuedMessages: true }),
+      });
+      const queuedError = await rejectionOf(
+        queued.workspaceService.executeHeartbeat(testWorkspaceId)
+      );
+      expect(queuedError).toBeInstanceOf(Error);
+      expect((queuedError as Error).message).toContain("queued user input");
+      expect(queued.sendMessageMock).not.toHaveBeenCalled();
     });
   });
 

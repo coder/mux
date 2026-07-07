@@ -8,6 +8,8 @@ import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
+  HEARTBEAT_TRIGGER_VALUES,
+  HEARTBEAT_WHEN_BUSY_VALUES,
 } from "@/constants/heartbeat";
 
 export const ProjectRefSchema = z.object({
@@ -68,6 +70,8 @@ export const WorkspaceGoalDefaultsOverrideSchema = z.object({
 });
 
 export const HeartbeatContextModeSchema = z.enum(HEARTBEAT_CONTEXT_MODE_VALUES);
+export const HeartbeatTriggerSchema = z.enum(HEARTBEAT_TRIGGER_VALUES);
+export const HeartbeatWhenBusySchema = z.enum(HEARTBEAT_WHEN_BUSY_VALUES);
 
 export const WorkspaceHeartbeatSettingsSchema = z.object({
   enabled: z.boolean().meta({
@@ -83,6 +87,17 @@ export const WorkspaceHeartbeatSettingsSchema = z.object({
   contextMode: HeartbeatContextModeSchema.nullish().meta({
     description:
       'Whether heartbeats use the existing context ("normal"), perform a real compaction first ("compact"), or append a synthetic reset boundary first ("reset"). Missing values default to "normal" at read time for backward compatibility.',
+  }),
+  // No Zod .default() on trigger/whenBusy: defaults resolve at read time via
+  // resolveHeartbeatSchedulePolicy (src/constants/heartbeat.ts) because the whenBusy default is
+  // conditional on the resolved trigger and strict-mode tool providers send explicit null.
+  trigger: HeartbeatTriggerSchema.nullish().meta({
+    description:
+      'How the heartbeat countdown is anchored: "idle" resets on workspace activity (fires only after a full quiet interval), "interval" is a fixed wall-clock cadence. Missing/null values default to "idle" at read time.',
+  }),
+  whenBusy: HeartbeatWhenBusySchema.nullish().meta({
+    description:
+      'What happens when a heartbeat fires while the workspace is busy: "skip" misses the slot, "tool-end" queues the heartbeat for the next tool boundary in the current turn, "turn-end" queues it as its own turn after the current one. Missing/null values default at read time to "skip" for the "idle" trigger and "turn-end" for the "interval" trigger.',
   }),
 });
 

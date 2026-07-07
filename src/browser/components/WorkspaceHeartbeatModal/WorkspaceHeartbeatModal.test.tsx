@@ -184,6 +184,8 @@ describe("WorkspaceHeartbeatModal", () => {
             enabled: false,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
             contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+            trigger: null,
+            whenBusy: null,
             message: "Check the pending review queue and summarize next steps.",
           },
         },
@@ -285,6 +287,8 @@ describe("WorkspaceHeartbeatModal", () => {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
             contextMode: "reset",
+            trigger: null,
+            whenBusy: null,
             message: "",
           },
         },
@@ -322,6 +326,8 @@ describe("WorkspaceHeartbeatModal", () => {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
             contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+            trigger: null,
+            whenBusy: null,
             message: LONG_HEARTBEAT_MESSAGE,
           },
         },
@@ -388,6 +394,134 @@ describe("WorkspaceHeartbeatModal", () => {
     });
   });
 
+  test("renders effective schedule defaults and flips the when-busy default label with the trigger draft", async () => {
+    settingsByWorkspaceId.set("ws-1", createHeartbeatSettings({ enabled: true }));
+
+    const view = render(
+      <WorkspaceHeartbeatModal
+        workspaceId="ws-1"
+        open={true}
+        onOpenChange={mock((_open: boolean) => undefined)}
+      />
+    );
+
+    const triggerField = (await waitFor(() =>
+      view.getByLabelText("Heartbeat trigger")
+    )) as HTMLSelectElement;
+    const whenBusyField = view.getByLabelText("Heartbeat when busy") as HTMLSelectElement;
+
+    // Unset settings render the effective defaults via the shared resolver.
+    expect(triggerField.value).toBe("idle");
+    expect(whenBusyField.value).toBe("");
+    expect(whenBusyField.options[whenBusyField.selectedIndex].textContent).toBe("Default (Skip)");
+
+    // Switching the trigger draft flips the unset when-busy default live: a user who never
+    // touched whenBusy gets turn-end automatically after switching to a fixed schedule.
+    fireEvent.change(triggerField, { target: { value: "interval" } });
+    await waitFor(() => {
+      expect(triggerField.value).toBe("interval");
+    });
+    expect(whenBusyField.value).toBe("");
+    expect(whenBusyField.options[whenBusyField.selectedIndex].textContent).toBe(
+      "Default (Send after turn)"
+    );
+
+    // Switching back to the idle option restores the skip default label.
+    fireEvent.change(triggerField, { target: { value: "idle" } });
+    await waitFor(() => {
+      expect(triggerField.value).toBe("idle");
+    });
+    expect(whenBusyField.options[whenBusyField.selectedIndex].textContent).toBe("Default (Skip)");
+  });
+
+  test("persists an explicit non-default schedule (interval + skip) distinct from unset", async () => {
+    settingsByWorkspaceId.set("ws-1", createHeartbeatSettings({ enabled: true }));
+
+    const view = render(
+      <WorkspaceHeartbeatModal
+        workspaceId="ws-1"
+        open={true}
+        onOpenChange={mock((_open: boolean) => undefined)}
+      />
+    );
+
+    const triggerField = (await waitFor(() =>
+      view.getByLabelText("Heartbeat trigger")
+    )) as HTMLSelectElement;
+    const whenBusyField = view.getByLabelText("Heartbeat when busy") as HTMLSelectElement;
+
+    fireEvent.change(triggerField, { target: { value: "interval" } });
+    // Explicit "skip" is distinct from the unset default (which would resolve to turn-end).
+    fireEvent.change(whenBusyField, { target: { value: "skip" } });
+    await waitFor(() => {
+      expect(whenBusyField.value).toBe("skip");
+    });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(saveCalls).toEqual([
+        {
+          workspaceId: "ws-1",
+          next: {
+            enabled: true,
+            intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+            trigger: "interval",
+            whenBusy: "skip",
+            message: "",
+          },
+        },
+      ]);
+    });
+  });
+
+  test("switching an explicit interval trigger back to idle saves trigger null (clear)", async () => {
+    settingsByWorkspaceId.set(
+      "ws-1",
+      createHeartbeatSettings({ enabled: true, trigger: "interval", whenBusy: "tool-end" })
+    );
+
+    const view = render(
+      <WorkspaceHeartbeatModal
+        workspaceId="ws-1"
+        open={true}
+        onOpenChange={mock((_open: boolean) => undefined)}
+      />
+    );
+
+    const triggerField = (await waitFor(() =>
+      view.getByLabelText("Heartbeat trigger")
+    )) as HTMLSelectElement;
+    const whenBusyField = view.getByLabelText("Heartbeat when busy") as HTMLSelectElement;
+    expect(triggerField.value).toBe("interval");
+    expect(whenBusyField.value).toBe("tool-end");
+    expect(whenBusyField.options[whenBusyField.selectedIndex].textContent).toBe("Send after step");
+
+    fireEvent.change(triggerField, { target: { value: "idle" } });
+    await waitFor(() => {
+      expect(triggerField.value).toBe("idle");
+    });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(saveCalls).toEqual([
+        {
+          workspaceId: "ws-1",
+          next: {
+            enabled: true,
+            intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+            // The idle option is never written explicitly — it clears back to unset.
+            trigger: null,
+            // The explicit when-busy draft is preserved independently of the trigger change.
+            whenBusy: "tool-end",
+            message: "",
+          },
+        },
+      ]);
+    });
+  });
+
   test("clearing the message removes the override instead of saving whitespace", async () => {
     settingsByWorkspaceId.set(
       "ws-1",
@@ -422,6 +556,8 @@ describe("WorkspaceHeartbeatModal", () => {
             enabled: true,
             intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
             contextMode: HEARTBEAT_DEFAULT_CONTEXT_MODE,
+            trigger: null,
+            whenBusy: null,
             message: "",
           },
         },

@@ -4035,6 +4035,10 @@ export const router = (authToken?: string) => {
               intervalMs: input.intervalMs,
               ...(input.message != null ? { message: input.message } : {}),
               ...(input.contextMode != null ? { contextMode: input.contextMode } : {}),
+              // trigger/whenBusy use key-presence semantics: a present key with null clears the
+              // persisted value back to unset (read-time default), an absent key preserves it.
+              ...("trigger" in input ? { trigger: input.trigger ?? null } : {}),
+              ...("whenBusy" in input ? { whenBusy: input.whenBusy ?? null } : {}),
             });
             if (!result.success) {
               return result;

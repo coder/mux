@@ -7,7 +7,7 @@ import type {
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
-import { formatHeartbeatInterval } from "@/constants/heartbeat";
+import { formatHeartbeatInterval, resolveHeartbeatSchedulePolicy } from "@/constants/heartbeat";
 import { requireWorkspaceId } from "./toolUtils";
 
 function hasProvided<K extends keyof HeartbeatToolArgs>(
@@ -30,7 +30,10 @@ function summarize(
   }
 
   const status = settings.enabled ? "enabled" : "disabled";
-  return `Heartbeat is ${status} for this workspace at ${formatHeartbeatInterval(settings.intervalMs)}.`;
+  // Mention the schedule shape only when it deviates from the default idle trigger.
+  const scheduleSuffix =
+    resolveHeartbeatSchedulePolicy(settings).trigger === "interval" ? " (fixed schedule)" : "";
+  return `Heartbeat is ${status} for this workspace at ${formatHeartbeatInterval(settings.intervalMs)}${scheduleSuffix}.`;
 }
 
 // Build the shared success payload for every heartbeat action so the get/set/unset branches
@@ -87,6 +90,15 @@ export const createHeartbeatTool: ToolFactory = (config) =>
         }
         if (hasProvided(args, "message")) {
           settingsUpdate.message = args.message;
+        }
+        // Strict-mode providers send explicit null for omitted fields, so the tool treats
+        // null as "not provided" (preserve). Individual fields cannot be cleared here;
+        // action='unset' clears everything.
+        if (hasProvided(args, "trigger")) {
+          settingsUpdate.trigger = args.trigger;
+        }
+        if (hasProvided(args, "whenBusy")) {
+          settingsUpdate.whenBusy = args.whenBusy;
         }
 
         const setResult = await heartbeatService.setHeartbeatSettings(workspaceId, settingsUpdate);

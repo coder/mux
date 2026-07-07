@@ -246,6 +246,86 @@ describe("WorkspaceService heartbeat settings", () => {
     });
   });
 
+  test("round-trips trigger and whenBusy and preserves them when a write omits the keys", async () => {
+    const setResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+      trigger: "interval",
+      whenBusy: "tool-end",
+    });
+    expect(setResult.success).toBe(true);
+    expect(service.getHeartbeatSettings(TEST_WORKSPACE_ID)).toMatchObject({
+      trigger: "interval",
+      whenBusy: "tool-end",
+    });
+
+    // An update without the keys preserves the persisted values.
+    const omitResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      intervalMs: 50 * 60 * 1000,
+    });
+    expect(omitResult.success).toBe(true);
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat;
+    expect(persistedHeartbeat).toMatchObject({
+      intervalMs: 50 * 60 * 1000,
+      trigger: "interval",
+      whenBusy: "tool-end",
+    });
+  });
+
+  test("explicit null clears trigger and whenBusy back to unset", async () => {
+    const setResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      trigger: "interval",
+      whenBusy: "skip",
+    });
+    expect(setResult.success).toBe(true);
+
+    const clearResult = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      trigger: null,
+      whenBusy: null,
+    });
+    expect(clearResult.success).toBe(true);
+
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat;
+    expect(persistedHeartbeat).toBeDefined();
+    expect(Object.keys(persistedHeartbeat!)).not.toContain("trigger");
+    expect(Object.keys(persistedHeartbeat!)).not.toContain("whenBusy");
+  });
+
+  test("unset trigger/whenBusy are never materialized into config by unrelated writes", async () => {
+    const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+    });
+    expect(result.success).toBe(true);
+
+    const persistedHeartbeat = currentProjectsConfig.projects
+      .get(TEST_PROJECT_PATH)
+      ?.workspaces.at(0)?.heartbeat;
+    expect(persistedHeartbeat).toBeDefined();
+    expect(Object.keys(persistedHeartbeat!)).not.toContain("trigger");
+    expect(Object.keys(persistedHeartbeat!)).not.toContain("whenBusy");
+    const readBack = service.getHeartbeatSettings(TEST_WORKSPACE_ID);
+    expect(readBack).not.toBeNull();
+    expect(Object.keys(readBack!)).not.toContain("trigger");
+    expect(Object.keys(readBack!)).not.toContain("whenBusy");
+  });
+
+  test("rejects invalid trigger and whenBusy values", async () => {
+    const invalidTrigger = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      trigger: "hourly" as never,
+    });
+    expect(invalidTrigger.success).toBe(false);
+
+    const invalidWhenBusy = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      whenBusy: "interrupt" as never,
+    });
+    expect(invalidWhenBusy.success).toBe(false);
+  });
+
   test("persists an explicit heartbeat context mode", async () => {
     const result = await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
       enabled: true,
