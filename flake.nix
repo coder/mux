@@ -111,7 +111,7 @@
             # git describe/rev-parse fall back to "unknown". Feed the revision
             # the flake already resolved so the version stamp is accurate.
             export RELEASE_TAG="${version}"
-            export GIT_COMMIT="${builtins.substring 0 12 version}"
+            export MUX_GIT_COMMIT="${builtins.substring 0 12 version}"
             make SHELL=${pkgs.bash}/bin/bash build
           '';
 

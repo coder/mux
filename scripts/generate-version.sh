@@ -11,9 +11,11 @@ VERSION_FILE="src/version.ts"
 TMP_FILE=$(mktemp)
 trap 'rm -f "$TMP_FILE"' EXIT
 
-# Allow the environment to override GIT_COMMIT (e.g. Nix builds where .git is
+# MUX_GIT_COMMIT overrides the commit stamp (e.g. Nix builds where .git is
 # unavailable in the sandbox but the revision is known to the flake).
-GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
+# Namespaced deliberately: plain GIT_COMMIT is exported ambiently by some CI
+# systems (Jenkins) and could pair a stale commit with HEAD's describe.
+GIT_COMMIT="${MUX_GIT_COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")}"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 if [ -n "${RELEASE_TAG:-}" ]; then
