@@ -618,6 +618,28 @@ function compareStringsAsc(a: string, b: string): number {
 }
 
 /**
+ * Pinned rows float above unpinned ones in stable pin order (pinnedAt asc: new
+ * pins append at the bottom of the pinned block); recency is intentionally
+ * ignored for pinned rows so activity never reshuffles them. Returns the pinned
+ * placement delta, or null when both rows share the same pinned status so the
+ * caller can fall through to its own tie-breakers (recency, stable order, ...).
+ */
+function comparePinnedPlacement(
+  a: FrontendWorkspaceMetadata,
+  b: FrontendWorkspaceMetadata
+): number | null {
+  const aPinned = isWorkspacePinned(a);
+  const bPinned = isWorkspacePinned(b);
+  if (aPinned !== bPinned) {
+    return aPinned ? -1 : 1;
+  }
+  if (aPinned && bPinned) {
+    return comparePinnedOrder(a, b);
+  }
+  return null;
+}
+
+/**
  * Build a map of project paths to sorted workspace metadata lists.
  * Includes both persisted workspaces (from config) and workspaces from
  * metadata that haven't yet appeared in config (handles race condition
@@ -662,16 +684,9 @@ export function buildSortedWorkspacesByProject(
   // flip ordering when multiple workspaces have equal recency.
   for (const metadataList of result.values()) {
     metadataList.sort((a, b) => {
-      // Pinned chats float above unpinned ones in stable pin order (pinnedAt asc:
-      // new pins append at the bottom of the pinned block). Recency is intentionally
-      // ignored for pinned rows so activity never reshuffles them.
-      const aPinned = isWorkspacePinned(a);
-      const bPinned = isWorkspacePinned(b);
-      if (aPinned !== bPinned) {
-        return aPinned ? -1 : 1;
-      }
-      if (aPinned && bPinned) {
-        return comparePinnedOrder(a, b);
+      const pinnedPlacement = comparePinnedPlacement(a, b);
+      if (pinnedPlacement !== null) {
+        return pinnedPlacement;
       }
 
       const aTimestamp = workspaceRecency[a.id] ?? 0;
@@ -718,14 +733,9 @@ export function buildSortedWorkspacesByProject(
 export function orderMultiProjectSectionRows(
   rows: FrontendWorkspaceMetadata[]
 ): FrontendWorkspaceMetadata[] {
-  const sorted = rows.slice().sort((a, b) => {
-    const aPinned = isWorkspacePinned(a);
-    const bPinned = isWorkspacePinned(b);
-    if (aPinned !== bPinned) {
-      return aPinned ? -1 : 1;
-    }
-    return aPinned && bPinned ? comparePinnedOrder(a, b) : 0;
-  });
+  // Unpinned rows keep their collected relative order (comparePinnedPlacement
+  // returns null -> 0, and Array.sort is stable).
+  const sorted = rows.slice().sort((a, b) => comparePinnedPlacement(a, b) ?? 0);
   return flattenWorkspaceTree(sorted);
 }
 
