@@ -1140,6 +1140,7 @@ describe("HeartbeatService", () => {
       skipAutoResumeReset?: boolean;
       requireIdle?: boolean;
       queueDedupeKey?: string;
+      yieldToQueuedMessages?: boolean;
     }
     type HeartbeatQueueSendMessageCall = [
       workspaceId: string,
@@ -1203,6 +1204,8 @@ describe("HeartbeatService", () => {
       expect(sendOptions.muxMetadata?.type).toBe("heartbeat-request");
       expect(dispatchOptions?.requireIdle).toBeUndefined();
       expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
+      // A user send racing sendMessage's internal awaits owns the queue slot.
+      expect(dispatchOptions?.yieldToQueuedMessages).toBe(true);
       expect(dispatchOptions?.synthetic).toBe(true);
       expect(dispatchOptions?.skipAutoResumeReset).toBe(true);
     });
@@ -1370,6 +1373,7 @@ describe("HeartbeatService", () => {
       expect(sendOptions.queueDispatchMode).toBe("turn-end");
       expect(dispatchOptions?.requireIdle).toBeUndefined();
       expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
+      expect(dispatchOptions?.yieldToQueuedMessages).toBe(true);
     });
 
     test("busy session with the default skip policy still throws", async () => {

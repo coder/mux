@@ -7307,6 +7307,14 @@ export class WorkspaceService extends EventEmitter {
       requireIdle?: boolean;
       /** Coalescing for queued sends: drop the message when the same key is already queued. */
       queueDedupeKey?: string;
+      /**
+       * For queued sends: quietly drop the message (success) when other messages are already
+       * queued at enqueue time. Scheduled heartbeats use this so a user send racing the awaits
+       * in this method keeps queue ownership — MessageQueue dispatches with the latest queued
+       * options, so merging a heartbeat in would run the user's queued turn with the
+       * heartbeat's model/agent.
+       */
+      yieldToQueuedMessages?: boolean;
     }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
@@ -7466,6 +7474,17 @@ export class WorkspaceService extends EventEmitter {
               error: getErrorMessage(error),
             });
           }
+        }
+
+        // Re-check queue emptiness at the enqueue point: the caller's decision may be stale
+        // by now (the pricing/settings awaits above yield the event loop, so a user send can
+        // queue first). Everything from here to queueMessage is synchronous, so this check
+        // cannot go stale again.
+        if (internal?.yieldToQueuedMessages === true && session.hasQueuedMessages()) {
+          log.info("sendMessage: yielded to messages queued during send preparation", {
+            workspaceId,
+          });
+          return Ok(undefined);
         }
 
         // Background any foreground task waits so the queued message can dispatch promptly.
@@ -9750,6 +9769,9 @@ export class WorkspaceService extends EventEmitter {
         // The dedupe key guards the opposite race: a heartbeat queued mid-flight coalesces
         // instead of double-queueing.
         queueDedupeKey: HEARTBEAT_QUEUE_DEDUPE_KEY,
+        // And if a user send queued during this method's awaits, it owns the slot — the
+        // caller's queue-emptiness check is re-verified at the enqueue point.
+        yieldToQueuedMessages: true,
       }
     );
 
@@ -9782,10 +9804,11 @@ export class WorkspaceService extends EventEmitter {
         synthetic: true,
         // whenBusy "skip": if the workspace became active after eligibility checks, skip
         // instead of queueing stale maintenance work for later. Queue modes instead queue on
-        // that race, deduped against an already-pending heartbeat.
+        // that race, deduped against an already-pending heartbeat and yielding to any user
+        // input that queued first (queued messages own the slot).
         ...(whenBusy === "skip"
           ? { requireIdle: true }
-          : { queueDedupeKey: HEARTBEAT_QUEUE_DEDUPE_KEY }),
+          : { queueDedupeKey: HEARTBEAT_QUEUE_DEDUPE_KEY, yieldToQueuedMessages: true }),
       }
     );
 

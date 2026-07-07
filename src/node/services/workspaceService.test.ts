@@ -3646,6 +3646,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
   let cleanupHistory: () => Promise<void>;
   let fakeSession: {
     isBusy: ReturnType<typeof mock>;
+    hasQueuedMessages: ReturnType<typeof mock>;
     queueMessage: ReturnType<typeof mock>;
     sendMessage: ReturnType<typeof mock>;
     resumeStream: ReturnType<typeof mock>;
@@ -3716,6 +3717,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
 
     fakeSession = {
       isBusy: mock(() => true),
+      hasQueuedMessages: mock(() => false),
       queueMessage: mock(() => "tool-end" as const),
       sendMessage: mock(() => Promise.resolve(Ok(undefined))),
       resumeStream: mock(() => Promise.resolve(Ok({ started: true }))),
@@ -4035,6 +4037,40 @@ describe("WorkspaceService sendMessage status clearing", () => {
       askUserQuestionManager.cancel("test-workspace", "tool-q1", "test cleanup");
       await settled;
     }
+  });
+
+  // The heartbeat caller's queue-emptiness check happens before sendMessage's internal
+  // awaits (pricing gate, settings persistence), so a user send can queue in that window.
+  // yieldToQueuedMessages re-checks at the enqueue point: queued messages own the slot.
+  test("yieldToQueuedMessages drops the send when messages queued during preparation", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+    fakeSession.hasQueuedMessages.mockReturnValue(true);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "[Heartbeat] scheduled check-in",
+      { model: "openai:gpt-4o-mini", agentId: "exec", queueDispatchMode: "turn-end" },
+      { synthetic: true, skipAutoResumeReset: true, yieldToQueuedMessages: true }
+    );
+
+    // Quiet success: the slot is consumed, but nothing is enqueued over the user's message.
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).not.toHaveBeenCalled();
+  });
+
+  test("yieldToQueuedMessages still queues into an empty queue", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+    fakeSession.hasQueuedMessages.mockReturnValue(false);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "[Heartbeat] scheduled check-in",
+      { model: "openai:gpt-4o-mini", agentId: "exec", queueDispatchMode: "turn-end" },
+      { synthetic: true, skipAutoResumeReset: true, yieldToQueuedMessages: true }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalled();
   });
 
   test("non-synthetic queued sends cancel a pending interactive question", async () => {
