@@ -4,6 +4,7 @@ import {
   formatDaysThreshold,
   AGE_THRESHOLDS_DAYS,
   buildSortedWorkspacesByProject,
+  orderMultiProjectSectionRows,
   computeWorkspaceDepthMap,
   computeAgentRowRenderMeta,
   computeDelegatedActivityByWorkspaceId,
@@ -708,6 +709,42 @@ describe("buildSortedWorkspacesByProject pinning", () => {
     const result = buildSortedWorkspacesByProject(projects, metadata, { fresh: now });
 
     expect(result.get("/project/a")?.map((w) => w.id)).toEqual(["fresh", "stale"]);
+  });
+});
+
+describe("orderMultiProjectSectionRows", () => {
+  it("floats pinned rows to the top in pinnedAt order and keeps unpinned relative order", () => {
+    const rows = [
+      createWorkspace("free-1", "/project/a"),
+      { ...createWorkspace("pin-late", "/project/b"), pinnedAt: "2026-01-02T00:00:00.000Z" },
+      createWorkspace("free-2", "/project/c"),
+      { ...createWorkspace("pin-early", "/project/a"), pinnedAt: "2026-01-01T00:00:00.000Z" },
+    ];
+
+    expect(orderMultiProjectSectionRows(rows).map((w) => w.id)).toEqual([
+      "pin-early",
+      "pin-late",
+      "free-1",
+      "free-2",
+    ]);
+  });
+
+  it("keeps sub-agent children attached under their pinned parent", () => {
+    const parent = {
+      ...createWorkspace("parent", "/project/b"),
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const child = createWorkspace("child", {
+      projectPath: "/project/b",
+      parentWorkspaceId: "parent",
+    });
+    const other = createWorkspace("other", "/project/a");
+
+    expect(orderMultiProjectSectionRows([other, child, parent]).map((w) => w.id)).toEqual([
+      "parent",
+      "child",
+      "other",
+    ]);
   });
 });
 

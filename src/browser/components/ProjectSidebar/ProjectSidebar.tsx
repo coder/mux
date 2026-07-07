@@ -59,6 +59,7 @@ import {
   getTierKey,
   getSectionExpandedKey,
   getSectionTierKey,
+  orderMultiProjectSectionRows,
   resolveEffectiveSectionId,
   isRunningOrStartingTaskStatus,
   computeRowMetaForVisibleNodes,
@@ -1709,7 +1710,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     singleProjectWorkspacesByProject.set(projectPath, singleProjectWorkspaces);
   }
 
-  const multiProjectWorkspaces = Array.from(multiProjectWorkspacesById.values());
+  // Re-sort across primary-project buckets so pinned rows form one correctly
+  // ordered block (cross-primary pinned reorders would otherwise snap back).
+  const multiProjectWorkspaces = orderMultiProjectSectionRows(
+    Array.from(multiProjectWorkspacesById.values())
+  );
   // Multi-project rows should share the same completed-subagent chevron behavior as
   // regular workspace rows, so reuse the same visibility + metadata calculations.
   const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectWorkspaces);

@@ -3,7 +3,11 @@ import type { ProjectConfig } from "@/common/types/project";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { isWorkspacePinned, recomposePinnedOrder } from "@/common/utils/pin";
 import { getSubProjectsForParent } from "@/common/utils/subProjects";
-import { partitionWorkspacesBySection, resolveEffectiveSectionId } from "./workspaceFiltering";
+import {
+  orderMultiProjectSectionRows,
+  partitionWorkspacesBySection,
+  resolveEffectiveSectionId,
+} from "./workspaceFiltering";
 
 /** Single definitions for the reorder unions shared by DnD, keybind, and palette code. */
 export type PinnedMoveDirection = "up" | "down";
@@ -22,7 +26,12 @@ export interface PinnedBlock {
   blockIds: string[];
 }
 
-/** Multi-project rows render as one flat section regardless of which bucket they came from. */
+/**
+ * Multi-project rows render as one flat section regardless of which bucket
+ * they came from. Rows are re-sorted with the same helper the sidebar uses so
+ * the resolved block order always matches the rendered order, even when rows
+ * were collected from different primary-project buckets.
+ */
 function collectMultiProjectRows(
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>
 ): FrontendWorkspaceMetadata[] {
@@ -34,7 +43,7 @@ function collectMultiProjectRows(
       }
     }
   }
-  return Array.from(byId.values());
+  return orderMultiProjectSectionRows(Array.from(byId.values()));
 }
 
 /**

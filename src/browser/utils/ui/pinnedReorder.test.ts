@@ -107,6 +107,35 @@ describe("locatePinnedBlock", () => {
     const block = locatePinnedBlock(m1, sorted, new Map());
     expect(block).toEqual({ fullOrder: ["m1", "m2"], blockIds: ["m1", "m2"] });
   });
+
+  it("orders the multi-project block by pinnedAt across primary-project buckets", () => {
+    // Multi-project rows can land under their primary project's bucket in the
+    // sorted map. The block must follow global pinnedAt order (what the
+    // Multi-Project section renders), not bucket iteration order, or a
+    // cross-primary drop would compute a stale block and snap back.
+    const multiProjects = [
+      { projectPath: "/test/a", projectName: "a" },
+      { projectPath: "/test/b", projectName: "b" },
+    ];
+    const mA = createWorkspace("mA", {
+      pinnedAt: "2026-01-01T00:00:02.000Z",
+      projectPath: "/test/a",
+      projects: multiProjects,
+    });
+    const mB = createWorkspace("mB", {
+      pinnedAt: "2026-01-01T00:00:01.000Z",
+      projectPath: "/test/b",
+      projects: multiProjects,
+    });
+    // Bucket order lists A's rows before B's, but B's pin is older.
+    const sorted = new Map([
+      ["/test/a", [mA]],
+      ["/test/b", [mB]],
+    ]);
+
+    const block = locatePinnedBlock(mA, sorted, new Map());
+    expect(block).toEqual({ fullOrder: ["mB", "mA"], blockIds: ["mB", "mA"] });
+  });
 });
 
 describe("computePinnedMoveOrder", () => {
