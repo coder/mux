@@ -1463,6 +1463,98 @@ describe("WorkspaceContext", () => {
       expect(state.pendingNewWorkspaceProject).toBeNull();
     });
   });
+
+  describe("reorderPinnedWorkspaces", () => {
+    // Three pinned chats in one project; pinnedAt ascending = a, b, c.
+    const T1 = "2026-01-01T00:00:00.000Z";
+    const T2 = "2026-01-01T00:00:01.000Z";
+    const T3 = "2026-01-01T00:00:02.000Z";
+    const pinnedWorkspaces = (): FrontendWorkspaceMetadata[] => [
+      createProjectWorkspaceMetadata("ws-a", "/alpha", { pinnedAt: T1 }),
+      createProjectWorkspaceMetadata("ws-b", "/alpha", { pinnedAt: T2 }),
+      createProjectWorkspaceMetadata("ws-c", "/alpha", { pinnedAt: T3 }),
+    ];
+    type ReorderResult = { success: true; data: undefined } | { success: false; error: string };
+    const createDeferred = () => {
+      let resolve!: (value: ReorderResult) => void;
+      const promise = new Promise<ReorderResult>((res) => {
+        resolve = res;
+      });
+      return { promise, resolve };
+    };
+    const pinnedAtById = (ctx: () => WorkspaceContext): Record<string, string | undefined> => ({
+      "ws-a": ctx().workspaceMetadata.get("ws-a")?.pinnedAt,
+      "ws-b": ctx().workspaceMetadata.get("ws-b")?.pinnedAt,
+      "ws-c": ctx().workspaceMetadata.get("ws-c")?.pinnedAt,
+    });
+
+    test("failed reorder reverts the optimistic pinnedAt values", async () => {
+      const deferred = createDeferred();
+      createMockAPI({
+        workspace: {
+          list: () => Promise.resolve(pinnedWorkspaces()),
+          reorderPinned: () => deferred.promise,
+        },
+      });
+
+      const ctx = await setup();
+      await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(3));
+
+      let request!: Promise<{ success: boolean; error?: string }>;
+      act(() => {
+        request = ctx().reorderPinnedWorkspaces(["ws-b", "ws-a", "ws-c"]);
+      });
+      // Optimistic re-deal of the existing pool: b<a<c.
+      expect(pinnedAtById(ctx)).toEqual({ "ws-a": T2, "ws-b": T1, "ws-c": T3 });
+
+      deferred.resolve({ success: false, error: "boom" });
+      await act(async () => {
+        expect(await request).toEqual({ success: false, error: "boom" });
+      });
+
+      expect(pinnedAtById(ctx)).toEqual({ "ws-a": T1, "ws-b": T2, "ws-c": T3 });
+    });
+
+    test("stale reorder failure does not clobber a newer reorder's state", async () => {
+      const first = createDeferred();
+      const second = createDeferred();
+      let calls = 0;
+      createMockAPI({
+        workspace: {
+          list: () => Promise.resolve(pinnedWorkspaces()),
+          reorderPinned: () => (calls++ === 0 ? first.promise : second.promise),
+        },
+      });
+
+      const ctx = await setup();
+      await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(3));
+
+      let request1!: Promise<{ success: boolean; error?: string }>;
+      let request2!: Promise<{ success: boolean; error?: string }>;
+      act(() => {
+        request1 = ctx().reorderPinnedWorkspaces(["ws-b", "ws-a", "ws-c"]);
+      });
+      act(() => {
+        request2 = ctx().reorderPinnedWorkspaces(["ws-c", "ws-b", "ws-a"]);
+      });
+      // Second reorder's optimistic re-deal on top of the first: c<b<a.
+      const afterSecond = pinnedAtById(ctx);
+      expect(afterSecond).toEqual({ "ws-a": T3, "ws-b": T2, "ws-c": T1 });
+
+      // Out-of-order completion: #2 succeeds, then the stale #1 fails. Its
+      // revert must not roll entries back underneath the newer reorder.
+      second.resolve({ success: true, data: undefined });
+      await act(async () => {
+        await request2;
+      });
+      first.resolve({ success: false, error: "boom" });
+      await act(async () => {
+        await request1;
+      });
+
+      expect(pinnedAtById(ctx)).toEqual(afterSecond);
+    });
+  });
 });
 
 async function setup() {
@@ -1582,6 +1674,14 @@ function createMockAPI(options: MockAPIOptions = {}) {
     ),
     updateTitle: mock(
       options.workspace?.updateTitle ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
+    setPinned: mock(
+      options.workspace?.setPinned ??
+        (() => Promise.resolve({ success: true as const, data: undefined }))
+    ),
+    reorderPinned: mock(
+      options.workspace?.reorderPinned ??
         (() => Promise.resolve({ success: true as const, data: undefined }))
     ),
     getInfo: mock(options.workspace?.getInfo ?? (() => Promise.resolve(null))),

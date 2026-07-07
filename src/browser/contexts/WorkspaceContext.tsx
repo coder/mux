@@ -1534,6 +1534,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       if (!api) return { success: false, error: "API not connected" };
 
       let previousPinnedAtById: Map<string, string> | undefined;
+      let optimisticPinnedAtById: Map<string, string> | undefined;
       setWorkspaceMetadata((prev) => {
         const currentPinnedAtById = new Map<string, string>();
         for (const id of workspaceIds) {
@@ -1545,28 +1546,37 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         if (changes.size === 0) return prev;
 
         const snapshot = new Map<string, string>();
+        const applied = new Map<string, string>();
         const next = new Map(prev);
         for (const [id, pinnedAt] of changes) {
           const meta = prev.get(id);
           const previousPinnedAt = currentPinnedAtById.get(id);
           if (!meta || previousPinnedAt === undefined) continue;
           snapshot.set(id, previousPinnedAt);
+          applied.set(id, pinnedAt);
           next.set(id, { ...meta, pinnedAt });
         }
         previousPinnedAtById = snapshot;
+        optimisticPinnedAtById = applied;
         return next;
       });
       const revert = () => {
         const snapshot = previousPinnedAtById;
-        if (!snapshot) return;
+        const applied = optimisticPinnedAtById;
+        if (!snapshot || !applied) return;
         setWorkspaceMetadata((prev) => {
+          let changed = false;
           const next = new Map(prev);
           for (const [id, pinnedAt] of snapshot) {
             const meta = prev.get(id);
-            if (!meta) continue;
+            // Unawaited reorders can interleave; only roll back entries this
+            // request still owns (current value == our optimistic value).
+            // Otherwise a stale failure would clobber a newer reorder's state.
+            if (!meta || meta.pinnedAt !== applied.get(id)) continue;
             next.set(id, { ...meta, pinnedAt });
+            changed = true;
           }
-          return next;
+          return changed ? next : prev;
         });
       };
 
