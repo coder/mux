@@ -7,6 +7,7 @@ import {
   DetailSection,
 } from "@/browser/features/Tools/Shared/ToolPrimitives";
 import { useAPI } from "@/browser/contexts/API";
+import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
 import {
   appendLiveBashOutputChunk,
   type LiveBashOutputInternal,
@@ -47,10 +48,38 @@ export const BackgroundBashOutputDialog: React.FC<BackgroundBashOutputDialogProp
         </DetailSection>
       )}
 
+      <BackgroundBashMonitorSection workspaceId={props.workspaceId} processId={props.processId} />
+
       <BackgroundBashOutputViewer workspaceId={props.workspaceId} processId={props.processId} />
     </DialogContent>
   </Dialog>
 );
+
+/**
+ * Live monitor info (wake-on-match regex + match count) for the process, looked up
+ * from the store so it stays current while the dialog is open. Rendered as its own
+ * component (mounted only while the dialog is open) so tool cards that keep the
+ * dialog closed don't hold a background-bash subscription.
+ */
+const BackgroundBashMonitorSection: React.FC<{ workspaceId: string; processId: string }> = (
+  props
+) => {
+  const processes = useBackgroundProcesses(props.workspaceId);
+  const monitor = processes.find((p) => p.id === props.processId)?.monitor;
+
+  if (!monitor) return null;
+
+  return (
+    <DetailSection>
+      <DetailLabel>Monitor</DetailLabel>
+      <DetailContent className="px-2 py-1.5">
+        {monitor.filter_exclude ? "waking on lines not matching" : "waking on lines matching"} /
+        {monitor.filter}/ · {monitor.totalMatches} match{monitor.totalMatches === 1 ? "" : "es"}
+        {monitor.stopped ? " · stopped" : ""}
+      </DetailContent>
+    </DetailSection>
+  );
+};
 
 const BackgroundBashOutputViewer: React.FC<{ workspaceId: string; processId: string }> = (
   props
