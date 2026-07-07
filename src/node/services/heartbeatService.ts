@@ -221,20 +221,28 @@ export class HeartbeatService {
         configuredWorkspaceIds.add(workspaceId);
         const trackingIntervalMs = this.getTrackingIntervalMsForWorkspace(workspace, config);
         if (trackingIntervalMs != null) {
+          const trigger = resolveHeartbeatSchedulePolicy(workspace.heartbeat).trigger;
           const nextEligibleAt = this.nextEligibleAtByWorkspaceId.has(workspaceId)
             ? now + trackingIntervalMs
-            : this.deriveInitialNextEligibleAt(
-                now,
-                workspaceId,
-                trackingIntervalMs,
-                activitySnapshots.get(workspaceId)
-              );
-          this.ensureTrackedWorkspace(
-            workspaceId,
-            nextEligibleAt,
-            trackingIntervalMs,
-            resolveHeartbeatSchedulePolicy(workspace.heartbeat).trigger
-          );
+            : trigger === "interval"
+              ? await this.deriveInitialIntervalNextEligibleAt(
+                  now,
+                  workspaceId,
+                  trackingIntervalMs,
+                  activitySnapshots.get(workspaceId)
+                )
+              : this.deriveInitialNextEligibleAt(
+                  now,
+                  workspaceId,
+                  trackingIntervalMs,
+                  activitySnapshots.get(workspaceId)
+                );
+          // Re-check after the potential await above: a stop()/restart mid-derivation
+          // must not re-track a stale entry.
+          if (this.lifecycleVersion !== lifecycleVersion) {
+            return;
+          }
+          this.ensureTrackedWorkspace(workspaceId, nextEligibleAt, trackingIntervalMs, trigger);
           continue;
         }
 
@@ -250,6 +258,58 @@ export class HeartbeatService {
         this.purgeWorkspace(workspaceId, "config_resync_missing");
       }
     }
+  }
+
+  /**
+   * Initial deadline for fixed-interval schedules after a restart/resync-add.
+   *
+   * Fixed schedules are activity-independent, so re-anchoring them to activity recency
+   * would let a user interaction just before a restart push the next firing out (an edit
+   * at 10:25 must not move a 10:30 firing to 10:55). The last firing is already persisted
+   * as the heartbeat-request user message in chat history — anchor there: in-window
+   * schedules keep their cadence and overdue ones fire once immediately (max with now,
+   * never a burst). Workspaces with no recorded firing (never fired, or the record was
+   * compacted away) fall back to the activity-recency approximation used by idle triggers.
+   */
+  private async deriveInitialIntervalNextEligibleAt(
+    now: number,
+    workspaceId: string,
+    trackingIntervalMs: number,
+    activity: WorkspaceActivitySnapshot | undefined
+  ): Promise<number> {
+    assert(
+      Number.isFinite(now),
+      "HeartbeatService.deriveInitialIntervalNextEligibleAt requires a finite timestamp"
+    );
+
+    try {
+      const history = await this.workspaceService.getChatHistory(workspaceId);
+      for (let i = history.length - 1; i >= 0; i -= 1) {
+        const message = history[i];
+        if (message?.role !== "user") {
+          continue;
+        }
+        if (message.metadata?.muxMetadata?.type !== "heartbeat-request") {
+          continue;
+        }
+
+        const firedAt = message.metadata.timestamp;
+        // Newest firing record wins; an unusable timestamp (missing/overflowed/future
+        // clock skew) falls through to the recency fallback rather than scanning older,
+        // even staler records.
+        if (typeof firedAt !== "number" || !Number.isFinite(firedAt) || firedAt > now) {
+          break;
+        }
+        return Math.max(firedAt + trackingIntervalMs, now);
+      }
+    } catch (error) {
+      log.warn("HeartbeatService: failed to derive interval anchor from history", {
+        workspaceId,
+        error,
+      });
+    }
+
+    return this.deriveInitialNextEligibleAt(now, workspaceId, trackingIntervalMs, activity);
   }
 
   private deriveInitialNextEligibleAt(

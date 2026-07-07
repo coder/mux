@@ -1569,6 +1569,78 @@ describe("HeartbeatService", () => {
       expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(recency + intervalMs);
     });
 
+    // Fixed schedules are activity-independent: a restart must re-anchor them to the last
+    // persisted heartbeat firing (the heartbeat-request user message), not to activity
+    // recency — otherwise interacting just before a restart delays the fixed cadence.
+    test("rebuilds an interval restart deadline from the last persisted firing, not activity", async () => {
+      const internals = getInternals();
+      const intervalMs = 30 * 60 * 1000;
+      const now = 4 * 60 * 60 * 1000;
+      const lastFiredAt = now - 10 * 60 * 1000; // next slot: 20 minutes from now
+      const recency = now - 60 * 1000; // fresh user interaction just before restart
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs, trigger: "interval" } }),
+      ]);
+      getAllSnapshotsMock.mockResolvedValueOnce(
+        makeSnapshotMap([[testWorkspaceId, makeSnapshot({ recency, streaming: false })]])
+      );
+      getChatHistoryMock.mockResolvedValueOnce([
+        ...makeCompletedTurnHistory(),
+        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+          timestamp: lastFiredAt,
+          muxMetadata: { type: "heartbeat-request" },
+        }),
+        createMuxMessage("hb-1-reply", "assistant", "All good", { timestamp: lastFiredAt + 1 }),
+      ]);
+
+      await internals.resyncFromConfig(now);
+
+      // Anchored at the firing, not at recency + interval (which would be ~29 min later).
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(
+        lastFiredAt + intervalMs
+      );
+    });
+
+    test("an overdue persisted interval firing becomes eligible immediately, without bursts", async () => {
+      const internals = getInternals();
+      const intervalMs = 30 * 60 * 1000;
+      const now = 4 * 60 * 60 * 1000;
+      const lastFiredAt = now - 3 * intervalMs; // downtime spanned three slots
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs, trigger: "interval" } }),
+      ]);
+      getChatHistoryMock.mockResolvedValueOnce([
+        ...makeCompletedTurnHistory(),
+        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+          timestamp: lastFiredAt,
+          muxMetadata: { type: "heartbeat-request" },
+        }),
+      ]);
+
+      await internals.resyncFromConfig(now);
+
+      // One catch-up firing at now — never a backlog of missed slots.
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(now);
+    });
+
+    test("interval restart falls back to activity recency when no firing is on record", async () => {
+      const internals = getInternals();
+      const intervalMs = 30 * 60 * 1000;
+      const now = 4 * 60 * 60 * 1000;
+      const recency = now - 5 * 60 * 1000;
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs, trigger: "interval" } }),
+      ]);
+      getAllSnapshotsMock.mockResolvedValueOnce(
+        makeSnapshotMap([[testWorkspaceId, makeSnapshot({ recency, streaming: false })]])
+      );
+      // makeCompletedTurnHistory has no heartbeat-request message.
+
+      await internals.resyncFromConfig(now);
+
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(recency + intervalMs);
+    });
+
     test("makes overdue workspaces eligible on the first post-start check", async () => {
       service.start();
       const internals = getInternals();
