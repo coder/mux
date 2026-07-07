@@ -9,14 +9,18 @@ import {
   appendEvents,
   CHAT_FILE_NAME,
   clearWorkspaceAnalyticsState,
+  getCurrentPricingFingerprint,
   ingestWorkspace,
   parseWorkspaceFromDisk,
   readPersistedWorkspaceHeadSignature,
+  readStoredPricingFingerprint,
   rebuildAll,
+  storePricingFingerprint,
 } from "./etl";
 import {
   CREATE_DELEGATION_ROLLUPS_TABLE_SQL,
   CREATE_EVENTS_TABLE_SQL,
+  CREATE_INGEST_META_TABLE_SQL,
   CREATE_WATERMARK_TABLE_SQL,
 } from "./schemaSql";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -189,6 +193,7 @@ async function createTestConn(
   }
   await conn.run(CREATE_WATERMARK_TABLE_SQL);
   await conn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
+  await conn.run(CREATE_INGEST_META_TABLE_SQL);
 
   return conn;
 }
@@ -1177,7 +1182,9 @@ describe("ingestArchivedSubagentTranscripts", () => {
     await clearWorkspaceAnalyticsState(conn, childWorkspaceId);
     expect(await queryEventCount(conn, childWorkspaceId)).toBe(0);
 
-    await bumpChatMtime(parentSessionDir);
+    // Recovery must NOT require the parent's own chat files to change: child
+    // deletion archives the transcript without touching the parent's chat, so
+    // any subsequent ingest pass of the parent restores the child's rows.
     await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
 
     expect(await queryEventCount(conn, childWorkspaceId)).toBe(1);
@@ -1351,5 +1358,20 @@ describe("ingestDelegationRollups", () => {
     expect(parseInteger(rows[0].reasoning_tokens, "reasoning_tokens")).toBe(0);
     expect(parseInteger(rows[0].cached_tokens, "cached_tokens")).toBe(0);
     expect(parseInteger(rows[0].cache_create_tokens, "cache_create_tokens")).toBe(0);
+  });
+});
+
+describe("pricing fingerprint", () => {
+  test("round-trips through ingest_meta and starts unset", async () => {
+    const conn = await createTestConn();
+
+    expect(await readStoredPricingFingerprint(conn)).toBeNull();
+
+    await storePricingFingerprint(conn);
+    expect(await readStoredPricingFingerprint(conn)).toBe(getCurrentPricingFingerprint());
+
+    // Idempotent upsert: storing again keeps a single row with the same value.
+    await storePricingFingerprint(conn);
+    expect(await readStoredPricingFingerprint(conn)).toBe(getCurrentPricingFingerprint());
   });
 });

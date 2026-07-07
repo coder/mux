@@ -8,6 +8,7 @@ function makeInput(overrides: Partial<SyncPlanInput> = {}): SyncPlanInput {
     knownWorkspaceIds: new Set(),
     watermarkWorkspaceIds: new Set(),
     hasAnyWatermarkAtOrAboveZero: false,
+    pricingFingerprintChanged: false,
     ...overrides,
   };
 }
@@ -189,6 +190,43 @@ describe("decideSyncPlan", () => {
         )
       ).toEqual({
         action: "full_rebuild",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns full_rebuild to reprice existing events when pricing tables changed", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 10,
+            watermarkCount: 2,
+            knownWorkspaceIds: new Set(["ws-1", "ws-2"]),
+            watermarkWorkspaceIds: new Set(["ws-1", "ws-2"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+            pricingFingerprintChanged: true,
+          })
+        )
+      ).toEqual({
+        action: "full_rebuild",
+        workspaceIdsToIngest: [],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("does not rebuild for a pricing change when no events exist", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 0,
+            watermarkCount: 1,
+            knownWorkspaceIds: new Set(["ws-1"]),
+            watermarkWorkspaceIds: new Set(["ws-1"]),
+            pricingFingerprintChanged: true,
+          })
+        )
+      ).toEqual({
+        action: "noop",
         workspaceIdsToIngest: [],
         workspaceIdsToPurge: [],
       });

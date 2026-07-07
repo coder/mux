@@ -21,6 +21,7 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 import type { AIService } from "./aiService";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { HistoryService } from "./historyService";
+import type { SessionUsageService } from "./sessionUsageService";
 import type { TokenizerService } from "./tokenizerService";
 import type { WindowService } from "./windowService";
 import type { WorkspaceService } from "./workspaceService";
@@ -34,6 +35,11 @@ export interface AgentStatusServiceOptions {
   clock?: () => number;
   /** Override scheduler tick interval. Defaults to AGENT_STATUS_TICK_INTERVAL_MS. */
   tickIntervalMs?: number;
+  /**
+   * Cost telemetry sink. Status generation bypasses StreamManager, so
+   * without this its recurring spend never reaches session-usage.json.
+   */
+  sessionUsageService?: SessionUsageService;
 }
 
 interface State {
@@ -101,6 +107,7 @@ export class AgentStatusService {
   private readonly inFlightPromises = new Set<Promise<void>>();
   private readonly clock: () => number;
   private readonly tickIntervalMs: number;
+  private readonly sessionUsageService?: SessionUsageService;
 
   private checkInterval: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
@@ -118,6 +125,7 @@ export class AgentStatusService {
   ) {
     this.clock = options.clock ?? (() => Date.now());
     this.tickIntervalMs = options.tickIntervalMs ?? AGENT_STATUS_TICK_INTERVAL_MS;
+    this.sessionUsageService = options.sessionUsageService;
   }
 
   start(): void {
@@ -340,6 +348,9 @@ export class AgentStatusService {
       if (this.stopped) return;
       const result = await generateWorkspaceStatus(transcript, candidates, this.aiService, {
         streaming,
+        recordUsage: async (modelString, usage) => {
+          await this.sessionUsageService?.recordHeadlessUsage(workspaceId, modelString, usage);
+        },
       });
       // Re-check after the generator returns: the same hazard at a later
       // await boundary.

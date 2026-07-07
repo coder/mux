@@ -17,6 +17,7 @@ import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { LanguageModel } from "ai";
+import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Result } from "@/common/types/result";
 
@@ -274,7 +275,13 @@ export class MemoryConsolidationService extends EventEmitter {
     private readonly metaService: MemoryMetaService,
     private readonly historyService: HistoryService,
     private readonly modelFactory: ModelFactoryLike,
-    private readonly experiments: ExperimentsCheck
+    private readonly experiments: ExperimentsCheck,
+    /**
+     * Optional cost telemetry sink. Headless consolidation/harvest streams
+     * bypass StreamManager, so without this their spend never reaches
+     * session-usage.json / per-workspace cost displays.
+     */
+    private readonly sessionUsageService?: SessionUsageService
   ) {
     super();
     this.sidecarPath = path.join(config.rootDir, "memory-consolidation.json");
@@ -488,6 +495,9 @@ export class MemoryConsolidationService extends EventEmitter {
       // Hard timeout: a wedged provider stream must not hold the in-flight
       // lock forever (and stall the sequential launch sweep behind it).
       abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
+      recordUsage: async (usage) => {
+        await this.sessionUsageService?.recordHeadlessUsage(workspaceId, modelString, usage);
+      },
     });
     // A stream failure (provider error or the run timeout) means the pass did
     // NOT cover the memory state: skip the journal record so the debounce and
@@ -614,6 +624,13 @@ export class MemoryConsolidationService extends EventEmitter {
           messages: epoch.data.messages,
           summary: epoch.data.summary,
           abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
+          recordUsage: async (usage) => {
+            await this.sessionUsageService?.recordHeadlessUsage(
+              metadata.workspaceId,
+              modelString,
+              usage
+            );
+          },
         });
         if (harvest.streamError !== undefined) {
           throw new Error(`harvest stream failed: ${harvest.streamError}`);

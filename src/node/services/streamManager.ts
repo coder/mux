@@ -938,6 +938,14 @@ export class StreamManager extends EventEmitter {
       return cumulativeUsage;
     }
 
+    // streamResult.totalUsage is read with a short timeout (getStreamMetadata) and can
+    // resolve to undefined under slow SDK settlement even though the provider billed the
+    // turn. Fall back to the live per-step accumulation so completed streams never
+    // persist an unpriced assistant message (analytics prices rows from metadata.usage).
+    if (!hasTokenUsage(totalUsage) && hasTokenUsage(cumulativeUsage)) {
+      return cumulativeUsage;
+    }
+
     return totalUsage;
   }
 
@@ -1295,6 +1303,34 @@ export class StreamManager extends EventEmitter {
       "error",
       streamInfo
     );
+
+    // Stamp the aborted turn's usage onto the partial message BEFORE emitting
+    // stream-abort (whose handler commits the partial to chat.jsonl). Analytics
+    // prices history rows from metadata.usage, so without this every
+    // interrupted turn — user Esc, queued tool-end preemption, monitor wakes —
+    // would ingest as $0 even though the provider billed all completed steps.
+    if (!abandonPartial && (usage !== undefined || streamInfo.toolModelUsages.length > 0)) {
+      try {
+        await this.awaitPendingPartialWrite(streamInfo);
+        await this.historyService.writePartial(
+          workspaceId as string,
+          this.buildPartialAssistantMessage(streamInfo, {
+            metadata: {
+              ...(usage !== undefined ? { usage: cloneUsage(usage) } : {}),
+              ...(providerMetadata !== undefined ? { providerMetadata } : {}),
+              ...(contextUsage !== undefined ? { contextUsage } : {}),
+              ...(contextProviderMetadata !== undefined ? { contextProviderMetadata } : {}),
+              duration,
+              ...(streamInfo.toolModelUsages.length > 0
+                ? { toolModelUsages: streamInfo.toolModelUsages.map(clonePersistedToolModelUsage) }
+                : {}),
+            },
+          })
+        );
+      } catch (error) {
+        log.error("Failed to persist aborted-stream usage on partial message", { error });
+      }
+    }
 
     // Emit abort event with usage if available
     this.emitStreamAbort(
@@ -3171,15 +3207,43 @@ export class StreamManager extends EventEmitter {
     const terminalRefusalUsage = streamInfo.terminalRefusalUsage;
     const terminalRefusalProviderMetadata = streamInfo.terminalRefusalProviderMetadata;
 
+    // Errored turns still billed every completed step. When no refusal snapshot
+    // exists (refusals record their usage separately), persist the live-tracked
+    // cumulative usage on the error partial so the committed history row carries
+    // billable usage for analytics, and mirror it into session-usage.json —
+    // the error path previously skipped both, ingesting failed turns as $0.
+    let cumulativeErrorUsage: LanguageModelV2Usage | undefined;
+    let cumulativeErrorProviderMetadata: Record<string, unknown> | undefined;
+    if (terminalRefusalUsage === undefined && hasTokenUsage(streamInfo.cumulativeUsage)) {
+      cumulativeErrorUsage = cloneUsage(streamInfo.cumulativeUsage);
+      await this.backfillReasoningTokensFromParts(streamInfo, cumulativeErrorUsage);
+      cumulativeErrorProviderMetadata = markProviderMetadataCostsIncluded(
+        streamInfo.cumulativeProviderMetadata
+          ? { ...streamInfo.cumulativeProviderMetadata }
+          : undefined,
+        streamInfo.initialMetadata?.costsIncluded
+      );
+      await this.recordSessionUsage(
+        workspaceId,
+        streamInfo.model,
+        cumulativeErrorUsage,
+        cumulativeErrorProviderMetadata,
+        "Failed to record session usage for errored stream",
+        "warn",
+        streamInfo
+      );
+    }
+    const errorUsage = terminalRefusalUsage ?? cumulativeErrorUsage;
+    const errorProviderMetadata =
+      terminalRefusalProviderMetadata ?? cumulativeErrorProviderMetadata;
+
     const errorPartialMessage = this.buildPartialAssistantMessage(streamInfo, {
       metadata: {
         error: payload.error,
         errorType: payload.errorType,
         ...(refusalFinishReason !== undefined ? { finishReason: refusalFinishReason } : {}),
-        ...(terminalRefusalUsage !== undefined ? { usage: terminalRefusalUsage } : {}),
-        ...(terminalRefusalProviderMetadata !== undefined
-          ? { providerMetadata: terminalRefusalProviderMetadata }
-          : {}),
+        ...(errorUsage !== undefined ? { usage: errorUsage } : {}),
+        ...(errorProviderMetadata !== undefined ? { providerMetadata: errorProviderMetadata } : {}),
         // Keep tool-side / refused-fallback usage rows durable on the error
         // partial: a fallback chain that ends in a terminal refusal must not
         // drop the refused attempts' tokens from persisted metadata.

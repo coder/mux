@@ -293,7 +293,9 @@ describe("AgentStatusService", () => {
     // Asserting the options object reaches the generator catches a
     // regression where the streaming bit gets silently dropped at the
     // dispatch boundary.
-    expect(generateSpy.mock.calls[0][3]).toEqual({ streaming: true });
+    // toMatchObject: the options also carry a recordUsage cost-telemetry
+    // callback; this test only cares that the streaming bit is forwarded.
+    expect(generateSpy.mock.calls[0][3]).toMatchObject({ streaming: true });
   });
 
   test("dedup hash includes the streaming bit so liveness flips force a re-generation", async () => {
@@ -320,7 +322,7 @@ describe("AgentStatusService", () => {
     // sidebar would never re-evaluate tense after the stream ended.
     await getInternals(service).runForWorkspace(workspaceId, null, false);
     expect(generateSpy).toHaveBeenCalledTimes(2);
-    expect(generateSpy.mock.calls[1][3]).toEqual({ streaming: false });
+    expect(generateSpy.mock.calls[1][3]).toMatchObject({ streaming: false });
   });
 
   test("re-generates after the trailing transcript changes", async () => {

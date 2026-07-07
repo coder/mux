@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -7,6 +8,8 @@ import { DuckDBAppender, DuckDBDateValue, type DuckDBConnection } from "@duckdb/
 import { EventRowSchema, type EventRow } from "@/common/orpc/schemas/analytics";
 import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import modelsData from "@/common/utils/tokens/models.json";
+import { modelsExtra } from "@/common/utils/tokens/models-extra";
 import { log } from "@/node/services/log";
 import { toUtcDateString } from "@/node/services/analytics/dateUtils";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
@@ -1082,6 +1085,17 @@ export async function ingestWorkspace(
   // Keep delegation rollups fresh even when chat.jsonl is unchanged.
   await ingestDelegationRollups(conn, workspaceId, sessionDir, workspaceMeta);
 
+  // Also ingest archived sub-agent transcripts stored in this workspace's
+  // session dir. This recovers sub-agent data that was cleared when the
+  // child workspace was removed (clearWorkspace deletes child rows, but
+  // the archived chat.jsonl in the parent dir is the source of truth).
+  // This must run BEFORE the changeSignal early-return below: child deletion
+  // archives the transcript without touching the parent's own chat files, so
+  // gating recovery on a parent chat change would strand the child's spend
+  // until the parent happens to stream again. Watermark dedup makes repeated
+  // calls cheap (stat + comparison only).
+  await ingestArchivedSubagentTranscripts(conn, sessionDir, workspaceMeta, workspaceId);
+
   // Skip only when the combined change signal (mtimes + sizes + presence) is
   // unchanged. Any append/rewrite/rotation/file-deletion changes the signal, so
   // ingestion re-runs and the rebuild path can drop stale rows — even when the
@@ -1183,17 +1197,6 @@ export async function ingestWorkspace(
       lastModified: stat.changeSignal,
     });
   }
-
-  // Also ingest archived sub-agent transcripts stored in this workspace's
-  // session dir. This recovers sub-agent data that was cleared when the
-  // child workspace was removed (clearWorkspace deletes child rows, but
-  // the archived chat.jsonl in the parent dir is the source of truth).
-  // Watermark dedup makes repeated calls cheap (stat + comparison only).
-  const mergedMetaForChildren = mergeWorkspaceMeta(
-    await readWorkspaceMetaFromDisk(sessionDir),
-    meta
-  );
-  await ingestArchivedSubagentTranscripts(conn, sessionDir, mergedMetaForChildren, workspaceId);
 }
 
 /**
@@ -1589,6 +1592,43 @@ function collectAllEvents(parsed: ParsedWorkspaceData[]): CollectedEvents {
 
   collect(parsed);
   return { eventsByWorkspace, winnerMtimes };
+}
+
+const PRICING_FINGERPRINT_META_KEY = "pricing_fingerprint";
+
+let cachedPricingFingerprint: string | undefined;
+
+/**
+ * Fingerprint of the bundled pricing tables. Event costs are computed at
+ * ingest time from these tables, so a fingerprint change means previously
+ * ingested rows may carry stale costs (typically $0 for models that were
+ * unknown at ingest time) and need a full rebuild to reprice.
+ *
+ * Cached per process: the tables are compiled into the bundle and cannot
+ * change while the worker is running.
+ */
+export function getCurrentPricingFingerprint(): string {
+  cachedPricingFingerprint ??= createHash("sha256")
+    .update(JSON.stringify(modelsExtra))
+    .update(JSON.stringify(modelsData))
+    .digest("hex");
+  return cachedPricingFingerprint;
+}
+
+export async function readStoredPricingFingerprint(conn: DuckDBConnection): Promise<string | null> {
+  const result = await conn.run("SELECT value FROM ingest_meta WHERE key = ?", [
+    PRICING_FINGERPRINT_META_KEY,
+  ]);
+  const rows = await result.getRowObjectsJS();
+  const value = rows[0]?.value;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export async function storePricingFingerprint(conn: DuckDBConnection): Promise<void> {
+  await conn.run("INSERT OR REPLACE INTO ingest_meta (key, value) VALUES (?, ?)", [
+    PRICING_FINGERPRINT_META_KEY,
+    getCurrentPricingFingerprint(),
+  ]);
 }
 
 export async function rebuildAll(

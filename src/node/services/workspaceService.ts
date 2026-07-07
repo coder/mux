@@ -1528,7 +1528,17 @@ async function forEachWithConcurrencyLimit<T>(
 
 export interface WorkspaceServiceEvents {
   chat: (event: { workspaceId: string; message: WorkspaceChatMessage }) => void;
-  metadata: (event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void;
+  metadata: (event: {
+    workspaceId: string;
+    metadata: FrontendWorkspaceMetadata | null;
+    /**
+     * Set on removal (metadata === null) when the removed workspace was a
+     * sub-agent/task child: its transcript was archived into this parent's
+     * session dir, so analytics can re-ingest the parent to restore the
+     * child's spend after clearing the child's live rows.
+     */
+    removedParentWorkspaceId?: string;
+  }) => void;
   activity: (event: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }) => void;
 }
 
@@ -4386,7 +4396,11 @@ export class WorkspaceService extends EventEmitter {
       await this.config.removeWorkspace(workspaceId);
       this.autoTitlingWorkspaces.delete(workspaceId);
 
-      this.emit("metadata", { workspaceId, metadata: null });
+      this.emit("metadata", {
+        workspaceId,
+        metadata: null,
+        ...(parentWorkspaceId ? { removedParentWorkspaceId: parentWorkspaceId } : {}),
+      });
 
       return Ok(undefined);
     } catch (error) {
@@ -5387,6 +5401,16 @@ export class WorkspaceService extends EventEmitter {
       // work").
       emitChatEvent: (wsId, message) => {
         this.sessions.get(wsId)?.emitChatEvent(message);
+      },
+      // /btw bypasses StreamManager, so record its spend explicitly or it
+      // never reaches session-usage.json / cost displays.
+      recordUsage: async (modelString, usage, providerMetadata) => {
+        await this.sessionUsageService?.recordHeadlessUsage(
+          workspaceId,
+          modelString,
+          usage,
+          providerMetadata
+        );
       },
     });
     if (!result.success) {

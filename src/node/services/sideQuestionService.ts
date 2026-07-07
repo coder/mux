@@ -27,6 +27,7 @@
  */
 
 import { streamText, type ModelMessage } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { AIService } from "./aiService";
 import type { HistoryService } from "./historyService";
 import { log } from "./log";
@@ -83,6 +84,16 @@ export interface AskSideQuestionOptions {
    * stays free of any direct dependency on AgentSession.
    */
   emitChatEvent: (workspaceId: string, message: WorkspaceChatMessage) => void;
+  /**
+   * Best-effort cost telemetry for the successful answer. /btw bypasses
+   * StreamManager, so without this callback its token spend never reaches
+   * session-usage.json. Provided by WorkspaceService (SessionUsageService).
+   */
+  recordUsage?: (
+    modelString: string,
+    usage: LanguageModelV2Usage,
+    providerMetadata?: Record<string, unknown>
+  ) => Promise<void>;
 }
 
 export interface AskSideQuestionSuccess {
@@ -352,6 +363,8 @@ export async function askSideQuestion(
       startTime: streamStartedAt,
     });
 
+    let usage: LanguageModelV2Usage | undefined;
+    let usageProviderMetadata: Record<string, unknown> | undefined;
     try {
       try {
         // streamText (not generateText): we want token-by-token UX.
@@ -379,6 +392,19 @@ export async function askSideQuestion(
             timestamp: Date.now(),
           });
         }
+
+        // Cost telemetry: the side question sends the full conversation
+        // context, so the provider bills real spend. Capture usage after a
+        // clean stream (short race — a slow-settling SDK promise must not
+        // stall the answer) so it can be persisted on the answer row and
+        // recorded in session-usage.json below.
+        const withTimeout = <T>(promise: PromiseLike<T>): Promise<T | undefined> =>
+          Promise.race([
+            promise,
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+          ]).catch(() => undefined);
+        usage = await withTimeout(stream.totalUsage);
+        usageProviderMetadata = await withTimeout(stream.providerMetadata);
       } catch (error) {
         lastError = mapNameGenerationError(error, modelString);
         log.warn("Side question failed; trying next candidate", {
@@ -451,6 +477,12 @@ export async function askSideQuestion(
           timestamp: streamStartedAt,
           duration,
           model: modelString,
+          // Persist usage on the answer row so analytics prices the /btw turn
+          // (the ETL reads metadata.usage from chat.jsonl rows).
+          ...(usage !== undefined ? { usage } : {}),
+          ...(usageProviderMetadata !== undefined
+            ? { providerMetadata: usageProviderMetadata }
+            : {}),
           muxMetadata: {
             type: SIDE_QUESTION_ANSWER_METADATA_TYPE,
             questionMessageId: userMessage.id,
@@ -458,6 +490,12 @@ export async function askSideQuestion(
         },
         parts: finalParts,
       };
+
+      // Mirror the persisted usage into session-usage.json (live per-workspace
+      // cost display). Best-effort: the recorder never throws.
+      if (usage !== undefined && opts.recordUsage) {
+        await opts.recordUsage(modelString, usage, usageProviderMetadata);
+      }
 
       const updateResult = await historyService.updateHistory(workspaceId, assistantMessage);
       if (!updateResult.success) {

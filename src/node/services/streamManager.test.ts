@@ -1717,6 +1717,10 @@ describe("StreamManager - empty stream completions", () => {
     expect(partial?.metadata?.error).toContain("before producing any assistant-visible output");
     expect(partial?.metadata?.metadataModel).toBe(KNOWN_MODELS.SONNET.id);
     expect(partial?.parts).toEqual([]);
+    // Errored turns still billed the completed steps: the error partial must
+    // carry the live-tracked cumulative usage so analytics can price the turn.
+    expect(partial?.metadata?.usage).toEqual({ inputTokens: 7, outputTokens: 0, totalTokens: 7 });
+    expect(partial?.metadata?.providerMetadata).toEqual({ openai: { cached_tokens: 2 } });
   });
 
   test("persists retryable partial error when a non-empty stream closes before finish", async () => {
@@ -3894,9 +3898,29 @@ describe("StreamManager - previousResponseId recovery", () => {
   const totalUsageCases: Array<{
     name: string;
     streamInfo: Record<string, unknown>;
-    totalUsage: Record<string, number>;
+    totalUsage: Record<string, number> | undefined;
     expected: Record<string, number>;
   }> = [
+    {
+      name: "falls back to cumulative usage when stream total is missing",
+      streamInfo: {
+        didRetryPreviousResponseIdAtStep: false,
+        cumulativeUsage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+      },
+      // getStreamMetadata's totalUsage read can time out (slow SDK settlement)
+      // even though the provider billed the turn.
+      totalUsage: undefined,
+      expected: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+    },
+    {
+      name: "falls back to cumulative usage when stream total has zero tokens",
+      streamInfo: {
+        didRetryPreviousResponseIdAtStep: false,
+        cumulativeUsage: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+      },
+      totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      expected: { inputTokens: 4, outputTokens: 5, totalTokens: 9 },
+    },
     {
       name: "prefers cumulative usage after step retry",
       streamInfo: {
@@ -4342,6 +4366,78 @@ describe("StreamManager - stopStream", () => {
     expect(abortEvents[0].workspaceId).toBe("test-workspace");
     // messageId is empty for synthetic abort (no actual stream existed)
     expect(abortEvents[0].messageId).toBe("");
+  });
+});
+
+describe("StreamManager - aborted stream usage persistence", () => {
+  type CleanupAbortedStreamForTests = (
+    workspaceId: string,
+    streamInfo: unknown,
+    abortReason: string,
+    abandonPartial?: boolean
+  ) => Promise<void>;
+
+  function createAbortStreamInfo(messageId: string): Record<string, unknown> {
+    const usage = { inputTokens: 120, outputTokens: 30, totalTokens: 150 };
+    return createStreamInfoForTests({
+      messageId,
+      parts: [{ type: "text", text: "partial output", timestamp: Date.now() }],
+      cumulativeUsage: usage,
+      cumulativeProviderMetadata: { anthropic: { cacheCreationInputTokens: 42 } },
+      lastStepUsage: usage,
+    });
+  }
+
+  test("stamps cumulative usage on the partial so committed history rows stay billable", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("stream-abort", () => undefined);
+    const workspaceId = "abort-usage-workspace";
+    const messageId = "abort-usage-message";
+    await appendPartialAssistantForTests(workspaceId, messageId, 1);
+
+    const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
+      streamManager,
+      "cleanupAbortedStream"
+    );
+    await cleanupAborted.call(streamManager, workspaceId, createAbortStreamInfo(messageId), "user");
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial?.metadata?.partial).toBe(true);
+    expect(partial?.metadata?.usage).toEqual({
+      inputTokens: 120,
+      outputTokens: 30,
+      totalTokens: 150,
+    });
+    expect(partial?.metadata?.providerMetadata).toEqual({
+      anthropic: { cacheCreationInputTokens: 42 },
+    });
+    expect(partial?.metadata?.contextUsage).toEqual({
+      inputTokens: 120,
+      outputTokens: 30,
+      totalTokens: 150,
+    });
+  });
+
+  test("does not rewrite the partial when the abort abandons it", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("stream-abort", () => undefined);
+    const workspaceId = "abort-abandon-workspace";
+    const messageId = "abort-abandon-message";
+
+    const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
+      streamManager,
+      "cleanupAbortedStream"
+    );
+    await cleanupAborted.call(
+      streamManager,
+      workspaceId,
+      createAbortStreamInfo(messageId),
+      "user",
+      true
+    );
+
+    const partial = await historyService.readPartial(workspaceId);
+    expect(partial).toBeNull();
   });
 });
 

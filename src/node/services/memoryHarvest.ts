@@ -1,4 +1,5 @@
 import { stepCountIs, streamText, tool, type LanguageModel } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { z } from "zod";
 
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
@@ -196,6 +197,12 @@ export async function runMemoryHarvest(args: {
   messages: MuxMessage[];
   summary: MuxMessage;
   abortSignal?: AbortSignal;
+  /**
+   * Best-effort cost telemetry: headless harvest bypasses the chat cost
+   * pipeline, so the caller records each clean chunk stream's full usage
+   * (with cache-token breakdown) into session-usage.json.
+   */
+  recordUsage?: (usage: LanguageModelV2Usage) => Promise<void>;
 }): Promise<MemoryHarvestResult> {
   assert(args.agentBody.trim().length > 0, "harvest agent body must not be empty");
   assert(
@@ -264,6 +271,7 @@ export async function runMemoryHarvest(args: {
         inputTokens: (usage?.inputTokens ?? 0) + (totalUsage.inputTokens ?? 0),
         outputTokens: (usage?.outputTokens ?? 0) + (totalUsage.outputTokens ?? 0),
       };
+      await args.recordUsage?.(totalUsage);
     } catch {
       usage = undefined;
     }

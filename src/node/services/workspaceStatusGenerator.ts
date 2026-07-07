@@ -1,4 +1,5 @@
 import { streamText, tool } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { AIService } from "./aiService";
 import { log } from "./log";
 import { runLanguageModelCleanup } from "./languageModelCleanup";
@@ -129,7 +130,14 @@ export async function generateWorkspaceStatus(
   transcript: string,
   candidates: readonly string[],
   aiService: AIService,
-  options: BuildWorkspaceStatusPromptOptions = {}
+  options: BuildWorkspaceStatusPromptOptions & {
+    /**
+     * Best-effort cost telemetry: status generation bypasses StreamManager,
+     * so the caller records the successful candidate's usage into
+     * session-usage.json.
+     */
+    recordUsage?: (modelString: string, usage: LanguageModelV2Usage) => Promise<void>;
+  } = {}
 ): Promise<Result<GenerateWorkspaceStatusResult, GenerateWorkspaceStatusFailure>> {
   if (candidates.length === 0) {
     return Err({
@@ -187,6 +195,17 @@ export async function generateWorkspaceStatus(
       }
 
       const { emoji, message } = toolResult.output;
+
+      if (options.recordUsage) {
+        try {
+          // toolResults resolving implies the stream was consumed, so
+          // totalUsage settles promptly; the recorder itself never throws.
+          await options.recordUsage(modelString, await currentStream.totalUsage);
+        } catch {
+          // Usage promise rejection must not fail an otherwise good status.
+        }
+      }
+
       return Ok({
         status: { emoji: emoji.trim(), message: message.trim() },
         modelUsed: modelString,

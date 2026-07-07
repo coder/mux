@@ -31,6 +31,20 @@ CREATE TABLE IF NOT EXISTS events (
 )
 `;
 
+/**
+ * Small key/value side table for ingest bookkeeping that is not per-workspace.
+ * Currently stores the pricing-table fingerprint: event costs are computed at
+ * ingest time, so when the bundled pricing tables change (e.g. a new model's
+ * pricing lands in an app upgrade), previously ingested rows keep stale $0
+ * costs until a full rebuild reprices them.
+ */
+export const CREATE_INGEST_META_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS ingest_meta (
+  key VARCHAR PRIMARY KEY,
+  value VARCHAR NOT NULL
+)
+`;
+
 export const CREATE_WATERMARK_TABLE_SQL = `
 CREATE TABLE IF NOT EXISTS ingest_watermarks (
   workspace_id VARCHAR PRIMARY KEY,

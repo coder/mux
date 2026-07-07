@@ -26,6 +26,7 @@
  * MemoryService; until then the journal is the only post-run signal.
  */
 import { tool, streamText, stepCountIs, type LanguageModel, type Tool } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import assert from "@/common/utils/assert";
 import {
@@ -207,6 +208,12 @@ export async function runMemoryConsolidation(args: {
    */
   finalPass?: boolean;
   abortSignal?: AbortSignal;
+  /**
+   * Best-effort cost telemetry: headless consolidation bypasses the chat cost
+   * pipeline, so the caller records the full stream usage (with cache-token
+   * breakdown) into session-usage.json. Invoked only after a clean stream.
+   */
+  recordUsage?: (usage: LanguageModelV2Usage) => Promise<void>;
 }): Promise<MemoryConsolidationResult> {
   assert(args.agentBody.trim().length > 0, "dream agent body must not be empty");
   const journal: MemoryConsolidationOp[] = [];
@@ -261,6 +268,7 @@ export async function runMemoryConsolidation(args: {
         inputTokens: totalUsage.inputTokens ?? 0,
         outputTokens: totalUsage.outputTokens ?? 0,
       };
+      await args.recordUsage?.(totalUsage);
     } catch {
       usage = undefined;
     }

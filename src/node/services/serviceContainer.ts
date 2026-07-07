@@ -39,7 +39,10 @@ import { BrowserControlService } from "@/node/services/browser/BrowserControlSer
 import { BrowserSessionStateHub } from "@/node/services/browser/BrowserSessionStateHub";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
-import { AnalyticsService } from "@/node/services/analytics/analyticsService";
+import {
+  AnalyticsService,
+  type IngestWorkspaceMeta,
+} from "@/node/services/analytics/analyticsService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
@@ -315,7 +318,10 @@ export class ServiceContainer {
       this.extensionMetadata,
       this.workspaceService,
       this.windowService,
-      this.aiService
+      this.aiService,
+      // Status generation spends tokens outside StreamManager; give it a cost
+      // telemetry sink so that spend shows up in per-workspace usage.
+      { sessionUsageService: this.sessionUsageService }
     );
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
@@ -405,7 +411,30 @@ export class ServiceContainer {
         return;
       }
 
-      this.analyticsService.clearWorkspace(event.workspaceId);
+      // Removed sub-agent children archive their transcript into the parent's
+      // session dir before this event fires. Re-ingest the parent (chained after
+      // the clear) so the child's spend is restored from the archive instead of
+      // vanishing from analytics until the parent's next stream-end.
+      let reingestAfterClear:
+        | { workspaceId: string; sessionDir: string; meta: IngestWorkspaceMeta }
+        | undefined;
+      const parentWorkspaceId = event.removedParentWorkspaceId;
+      if (parentWorkspaceId) {
+        const parentLookup = this.config.findWorkspace(parentWorkspaceId);
+        const parentProjectPath = parentLookup?.attributionProjectPath ?? parentLookup?.projectPath;
+        reingestAfterClear = {
+          workspaceId: parentWorkspaceId,
+          sessionDir: this.config.getSessionDir(parentWorkspaceId),
+          meta: {
+            projectPath: parentProjectPath,
+            projectName: parentProjectPath ? path.basename(parentProjectPath) : undefined,
+            workspaceName: parentLookup?.workspaceName,
+            parentWorkspaceId: parentLookup?.parentWorkspaceId,
+          },
+        };
+      }
+
+      this.analyticsService.clearWorkspace(event.workspaceId, { reingestAfterClear });
     });
 
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>

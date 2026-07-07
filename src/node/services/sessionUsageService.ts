@@ -1,5 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import writeFileAtomic from "write-file-atomic";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
@@ -152,6 +153,32 @@ export class SessionUsageService {
       current.lastRequest = { model, usage, timestamp: Date.now() };
       await this.writeFile(workspaceId, current);
     });
+  }
+
+  /**
+   * Best-effort usage recording for headless AI calls that bypass the
+   * StreamManager pipeline (side questions, memory consolidation/harvest,
+   * status/title generation). Without this, their spend is invisible to
+   * per-workspace cost displays even though the provider bills it.
+   *
+   * Never throws: cost telemetry must not fail the feature that spent the
+   * tokens.
+   */
+  async recordHeadlessUsage(
+    workspaceId: string,
+    modelString: string,
+    usage: LanguageModelV2Usage | undefined,
+    providerMetadata?: Record<string, unknown>
+  ): Promise<void> {
+    if (!usage) return;
+    try {
+      const canonicalModel = normalizeToCanonical(modelString);
+      const displayUsage = createDisplayUsage(usage, canonicalModel, providerMetadata);
+      if (!displayUsage) return;
+      await this.recordUsage(workspaceId, canonicalModel, displayUsage);
+    } catch (error) {
+      log.warn("Failed to record headless usage", { workspaceId, modelString, error });
+    }
   }
 
   /**

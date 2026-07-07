@@ -63,7 +63,7 @@ type AnalyticsQueryName =
   | "getCacheHitRatioByProvider"
   | "getDelegationSummary";
 
-interface IngestWorkspaceMeta {
+export interface IngestWorkspaceMeta {
   projectPath: string | undefined;
   projectName: string | undefined;
   workspaceName: string | undefined;
@@ -887,7 +887,20 @@ export class AnalyticsService {
     }
   }
 
-  clearWorkspace(workspaceId: string): void {
+  clearWorkspace(
+    workspaceId: string,
+    options?: {
+      /**
+       * Re-ingest this workspace right after the clear completes (same promise
+       * chain, so it cannot race ahead of the clear and get purged). Used when
+       * a removed sub-agent child archived its transcript into the parent's
+       * session dir: re-ingesting the parent restores the child's spend from
+       * the archive immediately instead of waiting for the parent's next
+       * stream-end, which may never come for finished coordinators.
+       */
+      reingestAfterClear?: { workspaceId: string; sessionDir: string; meta: IngestWorkspaceMeta };
+    }
+  ): void {
     if (workspaceId.trim().length === 0) {
       log.warn("[AnalyticsService] Skipping workspace clear due to missing workspaceId", {
         workspaceId,
@@ -895,9 +908,16 @@ export class AnalyticsService {
       return;
     }
 
+    const reingestAfterClear = options?.reingestAfterClear;
     const runClear = () => {
       this.ensureWorker()
         .then(() => this.dispatch<void>("clearWorkspace", { workspaceId }))
+        .then(() => {
+          if (reingestAfterClear == null) {
+            return;
+          }
+          return this.dispatch("ingest", reingestAfterClear).then(() => undefined);
+        })
         .catch((error) => {
           log.warn("[AnalyticsService] Failed to clear workspace analytics state", {
             workspaceId,

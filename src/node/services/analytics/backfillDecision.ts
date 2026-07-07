@@ -16,6 +16,12 @@ export interface SyncPlanInput {
   knownWorkspaceIds: Set<string>;
   watermarkWorkspaceIds: Set<string>;
   hasAnyWatermarkAtOrAboveZero: boolean;
+  /**
+   * True when the bundled pricing tables changed since the last ingest.
+   * Costs are computed at ingest time, so existing rows may carry stale
+   * (typically $0 unknown-model) costs and need a full rebuild to reprice.
+   */
+  pricingFingerprintChanged: boolean;
 }
 
 export function decideSyncPlan(input: SyncPlanInput): SyncPlan {
@@ -38,6 +44,13 @@ export function decideSyncPlan(input: SyncPlanInput): SyncPlan {
     workspaceIdsToIngest: [],
     workspaceIdsToPurge: [],
   };
+
+  // Pricing tables changed and priced rows exist → reprice via full rebuild.
+  // Skipped when the events table is empty: nothing is stale, and the caller
+  // persists the new fingerprint after every sync check.
+  if (input.pricingFingerprintChanged && input.eventCount > 0) {
+    return REBUILD;
+  }
 
   // No workspaces on disk — purge any stale DB state, or noop if already clean.
   if (input.knownWorkspaceIds.size === 0) {

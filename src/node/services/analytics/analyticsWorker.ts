@@ -4,10 +4,18 @@ import { DuckDBInstance, type DuckDBConnection } from "@duckdb/node-api";
 import { getErrorMessage } from "@/common/utils/errors";
 import { decideSyncPlan, type SyncAction } from "./backfillDecision";
 import { shouldCheckpointAfterSync } from "./checkpointDecision";
-import { clearWorkspaceAnalyticsState, ingestWorkspace, rebuildAll } from "./etl";
+import {
+  clearWorkspaceAnalyticsState,
+  getCurrentPricingFingerprint,
+  ingestWorkspace,
+  readStoredPricingFingerprint,
+  rebuildAll,
+  storePricingFingerprint,
+} from "./etl";
 import {
   CREATE_DELEGATION_ROLLUPS_TABLE_SQL,
   CREATE_EVENTS_TABLE_SQL,
+  CREATE_INGEST_META_TABLE_SQL,
   CREATE_WATERMARK_TABLE_SQL,
 } from "./schemaSql";
 import { discoverAllWorkspaces } from "./workspaceDiscovery";
@@ -131,6 +139,7 @@ async function handleInit(data: InitData): Promise<void> {
   await activeConn.run(CREATE_EVENTS_TABLE_SQL);
   await activeConn.run(CREATE_WATERMARK_TABLE_SQL);
   await activeConn.run(CREATE_DELEGATION_ROLLUPS_TABLE_SQL);
+  await activeConn.run(CREATE_INGEST_META_TABLE_SQL);
   for (const migrationSql of EVENTS_COLUMN_MIGRATIONS_SQL) {
     await activeConn.run(migrationSql);
   }
@@ -155,7 +164,11 @@ async function handleRebuildAll(data: RebuildAllData): Promise<{ workspacesInges
     );
   }
 
-  return rebuildAll(getConn(), data.sessionsDir, data.workspaceMetaById ?? {});
+  const result = await rebuildAll(getConn(), data.sessionsDir, data.workspaceMetaById ?? {});
+  // A completed rebuild priced everything with the current tables; refresh the
+  // fingerprint so the next sync check does not schedule a redundant rebuild.
+  await storePricingFingerprint(getConn());
+  return result;
 }
 
 async function handleClearWorkspace(data: ClearWorkspaceData): Promise<void> {
@@ -302,13 +315,28 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
     "syncCheck expected watermark_count to match ingest_watermarks workspace IDs"
   );
 
+  // Event costs are computed at ingest time; when the bundled pricing tables
+  // change (app upgrade), rows priced under the old tables — typically $0 for
+  // then-unknown models — must be repriced via a full rebuild.
+  const storedPricingFingerprint = await readStoredPricingFingerprint(getConn());
+  const pricingFingerprintChanged = storedPricingFingerprint !== getCurrentPricingFingerprint();
+
   const plan = decideSyncPlan({
     eventCount,
     watermarkCount,
     knownWorkspaceIds,
     watermarkWorkspaceIds,
     hasAnyWatermarkAtOrAboveZero,
+    pricingFingerprintChanged,
   });
+
+  // Persist the current fingerprint for noop/incremental plans where nothing
+  // was stale (empty events table or unchanged pricing) so the mismatch does
+  // not linger. For full rebuilds, store only after the rebuild succeeds so a
+  // crashed repricing rebuild re-triggers on the next sync check.
+  if (pricingFingerprintChanged && plan.action !== "full_rebuild") {
+    await storePricingFingerprint(getConn());
+  }
 
   if (plan.action === "noop") {
     const elapsedMs = Math.round(performance.now() - syncStartMs);
@@ -329,11 +357,14 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
       data.sessionsDir,
       data.workspaceMetaById
     );
+    if (pricingFingerprintChanged) {
+      await storePricingFingerprint(getConn());
+    }
     await checkpointIfNeeded(plan.action, workspacesIngested, 0);
 
     const elapsedMs = Math.round(performance.now() - syncStartMs);
     process.stderr.write(
-      `[analytics-worker] syncCheck: plan=full_rebuild, workspacesIngested=${workspacesIngested}, workspacesOnDisk=${knownWorkspaceIds.size} (${elapsedMs}ms)\n`
+      `[analytics-worker] syncCheck: plan=full_rebuild, workspacesIngested=${workspacesIngested}, workspacesOnDisk=${knownWorkspaceIds.size}, repricedForPricingChange=${pricingFingerprintChanged} (${elapsedMs}ms)\n`
     );
 
     return {

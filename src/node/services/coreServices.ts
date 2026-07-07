@@ -125,7 +125,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     memoryMetaService,
     historyService,
     aiService,
-    opts.experimentsService ?? { isExperimentEnabled: () => false }
+    opts.experimentsService ?? { isExperimentEnabled: () => false },
+    sessionUsageService
   );
 
   // MCP: allow callers to override which Config provides server definitions
