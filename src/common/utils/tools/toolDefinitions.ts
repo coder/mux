@@ -1617,9 +1617,9 @@ export const TOOL_DEFINITIONS = {
   },
   attach_file: {
     description:
-      "Attach a supported file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
-      "Accepts absolute or relative paths, including files outside the workspace. " +
-      "Currently supports raster images, SVG, and PDF as model attachments. Markdown files are shown to the user for preview/download only. Unsupported file types are shown to the user in chat when possible, but only a notice is sent to the model.",
+      "Attach a file from the filesystem so later model steps receive it as a real attachment instead of a huge base64 JSON blob. " +
+      "Accepts absolute or relative paths, including files outside the workspace. Accepts any file type. " +
+      "Raster images, SVG, and PDF are sent to the model as real attachments. Every other file type (text, source, diffs, logs, video, audio, archives, etc.) is shown to the user in chat for preview/download, but its contents are NOT sent to the model — you only receive a notice. Use file_read when you need to read a text file's contents yourself.",
     schema: z.preprocess(
       normalizeFilePath,
       z
