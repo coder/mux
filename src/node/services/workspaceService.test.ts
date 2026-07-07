@@ -2,6 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach, spyOn, type Mock }
 import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
 import type { IdleCompactionOutcome } from "./idleCompactionService";
 import type { AgentSession } from "./agentSession";
+import { askUserQuestionManager } from "./askUserQuestionManager";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
@@ -3999,6 +4000,70 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(result.success).toBe(true);
     expect(fakeSession.queueMessage).toHaveBeenCalled();
     expect(resetAutoResumeCount).not.toHaveBeenCalled();
+  });
+
+  test("synthetic queued sends leave a pending interactive question intact", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+
+    const questionPromise = askUserQuestionManager.registerPending("test-workspace", "tool-q1", [
+      {
+        question: "Proceed?",
+        header: "Next",
+        options: [
+          { label: "Yes", description: "Continue" },
+          { label: "No", description: "Stop" },
+        ],
+        multiSelect: false,
+      },
+    ]);
+    // Attach handler before cleanup cancel so Bun does not flag an unhandled rejection.
+    const settled = questionPromise.catch((error: unknown) => error);
+
+    try {
+      const result = await workspaceService.sendMessage(
+        "test-workspace",
+        "[Heartbeat] scheduled check-in",
+        { model: "openai:gpt-4o-mini", agentId: "exec", queueDispatchMode: "turn-end" },
+        { synthetic: true, skipAutoResumeReset: true }
+      );
+
+      expect(result.success).toBe(true);
+      expect(fakeSession.queueMessage).toHaveBeenCalled();
+      // A backend-initiated maintenance send is not a user response: the prompt survives.
+      expect(askUserQuestionManager.getLatestPending("test-workspace")?.toolCallId).toBe("tool-q1");
+    } finally {
+      askUserQuestionManager.cancel("test-workspace", "tool-q1", "test cleanup");
+      await settled;
+    }
+  });
+
+  test("non-synthetic queued sends cancel a pending interactive question", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+
+    const questionPromise = askUserQuestionManager.registerPending("test-workspace", "tool-q1", [
+      {
+        question: "Proceed?",
+        header: "Next",
+        options: [
+          { label: "Yes", description: "Continue" },
+          { label: "No", description: "Stop" },
+        ],
+        multiSelect: false,
+      },
+    ]);
+    // Attach handler before the send cancels the question, avoiding an unhandled rejection.
+    const settled = questionPromise.catch((error: unknown) => error);
+
+    const result = await workspaceService.sendMessage("test-workspace", "hello", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalled();
+    // A real user message supersedes the question: it is canceled before queueing.
+    expect(askUserQuestionManager.getLatestPending("test-workspace")).toBeNull();
+    expect(await settled).toBeInstanceOf(Error);
   });
 
   test("backgrounds foreground task waits when queuing a tool-end message", async () => {

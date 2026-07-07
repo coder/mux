@@ -7457,7 +7457,14 @@ export class WorkspaceService extends EventEmitter {
           });
         }
 
-        const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
+        // A pending interactive question is only moot when the user actually responds in
+        // chat. Backend-initiated synthetic sends (scheduled heartbeats, task wakes) are
+        // not user responses — canceling would destroy a user-facing prompt and record a
+        // misleading cancel reason, so synthetic sends queue behind the question instead.
+        const pendingAskUserQuestion =
+          internal?.synthetic === true
+            ? null
+            : askUserQuestionManager.getLatestPending(workspaceId);
         if (pendingAskUserQuestion) {
           try {
             askUserQuestionManager.cancel(
@@ -9707,6 +9714,17 @@ export class WorkspaceService extends EventEmitter {
     // Quiet skip (no throw): the slot is consumed and the deadline advances normally.
     if (session.hasQueuedDedupeKey(HEARTBEAT_QUEUE_DEDUPE_KEY)) {
       log.info("Skipped heartbeat enqueue: a scheduled heartbeat is already queued", {
+        workspaceId,
+      });
+      return;
+    }
+
+    // The awaiting_interactive_input eligibility gate only sees committed history, but a
+    // mid-stream ask_user_question lives in partial.json until the turn commits — so the
+    // delivery path must re-check the live manager. A scheduled check-in must never disturb
+    // a user-facing prompt; consume the slot quietly instead (like the coalescing skip).
+    if (askUserQuestionManager.getLatestPending(workspaceId) != null) {
+      log.info("Skipped heartbeat enqueue: an interactive question is pending", {
         workspaceId,
       });
       return;

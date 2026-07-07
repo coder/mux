@@ -13,6 +13,7 @@ import type { Config } from "@/node/config";
 import { EventEmitter } from "events";
 import type { AIService } from "./aiService";
 import type { AgentSession } from "./agentSession";
+import { askUserQuestionManager } from "./askUserQuestionManager";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import { advanceAnchoredDeadline, HeartbeatService } from "./heartbeatService";
@@ -1263,6 +1264,43 @@ describe("HeartbeatService", () => {
       await workspaceService.executeHeartbeat(testWorkspaceId);
 
       expect(sendMessageMock).not.toHaveBeenCalled();
+    });
+
+    test("a pending interactive question quietly skips the busy firing and survives", async () => {
+      const { sendMessageMock, workspaceService } = setupExecuteHeartbeat({
+        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
+        session: makeSessionStub({ isBusy: true }),
+      });
+
+      // A pending ask_user_question only exists mid-stream (the assistant message is still
+      // in partial.json), so the committed-history awaiting_interactive_input gate cannot
+      // see it — the delivery path must skip on the live manager instead of enqueueing
+      // over (or canceling) the user-facing prompt.
+      const questionPromise = askUserQuestionManager.registerPending(testWorkspaceId, "tool-q1", [
+        {
+          question: "Proceed?",
+          header: "Next",
+          options: [
+            { label: "Yes", description: "Continue" },
+            { label: "No", description: "Stop" },
+          ],
+          multiSelect: false,
+        },
+      ]);
+      // Attach handler before cleanup cancel so Bun does not flag an unhandled rejection.
+      const settled = questionPromise.catch((error: unknown) => error);
+
+      try {
+        await workspaceService.executeHeartbeat(testWorkspaceId);
+
+        expect(sendMessageMock).not.toHaveBeenCalled();
+        expect(askUserQuestionManager.getLatestPending(testWorkspaceId)?.toolCallId).toBe(
+          "tool-q1"
+        );
+      } finally {
+        askUserQuestionManager.cancel(testWorkspaceId, "tool-q1", "test cleanup");
+        await settled;
+      }
     });
 
     test("busy queue delivery downgrades compact contextMode to a normal queued message", async () => {
