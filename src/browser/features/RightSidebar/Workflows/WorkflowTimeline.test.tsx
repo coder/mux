@@ -5,6 +5,8 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { APIContext } from "@/browser/contexts/API";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import { overlayWorkspaceStoreRaw } from "@/browser/stores/workspaceStoreTestOverlay";
 
 import { installDom } from "../../../../../tests/ui/dom";
 void mock.module("@/browser/features/Tools/WorkflowToolShared", () => ({
@@ -17,15 +19,27 @@ let workflowTaskWorkspaces = new Map<string, FrontendWorkspaceMetadata>();
 let navigateToWorkspace: (workspaceId: string) => void = () => undefined;
 const workspaceStoreSubscribers = new Set<() => void>();
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualWorkspaceStore =
+  require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
+// Spread the real module and overlay (not replace) the raw store: bun evaluates every test
+// file before running tests and static import bindings freeze at eval time, so this
+// file-scope mock is what any later-evaluated file in the same bun process gets forever.
+// Replacing the whole module (or exposing a bare fake missing store methods) breaks those
+// files' cleanup and cascades into unrelated CI failures.
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  useWorkspaceStoreRaw: () => ({
-    subscribeDerived: (listener: () => void) => {
-      workspaceStoreSubscribers.add(listener);
-      return () => workspaceStoreSubscribers.delete(listener);
-    },
-    getWorkspaceMetadata: (workspaceId: string) => workflowTaskWorkspaces.get(workspaceId),
-    navigateToWorkspace: (workspaceId: string) => navigateToWorkspace(workspaceId),
-  }),
+  ...actualWorkspaceStore,
+  useWorkspaceStoreRaw: () =>
+    overlayWorkspaceStoreRaw(actualWorkspaceStore.useWorkspaceStoreRaw(), {
+      subscribeDerived: (listener: () => void) => {
+        workspaceStoreSubscribers.add(listener);
+        return () => workspaceStoreSubscribers.delete(listener);
+      },
+      getWorkspaceMetadata: (workspaceId: string) => workflowTaskWorkspaces.get(workspaceId),
+      navigateToWorkspace: (workspaceId: string) => navigateToWorkspace(workspaceId),
+    }),
 }));
 
 import type { WorkflowRunView } from "./projectWorkflowRun";

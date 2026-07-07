@@ -4,6 +4,7 @@ import { GlobalWindow } from "happy-dom";
 import type { ReactElement } from "react";
 
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import { overlayWorkspaceStoreRaw } from "@/browser/stores/workspaceStoreTestOverlay";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
 // ToolIcon renders a Radix Tooltip, which requires a TooltipProvider in the
@@ -81,12 +82,17 @@ const actualWorkspaceStore =
   require("@/browser/stores/WorkspaceStore?real=1") as typeof WorkspaceStoreModule;
 /* eslint-enable @typescript-eslint/no-require-imports */
 
+// Overlay (not replace) the raw store: bun evaluates every test file before running tests
+// and static import bindings freeze at eval time, so this file-scope mock is what any
+// later-evaluated file in the same bun process gets forever. A bare fake missing store
+// methods (e.g. setNavigateToWorkspace) breaks those files' cleanup and cascades.
 void mock.module("@/browser/stores/WorkspaceStore", () => ({
   ...actualWorkspaceStore,
-  useWorkspaceStoreRaw: () => ({
-    subscribeKey: (_workspaceId: string, _listener: () => void) => () => undefined,
-    getWorkspaceState: (_workspaceId: string) => currentWorkspaceState,
-  }),
+  useWorkspaceStoreRaw: () =>
+    overlayWorkspaceStoreRaw(actualWorkspaceStore.useWorkspaceStoreRaw(), {
+      subscribeKey: (_workspaceId: string, _listener: () => void) => () => undefined,
+      getWorkspaceState: (_workspaceId: string) => currentWorkspaceState,
+    }),
 }));
 
 import { AskUserQuestionToolCall } from "./AskUserQuestionToolCall";
