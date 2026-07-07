@@ -19,6 +19,7 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     initKey,
     removingKey,
     heartbeatEnabledKey, // Heartbeat icon replaces the seen-state archive affordance in the sidebar.
+    meta.pinnedAt ?? "", // Pin icon + pinned-first ordering; pinning may not change row order
     meta.parentWorkspaceId ?? "", // Nested sidebar indentation/order
     meta.taskStatus ?? "", // Task lifecycle label/state for sub-agent rows
     meta.agentType ?? "", // Agent preset badge/label (future)

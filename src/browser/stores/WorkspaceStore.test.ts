@@ -1692,6 +1692,19 @@ describe("WorkspaceStore", () => {
       expect(global.window.localStorage.getItem(autoRetryKey)).toBeNull();
     });
 
+    it("refreshes metadata for existing workspaces", () => {
+      const metadata = makeWorkspaceMetadata("workspace-1");
+      store.syncWorkspaces(new Map([[metadata.id, metadata]]));
+      expect(store.getWorkspaceMetadata("workspace-1")?.pinnedAt).toBeUndefined();
+
+      // Same workspace id, updated field (e.g. pinned after initial load).
+      // Imperative readers like the pin keybind must see the fresh value.
+      const pinned = { ...metadata, pinnedAt: "2026-01-01T00:00:00.000Z" };
+      store.syncWorkspaces(new Map([[pinned.id, pinned]]));
+
+      expect(store.getWorkspaceMetadata("workspace-1")?.pinnedAt).toBe("2026-01-01T00:00:00.000Z");
+    });
+
     it("should remove deleted workspaces", () => {
       createAndAddWorkspace(
         store,
