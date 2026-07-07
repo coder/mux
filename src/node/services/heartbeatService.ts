@@ -645,7 +645,13 @@ export class HeartbeatService {
     // turn. During an active stream, however, the in-progress assistant output lives only in
     // partial.json (committed history still ends with the user message being answered), so
     // queue modes must carve out the streaming case or they could never deliver while busy.
-    if (lastMessage?.role === "user" && !isStreaming) {
+    // The live session busy state counts too: between user-message acceptance and
+    // stream-start (turn preparation) the activity snapshot's streaming flag is still false,
+    // yet the trailing user message is actively being answered — queue modes must queue that
+    // slot, not consume it as awaiting_response. Skip mode keeps the pre-existing gate.
+    const activelyAnswering =
+      isStreaming || (deliverWhenBusy && this.workspaceService.isBusyForMessage(workspaceId));
+    if (lastMessage?.role === "user" && !activelyAnswering) {
       return { eligible: false, reason: "awaiting_response" };
     }
     // Inert while streaming (committed history cannot end with an assistant message then), so

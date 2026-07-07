@@ -82,6 +82,7 @@ describe("HeartbeatService", () => {
   >;
   let getChatHistoryMock: ReturnType<typeof mock<(workspaceId: string) => Promise<MuxMessage[]>>>;
   let executeHeartbeatMock: ReturnType<typeof mock<(workspaceId: string) => Promise<void>>>;
+  let isBusyForMessageMock: ReturnType<typeof mock<(workspaceId: string) => boolean>>;
   let hasActiveDescendantTasksMock: ReturnType<typeof mock<(workspaceId: string) => boolean>>;
 
   const testWorkspaceId = "test-ws";
@@ -251,9 +252,11 @@ describe("HeartbeatService", () => {
     wsEmitter = new EventEmitter();
     getChatHistoryMock = mock(() => Promise.resolve(makeCompletedTurnHistory()));
     executeHeartbeatMock = mock(() => Promise.resolve());
+    isBusyForMessageMock = mock(() => false);
     mockWorkspaceService = Object.assign(wsEmitter, {
       getChatHistory: getChatHistoryMock,
       executeHeartbeat: executeHeartbeatMock,
+      isBusyForMessage: isBusyForMessageMock,
     }) as unknown as WorkspaceService;
 
     getSnapshotMock = mock(() => Promise.resolve(makeSnapshot()));
@@ -447,6 +450,37 @@ describe("HeartbeatService", () => {
       const result = await service.checkEligibility(testWorkspaceId, Date.now());
 
       expect(result).toEqual({ eligible: false, reason: "currently_streaming" });
+    });
+
+    // Between user-message acceptance and stream-start (turn preparation), the activity
+    // snapshot's streaming flag is still false but the session is busy. The trailing user
+    // message is being answered, so queue modes must queue the slot instead of consuming it.
+    test("a preparing turn (busy session, not yet streaming) is eligible under a queue mode", async () => {
+      setHeartbeatConfig({ ...queueModeHeartbeat });
+      isBusyForMessageMock.mockReturnValueOnce(true);
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createMuxMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: true });
+    });
+
+    test("a preparing turn still gates skip mode as awaiting_response", async () => {
+      setHeartbeatConfig({ enabled: true, intervalMs: defaultHeartbeatIntervalMs });
+      isBusyForMessageMock.mockReturnValueOnce(true);
+      getChatHistoryMock.mockResolvedValueOnce([
+        createMuxMessage("1", "user", "Hello", { timestamp: staleTimestamp }),
+        createMuxMessage("2", "assistant", "Hi!", { timestamp: staleTimestamp }),
+        createMuxMessage("3", "user", "Keep going", { timestamp: staleTimestamp }),
+      ]);
+
+      const result = await service.checkEligibility(testWorkspaceId, Date.now());
+
+      expect(result).toEqual({ eligible: false, reason: "awaiting_response" });
     });
 
     test("an idle unanswered user message still gates queue modes", async () => {
