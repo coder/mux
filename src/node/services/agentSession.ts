@@ -26,6 +26,7 @@ import type {
   StreamErrorMessage,
 } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { HEARTBEAT_QUEUE_DEDUPE_KEY } from "@/constants/heartbeat";
 import {
   GOAL_BUDGET_LIMIT_KIND,
   GOAL_CONTINUATION_KIND,
@@ -5204,6 +5205,15 @@ export class AgentSession {
    */
   restoreQueueToInput(): void {
     this.assertNotDisposed("restoreQueueToInput");
+    // Restore-to-input exists to give the user their own words back (interrupt / edit).
+    // A queued scheduled heartbeat is backend-initiated maintenance, not user input —
+    // surfacing it as editable composer text would be confusing, so discard it instead
+    // (the check-in is periodic; its next slot fires anyway). It can only ever be the
+    // queue's sole content: it is enqueued exclusively into an empty queue, and any
+    // later user message supersedes it before queueing.
+    if (this.dropQueuedMessageWithOnlyDedupeKey(HEARTBEAT_QUEUE_DEDUPE_KEY)) {
+      return;
+    }
     if (!this.messageQueue.isEmpty()) {
       const displayText = this.messageQueue.getDisplayText();
       const fileParts = this.messageQueue.getFileParts();

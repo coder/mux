@@ -274,6 +274,51 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("restoreQueueToInput discards a queued heartbeat instead of restoring it", async () => {
+    const workspaceId = "queue-dispatch-restore-discards-heartbeat";
+    const { session, cleanup } = await createAgentSessionHarness({ workspaceId });
+
+    try {
+      session.queueMessage(
+        "[Scheduled heartbeat] check in",
+        { model: TEST_MODEL, agentId: "exec", queueDispatchMode: "turn-end" },
+        { synthetic: true, dedupeKey: "heartbeat-request" }
+      );
+      expect(session.hasQueuedMessages()).toBe(true);
+
+      const restoredTexts: string[] = [];
+      const unsubscribe = session.onChatEvent((event) => {
+        if (event.message.type === "restore-to-input") {
+          restoredTexts.push(event.message.text);
+        }
+      });
+
+      // A user interrupt restores queued input to the composer — the backend-initiated
+      // heartbeat must be discarded, not surfaced as editable user text.
+      session.restoreQueueToInput();
+      unsubscribe();
+
+      expect(restoredTexts).toEqual([]);
+      expect(session.hasQueuedMessages()).toBe(false);
+      // Dropping released the dedupe key so the next scheduled firing can enqueue again.
+      expect(session.hasQueuedDedupeKey("heartbeat-request")).toBe(false);
+
+      // Plain user input still restores.
+      session.queueMessage("my own words", { model: TEST_MODEL, agentId: "exec" });
+      const unsubscribeUser = session.onChatEvent((event) => {
+        if (event.message.type === "restore-to-input") {
+          restoredTexts.push(event.message.text);
+        }
+      });
+      session.restoreQueueToInput();
+      unsubscribeUser();
+      expect(restoredTexts).toEqual(["my own words"]);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("does not send the queued message after a user abort", async () => {
     const workspaceId = "queue-dispatch-user-abort";
     const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({
