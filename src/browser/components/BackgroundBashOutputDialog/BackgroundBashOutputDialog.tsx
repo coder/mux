@@ -86,19 +86,15 @@ const BackgroundBashOutputViewer: React.FC<{ workspaceId: string; processId: str
     const run = async () => {
       let offset: number | undefined = undefined;
 
+      // The process identity is the same on every poll; only the read window
+      // differs (initial tail vs. incremental fromOffset), so keep it in one place.
+      const target = { workspaceId: props.workspaceId, processId: props.processId };
+
       while (!cancelled) {
         const result = await api.workspace.backgroundBashes.getOutput(
           offset === undefined
-            ? {
-                workspaceId: props.workspaceId,
-                processId: props.processId,
-                tailBytes: BACKGROUND_BASH_INITIAL_TAIL_BYTES,
-              }
-            : {
-                workspaceId: props.workspaceId,
-                processId: props.processId,
-                fromOffset: offset,
-              }
+            ? { ...target, tailBytes: BACKGROUND_BASH_INITIAL_TAIL_BYTES }
+            : { ...target, fromOffset: offset }
         );
 
         if (cancelled) return;
