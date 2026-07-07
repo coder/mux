@@ -7305,12 +7305,6 @@ export class WorkspaceService extends EventEmitter {
       startStreamInBackground?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
       requireIdle?: boolean;
-      /**
-       * Route into the queued-message path even when the session itself is idle. Used for
-       * scheduled sends that must not preempt other pending work (queued user input, active
-       * descendant tasks) — the queue drains at the next turn boundary instead.
-       */
-      forceQueue?: boolean;
       /** Coalescing for queued sends: drop the message when the same key is already queued. */
       queueDedupeKey?: string;
     }
@@ -7432,14 +7426,7 @@ export class WorkspaceService extends EventEmitter {
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
 
-      // forceQueue exists to defer a send behind other pending work; requireIdle exists to
-      // drop a send when any work is pending. Combining them is contradictory.
-      assert(
-        !(internal?.forceQueue === true && internal?.requireIdle === true),
-        "sendMessage: forceQueue and requireIdle are mutually exclusive"
-      );
-      const shouldQueue =
-        !normalizedOptions?.editMessageId && (session.isBusy() || internal?.forceQueue === true);
+      const shouldQueue = !normalizedOptions?.editMessageId && session.isBusy();
 
       if (shouldQueue) {
         const taskStatus = this.taskService?.getAgentTaskStatus?.(workspaceId);
@@ -9593,18 +9580,29 @@ export class WorkspaceService extends EventEmitter {
         );
       }
     } else {
-      // Busy-at-fire includes queued input and active descendant tasks even when the session
-      // itself is idle: dispatching immediately would preempt that pending work, so those
-      // cases deliver through the message queue (forceQueue) and drain at the next turn
-      // boundary (queue flush on stream end / task terminal wake).
-      const busyAtFire =
-        session.isBusy() ||
-        session.hasQueuedMessages() ||
-        (this.taskService?.hasActiveDescendantAgentTasksForWorkspace(workspaceId) ?? false);
-      if (busyAtFire) {
-        await this.queueHeartbeatMessage(workspaceId, session, heartbeatRequest);
+      // Queue modes deliver through the message queue only while a turn is actively
+      // streaming. A non-empty queue instead wins the slot outright: merging a heartbeat
+      // into queued user input would clobber that queue's send options (MessageQueue
+      // dispatches with the latest options, so the user's queued turn could run with the
+      // heartbeat's model/agent), and parking a heartbeat in an idle session's queue
+      // deadlocks descendant-task terminal wake-ups — they defer while the owner has
+      // queued messages, and an idle queue only drains at the next turn boundary, which
+      // would then never come. This also coalesces: a still-pending queued heartbeat is
+      // itself a queued message, so the next firing consumes its slot quietly here.
+      if (session.hasQueuedMessages()) {
+        log.info("Skipped heartbeat enqueue: queued messages own the next turn", {
+          workspaceId,
+          hadQueuedHeartbeat: session.hasQueuedDedupeKey(HEARTBEAT_QUEUE_DEDUPE_KEY),
+        });
         return;
       }
+      if (session.isBusy()) {
+        await this.queueHeartbeatMessage(workspaceId, heartbeatRequest);
+        return;
+      }
+      // Active descendant tasks alone leave the session idle — fall through to immediate
+      // dispatch: the child's terminal wake defers during the heartbeat turn and delivers
+      // right after it, so nothing is preempted and nothing deadlocks.
     }
 
     log.info("Executing heartbeat", {
@@ -9698,26 +9696,16 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Deliver a heartbeat that fired while the workspace was busy through the message queue.
-   * Only used for whenBusy queue modes ("tool-end" / "turn-end").
+   * Deliver a heartbeat that fired while a turn was actively streaming through the message
+   * queue. Only used for whenBusy queue modes ("tool-end" / "turn-end"); the caller has
+   * already ruled out queued messages (a non-empty queue wins the slot instead).
    */
   private async queueHeartbeatMessage(
     workspaceId: string,
-    session: AgentSession,
     heartbeatRequest: HeartbeatExecutionRequest
   ): Promise<void> {
     const whenBusy = heartbeatRequest.schedulePolicy.whenBusy;
     assert(whenBusy !== "skip", "queueHeartbeatMessage requires a queue whenBusy mode");
-
-    // Coalescing: never stack a second scheduled heartbeat while one is still pending —
-    // heartbeats are periodic check-ins, so a duplicate adds noise without information.
-    // Quiet skip (no throw): the slot is consumed and the deadline advances normally.
-    if (session.hasQueuedDedupeKey(HEARTBEAT_QUEUE_DEDUPE_KEY)) {
-      log.info("Skipped heartbeat enqueue: a scheduled heartbeat is already queued", {
-        workspaceId,
-      });
-      return;
-    }
 
     // The awaiting_interactive_input eligibility gate only sees committed history, but a
     // mid-stream ask_user_question lives in partial.json until the turn commits — so the
@@ -9739,12 +9727,9 @@ export class WorkspaceService extends EventEmitter {
       });
     }
 
-    // If user input is already queued, the heartbeat merges into that turn (MessageQueue
-    // joins texts; the first queued metadata wins) — log so transcripts stay explainable.
     log.info("Queueing heartbeat for busy workspace", {
       workspaceId,
       queueDispatchMode: whenBusy,
-      hadQueuedMessages: session.hasQueuedMessages(),
     });
 
     const sendResult = await this.sendMessage(
@@ -9760,9 +9745,10 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         // Backend-initiated maintenance turn: do not treat as explicit user re-engagement.
         synthetic: true,
-        // Route through the queue even when the session is idle (queued input / descendant
-        // task cases) so the heartbeat never preempts pending work.
-        forceQueue: true,
+        // If the stream ends between the caller's isBusy check and this send, the message
+        // dispatches immediately — the workspace is idle then, so that is the right outcome.
+        // The dedupe key guards the opposite race: a heartbeat queued mid-flight coalesces
+        // instead of double-queueing.
         queueDedupeKey: HEARTBEAT_QUEUE_DEDUPE_KEY,
       }
     );

@@ -1139,7 +1139,6 @@ describe("HeartbeatService", () => {
       synthetic?: boolean;
       skipAutoResumeReset?: boolean;
       requireIdle?: boolean;
-      forceQueue?: boolean;
       queueDedupeKey?: string;
     }
     type HeartbeatQueueSendMessageCall = [
@@ -1185,7 +1184,7 @@ describe("HeartbeatService", () => {
       };
     }
 
-    test("busy session with interval trigger queues with turn-end, forceQueue, and the scheduled lead-in", async () => {
+    test("busy session with interval trigger queues with turn-end and the scheduled lead-in", async () => {
       const { workspaceService, sendMessageMock, getSendMessageCall } = setupExecuteHeartbeat({
         heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, trigger: "interval" },
         session: makeSessionStub({ isBusy: true }),
@@ -1202,7 +1201,6 @@ describe("HeartbeatService", () => {
       expect(heartbeatPrompt).not.toContain("idle for approximately");
       expect(sendOptions.queueDispatchMode).toBe("turn-end");
       expect(sendOptions.muxMetadata?.type).toBe("heartbeat-request");
-      expect(dispatchOptions?.forceQueue).toBe(true);
       expect(dispatchOptions?.requireIdle).toBeUndefined();
       expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
       expect(dispatchOptions?.synthetic).toBe(true);
@@ -1223,25 +1221,35 @@ describe("HeartbeatService", () => {
       expect(heartbeatPrompt).toContain("[Heartbeat]");
       expect(heartbeatPrompt).not.toContain("[Scheduled heartbeat]");
       expect(sendOptions.queueDispatchMode).toBe("tool-end");
-      expect(dispatchOptions?.forceQueue).toBe(true);
       expect(dispatchOptions?.requireIdle).toBeUndefined();
     });
 
-    test("queued user input while idle force-queues instead of dispatching over it", async () => {
-      const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
-        heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
-        session: makeSessionStub({ isBusy: false, hasQueuedMessages: true }),
-      });
+    // Merging a heartbeat into queued user input would clobber the queue's send options
+    // (MessageQueue dispatches with the latest options), and a heartbeat parked in an idle
+    // session's queue deadlocks descendant-task terminal wake-ups — so a non-empty queue
+    // always wins the slot.
+    test("queued user input skips the firing whether the session is idle or busy", async () => {
+      for (const isBusy of [false, true]) {
+        const { sendMessageMock, workspaceService } = setupExecuteHeartbeat({
+          heartbeat: {
+            enabled: true,
+            intervalMs: HEARTBEAT_MIN_INTERVAL_MS,
+            whenBusy: "turn-end",
+          },
+          session: makeSessionStub({ isBusy, hasQueuedMessages: true }),
+        });
 
-      await workspaceService.executeHeartbeat(testWorkspaceId);
+        await workspaceService.executeHeartbeat(testWorkspaceId);
 
-      expect(sendMessageMock).toHaveBeenCalledTimes(1);
-      const [, , sendOptions, dispatchOptions] = getSendMessageCall(0)!;
-      expect(sendOptions.queueDispatchMode).toBe("turn-end");
-      expect(dispatchOptions?.forceQueue).toBe(true);
+        expect(sendMessageMock).not.toHaveBeenCalled();
+      }
     });
 
-    test("active descendant tasks while idle force-queue the heartbeat", async () => {
+    // Active descendant tasks leave the session itself idle: queueing here would deadlock
+    // the child's terminal wake (it defers while the owner has queued messages, and an idle
+    // queue never drains). Immediate dispatch is safe — the wake defers during the heartbeat
+    // turn and delivers right after it.
+    test("active descendant tasks while idle dispatch the heartbeat immediately", async () => {
       const { sendMessageMock, workspaceService, getSendMessageCall } = setupExecuteHeartbeat({
         heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
         session: makeSessionStub(),
@@ -1251,14 +1259,21 @@ describe("HeartbeatService", () => {
       await workspaceService.executeHeartbeat(testWorkspaceId);
 
       expect(sendMessageMock).toHaveBeenCalledTimes(1);
-      const [, , , dispatchOptions] = getSendMessageCall(0)!;
-      expect(dispatchOptions?.forceQueue).toBe(true);
+      const [, , sendOptions, dispatchOptions] = getSendMessageCall(0)!;
+      expect(sendOptions.queueDispatchMode).toBe("turn-end");
+      expect(dispatchOptions?.requireIdle).toBeUndefined();
+      expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
     });
 
     test("a pending queued heartbeat coalesces the next busy firing without throwing", async () => {
+      // A queued heartbeat is itself a queued message, so the queue-wins rule coalesces it.
       const { sendMessageMock, workspaceService } = setupExecuteHeartbeat({
         heartbeat: { enabled: true, intervalMs: HEARTBEAT_MIN_INTERVAL_MS, whenBusy: "turn-end" },
-        session: makeSessionStub({ isBusy: true, hasQueuedDedupeKey: true }),
+        session: makeSessionStub({
+          isBusy: true,
+          hasQueuedMessages: true,
+          hasQueuedDedupeKey: true,
+        }),
       });
 
       await workspaceService.executeHeartbeat(testWorkspaceId);
@@ -1354,7 +1369,6 @@ describe("HeartbeatService", () => {
       const [, , sendOptions, dispatchOptions] = getSendMessageCall(0)!;
       expect(sendOptions.queueDispatchMode).toBe("turn-end");
       expect(dispatchOptions?.requireIdle).toBeUndefined();
-      expect(dispatchOptions?.forceQueue).toBeUndefined();
       expect(dispatchOptions?.queueDedupeKey).toBe("heartbeat-request");
     });
 

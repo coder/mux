@@ -585,7 +585,8 @@ export class HeartbeatService {
 
     // Busy-related gates depend on the whenBusy policy: "skip" (the idle-trigger default)
     // misses the slot exactly as before, while queue modes pass through so executeHeartbeat
-    // can enqueue the heartbeat at the requested boundary.
+    // can deliver — enqueued at the requested boundary while streaming, or dispatched
+    // immediately when only descendant tasks are active (the session itself is idle then).
     const deliverWhenBusy = resolveHeartbeatSchedulePolicy(workspace.heartbeat).whenBusy !== "skip";
 
     const activity = await this.extensionMetadata.getSnapshot(workspaceId);
