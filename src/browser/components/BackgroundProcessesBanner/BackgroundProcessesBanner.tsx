@@ -174,6 +174,7 @@ export const BackgroundProcessesBanner: React.FC<BackgroundProcessesBannerProps>
           workspaceId={props.workspaceId}
           processId={viewingProcessId}
           displayName={viewingProcess?.displayName}
+          script={viewingProcess?.script}
         />
       )}
     </>

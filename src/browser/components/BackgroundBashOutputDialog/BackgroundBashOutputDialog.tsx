@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { CopyButton } from "../CopyButton/CopyButton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../Dialog/Dialog";
-import { DetailContent } from "@/browser/features/Tools/Shared/ToolPrimitives";
+import {
+  DetailContent,
+  DetailLabel,
+  DetailSection,
+} from "@/browser/features/Tools/Shared/ToolPrimitives";
 import { useAPI } from "@/browser/contexts/API";
 import {
   appendLiveBashOutputChunk,
@@ -18,6 +22,8 @@ interface BackgroundBashOutputDialogProps {
   workspaceId: string;
   processId: string;
   displayName?: string;
+  /** The bash script being run, shown so the user can tell what the process is doing. */
+  script?: string;
 }
 
 export const BackgroundBashOutputDialog: React.FC<BackgroundBashOutputDialogProps> = (props) => (
@@ -33,6 +39,13 @@ export const BackgroundBashOutputDialog: React.FC<BackgroundBashOutputDialogProp
           )}
         </DialogTitle>
       </DialogHeader>
+
+      {props.script && (
+        <DetailSection>
+          <DetailLabel>Command</DetailLabel>
+          <DetailContent className="max-h-32 px-2 py-1.5">{props.script}</DetailContent>
+        </DetailSection>
+      )}
 
       <BackgroundBashOutputViewer workspaceId={props.workspaceId} processId={props.processId} />
     </DialogContent>

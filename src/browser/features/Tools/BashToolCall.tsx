@@ -252,6 +252,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
           workspaceId={workspaceId}
           processId={backgroundProcessId}
           displayName={args.display_name}
+          script={args.script}
         />
       )}
 
