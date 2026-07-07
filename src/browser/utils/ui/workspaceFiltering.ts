@@ -609,6 +609,15 @@ function parseTimestampMs(value: string | undefined): number {
 }
 
 /**
+ * Ascending lexicographic comparison for use as an Array.sort tie-breaker,
+ * returning the standard -1 / 0 / 1 so equal values fall through to the next
+ * tie-breaker instead of short-circuiting the sort.
+ */
+function compareStringsAsc(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
  * Build a map of project paths to sorted workspace metadata lists.
  * Includes both persisted workspaces (from config) and workspaces from
  * metadata that haven't yet appeared in config (handles race condition
@@ -677,15 +686,12 @@ export function buildSortedWorkspacesByProject(
         return bCreatedAt - aCreatedAt;
       }
 
-      if (a.name !== b.name) {
-        return a.name < b.name ? -1 : 1;
+      const nameOrder = compareStringsAsc(a.name, b.name);
+      if (nameOrder !== 0) {
+        return nameOrder;
       }
 
-      if (a.id !== b.id) {
-        return a.id < b.id ? -1 : 1;
-      }
-
-      return 0;
+      return compareStringsAsc(a.id, b.id);
     });
   }
 
