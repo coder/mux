@@ -95,8 +95,19 @@ interface QueuedMessageInternalOptions {
   onCanceled?: (reason: string) => Promise<void> | void;
 }
 
+/**
+ * A single queued text entry. `synthetic` marks system-injected messages
+ * (bash monitor wakes, goal continuations, workspace-turn follow-ups, ...)
+ * so user-facing accessors can exclude them: system prompts must never
+ * surface in the queued-message banner or be restored to the composer.
+ */
+interface QueueEntry {
+  text: string;
+  synthetic: boolean;
+}
+
 export class MessageQueue {
-  private messages: string[] = [];
+  private entries: QueueEntry[] = [];
   private firstMuxMetadata?: unknown;
   private latestOptions?: SendMessageOptions;
   private accumulatedFileParts: FilePart[] = [];
@@ -262,7 +273,7 @@ export class MessageQueue {
 
     // Add text message if non-empty
     if (trimmedMessage.length > 0) {
-      this.messages.push(trimmedMessage);
+      this.entries.push({ text: trimmedMessage, synthetic: internal?.synthetic === true });
     }
 
     if (options) {
@@ -300,31 +311,47 @@ export class MessageQueue {
   }
 
   /**
-   * Get all queued message texts (for editing/restoration).
+   * Get user-authored queued message texts (for the queue banner and editing/restoration).
+   * Synthetic (system-injected) entries are deliberately excluded: they dispatch with the
+   * batch but must never render as if the user had typed them.
    */
-  getMessages(): string[] {
-    return [...this.messages];
+  getUserMessages(): string[] {
+    return this.entries.filter((entry) => !entry.synthetic).map((entry) => entry.text);
   }
 
   /**
-   * Get display text for queued messages.
+   * Get display text for user-authored queued messages.
    * - Single compaction request shows rawCommand (/compact)
    * - Single agent-skill invocation shows rawCommand (/{skill})
    * - Multiple messages show all actual message texts
+   * Synthetic (system-injected) entries are excluded, same as getUserMessages().
    */
-  getDisplayText(): string {
+  getUserDisplayText(): string {
+    const userMessages = this.getUserMessages();
+    // rawCommand shortcuts only apply when the queue holds nothing but the user command
+    // (a synthetic entry alongside would make rawCommand misrepresent the batch).
+    const hasSyntheticEntries = this.entries.some((entry) => entry.synthetic);
+
     // Only show rawCommand for single compaction request
-    if (this.messages.length === 1 && isCompactionMetadata(this.firstMuxMetadata)) {
+    if (
+      !hasSyntheticEntries &&
+      userMessages.length === 1 &&
+      isCompactionMetadata(this.firstMuxMetadata)
+    ) {
       return this.firstMuxMetadata.rawCommand;
     }
 
     // Only show rawCommand for a single agent-skill invocation.
     // (Batching agent-skill with other messages is disallowed.)
-    if (this.messages.length <= 1 && isAgentSkillMetadata(this.firstMuxMetadata)) {
+    if (
+      !hasSyntheticEntries &&
+      userMessages.length <= 1 &&
+      isAgentSkillMetadata(this.firstMuxMetadata)
+    ) {
       return this.firstMuxMetadata.rawCommand;
     }
 
-    return this.messages.join("\n");
+    return userMessages.join("\n");
   }
 
   /**
@@ -364,7 +391,7 @@ export class MessageQueue {
     options?: SendMessageOptions & { fileParts?: FilePart[] };
     internal?: QueuedMessageInternalOptions;
   } {
-    const joinedMessages = this.messages.join("\n");
+    const joinedMessages = this.entries.map((entry) => entry.text).join("\n");
     // First metadata takes precedence (preserves compaction + agent-skill invocations)
     const muxMetadata =
       this.firstMuxMetadata !== undefined
@@ -414,7 +441,7 @@ export class MessageQueue {
    * Clear all queued messages, options, and images.
    */
   clear(): void {
-    this.messages = [];
+    this.entries = [];
     this.firstMuxMetadata = undefined;
     this.latestOptions = undefined;
     this.accumulatedFileParts = [];
@@ -433,6 +460,6 @@ export class MessageQueue {
    * Check if queue is empty (no messages AND no images).
    */
   isEmpty(): boolean {
-    return this.messages.length === 0 && this.accumulatedFileParts.length === 0;
+    return this.entries.length === 0 && this.accumulatedFileParts.length === 0;
   }
 }

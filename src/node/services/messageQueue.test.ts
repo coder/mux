@@ -10,12 +10,12 @@ describe("MessageQueue", () => {
     queue = new MessageQueue();
   });
 
-  describe("getDisplayText", () => {
+  describe("getUserDisplayText", () => {
     it("should return joined messages for normal messages", () => {
       queue.add("First message");
       queue.add("Second message");
 
-      expect(queue.getDisplayText()).toBe("First message\nSecond message");
+      expect(queue.getUserDisplayText()).toBe("First message\nSecond message");
     });
 
     it("should return rawCommand for compaction request", () => {
@@ -33,7 +33,7 @@ describe("MessageQueue", () => {
 
       queue.add("Summarize this conversation into a compact form...", options);
 
-      expect(queue.getDisplayText()).toBe("/compact -t 3000");
+      expect(queue.getUserDisplayText()).toBe("/compact -t 3000");
     });
 
     it("should throw when adding compaction after normal message", () => {
@@ -71,11 +71,11 @@ describe("MessageQueue", () => {
 
       queue.add("Regular message", options);
 
-      expect(queue.getDisplayText()).toBe("Regular message");
+      expect(queue.getUserDisplayText()).toBe("Regular message");
     });
 
     it("should return empty string for empty queue", () => {
-      expect(queue.getDisplayText()).toBe("");
+      expect(queue.getUserDisplayText()).toBe("");
     });
 
     it("should return joined messages after clearing compaction metadata", () => {
@@ -95,7 +95,7 @@ describe("MessageQueue", () => {
       queue.clear();
       queue.add("New message");
 
-      expect(queue.getDisplayText()).toBe("New message");
+      expect(queue.getUserDisplayText()).toBe("New message");
     });
   });
 
@@ -116,9 +116,9 @@ describe("MessageQueue", () => {
       queue.add("Summarize this conversation...", options);
 
       // getMessages should return the actual message text for editing
-      expect(queue.getMessages()).toEqual(["Summarize this conversation..."]);
-      // getDisplayText should return the slash command
-      expect(queue.getDisplayText()).toBe("/compact");
+      expect(queue.getUserMessages()).toEqual(["Summarize this conversation..."]);
+      // getUserDisplayText should return the slash command
+      expect(queue.getUserDisplayText()).toBe("/compact");
     });
   });
 
@@ -225,7 +225,7 @@ describe("MessageQueue", () => {
       ).toThrow(/Cannot queue compaction request/);
 
       expect(queue.getQueueDispatchMode()).toBe("turn-end");
-      expect(queue.getMessages()).toHaveLength(1);
+      expect(queue.getUserMessages()).toHaveLength(1);
     });
 
     it("should preserve turn-end mode when agent-skill enqueue is rejected", () => {
@@ -256,7 +256,7 @@ describe("MessageQueue", () => {
       ).toThrow(/Cannot queue agent skill/);
 
       expect(queue.getQueueDispatchMode()).toBe("turn-end");
-      expect(queue.getMessages()).toHaveLength(1);
+      expect(queue.getUserMessages()).toHaveLength(1);
     });
 
     it("should reset mode to tool-end when cleared", () => {
@@ -374,7 +374,7 @@ describe("MessageQueue", () => {
 
       expect(addedFirst).toBe(true);
       expect(addedSecond).toBe(false);
-      expect(queue.getMessages()).toEqual(["Follow up"]);
+      expect(queue.getUserMessages()).toEqual(["Follow up"]);
       expect(queue.getFileParts()).toEqual([image]);
     });
   });
@@ -385,8 +385,8 @@ describe("MessageQueue", () => {
       queue.add("Second message");
       queue.add("Third message");
 
-      expect(queue.getMessages()).toEqual(["First message", "Second message", "Third message"]);
-      expect(queue.getDisplayText()).toBe("First message\nSecond message\nThird message");
+      expect(queue.getUserMessages()).toEqual(["First message", "Second message", "Third message"]);
+      expect(queue.getUserDisplayText()).toBe("First message\nSecond message\nThird message");
     });
 
     it("should preserve compaction metadata when follow-up is added", () => {
@@ -404,10 +404,10 @@ describe("MessageQueue", () => {
       queue.add("And then do this follow-up task");
 
       // Display shows all messages (multiple messages = not just compaction)
-      expect(queue.getDisplayText()).toBe("Summarize...\nAnd then do this follow-up task");
+      expect(queue.getUserDisplayText()).toBe("Summarize...\nAnd then do this follow-up task");
 
       // getMessages includes both
-      expect(queue.getMessages()).toEqual(["Summarize...", "And then do this follow-up task"]);
+      expect(queue.getUserMessages()).toEqual(["Summarize...", "And then do this follow-up task"]);
 
       // produceMessage preserves compaction metadata from first message
       const { message, options } = queue.produceMessage();
@@ -454,7 +454,7 @@ describe("MessageQueue", () => {
         muxMetadata: metadata,
       });
 
-      expect(queue.getDisplayText()).toBe("/init");
+      expect(queue.getUserDisplayText()).toBe("/init");
 
       expect(() => queue.add("Follow-up message")).toThrow(
         /agent skill invocation is already queued/
@@ -489,13 +489,13 @@ describe("MessageQueue", () => {
         fileParts: [image2],
       });
 
-      expect(queue.getMessages()).toEqual([
+      expect(queue.getUserMessages()).toEqual([
         "Message with image",
         "Follow-up without image",
         "Another with image",
       ]);
       expect(queue.getFileParts()).toEqual([image1, image2]);
-      expect(queue.getDisplayText()).toBe(
+      expect(queue.getUserDisplayText()).toBe(
         "Message with image\nFollow-up without image\nAnother with image"
       );
     });
@@ -528,6 +528,45 @@ describe("MessageQueue", () => {
       queue.add("User message", { model: "gpt-4", agentId: "exec" });
       const { internal } = queue.produceMessage();
       expect(internal).toBeUndefined();
+    });
+  });
+
+  describe("synthetic entry segregation", () => {
+    it("should hide synthetic entries from user-facing accessors while still dispatching them", () => {
+      queue.add(
+        "A background bash monitor matched output.",
+        { model: "gpt-4", agentId: "exec" },
+        { synthetic: true }
+      );
+
+      // User-facing view is empty (nothing to show in the queue banner or restore to input)...
+      expect(queue.getUserMessages()).toEqual([]);
+      expect(queue.getUserDisplayText()).toBe("");
+      // ...but the entry still counts as queued and dispatches with the batch.
+      expect(queue.isEmpty()).toBe(false);
+      expect(queue.produceMessage().message).toBe("A background bash monitor matched output.");
+    });
+
+    it("should show only user text for mixed synthetic + user batches", () => {
+      queue.add("Synthetic wake prompt", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
+      queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
+
+      expect(queue.getUserMessages()).toEqual(["User follow-up"]);
+      expect(queue.getUserDisplayText()).toBe("User follow-up");
+      // Dispatch still includes both, in queue order.
+      expect(queue.produceMessage().message).toBe("Synthetic wake prompt\nUser follow-up");
+    });
+
+    it("should not apply rawCommand shortcut when a synthetic entry shares the queue", () => {
+      queue.add("Summarize this conversation...", {
+        model: "gpt-4",
+        agentId: "exec",
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact" },
+      });
+      queue.add("Synthetic follow-up", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
+
+      // rawCommand would misrepresent the batch; fall back to the actual user text.
+      expect(queue.getUserDisplayText()).toBe("Summarize this conversation...");
     });
   });
 
@@ -600,7 +639,7 @@ describe("MessageQueue", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
-      expect(queue.getMessages()).toEqual([]);
+      expect(queue.getUserMessages()).toEqual([]);
       expect(queue.getFileParts()).toEqual([image]);
       expect(queue.isEmpty()).toBe(false);
     });
@@ -609,7 +648,7 @@ describe("MessageQueue", () => {
       queue.add("", { model: "gpt-4", agentId: "exec" });
 
       expect(queue.isEmpty()).toBe(true);
-      expect(queue.getMessages()).toEqual([]);
+      expect(queue.getUserMessages()).toEqual([]);
       expect(queue.getFileParts()).toEqual([]);
     });
 
@@ -620,7 +659,7 @@ describe("MessageQueue", () => {
       queue.add("Text message", { model: "gpt-4", agentId: "exec", fileParts: [image1] });
       queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image2] }); // Image-only
 
-      expect(queue.getMessages()).toEqual(["Text message"]);
+      expect(queue.getUserMessages()).toEqual(["Text message"]);
       expect(queue.getFileParts()).toEqual([image1, image2]);
       expect(queue.isEmpty()).toBe(false);
     });
@@ -643,11 +682,11 @@ describe("MessageQueue", () => {
       expect(options?.model).toBe("gpt-4");
     });
 
-    it("should return empty string for getDisplayText with image-only", () => {
+    it("should return empty string for getUserDisplayText with image-only", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
-      expect(queue.getDisplayText()).toBe("");
+      expect(queue.getUserDisplayText()).toBe("");
     });
   });
 });
