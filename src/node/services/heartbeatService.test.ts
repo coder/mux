@@ -683,6 +683,48 @@ describe("HeartbeatService", () => {
       expect(updatedDeadline).toBeGreaterThanOrEqual(beforeMetadataUpdate + updatedIntervalMs);
     });
 
+    // A trigger-only edit (same intervalMs) must re-anchor: an idle→interval switch that
+    // kept the old idle deadline would fire the "fixed" schedule at the stale
+    // time-since-activity deadline instead of a fresh cadence from the edit.
+    test("metadata event re-anchors the deadline when only the trigger changes", async () => {
+      service.start();
+      const internals = getInternals();
+      await internals.resyncFromConfig(0);
+      const idleDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      expect(idleDeadline).toBeDefined();
+
+      const beforeTriggerSwitch = Date.now();
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({
+          heartbeat: {
+            enabled: true,
+            intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            trigger: "interval",
+          },
+        }),
+      });
+
+      const reanchoredDeadline = internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId);
+      expect(reanchoredDeadline).toBeDefined();
+      expect(reanchoredDeadline).toBeGreaterThanOrEqual(
+        beforeTriggerSwitch + HEARTBEAT_DEFAULT_INTERVAL_MS
+      );
+
+      // Same settings again: no further deadline churn (change detection still works).
+      wsEmitter.emit("metadata", {
+        workspaceId: testWorkspaceId,
+        metadata: makeWorkspaceEntry({
+          heartbeat: {
+            enabled: true,
+            intervalMs: HEARTBEAT_DEFAULT_INTERVAL_MS,
+            trigger: "interval",
+          },
+        }),
+      });
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(reanchoredDeadline);
+    });
+
     test("metadata event re-adds unarchived workspace", async () => {
       service.start();
       const internals = getInternals();

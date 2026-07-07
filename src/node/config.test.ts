@@ -1657,6 +1657,43 @@ describe("Config", () => {
       });
     });
 
+    it("preserves valid heartbeat schedule fields and drops invalid ones in workspace metadata", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(config.srcDir, "project", "heartbeat-schedule");
+      // trigger is valid and must survive normalization; whenBusy simulates a corrupt
+      // persisted value and must be dropped (self-healing) rather than passed through.
+      const persistedHeartbeat = {
+        enabled: true,
+        intervalMs: 30 * 60 * 1000,
+        trigger: "interval",
+        whenBusy: "not-a-mode",
+      };
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [
+            {
+              path: workspacePath,
+              id: "workspace-heartbeat-schedule",
+              name: "heartbeat-schedule",
+              createdAt: "2025-01-01T00:00:00.000Z",
+              runtimeConfig: { type: "local" },
+              heartbeat: persistedHeartbeat as NonNullable<WorkspaceMetadata["heartbeat"]>,
+            },
+          ],
+        });
+        return cfg;
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+
+      expect(metadata.heartbeat).toEqual({
+        enabled: true,
+        intervalMs: 30 * 60 * 1000,
+        trigger: "interval",
+      });
+    });
+
     it("should use existing metadata file if present (legacy format)", async () => {
       const projectPath = "/fake/project";
       const workspaceName = "my-feature";

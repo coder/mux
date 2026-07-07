@@ -8,6 +8,7 @@ import {
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
   resolveHeartbeatSchedulePolicy,
+  type HeartbeatTrigger,
 } from "@/constants/heartbeat";
 import type { Config } from "@/node/config";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -62,6 +63,7 @@ export class HeartbeatService {
 
   private readonly nextEligibleAtByWorkspaceId = new Map<string, number>();
   private readonly trackedIntervalMsByWorkspaceId = new Map<string, number>();
+  private readonly trackedTriggerByWorkspaceId = new Map<string, HeartbeatTrigger>();
   private readonly activeWorkspaceIds = new Set<string>();
   private readonly queuedWorkspaceIds = new Set<string>();
   private isProcessingQueue = false;
@@ -150,6 +152,7 @@ export class HeartbeatService {
 
     this.nextEligibleAtByWorkspaceId.clear();
     this.trackedIntervalMsByWorkspaceId.clear();
+    this.trackedTriggerByWorkspaceId.clear();
     this.activeWorkspaceIds.clear();
     this.queuedWorkspaceIds.clear();
     this.isProcessingQueue = false;
@@ -226,7 +229,12 @@ export class HeartbeatService {
                 trackingIntervalMs,
                 activitySnapshots.get(workspaceId)
               );
-          this.ensureTrackedWorkspace(workspaceId, nextEligibleAt, trackingIntervalMs);
+          this.ensureTrackedWorkspace(
+            workspaceId,
+            nextEligibleAt,
+            trackingIntervalMs,
+            resolveHeartbeatSchedulePolicy(workspace.heartbeat).trigger
+          );
           continue;
         }
 
@@ -295,7 +303,8 @@ export class HeartbeatService {
   private ensureTrackedWorkspace(
     workspaceId: string,
     nextEligibleAt: number,
-    trackingIntervalMs: number
+    trackingIntervalMs: number,
+    trigger: HeartbeatTrigger
   ): void {
     assert(
       workspaceId.trim().length > 0,
@@ -312,12 +321,22 @@ export class HeartbeatService {
 
     const previousNextEligibleAt = this.nextEligibleAtByWorkspaceId.get(workspaceId);
     const previousIntervalMs = this.trackedIntervalMsByWorkspaceId.get(workspaceId);
-    if (previousNextEligibleAt != null && previousIntervalMs === trackingIntervalMs) {
+    const previousTrigger = this.trackedTriggerByWorkspaceId.get(workspaceId);
+    // A trigger change must refresh the deadline even when intervalMs is unchanged:
+    // an idle→interval edit re-anchors the fixed cadence at the edit (instead of
+    // inheriting the stale idle countdown), and interval→idle starts a fresh
+    // time-since-activity countdown.
+    if (
+      previousNextEligibleAt != null &&
+      previousIntervalMs === trackingIntervalMs &&
+      previousTrigger === trigger
+    ) {
       return;
     }
 
     this.nextEligibleAtByWorkspaceId.set(workspaceId, nextEligibleAt);
     this.trackedIntervalMsByWorkspaceId.set(workspaceId, trackingIntervalMs);
+    this.trackedTriggerByWorkspaceId.set(workspaceId, trigger);
     log.debug(
       previousNextEligibleAt == null
         ? "HeartbeatService: tracking workspace"
@@ -326,8 +345,10 @@ export class HeartbeatService {
         workspaceId,
         previousNextEligibleAt,
         previousIntervalMs,
+        previousTrigger,
         nextEligibleAt,
         trackingIntervalMs,
+        trigger,
       }
     );
   }
@@ -338,6 +359,7 @@ export class HeartbeatService {
 
     const removedDeadline = this.nextEligibleAtByWorkspaceId.delete(workspaceId);
     const removedInterval = this.trackedIntervalMsByWorkspaceId.delete(workspaceId);
+    this.trackedTriggerByWorkspaceId.delete(workspaceId);
     const removedActive = this.activeWorkspaceIds.delete(workspaceId);
     const removedQueued = this.queuedWorkspaceIds.delete(workspaceId);
     if (!removedDeadline && !removedInterval && !removedActive && !removedQueued) {
@@ -388,12 +410,14 @@ export class HeartbeatService {
 
     // Fixed-interval heartbeats measure wall-clock cadence, not time-since-activity:
     // activity must not push back the deadline.
-    if (resolveHeartbeatSchedulePolicy(workspace?.heartbeat).trigger === "interval") {
+    const trigger = resolveHeartbeatSchedulePolicy(workspace?.heartbeat).trigger;
+    if (trigger === "interval") {
       return;
     }
 
     this.nextEligibleAtByWorkspaceId.set(workspaceId, Date.now() + intervalMs);
     this.trackedIntervalMsByWorkspaceId.set(workspaceId, intervalMs);
+    this.trackedTriggerByWorkspaceId.set(workspaceId, trigger);
     log.debug("HeartbeatService: activity event reset countdown", { workspaceId, intervalMs });
   }
 
@@ -432,7 +456,12 @@ export class HeartbeatService {
         return;
       }
 
-      this.ensureTrackedWorkspace(workspaceId, Date.now() + intervalMs, intervalMs);
+      this.ensureTrackedWorkspace(
+        workspaceId,
+        Date.now() + intervalMs,
+        intervalMs,
+        resolveHeartbeatSchedulePolicy(metadata.heartbeat).trigger
+      );
       return;
     }
 
@@ -521,12 +550,14 @@ export class HeartbeatService {
               // Every attempt (success, eligibility skip, or error) consumes its slot.
               // Fixed-interval triggers stay anchored to the fire time; idle triggers
               // keep today's fresh countdown from dispatch end.
+              const trigger = resolveHeartbeatSchedulePolicy(workspace?.heartbeat).trigger;
               const nextEligibleAt =
-                resolveHeartbeatSchedulePolicy(workspace?.heartbeat).trigger === "interval"
+                trigger === "interval"
                   ? advanceAnchoredDeadline(firedAt, trackingIntervalMs, Date.now())
                   : Date.now() + trackingIntervalMs;
               this.nextEligibleAtByWorkspaceId.set(workspaceId, nextEligibleAt);
               this.trackedIntervalMsByWorkspaceId.set(workspaceId, trackingIntervalMs);
+              this.trackedTriggerByWorkspaceId.set(workspaceId, trigger);
             } else {
               this.purgeWorkspace(workspaceId, "post_dispatch_ineligible");
             }

@@ -61,6 +61,8 @@ import {
   HEARTBEAT_DEFAULT_INTERVAL_MS,
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
+  isHeartbeatTrigger,
+  isHeartbeatWhenBusy,
 } from "@/constants/heartbeat";
 import { normalizeGoalDefaults } from "@/constants/goals";
 import {
@@ -113,6 +115,12 @@ function normalizeWorkspaceMetadataHeartbeat(
   const contextMode = isWorkspaceHeartbeatContextMode(persisted.contextMode)
     ? persisted.contextMode
     : undefined;
+  // Copy schedule fields through so metadata consumers (frontend modal, HeartbeatService's
+  // metadata-event handler) see persisted values instead of silently falling back to the
+  // read-time defaults. Invalid values are dropped (self-healing), which resolves to the
+  // same defaults resolveHeartbeatSchedulePolicy would apply.
+  const trigger = isHeartbeatTrigger(persisted.trigger) ? persisted.trigger : undefined;
+  const whenBusy = isHeartbeatWhenBusy(persisted.whenBusy) ? persisted.whenBusy : undefined;
 
   return {
     enabled: persisted.enabled === true,
@@ -121,6 +129,8 @@ function normalizeWorkspaceMetadataHeartbeat(
       : defaultIntervalMs,
     ...(message != null ? { message } : {}),
     ...(contextMode != null ? { contextMode } : {}),
+    ...(trigger != null ? { trigger } : {}),
+    ...(whenBusy != null ? { whenBusy } : {}),
   };
 }
 
