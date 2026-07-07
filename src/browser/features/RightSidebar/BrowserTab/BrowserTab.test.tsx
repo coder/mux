@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { useState } from "react";
 
 import type {
   BrowserDiscoveredOtherSession,
@@ -50,9 +49,12 @@ void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => apiResultMock,
 }));
 
-void mock.module("@/browser/hooks/usePersistedState", () => ({
-  usePersistedState: <T,>(_key: string, initialValue: T) => useState(initialValue),
-}));
+// No usePersistedState module mock: each test gets a fresh happy-dom window, so the real
+// hook already returns the null default this suite relies on. A module replacement here
+// leaks process-wide (bun's mock.module overrides the module cache for every file
+// evaluated afterwards), turning later-evaluated suites' persistence into no-ops (seen as
+// GeneralSection CI failures once the CommandPalette suite — whose imports used to load
+// the real module graph first — moved out of the monolithic pass).
 
 void mock.module("./useBrowserBridgeConnection", () => ({
   useBrowserBridgeConnection: () => ({
