@@ -77,6 +77,12 @@ export interface MonitorMatchPayload {
   totalMatches: number;
   droppedLines?: number;
   timestamp: number;
+  /**
+   * File byte offset at the end of the last matched line, carried so the drain can re-check it
+   * against the settled shown-frontier at delivery time. The emit-time suppression in
+   * emitMonitorMatch is only a point-in-time fast path; drainBashMonitorWakes is authoritative.
+   */
+  matchedThroughOffset: number;
 }
 
 /** Emitted when a spawn arms a monitor; drives the persisted armed-monitor registry. */
@@ -145,6 +151,15 @@ export interface BackgroundProcess {
    * the monitor's matchedThroughOffset are absolute file offsets, so suppression is race-free.
    */
   shownThroughOffset: number;
+  /**
+   * Resolves when the current in-flight *unfiltered* getOutput read settles (i.e. after it has
+   * advanced shownThroughOffset and returned). undefined when no unfiltered read is in flight.
+   * getSettledShownThroughOffset awaits this so the drain gate reads a settled frontier instead of
+   * racing a concurrent task_await. Filtered reads are deliberately not tracked here: they never
+   * advance shownThroughOffset and a filtered long-poll can hold the lock for the full timeout, so
+   * waiting on them would stall wake delivery for nothing.
+   */
+  unfilteredReadSettled?: Promise<void>;
   /** Mutex to serialize getOutput() calls (prevents race condition when
    * parallel tool calls read from same offset before position is updated) */
   outputLock: AsyncMutex;
@@ -318,14 +333,15 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       monitor.flushTimer = undefined;
     }
 
-    // Don't wake the agent about output it has already been shown. shownThroughOffset is the file
-    // position an unfiltered task_await / bash_output read has delivered complete lines through;
-    // matchedThroughOffset is where the matched line ends. Both are absolute file offsets, so this
-    // is order-independent (no race between the reader and the monitor). If the agent was shown
-    // through the match, a wake would only double-report it (e.g. a concurrent task_await that just
-    // returned the same line), so drop. Anything still beyond the shown mark -- a filtered-out
-    // match (filtered reads never advance the mark), a line still buffered unterminated (matched
-    // only on exit), or genuinely new output -- stays above it and still wakes.
+    // Fast-path drop: don't even emit a wake for output the agent has already been shown.
+    // shownThroughOffset is the file position an unfiltered task_await / bash_output read has
+    // delivered complete lines through; matchedThroughOffset is where the matched line ends. Both
+    // are absolute file offsets, so this is order-independent. This check is only a point-in-time
+    // optimization -- it suppresses the common cooldown-deferred case with zero store I/O. It can
+    // still race a concurrent task_await that advances shownThroughOffset just after this flush
+    // (e.g. a process that prints its final line then exits, triggering an immediate exit flush).
+    // drainBashMonitorWakes re-checks matchedThroughOffset against the settled frontier at delivery
+    // time and is the authoritative suppression point; this is the cheap early-out ahead of it.
     if (proc.shownThroughOffset >= monitor.matchedThroughOffset) {
       monitor.pendingLines = [];
       monitor.droppedLines = 0;
@@ -348,6 +364,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       totalMatches: monitor.matchesCount,
       ...(droppedLines > 0 ? { droppedLines } : {}),
       timestamp: Date.now(),
+      matchedThroughOffset: monitor.matchedThroughOffset,
     });
     this.emitChange(proc.workspaceId);
   }
@@ -971,6 +988,50 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   /**
+   * Register an in-flight unfiltered read on the process and return a disposable that resolves +
+   * clears it when the read settles. Filtered reads get an inert disposable: they never advance the
+   * shown frontier, so wake delivery must not wait on them. See BackgroundProcess.unfilteredReadSettled.
+   */
+  private trackUnfilteredRead(proc: BackgroundProcess, filter: string | undefined): Disposable {
+    if (filter) {
+      // Filtered read: nothing to track, so the disposable is a no-op.
+      return { [Symbol.dispose]: () => undefined };
+    }
+    let resolve!: () => void;
+    const settled = new Promise<void>((r) => {
+      resolve = r;
+    });
+    proc.unfilteredReadSettled = settled;
+    return {
+      [Symbol.dispose]: () => {
+        // A later read only starts after this one releases outputLock, so the field is still ours.
+        if (proc.unfilteredReadSettled === settled) {
+          proc.unfilteredReadSettled = undefined;
+        }
+        resolve();
+      },
+    };
+  }
+
+  /**
+   * The shown-frontier (shownThroughOffset) after any in-flight unfiltered read settles. Used by
+   * drainBashMonitorWakes to decide, at delivery time, whether a monitor match has already been
+   * shown to the agent by a concurrent task_await. Returns undefined for an unknown process so the
+   * drain fails open (delivers the wake) rather than silently dropping it.
+   */
+  async getSettledShownThroughOffset(processId: string): Promise<number | undefined> {
+    const proc = await this.getProcess(processId);
+    if (!proc) return undefined;
+    // Await the current unfiltered read (if any). The matched output already exists on disk, so an
+    // unfiltered long-poll picks it up on its first iteration and returns promptly -- this does not
+    // hang on an idle process (no read in flight => field is undefined).
+    if (proc.unfilteredReadSettled) {
+      await proc.unfilteredReadSettled;
+    }
+    return proc.shownThroughOffset;
+  }
+
+  /**
    * Get incremental output from a background process.
    * Returns only NEW output since the last call (tracked per process).
    * @param processId Process ID to get output from
@@ -1019,6 +1080,12 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // This prevents race conditions where parallel tool calls both read from
     // the same offset before either updates the read position.
     await using _lock = await proc.outputLock.acquire();
+
+    // Register this read so the wake drain (getSettledShownThroughOffset) can await it before
+    // reading the shown-frontier, closing the race where a monitor exit-flush emits a wake for the
+    // same final line a concurrent task_await is still delivering. Filtered reads return an inert
+    // tracker: they never advance shownThroughOffset, so wake delivery must not block on them.
+    using _readTracker = this.trackUnfilteredRead(proc, filter);
 
     // Track call count for polling detection
     proc.getOutputCallCount++;

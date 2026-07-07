@@ -380,6 +380,7 @@ describe("WorkspaceService bash monitor wakes", () => {
         lines: ["FAILED before shutdown"],
         totalMatches: 1,
         timestamp: Date.now(),
+        matchedThroughOffset: 0,
       });
       // …and the monitor was still armed.
       const registryStore = new BashMonitorRegistryStore(config);
@@ -1760,6 +1761,253 @@ describe("WorkspaceService bash monitor wakes", () => {
 
       await drainPendingDispatches();
       expect(waitForIdleSpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup();
+    }
+  });
+  test("supersedes a monitor wake whose matched output was already shown by a concurrent read", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-shown-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // The screenshot bug: a task_await already delivered "ALL DONE exit=0" inline, advancing the
+      // settled shown-frontier to (or past) where the match ends. The drain must drop the wake
+      // rather than re-report the same line. This fails without the drain gate (emit-time
+      // suppression alone loses the race with the exit-flush).
+      const getSettledShownThroughOffset = mock(() => Promise.resolve(100));
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getSettledShownThroughOffset,
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "ALL DONE|FAIL",
+        filterExclude: false,
+        lines: ["ALL DONE exit=0"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: { listPending: (id: string) => Promise<unknown[]> };
+        }
+      ).bashMonitorWakeStore;
+      // Positive signal that the drain reached the gate (without the gate this is never called, so
+      // this wait times out and the test fails -- proving the assertion below is not vacuous).
+      await waitForCondition(() => getSettledShownThroughOffset.mock.calls.length >= 1);
+      // The gate supersedes the record (no longer pending) without ever building a wake message.
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+      expect(sendSpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("delivers a monitor wake when the matched output has not yet been shown", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-unshown-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // Shown-frontier sits behind the match: the agent has not seen this output, so deliver.
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getSettledShownThroughOffset: mock(() => Promise.resolve(40)),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED one"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][1]).toContain("FAILED one");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("delivers the wake when the manager cannot report a shown-frontier (fail open)", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-failopen-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // Partial manager stub without getSettledShownThroughOffset (older manager / narrow stub).
+      // Even with a matchedThroughOffset present, the gate must fail open and deliver rather than
+      // silently drop the wake.
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-1",
+        taskId: "bash:proc-1",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED one"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][1]).toContain("FAILED one");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("supersedes only the shown records in a mixed pending batch", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-mixed-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // Two undelivered match wakes for different processes: one already shown to the agent, one not.
+      // Seed them on disk before the service boots so its startup recovery drains both in one pass.
+      const seedWakeStore = new BashMonitorWakeStore(config);
+      await seedWakeStore.enqueueOrMergePending({
+        processId: "proc-shown",
+        taskId: "bash:proc-shown",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["SHOWN-ALREADY done"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 50,
+      });
+      await seedWakeStore.enqueueOrMergePending({
+        processId: "proc-unshown",
+        taskId: "bash:proc-unshown",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["UNSHOWN done"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        // proc-shown: frontier past its match (superseded). proc-unshown: frontier behind (delivered).
+        getSettledShownThroughOffset: mock((processId: string) =>
+          Promise.resolve(processId === "proc-shown" ? 100 : 10)
+        ),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      // Startup recovery schedules a single drain for the owner's pending records.
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      const prompt = sendSpy.mock.calls[0][1];
+      expect(prompt).toContain("UNSHOWN done");
+      expect(prompt).not.toContain("SHOWN-ALREADY done");
+      // Only the unshown record survives into the delivered batch.
+      expect(sendSpy.mock.calls[0][2]).toMatchObject({
+        muxMetadata: {
+          type: "bash-monitor-wake",
+          records: [{ kind: "match", displayName: "proc-unshown", filter: "DONE" }],
+        },
+      });
+
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: { listPending: (id: string) => Promise<unknown[]> };
+        }
+      ).bashMonitorWakeStore;
+      // proc-shown superseded, proc-unshown delivered -> nothing left pending.
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
     } finally {
       await cleanup();
     }

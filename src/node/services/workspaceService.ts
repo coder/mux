@@ -1980,25 +1980,12 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    const prompt = buildBashMonitorWakePrompt(pending);
-    const retryAfterIdleIfBusy = (reason: string): void => {
-      if (
-        this.isBusyForMessage(ownerWorkspaceId) ||
-        this.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId)
-      ) {
-        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
-        return;
-      }
-      log.debug("Bash monitor wake left pending without immediate retry", {
-        ownerWorkspaceId,
-        reason,
-      });
-    };
     // Both terminal transitions return false when the persisted record picked up new merged
     // matches after this drain snapshotted `pending`; in that case reschedule so the freshly
-    // merged lines get their own drain pass. The delivered/canceled callbacks differ only in
+    // merged lines get their own drain pass. The delivered/superseded callbacks differ only in
     // which store transition they apply, so share the resolve-each-then-reschedule-on-any-miss
-    // loop rather than copy-pasting it.
+    // loop rather than copy-pasting it. Defined ahead of the delivery gate below so the gate can
+    // reuse markSupersededSnapshots for matches it drops as already-shown.
     const resolveWakeSnapshots = async (
       records: readonly BashMonitorWakeRecord[],
       resolve: (record: BashMonitorWakeRecord) => Promise<boolean>
@@ -2017,12 +2004,54 @@ export class WorkspaceService extends EventEmitter {
       resolveWakeSnapshots(records, (record) =>
         this.bashMonitorWakeStore.markDeliveredSnapshot(ownerWorkspaceId, record)
       );
-    const markSupersededAfterCanceled = (
-      records: readonly BashMonitorWakeRecord[]
-    ): Promise<void> =>
+    const markSupersededSnapshots = (records: readonly BashMonitorWakeRecord[]): Promise<void> =>
       resolveWakeSnapshots(records, (record) =>
         this.bashMonitorWakeStore.markSupersededSnapshot(ownerWorkspaceId, record)
       );
+
+    // Delivery gate: the authoritative "don't re-report shown output" check. emitMonitorMatch's
+    // shownThroughOffset comparison is only a point-in-time fast path -- it can lose a race with a
+    // concurrent task_await that advances the shown-frontier just after the wake is emitted (a
+    // process printing its final line then exiting triggers an immediate exit flush that bypasses
+    // the cooldown). Here, at the moment each wake would become a transcript message, re-check its
+    // matched offset against the settled shown-frontier and drop any match already shown. Records
+    // without matchedThroughOffset (legacy on-disk) and managers without the query (partial test
+    // stubs) fail open -- the wake delivers, matching the pre-gate behavior.
+    const canQueryShownFrontier =
+      typeof this.backgroundProcessManager.getSettledShownThroughOffset === "function";
+    const deliverable: BashMonitorWakeRecord[] = [];
+    const supersededByShown: BashMonitorWakeRecord[] = [];
+    for (const record of pending) {
+      if (canQueryShownFrontier && record.kind === "match" && record.matchedThroughOffset != null) {
+        const shown = await this.backgroundProcessManager.getSettledShownThroughOffset(
+          record.processId
+        );
+        if (shown != null && shown >= record.matchedThroughOffset) {
+          supersededByShown.push(record);
+          continue;
+        }
+      }
+      deliverable.push(record);
+    }
+    if (supersededByShown.length > 0) {
+      await markSupersededSnapshots(supersededByShown);
+    }
+    if (deliverable.length === 0) return;
+
+    const prompt = buildBashMonitorWakePrompt(deliverable);
+    const retryAfterIdleIfBusy = (reason: string): void => {
+      if (
+        this.isBusyForMessage(ownerWorkspaceId) ||
+        this.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId)
+      ) {
+        this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+        return;
+      }
+      log.debug("Bash monitor wake left pending without immediate retry", {
+        ownerWorkspaceId,
+        reason,
+      });
+    };
 
     // Once the synthetic wake turn is accepted into durable chat history, the wake has
     // been delivered. If provider startup fails after acceptance, AgentSession's
@@ -2034,7 +2063,7 @@ export class WorkspaceService extends EventEmitter {
       if (delivered) return;
       delivered = true;
       try {
-        await markDeliveredAfterAccepted(pending);
+        await markDeliveredAfterAccepted(deliverable);
       } catch (error) {
         log.error("Failed to mark bash monitor wake delivered after accepted send", {
           ownerWorkspaceId,
@@ -2050,7 +2079,7 @@ export class WorkspaceService extends EventEmitter {
         ...sendOptions,
         queueDispatchMode: "tool-end",
         // Compact display summaries; the transcript collapses the raw prompt.
-        muxMetadata: buildBashMonitorWakeMetadata(pending),
+        muxMetadata: buildBashMonitorWakeMetadata(deliverable),
       },
       {
         skipAutoResumeReset: true,
@@ -2074,7 +2103,7 @@ export class WorkspaceService extends EventEmitter {
         },
         onCanceled: async (reason) => {
           if (delivered) return;
-          const cancelingKeys = pending.map((record) =>
+          const cancelingKeys = deliverable.map((record) =>
             this.bashMonitorWakeKey(ownerWorkspaceId, record.id)
           );
           for (const key of cancelingKeys) {
@@ -2085,7 +2114,7 @@ export class WorkspaceService extends EventEmitter {
             reason,
           });
           try {
-            await markSupersededAfterCanceled(pending);
+            await markSupersededSnapshots(deliverable);
           } catch (error) {
             log.error("Failed to supersede canceled bash monitor wake snapshot", {
               ownerWorkspaceId,

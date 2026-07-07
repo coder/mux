@@ -28,6 +28,7 @@ function payload(overrides: Partial<BashMonitorWakePayload> = {}): BashMonitorWa
     lines: ["ERROR one"],
     totalMatches: 1,
     timestamp: Date.now(),
+    matchedThroughOffset: 0,
     ...overrides,
   };
 }

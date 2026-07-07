@@ -40,6 +40,8 @@ export interface BashMonitorWakePayload {
   totalMatches: number;
   droppedLines?: number;
   timestamp: number;
+  /** File byte offset at the end of the last matched line; see BashMonitorWakeRecord. */
+  matchedThroughOffset: number;
 }
 
 /**
@@ -71,6 +73,13 @@ export interface BashMonitorWakeRecord {
   lines: string[];
   totalMatches: number;
   droppedLines: number;
+  /**
+   * File byte offset at the end of the last matched line (match records only). drainBashMonitorWakes
+   * re-checks this against the settled shown-frontier at delivery time so a wake never re-reports
+   * output a concurrent task_await already showed the agent. Optional so pending records written
+   * before this field existed keep parsing under `.strict()` (they deliver as before -- fail open).
+   */
+  matchedThroughOffset?: number;
   status: BashMonitorWakeStatus;
   createdAt: string;
   updatedAt: string;
@@ -91,6 +100,7 @@ const BashMonitorWakeRecordSchema = z
     lines: z.array(z.string()),
     totalMatches: z.number().int().nonnegative(),
     droppedLines: z.number().int().nonnegative(),
+    matchedThroughOffset: z.number().int().nonnegative().optional(),
     status: z.enum(BASH_MONITOR_WAKE_STATUSES),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
@@ -263,6 +273,18 @@ export class BashMonitorWakeStore {
           lines: merged.lines,
           totalMatches: payload.totalMatches,
           droppedLines: existing.droppedLines + (payload.droppedLines ?? 0) + merged.droppedLines,
+          // Offsets only grow, so the newest match is the furthest; Math.max is defensive against
+          // any out-of-order enqueue and a legacy existing record that lacked the field. When the
+          // payload omits the offset (legacy emitter), keep whatever `existing` carried rather than
+          // coercing to a bogus 0/NaN -- the spread above already preserves it.
+          ...(payload.matchedThroughOffset != null
+            ? {
+                matchedThroughOffset: Math.max(
+                  existing.matchedThroughOffset ?? 0,
+                  payload.matchedThroughOffset
+                ),
+              }
+            : {}),
           updatedAt: now,
         };
         await this.write(record);
@@ -281,6 +303,9 @@ export class BashMonitorWakeStore {
         lines: bounded.lines,
         totalMatches: payload.totalMatches,
         droppedLines: (payload.droppedLines ?? 0) + bounded.droppedLines,
+        ...(payload.matchedThroughOffset != null
+          ? { matchedThroughOffset: payload.matchedThroughOffset }
+          : {}),
         status: "pending",
         createdAt: now,
         updatedAt: now,
