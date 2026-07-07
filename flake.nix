@@ -107,6 +107,11 @@
           buildPhase = ''
             echo "Building mux with make..."
             export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
+            # Nix strips .git from the build sandbox, so generate-version.sh's
+            # git describe/rev-parse fall back to "unknown". Feed the revision
+            # the flake already resolved so the version stamp is accurate.
+            export RELEASE_TAG="${version}"
+            export GIT_COMMIT="${builtins.substring 0 12 version}"
             make SHELL=${pkgs.bash}/bin/bash build
           '';
 
