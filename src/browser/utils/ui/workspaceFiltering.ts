@@ -599,6 +599,16 @@ export const AGE_THRESHOLDS_DAYS = [1, 7, 30] as const;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Parse an optional ISO timestamp string to epoch milliseconds, treating missing
+ * or unparseable values as 0. Used as a sort key so absent/malformed timestamps
+ * deterministically sort last (oldest) instead of leaking NaN into comparisons.
+ */
+function parseTimestampMs(value: string | undefined): number {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
  * Build a map of project paths to sorted workspace metadata lists.
  * Includes both persisted workspaces (from config) and workspaces from
  * metadata that haven't yet appeared in config (handles race condition
@@ -661,10 +671,8 @@ export function buildSortedWorkspacesByProject(
         return bTimestamp - aTimestamp;
       }
 
-      const aCreatedAtRaw = Date.parse(a.createdAt ?? "");
-      const bCreatedAtRaw = Date.parse(b.createdAt ?? "");
-      const aCreatedAt = Number.isFinite(aCreatedAtRaw) ? aCreatedAtRaw : 0;
-      const bCreatedAt = Number.isFinite(bCreatedAtRaw) ? bCreatedAtRaw : 0;
+      const aCreatedAt = parseTimestampMs(a.createdAt);
+      const bCreatedAt = parseTimestampMs(b.createdAt);
       if (aCreatedAt !== bCreatedAt) {
         return bCreatedAt - aCreatedAt;
       }
