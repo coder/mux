@@ -25,7 +25,10 @@ interface BackgroundBashOutputDialogProps {
 
 export const BackgroundBashOutputDialog: React.FC<BackgroundBashOutputDialogProps> = (props) => (
   <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-    <DialogContent className="max-h-[80vh] max-w-4xl gap-3 overflow-hidden">
+    {/* flex-col (not the default grid) so the output viewer shrinks when the
+        header + script push total content past max-h; otherwise overflow-hidden
+        would clip the bottom of the output pane at small window heights. */}
+    <DialogContent className="flex max-h-[80vh] max-w-4xl flex-col gap-3 overflow-hidden">
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <span className="font-mono text-sm">{props.displayName ?? props.processId}</span>
@@ -171,7 +174,12 @@ const BackgroundBashOutputViewer: React.FC<{ workspaceId: string; processId: str
 
       {error && <div className="text-error text-[11px]">{error}</div>}
 
-      <DetailContent className="max-h-[60vh] min-h-[200px] px-2 py-1.5">
+      {/* flex-1 + max-h-none: fill whatever height remains inside the dialog's
+          80vh cap and scroll internally, instead of a fixed 60vh that could
+          overflow the dialog once the header/script take their share. The small
+          min-h keeps a visible pane for "No output yet" while still letting very
+          short windows shrink it instead of clipping it at the dialog edge. */}
+      <DetailContent className="max-h-none min-h-24 flex-1 px-2 py-1.5">
         {isLoading ? "Loading…" : text.length > 0 ? text : error ? "" : "No output yet"}
       </DetailContent>
     </div>

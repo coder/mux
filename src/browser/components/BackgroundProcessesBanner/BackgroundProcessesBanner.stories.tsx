@@ -44,7 +44,10 @@ export const BackgroundProcesses: AppStory = {
             {
               id: "bash_1",
               pid: 12345,
-              script: "npm run dev",
+              // Multi-line script: exercises the dialog's capped command block
+              // together with tall output at small window heights.
+              script:
+                "export NODE_ENV=development\nexport PORT=3000\nnpm run dev -- --host 0.0.0.0 --port $PORT",
               displayName: "Dev Server",
               startTime: Date.now() - 45000, // 45 seconds ago
               monitor: {

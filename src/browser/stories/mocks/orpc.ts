@@ -1631,11 +1631,25 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           await new Promise<void>(() => undefined);
         },
         terminate: () => Promise.resolve({ success: true, data: undefined }),
-        getOutput: () =>
-          Promise.resolve({
+        getOutput: (input: { fromOffset?: number }) => {
+          // Return sample output on the initial tail read only; follow-up polls
+          // (fromOffset set) return nothing so the dialog doesn't grow forever.
+          const sample =
+            input.fromOffset === undefined
+              ? Array.from({ length: 120 }, (_, i) => `[dev] GET /api/items/${i} 200 in 12ms`).join(
+                  "\n"
+                )
+              : "";
+          return Promise.resolve({
             success: true,
-            data: { status: "running" as const, output: "", nextOffset: 0, truncatedStart: false },
-          }),
+            data: {
+              status: "running" as const,
+              output: sample,
+              nextOffset: sample.length,
+              truncatedStart: false,
+            },
+          });
+        },
         sendToBackground: () => Promise.resolve({ success: true, data: undefined }),
       },
       stats: {
