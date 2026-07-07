@@ -4,6 +4,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
 import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import type { PinnedMoveDirection } from "@/browser/utils/ui/pinnedReorder";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import {
   enforceThinkingPolicy,
@@ -106,7 +107,7 @@ export interface BuildSourcesParams {
   onRemoveProject: (path: string) => void;
   onToggleSidebar: () => void;
   onNavigateWorkspace: (dir: "next" | "prev") => void;
-  onMovePinnedChat: (direction: "up" | "down") => void;
+  onMovePinnedChat: (direction: PinnedMoveDirection) => void;
   onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemePreference) => void;

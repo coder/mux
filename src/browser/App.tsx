@@ -19,7 +19,10 @@ import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
-import { computePinnedMoveOrder, locatePinnedBlock } from "./utils/ui/pinnedReorder";
+import {
+  computePinnedMoveOrderForWorkspace,
+  type PinnedMoveDirection,
+} from "./utils/ui/pinnedReorder";
 import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -711,16 +714,19 @@ function AppInner() {
   );
 
   // Move the selected pinned chat within its visual pinned block. Shares the
-  // block-resolution helpers with the sidebar keybind handler so palette and
-  // keyboard behavior can't drift apart.
+  // move-order helper with the sidebar keybind handler so palette and keyboard
+  // behavior can't drift apart.
   const movePinnedChatFromPalette = useCallback(
-    (direction: "up" | "down") => {
+    (direction: PinnedMoveDirection) => {
       if (!selectedWorkspace) return;
       const meta = workspaceMetadata.get(selectedWorkspace.workspaceId);
       if (!meta) return;
-      const block = locatePinnedBlock(meta, sortedWorkspacesByProject, userProjects);
-      if (!block) return;
-      const order = computePinnedMoveOrder(block, selectedWorkspace.workspaceId, direction);
+      const order = computePinnedMoveOrderForWorkspace(
+        meta,
+        direction,
+        sortedWorkspacesByProject,
+        userProjects
+      );
       if (order) void reorderPinnedWorkspaces(order);
     },
     [

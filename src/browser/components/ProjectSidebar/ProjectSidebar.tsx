@@ -67,8 +67,10 @@ import {
 } from "@/browser/utils/ui/workspaceFiltering";
 import {
   computePinnedDropOrder,
-  computePinnedMoveOrder,
+  computePinnedMoveOrderForWorkspace,
   locatePinnedBlock,
+  type PinnedDropEdge,
+  type PinnedMoveDirection,
 } from "@/browser/utils/ui/pinnedReorder";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
@@ -1737,7 +1739,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // list), so moves stay within the row's visual pinned block while the
   // request carries the bucket's full pinned order.
   const handlePinnedReorderDrop = useCallback(
-    (draggedId: string, targetId: string, edge: "before" | "after") => {
+    (draggedId: string, targetId: string, edge: PinnedDropEdge) => {
       const targetMeta = workspaceStore.getWorkspaceMetadata(targetId);
       if (!targetMeta) return;
       const block = locatePinnedBlock(targetMeta, sortedWorkspacesByProject, userProjects);
@@ -1749,12 +1751,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const movePinnedWorkspace = useCallback(
-    (workspaceId: string, direction: "up" | "down") => {
+    (workspaceId: string, direction: PinnedMoveDirection) => {
       const meta = workspaceStore.getWorkspaceMetadata(workspaceId);
       if (!meta) return;
-      const block = locatePinnedBlock(meta, sortedWorkspacesByProject, userProjects);
-      if (!block) return;
-      const order = computePinnedMoveOrder(block, workspaceId, direction);
+      const order = computePinnedMoveOrderForWorkspace(
+        meta,
+        direction,
+        sortedWorkspacesByProject,
+        userProjects
+      );
       if (order) void reorderPinnedWorkspaces(order);
     },
     [workspaceStore, sortedWorkspacesByProject, userProjects, reorderPinnedWorkspaces]

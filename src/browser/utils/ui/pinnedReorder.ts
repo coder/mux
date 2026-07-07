@@ -5,6 +5,10 @@ import { isWorkspacePinned, recomposePinnedOrder } from "@/common/utils/pin";
 import { getSubProjectsForParent } from "@/common/utils/subProjects";
 import { partitionWorkspacesBySection, resolveEffectiveSectionId } from "./workspaceFiltering";
 
+/** Single definitions for the reorder unions shared by DnD, keybind, and palette code. */
+export type PinnedMoveDirection = "up" | "down";
+export type PinnedDropEdge = "before" | "after";
+
 /**
  * A workspace's pinned surroundings, both in displayed order:
  * - `fullOrder`: every pinned id of its config bucket. Reorder requests always
@@ -80,7 +84,7 @@ export function locatePinnedBlock(
 export function computePinnedMoveOrder(
   block: PinnedBlock,
   workspaceId: string,
-  direction: "up" | "down"
+  direction: PinnedMoveDirection
 ): string[] | null {
   const index = block.blockIds.indexOf(workspaceId);
   if (index === -1) return null;
@@ -92,6 +96,23 @@ export function computePinnedMoveOrder(
 }
 
 /**
+ * Locate `meta`'s pinned block and compute the order after moving it one step.
+ * Shared by the sidebar keybind and palette handlers so their behavior cannot
+ * drift. Null when the workspace is not a rendered pinned row or the move is a
+ * no-op.
+ */
+export function computePinnedMoveOrderForWorkspace(
+  meta: FrontendWorkspaceMetadata,
+  direction: PinnedMoveDirection,
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  userProjects: Map<string, ProjectConfig>
+): string[] | null {
+  const block = locatePinnedBlock(meta, sortedWorkspacesByProject, userProjects);
+  if (!block) return null;
+  return computePinnedMoveOrder(block, meta.id, direction);
+}
+
+/**
  * Full new pinned order after dropping `draggedId` onto the before/after edge
  * of `targetId` within the same block. Null when nothing would change.
  */
@@ -99,7 +120,7 @@ export function computePinnedDropOrder(
   block: PinnedBlock,
   draggedId: string,
   targetId: string,
-  edge: "before" | "after"
+  edge: PinnedDropEdge
 ): string[] | null {
   if (draggedId === targetId) return null;
   if (!block.blockIds.includes(draggedId)) return null;

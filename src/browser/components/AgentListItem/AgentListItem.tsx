@@ -74,6 +74,7 @@ import {
   type WorkspaceDragItem,
 } from "../WorkspaceSectionDropZone/WorkspaceSectionDropZone";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import type { PinnedDropEdge } from "@/browser/utils/ui/pinnedReorder";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
 import { useAPI } from "@/browser/contexts/API";
@@ -128,7 +129,7 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
    */
   pinnedReorderGroup?: string;
   /** Present when pinned rows in this list can be drag-reordered. */
-  onPinnedReorderDrop?: (draggedId: string, targetId: string, edge: "before" | "after") => void;
+  onPinnedReorderDrop?: (draggedId: string, targetId: string, edge: PinnedDropEdge) => void;
   rowRenderMeta?: AgentRowRenderMeta;
   delegatedActivity?: WorkspaceDelegatedActivity;
   completedChildrenExpanded?: boolean;
@@ -795,10 +796,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   // from the pointer position relative to the row midpoint; it is computed
   // fresh in drop() so the result never depends on stale hover state.
   const rowNodeRef = useRef<HTMLDivElement | null>(null);
-  const [pinnedDropEdge, setPinnedDropEdge] = useState<"before" | "after" | null>(null);
+  const [pinnedDropEdge, setPinnedDropEdge] = useState<PinnedDropEdge | null>(null);
   const onPinnedReorderDrop = props.onPinnedReorderDrop;
   const pinnedReorderGroup = props.pinnedReorderGroup;
-  const computePinnedDropEdge = (monitor: DropTargetMonitor): "before" | "after" => {
+  const computePinnedDropEdge = (monitor: DropTargetMonitor): PinnedDropEdge => {
     const node = rowNodeRef.current;
     const offset = monitor.getClientOffset();
     if (!node || !offset) return "after";
