@@ -62,6 +62,7 @@ import {
 } from "@/browser/utils/rightSidebarLayout";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { reassignPinnedTimestamps } from "@/common/utils/pin";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { findAdjacentWorkspaceId } from "@/browser/utils/ui/workspaceDomNav";
@@ -450,6 +451,9 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
   setWorkspacePinned: (
     workspaceId: string,
     pinned: boolean
+  ) => Promise<{ success: boolean; error?: string }>;
+  reorderPinnedWorkspaces: (
+    workspaceIds: string[]
   ) => Promise<{ success: boolean; error?: string }>;
   preflightArchiveWorkspace: (
     workspaceId: string
@@ -1518,6 +1522,72 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [api, setWorkspaceMetadata]
   );
 
+  /**
+   * Reorder pinned chats within one project bucket. `workspaceIds` is the full
+   * desired pinned order for that bucket. Optimistically re-deals the existing
+   * pinnedAt pool locally (same algorithm as the server) so rows move on drop;
+   * the metadata subscription round-trip then reconciles all clients with the
+   * server's authoritative values (and we revert on failure).
+   */
+  const reorderPinnedWorkspaces = useCallback(
+    async (workspaceIds: string[]): Promise<{ success: boolean; error?: string }> => {
+      if (!api) return { success: false, error: "API not connected" };
+
+      let previousPinnedAtById: Map<string, string> | undefined;
+      setWorkspaceMetadata((prev) => {
+        const currentPinnedAtById = new Map<string, string>();
+        for (const id of workspaceIds) {
+          const meta = prev.get(id);
+          if (meta?.pinnedAt) currentPinnedAtById.set(id, meta.pinnedAt);
+        }
+        const orderedIds = workspaceIds.filter((id) => currentPinnedAtById.has(id));
+        const changes = reassignPinnedTimestamps(orderedIds, currentPinnedAtById);
+        if (changes.size === 0) return prev;
+
+        const snapshot = new Map<string, string>();
+        const next = new Map(prev);
+        for (const [id, pinnedAt] of changes) {
+          const meta = prev.get(id);
+          const previousPinnedAt = currentPinnedAtById.get(id);
+          if (!meta || previousPinnedAt === undefined) continue;
+          snapshot.set(id, previousPinnedAt);
+          next.set(id, { ...meta, pinnedAt });
+        }
+        previousPinnedAtById = snapshot;
+        return next;
+      });
+      const revert = () => {
+        const snapshot = previousPinnedAtById;
+        if (!snapshot) return;
+        setWorkspaceMetadata((prev) => {
+          const next = new Map(prev);
+          for (const [id, pinnedAt] of snapshot) {
+            const meta = prev.get(id);
+            if (!meta) continue;
+            next.set(id, { ...meta, pinnedAt });
+          }
+          return next;
+        });
+      };
+
+      try {
+        const result = await api.workspace.reorderPinned({ workspaceIds });
+        if (result.success) {
+          return { success: true };
+        }
+        revert();
+        console.error("Failed to reorder pinned chats:", result.error);
+        return { success: false, error: result.error };
+      } catch (error) {
+        revert();
+        const errorMessage = getErrorMessage(error);
+        console.error("Failed to reorder pinned chats:", errorMessage);
+        return { success: false, error: errorMessage };
+      }
+    },
+    [api, setWorkspaceMetadata]
+  );
+
   const preflightArchiveWorkspace = useCallback(
     async (
       workspaceId: string
@@ -1907,6 +1977,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       removeWorkspace,
       updateWorkspaceTitle,
       setWorkspacePinned,
+      reorderPinnedWorkspaces,
       preflightArchiveWorkspace,
       archiveWorkspace,
       unarchiveWorkspace,
@@ -1932,6 +2003,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       removeWorkspace,
       updateWorkspaceTitle,
       setWorkspacePinned,
+      reorderPinnedWorkspaces,
       preflightArchiveWorkspace,
       archiveWorkspace,
       unarchiveWorkspace,

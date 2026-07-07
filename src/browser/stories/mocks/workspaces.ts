@@ -26,6 +26,7 @@ export interface WorkspaceFixture {
   workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
   title?: string;
   transcriptOnly?: boolean;
+  pinnedAt?: string;
 }
 
 /** Create a workspace with sensible defaults */
@@ -49,6 +50,7 @@ export function createWorkspace(
     bestOf: opts.bestOf,
     workflowTask: opts.workflowTask,
     transcriptOnly: opts.transcriptOnly,
+    pinnedAt: opts.pinnedAt,
   };
 }
 

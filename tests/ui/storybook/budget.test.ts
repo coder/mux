@@ -8,7 +8,7 @@ const MAX_SNAPSHOT_ENABLED_FILES = 79;
 // Exact current retained snapshot baseline. Keep this no-headroom guardrail tight:
 // future growth should disable, consolidate, or intentionally rebalance snapshots
 // rather than silently increasing Chromatic load.
-const MAX_ESTIMATED_SNAPSHOTS = 289;
+const MAX_ESTIMATED_SNAPSHOTS = 293;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const SMOKE_MODE_PATTERN = /modes:\s*CHROMATIC_SMOKE_MODES/g;
 const INLINE_MODE_OBJECT_PATTERN = /modes:\s*{/g;

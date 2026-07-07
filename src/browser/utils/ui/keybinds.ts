@@ -349,6 +349,12 @@ export const KEYBINDS = {
   // Use the physical P key: macOS Option+P produces "π" for event.key, so match on code.
   PIN_WORKSPACE: { key: "p", code: "KeyP", ctrl: true, alt: true },
 
+  /** Move the selected pinned chat up/down within its pinned block */
+  // Same ctrl+alt layer as PIN_WORKSPACE. Arrow keys are unaffected by macOS
+  // Option remapping, so matching on key alone is safe here.
+  MOVE_PINNED_UP: { key: "ArrowUp", ctrl: true, alt: true },
+  MOVE_PINNED_DOWN: { key: "ArrowDown", ctrl: true, alt: true },
+
   /** Jump to bottom of chat */
   JUMP_TO_BOTTOM: { key: "G", shift: true },
 

@@ -19,6 +19,7 @@ import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
+import { computePinnedMoveOrder, locatePinnedBlock } from "./utils/ui/pinnedReorder";
 import { getVisibleWorkspaceIds } from "./utils/ui/workspaceDomNav";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
 import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceStore";
@@ -141,6 +142,7 @@ function AppInner() {
     setWorkspaceMetadata,
     removeWorkspace,
     updateWorkspaceTitle,
+    reorderPinnedWorkspaces,
     selectedWorkspace,
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
@@ -708,6 +710,28 @@ function AppInner() {
     [handleNavigateWorkspace]
   );
 
+  // Move the selected pinned chat within its visual pinned block. Shares the
+  // block-resolution helpers with the sidebar keybind handler so palette and
+  // keyboard behavior can't drift apart.
+  const movePinnedChatFromPalette = useCallback(
+    (direction: "up" | "down") => {
+      if (!selectedWorkspace) return;
+      const meta = workspaceMetadata.get(selectedWorkspace.workspaceId);
+      if (!meta) return;
+      const block = locatePinnedBlock(meta, sortedWorkspacesByProject, userProjects);
+      if (!block) return;
+      const order = computePinnedMoveOrder(block, selectedWorkspace.workspaceId, direction);
+      if (order) void reorderPinnedWorkspaces(order);
+    },
+    [
+      selectedWorkspace,
+      workspaceMetadata,
+      sortedWorkspacesByProject,
+      userProjects,
+      reorderPinnedWorkspaces,
+    ]
+  );
+
   registerParamsRef.current = {
     userProjects,
     workspaceMetadata,
@@ -728,6 +752,7 @@ function AppInner() {
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
+    onMovePinnedChat: movePinnedChatFromPalette,
     onOpenWorkspaceInTerminal: (workspaceId, runtimeConfig) => {
       // Best-effort only. Palette actions should never throw.
       void openWorkspaceInTerminal(workspaceId, runtimeConfig).catch(() => {

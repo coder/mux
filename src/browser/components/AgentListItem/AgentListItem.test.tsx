@@ -156,6 +156,7 @@ function installAgentListItemTestDoubles() {
   void mock.module("react-dnd", () => ({
     ...actualReactDnd,
     useDrag: () => [{ isDragging: false }, passthroughRef, () => undefined] as const,
+    useDrop: () => [{ isPinnedReorderTarget: false }, passthroughRef] as const,
   }));
 
   void mock.module("react-dnd-html5-backend", () => ({

@@ -28,7 +28,8 @@ import { isDevcontainerRuntime } from "@/common/types/runtime";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useDrag } from "react-dnd";
+import { useDrag, useDrop } from "react-dnd";
+import type { DropTargetMonitor } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { SubAgentListItem } from "./SubAgentListItem";
 import {
@@ -121,6 +122,13 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   isRemoving?: boolean;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
+  /**
+   * Identifies the visual pinned block this row renders in (project + section,
+   * or the multi-project section). Rows drag-reorder only within their block.
+   */
+  pinnedReorderGroup?: string;
+  /** Present when pinned rows in this list can be drag-reordered. */
+  onPinnedReorderDrop?: (draggedId: string, targetId: string, edge: "before" | "after") => void;
   rowRenderMeta?: AgentRowRenderMeta;
   delegatedActivity?: WorkspaceDelegatedActivity;
   completedChildrenExpanded?: boolean;
@@ -745,7 +753,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     workspaceId,
   };
 
-  // Drag handle for moving workspace between sections
+  // Drag handle for moving workspace between sections (and reordering pinned rows)
   const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: WORKSPACE_DRAG_TYPE,
@@ -754,6 +762,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         workspaceId,
         projectPath,
         currentSectionId: sectionId,
+        pinned: isPinned,
+        pinnedReorderGroup: props.pinnedReorderGroup,
         // Extra fields for custom drag layer preview
         displayTitle,
         runtimeConfig: metadata.runtimeConfig,
@@ -763,7 +773,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       }),
       canDrag: !isDisabled,
     }),
-    [workspaceId, projectPath, sectionId, isDisabled, displayTitle, metadata.runtimeConfig]
+    [
+      workspaceId,
+      projectPath,
+      sectionId,
+      isDisabled,
+      isPinned,
+      props.pinnedReorderGroup,
+      displayTitle,
+      metadata.runtimeConfig,
+    ]
   );
 
   // Hide native drag preview; we render a custom preview via WorkspaceDragLayer
@@ -771,10 +790,54 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     dragPreview(getEmptyImage(), { captureDraggingState: true });
   }, [dragPreview]);
 
+  // Pinned rows double as drop targets so pinned chats can be reordered by
+  // dragging within their own block. The drop edge (insert before/after) comes
+  // from the pointer position relative to the row midpoint; it is computed
+  // fresh in drop() so the result never depends on stale hover state.
+  const rowNodeRef = useRef<HTMLDivElement | null>(null);
+  const [pinnedDropEdge, setPinnedDropEdge] = useState<"before" | "after" | null>(null);
+  const onPinnedReorderDrop = props.onPinnedReorderDrop;
+  const pinnedReorderGroup = props.pinnedReorderGroup;
+  const computePinnedDropEdge = (monitor: DropTargetMonitor): "before" | "after" => {
+    const node = rowNodeRef.current;
+    const offset = monitor.getClientOffset();
+    if (!node || !offset) return "after";
+    const rect = node.getBoundingClientRect();
+    return offset.y < rect.top + rect.height / 2 ? "before" : "after";
+  };
+  const [{ isPinnedReorderTarget }, pinnedReorderDrop] = useDrop(
+    () => ({
+      accept: WORKSPACE_DRAG_TYPE,
+      canDrop: (item: WorkspaceDragItem) =>
+        onPinnedReorderDrop !== undefined &&
+        isPinned &&
+        item.pinned === true &&
+        item.pinnedReorderGroup !== undefined &&
+        item.pinnedReorderGroup === pinnedReorderGroup &&
+        item.workspaceId !== workspaceId,
+      hover: (_item: WorkspaceDragItem, monitor) => {
+        if (!monitor.canDrop()) return;
+        setPinnedDropEdge(computePinnedDropEdge(monitor));
+      },
+      drop: (item: WorkspaceDragItem, monitor) => {
+        onPinnedReorderDrop?.(item.workspaceId, workspaceId, computePinnedDropEdge(monitor));
+      },
+      collect: (monitor) => ({
+        isPinnedReorderTarget: monitor.isOver() && monitor.canDrop(),
+      }),
+    }),
+    [onPinnedReorderDrop, isPinned, pinnedReorderGroup, workspaceId]
+  );
+  const attachRowDndRef = (node: HTMLDivElement | null) => {
+    rowNodeRef.current = node;
+    drag(node);
+    pinnedReorderDrop(node);
+  };
+
   return (
     <React.Fragment>
       <div
-        ref={drag}
+        ref={attachRowDndRef}
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           "group/row",
@@ -876,6 +939,17 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
       >
+        {/* Pinned-reorder insertion indicator: marks the edge the dragged row will land on. */}
+        {isPinnedReorderTarget && (
+          <div
+            aria-hidden
+            data-testid="pinned-reorder-indicator"
+            className={cn(
+              "bg-accent pointer-events-none absolute inset-x-0 z-10 h-0.5",
+              (pinnedDropEdge ?? "after") === "before" ? "top-0" : "bottom-0"
+            )}
+          />
+        )}
         {shouldShowHeartbeatFallback ? (
           <div className={STATUS_DOT_SLOT_CONTAINER_CLASSES} style={LEADING_SLOT_CONTAINER_STYLE}>
             <HeartbeatFallbackIcon />

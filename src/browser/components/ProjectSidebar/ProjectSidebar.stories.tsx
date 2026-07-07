@@ -297,3 +297,55 @@ export const WorkflowRunGroups: AppStory = {
     });
   },
 };
+
+// Pinned chats sort by pinnedAt (user-reorderable), not by name or recency:
+// the pinned block deliberately renders as charlie, alpha, bravo while the
+// newest unpinned chat stays below the block.
+export const PinnedChatsCustomOrder: AppStory = {
+  parameters: {
+    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaces = [
+          createWorkspace({
+            id: "ws-alpha",
+            name: "alpha",
+            projectName: "my-app",
+            pinnedAt: "2026-01-01T00:00:01.000Z",
+          }),
+          createWorkspace({
+            id: "ws-bravo",
+            name: "bravo",
+            projectName: "my-app",
+            pinnedAt: "2026-01-01T00:00:02.000Z",
+          }),
+          createWorkspace({
+            id: "ws-charlie",
+            name: "charlie",
+            projectName: "my-app",
+            pinnedAt: "2026-01-01T00:00:00.000Z",
+          }),
+          createWorkspace({ id: "ws-recent", name: "recent-work", projectName: "my-app" }),
+        ];
+        expandProjects([PROJECT_PATH]);
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await waitFor(() => {
+      const rows = Array.from(
+        canvasElement.querySelectorAll<HTMLElement>("[data-workspace-id]")
+      ).map((row) => row.dataset.workspaceId);
+      const expected = ["ws-charlie", "ws-alpha", "ws-bravo", "ws-recent"];
+      if (rows.length !== expected.length || expected.some((id, i) => rows[i] !== id)) {
+        throw new Error(`Expected pinned order ${expected.join(", ")} but saw ${rows.join(", ")}`);
+      }
+    });
+  },
+};

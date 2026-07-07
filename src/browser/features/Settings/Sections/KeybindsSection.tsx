@@ -25,6 +25,8 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   GENERATE_WORKSPACE_TITLE: "Generate new title",
   ARCHIVE_WORKSPACE: "Archive workspace",
   PIN_WORKSPACE: "Pin/unpin chat",
+  MOVE_PINNED_UP: "Move pinned chat up",
+  MOVE_PINNED_DOWN: "Move pinned chat down",
   JUMP_TO_BOTTOM: "Jump to bottom",
   LOAD_OLDER_MESSAGES: "Load older messages",
   NEXT_WORKSPACE: "Next workspace",

@@ -214,7 +214,7 @@ export const WorkspaceConfigSchema = z.object({
   }),
   pinnedAt: z.string().optional().meta({
     description:
-      "ISO 8601 timestamp when workspace was pinned. Pinned workspaces sort to the top of their project in pin order (ascending). Cleared on archive.",
+      "ISO 8601 pin ordering key (not a reliable 'when pinned' record: reorderPinned re-deals existing values). Pinned workspaces sort to the top of their project in pinnedAt order (ascending). Cleared on archive.",
   }),
   worktreeArchiveSnapshot: WorktreeArchiveSnapshotSchema.optional().meta({
     description:

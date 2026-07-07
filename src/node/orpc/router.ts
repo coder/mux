@@ -4103,6 +4103,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.setPinned(input.workspaceId, input.pinned);
         }),
+      reorderPinned: t
+        .input(schemas.workspace.reorderPinned.input)
+        .output(schemas.workspace.reorderPinned.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.reorderPinned(input.workspaceIds);
+        }),
       updateTags: t
         .input(schemas.workspace.updateTags.input)
         .output(schemas.workspace.updateTags.output)

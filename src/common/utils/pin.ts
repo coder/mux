@@ -33,3 +33,83 @@ export function isWorkspacePinnable(workspace: {
   if (workspace.parentWorkspaceId) return false;
   return !isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt);
 }
+
+/** Unparseable/missing pinnedAt sorts first (same fallback the sidebar sort always used). */
+function parsePinnedAtMs(pinnedAt: string | undefined): number {
+  const ms = Date.parse(pinnedAt ?? "");
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * Stable pinned-block comparator: pinnedAt ascending (new pins append at the
+ * bottom of the pinned block), workspace id as deterministic tie-breaker.
+ * Shared by frontend sorting and the backend reorder path so both derive the
+ * same current order.
+ */
+export function comparePinnedOrder(
+  a: { id: string; pinnedAt?: string },
+  b: { id: string; pinnedAt?: string }
+): number {
+  const aPinnedAt = parsePinnedAtMs(a.pinnedAt);
+  const bPinnedAt = parsePinnedAtMs(b.pinnedAt);
+  if (aPinnedAt !== bPinnedAt) {
+    return aPinnedAt - bPinnedAt;
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Re-deal an existing pool of pinnedAt timestamps onto a new pinned order.
+ *
+ * pinnedAt is an ordering key, not a "when pinned" record: reordering permutes
+ * the already-persisted timestamps (sorted ascending) onto `orderedIds` instead
+ * of minting fresh now() values. Reusing the pool keeps max(pinnedAt) stable so
+ * a subsequent pin (max + 1ms) still appends at the bottom, and values never
+ * drift into the future. Ties and unparseable values are nudged +1ms so the
+ * assigned sequence is strictly monotonic and sorts exactly as `orderedIds`.
+ *
+ * Returns only the entries whose stored value changes (a single move rewrites
+ * just the displaced range, so untouched rows emit no updates).
+ */
+export function reassignPinnedTimestamps(
+  orderedIds: readonly string[],
+  currentPinnedAtById: ReadonlyMap<string, string>
+): Map<string, string> {
+  const poolMs = orderedIds
+    .map((id) => parsePinnedAtMs(currentPinnedAtById.get(id)))
+    .sort((a, b) => a - b);
+
+  const changed = new Map<string, string>();
+  let previousMs = Number.NEGATIVE_INFINITY;
+  orderedIds.forEach((id, index) => {
+    const ms = Math.max(poolMs[index] ?? 0, previousMs + 1);
+    previousMs = ms;
+    const iso = new Date(ms).toISOString();
+    if (currentPinnedAtById.get(id) !== iso) {
+      changed.set(id, iso);
+    }
+  });
+  return changed;
+}
+
+/**
+ * Recompose a bucket-wide pinned order after one visual block was reordered.
+ * Sections partition the sorted list, so each partition renders its own pinned
+ * block; walking `fullOrder` and substituting only ids that belong to the
+ * reordered block keeps pinned chats in every other partition untouched.
+ */
+export function recomposePinnedOrder(
+  fullOrder: readonly string[],
+  blockIds: readonly string[],
+  reorderedBlockIds: readonly string[]
+): string[] {
+  const blockSet = new Set(blockIds);
+  const replacements = reorderedBlockIds.filter((id) => blockSet.has(id));
+  let nextReplacement = 0;
+  return fullOrder.map((id) => {
+    if (!blockSet.has(id)) return id;
+    const replacement = replacements[nextReplacement];
+    nextReplacement += 1;
+    return replacement ?? id;
+  });
+}

@@ -2,7 +2,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/common/types/project";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { assert } from "@/common/utils/assert";
-import { isWorkspacePinned } from "@/common/utils/pin";
+import { comparePinnedOrder, isWorkspacePinned } from "@/common/utils/pin";
 
 interface WorkspaceGroupConfig {
   id: string;
@@ -652,14 +652,7 @@ export function buildSortedWorkspacesByProject(
         return aPinned ? -1 : 1;
       }
       if (aPinned && bPinned) {
-        const aPinnedAtRaw = Date.parse(a.pinnedAt ?? "");
-        const bPinnedAtRaw = Date.parse(b.pinnedAt ?? "");
-        const aPinnedAt = Number.isFinite(aPinnedAtRaw) ? aPinnedAtRaw : 0;
-        const bPinnedAt = Number.isFinite(bPinnedAtRaw) ? bPinnedAtRaw : 0;
-        if (aPinnedAt !== bPinnedAt) {
-          return aPinnedAt - bPinnedAt;
-        }
-        return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        return comparePinnedOrder(a, b);
       }
 
       const aTimestamp = workspaceRecency[a.id] ?? 0;

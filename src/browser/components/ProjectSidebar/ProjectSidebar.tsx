@@ -65,6 +65,11 @@ import {
   type AgentRowRenderMeta,
   type SidebarVisibleRowNode,
 } from "@/browser/utils/ui/workspaceFiltering";
+import {
+  computePinnedDropOrder,
+  computePinnedMoveOrder,
+  locatePinnedBlock,
+} from "@/browser/utils/ui/pinnedReorder";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { SidebarCollapseButton } from "../SidebarCollapseButton/SidebarCollapseButton";
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
@@ -138,6 +143,17 @@ interface SectionConfig {
   name: string;
   color?: string;
 }
+
+/**
+ * Pinned rows drag-reorder only within their visual block. Regular rows group
+ * by project + section (NUL separator: cannot appear in paths); multi-project
+ * rows share one flat section, so they get a single sentinel group regardless
+ * of each row's primary projectPath.
+ */
+function getPinnedReorderGroup(projectPath: string, sectionId: string | undefined): string {
+  return `${projectPath}\u0000${sectionId ?? ""}`;
+}
+const MULTI_PROJECT_PINNED_REORDER_GROUP = "\u0000multi-project";
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
@@ -713,6 +729,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     removeWorkspace,
     updateWorkspaceTitle: onUpdateTitle,
     setWorkspacePinned,
+    reorderPinnedWorkspaces,
     refreshWorkspaceMetadata,
     pendingNewWorkspaceProject,
     pendingNewWorkspaceDraftId,
@@ -1715,6 +1732,34 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [projectOrder, userProjects, setProjectOrder]
   );
 
+  // Pinned-chat reordering, shared by row drag-drop and the move keybinds.
+  // locatePinnedBlock mirrors renderer partitioning (sections, multi-project
+  // list), so moves stay within the row's visual pinned block while the
+  // request carries the bucket's full pinned order.
+  const handlePinnedReorderDrop = useCallback(
+    (draggedId: string, targetId: string, edge: "before" | "after") => {
+      const targetMeta = workspaceStore.getWorkspaceMetadata(targetId);
+      if (!targetMeta) return;
+      const block = locatePinnedBlock(targetMeta, sortedWorkspacesByProject, userProjects);
+      if (!block) return;
+      const order = computePinnedDropOrder(block, draggedId, targetId, edge);
+      if (order) void reorderPinnedWorkspaces(order);
+    },
+    [workspaceStore, sortedWorkspacesByProject, userProjects, reorderPinnedWorkspaces]
+  );
+
+  const movePinnedWorkspace = useCallback(
+    (workspaceId: string, direction: "up" | "down") => {
+      const meta = workspaceStore.getWorkspaceMetadata(workspaceId);
+      if (!meta) return;
+      const block = locatePinnedBlock(meta, sortedWorkspacesByProject, userProjects);
+      if (!block) return;
+      const order = computePinnedMoveOrder(block, workspaceId, direction);
+      if (order) void reorderPinnedWorkspaces(order);
+    },
+    [workspaceStore, sortedWorkspacesByProject, userProjects, reorderPinnedWorkspaces]
+  );
+
   const hasProjectMenuTarget = projectMenuTargetPath !== null;
 
   // Handle keyboard shortcuts
@@ -1755,6 +1800,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         if (meta && isWorkspacePinnable(meta)) {
           void setWorkspacePinned(selectedWorkspace.workspaceId, !isWorkspacePinned(meta));
         }
+      } else if (matchesKeybind(e, KEYBINDS.MOVE_PINNED_UP) && selectedWorkspace) {
+        e.preventDefault();
+        movePinnedWorkspace(selectedWorkspace.workspaceId, "up");
+      } else if (matchesKeybind(e, KEYBINDS.MOVE_PINNED_DOWN) && selectedWorkspace) {
+        e.preventDefault();
+        movePinnedWorkspace(selectedWorkspace.workspaceId, "down");
       }
     };
 
@@ -1766,6 +1817,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     handleAddWorkspace,
     handleArchiveWorkspace,
     setWorkspacePinned,
+    movePinnedWorkspace,
     sortedWorkspacesByProject,
     userProjects,
     workspaceStore,
@@ -1878,6 +1930,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 multiProjectDepthByWorkspaceId[metadata.id] ??
                                 0
                               }
+                              pinnedReorderGroup={MULTI_PROJECT_PINNED_REORDER_GROUP}
+                              onPinnedReorderDrop={handlePinnedReorderDrop}
                               rowRenderMeta={rowRenderMeta}
                               delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
                               completedChildrenExpanded={expandedCompletedParentIds.has(
@@ -2252,6 +2306,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       0
                                     }
                                     sectionId={sectionId}
+                                    pinnedReorderGroup={getPinnedReorderGroup(
+                                      projectPath,
+                                      sectionId
+                                    )}
+                                    onPinnedReorderDrop={handlePinnedReorderDrop}
                                     rowRenderMeta={rowRenderMeta}
                                     subAgentConnectorLayout={subAgentConnectorLayout}
                                     taskGroupHeaderTitle={taskGroupHeaderTitle}

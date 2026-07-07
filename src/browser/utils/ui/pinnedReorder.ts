@@ -1,0 +1,113 @@
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ProjectConfig } from "@/common/types/project";
+import { isMultiProject } from "@/common/utils/multiProject";
+import { isWorkspacePinned, recomposePinnedOrder } from "@/common/utils/pin";
+import { getSubProjectsForParent } from "@/common/utils/subProjects";
+import { partitionWorkspacesBySection, resolveEffectiveSectionId } from "./workspaceFiltering";
+
+/**
+ * A workspace's pinned surroundings, both in displayed order:
+ * - `fullOrder`: every pinned id of its config bucket. Reorder requests always
+ *   send the full bucket order so the backend never has to guess scope.
+ * - `blockIds`: pinned ids of its own visual block (sections partition the
+ *   sorted list, so each partition renders its own pinned block). Reorder UX
+ *   moves rows within one block only.
+ */
+export interface PinnedBlock {
+  fullOrder: string[];
+  blockIds: string[];
+}
+
+/** Multi-project rows render as one flat section regardless of which bucket they came from. */
+function collectMultiProjectRows(
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>
+): FrontendWorkspaceMetadata[] {
+  const byId = new Map<string, FrontendWorkspaceMetadata>();
+  for (const rows of sortedWorkspacesByProject.values()) {
+    for (const row of rows) {
+      if (isMultiProject(row)) {
+        byId.set(row.id, row);
+      }
+    }
+  }
+  return Array.from(byId.values());
+}
+
+/**
+ * Resolve the pinned block containing `meta`, mirroring the sidebar renderer:
+ * multi-project rows form one flat block; regular rows partition by their
+ * effective section. Returns null when the workspace is not a rendered pinned
+ * row (unpinned, or missing from the sorted map).
+ */
+export function locatePinnedBlock(
+  meta: FrontendWorkspaceMetadata,
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  userProjects: Map<string, ProjectConfig>
+): PinnedBlock | null {
+  if (!isWorkspacePinned(meta)) return null;
+
+  if (isMultiProject(meta)) {
+    const pinnedIds = collectMultiProjectRows(sortedWorkspacesByProject)
+      .filter(isWorkspacePinned)
+      .map((row) => row.id);
+    if (!pinnedIds.includes(meta.id)) return null;
+    return { fullOrder: pinnedIds, blockIds: pinnedIds };
+  }
+
+  const rows = sortedWorkspacesByProject.get(meta.projectPath) ?? [];
+  const fullOrder = rows.filter(isWorkspacePinned).map((row) => row.id);
+  if (!fullOrder.includes(meta.id)) return null;
+
+  const sections = getSubProjectsForParent(meta.projectPath, userProjects).map(
+    ([subProjectPath]) => ({ id: subProjectPath })
+  );
+  const { unsectioned, bySectionId } = partitionWorkspacesBySection(rows, sections);
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const sectionIds = new Set(sections.map((section) => section.id));
+  const effectiveSectionId = resolveEffectiveSectionId(meta, byId, sectionIds);
+  const partitionRows = effectiveSectionId
+    ? (bySectionId.get(effectiveSectionId) ?? [])
+    : unsectioned;
+  const blockIds = partitionRows.filter(isWorkspacePinned).map((row) => row.id);
+  return { fullOrder, blockIds };
+}
+
+/**
+ * Full new pinned order (for the whole bucket) after moving `workspaceId` one
+ * step up/down within its block. Null when the move is a no-op (not in the
+ * block, or already at the edge).
+ */
+export function computePinnedMoveOrder(
+  block: PinnedBlock,
+  workspaceId: string,
+  direction: "up" | "down"
+): string[] | null {
+  const index = block.blockIds.indexOf(workspaceId);
+  if (index === -1) return null;
+  const swapWith = direction === "up" ? index - 1 : index + 1;
+  if (swapWith < 0 || swapWith >= block.blockIds.length) return null;
+  const reordered = [...block.blockIds];
+  [reordered[index], reordered[swapWith]] = [reordered[swapWith], reordered[index]];
+  return recomposePinnedOrder(block.fullOrder, block.blockIds, reordered);
+}
+
+/**
+ * Full new pinned order after dropping `draggedId` onto the before/after edge
+ * of `targetId` within the same block. Null when nothing would change.
+ */
+export function computePinnedDropOrder(
+  block: PinnedBlock,
+  draggedId: string,
+  targetId: string,
+  edge: "before" | "after"
+): string[] | null {
+  if (draggedId === targetId) return null;
+  if (!block.blockIds.includes(draggedId)) return null;
+  const without = block.blockIds.filter((id) => id !== draggedId);
+  const targetIndex = without.indexOf(targetId);
+  if (targetIndex === -1) return null;
+  const insertAt = edge === "before" ? targetIndex : targetIndex + 1;
+  const reordered = [...without.slice(0, insertAt), draggedId, ...without.slice(insertAt)];
+  if (reordered.every((id, i) => id === block.blockIds[i])) return null;
+  return recomposePinnedOrder(block.fullOrder, block.blockIds, reordered);
+}

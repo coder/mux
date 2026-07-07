@@ -5,6 +5,11 @@ import assert from "@/common/utils/assert";
 import { DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR } from "@/common/config/worktreeArchiveBehavior";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import {
+  comparePinnedOrder,
+  isWorkspacePinned,
+  reassignPinnedTimestamps,
+} from "@/common/utils/pin";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
@@ -5127,14 +5132,23 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async emitCurrentWorkspaceMetadata(workspaceId: string): Promise<void> {
+    await this.emitCurrentWorkspaceMetadataBatch([workspaceId]);
+  }
+
+  /** Emit fresh metadata for several workspaces with a single config reload. */
+  private async emitCurrentWorkspaceMetadataBatch(workspaceIds: string[]): Promise<void> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
-    const updatedMetadata = allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
-    const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
-    const session = this.sessions.get(workspaceId);
-    if (session) {
-      session.emitMetadata(enrichedMetadata);
-    } else {
-      this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+    const metadataById = new Map(allMetadata.map((metadata) => [metadata.id, metadata]));
+    for (const workspaceId of workspaceIds) {
+      const enrichedMetadata = this.enrichMaybeFrontendMetadata(
+        metadataById.get(workspaceId) ?? null
+      );
+      const session = this.sessions.get(workspaceId);
+      if (session) {
+        session.emitMetadata(enrichedMetadata);
+      } else {
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+      }
     }
   }
 
@@ -5529,6 +5543,101 @@ export class WorkspaceService extends EventEmitter {
       return Ok(undefined);
     } catch (error) {
       return Err(`Failed to update pin state: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Reorder the pinned block of one project bucket. `workspaceIds` is the full
+   * desired pinned order for that bucket as the client sees it. Defensive
+   * contract: unknown/unpinned ids are dropped, currently-pinned ids omitted
+   * from the input keep their relative order and are appended, so concurrent
+   * pin/unpin from other clients is absorbed instead of erroring.
+   *
+   * Persistence model: pinnedAt is an ordering key, so reordering re-deals the
+   * existing pool of pinnedAt timestamps onto the new order (see
+   * reassignPinnedTimestamps). Reusing the pool keeps max(pinnedAt) stable,
+   * preserving setPinned's append-at-bottom invariant across reorders.
+   */
+  async reorderPinned(workspaceIds: string[]): Promise<Result<void>> {
+    try {
+      // Derive the config bucket from the first resolvable id so clients never
+      // need internal bucket keys (e.g. the multi-project bucket). Nothing
+      // resolvable means the client acted on stale state: a benign no-op.
+      let projectPath: string | undefined;
+      for (const id of workspaceIds) {
+        const found = this.config.findWorkspace(id);
+        if (found) {
+          projectPath = found.projectPath;
+          break;
+        }
+      }
+      if (projectPath === undefined) {
+        return Ok(undefined);
+      }
+      const bucketPath = projectPath;
+
+      const changedIds: string[] = [];
+      await this.config.editConfig((config) => {
+        const projectConfig = config.projects.get(bucketPath);
+        if (!projectConfig) {
+          return config;
+        }
+
+        // Current pinned roots of the bucket, in effective pin order.
+        const pinnedEntries: Array<{ id: string; pinnedAt: string }> = [];
+        for (const entry of projectConfig.workspaces) {
+          if (!entry.id || !entry.pinnedAt) continue;
+          if (!isWorkspacePinned(entry)) continue;
+          pinnedEntries.push({ id: entry.id, pinnedAt: entry.pinnedAt });
+        }
+        if (pinnedEntries.length < 2) {
+          return config;
+        }
+        pinnedEntries.sort(comparePinnedOrder);
+        const currentOrder = pinnedEntries.map((entry) => entry.id);
+        const currentSet = new Set(currentOrder);
+
+        // Desired order: dedupe the input, keep only currently-pinned ids,
+        // then append omitted pins in their current relative order.
+        const seen = new Set<string>();
+        const desiredOrder: string[] = [];
+        for (const id of workspaceIds) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          if (currentSet.has(id)) {
+            desiredOrder.push(id);
+          }
+        }
+        for (const id of currentOrder) {
+          if (!seen.has(id)) {
+            desiredOrder.push(id);
+          }
+        }
+        if (desiredOrder.every((id, index) => id === currentOrder[index])) {
+          return config;
+        }
+
+        const currentPinnedAtById = new Map(
+          pinnedEntries.map((entry) => [entry.id, entry.pinnedAt])
+        );
+        const changes = reassignPinnedTimestamps(desiredOrder, currentPinnedAtById);
+        for (const entry of projectConfig.workspaces) {
+          if (!entry.id) continue;
+          const nextPinnedAt = changes.get(entry.id);
+          if (nextPinnedAt !== undefined) {
+            entry.pinnedAt = nextPinnedAt;
+            changedIds.push(entry.id);
+          }
+        }
+        return config;
+      });
+
+      if (changedIds.length > 0) {
+        await this.emitCurrentWorkspaceMetadataBatch(changedIds);
+      }
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to reorder pinned chats: ${getErrorMessage(error)}`);
     }
   }
 

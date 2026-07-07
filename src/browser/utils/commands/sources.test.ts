@@ -56,6 +56,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onRemoveProject: () => undefined,
     onToggleSidebar: () => undefined,
     onNavigateWorkspace: () => undefined,
+    onMovePinnedChat: () => undefined,
     onOpenWorkspaceInTerminal: () => undefined,
     onToggleTheme: () => undefined,
     onSetTheme: () => undefined,

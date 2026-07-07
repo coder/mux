@@ -1129,6 +1129,17 @@ export const workspace = {
     input: z.object({ workspaceId: z.string(), pinned: z.boolean() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  reorderPinned: {
+    /**
+     * Full desired pinned order for one project bucket. The server derives the
+     * bucket from the first known id (so clients never need internal bucket
+     * keys like the multi-project one), drops stale/unpinned ids, and appends
+     * currently-pinned ids omitted from the input, absorbing concurrent
+     * pin/unpin from other clients.
+     */
+    input: z.object({ workspaceIds: z.array(z.string()) }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   updateTags: {
     /** Merge tag updates into a workspace; a null value deletes that key. */
     input: z.object({

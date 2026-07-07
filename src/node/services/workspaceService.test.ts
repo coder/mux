@@ -7734,6 +7734,217 @@ describe("WorkspaceService setPinned", () => {
   });
 });
 
+describe("WorkspaceService reorderPinned", () => {
+  const projectPath = "/tmp/project";
+  const idA = "ws-a";
+  const idB = "ws-b";
+  const idC = "ws-c";
+  const unpinnedId = "ws-unpinned";
+  const childId = "ws-child";
+  const archivedId = "ws-archived";
+
+  let workspaceService: WorkspaceService;
+  let configState: ProjectsConfig;
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+  let emittedMetadata: Array<{ workspaceId: string; metadata: FrontendWorkspaceMetadata | null }>;
+
+  const getEntry = (id: string) =>
+    configState.projects.get(projectPath)?.workspaces.find((w) => w.id === id);
+
+  /** Pinned ids in effective order (pinnedAt asc), as the sidebar sorts them. */
+  const pinnedOrder = () =>
+    (configState.projects.get(projectPath)?.workspaces ?? [])
+      .filter((w) => w.id && w.pinnedAt && !w.parentWorkspaceId && !w.archivedAt)
+      .sort((a, b) => Date.parse(a.pinnedAt ?? "") - Date.parse(b.pinnedAt ?? ""))
+      .map((w) => w.id);
+
+  beforeEach(async () => {
+    configState = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              // Pinned block in order A, B, C (pinnedAt ascending).
+              {
+                path: `${projectPath}/${idA}`,
+                id: idA,
+                pinnedAt: "2026-01-01T00:00:00.000Z",
+              },
+              {
+                path: `${projectPath}/${idB}`,
+                id: idB,
+                pinnedAt: "2026-01-01T00:00:10.000Z",
+              },
+              {
+                path: `${projectPath}/${idC}`,
+                id: idC,
+                pinnedAt: "2026-01-01T00:00:20.000Z",
+              },
+              { path: `${projectPath}/${unpinnedId}`, id: unpinnedId },
+              {
+                path: `${projectPath}/${childId}`,
+                id: childId,
+                parentWorkspaceId: idA,
+              },
+              {
+                path: `${projectPath}/${archivedId}`,
+                id: archivedId,
+                archivedAt: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock((id: string) => {
+        const entry = getEntry(id);
+        if (!entry) return null;
+        return {
+          projectPath,
+          workspacePath: entry.path,
+          parentWorkspaceId: entry.parentWorkspaceId,
+        };
+      }),
+      editConfig: mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
+        configState = fn(configState);
+        return Promise.resolve();
+      }),
+      getAllWorkspaceMetadata: mock(() =>
+        Promise.resolve(
+          (configState.projects.get(projectPath)?.workspaces ?? [])
+            .filter((w): w is typeof w & { id: string } => w.id != null)
+            .map(
+              (w): FrontendWorkspaceMetadata => ({
+                id: w.id,
+                name: w.id,
+                projectName: "proj",
+                projectPath,
+                namedWorkspacePath: w.path,
+                runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+                parentWorkspaceId: w.parentWorkspaceId,
+                archivedAt: w.archivedAt,
+                unarchivedAt: w.unarchivedAt,
+                pinnedAt: w.pinnedAt,
+              })
+            )
+        )
+      ),
+      loadConfigOrDefault: mock(() => configState),
+    };
+
+    workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
+      historyService,
+    });
+
+    emittedMetadata = [];
+    workspaceService.on("metadata", (payload) => {
+      emittedMetadata.push(payload as (typeof emittedMetadata)[number]);
+    });
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("persists the new order and emits metadata only for displaced rows", async () => {
+    // Move C to the front: every rank shifts, so all three rows change.
+    const result = await workspaceService.reorderPinned([idC, idA, idB]);
+    expect(result.success).toBe(true);
+    expect(pinnedOrder()).toEqual([idC, idA, idB]);
+    expect(emittedMetadata.map((e) => e.workspaceId).sort()).toEqual([idA, idB, idC].sort());
+    // Emitted metadata carries the rewritten pinnedAt values.
+    for (const event of emittedMetadata) {
+      expect(event.metadata?.pinnedAt).toBe(getEntry(event.workspaceId)?.pinnedAt);
+    }
+  });
+
+  test("swapping only a suffix leaves preceding pins untouched", async () => {
+    const pinnedAtA = getEntry(idA)?.pinnedAt;
+    const result = await workspaceService.reorderPinned([idA, idC, idB]);
+    expect(result.success).toBe(true);
+    expect(pinnedOrder()).toEqual([idA, idC, idB]);
+    // A kept its rank, so its timestamp is untouched and no event is emitted for it.
+    expect(getEntry(idA)?.pinnedAt).toBe(pinnedAtA);
+    expect(emittedMetadata.map((e) => e.workspaceId).sort()).toEqual([idB, idC].sort());
+  });
+
+  test("no-op order emits nothing and rewrites nothing", async () => {
+    const before = [getEntry(idA)?.pinnedAt, getEntry(idB)?.pinnedAt, getEntry(idC)?.pinnedAt];
+    const result = await workspaceService.reorderPinned([idA, idB, idC]);
+    expect(result.success).toBe(true);
+    expect([getEntry(idA)?.pinnedAt, getEntry(idB)?.pinnedAt, getEntry(idC)?.pinnedAt]).toEqual(
+      before
+    );
+    expect(emittedMetadata).toHaveLength(0);
+  });
+
+  test("drops stale/unpinned/duplicate ids and appends omitted pins in current order", async () => {
+    // Client sends duplicates, an unpinned id, a sub-agent, an archived chat,
+    // and a ghost id, and omits B and C entirely.
+    const result = await workspaceService.reorderPinned([
+      idC,
+      idC,
+      unpinnedId,
+      childId,
+      archivedId,
+      "ws-ghost",
+    ]);
+    expect(result.success).toBe(true);
+    // C first, then omitted pins A, B keep their relative order.
+    expect(pinnedOrder()).toEqual([idC, idA, idB]);
+    // Ineligible ids never gain pinnedAt.
+    expect(getEntry(unpinnedId)?.pinnedAt).toBeUndefined();
+    expect(getEntry(childId)?.pinnedAt).toBeUndefined();
+    expect(getEntry(archivedId)?.pinnedAt).toBeUndefined();
+  });
+
+  test("reorder preserves the timestamp pool so setPinned still appends at the bottom", async () => {
+    const maxBefore = Math.max(
+      ...[idA, idB, idC].map((id) => Date.parse(getEntry(id)?.pinnedAt ?? ""))
+    );
+    expect((await workspaceService.reorderPinned([idC, idB, idA])).success).toBe(true);
+    const maxAfter = Math.max(
+      ...[idA, idB, idC].map((id) => Date.parse(getEntry(id)?.pinnedAt ?? ""))
+    );
+    // Re-dealing the pool must not inflate the max timestamp.
+    expect(maxAfter).toBe(maxBefore);
+
+    expect((await workspaceService.setPinned(unpinnedId, true)).success).toBe(true);
+    expect(pinnedOrder()).toEqual([idC, idB, idA, unpinnedId]);
+  });
+
+  test("returns Ok no-op when no id resolves to a workspace", async () => {
+    const result = await workspaceService.reorderPinned(["ws-ghost-1", "ws-ghost-2"]);
+    expect(result.success).toBe(true);
+    expect(pinnedOrder()).toEqual([idA, idB, idC]);
+    expect(emittedMetadata).toHaveLength(0);
+  });
+
+  test("identical pinnedAt values (client races) still reorder deterministically", async () => {
+    const same = "2026-01-01T00:00:00.000Z";
+    getEntry(idA)!.pinnedAt = same;
+    getEntry(idB)!.pinnedAt = same;
+    getEntry(idC)!.pinnedAt = same;
+
+    const result = await workspaceService.reorderPinned([idB, idC, idA]);
+    expect(result.success).toBe(true);
+    expect(pinnedOrder()).toEqual([idB, idC, idA]);
+    // Strictly monotonic after the re-deal.
+    const values = [idB, idC, idA].map((id) => Date.parse(getEntry(id)?.pinnedAt ?? ""));
+    expect(values[0]).toBeLessThan(values[1]);
+    expect(values[1]).toBeLessThan(values[2]);
+  });
+});
+
 describe("WorkspaceService archive lifecycle hooks", () => {
   const workspaceId = "ws-archive";
   const projectPath = "/tmp/project";

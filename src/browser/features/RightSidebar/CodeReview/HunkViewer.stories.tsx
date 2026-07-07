@@ -88,6 +88,7 @@ function createStubWorkspaceContextValue(): WorkspaceContextValue {
     removeWorkspace: () => Promise.resolve({ success: true }),
     updateWorkspaceTitle: () => Promise.resolve({ success: true }),
     setWorkspacePinned: () => Promise.resolve({ success: true }),
+    reorderPinnedWorkspaces: () => Promise.resolve({ success: true }),
     preflightArchiveWorkspace: () => Promise.resolve({ success: true }),
     archiveWorkspace: () => Promise.resolve({ success: true }),
     unarchiveWorkspace: () => Promise.resolve({ success: true }),
