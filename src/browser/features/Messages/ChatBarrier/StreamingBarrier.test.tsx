@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
+import type * as ModelsFromSettingsModule from "@/browser/hooks/useModelsFromSettings";
+import type * as APIModule from "@/browser/contexts/API";
 import { overlayWorkspaceStoreRaw } from "@/browser/stores/workspaceStoreTestOverlay";
 
 interface MockWorkspaceState {
@@ -82,7 +84,15 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   useWorkspaceStreamingStats: () => currentStreamingStats,
 }));
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualAPI = require("@/browser/contexts/API?real=1") as typeof APIModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
+// Spread the real module: replacing it outright deletes exports like APIContext that
+// later-evaluated test files import statically, crashing them at load (module mocks are
+// process-wide and bun evaluates every test file before running tests).
 void mock.module("@/browser/contexts/API", () => ({
+  ...actualAPI,
   useAPI: () => ({
     api: {
       workspace: {
@@ -109,14 +119,21 @@ void mock.module("@/browser/contexts/SettingsContext", () => ({
   }),
 }));
 
-void mock.module("@/browser/hooks/usePersistedState", () => ({
-  readPersistedState: function <T>(_key: string, defaultValue: T): T {
-    return defaultValue;
-  },
-  readPersistedString: () => null,
-}));
+// No usePersistedState module mock: in a fresh happy-dom localStorage the real
+// readPersistedState/readPersistedString already return the defaults this suite relied on,
+// and a partial module replacement here leaks process-wide (bun evaluates every test file
+// before running tests), deleting exports that later-evaluated suites need (seen as
+// GeneralSection/MemoryTab CI failures).
 
+/* eslint-disable @typescript-eslint/no-require-imports */
+const actualModelsFromSettings =
+  require("@/browser/hooks/useModelsFromSettings?real=1") as typeof ModelsFromSettingsModule;
+/* eslint-enable @typescript-eslint/no-require-imports */
+
+// Spread the real module: this suite only pins getDefaultModel (its assertions expect
+// "openai:gpt-4o-mini"); replacing the whole module would leak missing exports.
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
+  ...actualModelsFromSettings,
   getDefaultModel: () => "openai:gpt-4o-mini",
 }));
 

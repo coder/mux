@@ -207,6 +207,12 @@ jobs:
             # and could not be reproduced locally even with the exact CI file order,
             # bun version, and coverage flags.
             src/browser/components/CommandPalette/CommandPalette.prompt.test.tsx
+            # Its tooltip test asserts Radix portal content, and Radix tooltip module
+            # state binds to the first document that mounted a TooltipProvider in the
+            # process — any earlier test file rendering a tooltip (raw happy-dom swap
+            # or installDom alike) makes the portal land in a stale document. Verified
+            # order-dependent on origin/main; only reliable in its own process.
+            src/browser/features/RightSidebar/Memory/MemoryTab.test.tsx
           )
           bun test --max-concurrency=1 "${isolated_unit_tests[@]}"
 
@@ -219,6 +225,7 @@ jobs:
               ! -path 'src/browser/hooks/useChatTranscriptFullWidth.test.tsx' \
               ! -path 'src/browser/utils/commands/sources.test.ts' \
               ! -path 'src/browser/components/CommandPalette/CommandPalette.prompt.test.tsx' \
+              ! -path 'src/browser/features/RightSidebar/Memory/MemoryTab.test.tsx' \
               -print0
           )
           bun test --max-concurrency=1 --coverage --coverage-reporter=lcov "${unit_files[@]}"
