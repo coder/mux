@@ -5563,22 +5563,17 @@ export class WorkspaceService extends EventEmitter {
       // Derive the config bucket from the first resolvable id so clients never
       // need internal bucket keys (e.g. the multi-project bucket). Nothing
       // resolvable means the client acted on stale state: a benign no-op.
-      let projectPath: string | undefined;
-      for (const id of workspaceIds) {
-        const found = this.config.findWorkspace(id);
-        if (found) {
-          projectPath = found.projectPath;
-          break;
-        }
-      }
+      // Const (not narrowed let) so the editConfig closure sees type string.
+      const projectPath = workspaceIds
+        .map((id) => this.config.findWorkspace(id)?.projectPath)
+        .find((path) => path !== undefined);
       if (projectPath === undefined) {
         return Ok(undefined);
       }
-      const bucketPath = projectPath;
 
       const changedIds: string[] = [];
       await this.config.editConfig((config) => {
-        const projectConfig = config.projects.get(bucketPath);
+        const projectConfig = config.projects.get(projectPath);
         if (!projectConfig) {
           return config;
         }

@@ -82,7 +82,7 @@ export function reassignPinnedTimestamps(
   const changed = new Map<string, string>();
   let previousMs = Number.NEGATIVE_INFINITY;
   orderedIds.forEach((id, index) => {
-    const ms = Math.max(poolMs[index] ?? 0, previousMs + 1);
+    const ms = Math.max(poolMs[index], previousMs + 1);
     previousMs = ms;
     const iso = new Date(ms).toISOString();
     if (currentPinnedAtById.get(id) !== iso) {
@@ -104,12 +104,6 @@ export function recomposePinnedOrder(
   reorderedBlockIds: readonly string[]
 ): string[] {
   const blockSet = new Set(blockIds);
-  const replacements = reorderedBlockIds.filter((id) => blockSet.has(id));
   let nextReplacement = 0;
-  return fullOrder.map((id) => {
-    if (!blockSet.has(id)) return id;
-    const replacement = replacements[nextReplacement];
-    nextReplacement += 1;
-    return replacement ?? id;
-  });
+  return fullOrder.map((id) => (blockSet.has(id) ? reorderedBlockIds[nextReplacement++] : id));
 }

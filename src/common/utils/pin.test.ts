@@ -99,16 +99,4 @@ describe("recomposePinnedOrder", () => {
       "b",
     ]);
   });
-
-  it("ignores foreign ids in the reordered block (defensive)", () => {
-    const fullOrder = ["a", "b"];
-    const blockIds = ["a", "b"];
-    expect(recomposePinnedOrder(fullOrder, blockIds, ["b", "ghost", "a"])).toEqual(["b", "a"]);
-  });
-
-  it("keeps original id when the reordered block is short (defensive)", () => {
-    const fullOrder = ["a", "b", "c"];
-    const blockIds = ["a", "b", "c"];
-    expect(recomposePinnedOrder(fullOrder, blockIds, ["c"])).toEqual(["c", "b", "c"]);
-  });
 });
