@@ -391,6 +391,14 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         source?: "heartbeat";
         /** Transient status to display while the heartbeat is running. */
         displayStatus?: DisplayStatus;
+        /**
+         * When the schedule slot fired (epoch ms). Queue-mode busy deliveries write the
+         * history row only after the running turn finishes, so the message timestamp can
+         * be minutes late; fixed-interval restart anchoring must use this instead
+         * (HeartbeatService.deriveInitialIntervalNextEligibleAt), matching the live
+         * advanceAnchoredDeadline anchor.
+         */
+        firedAt?: number;
       }
     | {
         type: "normal"; // Regular messages

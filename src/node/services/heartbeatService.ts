@@ -302,11 +302,24 @@ export class HeartbeatService {
         if (message?.role !== "user") {
           continue;
         }
-        if (message.metadata?.muxMetadata?.type !== "heartbeat-request") {
+        const metadata = message.metadata;
+        const muxMetadata = metadata?.muxMetadata;
+        if (metadata == null || muxMetadata?.type !== "heartbeat-request") {
           continue;
         }
 
-        const firedAt = message.metadata.timestamp;
+        // Queue-mode busy deliveries write the history row only after the running turn
+        // finishes, so the row timestamp can be minutes after the slot fired — anchoring
+        // there would drift the fixed cadence across restarts. Prefer the persisted fire
+        // time (matching the live advanceAnchoredDeadline anchor); rows without it
+        // (pre-firedAt records) fall back to the row timestamp.
+        const persistedFiredAt = muxMetadata.firedAt;
+        const firedAt =
+          typeof persistedFiredAt === "number" &&
+          Number.isFinite(persistedFiredAt) &&
+          persistedFiredAt <= now
+            ? persistedFiredAt
+            : metadata.timestamp;
         // Newest firing record wins; an unusable timestamp (missing/overflowed/future
         // clock skew) falls through to the recency fallback rather than scanning older,
         // even staler records.

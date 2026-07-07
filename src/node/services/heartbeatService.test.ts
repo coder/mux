@@ -1624,6 +1624,30 @@ describe("HeartbeatService", () => {
       expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(now);
     });
 
+    test("a queued busy delivery anchors at the persisted fire time, not the row timestamp", async () => {
+      const internals = getInternals();
+      const intervalMs = 30 * 60 * 1000;
+      const now = 4 * 60 * 60 * 1000;
+      const firedAt = now - 20 * 60 * 1000; // the 10:00 slot
+      const deliveredAt = firedAt + 15 * 60 * 1000; // row written when the busy turn ended
+      currentProjectsConfig = makeProjectsConfig([
+        makeWorkspaceEntry({ heartbeat: { enabled: true, intervalMs, trigger: "interval" } }),
+      ]);
+      getChatHistoryMock.mockResolvedValueOnce([
+        ...makeCompletedTurnHistory(),
+        createMuxMessage("hb-1", "user", "[Scheduled heartbeat] check in", {
+          timestamp: deliveredAt,
+          muxMetadata: { type: "heartbeat-request", firedAt },
+        }),
+      ]);
+
+      await internals.resyncFromConfig(now);
+
+      // Anchored at the slot's fire time (matching the live advanceAnchoredDeadline
+      // anchor), not delivery — which would drift the cadence by 15 minutes.
+      expect(internals.nextEligibleAtByWorkspaceId.get(testWorkspaceId)).toBe(firedAt + intervalMs);
+    });
+
     test("a firing that predates the last cadence edit loses to the edit anchor", async () => {
       const internals = getInternals();
       const intervalMs = 30 * 60 * 1000;

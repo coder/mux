@@ -9730,6 +9730,9 @@ export class WorkspaceService extends EventEmitter {
       source: "heartbeat",
       requestedModel: sendOptions.model,
       displayStatus: { emoji: "💓", message: "Heartbeat check..." },
+      // The slot's fire time. Queue-mode deliveries persist the history row after the
+      // busy turn ends, so restart anchoring reads this instead of the row timestamp.
+      firedAt: Date.now(),
     };
 
     return {
