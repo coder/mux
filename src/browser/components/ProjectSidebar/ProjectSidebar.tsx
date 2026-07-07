@@ -1750,10 +1750,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [workspaceStore, sortedWorkspacesByProject, userProjects, reorderPinnedWorkspaces]
   );
 
+  /**
+   * Move the selected pinned chat within its visual block. Returns whether the
+   * shortcut applies to this workspace: true for pinned rows (even edge
+   * no-ops, so the key is still consumed deterministically), false for
+   * unpinned/sub-agent selections so the keydown handler leaves the event
+   * untouched for other handlers instead of swallowing it globally.
+   */
   const movePinnedWorkspace = useCallback(
-    (workspaceId: string, direction: PinnedMoveDirection) => {
+    (workspaceId: string, direction: PinnedMoveDirection): boolean => {
       const meta = workspaceStore.getWorkspaceMetadata(workspaceId);
-      if (!meta) return;
+      if (!meta || !isWorkspacePinned(meta)) return false;
       const order = computePinnedMoveOrderForWorkspace(
         meta,
         direction,
@@ -1761,6 +1768,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         userProjects
       );
       if (order) void reorderPinnedWorkspaces(order);
+      return true;
     },
     [workspaceStore, sortedWorkspacesByProject, userProjects, reorderPinnedWorkspaces]
   );
@@ -1806,11 +1814,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           void setWorkspacePinned(selectedWorkspace.workspaceId, !isWorkspacePinned(meta));
         }
       } else if (matchesKeybind(e, KEYBINDS.MOVE_PINNED_UP) && selectedWorkspace) {
-        e.preventDefault();
-        movePinnedWorkspace(selectedWorkspace.workspaceId, "up");
+        // Consume the shortcut only when it applies (selected row is pinned);
+        // otherwise let the event fall through to other handlers.
+        if (movePinnedWorkspace(selectedWorkspace.workspaceId, "up")) {
+          e.preventDefault();
+        }
       } else if (matchesKeybind(e, KEYBINDS.MOVE_PINNED_DOWN) && selectedWorkspace) {
-        e.preventDefault();
-        movePinnedWorkspace(selectedWorkspace.workspaceId, "down");
+        if (movePinnedWorkspace(selectedWorkspace.workspaceId, "down")) {
+          e.preventDefault();
+        }
       }
     };
 
