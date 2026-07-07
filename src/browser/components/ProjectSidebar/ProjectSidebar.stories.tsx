@@ -339,8 +339,10 @@ export const PinnedChatsCustomOrder: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await waitFor(() => {
+      // Scope to workspace rows (role="button"): inline action controls inside
+      // AgentListItem carry data-workspace-id too and would duplicate entries.
       const rows = Array.from(
-        canvasElement.querySelectorAll<HTMLElement>("[data-workspace-id]")
+        canvasElement.querySelectorAll<HTMLElement>('[data-workspace-id][role="button"]')
       ).map((row) => row.dataset.workspaceId);
       const expected = ["ws-charlie", "ws-alpha", "ws-bravo", "ws-recent"];
       if (rows.length !== expected.length || expected.some((id, i) => rows[i] !== id)) {
