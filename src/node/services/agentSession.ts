@@ -5128,6 +5128,22 @@ export class AgentSession {
     return this.messageQueue.hasDedupeKey(dedupeKey);
   }
 
+  /**
+   * Drop the queue when its only content is the entry queued under this dedupe key.
+   * Returns true when a drop happened. Supersede semantics for scheduled maintenance
+   * messages: new input must own its turn, not batch behind a pending heartbeat whose
+   * muxMetadata would mislabel it.
+   */
+  dropQueuedMessageWithOnlyDedupeKey(dedupeKey: string): boolean {
+    this.assertNotDisposed("dropQueuedMessageWithOnlyDedupeKey");
+    assert(dedupeKey.length > 0, "dropQueuedMessageWithOnlyDedupeKey requires a dedupeKey");
+    if (!this.messageQueue.holdsOnlyDedupeKey(dedupeKey)) {
+      return false;
+    }
+    this.clearQueue("Scheduled message superseded by new input.");
+    return true;
+  }
+
   private requestQueuedToolEndDispatchAfterCurrentTool(): void {
     if (
       this.turnPhase !== TurnPhase.STREAMING ||

@@ -7476,6 +7476,20 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
+        // The reverse of yieldToQueuedMessages below: a pending scheduled heartbeat must
+        // never absorb real input. MessageQueue batches later texts under the first entry's
+        // muxMetadata, so a message queued behind a heartbeat would dispatch tagged (and
+        // displayed) as a heartbeat. New input supersedes the check-in instead — the
+        // heartbeat is periodic and its next slot will fire anyway.
+        if (
+          internal?.queueDedupeKey !== HEARTBEAT_QUEUE_DEDUPE_KEY &&
+          session.dropQueuedMessageWithOnlyDedupeKey(HEARTBEAT_QUEUE_DEDUPE_KEY)
+        ) {
+          log.info("sendMessage: dropped pending queued heartbeat superseded by new input", {
+            workspaceId,
+          });
+        }
+
         // Re-check queue emptiness at the enqueue point: the caller's decision may be stale
         // by now (the pricing/settings awaits above yield the event loop, so a user send can
         // queue first). Everything from here to queueMessage is synchronous, so this check

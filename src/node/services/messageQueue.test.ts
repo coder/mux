@@ -393,6 +393,19 @@ describe("MessageQueue", () => {
       ).toBe(true);
     });
 
+    it("holdsOnlyDedupeKey is true only when the keyed entry is the sole queue content", () => {
+      // Empty queue: nothing to supersede.
+      expect(queue.holdsOnlyDedupeKey("heartbeat-request")).toBe(false);
+
+      // Sole keyed entry: droppable so later real input never batches behind it.
+      queue.addOnce("Heartbeat", { model: "gpt-4", agentId: "exec" }, "heartbeat-request");
+      expect(queue.holdsOnlyDedupeKey("heartbeat-request")).toBe(true);
+
+      // Once anything else shares the queue, a blanket drop would destroy real input.
+      queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
+      expect(queue.holdsOnlyDedupeKey("heartbeat-request")).toBe(false);
+    });
+
     it("should dedupe a keyed entry queued behind an existing plain message", () => {
       queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
 

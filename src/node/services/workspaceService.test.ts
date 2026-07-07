@@ -3647,6 +3647,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
   let fakeSession: {
     isBusy: ReturnType<typeof mock>;
     hasQueuedMessages: ReturnType<typeof mock>;
+    dropQueuedMessageWithOnlyDedupeKey: ReturnType<typeof mock>;
     queueMessage: ReturnType<typeof mock>;
     sendMessage: ReturnType<typeof mock>;
     resumeStream: ReturnType<typeof mock>;
@@ -3718,6 +3719,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
     fakeSession = {
       isBusy: mock(() => true),
       hasQueuedMessages: mock(() => false),
+      dropQueuedMessageWithOnlyDedupeKey: mock(() => false),
       queueMessage: mock(() => "tool-end" as const),
       sendMessage: mock(() => Promise.resolve(Ok(undefined))),
       resumeStream: mock(() => Promise.resolve(Ok({ started: true }))),
@@ -4056,6 +4058,45 @@ describe("WorkspaceService sendMessage status clearing", () => {
     // Quiet success: the slot is consumed, but nothing is enqueued over the user's message.
     expect(result.success).toBe(true);
     expect(fakeSession.queueMessage).not.toHaveBeenCalled();
+  });
+
+  // The reverse race: a heartbeat queued first must not absorb a later real message —
+  // MessageQueue batches texts under the first entry's muxMetadata, so input queued behind
+  // a heartbeat would dispatch tagged as a heartbeat. New input supersedes the heartbeat.
+  test("queued sends supersede a pending queued heartbeat before enqueueing", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+    fakeSession.dropQueuedMessageWithOnlyDedupeKey.mockReturnValue(true);
+
+    const result = await workspaceService.sendMessage("test-workspace", "real user input", {
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    });
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.dropQueuedMessageWithOnlyDedupeKey).toHaveBeenCalledWith(
+      "heartbeat-request"
+    );
+    // The user message still queues normally after the heartbeat is dropped.
+    expect(fakeSession.queueMessage).toHaveBeenCalled();
+  });
+
+  test("a queued heartbeat send does not supersede itself", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "[Heartbeat] scheduled check-in",
+      { model: "openai:gpt-4o-mini", agentId: "exec", queueDispatchMode: "turn-end" },
+      {
+        synthetic: true,
+        skipAutoResumeReset: true,
+        queueDedupeKey: "heartbeat-request",
+        yieldToQueuedMessages: true,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.dropQueuedMessageWithOnlyDedupeKey).not.toHaveBeenCalled();
   });
 
   test("yieldToQueuedMessages still queues into an empty queue", async () => {
