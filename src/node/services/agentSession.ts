@@ -2173,16 +2173,7 @@ export class AgentSession {
       // rebuild queue UI state even when history replay errored mid-flight.
       listener({
         workspaceId: this.workspaceId,
-        message: {
-          type: "queued-message-changed",
-          workspaceId: this.workspaceId,
-          queuedMessages: this.messageQueue.getMessages(),
-          displayText: this.messageQueue.getDisplayText(),
-          fileParts: this.messageQueue.getFileParts(),
-          reviews: this.messageQueue.getReviews(),
-          queueDispatchMode: this.messageQueue.getQueueDispatchMode(),
-          hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
-        },
+        message: this.buildQueuedMessageChangedEvent(),
       });
 
       // Rehydrate pending auto-retry countdown state on reconnect/reload so
@@ -5178,10 +5169,19 @@ export class AgentSession {
   restoreQueueToInput(): void {
     this.assertNotDisposed("restoreQueueToInput");
     if (!this.messageQueue.isEmpty()) {
-      const displayText = this.messageQueue.getDisplayText();
+      // Restore only user-authored content. Synthetic (system-injected) entries such as
+      // bash monitor wake prompts are canceled via clearQueue's callbacks instead of
+      // leaking system text into the composer.
+      const displayText = this.messageQueue.getUserDisplayText();
       const fileParts = this.messageQueue.getFileParts();
       const reviews = this.messageQueue.getReviews();
       this.clearQueue();
+
+      const hasUserContent =
+        displayText.length > 0 || fileParts.length > 0 || (reviews?.length ?? 0) > 0;
+      if (!hasUserContent) {
+        return;
+      }
 
       this.emitChatEvent({
         type: "restore-to-input",
@@ -5193,17 +5193,29 @@ export class AgentSession {
     }
   }
 
-  private emitQueuedMessageChanged(): void {
-    this.emitChatEvent({
+  /**
+   * Snapshot of the queue for UI consumption. Only user-authored entries are included;
+   * synthetic (system-injected) messages like bash monitor wakes still dispatch with the
+   * queued batch but must never appear in the queued-message banner.
+   */
+  private buildQueuedMessageChangedEvent(): Extract<
+    WorkspaceChatMessage,
+    { type: "queued-message-changed" }
+  > {
+    return {
       type: "queued-message-changed",
       workspaceId: this.workspaceId,
-      queuedMessages: this.messageQueue.getMessages(),
-      displayText: this.messageQueue.getDisplayText(),
+      queuedMessages: this.messageQueue.getUserMessages(),
+      displayText: this.messageQueue.getUserDisplayText(),
       fileParts: this.messageQueue.getFileParts(),
       reviews: this.messageQueue.getReviews(),
       queueDispatchMode: this.messageQueue.getQueueDispatchMode(),
       hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
-    });
+    };
+  }
+
+  private emitQueuedMessageChanged(): void {
+    this.emitChatEvent(this.buildQueuedMessageChangedEvent());
   }
 
   /**

@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 
+import { isQueuedMessageChanged, isRestoreToInput } from "@/common/orpc/types";
 import { Ok } from "@/common/types/result";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 
@@ -210,6 +211,84 @@ describe("AgentSession queued message tool-call dispatch", () => {
     } finally {
       sendQueuedMessages.mockRestore();
       stopStream.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("hides synthetic queued messages from the queued-message-changed event", async () => {
+    const workspaceId = "queue-dispatch-synthetic-hidden";
+    const { session, cleanup, events } = await createAgentSessionHarness({
+      workspaceId,
+      captureEvents: true,
+    });
+
+    try {
+      session.queueMessage(
+        "A background bash monitor matched output.",
+        { model: TEST_MODEL, agentId: "exec" },
+        { synthetic: true, agentInitiated: true }
+      );
+      session.queueMessage("user follow up", { model: TEST_MODEL, agentId: "exec" });
+
+      const queueEvents = events.filter(isQueuedMessageChanged);
+      expect(queueEvents).toHaveLength(2);
+      // Synthetic-only queue renders as empty (no queue banner)...
+      expect(queueEvents[0].queuedMessages).toEqual([]);
+      expect(queueEvents[0].displayText).toBe("");
+      // ...and a mixed batch shows only the user-authored text.
+      expect(queueEvents[1].queuedMessages).toEqual(["user follow up"]);
+      expect(queueEvents[1].displayText).toBe("user follow up");
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("does not restore synthetic queued messages to the input box", async () => {
+    const workspaceId = "queue-dispatch-synthetic-restore";
+    const { session, cleanup, events } = await createAgentSessionHarness({
+      workspaceId,
+      captureEvents: true,
+    });
+
+    try {
+      session.queueMessage(
+        "A background bash monitor matched output.",
+        { model: TEST_MODEL, agentId: "exec" },
+        { synthetic: true, agentInitiated: true }
+      );
+      session.restoreQueueToInput();
+
+      // Queue is cleared, but no system text leaks into the composer.
+      expect(session.hasQueuedMessages()).toBe(false);
+      expect(events.filter(isRestoreToInput)).toHaveLength(0);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("restores only user text when the queue mixes synthetic and user messages", async () => {
+    const workspaceId = "queue-dispatch-mixed-restore";
+    const { session, cleanup, events } = await createAgentSessionHarness({
+      workspaceId,
+      captureEvents: true,
+    });
+
+    try {
+      session.queueMessage(
+        "A background bash monitor matched output.",
+        { model: TEST_MODEL, agentId: "exec" },
+        { synthetic: true, agentInitiated: true }
+      );
+      session.queueMessage("user follow up", { model: TEST_MODEL, agentId: "exec" });
+      session.restoreQueueToInput();
+
+      const restoreEvents = events.filter(isRestoreToInput);
+      expect(restoreEvents).toHaveLength(1);
+      expect(restoreEvents[0].text).toBe("user follow up");
+    } finally {
       session.dispose();
       await cleanup();
     }
