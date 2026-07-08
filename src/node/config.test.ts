@@ -209,7 +209,9 @@ describe("Config", () => {
       await config.editConfig((cfg) => {
         cfg.projects.set("/repo", {
           // Legacy entry (no id/name) with settings the migration would carry over.
-          workspaces: [{ path: sharedPath, aiSettings: { modelString: "old:model" } }],
+          workspaces: [
+            { path: sharedPath, aiSettings: { model: "old:model", thinkingLevel: "medium" } },
+          ],
         });
         return cfg;
       });
