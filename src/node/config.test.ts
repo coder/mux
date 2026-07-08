@@ -199,6 +199,54 @@ describe("Config", () => {
       expect(persisted?.name).toBe(metadata[0]?.name);
     });
 
+    // Regression (PR #3694 Codex P2): paths are reusable after deletion. A queued
+    // migration replay recorded for a legacy entry must not apply the old workspace's
+    // settings to a replacement workspace created at the same path while the replay
+    // waited in the editConfig queue.
+    it("does not retarget queued migrations onto a replacement workspace at the same path", async () => {
+      const sharedPath = "/repo/reused";
+      const staleHeartbeat = { enabled: true, intervalMs: 45 * 60 * 1000 };
+      await config.editConfig((cfg) => {
+        cfg.projects.set("/repo", {
+          // Legacy entry (no id/name) with settings the migration would carry over.
+          workspaces: [{ path: sharedPath, aiSettings: { modelString: "old:model" } }],
+        });
+        return cfg;
+      });
+
+      // Enqueue remove+recreate FIFO-ahead of getAllWorkspaceMetadata's queued replay:
+      // its snapshot read (sync) sees the legacy entry, but by the time its editConfig
+      // transform runs, the path belongs to a NEW workspace with a different id.
+      const loader = new Config(tempDir);
+      const removal = loader.editConfig((cfg) => {
+        cfg.projects.set("/repo", { workspaces: [] });
+        return cfg;
+      });
+      const recreate = loader.editConfig((cfg) => {
+        cfg.projects.get("/repo")?.workspaces.push({
+          id: "replacement-id",
+          name: "replacement",
+          path: sharedPath,
+          heartbeat: staleHeartbeat,
+        });
+        return cfg;
+      });
+      await loader.getAllWorkspaceMetadata();
+      await Promise.all([removal, recreate]);
+
+      const persisted = new Config(tempDir).loadConfigOrDefault().projects.get("/repo")?.workspaces;
+      expect(persisted).toHaveLength(1);
+      const replacement = persisted?.[0];
+      // The replacement keeps its own identity and never inherits the legacy entry's
+      // migrated defaults: pre-fix the path-only replay match filled the replacement's
+      // missing createdAt/runtimeConfig from the removed legacy workspace's migration.
+      expect(replacement?.id).toBe("replacement-id");
+      expect(replacement?.name).toBe("replacement");
+      expect(replacement?.createdAt).toBeUndefined();
+      expect(replacement?.runtimeConfig).toBeUndefined();
+      expect(replacement?.heartbeat).toEqual(staleHeartbeat);
+    });
+
     it("returns the persisted name for an entry missing only an id", async () => {
       await config.editConfig((cfg) => {
         cfg.projects.set("/repo", {

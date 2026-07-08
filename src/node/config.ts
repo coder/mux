@@ -1726,16 +1726,11 @@ export class Config {
     // (??=), so re-application onto fresh state is idempotent and never clobbers newer data.
     const pendingWorkspaceMigrations: Array<{
       projectPath: string;
+      /** Entry id as persisted on disk BEFORE this load's in-memory migrations. */
+      persistedWorkspaceId: string | undefined;
       workspacePath: string;
       apply: (entry: Workspace) => void;
     }> = [];
-    const recordWorkspaceMigration = (
-      migrationProjectPath: string,
-      workspacePath: string,
-      apply: (entry: Workspace) => void
-    ) => {
-      pendingWorkspaceMigrations.push({ projectPath: migrationProjectPath, workspacePath, apply });
-    };
 
     for (const [projectPath, projectConfig] of config.projects) {
       // Validate project path is not empty (defensive check for corrupted config)
@@ -1752,6 +1747,24 @@ export class Config {
         // Extract workspace basename from path (could be stable ID or legacy name)
         const workspaceBasename =
           workspace.path.split("/").pop() ?? workspace.path.split("\\").pop() ?? "unknown";
+
+        // Captured BEFORE any in-memory migration mutates workspace.id: the queued
+        // replay must retarget by persisted identity, never by path alone — paths are
+        // reusable after deletion, and applying a stale migration to a replacement
+        // workspace at the same path would leak the old workspace's settings into it.
+        const persistedWorkspaceId = workspace.id;
+        const recordWorkspaceMigration = (
+          migrationProjectPath: string,
+          workspacePath: string,
+          apply: (entry: Workspace) => void
+        ) => {
+          pendingWorkspaceMigrations.push({
+            projectPath: migrationProjectPath,
+            persistedWorkspaceId,
+            workspacePath,
+            apply,
+          });
+        };
 
         const workspaceProjects = workspace.projects?.length ? workspace.projects : undefined;
         const primaryWorkspaceProject = workspaceProjects?.[0];
@@ -2082,14 +2095,21 @@ export class Config {
 
     // Persist migrated workspace fields under the editConfig queue, re-resolving each
     // entry from the fresh snapshot. Entries removed concurrently are skipped so this
-    // write can never resurrect them.
+    // write can never resurrect them. Matching is by persisted identity: entries with
+    // an id must match by id, and only id-less legacy entries may match by path — a
+    // path match with a different id is a replacement workspace that must not inherit
+    // the removed workspace's migrated settings.
     if (pendingWorkspaceMigrations.length > 0) {
       await this.editConfig((freshConfig) => {
         for (const migration of pendingWorkspaceMigrations) {
           const project = freshConfig.projects.get(migration.projectPath);
-          const entry = project?.workspaces.find(
-            (candidate) => candidate.path === migration.workspacePath
-          );
+          const entry = migration.persistedWorkspaceId
+            ? project?.workspaces.find(
+                (candidate) => candidate.id === migration.persistedWorkspaceId
+              )
+            : project?.workspaces.find(
+                (candidate) => candidate.path === migration.workspacePath && !candidate.id
+              );
           if (!entry) continue; // workspace removed concurrently — do not resurrect
           migration.apply(entry);
         }
