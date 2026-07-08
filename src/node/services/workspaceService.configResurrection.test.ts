@@ -38,12 +38,13 @@ describe("WorkspaceService config resurrection regression", () => {
   let service: WorkspaceService;
 
   function workspaceEntry(id: string, extra?: Partial<Workspace>): Workspace {
-    return {
+    const entry: Workspace = {
       id,
       path: path.join(PROJECT_PATH, id),
       name: id,
       ...extra,
-    } as Workspace;
+    };
+    return entry;
   }
 
   async function seedWorkspaces(entries: Workspace[]): Promise<void> {
@@ -84,9 +85,8 @@ describe("WorkspaceService config resurrection regression", () => {
     (
       service as unknown as { emitCurrentWorkspaceMetadata: () => Promise<void> }
     ).emitCurrentWorkspaceMetadata = mock(() => Promise.resolve());
-    (
-      service as unknown as { updateRecencyTimestamp: () => Promise<void> }
-    ).updateRecencyTimestamp = mock(() => Promise.resolve());
+    (service as unknown as { updateRecencyTimestamp: () => Promise<void> }).updateRecencyTimestamp =
+      mock(() => Promise.resolve());
   });
 
   afterEach(() => {
