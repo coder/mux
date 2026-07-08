@@ -3275,14 +3275,18 @@ export class StreamManager extends EventEmitter {
     const terminalRefusalUsage = streamInfo.terminalRefusalUsage;
     const terminalRefusalProviderMetadata = streamInfo.terminalRefusalProviderMetadata;
 
-    // Errored turns still billed every completed step. When no refusal snapshot
-    // exists (refusals record their usage separately), persist the live-tracked
-    // cumulative usage on the error partial so the committed history row carries
-    // billable usage for analytics, and mirror it into session-usage.json —
-    // the error path previously skipped both, ingesting failed turns as $0.
+    // Errored turns still billed every completed step. Capture the
+    // live-tracked cumulative usage for the sidecar below and mirror it into
+    // session-usage.json — the error path previously skipped both, ingesting
+    // failed turns as $0. Refusal errors are excluded entirely: the refusal
+    // paths already attributed the refusing attempt's tokens (terminal
+    // refusals via terminalRefusalUsage, fallback hops — including the FINAL
+    // hop on chain exhaustion — via recordRefusedAttemptUsage into
+    // toolModelUsages + the ledger), so re-recording the cumulative counters
+    // here would double-count the last refusing attempt.
     let cumulativeErrorUsage: LanguageModelV2Usage | undefined;
     let cumulativeErrorProviderMetadata: Record<string, unknown> | undefined;
-    if (terminalRefusalUsage === undefined && hasTokenUsage(streamInfo.cumulativeUsage)) {
+    if (payload.errorType !== "model_refusal" && hasTokenUsage(streamInfo.cumulativeUsage)) {
       cumulativeErrorUsage = cloneUsage(streamInfo.cumulativeUsage);
       await this.backfillReasoningTokensFromParts(streamInfo, cumulativeErrorUsage);
       cumulativeErrorProviderMetadata = markProviderMetadataCostsIncluded(
@@ -3310,14 +3314,16 @@ export class StreamManager extends EventEmitter {
         error: payload.error,
         errorType: payload.errorType,
         ...(refusalFinishReason !== undefined ? { finishReason: refusalFinishReason } : {}),
-        ...(errorUsage !== undefined ? { usage: errorUsage } : {}),
         ...(errorProviderMetadata !== undefined ? { providerMetadata: errorProviderMetadata } : {}),
-        // Keep tool-side / refused-fallback usage rows durable on the error
-        // partial: a fallback chain that ends in a terminal refusal must not
-        // drop the refused attempts' tokens from persisted metadata.
-        ...(streamInfo.toolModelUsages.length > 0
-          ? { toolModelUsages: streamInfo.toolModelUsages.map(clonePersistedToolModelUsage) }
-          : {}),
+        // INVARIANT: usage / toolModelUsages are deliberately NOT stamped on
+        // the error partial. Errored turns are sidecar-canonical: unlike
+        // aborts, nothing commits the partial at error time (AIService
+        // forwards "error" without commitPartial), so usage stamped here
+        // would strand in partial.json until an unrelated send — or die
+        // entirely when a retry overwrites the partial. The sidecar rows
+        // below are ingested immediately by the error listener, and the
+        // eventually committed row carries no usage, so exactly one source
+        // ever reaches the events table.
       },
     });
 
@@ -3329,27 +3335,16 @@ export class StreamManager extends EventEmitter {
     // Write error state to disk - await to ensure consistent state before any resume.
     await this.historyService.writePartial(workspaceId as string, errorPartialMessage);
 
-    // Mirror of the abort path's tool-only routing: when the error partial
-    // will be dropped at commit time (no commit-worthy parts and no durable
-    // refusal metadata — commitPartial commits refusal placeholders even
-    // partless), its stamped usage would die with it and the billed turn
-    // would never reach the events table. Parts are frozen at error time, so
-    // this predicate matches the eventual commitPartial decision exactly;
-    // one of {chat row, sidecar row} carries the turn's usage, never both.
-    const errorPartialWillCommit =
-      hasCommitWorthyParts(errorPartialMessage.parts) || isRefusalFinishReason(refusalFinishReason);
-    if (!errorPartialWillCommit) {
-      try {
-        await this.recordDroppedPartialUsageInSidecar(
-          workspaceId,
-          streamInfo,
-          errorUsage,
-          errorProviderMetadata,
-          "errored_stream"
-        );
-      } catch (error) {
-        log.error("Failed to record errored-stream usage in headless sidecar", { error });
-      }
+    try {
+      await this.recordDroppedPartialUsageInSidecar(
+        workspaceId,
+        streamInfo,
+        errorUsage,
+        errorProviderMetadata,
+        "errored_stream"
+      );
+    } catch (error) {
+      log.error("Failed to record errored-stream usage in headless sidecar", { error });
     }
 
     // Emit error event.

@@ -1719,9 +1719,10 @@ describe("StreamManager - empty stream completions", () => {
     expect(partial?.metadata?.error).toContain("before producing any assistant-visible output");
     expect(partial?.metadata?.metadataModel).toBe(KNOWN_MODELS.SONNET.id);
     expect(partial?.parts).toEqual([]);
-    // Errored turns still billed the completed steps: the error partial must
-    // carry the live-tracked cumulative usage so analytics can price the turn.
-    expect(partial?.metadata?.usage).toEqual({ inputTokens: 7, outputTokens: 0, totalTokens: 7 });
+    // Errored turns are sidecar-canonical: usage is deliberately NOT stamped
+    // on the error partial (it routes to headless-usage.jsonl, covered by
+    // dedicated sidecar tests) so a later commit cannot double-count.
+    expect(partial?.metadata?.usage).toBeUndefined();
     expect(partial?.metadata?.providerMetadata).toEqual({ openai: { cached_tokens: 2 } });
   });
 
@@ -1988,7 +1989,9 @@ describe("StreamManager - empty stream completions", () => {
     const partial = await historyService.readPartial(workspaceId);
     expect(partial?.metadata?.errorType).toBe("model_refusal");
     expect(partial?.metadata?.finishReason).toBe("content-filter");
-    expect(partial?.metadata?.usage).toMatchObject({ inputTokens: 30000, outputTokens: 0 });
+    // Sidecar-canonical: refusal usage routes to headless-usage.jsonl, so the
+    // partial (and its eventual commit) must not carry usage.
+    expect(partial?.metadata?.usage).toBeUndefined();
 
     const commitResult = await historyService.commitPartial(workspaceId);
     expect(commitResult.success).toBe(true);
@@ -2002,7 +2005,7 @@ describe("StreamManager - empty stream completions", () => {
     expect(committed?.metadata?.error).toBeUndefined();
     expect(committed?.metadata?.errorType).toBeUndefined();
     expect(committed?.metadata?.finishReason).toBe("content-filter");
-    expect(committed?.metadata?.usage).toMatchObject({ inputTokens: 30000, outputTokens: 0 });
+    expect(committed?.metadata?.usage).toBeUndefined();
   });
 
   test("zero-output refusal finishReason survives commit when usage is unavailable", async () => {
@@ -2065,7 +2068,19 @@ describe("StreamManager - empty stream completions", () => {
     const recordUsage = mock((_workspaceId: string, _model: string, _usage: unknown) =>
       Promise.resolve(undefined)
     );
-    const sessionUsageService = { recordUsage } as unknown as SessionUsageService;
+    const recordHeadlessUsage = mock(
+      (
+        _workspaceId: string,
+        _model: string,
+        _usage: unknown,
+        _providerMetadata: unknown,
+        _options: unknown
+      ) => Promise.resolve(undefined)
+    );
+    const sessionUsageService = {
+      recordUsage,
+      recordHeadlessUsage,
+    } as unknown as SessionUsageService;
     const streamManager = new StreamManager(historyService, sessionUsageService);
     const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
     const streamEndEvents: unknown[] = [];
@@ -2127,7 +2142,16 @@ describe("StreamManager - empty stream completions", () => {
     expect(recordUsage.mock.calls[0]?.[0]).toBe(workspaceId);
     expect(recordUsage.mock.calls[0]?.[1]).toBe(KNOWN_MODELS.SONNET.id);
     expect(partial?.metadata?.finishReason).toBe("content-filter");
-    expect(partial?.metadata?.usage).toMatchObject({ inputTokens: 3, outputTokens: 2 });
+    // Sidecar-canonical: the billed refusal usage routes to the headless
+    // sidecar (asserted via recordHeadlessUsage below), never the partial.
+    expect(partial?.metadata?.usage).toBeUndefined();
+    expect(recordHeadlessUsage).toHaveBeenCalledTimes(1);
+    expect(recordHeadlessUsage.mock.calls[0]?.[0]).toBe(workspaceId);
+    expect(recordHeadlessUsage.mock.calls[0]?.[2]).toMatchObject({ inputTokens: 3 });
+    expect(recordHeadlessUsage.mock.calls[0]?.[4]).toMatchObject({
+      analyticsSource: "errored_stream",
+      skipSessionLedger: true,
+    });
 
     const commitResult = await historyService.commitPartial(workspaceId);
     expect(commitResult.success).toBe(true);
@@ -2140,7 +2164,7 @@ describe("StreamManager - empty stream completions", () => {
     expect(committed?.metadata?.error).toBeUndefined();
     expect(committed?.metadata?.errorType).toBeUndefined();
     expect(committed?.metadata?.finishReason).toBe("content-filter");
-    expect(committed?.metadata?.usage).toMatchObject({ inputTokens: 3, outputTokens: 2 });
+    expect(committed?.metadata?.usage).toBeUndefined();
   });
 
   test("zero-output refusal with a configured fallback chain swaps models without any error event", async () => {
@@ -2907,7 +2931,20 @@ describe("StreamManager - empty stream completions", () => {
   });
 
   test("refusal fallback chain exhaustion fails terminally as model_refusal", async () => {
-    const streamManager = new StreamManager(historyService);
+    const recordHeadlessUsage = mock(
+      (
+        _workspaceId: string,
+        _model: string,
+        _usage: unknown,
+        _providerMetadata: unknown,
+        _options: unknown
+      ) => Promise.resolve(undefined)
+    );
+    const sessionUsageService = {
+      recordUsage: mock(() => Promise.resolve(undefined)),
+      recordHeadlessUsage,
+    } as unknown as SessionUsageService;
+    const streamManager = new StreamManager(historyService, sessionUsageService);
     const errorEvents: Array<{ messageId: string; error: string; errorType?: string }> = [];
     const streamEndEvents: unknown[] = [];
 
@@ -3000,21 +3037,26 @@ describe("StreamManager - empty stream completions", () => {
     );
 
     // Even though the turn failed terminally, every refused hop's usage —
-    // including the FINAL refusing model's — is attributed and persisted, so
-    // chains ending in failure don't underreport costs.
+    // including the FINAL refusing model's — is attributed and persisted.
+    // Sidecar-canonical: errored turns route usage through the headless
+    // sidecar (never the partial), so chains ending in failure don't
+    // underreport costs and the eventual commit can't double-count.
     const partial = await historyService.readPartial(workspaceId);
     expect(partial?.metadata?.errorType).toBe("model_refusal");
-    expect(partial?.metadata?.toolModelUsages).toHaveLength(2);
-    expect(partial?.metadata?.toolModelUsages?.[0]).toMatchObject({
-      toolName: "model_fallback_refusal",
-      model: KNOWN_MODELS.SONNET.id,
-      usage: { inputTokens: 30000 },
-    });
-    expect(partial?.metadata?.toolModelUsages?.[1]).toMatchObject({
-      toolName: "model_fallback_refusal",
-      model: fallbackModel,
-      usage: { inputTokens: 10 },
-    });
+    expect(partial?.metadata?.toolModelUsages).toBeUndefined();
+    expect(partial?.metadata?.usage).toBeUndefined();
+    const sidecarCalls = recordHeadlessUsage.mock.calls;
+    expect(sidecarCalls).toHaveLength(2);
+    expect(sidecarCalls[0]?.[1]).toBe(KNOWN_MODELS.SONNET.id);
+    expect(sidecarCalls[0]?.[2]).toMatchObject({ inputTokens: 30000 });
+    expect(sidecarCalls[1]?.[1]).toBe(fallbackModel);
+    expect(sidecarCalls[1]?.[2]).toMatchObject({ inputTokens: 10 });
+    for (const call of sidecarCalls) {
+      expect(call?.[4]).toMatchObject({
+        analyticsSource: "errored_stream",
+        skipSessionLedger: true,
+      });
+    }
   });
 
   test("unstartable fallback model fails terminally as model_refusal instead of skipping ahead", async () => {
@@ -4558,9 +4600,11 @@ describe("StreamManager - aborted stream usage persistence", () => {
     }
   });
 
-  test("does not write the sidecar when the errored partial is commit-worthy", async () => {
-    // Text parts survive commit with usage attached — a sidecar row here
-    // would double-count the turn (chat row + headless row).
+  test("errored turns are sidecar-canonical even with commit-worthy parts", async () => {
+    // Nothing commits the error partial at error time (AIService forwards
+    // "error" without commitPartial), and a retry overwrites it — so usage
+    // must ride the sidecar and stay OFF the partial, or the spend strands
+    // until an unrelated send (and the eventual commit would double-count).
     const { historyService: hs, config, cleanup } = await createTestHistoryService();
     try {
       const sessionUsageService = new SessionUsageService(config, hs);
@@ -4592,10 +4636,16 @@ describe("StreamManager - aborted stream usage persistence", () => {
       });
 
       const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
-      expect(existsSync(sidecarPath)).toBe(false);
-      // Usage rides the error partial into the eventual chat commit instead.
+      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(record.source).toBe("errored_stream");
+      expect((record.usage as Record<string, unknown>).inputTokens).toBe(900);
+      // The partial keeps its content for retry/resume but carries no usage.
       const partial = await hs.readPartial(workspaceId);
-      expect(partial?.metadata?.usage).toEqual(usage);
+      expect(partial?.metadata?.usage).toBeUndefined();
+      expect(partial?.parts).toMatchObject([{ type: "text" }]);
     } finally {
       await cleanup();
     }
