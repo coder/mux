@@ -2112,6 +2112,17 @@ export class TaskService {
     }
     const cleanupReportedTasksMs = Date.now() - cleanupReportedTasksStartedAt;
 
+    // Startup self-heal for leftover workflow task garbage: interrupted-without-report
+    // workflow-owned children of inactive runs (both the ones the prepass above just
+    // interrupted and historical leftovers) are archived out of the active sidebar.
+    // Startup-time rule: never crash the app — archive failures are logged and retried
+    // on the next launch.
+    try {
+      await this.archiveLeftoverTasksOfInactiveWorkflowRuns();
+    } catch (error: unknown) {
+      log.error("Startup workflow task archive sweep failed", { error });
+    }
+
     const recoveredTerminalWorkflowRunNotificationCount =
       await this.recoverTerminalWorkflowRunAttentionNotifications();
     const recoveredTerminalWorkspaceTurnNotificationCount =
@@ -3789,26 +3800,173 @@ export class TaskService {
     return Ok({ terminatedTaskIds });
   }
 
-  /** Best-effort final recheck for any completed workflow children still deferred by cleanup gates. */
+  /**
+   * Best-effort sweep of leftover task workspaces once a workflow run reached a terminal
+   * state (completed, failed, interrupted): recheck completed children still deferred by
+   * cleanup gates and archive interrupted-without-report garbage.
+   */
   async markWorkflowRunEnded(workflowRunId: string): Promise<void> {
     assert(workflowRunId.length > 0, "markWorkflowRunEnded: workflowRunId must be non-empty");
+    await this.sweepEndedWorkflowRunTasks(workflowRunId);
+  }
 
-    const cfg = this.config.loadConfigOrDefault();
-    const completedTaskIds: string[] = [];
-    for (const project of cfg.projects.values()) {
-      for (const workspace of project.workspaces) {
-        if (
-          workspace.id &&
-          workspace.workflowTask?.runId === workflowRunId &&
-          hasCompletedAgentReport(workspace)
-        ) {
-          completedTaskIds.push(workspace.id);
+  /**
+   * Hide leftover task workspaces of a workflow run that reached a terminal state.
+   *
+   * Why: interrupting a run leaves its children in taskStatus "interrupted" WITHOUT a
+   * completed report, and canCleanupReportedTask requires a completed report — so those
+   * children would linger in the active sidebar forever (until manual deletion).
+   * Workflow-owned children are transient by design (results persist in the workflow
+   * run/report artifacts), so archive them — never remove — once the owning run has
+   * ended. Archived entries disappear from the active sidebar but keep their data for
+   * inspection. User-spawned interrupted tasks are untouched: they intentionally stay
+   * visible for manual inspection/resume.
+   *
+   * workflow_resume stays safe: resume replays the journal and restarts incomplete steps
+   * with FRESH task ids (see WorkflowRunner's unrecoverable-started-task restart), so
+   * archived old children are never reused.
+   *
+   * Idempotent (interrupted + not-already-archived filter), so it runs from both the
+   * run-end hook and the run-scoped interrupt path: WorkflowService.interruptRun aborts
+   * the runner BEFORE terminating descendants, so the runner's onRunEnded can fire while
+   * children are still "running" — only the later interrupt-path sweep sees them.
+   */
+  private async sweepEndedWorkflowRunTasks(workflowRunId: string): Promise<void> {
+    assert(workflowRunId.length > 0, "sweepEndedWorkflowRunTasks: workflowRunId must be non-empty");
+
+    // Phase 1: archive interrupted-without-report descendants of the run. Descendants of
+    // run children (spawned by workflow-owned agents) are included via ancestry.
+    {
+      const cfg = this.config.loadConfigOrDefault();
+      const index = this.buildAgentTaskIndex(cfg);
+      const interruptedTaskIds = [...index.byId.entries()]
+        .filter(
+          ([taskId, workspace]) =>
+            this.isWorkflowRunDescendant(index, taskId, workflowRunId) &&
+            workspace.taskStatus === "interrupted" &&
+            !hasCompletedAgentReport(workspace) &&
+            !isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)
+        )
+        .map(([taskId]) => taskId);
+      await this.archiveWorkflowTaskWorkspacesDeepestFirst(interruptedTaskIds, index);
+    }
+
+    // Phase 2: recheck reported descendants of the run (deepest-first). Eligible ones are
+    // removed by the normal cleanup walk. The rest can be blocked by the structural-leaf
+    // topology gate: hasChildAgentTasks counts archived children too, so a reported
+    // ancestor whose only remaining children are the entries archived in phase 1 can
+    // never become removable — removing it anyway would orphan those archived config
+    // entries. Archive such ancestors instead: hidden from the active sidebar, fully
+    // preserved for inspection, tree intact.
+    {
+      const cfg = this.config.loadConfigOrDefault();
+      const index = this.buildAgentTaskIndex(cfg);
+      const reportedTaskIds = [...index.byId.entries()]
+        .filter(
+          ([taskId, workspace]) =>
+            this.isWorkflowRunDescendant(index, taskId, workflowRunId) &&
+            hasCompletedAgentReport(workspace)
+        )
+        .map(([taskId]) => taskId);
+      const depthById = new Map<string, number>();
+      for (const taskId of reportedTaskIds) {
+        depthById.set(taskId, this.getTaskDepthFromParentById(index.parentById, taskId));
+      }
+      reportedTaskIds.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
+
+      for (const taskId of reportedTaskIds) {
+        await this.cleanupReportedLeafTask(taskId);
+
+        const freshConfig = this.config.loadConfigOrDefault();
+        const entry = findWorkspaceEntry(freshConfig, taskId);
+        if (!entry) continue; // removed by the cleanup walk
+        if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
+          continue;
         }
+        // Defensive: never hide a workspace with an active stream.
+        if (this.aiService.isStreaming(taskId)) continue;
+        const freshIndex = this.buildAgentTaskIndex(freshConfig);
+        const childTaskIds = freshIndex.childrenByParent.get(taskId) ?? [];
+        // Leaf tasks deferred by non-topology gates (pending patch artifact, best-of
+        // grouping) keep their own event-driven rechecks; do not archive them here.
+        if (childTaskIds.length === 0) continue;
+        const blockedOnlyByArchivedChildren = childTaskIds.every((childTaskId) => {
+          const child = freshIndex.byId.get(childTaskId);
+          return child != null && isWorkspaceArchived(child.archivedAt, child.unarchivedAt);
+        });
+        if (!blockedOnlyByArchivedChildren) continue;
+        await this.archiveWorkflowTaskWorkspacesDeepestFirst([taskId], freshIndex);
       }
     }
-    for (const taskId of completedTaskIds) {
-      await this.cleanupReportedLeafTask(taskId);
+  }
+
+  /**
+   * Archive task workspaces deepest-first (so WorkspaceService.archive preconditions on
+   * descendants hold), logging and continuing on per-task failures — one failed archive
+   * must not abort the sweep; failures self-heal on the next startup sweep.
+   */
+  private async archiveWorkflowTaskWorkspacesDeepestFirst(
+    taskIds: readonly string[],
+    index: AgentTaskIndex
+  ): Promise<void> {
+    if (taskIds.length === 0) return;
+    const depthById = new Map<string, number>();
+    for (const taskId of taskIds) {
+      depthById.set(taskId, this.getTaskDepthFromParentById(index.parentById, taskId));
     }
+    const orderedTaskIds = [...taskIds].sort(
+      (a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0)
+    );
+    for (const taskId of orderedTaskIds) {
+      try {
+        const result = await this.workspaceService.archive(taskId);
+        if (!result.success) {
+          log.warn("Failed to archive leftover workflow task workspace", {
+            taskId,
+            error: result.error,
+          });
+        } else if (result.data.kind === "confirm-lossy-untracked-files") {
+          // Snapshot-archive mode asks for user confirmation before discarding untracked
+          // files. Auto-acknowledging would silently lose data, so leave this workspace
+          // visible for manual handling instead.
+          log.warn(
+            "Skipping auto-archive of workflow task workspace pending untracked-file confirmation",
+            { taskId }
+          );
+        }
+      } catch (error: unknown) {
+        log.warn("Archive of leftover workflow task workspace threw", { taskId, error });
+      }
+    }
+  }
+
+  /**
+   * Startup self-heal: archive interrupted-without-report workflow-owned tasks whose
+   * owning workflow run is no longer active. Covers both children the startup prepass
+   * just transitioned to "interrupted" (inactive workflow owner) and historical garbage
+   * left by interrupts before this sweep existed. Delegates to
+   * sweepEndedWorkflowRunTasks per inactive run so blocked reported ancestors are also
+   * resolved. Returns the number of inactive runs swept.
+   */
+  private async archiveLeftoverTasksOfInactiveWorkflowRuns(): Promise<number> {
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    const inactiveRunIds = new Set<string>();
+    for (const [taskId, workspace] of index.byId) {
+      if (workspace.taskStatus !== "interrupted" || hasCompletedAgentReport(workspace)) {
+        continue;
+      }
+      if (isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)) continue;
+      // Non-workflow-owned tasks have no owner in ancestry → null → skipped (user-spawned
+      // interrupted tasks intentionally stay visible).
+      const inactiveOwner = await this.getInactiveWorkflowTaskOwnerForRecovery(taskId, cfg, index);
+      if (inactiveOwner == null) continue;
+      inactiveRunIds.add(inactiveOwner.runId);
+    }
+    for (const runId of inactiveRunIds) {
+      await this.sweepEndedWorkflowRunTasks(runId);
+    }
+    return inactiveRunIds.size;
   }
 
   /**
@@ -3919,6 +4077,16 @@ export class TaskService {
 
     for (const taskId of interruptedTaskIds) {
       await this.emitWorkspaceMetadata(taskId);
+    }
+
+    if (options?.workflowRunId != null) {
+      // Run-scoped interrupts arrive after the owning run's terminal status write
+      // (WorkflowService.interruptRun aborts the runner, persists "interrupted", THEN
+      // terminates descendants), so the children just interrupted above can be archived
+      // right away. markWorkflowRunEnded also sweeps, but the runner-abort path can fire
+      // onRunEnded before this termination completes — sweeping here closes that
+      // ordering race (the sweep is idempotent).
+      await this.sweepEndedWorkflowRunTasks(options.workflowRunId);
     }
 
     // Free slots and start any queued tasks (best-effort).

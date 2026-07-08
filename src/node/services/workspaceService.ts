@@ -4915,6 +4915,32 @@ export class WorkspaceService extends EventEmitter {
         override.defaultTurnCap == null &&
         override.alwaysRequireExplicitBudget == null;
 
+      // No-op fast path from a snapshot read: skip the queued write entirely when the
+      // override already matches. Race-safe — equivalent to a serialized write of the
+      // identical value landing first, and skipping cannot resurrect removed entries.
+      {
+        const snapshotEntry = this.findFreshWorkspaceEntry(this.config.loadConfigOrDefault(), {
+          projectPath,
+          workspaceId: normalizedWorkspaceId,
+          workspacePath,
+        });
+        const prior = snapshotEntry?.goalDefaults;
+        if (snapshotEntry && allNull && prior == null) {
+          return Ok(undefined);
+        }
+        if (
+          snapshotEntry &&
+          !allNull &&
+          prior != null &&
+          (prior.defaultBudgetCents ?? null) === (override.defaultBudgetCents ?? null) &&
+          (prior.defaultTurnCap ?? null) === (override.defaultTurnCap ?? null) &&
+          (prior.alwaysRequireExplicitBudget ?? null) ===
+            (override.alwaysRequireExplicitBudget ?? null)
+        ) {
+          return Ok(undefined);
+        }
+      }
+
       // Compare against the FRESH entry inside the serialized editConfig transform
       // (see findFreshWorkspaceEntry): persisting a pre-read snapshot loses concurrent
       // edits and can resurrect removed workspaces. Entry gone meanwhile → Err.
@@ -6799,6 +6825,30 @@ export class WorkspaceService extends EventEmitter {
     // Removing the built-in Ask agent should not force writes into Auto's
     // settings bucket. Persist whatever agent ID the caller chose so legacy Ask
     // settings can fade out naturally instead of being mixed into Auto.
+
+    // Hot path: this runs on every message send, so skip the queued write when a
+    // snapshot read already shows no change. Skipping is race-safe — it is equivalent
+    // to a serialized write of the identical value landing first, and not writing can
+    // never resurrect concurrently removed entries.
+    {
+      const snapshotEntry = this.findFreshWorkspaceEntry(this.config.loadConfigOrDefault(), {
+        projectPath,
+        workspaceId,
+        workspacePath,
+      });
+      if (!snapshotEntry) {
+        return Err("Workspace not found");
+      }
+      const prev = snapshotEntry.aiSettingsByAgent?.[normalizedAgentId];
+      const aiSettingsChanged =
+        aiSettings != null &&
+        (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+      const selectedAgentChanged =
+        options?.persistSelectedAgentId === true && snapshotEntry.agentId !== normalizedAgentId;
+      if (!aiSettingsChanged && !selectedAgentChanged) {
+        return Ok(false);
+      }
+    }
 
     // Compare/merge against the FRESH entry inside the serialized editConfig transform
     // (see findFreshWorkspaceEntry): persisting a pre-read snapshot loses concurrent

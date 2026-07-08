@@ -61,8 +61,10 @@ describe("WorkspaceService goal-defaults override", () => {
         workspacePath: TEST_WORKSPACE_PATH,
         projectPath: TEST_PROJECT_PATH,
       })),
-      saveConfig: mock((nextConfig: ProjectsConfig) => {
-        currentProjectsConfig = nextConfig;
+      // Goal-defaults writes mutate inside serialized editConfig transforms (saveConfig
+      // is private); mirror that by applying the transform and counting queued writes.
+      editConfig: mock((transform: (config: ProjectsConfig) => ProjectsConfig) => {
+        currentProjectsConfig = transform(currentProjectsConfig);
         saveConfigCalls += 1;
         return Promise.resolve();
       }),

@@ -64,8 +64,10 @@ describe("WorkspaceService heartbeat settings", () => {
         workspacePath: TEST_WORKSPACE_PATH,
         projectPath: TEST_PROJECT_PATH,
       })),
-      saveConfig: mock((nextConfig: ProjectsConfig) => {
-        currentProjectsConfig = nextConfig;
+      // Heartbeat writers mutate inside serialized editConfig transforms (saveConfig is
+      // private); mirror that by applying the transform to the current config snapshot.
+      editConfig: mock((transform: (config: ProjectsConfig) => ProjectsConfig) => {
+        currentProjectsConfig = transform(currentProjectsConfig);
         return Promise.resolve();
       }),
     } as unknown as Config;

@@ -1037,7 +1037,7 @@ export class Config {
           // re-applied on every load, so the identity transform re-reads disk, re-runs them,
           // and persists the migrated form under the queue. One-shot guard: while a persist
           // is in flight, the loads it performs internally must not re-schedule.
-          this.migrationPersist = this.editConfig((migratedConfig) => migratedConfig)
+          this.migrationPersist = this.enqueueConfigEdit((migratedConfig) => migratedConfig)
             .catch((error: unknown) => {
               // Keep startup resilient even if persisting migration fails.
               log.warn("Failed to persist migrated config", { error });
@@ -1430,6 +1430,16 @@ export class Config {
    * and the later write silently clobbers the earlier one.
    */
   async editConfig(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
+    return this.enqueueConfigEdit(fn);
+  }
+
+  /**
+   * Internal queue primitive shared by editConfig and the load-time migration persist.
+   * The migration persist must not call the public editConfig: that method is commonly
+   * spied/overridden in tests, and the internally scheduled write is an implementation
+   * detail rather than a caller-initiated mutation.
+   */
+  private enqueueConfigEdit(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
     const run = this.editConfigQueue.then(async () => {
       const config = this.loadConfigOrDefault();
       const newConfig = fn(config);
