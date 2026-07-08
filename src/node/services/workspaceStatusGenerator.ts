@@ -198,9 +198,18 @@ export async function generateWorkspaceStatus(
 
       if (options.recordUsage) {
         try {
-          // toolResults resolving implies the stream was consumed, so
-          // totalUsage settles promptly; the recorder itself never throws.
-          await options.recordUsage(modelString, await currentStream.totalUsage);
+          // Guard totalUsage with a short timeout (like the stream-end and
+          // /btw usage reads): a slow-settling SDK promise must not block the
+          // already-produced status — AgentStatusService.runTick() awaits
+          // in-flight generations, so a stuck read would wedge the workspace's
+          // sidebar status loop. The recorder itself never throws.
+          const usage = await Promise.race([
+            currentStream.totalUsage,
+            new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
+          ]);
+          if (usage !== undefined) {
+            await options.recordUsage(modelString, usage);
+          }
         } catch {
           // Usage promise rejection must not fail an otherwise good status.
         }
