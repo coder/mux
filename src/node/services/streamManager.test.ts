@@ -4446,6 +4446,15 @@ describe("StreamManager - aborted stream usage persistence", () => {
         ],
         cumulativeUsage: usage,
         lastStepUsage: usage,
+        // Tool-internal model call reported before the abort: stamped as
+        // metadata.toolModelUsages on the partial, which is dropped too.
+        toolModelUsages: [
+          {
+            toolName: "agent_report",
+            model: KNOWN_MODELS.SONNET.id,
+            usage: { inputTokens: 70, outputTokens: 7, totalTokens: 77 },
+          },
+        ],
       });
 
       const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
@@ -4455,12 +4464,17 @@ describe("StreamManager - aborted stream usage persistence", () => {
       await cleanupAborted.call(streamManager, workspaceId, streamInfo, "user");
 
       const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
-      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
-        string,
-        unknown
-      >;
-      expect(record.source).toBe("aborted_stream");
-      expect((record.usage as Record<string, unknown>).inputTokens).toBe(500);
+      const records = (await fs.readFile(sidecarPath, "utf-8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      // Parent stream usage AND the tool-internal model call each get a row.
+      expect(records).toHaveLength(2);
+      expect(records[0].source).toBe("aborted_stream");
+      expect((records[0].usage as Record<string, unknown>).inputTokens).toBe(500);
+      expect(records[1].source).toBe("aborted_stream");
+      expect(records[1].model).toBe(KNOWN_MODELS.SONNET.id);
+      expect((records[1].usage as Record<string, unknown>).inputTokens).toBe(70);
     } finally {
       await cleanup();
     }

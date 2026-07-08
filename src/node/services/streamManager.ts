@@ -1333,15 +1333,14 @@ export class StreamManager extends EventEmitter {
         // calls, so the usage stamped above would die with the deleted
         // partial. Route that spend through the headless-usage sidecar
         // instead. Same predicate commitPartial applies, so exactly one of
-        // {chat row, sidecar row} carries this turn's usage. skipSessionLedger
-        // because recordSessionUsage above already updated session-usage.json.
-        if (usage !== undefined && !hasCommitWorthyParts(partialMessage.parts)) {
-          await this.sessionUsageService?.recordHeadlessUsage(
-            workspaceId as string,
-            streamInfo.model,
-            cloneUsage(usage),
+        // {chat row, sidecar row} carries this turn's usage.
+        if (!hasCommitWorthyParts(partialMessage.parts)) {
+          await this.recordDroppedPartialUsageInSidecar(
+            workspaceId,
+            streamInfo,
+            usage,
             providerMetadata,
-            { analyticsSource: "aborted_stream", skipSessionLedger: true }
+            "aborted_stream"
           );
         }
       } catch (error) {
@@ -1361,6 +1360,42 @@ export class StreamManager extends EventEmitter {
 
     // Clean up immediately
     this.workspaceStreams.delete(workspaceId);
+  }
+
+  /**
+   * Route a dropped partial's billed usage to the headless-usage sidecar:
+   * the parent stream's cumulative usage plus every tool-internal model call
+   * (toolModelUsages). Used by the abort and error paths when the partial
+   * fails commitPartial's durability predicate — metadata stamped on such a
+   * partial dies with it, so the sidecar is the only route to the events
+   * table. skipSessionLedger everywhere: parent usage was recorded via
+   * recordSessionUsage and tool usage at report time (AIService).
+   */
+  private async recordDroppedPartialUsageInSidecar(
+    workspaceId: WorkspaceId,
+    streamInfo: Pick<WorkspaceStreamInfo, "model" | "toolModelUsages">,
+    usage: LanguageModelV2Usage | undefined,
+    providerMetadata: Record<string, unknown> | undefined,
+    analyticsSource: "aborted_stream" | "errored_stream"
+  ): Promise<void> {
+    if (usage !== undefined) {
+      await this.sessionUsageService?.recordHeadlessUsage(
+        workspaceId as string,
+        streamInfo.model,
+        cloneUsage(usage),
+        providerMetadata,
+        { analyticsSource, skipSessionLedger: true }
+      );
+    }
+    for (const toolUsage of streamInfo.toolModelUsages) {
+      await this.sessionUsageService?.recordHeadlessUsage(
+        workspaceId as string,
+        toolUsage.model,
+        cloneUsage(toolUsage.usage),
+        toolUsage.providerMetadata,
+        { analyticsSource, skipSessionLedger: true }
+      );
+    }
   }
 
   private async recordSessionUsage(
@@ -3285,17 +3320,16 @@ export class StreamManager extends EventEmitter {
     // would never reach the events table. Parts are frozen at error time, so
     // this predicate matches the eventual commitPartial decision exactly;
     // one of {chat row, sidecar row} carries the turn's usage, never both.
-    // skipSessionLedger: recordSessionUsage above already updated the ledger.
     const errorPartialWillCommit =
       hasCommitWorthyParts(errorPartialMessage.parts) || isRefusalFinishReason(refusalFinishReason);
-    if (errorUsage !== undefined && !errorPartialWillCommit) {
+    if (!errorPartialWillCommit) {
       try {
-        await this.sessionUsageService?.recordHeadlessUsage(
-          workspaceId as string,
-          streamInfo.model,
-          cloneUsage(errorUsage),
+        await this.recordDroppedPartialUsageInSidecar(
+          workspaceId,
+          streamInfo,
+          errorUsage,
           errorProviderMetadata,
-          { analyticsSource: "errored_stream", skipSessionLedger: true }
+          "errored_stream"
         );
       } catch (error) {
         log.error("Failed to record errored-stream usage in headless sidecar", { error });
