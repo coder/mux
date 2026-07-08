@@ -10072,6 +10072,79 @@ describe("TaskService", () => {
     expect(userInterrupted?.archivedAt).toBeUndefined();
   });
 
+  test("initialize re-sweeps a run whose interrupted children were archived but reported ancestor was not", async () => {
+    // Regression (PR #3694 Codex P2): crash window between sweep phases. If a previous
+    // session archived the interrupted child (phase 1) but crashed before archiving the
+    // reported ancestor it blocks (phase 2), no unarchived interrupted task remains to
+    // seed the startup sweep — so the reported ancestor stayed visible forever. The
+    // seeding now also considers unarchived reported workflow-owned tasks.
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootId = "root-crash-window";
+    const reportedParentId = "reported-parent-crash-window";
+    const archivedChildId = "archived-interrupted-child";
+    const workflowRunId = "wfr_crash_window_sweep";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootId),
+        // Phase-2 leftover: reported, unarchived, blocked by its archived child.
+        projectWorkspace(projectPath, "reported-parent", reportedParentId, {
+          name: "agent_exec_reported_parent",
+          parentWorkspaceId: rootId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "reported",
+          reportedAt: "2026-05-29T00:00:02.000Z",
+          taskModelString: defaultModel,
+          workflowTask: { runId: workflowRunId, stepId: "parent" },
+        }),
+        // Phase-1 result from the crashed session: interrupted child already archived.
+        projectWorkspace(projectPath, "archived-child", archivedChildId, {
+          name: "agent_explore_archived",
+          parentWorkspaceId: reportedParentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskModelString: defaultModel,
+          archivedAt: "2026-05-29T00:00:03.000Z",
+        }),
+      ],
+      testTaskSettings(10, 3)
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: rootId,
+      workflow: {
+        name: "interrupted",
+        description: "Interrupted",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "interrupted", "2026-05-29T00:00:01.000Z");
+
+    const archive = createConfigMutatingArchiveMock(() => config);
+    const { aiService } = createAIServiceMocks(config, { isStreaming: mock(() => false) });
+    const { workspaceService } = createWorkspaceServiceMocks({ archive });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await taskService.initialize();
+
+    // The startup sweep re-seeded the run from the unarchived reported ancestor and
+    // archived it (blocked only by its archived child), completing the interrupted sweep.
+    const reportedParent = findWorkspaceInConfig(config, reportedParentId);
+    expect(reportedParent?.archivedAt).toBeString();
+    expect(reportedParent?.taskStatus).toBe("reported");
+  });
+
   test("initialize drains queued tasks after interrupting inactive workflow children", async () => {
     const config = await createTestConfig(rootDir);
 

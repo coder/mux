@@ -139,6 +139,43 @@ describe("ProjectService", () => {
       expect(stat.isDirectory()).toBe(true);
       expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
     });
+
+    // Regression (PR #3694 Codex P2): the snapshot-time depth check can miss a
+    // sub-project ancestor registered concurrently, persisting a project nested
+    // under a registered sub-project ("one level deep" invariant violation). The
+    // serialized transform must re-validate depth against the fresh hierarchy.
+    it("create rejects a path nested under a concurrently registered sub-project", async () => {
+      const repoPath = path.join(tempDir, "repo");
+      const pkgPath = path.join(repoPath, "pkg");
+      const apiPath = path.join(pkgPath, "api");
+      await fs.mkdir(apiPath, { recursive: true });
+      // Same-git-repo hierarchy so the snapshot-time git-root validations pass.
+      const git = Bun.spawn(["git", "init", "-q", repoPath]);
+      await git.exited;
+
+      const topLevel = await service.create(repoPath);
+      expect(topLevel.success).toBe(true);
+
+      // Deterministic interleaving: enqueue the concurrent sub-project registration
+      // of /repo/pkg first (not yet written), then call create(/repo/pkg/api). The
+      // create's synchronous snapshot read runs before the queued write lands, so
+      // its snapshot-time depth check misses pkg; its transform is queued after and
+      // sees pkg — only the fresh in-transform depth re-check can reject it.
+      const registerPkg = config.editConfig((cfg) => {
+        cfg.projects.set(pkgPath, { workspaces: [], parentProjectPath: repoPath });
+        return cfg;
+      });
+      const api = await service.create(apiPath);
+      await registerPkg;
+
+      expect(api.success).toBe(false);
+      expect(!api.success && api.error).toContain("one level deep");
+      const persisted = config.loadConfigOrDefault().projects;
+      expect(persisted.has(apiPath)).toBe(false);
+      // The pre-existing directory was not created by this call; it must survive.
+      const stat = await fs.stat(apiPath);
+      expect(stat.isDirectory()).toBe(true);
+    });
   });
 
   describe("listDirectory", () => {

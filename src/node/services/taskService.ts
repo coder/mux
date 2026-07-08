@@ -3953,10 +3953,16 @@ export class TaskService {
     const index = this.buildAgentTaskIndex(cfg);
     const inactiveRunIds = new Set<string>();
     for (const [taskId, workspace] of index.byId) {
-      if (workspace.taskStatus !== "interrupted" || hasCompletedAgentReport(workspace)) {
+      if (isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)) continue;
+      // Seed from two unarchived shapes so a crash mid-sweep still self-heals:
+      // - interrupted-without-report children (normal leftover garbage), and
+      // - reported tasks, covering a crash after phase 1 archived the interrupted
+      //   children but before phase 2 archived the reported ancestor they block —
+      //   at that point no unarchived interrupted task remains to re-seed the run.
+      // Reported tasks of ACTIVE runs are filtered out by the inactivity check below.
+      if (workspace.taskStatus !== "interrupted" && !hasCompletedAgentReport(workspace)) {
         continue;
       }
-      if (isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)) continue;
       // Non-workflow-owned tasks have no owner in ancestry → null → skipped (user-spawned
       // interrupted tasks intentionally stay visible).
       const inactiveOwner = await this.getInactiveWorkflowTaskOwnerForRecovery(taskId, cfg, index);

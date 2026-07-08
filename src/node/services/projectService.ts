@@ -508,12 +508,26 @@ export class ProjectService {
       // transform only re-resolves state that a concurrent edit could have changed.
       let createResult: Result<{ projectConfig: ProjectConfig; normalizedPath: string }> =
         Err("Project already exists");
+      // Distinguishes in-transform failures for directory cleanup: when a concurrent
+      // call registered this same path ("duplicate"), the directory belongs to that
+      // winner and must not be deleted; other rejections leave the directory ours.
+      let transformFailure: "duplicate" | "depth" | null = null;
       await this.config.editConfig((freshConfig) => {
         if (freshConfig.projects.has(normalizedPath) || freshConfig.projects.has(canonicalPath)) {
+          transformFailure = "duplicate";
           createResult = Err("Project already exists");
           return freshConfig;
         }
         freshConfig.projects = deriveProjectHierarchy(freshConfig.projects);
+        // Re-run the sub-project depth check against FRESH hierarchy: a concurrent
+        // registration (e.g. /repo/pkg landing while /repo/pkg/api is validating)
+        // can introduce a sub-project ancestor that the snapshot-time check missed,
+        // which would persist a second-level sub-project.
+        if (hasRegisteredSubProjectAncestor(normalizedPath, freshConfig.projects)) {
+          transformFailure = "depth";
+          createResult = Err("Sub-projects can only be one level deep");
+          return freshConfig;
+        }
         const freshParentProjectPath = findDeepestTopLevelParentProject(
           normalizedPath,
           freshConfig.projects
@@ -529,10 +543,13 @@ export class ProjectService {
       });
 
       // Do NOT clean up the created directory when the transform loses the duplicate
-      // re-check: the only in-transform failure is a concurrent registration of this
-      // same path, so the directory on disk now belongs to the winning project.
-      // Deleting it here would destroy the winner's checkout (including any files
-      // already created there after the winning call returned).
+      // re-check: a concurrent registration of this same path owns the directory now.
+      // Deleting it would destroy the winner's checkout (including any files created
+      // there after the winning call returned). Depth rejections imply no concurrent
+      // claim on this path, so the directory we created is still ours to remove.
+      if (transformFailure === "depth") {
+        await cleanupCreatedDirectory();
+      }
       return createResult;
     } catch (error) {
       const message = getErrorMessage(error);
