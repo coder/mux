@@ -461,13 +461,13 @@ export class ServiceContainer {
 
     this.aiService.on("stream-abort", (data: StreamAbortEvent) => {
       this.sessionTimingService.handleStreamAbort(data);
-      // Aborted turns commit their partial (now carrying usage) to chat.jsonl
-      // before AIService forwards this event (the commit runs in the same
-      // async chain that emits it), so ingest here or the interrupted turn's
-      // spend stays out of dashboard totals until the next stream-end.
-      if (!data.abandonPartial) {
-        ingestWorkspaceAnalytics(data.workspaceId);
-      }
+      // Aborted turns persist their spend before this event fires (same async
+      // chain): normal aborts commit the usage-stamped partial to chat.jsonl
+      // (or the headless sidecar for non-commit-worthy partials); abandoned
+      // aborts (edit/discard) write only the sidecar. Ingest both, or the
+      // interrupted turn's spend stays out of dashboards until the next
+      // stream-end.
+      ingestWorkspaceAnalytics(data.workspaceId);
     });
     // Errored turns whose partial would be dropped at commit time route their
     // usage to the headless sidecar (persistStreamError). The sidecar write

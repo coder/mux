@@ -4601,26 +4601,44 @@ describe("StreamManager - aborted stream usage persistence", () => {
     }
   });
 
-  test("does not rewrite the partial when the abort abandons it", async () => {
-    const streamManager = new StreamManager(historyService);
-    streamManager.on("stream-abort", () => undefined);
-    const workspaceId = "abort-abandon-workspace";
-    const messageId = "abort-abandon-message";
+  test("abandoned aborts skip the partial but route usage to the headless sidecar", async () => {
+    // Edit/discard of a streaming turn (abandonPartial=true): the partial and
+    // its content are deliberately dropped, so the sidecar is the only route
+    // for the billed tokens to reach the events table.
+    const { historyService: hs, config, cleanup } = await createTestHistoryService();
+    try {
+      const sessionUsageService = new SessionUsageService(config, hs);
+      const streamManager = new StreamManager(hs, sessionUsageService);
+      streamManager.on("stream-abort", () => undefined);
+      const workspaceId = "abort-abandon-workspace";
+      const messageId = "abort-abandon-message";
 
-    const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
-      streamManager,
-      "cleanupAbortedStream"
-    );
-    await cleanupAborted.call(
-      streamManager,
-      workspaceId,
-      createAbortStreamInfo(messageId),
-      "user",
-      true
-    );
+      const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
+        streamManager,
+        "cleanupAbortedStream"
+      );
+      await cleanupAborted.call(
+        streamManager,
+        workspaceId,
+        createAbortStreamInfo(messageId),
+        "user",
+        true
+      );
 
-    const partial = await historyService.readPartial(workspaceId);
-    expect(partial).toBeNull();
+      // Partial untouched (the abandon contract) …
+      const partial = await hs.readPartial(workspaceId);
+      expect(partial).toBeNull();
+      // … but the billed usage still reaches analytics via the sidecar.
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(record.source).toBe("aborted_stream");
+      expect((record.usage as Record<string, unknown>).inputTokens).toBe(120);
+    } finally {
+      await cleanup();
+    }
   });
 });
 

@@ -1346,6 +1346,22 @@ export class StreamManager extends EventEmitter {
       } catch (error) {
         log.error("Failed to persist aborted-stream usage on partial message", { error });
       }
+    } else if (abandonPartial && (usage !== undefined || streamInfo.toolModelUsages.length > 0)) {
+      // Abandoned aborts (edit/discard of the streaming turn): the partial is
+      // deliberately dropped and its content never reaches chat.jsonl, but
+      // the provider still billed every completed step. The sidecar is the
+      // only route to the events table for this spend.
+      try {
+        await this.recordDroppedPartialUsageInSidecar(
+          workspaceId,
+          streamInfo,
+          usage,
+          providerMetadata,
+          "aborted_stream"
+        );
+      } catch (error) {
+        log.error("Failed to record abandoned-abort usage in headless sidecar", { error });
+      }
     }
 
     // Emit abort event with usage if available
