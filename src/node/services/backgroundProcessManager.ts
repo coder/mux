@@ -1124,6 +1124,10 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
 
     // Track the previous buffer to prepend to accumulated output
     const previousBuffer = proc.incompleteLineBuffer;
+    // File offset where this read's processable content begins (start cursor minus the buffered
+    // fragment that cursor already advanced past). Used below to detect a gap left by a prior
+    // filtered read so the shown-frontier never jumps over lines this read never showed.
+    const readStartOffset = proc.outputBytesRead;
 
     while (true) {
       // Read new content via the handle (works for both local and SSH runtimes)
@@ -1259,10 +1263,20 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // dropped matched lines, so it must not count as having shown them. End-of-last-complete-line =
     // read cursor minus the trailing fragment we just buffered (cleared, hence 0, on exit). Offsets
     // only grow; Math.max guards against any out-of-order/partial call regressing the mark.
+    //
+    // Contiguity guard: outputBytesRead is a shared cursor that *filtered* reads also advance while
+    // dropping non-matching complete lines. If a prior filtered read consumed lines past our last
+    // shown frontier, this read starts beyond that frontier (shownRegionStart > shownThroughOffset)
+    // and those skipped lines were never shown to the agent. Advancing across that gap would let a
+    // wake for filtered-out output be wrongly suppressed, so only advance when this read's content
+    // is contiguous with the frontier. A gap pins the frontier low (safe: it can only over-wake).
     if (!filter) {
-      const shownThrough =
-        proc.outputBytesRead - Buffer.byteLength(proc.incompleteLineBuffer, "utf8");
-      proc.shownThroughOffset = Math.max(proc.shownThroughOffset, shownThrough);
+      const shownRegionStart = readStartOffset - Buffer.byteLength(previousBuffer, "utf8");
+      if (shownRegionStart <= proc.shownThroughOffset) {
+        const shownThrough =
+          proc.outputBytesRead - Buffer.byteLength(proc.incompleteLineBuffer, "utf8");
+        proc.shownThroughOffset = Math.max(proc.shownThroughOffset, shownThrough);
+      }
     }
 
     log.debug(
