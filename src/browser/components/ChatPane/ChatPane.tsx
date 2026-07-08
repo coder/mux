@@ -417,6 +417,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     isTranscriptCaughtUp,
     hasOlderHistory,
     loadingOlderHistory,
+    activeBashMonitorCount,
   } = workspaceState;
   const shouldShowPinnedTodoList = workspaceState.todos.length > 0;
   const shouldShowReviewsBanner = reviews.reviews.length > 0;
@@ -1015,6 +1016,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   const hasInterruptedStream = interruption?.hasInterruptedStream ?? false;
   const shouldShowStreamingBarrier = isStreamStarting || canInterrupt;
+  // An armed background bash monitor means the turn ended but the agent will be
+  // woken on matching output. Keep the barrier mounted so StreamingBarrier can
+  // show its "waiting on monitor" state instead of the chat looking idle.
+  const shouldMountStreamingBarrier = shouldShowStreamingBarrier || activeBashMonitorCount > 0;
   // Keep rendering cached transcript rows during incremental catch-up so workspace switches
   // feel stable, but active stream-start/interrupt states should keep their barrier visible
   // instead of flashing full-height transcript placeholders. The skeleton additionally holds
@@ -1095,7 +1100,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       })
     );
   }
-  if (shouldShowStreamingBarrier) {
+  if (shouldMountStreamingBarrier) {
     transcriptTailItems.push(
       createTranscriptTailStackItem({
         key: "streaming-barrier",

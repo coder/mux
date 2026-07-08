@@ -78,3 +78,15 @@ export const Streaming: Story = {
     tps: 73,
   },
 };
+
+/**
+ * Idle turn that is waiting on an armed background bash monitor. There is no
+ * active stream, so the stop control is replaced by an informational hint and
+ * the token-stats slot stays hidden.
+ */
+export const WaitingOnBackgroundBashMonitor: Story = {
+  args: {
+    statusText: "Waiting on background bash monitor...",
+    cancelText: "agent wakes on matching output",
+  },
+};
