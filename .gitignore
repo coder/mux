@@ -110,6 +110,8 @@ runs/
 
 # Python
 __pycache__
+# ruff format (fmt.mk) drops its cache at the repo root
+.ruff_cache/
 
 tmpfork
 .mux-agent-cli
