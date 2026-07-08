@@ -511,7 +511,7 @@ export class ProjectService {
       // Distinguishes in-transform failures for directory cleanup: when a concurrent
       // call registered this same path ("duplicate"), the directory belongs to that
       // winner and must not be deleted; other rejections leave the directory ours.
-      let transformFailure: "duplicate" | "depth" | null = null;
+      let transformFailure: "duplicate" | "depth" | "hierarchy-changed" | null = null;
       await this.config.editConfig((freshConfig) => {
         if (freshConfig.projects.has(normalizedPath) || freshConfig.projects.has(canonicalPath)) {
           transformFailure = "duplicate";
@@ -532,6 +532,24 @@ export class ProjectService {
           normalizedPath,
           freshConfig.projects
         );
+        // The same-git-repository validations above ran against the snapshot hierarchy
+        // only, and this transform is synchronous so it cannot re-run readGitTopLevel.
+        // If a concurrent edit introduced a different parent or new descendants, those
+        // were never git-validated — reject instead of persisting an unvalidated
+        // hierarchy (e.g. a sub-project from a different git repository).
+        const freshDescendantProjectPaths = Array.from(freshConfig.projects.keys()).filter(
+          (candidatePath) => isPathDescendant(normalizedPath, candidatePath)
+        );
+        if (
+          freshParentProjectPath !== parentProjectPath ||
+          freshDescendantProjectPaths.some(
+            (candidatePath) => !descendantProjectPaths.includes(candidatePath)
+          )
+        ) {
+          transformFailure = "hierarchy-changed";
+          createResult = Err("Project hierarchy changed concurrently; please retry");
+          return freshConfig;
+        }
         const projectConfig: ProjectConfig = {
           workspaces: [],
           parentProjectPath: freshParentProjectPath ?? undefined,
@@ -545,9 +563,9 @@ export class ProjectService {
       // Do NOT clean up the created directory when the transform loses the duplicate
       // re-check: a concurrent registration of this same path owns the directory now.
       // Deleting it would destroy the winner's checkout (including any files created
-      // there after the winning call returned). Depth rejections imply no concurrent
-      // claim on this path, so the directory we created is still ours to remove.
-      if (transformFailure === "depth") {
+      // there after the winning call returned). Depth/hierarchy rejections imply no
+      // concurrent claim on this path, so the directory we created is still ours.
+      if (transformFailure === "depth" || transformFailure === "hierarchy-changed") {
         await cleanupCreatedDirectory();
       }
       return createResult;
@@ -1504,6 +1522,16 @@ export class ProjectService {
       // resurrects concurrently removed workspaces). Entry gone meanwhile → Err.
       let result: Result<void> = Err(`Workspace not found: ${workspaceId}`);
       await this.config.editConfig((freshConfig) => {
+        // Re-validate the target sub-project against FRESH config: it can be removed or
+        // re-parented while this edit is queued, and send/runtime paths consume
+        // metadata.subProjectPath as the execution root — never persist a stale pointer.
+        if (subProjectPath !== null) {
+          const freshSubProject = freshConfig.projects.get(subProjectPath);
+          if (freshSubProject?.parentProjectPath !== owningProjectPath) {
+            result = Err(`Sub-project not found under parent: ${subProjectPath}`);
+            return freshConfig;
+          }
+        }
         const freshWorkspace = freshConfig.projects
           .get(owningProjectPath)
           ?.workspaces.find((w) => w.id === workspaceId);
