@@ -215,6 +215,12 @@ export class SessionUsageService {
        * be double-counted.
        */
       analyticsSource?: string;
+      /**
+       * Skip the session-usage.json byModel update. For callers that already
+       * recorded this turn's usage into the ledger through another path
+       * (StreamManager's abort handler) and only need the analytics sidecar.
+       */
+      skipSessionLedger?: boolean;
     }
   ): Promise<{ model: string; usage: ChatUsageDisplay } | undefined> {
     if (!usage) return undefined;
@@ -251,17 +257,19 @@ export class SessionUsageService {
       // analytics row — headless callers have no chat-row fallback, so that
       // would permanently hide provider-billed spend from the events table.
       let ledgerRecorded = false;
-      try {
-        await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
-          skipLastRequestUpdate: true,
-        });
-        ledgerRecorded = true;
-      } catch (error) {
-        log.warn("Failed to update session-usage ledger for headless usage", {
-          workspaceId,
-          modelString,
-          error,
-        });
+      if (options?.skipSessionLedger !== true) {
+        try {
+          await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
+            skipLastRequestUpdate: true,
+          });
+          ledgerRecorded = true;
+        } catch (error) {
+          log.warn("Failed to update session-usage ledger for headless usage", {
+            workspaceId,
+            modelString,
+            error,
+          });
+        }
       }
       if (options?.analyticsSource) {
         // Raw usage + provider metadata (not display costs) so the ETL prices

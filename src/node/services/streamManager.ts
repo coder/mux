@@ -36,7 +36,7 @@ import {
   stripNoisyErrorPrefix,
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
-import type { HistoryService } from "./historyService";
+import { hasCommitWorthyParts, type HistoryService } from "./historyService";
 import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import { linkAbortSignal } from "@/node/utils/abort";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
@@ -1314,21 +1314,36 @@ export class StreamManager extends EventEmitter {
     if (!abandonPartial && (usage !== undefined || streamInfo.toolModelUsages.length > 0)) {
       try {
         await this.awaitPendingPartialWrite(streamInfo);
-        await this.historyService.writePartial(
-          workspaceId as string,
-          this.buildPartialAssistantMessage(streamInfo, {
-            metadata: {
-              ...(usage !== undefined ? { usage: cloneUsage(usage) } : {}),
-              ...(providerMetadata !== undefined ? { providerMetadata } : {}),
-              ...(contextUsage !== undefined ? { contextUsage } : {}),
-              ...(contextProviderMetadata !== undefined ? { contextProviderMetadata } : {}),
-              duration,
-              ...(streamInfo.toolModelUsages.length > 0
-                ? { toolModelUsages: streamInfo.toolModelUsages.map(clonePersistedToolModelUsage) }
-                : {}),
-            },
-          })
-        );
+        const partialMessage = this.buildPartialAssistantMessage(streamInfo, {
+          metadata: {
+            ...(usage !== undefined ? { usage: cloneUsage(usage) } : {}),
+            ...(providerMetadata !== undefined ? { providerMetadata } : {}),
+            ...(contextUsage !== undefined ? { contextUsage } : {}),
+            ...(contextProviderMetadata !== undefined ? { contextProviderMetadata } : {}),
+            duration,
+            ...(streamInfo.toolModelUsages.length > 0
+              ? { toolModelUsages: streamInfo.toolModelUsages.map(clonePersistedToolModelUsage) }
+              : {}),
+          },
+        });
+        await this.historyService.writePartial(workspaceId as string, partialMessage);
+
+        // Tool-only aborts (Esc while a tool is still running): commitPartial
+        // refuses to commit partials whose only parts are input-available tool
+        // calls, so the usage stamped above would die with the deleted
+        // partial. Route that spend through the headless-usage sidecar
+        // instead. Same predicate commitPartial applies, so exactly one of
+        // {chat row, sidecar row} carries this turn's usage. skipSessionLedger
+        // because recordSessionUsage above already updated session-usage.json.
+        if (usage !== undefined && !hasCommitWorthyParts(partialMessage.parts)) {
+          await this.sessionUsageService?.recordHeadlessUsage(
+            workspaceId as string,
+            streamInfo.model,
+            cloneUsage(usage),
+            providerMetadata,
+            { analyticsSource: "aborted_stream", skipSessionLedger: true }
+          );
+        }
       } catch (error) {
         log.error("Failed to persist aborted-stream usage on partial message", { error });
       }

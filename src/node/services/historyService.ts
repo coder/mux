@@ -94,6 +94,35 @@ function getCompactionMetadataToPreserve(
 
   return preserved;
 }
+
+/**
+ * Whether a partial message's parts are durable enough to commit to
+ * chat.jsonl. Exported so StreamManager's abort path can apply the SAME
+ * predicate commitPartial uses: aborted turns whose partial will be dropped
+ * (e.g. only an input-available tool call) must route their billed usage
+ * through the headless-usage sidecar instead — exactly one of {chat row,
+ * sidecar row} may carry a turn's usage.
+ */
+export function hasCommitWorthyParts(parts: MuxMessage["parts"] | undefined): boolean {
+  return (parts ?? []).some((part) => {
+    if (part.type === "text" || part.type === "reasoning") {
+      return part.text.trim().length > 0;
+    }
+
+    if (part.type === "file") {
+      return true;
+    }
+
+    if (part.type === "dynamic-tool") {
+      // Incomplete tool calls (input-available) are dropped during provider request
+      // conversion. Persisting tool-only incomplete partials can brick future requests.
+      return part.state === "output-available";
+    }
+
+    return false;
+  });
+}
+
 /**
  * HistoryService - Manages chat history persistence and sequence numbering
  *
@@ -1284,23 +1313,7 @@ export class HistoryService {
       const existingMessages = historyResult.data;
       const maxExistingSequence = this.getNewestHistorySequence(existingMessages);
 
-      const hasCommitWorthyParts = (partial.parts ?? []).some((part) => {
-        if (part.type === "text" || part.type === "reasoning") {
-          return part.text.trim().length > 0;
-        }
-
-        if (part.type === "file") {
-          return true;
-        }
-
-        if (part.type === "dynamic-tool") {
-          // Incomplete tool calls (input-available) are dropped during provider request
-          // conversion. Persisting tool-only incomplete partials can brick future requests.
-          return part.state === "output-available";
-        }
-
-        return false;
-      });
+      const commitWorthy = hasCommitWorthyParts(partial.parts);
 
       // Refusal errors can be durable even with zero assistant-visible parts:
       // finishReason lets the UI show a refusal row after error/errorType are
@@ -1334,11 +1347,11 @@ export class HistoryService {
         (!existingMessage ||
           (partial.parts?.length ?? 0) > (existingMessage.parts?.length ?? 0) ||
           hasDurableRefusalMetadata) &&
-        (hasCommitWorthyParts || hasDurableRefusalMetadata);
+        (commitWorthy || hasDurableRefusalMetadata);
 
       const shouldDeleteErroredPlaceholder =
         hadErrorMetadata &&
-        !hasCommitWorthyParts &&
+        !commitWorthy &&
         !hasDurableRefusalMetadata &&
         existingMessage?.id === partial.id &&
         (existingMessage.parts?.length ?? 0) === 0;

@@ -1407,6 +1407,31 @@ describe("headless usage ingestion", () => {
     expect(await queryEventCount(conn, workspaceId)).toBe(3);
   });
 
+  test("failed headless ingestion stays retryable (watermark not advanced past it)", async () => {
+    const conn = await createTestConn();
+    const workspaceId = "headless-ws-retry";
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir);
+
+    // Unreadable sidecar (a directory → EISDIR, non-ENOENT): ingestion must
+    // throw BEFORE the watermark advances, or the next pass would see the
+    // change signal as current and permanently strand the sidecar spend.
+    await fs.mkdir(path.join(sessionDir, "headless-usage.jsonl"));
+    let threw = false;
+    try {
+      await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+
+    // Repair the sidecar; the retry must ingest chat + headless rows.
+    await fs.rmdir(path.join(sessionDir, "headless-usage.jsonl"));
+    await writeHeadlessUsageJsonl(sessionDir, [makeHeadlessLine()]);
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(2); // 1 chat + 1 headless
+  });
+
   test("sidecar appends shift the change signal so startup syncCheck detects them", async () => {
     const sessionDir = await createTempSessionDir();
     await writeBasicChatJsonl(sessionDir);

@@ -1,5 +1,7 @@
 import { describe, test, expect, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
+import * as path from "node:path";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
@@ -19,7 +21,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import * as modelStatsModule from "@/common/utils/tokens/modelStats";
-import type { SessionUsageService } from "./sessionUsageService";
+import { SessionUsageService } from "./sessionUsageService";
 import type { HistoryService } from "./historyService";
 import { createTestHistoryService } from "./testHistoryService";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -4416,6 +4418,84 @@ describe("StreamManager - aborted stream usage persistence", () => {
       outputTokens: 30,
       totalTokens: 150,
     });
+  });
+
+  test("routes tool-only aborted usage to the headless sidecar (commit would drop it)", async () => {
+    // Esc while a tool is still running: the partial's only part is an
+    // input-available tool call, which commitPartial refuses to commit —
+    // without the sidecar the billed usage would vanish with the partial.
+    const { historyService: hs, config, cleanup } = await createTestHistoryService();
+    try {
+      const sessionUsageService = new SessionUsageService(config, hs);
+      const streamManager = new StreamManager(hs, sessionUsageService);
+      streamManager.on("stream-abort", () => undefined);
+      const workspaceId = "abort-tool-only-workspace";
+
+      const usage = { inputTokens: 500, outputTokens: 0, totalTokens: 500 };
+      const streamInfo = createStreamInfoForTests({
+        messageId: "abort-tool-only-message",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "call-1",
+            toolName: "bash",
+            input: { script: "sleep 60" },
+            state: "input-available",
+            timestamp: Date.now(),
+          },
+        ],
+        cumulativeUsage: usage,
+        lastStepUsage: usage,
+      });
+
+      const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
+        streamManager,
+        "cleanupAbortedStream"
+      );
+      await cleanupAborted.call(streamManager, workspaceId, streamInfo, "user");
+
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(record.source).toBe("aborted_stream");
+      expect((record.usage as Record<string, unknown>).inputTokens).toBe(500);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("does not write the sidecar when the aborted partial is commit-worthy", async () => {
+    // Text parts commit with usage attached — a sidecar line here would
+    // double-count the turn (chat row + headless row).
+    const { historyService: hs, config, cleanup } = await createTestHistoryService();
+    try {
+      const sessionUsageService = new SessionUsageService(config, hs);
+      const streamManager = new StreamManager(hs, sessionUsageService);
+      streamManager.on("stream-abort", () => undefined);
+      const workspaceId = "abort-commit-worthy-workspace";
+      await appendPartialAssistantForTests(workspaceId, "abort-commit-worthy-message", 1);
+
+      const cleanupAborted = getPrivateMethodForTests<CleanupAbortedStreamForTests>(
+        streamManager,
+        "cleanupAbortedStream"
+      );
+      await cleanupAborted.call(
+        streamManager,
+        workspaceId,
+        createAbortStreamInfo("abort-commit-worthy-message"),
+        "user"
+      );
+
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+      expect(existsSync(sidecarPath)).toBe(false);
+      // Usage still reaches history via the partial (asserted in the test above).
+      const partial = await hs.readPartial(workspaceId);
+      expect(partial?.metadata?.usage).toBeDefined();
+    } finally {
+      await cleanup();
+    }
   });
 
   test("does not rewrite the partial when the abort abandons it", async () => {

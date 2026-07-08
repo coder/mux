@@ -1192,15 +1192,12 @@ export async function ingestWorkspace(
     hasHeadMismatch,
   });
 
+  let newLastSequence: number;
   if (shouldRebuild) {
     // Rebuild on truncation, head mismatch, or max-sequence rewinds. This removes
     // stale rows, including the zero-assistant-event truncation case.
     await replaceWorkspaceEvents(conn, workspaceId, parsedEvents);
-
-    await writeWatermark(conn, workspaceId, {
-      lastSequence: parsedMaxSequence ?? -1,
-      lastModified: stat.changeSignal,
-    });
+    newLastSequence = parsedMaxSequence ?? -1;
   } else {
     let maxSequence = watermark.lastSequence;
     const eventsToInsert: IngestEvent[] = [];
@@ -1217,17 +1214,21 @@ export async function ingestWorkspace(
     }
 
     await replaceEventsByResponseIndex(conn, workspaceId, eventsToInsert);
-
-    await writeWatermark(conn, workspaceId, {
-      lastSequence: maxSequence,
-      lastModified: stat.changeSignal,
-    });
+    newLastSequence = maxSequence;
   }
 
-  // Run AFTER the chat-row branches: the rebuild path above deletes all of
-  // this workspace's rows (including headless ones), so headless ingestion
-  // must re-add them last.
+  // Headless ingestion runs AFTER the chat-row writes (the rebuild path
+  // deletes all of this workspace's rows, including headless ones) but
+  // BEFORE the watermark advances: the watermark's change signal covers the
+  // sidecar too, so a crash between watermark write and headless commit
+  // would make the next syncCheck see the sidecar as current and strand
+  // that spend. Failing before the watermark keeps ingestion retryable.
   await ingestHeadlessUsage(conn, workspaceId, sessionDir, workspaceMeta);
+
+  await writeWatermark(conn, workspaceId, {
+    lastSequence: newLastSequence,
+    lastModified: stat.changeSignal,
+  });
 }
 
 /**
@@ -1899,6 +1900,18 @@ export async function rebuildAll(
           isDedupeWinner && !failedWorkspaceIds.has(workspace.workspaceId);
 
         if (shouldWriteMetadata) {
+          // Rebuild wiped all events rows up front, so re-ingest the
+          // headless-usage sidecar for dedup winners. Must run BEFORE the
+          // watermark write: the watermark's change signal covers the sidecar,
+          // so a crash after the watermark but before this commit would strand
+          // the sidecar spend as "current" on the next syncCheck.
+          await ingestHeadlessUsage(
+            conn,
+            workspace.workspaceId,
+            workspace.sessionDir,
+            workspace.workspaceMeta
+          );
+
           const maxSequence = getMaxSequence(workspace.events) ?? -1;
           await writeWatermark(conn, workspace.workspaceId, {
             lastSequence: maxSequence,
@@ -1911,15 +1924,6 @@ export async function rebuildAll(
             conn,
             workspace.workspaceId,
             workspace.delegationRollupRaw,
-            workspace.workspaceMeta
-          );
-
-          // Rebuild wiped all events rows up front, so re-ingest the
-          // headless-usage sidecar for dedup winners alongside metadata.
-          await ingestHeadlessUsage(
-            conn,
-            workspace.workspaceId,
-            workspace.sessionDir,
             workspace.workspaceMeta
           );
         }
