@@ -531,6 +531,12 @@ export async function askSideQuestion(
         });
       }
 
+      // INVARIANT: this stream-end must NOT carry metadata.usage. The live
+      // Costs cache already receives this turn's spend via the
+      // session-usage-delta emitted by the recordUsage callback above;
+      // WorkspaceStore also accumulates stream-end usage, so including it
+      // here would double-count until a reload. Usage lives only on the
+      // persisted answer row (for the analytics ETL).
       emitChatEvent(workspaceId, {
         type: "stream-end",
         workspaceId,
