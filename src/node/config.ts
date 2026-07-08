@@ -1916,6 +1916,16 @@ export class Config {
             metadata.forkFamilyBaseName ??= workspace.forkFamilyBaseName;
             metadata.tags ??= workspace.tags;
 
+            // Persisted config identity fields win over metadata.json values. The queued
+            // migration below uses ??= (it must never clobber concurrent edits), so any
+            // field already present in config keeps its persisted value — returning a
+            // different value here would hand the UI an ID that findWorkspace cannot
+            // resolve until the next reload.
+            metadata.id = workspace.id ?? metadata.id;
+            metadata.name = workspace.name ?? metadata.name;
+            metadata.createdAt = workspace.createdAt ?? metadata.createdAt;
+            metadata.runtimeConfig = workspace.runtimeConfig ?? metadata.runtimeConfig;
+
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
               recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
@@ -1961,14 +1971,18 @@ export class Config {
           if (!metadataFound) {
             const legacyId = this.generateLegacyId(projectPath, workspace.path);
             const metadata: WorkspaceMetadata = {
-              id: legacyId,
-              name: workspaceBasename,
+              // Prefer already-persisted identity fields: the queued ??= migration below
+              // keeps existing config values, so returning a generated legacyId for a
+              // partially-migrated entry that already has an id would expose an ID that
+              // findWorkspace cannot resolve until the next reload.
+              id: workspace.id ?? legacyId,
+              name: workspace.name ?? workspaceBasename,
               projectName: resolvedProjectName,
               projectPath: resolvedProjectPath,
               // GUARANTEE: All workspaces must have createdAt
-              createdAt: new Date().toISOString(),
+              createdAt: workspace.createdAt ?? new Date().toISOString(),
               // GUARANTEE: All workspaces must have runtimeConfig
-              runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+              runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
               goalDefaults: workspace.goalDefaults,
@@ -2021,14 +2035,16 @@ export class Config {
           // Fallback to basic metadata if migration fails
           const legacyId = this.generateLegacyId(projectPath, workspace.path);
           const metadata: WorkspaceMetadata = {
-            id: legacyId,
-            name: workspaceBasename,
+            // Same invariant as the branches above: never return an ID/name that
+            // diverges from a value already persisted in config.
+            id: workspace.id ?? legacyId,
+            name: workspace.name ?? workspaceBasename,
             projectName: resolvedProjectName,
             projectPath: resolvedProjectPath,
             // GUARANTEE: All workspaces must have createdAt (even in error cases)
-            createdAt: new Date().toISOString(),
+            createdAt: workspace.createdAt ?? new Date().toISOString(),
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
-            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
             heartbeat: workspace.heartbeat,
             goalDefaults: workspace.goalDefaults,

@@ -172,6 +172,52 @@ describe("Config", () => {
     });
   });
 
+  describe("legacy workspace migration identity", () => {
+    // Regression (PR #3694 Codex P2): the queued ??= migration preserves values already
+    // persisted in config. Returned metadata must use those same values — returning a
+    // generated legacyId for a partially-migrated entry (id present, name missing) hands
+    // the UI an ID that findWorkspace cannot resolve until the next reload.
+    it("returns the persisted id for a partially-migrated entry and persists the same value", async () => {
+      await config.editConfig((cfg) => {
+        cfg.projects.set("/repo", {
+          workspaces: [
+            // id present, name missing -> legacy fallback path (no metadata.json on disk).
+            { path: "/repo/partial", id: "persisted-id-1" },
+          ],
+        });
+        return cfg;
+      });
+
+      const metadata = await new Config(tempDir).getAllWorkspaceMetadata();
+      expect(metadata).toHaveLength(1);
+      expect(metadata[0]?.id).toBe("persisted-id-1");
+
+      // The migration must persist exactly what was returned.
+      const persisted = new Config(tempDir).loadConfigOrDefault().projects.get("/repo")
+        ?.workspaces[0];
+      expect(persisted?.id).toBe("persisted-id-1");
+      expect(persisted?.name).toBe(metadata[0]?.name);
+    });
+
+    it("returns the persisted name for an entry missing only an id", async () => {
+      await config.editConfig((cfg) => {
+        cfg.projects.set("/repo", {
+          workspaces: [{ path: "/repo/named", name: "persisted-name" }],
+        });
+        return cfg;
+      });
+
+      const metadata = await new Config(tempDir).getAllWorkspaceMetadata();
+      expect(metadata).toHaveLength(1);
+      expect(metadata[0]?.name).toBe("persisted-name");
+
+      const persisted = new Config(tempDir).loadConfigOrDefault().projects.get("/repo")
+        ?.workspaces[0];
+      expect(persisted?.name).toBe("persisted-name");
+      expect(persisted?.id).toBe(metadata[0]?.id);
+    });
+  });
+
   describe("userPreferences", () => {
     it("loads and saves user preferences", async () => {
       await config.editConfig((cfg) => ({
