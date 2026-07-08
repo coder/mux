@@ -3917,7 +3917,26 @@ export class TaskService {
     const orderedTaskIds = [...taskIds].sort(
       (a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0)
     );
+    // Ancestors of a task whose archive failed or was skipped must stay visible too:
+    // hiding the parent while its child remains active would orphan the child in the
+    // sidebar. Deepest-first ordering guarantees descendants settle before ancestors.
+    const blockedAncestorIds = new Set<string>();
+    const markAncestorsBlocked = (taskId: string): void => {
+      let currentId = index.parentById.get(taskId);
+      for (let depth = 0; currentId != null && depth < 32; depth++) {
+        blockedAncestorIds.add(currentId);
+        currentId = index.parentById.get(currentId);
+      }
+    };
     for (const taskId of orderedTaskIds) {
+      if (blockedAncestorIds.has(taskId)) {
+        // Own ancestors are already in the set: the failing descendant's walk went to root.
+        log.warn(
+          "Skipping auto-archive of workflow task workspace; a descendant stayed unarchived",
+          { taskId }
+        );
+        continue;
+      }
       try {
         const result = await this.workspaceService.archive(taskId);
         if (!result.success) {
@@ -3925,6 +3944,7 @@ export class TaskService {
             taskId,
             error: result.error,
           });
+          markAncestorsBlocked(taskId);
         } else if (result.data.kind === "confirm-lossy-untracked-files") {
           // Snapshot-archive mode asks for user confirmation before discarding untracked
           // files. Auto-acknowledging would silently lose data, so leave this workspace
@@ -3933,9 +3953,11 @@ export class TaskService {
             "Skipping auto-archive of workflow task workspace pending untracked-file confirmation",
             { taskId }
           );
+          markAncestorsBlocked(taskId);
         }
       } catch (error: unknown) {
         log.warn("Archive of leftover workflow task workspace threw", { taskId, error });
+        markAncestorsBlocked(taskId);
       }
     }
   }

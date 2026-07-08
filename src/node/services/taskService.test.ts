@@ -9988,6 +9988,77 @@ describe("TaskService", () => {
     expect(userChild?.archivedAt).toBeUndefined();
   });
 
+  test("sweep keeps an ancestor visible when a descendant archive is skipped", async () => {
+    // Regression (PR #3694 Codex P2): a child archive skipped by the lossy-untracked-file
+    // confirmation (or a failed archive) must block its ancestors' archives too —
+    // otherwise the parent gets hidden while its unarchived child stays active in the
+    // sidebar as an orphan.
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootId = "root-skip-blocks-ancestor";
+    const parentTaskId = "interrupted-parent-task";
+    const childTaskId = "interrupted-child-lossy";
+    const workflowRunId = "wfr_skip_blocks_ancestor";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootId),
+        projectWorkspace(projectPath, "interrupted-parent", parentTaskId, {
+          name: "agent_exec_parent",
+          parentWorkspaceId: rootId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "interrupted",
+          taskModelString: defaultModel,
+          workflowTask: { runId: workflowRunId, stepId: "parent" },
+        }),
+        projectWorkspace(projectPath, "interrupted-child", childTaskId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentTaskId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "interrupted",
+          taskModelString: defaultModel,
+        }),
+      ],
+      testTaskSettings(10, 3)
+    );
+
+    // Child archive is deferred pending untracked-file confirmation; parent would archive.
+    const archived: string[] = [];
+    const archive = mock(
+      async (
+        workspaceId: string
+      ): Promise<Result<{ kind: "archived" } | { kind: "confirm-lossy-untracked-files" }>> => {
+        if (workspaceId === childTaskId) {
+          return Ok({ kind: "confirm-lossy-untracked-files" });
+        }
+        await config.editConfig((cfg) => {
+          for (const project of cfg.projects.values()) {
+            const workspace = project.workspaces.find((w) => w.id === workspaceId);
+            if (workspace) workspace.archivedAt = new Date().toISOString();
+          }
+          return cfg;
+        });
+        archived.push(workspaceId);
+        return Ok({ kind: "archived" });
+      }
+    );
+    const { aiService } = createAIServiceMocks(config, { isStreaming: mock(() => false) });
+    const { workspaceService } = createWorkspaceServiceMocks({ archive });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await taskService.markWorkflowRunEnded(workflowRunId);
+
+    // Child stayed visible (confirmation pending) — so the parent must stay visible too.
+    expect(findWorkspaceInConfig(config, childTaskId)?.archivedAt).toBeUndefined();
+    expect(findWorkspaceInConfig(config, parentTaskId)?.archivedAt).toBeUndefined();
+    expect(archived).not.toContain(parentTaskId);
+  });
+
   test("initialize archives interrupted workflow-owned children of inactive runs but not user-spawned tasks", async () => {
     const config = await createTestConfig(rootDir);
 
