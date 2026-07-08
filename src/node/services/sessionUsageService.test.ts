@@ -501,6 +501,43 @@ describe("SessionUsageService", () => {
       expect((record.usage as Record<string, unknown>).inputTokens).toBe(40);
     });
 
+    it("still appends the analytics sidecar when the usage ledger is corrupt", async () => {
+      const workspaceId = "test-workspace";
+      const model = "anthropic:claude-sonnet-4-20250514";
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(sessionDir, { recursive: true });
+      // Corrupt ledger: readFile throws on bad JSON (non-ENOENT), which must
+      // not block the sidecar — headless spend has no chat-row fallback.
+      await fs.writeFile(path.join(sessionDir, "session-usage.json"), "{not json");
+
+      const recorded = await service.recordHeadlessUsage(
+        workspaceId,
+        model,
+        { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+        undefined,
+        { analyticsSource: "workspace_status" }
+      );
+
+      // Sidecar callers key their analytics-ingest trigger off the return.
+      expect(recorded?.model).toBe(model);
+      const sidecarPath = path.join(sessionDir, "headless-usage.jsonl");
+      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(record.source).toBe("workspace_status");
+
+      // Without a sidecar (/btw-style), a failed ledger write must NOT report
+      // success: the caller would emit a session-usage-delta that diverges
+      // from the on-disk ledger.
+      const btwRecorded = await service.recordHeadlessUsage(workspaceId, model, {
+        inputTokens: 40,
+        outputTokens: 10,
+        totalTokens: 50,
+      });
+      expect(btwRecorded).toBeUndefined();
+    });
+
     it("resolves mappedToModel aliases for pricing and stamps metadataModel in the sidecar", async () => {
       const workspaceId = "test-workspace";
       const mappedService = new SessionUsageService(config, historyService, () => ({

@@ -246,9 +246,23 @@ export class SessionUsageService {
         metadataModel
       );
       if (!displayUsage) return undefined;
-      await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
-        skipLastRequestUpdate: true,
-      });
+      // Ledger update is isolated from the sidecar append below: a corrupt
+      // session-usage.json (readFile throws on bad JSON) must not drop the
+      // analytics row — headless callers have no chat-row fallback, so that
+      // would permanently hide provider-billed spend from the events table.
+      let ledgerRecorded = false;
+      try {
+        await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
+          skipLastRequestUpdate: true,
+        });
+        ledgerRecorded = true;
+      } catch (error) {
+        log.warn("Failed to update session-usage ledger for headless usage", {
+          workspaceId,
+          modelString,
+          error,
+        });
+      }
       if (options?.analyticsSource) {
         // Raw usage + provider metadata (not display costs) so the ETL prices
         // with the current tables — repricing rebuilds then cover these rows.
@@ -269,8 +283,14 @@ export class SessionUsageService {
           HEADLESS_USAGE_FILE_NAME
         );
         await fs.appendFile(sidecarPath, `${line}\n`);
+        // Sidecar callers consume the return value to trigger an analytics
+        // ingest pass, so signal success once the sidecar line is durable
+        // even if the ledger update failed.
+        return { model: canonicalModel, usage: displayUsage };
       }
-      return { model: canonicalModel, usage: displayUsage };
+      // No sidecar (/btw): the return value feeds a session-usage-delta event
+      // that must mirror the on-disk ledger, so require ledger success.
+      return ledgerRecorded ? { model: canonicalModel, usage: displayUsage } : undefined;
     } catch (error) {
       log.warn("Failed to record headless usage", { workspaceId, modelString, error });
       return undefined;
