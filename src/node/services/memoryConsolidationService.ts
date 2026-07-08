@@ -496,12 +496,12 @@ export class MemoryConsolidationService extends EventEmitter {
       // Hard timeout: a wedged provider stream must not hold the in-flight
       // lock forever (and stall the sequential launch sweep behind it).
       abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
-      recordUsage: async (usage) => {
+      recordUsage: async (usage, providerMetadata) => {
         const recorded = await this.sessionUsageService?.recordHeadlessUsage(
           workspaceId,
           modelString,
           usage,
-          undefined,
+          providerMetadata,
           {
             costsIncluded: modelCostsIncluded(modelResult.data),
             analyticsSource: "memory_consolidation",
@@ -640,12 +640,12 @@ export class MemoryConsolidationService extends EventEmitter {
           messages: epoch.data.messages,
           summary: epoch.data.summary,
           abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
-          recordUsage: async (usage) => {
+          recordUsage: async (usage, providerMetadata) => {
             const recorded = await this.sessionUsageService?.recordHeadlessUsage(
               metadata.workspaceId,
               modelString,
               usage,
-              undefined,
+              providerMetadata,
               {
                 costsIncluded: modelCostsIncluded(modelResult.data),
                 analyticsSource: "memory_harvest",

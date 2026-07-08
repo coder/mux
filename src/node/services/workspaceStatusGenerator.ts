@@ -12,6 +12,7 @@ import {
   TOOL_DEFINITIONS,
   ProposeStatusToolArgsSchema,
 } from "@/common/utils/tools/toolDefinitions";
+import { accumulateStepsProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 
 /**
  * AI-generated sidebar status: emoji + short verb-led phrase, matching
@@ -141,7 +142,16 @@ export async function generateWorkspaceStatus(
     recordUsage?: (
       modelString: string,
       usage: LanguageModelV2Usage,
-      options: { costsIncluded: boolean }
+      options: {
+        costsIncluded: boolean;
+        /**
+         * Step-accumulated provider metadata. Anthropic reports billed
+         * cache-write tokens only here (cacheCreationInputTokens), not in
+         * LanguageModelV2Usage — without it the recorder prices cache writes
+         * as ordinary input.
+         */
+        providerMetadata?: Record<string, unknown>;
+      }
     ) => Promise<void>;
   } = {}
 ): Promise<Result<GenerateWorkspaceStatusResult, GenerateWorkspaceStatusFailure>> {
@@ -209,13 +219,15 @@ export async function generateWorkspaceStatus(
           // already-produced status — AgentStatusService.runTick() awaits
           // in-flight generations, so a stuck read would wedge the workspace's
           // sidebar status loop. The recorder itself never throws.
-          const usage = await Promise.race([
-            currentStream.totalUsage,
+          const settled = await Promise.race([
+            Promise.all([currentStream.totalUsage, currentStream.steps]),
             new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
           ]);
-          if (usage !== undefined) {
+          if (settled !== undefined) {
+            const [usage, steps] = settled;
             await options.recordUsage(modelString, usage, {
               costsIncluded: modelCostsIncluded(modelResult.data),
+              providerMetadata: accumulateStepsProviderMetadata(steps),
             });
           }
         } catch {

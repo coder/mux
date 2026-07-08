@@ -63,3 +63,23 @@ export function accumulateProviderMetadata(
     },
   };
 }
+
+/**
+ * Fold per-step provider metadata from an AI SDK stream result into a single
+ * record via {@link accumulateProviderMetadata}.
+ *
+ * `streamResult.providerMetadata` alone only reflects the LAST step: on
+ * multi-step tool loops it drops earlier steps' Anthropic cache-write tokens
+ * (`cacheCreationInputTokens`), which then get priced as ordinary input.
+ * Headless callers (status generation, memory sweeps) use this before
+ * recordHeadlessUsage so cache writes price as cache-create spend.
+ */
+export function accumulateStepsProviderMetadata(
+  steps: ReadonlyArray<{ providerMetadata?: Record<string, unknown> }>
+): Record<string, unknown> | undefined {
+  let accumulated: Record<string, unknown> | undefined;
+  for (const step of steps) {
+    accumulated = accumulateProviderMetadata(accumulated, step.providerMetadata);
+  }
+  return accumulated;
+}

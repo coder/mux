@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { MuxMessage } from "@/common/types/message";
 import { getErrorMessage } from "@/common/utils/errors";
+import { accumulateStepsProviderMetadata } from "@/common/utils/tokens/usageHelpers";
 import assert from "@/common/utils/assert";
 import type { MemoryScopeContext, MemoryService } from "@/node/services/memoryService";
 
@@ -200,9 +201,14 @@ export async function runMemoryHarvest(args: {
   /**
    * Best-effort cost telemetry: headless harvest bypasses the chat cost
    * pipeline, so the caller records each clean chunk stream's full usage
-   * (with cache-token breakdown) into session-usage.json.
+   * (with cache-token breakdown) into session-usage.json. providerMetadata
+   * is step-accumulated — Anthropic reports billed cache-write tokens only
+   * there, so dropping it would price cache writes as ordinary input.
    */
-  recordUsage?: (usage: LanguageModelV2Usage) => Promise<void>;
+  recordUsage?: (
+    usage: LanguageModelV2Usage,
+    providerMetadata?: Record<string, unknown>
+  ) => Promise<void>;
 }): Promise<MemoryHarvestResult> {
   assert(args.agentBody.trim().length > 0, "harvest agent body must not be empty");
   assert(
@@ -271,7 +277,7 @@ export async function runMemoryHarvest(args: {
         inputTokens: (usage?.inputTokens ?? 0) + (totalUsage.inputTokens ?? 0),
         outputTokens: (usage?.outputTokens ?? 0) + (totalUsage.outputTokens ?? 0),
       };
-      await args.recordUsage?.(totalUsage);
+      await args.recordUsage?.(totalUsage, accumulateStepsProviderMetadata(await stream.steps));
     } catch {
       usage = undefined;
     }

@@ -361,7 +361,7 @@ export class AgentStatusService {
             workspaceId,
             modelString,
             usage,
-            undefined,
+            usageOptions.providerMetadata,
             { costsIncluded: usageOptions.costsIncluded, analyticsSource: "workspace_status" }
           );
           if (recorded) {
