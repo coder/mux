@@ -12,7 +12,11 @@ import modelsData from "@/common/utils/tokens/models.json";
 import { modelsExtra } from "@/common/utils/tokens/models-extra";
 import { log } from "@/node/services/log";
 import { toUtcDateString } from "@/node/services/analytics/dateUtils";
-import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
+import {
+  CHAT_FILE_NAME,
+  CHAT_ARCHIVE_FILE_NAME,
+  HEADLESS_USAGE_FILE_NAME,
+} from "@/common/constants/paths";
 
 // Re-export the canonical chat history filename (defined in constants/paths.ts)
 // so existing analytics consumers (workspaceDiscovery, tests) can keep importing
@@ -255,7 +259,8 @@ interface IngestEventContext {
   workspaceMeta: WorkspaceMeta;
   agentId: string | null;
   thinkingLevel: string | null;
-  responseIndex: number;
+  /** Null for headless-usage rows so replaceEventsByResponseIndex never touches them. */
+  responseIndex: number | null;
   isSubAgent: boolean;
 }
 
@@ -1101,6 +1106,9 @@ export async function ingestWorkspace(
   // ingestion re-runs and the rebuild path can drop stale rows — even when the
   // surviving file's mtime equals the previously stored value.
   if (stat.changeSignal === watermark.lastModified) {
+    // Headless usage (status generation, memory sweeps) accrues without
+    // touching chat files, so it must ingest even when chat is unchanged.
+    await ingestHeadlessUsage(conn, workspaceId, sessionDir, workspaceMeta);
     return;
   }
 
@@ -1196,6 +1204,141 @@ export async function ingestWorkspace(
       lastSequence: maxSequence,
       lastModified: stat.changeSignal,
     });
+  }
+
+  // Run AFTER the chat-row branches: the rebuild path above deletes all of
+  // this workspace's rows (including headless ones), so headless ingestion
+  // must re-add them last.
+  await ingestHeadlessUsage(conn, workspaceId, sessionDir, workspaceMeta);
+}
+
+/**
+ * Ingest the headless-usage.jsonl sidecar (status generation, memory sweeps —
+ * AI spend with no chat.jsonl assistant row) into the events table.
+ *
+ * Idempotent delete + reinsert scoped to `tool_name LIKE 'headless:%'`:
+ * headless rows use a NULL response_index, so the chat-row refresh paths
+ * (replaceEventsByResponseIndex) never touch them, and this function never
+ * touches chat-derived rows. The sidecar stays small (one line per background
+ * call), so a full re-read per ingest pass is cheap — mirroring how
+ * delegation rollups stay fresh on every pass.
+ */
+async function ingestHeadlessUsage(
+  conn: DuckDBConnection,
+  workspaceId: string,
+  sessionDir: string,
+  workspaceMeta: WorkspaceMeta
+): Promise<void> {
+  let contents: string;
+  try {
+    contents = await fs.readFile(path.join(sessionDir, HEADLESS_USAGE_FILE_NAME), "utf-8");
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") {
+      // No sidecar — nothing to (re)ingest. Workspace removal clears any
+      // previously ingested headless rows via clearWorkspaceAnalyticsState.
+      return;
+    }
+    throw error;
+  }
+
+  const inheritedContext: IngestEventContext = {
+    workspaceId,
+    workspaceMeta,
+    agentId: null,
+    thinkingLevel: null,
+    responseIndex: null,
+    isSubAgent: false,
+  };
+
+  const rows: EventRow[] = [];
+  const lines = contents.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.length === 0) {
+      continue;
+    }
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      log.warn("[analytics-etl] Skipping malformed headless-usage line", {
+        workspaceId,
+        lineNumber: i + 1,
+      });
+      continue;
+    }
+    if (!isRecord(record)) {
+      continue;
+    }
+    const source = toOptionalString(record.source);
+    const model = toOptionalString(record.model);
+    const usage = parseUsage(record.usage);
+    if (!source || !model || !usage) {
+      continue;
+    }
+
+    const built = buildIngestEventRow({
+      inheritedContext,
+      model,
+      usage,
+      providerMetadata: isRecord(record.providerMetadata) ? record.providerMetadata : undefined,
+      toolName: `headless:${source}`,
+      timestamp: toFiniteNumber(record.timestamp) ?? null,
+      durationMs: null,
+      ttftMs: null,
+      outputTps: null,
+    });
+    if (!built.parsed.success) {
+      log.warn("[analytics-etl] Skipping invalid headless-usage row", {
+        workspaceId,
+        lineNumber: i + 1,
+      });
+      continue;
+    }
+    rows.push(built.parsed.data);
+  }
+
+  await conn.run("BEGIN TRANSACTION");
+  try {
+    await conn.run("DELETE FROM events WHERE workspace_id = ? AND tool_name LIKE 'headless:%'", [
+      workspaceId,
+    ]);
+    for (const row of rows) {
+      await conn.run(INSERT_EVENT_SQL, [
+        row.workspace_id,
+        row.project_path,
+        row.project_name,
+        row.workspace_name,
+        row.parent_workspace_id,
+        row.agent_id,
+        row.timestamp,
+        row.timestamp != null ? toUtcDateString(new Date(row.timestamp)) : null,
+        row.model,
+        row.tool_name,
+        row.thinking_level,
+        row.input_tokens,
+        row.output_tokens,
+        row.reasoning_tokens,
+        row.cached_tokens,
+        row.cache_create_tokens,
+        row.input_cost_usd,
+        row.output_cost_usd,
+        row.reasoning_cost_usd,
+        row.cached_cost_usd,
+        row.total_cost_usd,
+        row.duration_ms,
+        row.ttft_ms,
+        row.streaming_ms,
+        row.tool_execution_ms,
+        row.output_tps,
+        row.response_index,
+        row.is_sub_agent,
+      ]);
+    }
+    await conn.run("COMMIT");
+  } catch (error) {
+    await conn.run("ROLLBACK");
+    throw error;
   }
 }
 
@@ -1747,6 +1890,15 @@ export async function rebuildAll(
             conn,
             workspace.workspaceId,
             workspace.delegationRollupRaw,
+            workspace.workspaceMeta
+          );
+
+          // Rebuild wiped all events rows up front, so re-ingest the
+          // headless-usage sidecar for dedup winners alongside metadata.
+          await ingestHeadlessUsage(
+            conn,
+            workspace.workspaceId,
+            workspace.sessionDir,
             workspace.workspaceMeta
           );
         }

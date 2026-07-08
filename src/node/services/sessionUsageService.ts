@@ -11,6 +11,7 @@ import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
+import { HEADLESS_USAGE_FILE_NAME } from "@/common/constants/paths";
 import type { MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { log } from "./log";
@@ -191,6 +192,15 @@ export class SessionUsageService {
        * tokens at $0, mirroring the StreamManager path.
        */
       costsIncluded?: boolean;
+      /**
+       * When set, also append the raw usage to the workspace's
+       * headless-usage.jsonl sidecar so the analytics ETL can ingest it into
+       * dashboard totals. Only for callers whose spend produces NO chat.jsonl
+       * assistant row (status generation, memory sweeps) — callers that
+       * persist usage on a chat row (/btw) must omit this or the spend would
+       * be double-counted.
+       */
+      analyticsSource?: string;
     }
   ): Promise<{ model: string; usage: ChatUsageDisplay } | undefined> {
     if (!usage) return undefined;
@@ -211,6 +221,24 @@ export class SessionUsageService {
       await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
         skipLastRequestUpdate: true,
       });
+      if (options?.analyticsSource) {
+        // Raw usage + provider metadata (not display costs) so the ETL prices
+        // with the current tables — repricing rebuilds then cover these rows.
+        const line = JSON.stringify({
+          timestamp: Date.now(),
+          source: options.analyticsSource,
+          model: canonicalModel,
+          usage,
+          ...(effectiveProviderMetadata !== undefined
+            ? { providerMetadata: effectiveProviderMetadata }
+            : {}),
+        });
+        const sidecarPath = path.join(
+          path.dirname(this.getFilePath(workspaceId)),
+          HEADLESS_USAGE_FILE_NAME
+        );
+        await fs.appendFile(sidecarPath, `${line}\n`);
+      }
       return { model: canonicalModel, usage: displayUsage };
     } catch (error) {
       log.warn("Failed to record headless usage", { workspaceId, modelString, error });

@@ -20,6 +20,14 @@ export const CHAT_FILE_NAME = "chat.jsonl";
 export const CHAT_ARCHIVE_FILE_NAME = "chat-archive.jsonl";
 
 /**
+ * Per-workspace sidecar recording headless AI usage (status generation,
+ * memory consolidation/harvest) that produces no chat.jsonl assistant row.
+ * Appended by SessionUsageService.recordHeadlessUsage and ingested into the
+ * analytics events table by the ETL so dashboard totals include this spend.
+ */
+export const HEADLESS_USAGE_FILE_NAME = "headless-usage.jsonl";
+
+/**
  * Migrate from the legacy ~/.cmux directory into ~/.mux for rebranded installs.
  * Called on startup to preserve data created by earlier releases.
  *

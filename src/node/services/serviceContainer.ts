@@ -320,8 +320,15 @@ export class ServiceContainer {
       this.windowService,
       this.aiService,
       // Status generation spends tokens outside StreamManager; give it a cost
-      // telemetry sink so that spend shows up in per-workspace usage.
-      { sessionUsageService: this.sessionUsageService }
+      // telemetry sink so that spend shows up in per-workspace usage, and an
+      // ingest trigger so the headless-usage sidecar reaches dashboard totals
+      // even when the workspace has no further stream activity.
+      {
+        sessionUsageService: this.sessionUsageService,
+        requestAnalyticsIngest: (workspaceId) => {
+          this.workspaceService.emit("analyticsIngest", { workspaceId });
+        },
+      }
     );
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();

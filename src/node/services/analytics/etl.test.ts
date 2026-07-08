@@ -1361,6 +1361,67 @@ describe("ingestDelegationRollups", () => {
   });
 });
 
+describe("headless usage ingestion", () => {
+  async function writeHeadlessUsageJsonl(sessionDir: string, lines: string[]): Promise<void> {
+    await fs.writeFile(path.join(sessionDir, "headless-usage.jsonl"), `${lines.join("\n")}\n`);
+  }
+
+  function makeHeadlessLine(
+    opts: { source?: string; inputTokens?: number; outputTokens?: number } = {}
+  ): string {
+    return JSON.stringify({
+      timestamp: 1700000000000,
+      source: opts.source ?? "workspace_status",
+      model: "anthropic:claude-sonnet-4-20250514",
+      usage: {
+        inputTokens: opts.inputTokens ?? 500,
+        outputTokens: opts.outputTokens ?? 20,
+      },
+    });
+  }
+
+  test("ingests sidecar rows tagged headless:* alongside chat rows, idempotently", async () => {
+    const conn = await createTestConn();
+    const workspaceId = "headless-ws";
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir);
+    await writeHeadlessUsageJsonl(sessionDir, [makeHeadlessLine(), makeHeadlessLine()]);
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(3); // 1 chat + 2 headless
+
+    const headlessRows = await queryRows(
+      conn,
+      "SELECT tool_name, input_tokens, total_cost_usd FROM events WHERE workspace_id = ? AND tool_name LIKE 'headless:%'",
+      [workspaceId]
+    );
+    expect(headlessRows).toHaveLength(2);
+    expect(headlessRows[0].tool_name).toBe("headless:workspace_status");
+    expect(parseInteger(headlessRows[0].input_tokens, "input_tokens")).toBe(500);
+    expect(headlessRows[0].total_cost_usd as number).toBeGreaterThan(0);
+
+    // Second pass with unchanged files: delete+reinsert keeps counts stable
+    // and does not disturb chat-derived rows.
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(3);
+  });
+
+  test("ingests sidecar growth even when chat files are unchanged", async () => {
+    const conn = await createTestConn();
+    const workspaceId = "headless-ws-growth";
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir);
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(1);
+
+    // Headless usage lands without any chat.jsonl change (status generation).
+    await writeHeadlessUsageJsonl(sessionDir, [makeHeadlessLine()]);
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(2);
+  });
+});
+
 describe("pricing fingerprint", () => {
   test("round-trips through ingest_meta and starts unset", async () => {
     const conn = await createTestConn();

@@ -504,6 +504,7 @@ export class MemoryConsolidationService extends EventEmitter {
           undefined,
           {
             costsIncluded: modelCostsIncluded(modelResult.data),
+            analyticsSource: "memory_consolidation",
           }
         );
       },
@@ -639,7 +640,10 @@ export class MemoryConsolidationService extends EventEmitter {
               modelString,
               usage,
               undefined,
-              { costsIncluded: modelCostsIncluded(modelResult.data) }
+              {
+                costsIncluded: modelCostsIncluded(modelResult.data),
+                analyticsSource: "memory_harvest",
+              }
             );
           },
         });

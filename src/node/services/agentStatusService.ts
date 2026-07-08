@@ -40,6 +40,12 @@ export interface AgentStatusServiceOptions {
    * without this its recurring spend never reaches session-usage.json.
    */
   sessionUsageService?: SessionUsageService;
+  /**
+   * Request an analytics ingest pass after usage is recorded so the
+   * headless-usage sidecar reaches dashboard totals even when the workspace
+   * has no further stream activity.
+   */
+  requestAnalyticsIngest?: (workspaceId: string) => void;
 }
 
 interface State {
@@ -108,6 +114,7 @@ export class AgentStatusService {
   private readonly clock: () => number;
   private readonly tickIntervalMs: number;
   private readonly sessionUsageService?: SessionUsageService;
+  private readonly requestAnalyticsIngest?: (workspaceId: string) => void;
 
   private checkInterval: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
@@ -126,6 +133,7 @@ export class AgentStatusService {
     this.clock = options.clock ?? (() => Date.now());
     this.tickIntervalMs = options.tickIntervalMs ?? AGENT_STATUS_TICK_INTERVAL_MS;
     this.sessionUsageService = options.sessionUsageService;
+    this.requestAnalyticsIngest = options.requestAnalyticsIngest;
   }
 
   start(): void {
@@ -349,13 +357,16 @@ export class AgentStatusService {
       const result = await generateWorkspaceStatus(transcript, candidates, this.aiService, {
         streaming,
         recordUsage: async (modelString, usage, usageOptions) => {
-          await this.sessionUsageService?.recordHeadlessUsage(
+          const recorded = await this.sessionUsageService?.recordHeadlessUsage(
             workspaceId,
             modelString,
             usage,
             undefined,
-            { costsIncluded: usageOptions.costsIncluded }
+            { costsIncluded: usageOptions.costsIncluded, analyticsSource: "workspace_status" }
           );
+          if (recorded) {
+            this.requestAnalyticsIngest?.(workspaceId);
+          }
         },
       });
       // Re-check after the generator returns: the same hazard at a later

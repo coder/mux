@@ -11,6 +11,7 @@ import {
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { createTestHistoryService } from "./testHistoryService";
+import { existsSync } from "fs";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -470,6 +471,34 @@ describe("SessionUsageService", () => {
       expect(recorded?.usage.costsIncluded).toBe(true);
       expect(recorded?.usage.input.tokens).toBe(1000);
       expect(getTotalCost(recorded!.usage)).toBe(0);
+    });
+
+    it("appends to the headless-usage sidecar only when an analyticsSource is given", async () => {
+      const workspaceId = "test-workspace";
+      const model = "anthropic:claude-sonnet-4-20250514";
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+
+      // No source (/btw-style caller whose spend rides a chat row): no sidecar.
+      await service.recordHeadlessUsage(workspaceId, model, {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      });
+      expect(existsSync(sidecarPath)).toBe(false);
+
+      await service.recordHeadlessUsage(
+        workspaceId,
+        model,
+        { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+        undefined,
+        { analyticsSource: "workspace_status" }
+      );
+      const lines = (await fs.readFile(sidecarPath, "utf-8")).trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const record = JSON.parse(lines[0]) as Record<string, unknown>;
+      expect(record.source).toBe("workspace_status");
+      expect(record.model).toBe(model);
+      expect((record.usage as Record<string, unknown>).inputTokens).toBe(40);
     });
   });
 
