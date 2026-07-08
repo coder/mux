@@ -497,7 +497,7 @@ export class MemoryConsolidationService extends EventEmitter {
       // lock forever (and stall the sequential launch sweep behind it).
       abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
       recordUsage: async (usage) => {
-        await this.sessionUsageService?.recordHeadlessUsage(
+        const recorded = await this.sessionUsageService?.recordHeadlessUsage(
           workspaceId,
           modelString,
           usage,
@@ -507,6 +507,12 @@ export class MemoryConsolidationService extends EventEmitter {
             analyticsSource: "memory_consolidation",
           }
         );
+        // The sidecar row only reaches dashboard totals via an explicit
+        // ingest pass; request one (forwarded by ServiceContainer) so sweep
+        // spend doesn't strand until an unrelated stream-end or restart.
+        if (recorded) {
+          this.emit("analyticsIngest", { workspaceId });
+        }
       },
     });
     // A stream failure (provider error or the run timeout) means the pass did
@@ -635,7 +641,7 @@ export class MemoryConsolidationService extends EventEmitter {
           summary: epoch.data.summary,
           abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
           recordUsage: async (usage) => {
-            await this.sessionUsageService?.recordHeadlessUsage(
+            const recorded = await this.sessionUsageService?.recordHeadlessUsage(
               metadata.workspaceId,
               modelString,
               usage,
@@ -645,6 +651,11 @@ export class MemoryConsolidationService extends EventEmitter {
                 analyticsSource: "memory_harvest",
               }
             );
+            // Same as consolidation above: request an ingest pass so harvest
+            // spend reaches dashboard totals promptly.
+            if (recorded) {
+              this.emit("analyticsIngest", { workspaceId: metadata.workspaceId });
+            }
           },
         });
         if (harvest.streamError !== undefined) {

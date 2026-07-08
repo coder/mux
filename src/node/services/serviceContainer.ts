@@ -417,6 +417,13 @@ export class ServiceContainer {
     this.workspaceService.on("analyticsIngest", (event) => {
       ingestWorkspaceAnalytics(event.workspaceId);
     });
+    // Memory consolidation/harvest spend rides the headless-usage sidecar
+    // without any chat activity; ingest promptly so background sweeps reach
+    // dashboard totals instead of stranding until an unrelated stream-end
+    // or app restart.
+    this.memoryConsolidationService.on("analyticsIngest", (event: { workspaceId: string }) => {
+      ingestWorkspaceAnalytics(event.workspaceId);
+    });
     // WorkspaceService emits metadata:null after successful remove().
     // Clear analytics rows immediately so deleted workspaces disappear from stats
     // without waiting for a future ingest pass.

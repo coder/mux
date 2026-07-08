@@ -24,6 +24,7 @@ import {
 import { memoryLogicalKey, MemoryMetaService } from "./memoryMeta";
 import { HistoryService } from "./historyService";
 import { MemoryService } from "./memoryService";
+import { SessionUsageService } from "./sessionUsageService";
 import { TestTempDir } from "./tools/testHelpers";
 
 /**
@@ -206,6 +207,8 @@ async function createFixture(options?: {
   /** Holds every model run open until resolved (for in-flight race tests). */
   modelGate?: Promise<void>;
   modelFactory?: () => MockLanguageModelV3;
+  /** Wire a real SessionUsageService (headless cost telemetry tests). */
+  withSessionUsage?: boolean;
 }): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation-service");
   const muxHome = path.join(tempDir.path, "mux-home");
@@ -247,7 +250,8 @@ async function createFixture(options?: {
     {
       isExperimentEnabled: (id) =>
         enabled && (id === EXPERIMENT_IDS.MEMORY || id === EXPERIMENT_IDS.MEMORY_CONSOLIDATION),
-    }
+    },
+    options?.withSessionUsage ? new SessionUsageService(config, historyService) : undefined
   );
 
   return {
@@ -372,6 +376,27 @@ describe("MemoryConsolidationService", () => {
         projectPath: "/projects/demo",
       },
     ]);
+  });
+
+  it("requests an analytics ingest after recording headless sweep usage", async () => {
+    using fixture = await createFixture({ withSessionUsage: true });
+    const ingests: Array<{ workspaceId: string }> = [];
+    fixture.service.on("analyticsIngest", (event: { workspaceId: string }) => {
+      ingests.push(event);
+    });
+
+    const result = await fixture.service.maybeRun("ws-dream", "manual");
+    expect(result.success).toBe(true);
+
+    // The headless-usage sidecar only reaches dashboard totals via an
+    // explicit ingest pass, and no stream-end follows a background sweep —
+    // the sweep itself must request the ingest.
+    expect(ingests).toEqual([{ workspaceId: "ws-dream" }]);
+    const sidecar = await fsPromises.readFile(
+      path.join(fixture.config.getSessionDir("ws-dream"), "headless-usage.jsonl"),
+      "utf-8"
+    );
+    expect(sidecar).toContain('"source":"memory_consolidation"');
   });
 
   it("records project coverage for single-project workspace runs", async () => {
