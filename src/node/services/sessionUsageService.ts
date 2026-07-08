@@ -183,18 +183,38 @@ export class SessionUsageService {
     workspaceId: string,
     modelString: string,
     usage: LanguageModelV2Usage | undefined,
-    providerMetadata?: Record<string, unknown>
-  ): Promise<void> {
-    if (!usage) return;
+    providerMetadata?: Record<string, unknown>,
+    options?: {
+      /**
+       * Subscription-covered routing (e.g. Codex OAuth). Stamps
+       * providerMetadata.mux.costsIncluded so createDisplayUsage prices the
+       * tokens at $0, mirroring the StreamManager path.
+       */
+      costsIncluded?: boolean;
+    }
+  ): Promise<{ model: string; usage: ChatUsageDisplay } | undefined> {
+    if (!usage) return undefined;
     try {
       const canonicalModel = normalizeToCanonical(modelString);
-      const displayUsage = createDisplayUsage(usage, canonicalModel, providerMetadata);
-      if (!displayUsage) return;
+      const existingMux = providerMetadata?.mux;
+      const effectiveProviderMetadata = options?.costsIncluded
+        ? {
+            ...(providerMetadata ?? {}),
+            mux: {
+              ...(typeof existingMux === "object" && existingMux !== null ? existingMux : {}),
+              costsIncluded: true,
+            },
+          }
+        : providerMetadata;
+      const displayUsage = createDisplayUsage(usage, canonicalModel, effectiveProviderMetadata);
+      if (!displayUsage) return undefined;
       await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
         skipLastRequestUpdate: true,
       });
+      return { model: canonicalModel, usage: displayUsage };
     } catch (error) {
       log.warn("Failed to record headless usage", { workspaceId, modelString, error });
+      return undefined;
     }
   }
 

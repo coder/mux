@@ -1,5 +1,6 @@
 import { streamText, tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import { modelCostsIncluded } from "./providerModelFactory";
 import type { AIService } from "./aiService";
 import { log } from "./log";
 import { runLanguageModelCleanup } from "./languageModelCleanup";
@@ -134,9 +135,14 @@ export async function generateWorkspaceStatus(
     /**
      * Best-effort cost telemetry: status generation bypasses StreamManager,
      * so the caller records the successful candidate's usage into
-     * session-usage.json.
+     * session-usage.json. costsIncluded reflects subscription-covered routing
+     * (Codex OAuth) so those tokens are priced at $0.
      */
-    recordUsage?: (modelString: string, usage: LanguageModelV2Usage) => Promise<void>;
+    recordUsage?: (
+      modelString: string,
+      usage: LanguageModelV2Usage,
+      options: { costsIncluded: boolean }
+    ) => Promise<void>;
   } = {}
 ): Promise<Result<GenerateWorkspaceStatusResult, GenerateWorkspaceStatusFailure>> {
   if (candidates.length === 0) {
@@ -208,7 +214,9 @@ export async function generateWorkspaceStatus(
             new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
           ]);
           if (usage !== undefined) {
-            await options.recordUsage(modelString, usage);
+            await options.recordUsage(modelString, usage, {
+              costsIncluded: modelCostsIncluded(modelResult.data),
+            });
           }
         } catch {
           // Usage promise rejection must not fail an otherwise good status.

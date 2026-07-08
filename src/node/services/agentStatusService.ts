@@ -348,8 +348,14 @@ export class AgentStatusService {
       if (this.stopped) return;
       const result = await generateWorkspaceStatus(transcript, candidates, this.aiService, {
         streaming,
-        recordUsage: async (modelString, usage) => {
-          await this.sessionUsageService?.recordHeadlessUsage(workspaceId, modelString, usage);
+        recordUsage: async (modelString, usage, usageOptions) => {
+          await this.sessionUsageService?.recordHeadlessUsage(
+            workspaceId,
+            modelString,
+            usage,
+            undefined,
+            { costsIncluded: usageOptions.costsIncluded }
+          );
         },
       });
       // Re-check after the generator returns: the same hazard at a later

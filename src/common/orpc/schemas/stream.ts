@@ -494,13 +494,16 @@ export const ErrorEventSchema = z.object({
 });
 
 /**
- * Emitted when a child workspace is deleted and its accumulated session usage has been
- * rolled up into the parent workspace.
+ * Emitted when accumulated session usage changes outside the live stream path:
+ * a deleted child workspace's usage rolled up into the parent, or headless
+ * usage (e.g. a /btw side question) recorded against the workspace itself.
  */
 export const SessionUsageDeltaEventSchema = z.object({
   type: z.literal("session-usage-delta"),
-  workspaceId: z.string().meta({ description: "Parent workspace ID" }),
-  sourceWorkspaceId: z.string().meta({ description: "Deleted child workspace ID" }),
+  workspaceId: z.string().meta({ description: "Workspace receiving the usage delta" }),
+  sourceWorkspaceId: z
+    .string()
+    .meta({ description: "Workspace that produced the usage (deleted child, or self)" }),
   byModelDelta: z.record(z.string(), ChatUsageDisplaySchema),
   timestamp: z.number(),
 });

@@ -454,6 +454,23 @@ describe("SessionUsageService", () => {
       expect(result?.lastRequest?.model).toBe(agentModel);
       expect(result?.lastRequest?.usage.input.tokens).toBe(100);
     });
+
+    it("prices costsIncluded (subscription-covered) usage at $0", async () => {
+      const workspaceId = "test-workspace";
+      const model = "openai:gpt-5.2";
+
+      const recorded = await service.recordHeadlessUsage(
+        workspaceId,
+        model,
+        { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+        undefined,
+        { costsIncluded: true }
+      );
+
+      expect(recorded?.usage.costsIncluded).toBe(true);
+      expect(recorded?.usage.input.tokens).toBe(1000);
+      expect(getTotalCost(recorded!.usage)).toBe(0);
+    });
   });
 
   describe("resetSessionUsage", () => {

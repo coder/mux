@@ -17,6 +17,7 @@ import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { LanguageModel } from "ai";
+import { modelCostsIncluded } from "@/node/services/providerModelFactory";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Result } from "@/common/types/result";
@@ -496,7 +497,15 @@ export class MemoryConsolidationService extends EventEmitter {
       // lock forever (and stall the sequential launch sweep behind it).
       abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
       recordUsage: async (usage) => {
-        await this.sessionUsageService?.recordHeadlessUsage(workspaceId, modelString, usage);
+        await this.sessionUsageService?.recordHeadlessUsage(
+          workspaceId,
+          modelString,
+          usage,
+          undefined,
+          {
+            costsIncluded: modelCostsIncluded(modelResult.data),
+          }
+        );
       },
     });
     // A stream failure (provider error or the run timeout) means the pass did
@@ -628,7 +637,9 @@ export class MemoryConsolidationService extends EventEmitter {
             await this.sessionUsageService?.recordHeadlessUsage(
               metadata.workspaceId,
               modelString,
-              usage
+              usage,
+              undefined,
+              { costsIncluded: modelCostsIncluded(modelResult.data) }
             );
           },
         });

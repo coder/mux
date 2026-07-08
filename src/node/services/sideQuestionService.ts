@@ -28,6 +28,7 @@
 
 import { streamText, type ModelMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import { modelCostsIncluded } from "./providerModelFactory";
 import type { AIService } from "./aiService";
 import type { HistoryService } from "./historyService";
 import { log } from "./log";
@@ -405,6 +406,20 @@ export async function askSideQuestion(
           ]).catch(() => undefined);
         usage = await withTimeout(stream.totalUsage);
         usageProviderMetadata = await withTimeout(stream.providerMetadata);
+        // Subscription-covered routing (Codex OAuth) must price at $0. The
+        // StreamManager path stamps this via markProviderMetadataCostsIncluded;
+        // /btw bypasses it, so stamp here — the persisted answer row (analytics
+        // ETL) and the recordUsage callback both read this metadata.
+        if (usage !== undefined && modelCostsIncluded(modelResult.data)) {
+          const existingMux = usageProviderMetadata?.mux;
+          usageProviderMetadata = {
+            ...(usageProviderMetadata ?? {}),
+            mux: {
+              ...(typeof existingMux === "object" && existingMux !== null ? existingMux : {}),
+              costsIncluded: true,
+            },
+          };
+        }
       } catch (error) {
         lastError = mapNameGenerationError(error, modelString);
         log.warn("Side question failed; trying next candidate", {

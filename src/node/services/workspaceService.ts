@@ -5411,12 +5411,24 @@ export class WorkspaceService extends EventEmitter {
       // /btw bypasses StreamManager, so record its spend explicitly or it
       // never reaches session-usage.json / cost displays.
       recordUsage: async (modelString, usage, providerMetadata) => {
-        await this.sessionUsageService?.recordHeadlessUsage(
+        const recorded = await this.sessionUsageService?.recordHeadlessUsage(
           workspaceId,
           modelString,
           usage,
           providerMetadata
         );
+        // The renderer's session-usage cache only updates from stream-end
+        // usage metadata (absent for /btw) or delta events, so emit a delta —
+        // otherwise an open Costs tab shows stale totals until reload.
+        if (recorded) {
+          this.sessions.get(workspaceId)?.emitChatEvent({
+            type: "session-usage-delta",
+            workspaceId,
+            sourceWorkspaceId: workspaceId,
+            byModelDelta: { [recorded.model]: recorded.usage },
+            timestamp: Date.now(),
+          });
+        }
       },
     });
     if (!result.success) {
