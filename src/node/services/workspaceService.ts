@@ -1540,6 +1540,12 @@ export interface WorkspaceServiceEvents {
     removedParentWorkspaceId?: string;
   }) => void;
   activity: (event: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }) => void;
+  /**
+   * Request an incremental analytics ingest for a workspace whose chat.jsonl
+   * gained billable usage outside the StreamManager stream-end path (e.g. a
+   * /btw side question). ServiceContainer routes this to AnalyticsService.
+   */
+  analyticsIngest: (event: { workspaceId: string }) => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
@@ -5419,6 +5425,11 @@ export class WorkspaceService extends EventEmitter {
         error: result.error.raw ?? `Side question failed: ${result.error.type}`,
       };
     }
+    // The persisted answer row now carries metadata.usage, but incremental
+    // analytics ingest is normally driven by StreamManager stream-end (which
+    // /btw bypasses). Request an ingest pass so the spend reaches dashboard
+    // totals without waiting for the next real stream or an app restart.
+    this.emit("analyticsIngest", { workspaceId });
     return { success: true, modelUsed: result.data.modelUsed };
   }
 

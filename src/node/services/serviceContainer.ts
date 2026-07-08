@@ -385,23 +385,30 @@ export class ServiceContainer {
     this.aiService.on("tool-call-end", (data: ToolCallEndEvent) =>
       this.sessionTimingService.handleToolCallEnd(data)
     );
-    this.aiService.on("stream-end", (data: StreamEndEvent) => {
-      this.sessionTimingService.handleStreamEnd(data);
-
-      const workspaceLookup = this.config.findWorkspace(data.workspaceId);
-      const sessionDir = this.config.getSessionDir(data.workspaceId);
+    // Newly created sub-agent workspaces are ingested here before a full rebuild,
+    // so keep workspaceName + parentWorkspaceId to avoid NULL analytics attribution.
+    // Multi-project workspaces stay stored under _multi in config, but analytics should
+    // still attribute spend to the workspace's first real project path.
+    const ingestWorkspaceAnalytics = (workspaceId: string) => {
+      const workspaceLookup = this.config.findWorkspace(workspaceId);
+      const sessionDir = this.config.getSessionDir(workspaceId);
       const analyticsProjectPath =
         workspaceLookup?.attributionProjectPath ?? workspaceLookup?.projectPath;
-      // Newly created sub-agent workspaces are ingested here before a full rebuild,
-      // so keep workspaceName + parentWorkspaceId to avoid NULL analytics attribution.
-      // Multi-project workspaces stay stored under _multi in config, but analytics should
-      // still attribute spend to the workspace's first real project path.
-      this.analyticsService.ingestWorkspace(data.workspaceId, sessionDir, {
+      this.analyticsService.ingestWorkspace(workspaceId, sessionDir, {
         projectPath: analyticsProjectPath,
         projectName: analyticsProjectPath ? path.basename(analyticsProjectPath) : undefined,
         workspaceName: workspaceLookup?.workspaceName,
         parentWorkspaceId: workspaceLookup?.parentWorkspaceId,
       });
+    };
+    this.aiService.on("stream-end", (data: StreamEndEvent) => {
+      this.sessionTimingService.handleStreamEnd(data);
+      ingestWorkspaceAnalytics(data.workspaceId);
+    });
+    // Billable usage persisted outside StreamManager stream-end (e.g. /btw
+    // side-question answers) requests its own incremental ingest pass.
+    this.workspaceService.on("analyticsIngest", (event) => {
+      ingestWorkspaceAnalytics(event.workspaceId);
     });
     // WorkspaceService emits metadata:null after successful remove().
     // Clear analytics rows immediately so deleted workspaces disappear from stats
