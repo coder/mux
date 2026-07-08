@@ -17,6 +17,7 @@ import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { LanguageModel } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { modelCostsIncluded } from "@/node/services/providerModelFactory";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
@@ -406,6 +407,36 @@ export class MemoryConsolidationService extends EventEmitter {
   }
 
   /**
+   * Build the `recordUsage` callback shared by the consolidation and harvest
+   * sweeps. Both route the sweep's billed usage to the headless-usage sidecar
+   * and, when a row is recorded, request an ingest pass (forwarded by
+   * ServiceContainer) so sweep spend reaches dashboard totals promptly instead
+   * of stranding until an unrelated stream-end or restart.
+   */
+  private makeSweepUsageRecorder(
+    workspaceId: string,
+    modelString: string,
+    model: LanguageModel,
+    analyticsSource: "memory_consolidation" | "memory_harvest"
+  ): (usage: LanguageModelV2Usage, providerMetadata?: Record<string, unknown>) => Promise<void> {
+    return async (usage, providerMetadata) => {
+      const recorded = await this.sessionUsageService?.recordHeadlessUsage(
+        workspaceId,
+        modelString,
+        usage,
+        providerMetadata,
+        {
+          costsIncluded: modelCostsIncluded(model),
+          analyticsSource,
+        }
+      );
+      if (recorded) {
+        this.emit("analyticsIngest", { workspaceId });
+      }
+    };
+  }
+
+  /**
    * Funnel for every trigger. Checks experiment + debounce, then runs and
    * journals. Returns the record on a completed run, or a skip reason.
    */
@@ -496,24 +527,12 @@ export class MemoryConsolidationService extends EventEmitter {
       // Hard timeout: a wedged provider stream must not hold the in-flight
       // lock forever (and stall the sequential launch sweep behind it).
       abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
-      recordUsage: async (usage, providerMetadata) => {
-        const recorded = await this.sessionUsageService?.recordHeadlessUsage(
-          workspaceId,
-          modelString,
-          usage,
-          providerMetadata,
-          {
-            costsIncluded: modelCostsIncluded(modelResult.data),
-            analyticsSource: "memory_consolidation",
-          }
-        );
-        // The sidecar row only reaches dashboard totals via an explicit
-        // ingest pass; request one (forwarded by ServiceContainer) so sweep
-        // spend doesn't strand until an unrelated stream-end or restart.
-        if (recorded) {
-          this.emit("analyticsIngest", { workspaceId });
-        }
-      },
+      recordUsage: this.makeSweepUsageRecorder(
+        workspaceId,
+        modelString,
+        modelResult.data,
+        "memory_consolidation"
+      ),
     });
     // A stream failure (provider error or the run timeout) means the pass did
     // NOT cover the memory state: skip the journal record so the debounce and
@@ -640,23 +659,12 @@ export class MemoryConsolidationService extends EventEmitter {
           messages: epoch.data.messages,
           summary: epoch.data.summary,
           abortSignal: AbortSignal.timeout(MEMORY_CONSOLIDATION_TIMEOUT_MS),
-          recordUsage: async (usage, providerMetadata) => {
-            const recorded = await this.sessionUsageService?.recordHeadlessUsage(
-              metadata.workspaceId,
-              modelString,
-              usage,
-              providerMetadata,
-              {
-                costsIncluded: modelCostsIncluded(modelResult.data),
-                analyticsSource: "memory_harvest",
-              }
-            );
-            // Same as consolidation above: request an ingest pass so harvest
-            // spend reaches dashboard totals promptly.
-            if (recorded) {
-              this.emit("analyticsIngest", { workspaceId: metadata.workspaceId });
-            }
-          },
+          recordUsage: this.makeSweepUsageRecorder(
+            metadata.workspaceId,
+            modelString,
+            modelResult.data,
+            "memory_harvest"
+          ),
         });
         if (harvest.streamError !== undefined) {
           throw new Error(`harvest stream failed: ${harvest.streamError}`);
