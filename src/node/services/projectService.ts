@@ -511,7 +511,12 @@ export class ProjectService {
       // Distinguishes in-transform failures for directory cleanup: when a concurrent
       // call registered this same path ("duplicate"), the directory belongs to that
       // winner and must not be deleted; other rejections leave the directory ours.
-      let transformFailure: "duplicate" | "depth" | "hierarchy-changed" | null = null;
+      let transformFailure:
+        | "duplicate"
+        | "depth"
+        | "hierarchy-changed"
+        | "hierarchy-changed-descendant"
+        | null = null;
       await this.config.editConfig((freshConfig) => {
         if (freshConfig.projects.has(normalizedPath) || freshConfig.projects.has(canonicalPath)) {
           transformFailure = "duplicate";
@@ -540,13 +545,16 @@ export class ProjectService {
         const freshDescendantProjectPaths = Array.from(freshConfig.projects.keys()).filter(
           (candidatePath) => isPathDescendant(normalizedPath, candidatePath)
         );
-        if (
-          freshParentProjectPath !== parentProjectPath ||
-          freshDescendantProjectPaths.some(
-            (candidatePath) => !descendantProjectPaths.includes(candidatePath)
-          )
-        ) {
-          transformFailure = "hierarchy-changed";
+        const hasNewDescendantProject = freshDescendantProjectPaths.some(
+          (candidatePath) => !descendantProjectPaths.includes(candidatePath)
+        );
+        if (freshParentProjectPath !== parentProjectPath || hasNewDescendantProject) {
+          // A new descendant registered under this path claims the directory tree we
+          // created: recursive cleanup would delete that project's checkout, so treat
+          // it like the duplicate case and leave the directory alone.
+          transformFailure = hasNewDescendantProject
+            ? "hierarchy-changed-descendant"
+            : "hierarchy-changed";
           createResult = Err("Project hierarchy changed concurrently; please retry");
           return freshConfig;
         }
@@ -560,11 +568,11 @@ export class ProjectService {
         return freshConfig;
       });
 
-      // Do NOT clean up the created directory when the transform loses the duplicate
-      // re-check: a concurrent registration of this same path owns the directory now.
-      // Deleting it would destroy the winner's checkout (including any files created
-      // there after the winning call returned). Depth/hierarchy rejections imply no
-      // concurrent claim on this path, so the directory we created is still ours.
+      // Do NOT clean up the created directory when a concurrent registration claims
+      // it: a duplicate owns this exact path, and a new descendant project lives
+      // inside the tree we created — recursive removal would destroy the winner's
+      // checkout either way (including files created after its call returned). Only
+      // depth and parent-only hierarchy rejections leave the directory ours to remove.
       if (transformFailure === "depth" || transformFailure === "hierarchy-changed") {
         await cleanupCreatedDirectory();
       }

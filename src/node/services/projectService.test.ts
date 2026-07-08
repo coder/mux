@@ -206,6 +206,32 @@ describe("ProjectService", () => {
       // Pre-existing directory not created by this call must survive the rejection.
       expect((await fs.stat(pkgPath)).isDirectory()).toBe(true);
     });
+
+    // Regression (PR #3694 Codex P1): when create() made the directory itself and the
+    // hierarchy rejection is caused by a NEW DESCENDANT registered concurrently, the
+    // descendant's checkout lives inside that directory tree — recursive cleanup would
+    // delete the winning project's files.
+    it("create keeps the directory when a descendant project registered concurrently", async () => {
+      const parentPath = path.join(tempDir, "race-parent");
+      const descendantPath = path.join(parentPath, "pkg");
+
+      // Deterministic interleaving: queue the descendant registration so create()'s
+      // synchronous snapshot read misses it (createdDirectory === true, no validated
+      // descendants) while its queued transform sees the new descendant.
+      const registerDescendant = config.editConfig((cfg) => {
+        cfg.projects.set(descendantPath, { workspaces: [] });
+        return cfg;
+      });
+      const result = await service.create(parentPath);
+      await registerDescendant;
+
+      expect(result.success).toBe(false);
+      expect(!result.success && result.error).toContain("changed concurrently");
+      // The created directory now hosts the registered descendant project's tree:
+      // it must NOT be recursively deleted by the loser's cleanup.
+      expect((await fs.stat(parentPath)).isDirectory()).toBe(true);
+      expect(config.loadConfigOrDefault().projects.has(descendantPath)).toBe(true);
+    });
   });
 
   describe("listDirectory", () => {
