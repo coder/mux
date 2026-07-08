@@ -172,6 +172,7 @@ function getVisualState(opts: {
   isWorking: boolean;
   isStarting: boolean;
   hasActiveDelegatedWork: boolean;
+  isWaitingOnBashMonitor: boolean;
   isUnread: boolean;
   isSelected: boolean;
   hasError: boolean;
@@ -187,6 +188,12 @@ function getVisualState(opts: {
   }
   if (opts.isWorking || opts.isStarting || opts.isInitializing || opts.hasActiveDelegatedWork) {
     return "active";
+  }
+  // Idle but an armed background bash monitor will wake the agent: keep the row
+  // live (not "finished") without the streaming pulse, so users can tell parked
+  // wake-waiting apart from active streaming. Real work above wins.
+  if (opts.isWaitingOnBashMonitor) {
+    return "waiting";
   }
   // Avoid unread flicker for the currently selected workspace while last-read
   // timestamps catch up on the next render.
@@ -653,7 +660,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const hasError = lastAbortReason?.reason === "system";
   const hasActiveWorkflowRun = activeWorkflowRunCount > 0;
   // An armed background bash monitor means the workspace is still waiting to be
-  // woken, so keep the row on the active dot instead of letting it look finished.
+  // woken, so keep the row live (distinct "waiting" dot) instead of letting it
+  // look finished — but don't let it masquerade as active streaming.
   const hasActiveBashMonitor = activeBashMonitorCount > 0;
   const hasActiveDelegatedWork = (delegatedActivity?.activeCount ?? 0) > 0;
   const delegatedStatusText = delegatedActivity
@@ -683,7 +691,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isArchiving: isArchiving === true,
     isWorking,
     isStarting: displayStreamingStatusPhase === "starting",
-    hasActiveDelegatedWork: hasActiveDelegatedWork || hasActiveWorkflowRun || hasActiveBashMonitor,
+    hasActiveDelegatedWork: hasActiveDelegatedWork || hasActiveWorkflowRun,
+    isWaitingOnBashMonitor: hasActiveBashMonitor,
     isUnread,
     isSelected,
     hasError,
