@@ -4590,7 +4590,13 @@ export class WorkspaceService extends EventEmitter {
     const projectConfig = config.projects.get(target.projectPath);
     return (
       projectConfig?.workspaces.find((workspace) => workspace.id === target.workspaceId) ??
-      projectConfig?.workspaces.find((workspace) => workspace.path === target.workspacePath)
+      // Path fallback is for legacy entries that predate stable IDs only. A path match
+      // that carries a DIFFERENT id is a replacement workspace (paths are reusable after
+      // deletion) — treat the original entry as gone rather than leaking the stale
+      // settings write into the fresh workspace.
+      projectConfig?.workspaces.find(
+        (workspace) => workspace.path === target.workspacePath && !workspace.id
+      )
     );
   }
 

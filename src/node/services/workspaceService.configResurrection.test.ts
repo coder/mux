@@ -163,4 +163,35 @@ describe("WorkspaceService config resurrection regression", () => {
     expect(unsetResult.success).toBe(true);
     expect(readPersistedWorkspaces().find((w) => w.id === "doomed")).toBeUndefined();
   });
+
+  // Regression (PR #3694 Codex P2): workspace paths are reusable after deletion. A
+  // settings write queued behind a remove+recreate that reuses the same path must
+  // treat its original entry as gone — the path fallback previously retargeted the
+  // stale write onto the REPLACEMENT workspace's fresh entry.
+  test("stale heartbeat write does not leak onto a replacement workspace at the same path", async () => {
+    const sharedPath = path.join(PROJECT_PATH, "reused-checkout");
+    await seedWorkspaces([workspaceEntry("original", { path: sharedPath })]);
+
+    // Enqueue remove + recreate back-to-back (editConfig is FIFO) so BOTH land before
+    // the heartbeat write's transform: a NEW workspace (different id) reuses the path.
+    const removal = config.removeWorkspace("original");
+    const recreate = config.editConfig((cfg) => {
+      cfg.projects
+        .get(PROJECT_PATH)
+        ?.workspaces.push(workspaceEntry("replacement", { path: sharedPath }));
+      return cfg;
+    });
+    // Resolves "original" from the pre-removal snapshot, then its transform runs
+    // after the remove+recreate and must NOT match the replacement by path.
+    const writeResult = await service.setHeartbeatSettings("original", {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+    });
+    await Promise.all([removal, recreate]);
+
+    expect(writeResult.success).toBe(false);
+    const replacement = readPersistedWorkspaces().find((w) => w.id === "replacement");
+    expect(replacement).toBeDefined();
+    expect(replacement?.heartbeat).toBeUndefined();
+  });
 });
