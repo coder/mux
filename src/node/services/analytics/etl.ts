@@ -1260,8 +1260,14 @@ async function ingestHeadlessUsage(
     contents = await fs.readFile(path.join(sessionDir, HEADLESS_USAGE_FILE_NAME), "utf-8");
   } catch (error) {
     if (isRecord(error) && error.code === "ENOENT") {
-      // No sidecar — nothing to (re)ingest. Workspace removal clears any
-      // previously ingested headless rows via clearWorkspaceAnalyticsState.
+      // Sidecar gone: mirror the delete+reinsert idempotency below with an
+      // empty reinsert. Without this, a deleted sidecar (with chat.jsonl
+      // intact) leaves stale headless rows behind while the caller advances
+      // the watermark to the no-sidecar signal — permanently reporting
+      // deleted spend. Cheap no-op for the common never-had-a-sidecar case.
+      await conn.run("DELETE FROM events WHERE workspace_id = ? AND tool_name LIKE 'headless:%'", [
+        workspaceId,
+      ]);
       return;
     }
     throw error;

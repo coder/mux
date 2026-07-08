@@ -1407,6 +1407,31 @@ describe("headless usage ingestion", () => {
     expect(await queryEventCount(conn, workspaceId)).toBe(3);
   });
 
+  test("clears stale headless rows when the sidecar disappears", async () => {
+    const conn = await createTestConn();
+    const workspaceId = "headless-ws-removed";
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir);
+    await writeHeadlessUsageJsonl(sessionDir, [makeHeadlessLine()]);
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(2); // 1 chat + 1 headless
+
+    // Sidecar deleted while chat.jsonl remains: the changed signal re-ingests
+    // and must drop the stale headless rows instead of reporting deleted
+    // spend forever (the watermark advances to the no-sidecar signal).
+    await fs.rm(path.join(sessionDir, "headless-usage.jsonl"));
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(1); // chat row only
+
+    const headlessRows = await queryRows(
+      conn,
+      "SELECT 1 FROM events WHERE workspace_id = ? AND tool_name LIKE 'headless:%'",
+      [workspaceId]
+    );
+    expect(headlessRows).toHaveLength(0);
+  });
+
   test("unix-ms timestamps survive the incremental insert path un-truncated", async () => {
     // Regression: @duckdb/node-api infers integral JS numbers as INT32 for
     // untyped parameters, silently wrapping unix-ms timestamps (e.g.
