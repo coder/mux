@@ -8512,6 +8512,28 @@ export class WorkspaceService extends EventEmitter {
     return this.sessions.get(workspaceId.trim())?.hasQueuedWorkspaceTurn(handleId) ?? false;
   }
 
+  /**
+   * Remove only the queued workspace-turn entry for this handle (targeted cancel);
+   * unrelated queued messages stay pending. Returns whether an entry was removed.
+   */
+  removeQueuedWorkspaceTurn(
+    workspaceId: string,
+    handleId: string,
+    options: { cancelReason: string }
+  ): Result<boolean> {
+    try {
+      const session = this.sessions.get(workspaceId.trim());
+      if (session == null) {
+        return Ok(false);
+      }
+      return Ok(session.removeQueuedWorkspaceTurn(handleId, options.cancelReason));
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error in removeQueuedWorkspaceTurn handler:", error);
+      return Err(`Failed to remove queued workspace turn: ${errorMessage}`);
+    }
+  }
+
   hasQueuedMessages(workspaceId: string, dispatchMode?: "tool-end" | "turn-end"): boolean {
     return this.sessions.get(workspaceId.trim())?.hasQueuedMessages(dispatchMode) ?? false;
   }

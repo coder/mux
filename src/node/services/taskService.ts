@@ -6008,11 +6008,13 @@ export class TaskService {
     }
 
     if (shouldClearQueuedPrompt && workspaceId != null) {
-      const clearQueueResult = this.workspaceService.clearQueue(workspaceId, {
+      // Targeted removal: the queue can hold unrelated user messages before/behind
+      // this turn's entry, so clearing the whole queue would drop real input.
+      const removeResult = this.workspaceService.removeQueuedWorkspaceTurn(workspaceId, handleId, {
         cancelReason: "Workspace turn interrupted",
       });
-      if (!clearQueueResult.success) {
-        return Err(`Failed to clear queued workspace turn: ${clearQueueResult.error}`);
+      if (!removeResult.success) {
+        return Err(`Failed to clear queued workspace turn: ${removeResult.error}`);
       }
     }
     if (shouldStopStream && workspaceId != null) {

@@ -5118,6 +5118,27 @@ export class AgentSession {
     return this.messageQueue.hasWorkspaceTurn(handleId);
   }
 
+  /**
+   * Remove only the queued workspace-turn entry for this handle, keeping any
+   * unrelated queued messages (interrupting a queued turn must not drop user
+   * input queued before/behind it). Returns true when an entry was removed.
+   */
+  removeQueuedWorkspaceTurn(handleId: string, cancelReason: string): boolean {
+    this.assertNotDisposed("removeQueuedWorkspaceTurn");
+    assert(handleId.length > 0, "removeQueuedWorkspaceTurn requires handleId");
+    const callbacks = this.messageQueue.removeWorkspaceTurn(handleId);
+    if (callbacks == null) {
+      return false;
+    }
+    this.emitQueuedMessageChanged();
+    this.backgroundProcessManager.setMessageQueued(
+      this.workspaceId,
+      !this.messageQueue.isEmpty() && this.messageQueue.getQueueDispatchMode() === "tool-end"
+    );
+    this.notifyQueuedMessageCleared(callbacks, cancelReason);
+    return true;
+  }
+
   hasQueuedMessages(dispatchMode?: "tool-end" | "turn-end"): boolean {
     return (
       !this.messageQueue.isEmpty() &&

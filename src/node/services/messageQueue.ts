@@ -376,6 +376,31 @@ export class MessageQueue {
   }
 
   /**
+   * Remove only the entry pinned to this workspace-turn handle, leaving unrelated
+   * queued messages intact (interrupting a queued turn must not drop user input).
+   * Returns the removed entry's cancellation callbacks, or null when no entry matches.
+   */
+  removeWorkspaceTurn(handleId: string): QueueClearCallbacks | null {
+    if (handleId.length === 0) {
+      return null;
+    }
+    const index = this.entries.findIndex(
+      (entry) =>
+        isWorkspaceTurnMetadata(entry.muxMetadata) && entry.muxMetadata.taskHandleId === handleId
+    );
+    if (index === -1) {
+      return null;
+    }
+    const [entry] = this.entries.splice(index, 1);
+    return {
+      ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+      ...(entry.onAcceptedPreStreamFailure != null
+        ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
+        : {}),
+    };
+  }
+
+  /**
    * Remove the first entry and return its combined message and options for sending.
    * Later entries stay queued and dispatch on subsequent drains (FIFO).
    * Caller must check {@link isEmpty} first.

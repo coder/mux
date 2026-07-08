@@ -343,6 +343,25 @@ describe("MessageQueue", () => {
       expect(internal?.onCanceled).toBe(onCanceled);
     });
 
+    it("removeWorkspaceTurn drops only the matching entry and keeps user messages", () => {
+      const onCanceled = () => undefined;
+      queue.add("User message before");
+      queue.add(
+        "Follow up",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        { agentInitiated: true, onCanceled }
+      );
+      queue.add("User message after");
+
+      expect(queue.removeWorkspaceTurn("wst_other")).toBeNull();
+
+      const callbacks = queue.removeWorkspaceTurn("wst_followup");
+      expect(callbacks?.onCanceled).toBe(onCanceled);
+      expect(queue.hasWorkspaceTurn("wst_followup")).toBe(false);
+      // Unrelated queued input survives the targeted cancel.
+      expect(queue.getMessages()).toEqual(["User message before", "User message after"]);
+    });
+
     it("should report clear callbacks for every pending entry", () => {
       const onCanceledFirst = () => undefined;
       const onCanceledSecond = () => undefined;
