@@ -22,6 +22,14 @@ export interface SyncPlanInput {
    * (typically $0 unknown-model) costs and need a full rebuild to reprice.
    */
   pricingFingerprintChanged: boolean;
+  /**
+   * Watermarked workspaces whose on-disk change signal (chat files +
+   * headless-usage sidecar) no longer matches the stored watermark — writes
+   * that landed after the last ingest but before an app exit. Without this,
+   * startup would noop and that spend stays out of dashboard totals until an
+   * unrelated ingest touches the workspace.
+   */
+  changedSignalWorkspaceIds: Set<string>;
 }
 
 export function decideSyncPlan(input: SyncPlanInput): SyncPlan {
@@ -73,6 +81,17 @@ export function decideSyncPlan(input: SyncPlanInput): SyncPlan {
     if (!input.watermarkWorkspaceIds.has(id)) {
       workspaceIdsToIngest.push(id);
     }
+  }
+
+  // Watermarked workspaces with drifted on-disk signals (crash-stranded chat
+  // or headless-sidecar writes). Disjoint from the missing-watermark list by
+  // construction; assert instead of dedupe.
+  for (const id of input.changedSignalWorkspaceIds) {
+    assert(
+      input.knownWorkspaceIds.has(id) && input.watermarkWorkspaceIds.has(id),
+      "decideSyncPlan: changedSignalWorkspaceIds must be known, watermarked workspaces"
+    );
+    workspaceIdsToIngest.push(id);
   }
 
   const workspaceIdsToPurge: string[] = [];

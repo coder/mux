@@ -37,8 +37,17 @@ export { CHAT_FILE_NAME };
  *   watermark staleness check still fires when a file disappears even if the
  *   surviving file's mtime equals the previously stored max (e.g. same-tick
  *   writes followed by deleting chat.jsonl).
+ * - The headless-usage sidecar also feeds `changeSignal` (but not `mtimeMs`,
+ *   which stays chat-only for rebuild dedup recency): startup syncCheck
+ *   compares stored watermark signals against disk, so a sidecar line
+ *   appended right before an app exit must shift the signal or that spend
+ *   strands until an unrelated ingest. Present-only (no missing-file marker):
+ *   the sidecar is append-only, and a marker would drift the signal for every
+ *   sidecar-less workspace on upgrade.
+ *
+ * Exported for the analytics worker's startup syncCheck.
  */
-async function statSessionChatHistory(
+export async function statSessionChatHistory(
   sessionDir: string
 ): Promise<{ mtimeMs: number; changeSignal: number } | null> {
   let mtimeMs: number | null = null;
@@ -53,6 +62,15 @@ async function statSessionChatHistory(
         throw error;
       }
       changeSignal -= 1; // presence marker: distinguishes a missing file
+    }
+  }
+
+  try {
+    const stat = await fs.stat(path.join(sessionDir, HEADLESS_USAGE_FILE_NAME));
+    changeSignal += stat.mtimeMs + stat.size;
+  } catch (error) {
+    if (!(isRecord(error) && error.code === "ENOENT")) {
+      throw error;
     }
   }
 

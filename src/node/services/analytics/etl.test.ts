@@ -15,6 +15,7 @@ import {
   readPersistedWorkspaceHeadSignature,
   readStoredPricingFingerprint,
   rebuildAll,
+  statSessionChatHistory,
   storePricingFingerprint,
 } from "./etl";
 import {
@@ -1404,6 +1405,25 @@ describe("headless usage ingestion", () => {
     // and does not disturb chat-derived rows.
     await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
     expect(await queryEventCount(conn, workspaceId)).toBe(3);
+  });
+
+  test("sidecar appends shift the change signal so startup syncCheck detects them", async () => {
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir);
+
+    const before = await statSessionChatHistory(sessionDir);
+    expect(before).not.toBeNull();
+
+    // Crash scenario: recordHeadlessUsage appends a sidecar line but the app
+    // exits before the fire-and-forget ingest completes. The startup sync
+    // compares stored watermark signals against disk, so a sidecar-only write
+    // must shift the signal or the spend strands until an unrelated ingest.
+    await writeHeadlessUsageJsonl(sessionDir, [makeHeadlessLine()]);
+    const after = await statSessionChatHistory(sessionDir);
+    expect(after).not.toBeNull();
+    expect(after?.changeSignal).not.toBe(before?.changeSignal);
+    // mtimeMs stays chat-only (rebuild dedup recency).
+    expect(after?.mtimeMs).toBe(before!.mtimeMs);
   });
 
   test("prices mapped custom models via metadataModel while keeping raw attribution", async () => {

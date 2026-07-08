@@ -10,6 +10,7 @@ import {
   ingestWorkspace,
   readStoredPricingFingerprint,
   rebuildAll,
+  statSessionChatHistory,
   storePricingFingerprint,
 } from "./etl";
 import {
@@ -239,21 +240,26 @@ function parseNonEmptyString(value: unknown): string | null {
   return value;
 }
 
-async function listWatermarkWorkspaceIds(): Promise<Set<string>> {
-  const result = await getConn().run("SELECT workspace_id FROM ingest_watermarks");
+/** Watermarked workspace IDs mapped to their stored change signal (last_modified). */
+async function listWatermarkSignalsById(): Promise<Map<string, number>> {
+  const result = await getConn().run("SELECT workspace_id, last_modified FROM ingest_watermarks");
   const rows = await result.getRowObjectsJS();
 
-  const watermarkWorkspaceIds = new Set<string>();
+  const watermarkSignalsById = new Map<string, number>();
   for (const row of rows) {
     const workspaceId = parseNonEmptyString(row.workspace_id);
     assert(
       workspaceId !== null,
       "syncCheck expected ingest_watermarks rows to have non-empty workspace_id"
     );
-    watermarkWorkspaceIds.add(workspaceId);
+    assert(
+      typeof row.last_modified === "number" && Number.isFinite(row.last_modified),
+      "syncCheck expected ingest_watermarks rows to have a finite last_modified"
+    );
+    watermarkSignalsById.set(workspaceId, row.last_modified);
   }
 
-  return watermarkWorkspaceIds;
+  return watermarkSignalsById;
 }
 
 async function checkpointIfNeeded(
@@ -309,11 +315,34 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
   const discoveredWorkspacesById = await discoverAllWorkspaces(data.sessionsDir);
   const knownWorkspaceIds = new Set(discoveredWorkspacesById.keys());
 
-  const watermarkWorkspaceIds = await listWatermarkWorkspaceIds();
+  const watermarkSignalsById = await listWatermarkSignalsById();
+  const watermarkWorkspaceIds = new Set(watermarkSignalsById.keys());
   assert(
     watermarkWorkspaceIds.size === watermarkCount,
     "syncCheck expected watermark_count to match ingest_watermarks workspace IDs"
   );
+
+  // Watermarked workspaces whose on-disk signal drifted since the last ingest:
+  // writes (chat or headless-usage sidecar) that landed after the last worker
+  // pass but before an app exit. An ID-only diff would noop and strand that
+  // spend until an unrelated ingest touches the workspace.
+  const changedSignalWorkspaceIds = new Set<string>();
+  for (const [workspaceId, discovered] of discoveredWorkspacesById) {
+    const storedSignal = watermarkSignalsById.get(workspaceId);
+    if (storedSignal === undefined) {
+      continue; // No watermark — already covered by the ID diff below.
+    }
+    try {
+      const stat = await statSessionChatHistory(discovered.sessionDir);
+      if (stat !== null && stat.changeSignal !== storedSignal) {
+        changedSignalWorkspaceIds.add(workspaceId);
+      }
+    } catch (error) {
+      process.stderr.write(
+        `[analytics-worker] Failed to stat workspace during sync check (${workspaceId}): ${getErrorMessage(error)}\n`
+      );
+    }
+  }
 
   // Event costs are computed at ingest time; when the bundled pricing tables
   // change (app upgrade), rows priced under the old tables — typically $0 for
@@ -328,6 +357,7 @@ async function handleSyncCheck(data: SyncCheckData): Promise<SyncCheckResult> {
     watermarkWorkspaceIds,
     hasAnyWatermarkAtOrAboveZero,
     pricingFingerprintChanged,
+    changedSignalWorkspaceIds,
   });
 
   // Persist the current fingerprint for noop/incremental plans where nothing

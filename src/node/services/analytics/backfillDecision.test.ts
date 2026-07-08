@@ -9,6 +9,7 @@ function makeInput(overrides: Partial<SyncPlanInput> = {}): SyncPlanInput {
     watermarkWorkspaceIds: new Set(),
     hasAnyWatermarkAtOrAboveZero: false,
     pricingFingerprintChanged: false,
+    changedSignalWorkspaceIds: new Set(),
     ...overrides,
   };
 }
@@ -89,6 +90,46 @@ describe("decideSyncPlan", () => {
       ).toEqual({
         action: "incremental",
         workspaceIdsToIngest: ["w2"],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("returns incremental for watermarked workspaces with drifted change signals", () => {
+      // Crash-stranded writes: chat or headless-usage sidecar appended after
+      // the last ingest but before app exit. The ID diff alone would noop.
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 4,
+            watermarkCount: 2,
+            knownWorkspaceIds: new Set(["w1", "w2"]),
+            watermarkWorkspaceIds: new Set(["w1", "w2"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+            changedSignalWorkspaceIds: new Set(["w2"]),
+          })
+        )
+      ).toEqual({
+        action: "incremental",
+        workspaceIdsToIngest: ["w2"],
+        workspaceIdsToPurge: [],
+      });
+    });
+
+    test("combines missing-watermark and changed-signal workspaces in one plan", () => {
+      expect(
+        decideSyncPlan(
+          makeInput({
+            eventCount: 4,
+            watermarkCount: 1,
+            knownWorkspaceIds: new Set(["w1", "w2"]),
+            watermarkWorkspaceIds: new Set(["w1"]),
+            hasAnyWatermarkAtOrAboveZero: true,
+            changedSignalWorkspaceIds: new Set(["w1"]),
+          })
+        )
+      ).toEqual({
+        action: "incremental",
+        workspaceIdsToIngest: ["w2", "w1"],
         workspaceIdsToPurge: [],
       });
     });
