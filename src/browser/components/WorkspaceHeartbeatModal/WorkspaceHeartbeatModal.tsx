@@ -32,6 +32,11 @@ import {
 } from "@/constants/heartbeat";
 import { SEND_DISPATCH_MODES } from "@/browser/features/ChatInput/sendDispatchModes";
 
+// Shared styling for the modal's <select> controls (trigger, when-busy, context) so the
+// three dropdowns stay visually identical.
+const HEARTBEAT_SELECT_CLASS_NAME =
+  "border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent h-9 w-full rounded-md border px-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
+
 const HEARTBEAT_TRIGGER_OPTIONS: Array<{
   value: HeartbeatTrigger;
   label: string;
@@ -353,7 +358,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                         setDraftDirty(true);
                       }}
                       disabled={isSaving}
-                      className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent h-9 w-full rounded-md border px-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      className={HEARTBEAT_SELECT_CLASS_NAME}
                       aria-label="Heartbeat trigger"
                     >
                       {HEARTBEAT_TRIGGER_OPTIONS.map((option) => (
@@ -393,7 +398,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                         setDraftDirty(true);
                       }}
                       disabled={isSaving}
-                      className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent h-9 w-full rounded-md border px-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      className={HEARTBEAT_SELECT_CLASS_NAME}
                       aria-label="Heartbeat when busy"
                     >
                       {/* The default option's label follows the draft trigger (skip for idle,
@@ -431,7 +436,7 @@ export function WorkspaceHeartbeatModal(props: WorkspaceHeartbeatModalProps) {
                         setDraftDirty(true);
                       }}
                       disabled={isSaving}
-                      className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent h-9 w-full rounded-md border px-3 text-sm focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      className={HEARTBEAT_SELECT_CLASS_NAME}
                       aria-label="Heartbeat context mode"
                     >
                       {HEARTBEAT_CONTEXT_MODE_OPTIONS.map((option) => (
