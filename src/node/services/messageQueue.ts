@@ -32,7 +32,7 @@ function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
   return obj.type === "compaction-request" && typeof obj.rawCommand === "string";
 }
 
-// Workspace-turn task metadata must stay attached to exactly one queued message;
+// Workspace-turn task metadata must stay attached to exactly one queued entry;
 // otherwise a batched follow-up would leave one durable task handle with no matching stream-end.
 interface WorkspaceTurnMetadata {
   type: "workspace-turn-task";
@@ -68,25 +68,6 @@ type GoalInterventionPolicy = NonNullable<SendMessageOptions["goalInterventionPo
 // Derive from the Zod schema (SendMessageOptions) to stay in sync automatically.
 type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 
-/**
- * Queue for messages sent during active streaming.
- *
- * Stores:
- * - Message texts (accumulated)
- * - First muxMetadata (preserved - never overwritten by subsequent adds)
- * - Latest options (model, etc. - updated on each add)
- * - File parts (accumulated across all messages)
- *
- * IMPORTANT:
- * - Compaction requests must preserve their muxMetadata even when follow-up messages are queued.
- * - Agent-skill invocations cannot be batched with other messages; otherwise the skill metadata would
- *   “leak” onto later queued sends.
- *
- * Display logic:
- * - Single compaction request → shows rawCommand (/compact)
- * - Single agent-skill invocation → shows rawCommand (/{skill})
- * - Multiple messages → shows all actual message texts
- */
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
   agentInitiated?: boolean;
@@ -95,46 +76,97 @@ interface QueuedMessageInternalOptions {
   onCanceled?: (reason: string) => Promise<void> | void;
 }
 
+type QueueClearCallbacks = Pick<
+  QueuedMessageInternalOptions,
+  "onCanceled" | "onAcceptedPreStreamFailure"
+>;
+
+/**
+ * One dispatchable unit in the queue. Plain follow-up messages batch into a single
+ * entry (joined text, accumulated file parts); "special" sends (compaction requests,
+ * agent-skill invocations, workspace-turn follow-ups, callback-carrying internal
+ * sends) always start their own entry so their metadata/callbacks stay attached to
+ * exactly one dispatch.
+ */
+interface QueueEntry {
+  messages: string[];
+  /** First muxMetadata added to this entry (never overwritten by later batched adds). */
+  muxMetadata?: unknown;
+  latestOptions?: SendMessageOptions;
+  fileParts: FilePart[];
+  /** Dedupe keys registered by addOnce for adds that landed in this entry. */
+  dedupeKeys: Set<string>;
+  goalInterventionPolicy?: GoalInterventionPolicy;
+  dispatchMode: QueueDispatchMode;
+  /**
+   * Sealed entries never accept later batched messages: their callbacks/metadata
+   * correlate to exactly one turn (workspace-turn follow-ups, agent skills).
+   * Later messages queue as a new entry behind them instead.
+   */
+  sealed: boolean;
+  addCount: number;
+  syntheticCount: number;
+  agentInitiatedCount: number;
+  onCanceled?: (reason: string) => Promise<void> | void;
+  onAccepted?: () => Promise<void> | void;
+  onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+}
+
+/**
+ * FIFO queue of messages sent during active streaming.
+ *
+ * The queue holds ordered entries that dispatch one at a time (see dequeueNext):
+ * - Plain messages batch into the newest open entry (texts joined, file parts
+ *   accumulated, first muxMetadata preserved, latest options win).
+ * - Compaction requests, agent-skill invocations, workspace-turn follow-ups, and
+ *   callback-carrying internal sends each start their own entry, so queueing one
+ *   never blocks later sends — they simply dispatch after it (no enqueue errors).
+ * - Agent-skill / workspace-turn / callback entries are sealed: later messages
+ *   start a new entry instead of adopting their metadata or callbacks.
+ * - Compaction entries stay open: a follow-up typed behind a pending /compact
+ *   batches under the compaction request (long-standing behavior).
+ *
+ * Display logic:
+ * - A single-message compaction or agent-skill entry shows its rawCommand
+ *   (e.g. /compact, /{skill}); otherwise entries show their actual message texts.
+ */
 export class MessageQueue {
-  private messages: string[] = [];
-  private firstMuxMetadata?: unknown;
-  private latestOptions?: SendMessageOptions;
-  private accumulatedFileParts: FilePart[] = [];
-  private dedupeKeys: Set<string> = new Set<string>();
-  private goalInterventionPolicy?: GoalInterventionPolicy;
-  private queueDispatchMode: QueueDispatchMode = "tool-end";
-  private queuedEntryCount = 0;
-  private queuedSyntheticCount = 0;
-  private queuedAgentInitiatedCount = 0;
-  private onCanceled?: (reason: string) => Promise<void> | void;
-  private onAccepted?: () => Promise<void> | void;
-  private onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+  private entries: QueueEntry[] = [];
 
   /**
    * Check if the queue currently contains a compaction request.
    */
   hasCompactionRequest(): boolean {
-    return isCompactionMetadata(this.firstMuxMetadata);
+    return this.entries.some((entry) => isCompactionMetadata(entry.muxMetadata));
   }
 
   hasWorkspaceTurn(handleId: string): boolean {
     return (
       handleId.length > 0 &&
-      isWorkspaceTurnMetadata(this.firstMuxMetadata) &&
-      this.firstMuxMetadata.taskHandleId === handleId
+      this.entries.some(
+        (entry) =>
+          isWorkspaceTurnMetadata(entry.muxMetadata) && entry.muxMetadata.taskHandleId === handleId
+      )
     );
   }
 
+  /**
+   * Effective dispatch mode across pending entries: any entry queued for tool-end
+   * makes the whole queue dispatch at tool-end (sticky, matching pre-entry behavior),
+   * otherwise turn-end. Empty queue reports the tool-end default.
+   */
   getQueueDispatchMode(): QueueDispatchMode {
-    return this.queueDispatchMode;
+    if (this.entries.length === 0) {
+      return "tool-end";
+    }
+    return this.entries.some((entry) => entry.dispatchMode === "tool-end")
+      ? "tool-end"
+      : "turn-end";
   }
 
   /**
-   * Add a message to the queue.
-   * Preserves muxMetadata from first message, updates other options.
-   * Accumulates file parts.
-   *
-   * @throws Error if trying to add a compaction request when queue already has messages
+   * Add a message to the queue. Plain messages batch into the newest open entry;
+   * special sends start their own entry (see class docblock). Never throws.
    */
   add(
     message: string,
@@ -146,19 +178,23 @@ export class MessageQueue {
 
   /**
    * Whether a message queued via {@link addOnce} with this dedupe key is still pending.
-   * Keys reset when the queue is cleared (drain or user clear).
+   * Keys release when their entry dispatches or the queue is cleared.
    */
   hasDedupeKey(dedupeKey: string): boolean {
-    return this.dedupeKeys.has(dedupeKey);
+    return this.entries.some((entry) => entry.dedupeKeys.has(dedupeKey));
   }
 
   /**
-   * Whether the queue's only content is the single entry queued under this dedupe key.
+   * Whether the queue's only content is the single message queued under this dedupe key.
    * Used to supersede low-value scheduled entries (heartbeats): a later real message must
    * not batch behind them, because batching would adopt the first entry's muxMetadata.
    */
   holdsOnlyDedupeKey(dedupeKey: string): boolean {
-    return this.queuedEntryCount === 1 && this.dedupeKeys.has(dedupeKey);
+    return (
+      this.entries.length === 1 &&
+      this.entries[0].addCount === 1 &&
+      this.entries[0].dedupeKeys.has(dedupeKey)
+    );
   }
 
   /**
@@ -171,13 +207,13 @@ export class MessageQueue {
     dedupeKey?: string,
     internal?: QueuedMessageInternalOptions
   ): boolean {
-    if (dedupeKey !== undefined && this.dedupeKeys.has(dedupeKey)) {
+    if (dedupeKey !== undefined && this.hasDedupeKey(dedupeKey)) {
       return false;
     }
 
     const didAdd = this.addInternal(message, options, internal);
     if (didAdd && dedupeKey !== undefined) {
-      this.dedupeKeys.add(dedupeKey);
+      this.entries[this.entries.length - 1].dedupeKeys.add(dedupeKey);
     }
     return didAdd;
   }
@@ -195,231 +231,199 @@ export class MessageQueue {
       return false;
     }
 
-    const incomingIsCompaction = isCompactionMetadata(options?.muxMetadata);
-    const incomingIsAgentSkill = isAgentSkillMetadata(options?.muxMetadata);
-    const incomingIsWorkspaceTurn = isWorkspaceTurnMetadata(options?.muxMetadata);
     const incomingHasAcceptedCallbacks =
       internal?.onAccepted != null ||
       internal?.onAcceptedPreStreamFailure != null ||
       internal?.onCanceled != null;
-    const queueHasMessages = !this.isEmpty();
+    // Sealed entries must own their turn end-to-end: workspace-turn metadata and
+    // internal callbacks correlate to exactly one dispatch, and agent-skill metadata
+    // must not leak onto batched follow-ups.
+    const incomingIsSealed =
+      isAgentSkillMetadata(options?.muxMetadata) ||
+      isWorkspaceTurnMetadata(options?.muxMetadata) ||
+      incomingHasAcceptedCallbacks;
+    // Compaction starts its own entry (its metadata must not adopt earlier batched
+    // texts), but stays open so a follow-up typed behind a pending /compact batches
+    // under the compaction request, preserving long-standing behavior.
+    const incomingStartsNewEntry = incomingIsSealed || isCompactionMetadata(options?.muxMetadata);
     const incomingMode = options?.queueDispatchMode ?? "tool-end";
-    const nextQueueDispatchMode = !queueHasMessages
-      ? incomingMode
-      : incomingMode === "tool-end"
-        ? "tool-end"
-        : this.queueDispatchMode;
 
-    const queueHasAgentSkill = isAgentSkillMetadata(this.firstMuxMetadata);
-    const queueHasWorkspaceTurn = isWorkspaceTurnMetadata(this.firstMuxMetadata);
-    const queueHasAcceptedCallbacks =
-      this.onAccepted != null || this.onAcceptedPreStreamFailure != null || this.onCanceled != null;
-
-    // Avoid leaking agent-skill metadata to later queued messages.
-    // A skill invocation must be sent alone (or the user should restore/edit the queued message).
-    if (queueHasAgentSkill) {
-      throw new Error(
-        "Cannot queue additional messages: an agent skill invocation is already queued. " +
-          "Wait for the current stream to complete before sending another message."
-      );
+    const tail = this.entries[this.entries.length - 1];
+    let entry: QueueEntry;
+    if (tail !== undefined && !tail.sealed && !incomingStartsNewEntry) {
+      entry = tail;
+      // tool-end is sticky within an entry; turn-end never downgrades an entry
+      // that something already queued for tool-end dispatch.
+      if (incomingMode === "tool-end") {
+        entry.dispatchMode = "tool-end";
+      }
+    } else {
+      entry = {
+        messages: [],
+        fileParts: [],
+        dedupeKeys: new Set<string>(),
+        dispatchMode: incomingMode,
+        sealed: incomingIsSealed,
+        addCount: 0,
+        syntheticCount: 0,
+        agentInitiatedCount: 0,
+      };
+      this.entries.push(entry);
     }
 
-    if (queueHasWorkspaceTurn) {
-      throw new Error(
-        "Cannot queue additional messages: a workspace turn follow-up is already queued. " +
-          "Wait for it to dispatch before sending another message."
-      );
-    }
-    if (queueHasAcceptedCallbacks) {
-      throw new Error(
-        "Cannot queue additional messages: an internal workspace turn follow-up is already queued. " +
-          "Wait for it to dispatch before sending another message."
-      );
-    }
-
-    if (incomingHasAcceptedCallbacks && queueHasMessages) {
-      throw new Error(
-        "Cannot queue workspace turn follow-up: queue already has messages. " +
-          "Wait for the current stream to complete before sending another workspace turn."
-      );
-    }
-
-    // Cannot add compaction to a queue that already has messages
-    // (user should wait for those messages to send first)
-    if (incomingIsCompaction && queueHasMessages) {
-      throw new Error(
-        "Cannot queue compaction request: queue already has messages. " +
-          "Wait for current stream to complete before compacting."
-      );
-    }
-
-    // Cannot batch agent-skill metadata with other messages (it would apply to the whole batch).
-    if (incomingIsAgentSkill && queueHasMessages) {
-      throw new Error(
-        "Cannot queue agent skill invocation: queue already has messages. " +
-          "Wait for the current stream to complete before running a skill."
-      );
-    }
-    if (incomingIsWorkspaceTurn && queueHasMessages) {
-      throw new Error(
-        "Cannot queue workspace turn follow-up: queue already has messages. " +
-          "Wait for the current stream to complete before sending another workspace turn."
-      );
-    }
-
-    const nextGoalInterventionPolicy =
-      this.goalInterventionPolicy === "pause" || options?.goalInterventionPolicy === "pause"
+    // Explicit pause is sticky within an entry (a batched steer must not unpause).
+    entry.goalInterventionPolicy =
+      entry.goalInterventionPolicy === "pause" || options?.goalInterventionPolicy === "pause"
         ? "pause"
-        : (options?.goalInterventionPolicy ?? this.goalInterventionPolicy);
-
-    // Commit dispatch mode only after validation checks pass
-    this.queueDispatchMode = nextQueueDispatchMode;
-
-    this.goalInterventionPolicy = nextGoalInterventionPolicy;
+        : (options?.goalInterventionPolicy ?? entry.goalInterventionPolicy);
 
     // Add text message if non-empty
     if (trimmedMessage.length > 0) {
-      this.messages.push(trimmedMessage);
+      entry.messages.push(trimmedMessage);
     }
 
     if (options) {
       const { fileParts, ...restOptions } = options;
 
-      // Preserve first muxMetadata (see class docblock for rationale)
-      if (options.muxMetadata !== undefined && this.firstMuxMetadata === undefined) {
-        this.firstMuxMetadata = options.muxMetadata;
+      // Preserve first muxMetadata per entry (see class docblock for rationale)
+      if (options.muxMetadata !== undefined && entry.muxMetadata === undefined) {
+        entry.muxMetadata = options.muxMetadata;
       }
-      this.latestOptions = restOptions;
+      entry.latestOptions = restOptions;
 
       if (fileParts && fileParts.length > 0) {
-        this.accumulatedFileParts.push(...fileParts);
+        entry.fileParts.push(...fileParts);
       }
     }
     if (internal?.onCanceled != null) {
-      this.onCanceled = internal.onCanceled;
+      entry.onCanceled = internal.onCanceled;
     }
     if (internal?.onAccepted != null) {
-      this.onAccepted = internal.onAccepted;
+      entry.onAccepted = internal.onAccepted;
     }
     if (internal?.onAcceptedPreStreamFailure != null) {
-      this.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
+      entry.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
     }
 
-    this.queuedEntryCount += 1;
+    entry.addCount += 1;
     if (internal?.synthetic === true) {
-      this.queuedSyntheticCount += 1;
+      entry.syntheticCount += 1;
     }
     if (internal?.agentInitiated === true) {
-      this.queuedAgentInitiatedCount += 1;
+      entry.agentInitiatedCount += 1;
     }
 
     return true;
   }
 
   /**
-   * Get all queued message texts (for editing/restoration).
+   * Get all queued message texts across entries (for editing/restoration).
    */
   getMessages(): string[] {
-    return [...this.messages];
+    return this.entries.flatMap((entry) => entry.messages);
   }
 
   /**
    * Get display text for queued messages.
-   * - Single compaction request shows rawCommand (/compact)
-   * - Single agent-skill invocation shows rawCommand (/{skill})
-   * - Multiple messages show all actual message texts
+   * - A single-message compaction/agent-skill entry shows its rawCommand (/compact, /{skill})
+   * - Otherwise entries show their actual message texts, joined with newlines
    */
   getDisplayText(): string {
-    // Only show rawCommand for single compaction request
-    if (this.messages.length === 1 && isCompactionMetadata(this.firstMuxMetadata)) {
-      return this.firstMuxMetadata.rawCommand;
-    }
-
-    // Only show rawCommand for a single agent-skill invocation.
-    // (Batching agent-skill with other messages is disallowed.)
-    if (this.messages.length <= 1 && isAgentSkillMetadata(this.firstMuxMetadata)) {
-      return this.firstMuxMetadata.rawCommand;
-    }
-
-    return this.messages.join("\n");
+    return this.entries
+      .map((entry) => {
+        if (
+          entry.messages.length <= 1 &&
+          (isCompactionMetadata(entry.muxMetadata) || isAgentSkillMetadata(entry.muxMetadata))
+        ) {
+          return entry.muxMetadata.rawCommand;
+        }
+        return entry.messages.join("\n");
+      })
+      .filter((text) => text.length > 0)
+      .join("\n");
   }
 
   /**
-   * Get accumulated file parts for display.
+   * Get accumulated file parts across entries for display.
    */
   getFileParts(): FilePart[] {
-    return [...this.accumulatedFileParts];
+    return this.entries.flatMap((entry) => entry.fileParts);
   }
 
   /**
-   * Get reviews from metadata for display.
+   * Get reviews across entries' metadata for display.
    */
   getReviews(): ReviewNoteData[] | undefined {
-    if (hasReviews(this.firstMuxMetadata) && this.firstMuxMetadata.reviews?.length) {
-      return this.firstMuxMetadata.reviews;
-    }
-    return undefined;
-  }
-
-  getClearCallbacks(): Pick<
-    QueuedMessageInternalOptions,
-    "onCanceled" | "onAcceptedPreStreamFailure"
-  > {
-    return {
-      ...(this.onCanceled != null ? { onCanceled: this.onCanceled } : {}),
-      ...(this.onAcceptedPreStreamFailure != null
-        ? { onAcceptedPreStreamFailure: this.onAcceptedPreStreamFailure }
-        : {}),
-    };
+    const reviews = this.entries.flatMap((entry) =>
+      hasReviews(entry.muxMetadata) ? (entry.muxMetadata.reviews ?? []) : []
+    );
+    return reviews.length > 0 ? reviews : undefined;
   }
 
   /**
-   * Get combined message and options for sending.
+   * Cancellation callbacks for every pending entry, in queue order.
+   * Callers must notify each one when clearing the queue.
    */
-  produceMessage(): {
+  getClearCallbacks(): QueueClearCallbacks[] {
+    return this.entries
+      .filter((entry) => entry.onCanceled != null || entry.onAcceptedPreStreamFailure != null)
+      .map((entry) => ({
+        ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+        ...(entry.onAcceptedPreStreamFailure != null
+          ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
+          : {}),
+      }));
+  }
+
+  /**
+   * Remove the first entry and return its combined message and options for sending.
+   * Later entries stay queued and dispatch on subsequent drains (FIFO).
+   * Caller must check {@link isEmpty} first.
+   */
+  dequeueNext(): {
     message: string;
     options?: SendMessageOptions & { fileParts?: FilePart[] };
     internal?: QueuedMessageInternalOptions;
   } {
-    const joinedMessages = this.messages.join("\n");
-    // First metadata takes precedence (preserves compaction + agent-skill invocations)
-    const muxMetadata =
-      this.firstMuxMetadata !== undefined
-        ? this.firstMuxMetadata
-        : (this.latestOptions?.muxMetadata as unknown);
-    const options = this.latestOptions
+    const entry = this.entries.shift();
+    if (entry === undefined) {
+      return { message: "" };
+    }
+
+    const joinedMessages = entry.messages.join("\n");
+    const options = entry.latestOptions
       ? (() => {
-          const restOptions: SendMessageOptions = { ...this.latestOptions };
+          const restOptions: SendMessageOptions = { ...entry.latestOptions };
           delete restOptions.queueDispatchMode;
-          if (this.goalInterventionPolicy != null) {
-            restOptions.goalInterventionPolicy = this.goalInterventionPolicy;
+          if (entry.goalInterventionPolicy != null) {
+            restOptions.goalInterventionPolicy = entry.goalInterventionPolicy;
           }
           return {
             ...restOptions,
-            muxMetadata,
-            fileParts: this.accumulatedFileParts.length > 0 ? this.accumulatedFileParts : undefined,
+            // First metadata takes precedence (preserves compaction + agent-skill invocations)
+            muxMetadata: entry.muxMetadata,
+            fileParts: entry.fileParts.length > 0 ? entry.fileParts : undefined,
           };
         })()
       : undefined;
 
-    const allQueuedEntriesAreSynthetic =
-      this.queuedEntryCount > 0 && this.queuedSyntheticCount === this.queuedEntryCount;
-    const allQueuedEntriesAreAgentInitiated =
-      this.queuedEntryCount > 0 && this.queuedAgentInitiatedCount === this.queuedEntryCount;
+    const allAddsAreSynthetic = entry.addCount > 0 && entry.syntheticCount === entry.addCount;
+    const allAddsAreAgentInitiated =
+      entry.addCount > 0 && entry.agentInitiatedCount === entry.addCount;
     const hasInternalOptions =
-      allQueuedEntriesAreSynthetic ||
-      allQueuedEntriesAreAgentInitiated ||
-      this.onAccepted != null ||
-      this.onAcceptedPreStreamFailure != null ||
-      this.onCanceled != null;
+      allAddsAreSynthetic ||
+      allAddsAreAgentInitiated ||
+      entry.onAccepted != null ||
+      entry.onAcceptedPreStreamFailure != null ||
+      entry.onCanceled != null;
     const internal = hasInternalOptions
       ? {
-          ...(allQueuedEntriesAreSynthetic ? { synthetic: true } : {}),
-          ...(allQueuedEntriesAreAgentInitiated ? { agentInitiated: true } : {}),
-          ...(this.onCanceled != null ? { onCanceled: this.onCanceled } : {}),
-          ...(this.onAccepted != null ? { onAccepted: this.onAccepted } : {}),
-          ...(this.onAcceptedPreStreamFailure != null
-            ? { onAcceptedPreStreamFailure: this.onAcceptedPreStreamFailure }
+          ...(allAddsAreSynthetic ? { synthetic: true } : {}),
+          ...(allAddsAreAgentInitiated ? { agentInitiated: true } : {}),
+          ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+          ...(entry.onAccepted != null ? { onAccepted: entry.onAccepted } : {}),
+          ...(entry.onAcceptedPreStreamFailure != null
+            ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
             : {}),
         }
       : undefined;
@@ -428,28 +432,17 @@ export class MessageQueue {
   }
 
   /**
-   * Clear all queued messages, options, and images.
+   * Clear all queued entries. Callers that need to notify canceled entries must
+   * capture {@link getClearCallbacks} beforehand.
    */
   clear(): void {
-    this.messages = [];
-    this.firstMuxMetadata = undefined;
-    this.latestOptions = undefined;
-    this.accumulatedFileParts = [];
-    this.dedupeKeys.clear();
-    this.goalInterventionPolicy = undefined;
-    this.queueDispatchMode = "tool-end";
-    this.onCanceled = undefined;
-    this.onAccepted = undefined;
-    this.onAcceptedPreStreamFailure = undefined;
-    this.queuedEntryCount = 0;
-    this.queuedSyntheticCount = 0;
-    this.queuedAgentInitiatedCount = 0;
+    this.entries = [];
   }
 
   /**
-   * Check if queue is empty (no messages AND no images).
+   * Check if queue is empty (no pending entries).
    */
   isEmpty(): boolean {
-    return this.messages.length === 0 && this.accumulatedFileParts.length === 0;
+    return this.entries.length === 0;
   }
 }

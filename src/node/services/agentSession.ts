@@ -5082,11 +5082,13 @@ export class AgentSession {
 
   clearQueue(cancelReason = "Queued message cleared before dispatch."): void {
     this.assertNotDisposed("clearQueue");
-    const callbacks = this.messageQueue.getClearCallbacks();
+    const callbackSets = this.messageQueue.getClearCallbacks();
     this.messageQueue.clear();
     this.emitQueuedMessageChanged();
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
-    this.notifyQueuedMessageCleared(callbacks, cancelReason);
+    for (const callbacks of callbackSets) {
+      this.notifyQueuedMessageCleared(callbacks, cancelReason);
+    }
   }
 
   private notifyQueuedMessageCleared(
@@ -5260,9 +5262,20 @@ export class AgentSession {
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
 
     if (!this.messageQueue.isEmpty()) {
-      const { message, options, internal } = this.messageQueue.produceMessage();
-      this.messageQueue.clear();
+      // Entries dispatch one at a time (FIFO): special sends (compaction, agent
+      // skills, workspace-turn follow-ups) own their turn, and anything queued
+      // behind them dispatches on a later drain instead of batching into them.
+      const { message, options, internal } = this.messageQueue.dequeueNext();
       this.emitQueuedMessageChanged();
+
+      // Re-arm dispatch signals for the remaining entries so the stream we are
+      // about to start drains them at its next tool end (or stream end).
+      if (!this.messageQueue.isEmpty()) {
+        this.backgroundProcessManager.setMessageQueued(
+          this.workspaceId,
+          this.messageQueue.getQueueDispatchMode() === "tool-end"
+        );
+      }
 
       // Set PREPARING synchronously before the async sendMessage to prevent
       // incoming messages from bypassing the queue during the await gap.
@@ -5277,12 +5290,17 @@ export class AgentSession {
             if (this.turnPhase === TurnPhase.PREPARING) {
               this.setTurnPhase(TurnPhase.IDLE);
             }
+            // No stream started, so no stream-end drain will fire for the
+            // remaining entries — try the next one now (each attempt pops an
+            // entry, so this terminates).
+            this.sendQueuedMessages();
           }
         })
         .catch(() => {
           if (this.turnPhase === TurnPhase.PREPARING) {
             this.setTurnPhase(TurnPhase.IDLE);
           }
+          this.sendQueuedMessages();
         });
     }
   }
