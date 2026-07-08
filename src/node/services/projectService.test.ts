@@ -115,6 +115,32 @@ describe("ProjectService", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  describe("create", () => {
+    // Regression (PR #3694 Codex P1): two concurrent create() calls for the same
+    // not-yet-existing path both compute createdDirectory === true before either
+    // registration is serialized. The loser hits the duplicate re-check inside the
+    // editConfig transform; it must NOT recursively delete the directory, which now
+    // belongs to the winning registration.
+    it("concurrent create of the same new path keeps the winner's directory", async () => {
+      const projectPath = path.join(tempDir, "concurrent-project");
+
+      const [first, second] = await Promise.all([
+        service.create(projectPath),
+        service.create(projectPath),
+      ]);
+
+      const outcomes = [first, second];
+      expect(outcomes.filter((r) => r.success)).toHaveLength(1);
+      const loser = outcomes.find((r) => !r.success);
+      expect(loser && !loser.success ? loser.error : "").toContain("already exists");
+
+      // The winner's registered checkout must survive the loser's failure path.
+      const stat = await fs.stat(projectPath);
+      expect(stat.isDirectory()).toBe(true);
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
+    });
+  });
+
   describe("listDirectory", () => {
     it("returns root node with the actual requested path, not empty string", async () => {
       // Create test directory structure

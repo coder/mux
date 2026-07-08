@@ -528,9 +528,11 @@ export class ProjectService {
         return freshConfig;
       });
 
-      if (!createResult.success) {
-        await cleanupCreatedDirectory();
-      }
+      // Do NOT clean up the created directory when the transform loses the duplicate
+      // re-check: the only in-transform failure is a concurrent registration of this
+      // same path, so the directory on disk now belongs to the winning project.
+      // Deleting it here would destroy the winner's checkout (including any files
+      // already created there after the winning call returned).
       return createResult;
     } catch (error) {
       const message = getErrorMessage(error);
