@@ -14,6 +14,8 @@ import type { TokenConsumer } from "@/common/types/chatStats";
 import { HEADLESS_USAGE_FILE_NAME } from "@/common/constants/paths";
 import type { MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { log } from "./log";
 
 export interface SessionUsageTokenStatsCacheV1 {
@@ -93,10 +95,22 @@ export class SessionUsageService {
   private readonly fileLocks = workspaceFileLocks;
   private readonly config: Config;
   private readonly historyService: HistoryService;
+  private readonly getProvidersConfig: () => ProvidersConfigMap | null;
 
-  constructor(config: Config, historyService: HistoryService) {
+  constructor(
+    config: Config,
+    historyService: HistoryService,
+    /**
+     * Providers config accessor for mappedToModel alias resolution (mirrors
+     * StreamManager). Without it, headless usage for custom provider models
+     * configured with mappedToModel is priced against the raw custom ID
+     * (unknown → $0).
+     */
+    getProvidersConfig?: () => ProvidersConfigMap | null
+  ) {
     this.config = config;
     this.historyService = historyService;
+    this.getProvidersConfig = getProvidersConfig ?? (() => null);
   }
   /**
    * Collect all messages from iterateFullHistory into an array.
@@ -206,6 +220,15 @@ export class SessionUsageService {
     if (!usage) return undefined;
     try {
       const canonicalModel = normalizeToCanonical(modelString);
+      // Resolve mappedToModel aliases for pricing (mirrors StreamManager's
+      // resolveMetadataModel): custom provider models would otherwise price
+      // against the raw custom ID (unknown → $0).
+      let metadataModel: string;
+      try {
+        metadataModel = resolveModelForMetadata(modelString, this.getProvidersConfig());
+      } catch {
+        metadataModel = modelString;
+      }
       const existingMux = providerMetadata?.mux;
       const effectiveProviderMetadata = options?.costsIncluded
         ? {
@@ -216,7 +239,12 @@ export class SessionUsageService {
             },
           }
         : providerMetadata;
-      const displayUsage = createDisplayUsage(usage, canonicalModel, effectiveProviderMetadata);
+      const displayUsage = createDisplayUsage(
+        usage,
+        canonicalModel,
+        effectiveProviderMetadata,
+        metadataModel
+      );
       if (!displayUsage) return undefined;
       await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
         skipLastRequestUpdate: true,
@@ -224,10 +252,13 @@ export class SessionUsageService {
       if (options?.analyticsSource) {
         // Raw usage + provider metadata (not display costs) so the ETL prices
         // with the current tables — repricing rebuilds then cover these rows.
+        // metadataModel mirrors chat rows: model stays the canonical ID for
+        // attribution while pricing uses the resolved alias target.
         const line = JSON.stringify({
           timestamp: Date.now(),
           source: options.analyticsSource,
           model: canonicalModel,
+          metadataModel,
           usage,
           ...(effectiveProviderMetadata !== undefined
             ? { providerMetadata: effectiveProviderMetadata }

@@ -69,7 +69,10 @@ const SIDE_QUESTION_MIN_FALLBACK_ATTEMPTS = 3;
  * peek at the live-stream registry. Stating the dependency precisely keeps
  * `askSideQuestion` testable without an `as unknown as AIService` cast.
  */
-export type SideQuestionAIService = Pick<AIService, "createModel" | "getStreamInfo">;
+export type SideQuestionAIService = Pick<
+  AIService,
+  "createModel" | "getStreamInfo" | "resolveMetadataModel"
+>;
 
 export interface AskSideQuestionOptions {
   workspaceId: string;
@@ -492,6 +495,10 @@ export async function askSideQuestion(
           timestamp: streamStartedAt,
           duration,
           model: modelString,
+          // Resolved mappedToModel alias target (mirrors StreamManager rows):
+          // without it the ETL prices custom provider models against the raw
+          // custom ID (unknown → $0).
+          metadataModel: aiService.resolveMetadataModel(modelString),
           // Persist usage on the answer row so analytics prices the /btw turn
           // (the ETL reads metadata.usage from chat.jsonl rows).
           ...(usage !== undefined ? { usage } : {}),

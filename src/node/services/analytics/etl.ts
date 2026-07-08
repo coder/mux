@@ -1247,7 +1247,9 @@ async function ingestHeadlessUsage(
     agentId: null,
     thinkingLevel: null,
     responseIndex: null,
-    isSubAgent: false,
+    // Match chat-row derivation: archived sub-agent sidecars flow through
+    // here too (via ingestArchivedSubagentTranscripts → ingestWorkspace).
+    isSubAgent: (workspaceMeta.parentWorkspaceId ?? "").length > 0,
   };
 
   const rows: EventRow[] = [];
@@ -1280,6 +1282,7 @@ async function ingestHeadlessUsage(
     const built = buildIngestEventRow({
       inheritedContext,
       model,
+      metadataModel: toOptionalString(record.metadataModel),
       usage,
       providerMetadata: isRecord(record.providerMetadata) ? record.providerMetadata : undefined,
       toolName: `headless:${source}`,

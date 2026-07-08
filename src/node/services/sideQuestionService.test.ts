@@ -42,6 +42,8 @@ function createFakeAIService(
   return {
     createModel: () => Promise.resolve(Ok(model)),
     getStreamInfo: () => streamInfo,
+    // Identity resolution: no custom-provider mappedToModel aliases in tests.
+    resolveMetadataModel: (modelString: string) => modelString,
   };
 }
 
@@ -111,7 +113,12 @@ describe("askSideQuestion (persisted, streaming)", () => {
         workspaceId,
         question: "are you sure?",
         candidates: ["openai:gpt-4.1-mini"],
-        aiService: createFakeAIService(createFakeModel()),
+        aiService: {
+          ...createFakeAIService(createFakeModel()),
+          // Distinct mapped target proves the RESOLVED model is persisted
+          // (custom-provider mappedToModel aliases price via metadataModel).
+          resolveMetadataModel: () => "openai:mapped-target",
+        },
         historyService,
         emitChatEvent: (_wsId, message) => emitted.push(message),
       });
@@ -167,6 +174,10 @@ describe("askSideQuestion (persisted, streaming)", () => {
       expect(user.metadata?.muxMetadata?.commandPrefix).toBe("/btw");
       expect(assistant.role).toBe("assistant");
       expect(assistant.metadata?.muxMetadata?.type).toBe("side-question-answer");
+      // The answer row stores both the raw model (attribution) and the
+      // resolved metadata model (ETL pricing for mapped custom models).
+      expect(assistant.metadata?.model).toBe("openai:gpt-4.1-mini");
+      expect(assistant.metadata?.metadataModel).toBe("openai:mapped-target");
       // The assistant's text part should contain the full streamed answer.
       const textPart = assistant.parts.find(
         (p): p is Extract<typeof p, { type: "text" }> => p.type === "text"
@@ -580,6 +591,7 @@ describe("askSideQuestion (persisted, streaming)", () => {
         aiService: {
           createModel,
           getStreamInfo: () => undefined,
+          resolveMetadataModel: (modelString: string) => modelString,
         } as unknown as AIService,
         historyService,
         emitChatEvent: () => undefined,

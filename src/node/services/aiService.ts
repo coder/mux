@@ -2888,6 +2888,15 @@ export class AIService extends EventEmitter {
   }
 
   /**
+   * Resolve the pricing/tokenization metadata model for a model string
+   * (mappedToModel aliases for custom providers). Used by non-stream
+   * consumers like /btw so their persisted rows price like normal chat rows.
+   */
+  resolveMetadataModel(modelString: string): string {
+    return this.streamManager.resolveMetadataModel(modelString);
+  }
+
+  /**
    * Replay stream events
    * Emits the same events that would be emitted during live streaming
    */

@@ -85,7 +85,11 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const backgroundProcessManager = new BackgroundProcessManager(
     path.join(os.tmpdir(), "mux-bashes")
   );
-  const sessionUsageService = new SessionUsageService(config, historyService);
+  // Providers config accessor enables mappedToModel alias resolution for
+  // headless usage pricing (status generation, memory sweeps, /btw).
+  const sessionUsageService = new SessionUsageService(config, historyService, () =>
+    providerService.getConfig()
+  );
   const extensionMetadata = new ExtensionMetadataService(extensionMetadataPath);
   const workspaceGoalService = new WorkspaceGoalService(
     config,

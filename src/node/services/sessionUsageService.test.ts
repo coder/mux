@@ -500,6 +500,40 @@ describe("SessionUsageService", () => {
       expect(record.model).toBe(model);
       expect((record.usage as Record<string, unknown>).inputTokens).toBe(40);
     });
+
+    it("resolves mappedToModel aliases for pricing and stamps metadataModel in the sidecar", async () => {
+      const workspaceId = "test-workspace";
+      const mappedService = new SessionUsageService(config, historyService, () => ({
+        mycustom: {
+          apiKeySet: true,
+          isEnabled: true,
+          isConfigured: true,
+          models: [{ id: "my-alias", mappedToModel: "anthropic:claude-sonnet-4-20250514" }],
+        },
+      }));
+
+      const recorded = await mappedService.recordHeadlessUsage(
+        workspaceId,
+        "mycustom:my-alias",
+        { inputTokens: 1000, outputTokens: 500, totalTokens: 1500 },
+        undefined,
+        { analyticsSource: "workspace_status" }
+      );
+
+      // Priced via the mapped model — the raw custom ID has no pricing entry
+      // and would leave cost_usd undefined.
+      expect(recorded?.usage.input.cost_usd).toBeGreaterThan(0);
+
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
+        string,
+        unknown
+      >;
+      // model keeps the raw ID for attribution; metadataModel carries the
+      // resolved alias target for ETL pricing.
+      expect(record.model).toBe("mycustom:my-alias");
+      expect(record.metadataModel).toBe("anthropic:claude-sonnet-4-20250514");
+    });
   });
 
   describe("resetSessionUsage", () => {

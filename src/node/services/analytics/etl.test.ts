@@ -1406,6 +1406,66 @@ describe("headless usage ingestion", () => {
     expect(await queryEventCount(conn, workspaceId)).toBe(3);
   });
 
+  test("prices mapped custom models via metadataModel while keeping raw attribution", async () => {
+    const conn = await createTestConn();
+    const workspaceId = "headless-ws-mapped";
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir);
+    await writeHeadlessUsageJsonl(sessionDir, [
+      JSON.stringify({
+        timestamp: 1700000000000,
+        source: "workspace_status",
+        model: "mycustom:my-alias",
+        metadataModel: "anthropic:claude-sonnet-4-20250514",
+        usage: { inputTokens: 500, outputTokens: 20 },
+      }),
+    ]);
+
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+
+    const rows = await queryRows(
+      conn,
+      "SELECT model, total_cost_usd FROM events WHERE workspace_id = ? AND tool_name LIKE 'headless:%'",
+      [workspaceId]
+    );
+    expect(rows).toHaveLength(1);
+    // Attribution keeps the custom ID; pricing resolves via metadataModel
+    // (raw "mycustom:my-alias" has no pricing entry and would cost $0).
+    expect(rows[0].model).toBe("mycustom:my-alias");
+    expect(rows[0].total_cost_usd as number).toBeGreaterThan(0);
+  });
+
+  test("restores archived sub-agent headless usage as sub-agent rows", async () => {
+    const conn = await createTestConn();
+    const parentWorkspaceId = "parent-headless";
+    const childWorkspaceId = "child-headless";
+
+    const parentSessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(parentSessionDir);
+    const childSessionDir = await createArchivedSubagentTranscript(
+      parentSessionDir,
+      childWorkspaceId,
+      { parentWorkspaceId, projectPath: "/test", projectName: "test" }
+    );
+    // Workspace removal archives the child's headless sidecar alongside its
+    // chat transcript; the ETL must restore that spend after clearWorkspace.
+    await writeHeadlessUsageJsonl(childSessionDir, [makeHeadlessLine()]);
+
+    await ingestWorkspace(conn, parentWorkspaceId, parentSessionDir, { projectPath: "/test" });
+
+    const childHeadlessRows = await queryRows(
+      conn,
+      "SELECT CAST(is_sub_agent AS INTEGER) AS is_sub_agent_int, total_cost_usd FROM events WHERE workspace_id = ? AND tool_name LIKE 'headless:%'",
+      [childWorkspaceId]
+    );
+    expect(childHeadlessRows).toHaveLength(1);
+    // Headless rows match the chat-row is_sub_agent derivation.
+    expect(parseBooleanFromInteger(childHeadlessRows[0].is_sub_agent_int, "is_sub_agent_int")).toBe(
+      true
+    );
+    expect(childHeadlessRows[0].total_cost_usd as number).toBeGreaterThan(0);
+  });
+
   test("ingests sidecar growth even when chat files are unchanged", async () => {
     const conn = await createTestConn();
     const workspaceId = "headless-ws-growth";

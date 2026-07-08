@@ -52,7 +52,11 @@ import {
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
-import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
+import {
+  CHAT_FILE_NAME,
+  CHAT_ARCHIVE_FILE_NAME,
+  HEADLESS_USAGE_FILE_NAME,
+} from "@/common/constants/paths";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
@@ -1203,6 +1207,24 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
           parentWorkspaceId: params.parentWorkspaceId,
           childWorkspaceId: params.childWorkspaceId,
           artifact: "metadata.json",
+        },
+      });
+
+      // Headless usage (status generation, memory sweeps) has no chat row;
+      // the archived sidecar is the only way the analytics ETL can restore
+      // that spend after clearWorkspace deletes the child's event rows.
+      await copyFileBestEffort({
+        srcPath: path.join(params.childSessionDir, HEADLESS_USAGE_FILE_NAME),
+        destPath: path.join(
+          params.parentSessionDir,
+          "subagent-transcripts",
+          params.childWorkspaceId,
+          HEADLESS_USAGE_FILE_NAME
+        ),
+        logContext: {
+          parentWorkspaceId: params.parentWorkspaceId,
+          childWorkspaceId: params.childWorkspaceId,
+          artifact: HEADLESS_USAGE_FILE_NAME,
         },
       });
 
