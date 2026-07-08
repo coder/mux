@@ -1407,6 +1407,74 @@ describe("headless usage ingestion", () => {
     expect(await queryEventCount(conn, workspaceId)).toBe(3);
   });
 
+  test("unix-ms timestamps survive the incremental insert path un-truncated", async () => {
+    // Regression: @duckdb/node-api infers integral JS numbers as INT32 for
+    // untyped parameters, silently wrapping unix-ms timestamps (e.g.
+    // 1700000000000 → -807049216). Truncated persisted timestamps then break
+    // the head-signature comparison, forcing a full rebuild on every ingest.
+    const conn = await createTestConn();
+    const workspaceId = "bind-safe-ws";
+    const sessionDir = await createTempSessionDir();
+    await writeBasicChatJsonl(sessionDir); // timestamp 1700000000000
+
+    // First-pass ingest inserts via replaceEventsByResponseIndex (conn.run
+    // binding), not the rebuild appender.
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+
+    const rows = await queryRows(
+      conn,
+      "SELECT CAST(timestamp AS VARCHAR) AS ts FROM events WHERE workspace_id = ?",
+      [workspaceId]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].ts).toBe("1700000000000");
+  });
+
+  test("headless rows do not fake chat truncation (incremental path preserved)", async () => {
+    const conn = await createTestConn();
+    const workspaceId = "headless-ws-truncation";
+    const sessionDir = await createTempSessionDir();
+    await writeChatJsonl(sessionDir, [
+      makeAssistantLine({ sequence: 1 }),
+      makeAssistantLine({ sequence: 2 }),
+      makeAssistantLine({ sequence: 3 }),
+    ]);
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+
+    // Sidecar rows land (NULL response_index) — total rows now exceed chat rows.
+    await writeHeadlessUsageJsonl(sessionDir, [makeHeadlessLine(), makeHeadlessLine()]);
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+    expect(await queryEventCount(conn, workspaceId)).toBe(5);
+
+    // Sentinel on a MIDDLE chat row (not the head, whose cost feeds the
+    // head-signature check; sequence < watermark so the incremental path
+    // skips it). A (spurious) truncation rebuild deletes + reprices
+    // everything: if headless rows leaked into the truncation count,
+    // 4 parsed chat rows < 5 persisted rows would force that rebuild and
+    // reset the sentinel.
+    await conn.run(
+      "UPDATE events SET total_cost_usd = 999 WHERE workspace_id = ? AND response_index = 1",
+      [workspaceId]
+    );
+
+    await writeChatJsonl(sessionDir, [
+      makeAssistantLine({ sequence: 1 }),
+      makeAssistantLine({ sequence: 2 }),
+      makeAssistantLine({ sequence: 3 }),
+      makeAssistantLine({ sequence: 4 }),
+    ]);
+    await ingestWorkspace(conn, workspaceId, sessionDir, { projectPath: "/test" });
+
+    expect(await queryEventCount(conn, workspaceId)).toBe(6); // 4 chat + 2 headless
+    const sentinelRows = await queryRows(
+      conn,
+      "SELECT total_cost_usd FROM events WHERE workspace_id = ? AND response_index = 1",
+      [workspaceId]
+    );
+    expect(sentinelRows).toHaveLength(1);
+    expect(sentinelRows[0].total_cost_usd as number).toBe(999);
+  });
+
   test("failed headless ingestion stays retryable (watermark not advanced past it)", async () => {
     const conn = await createTestConn();
     const workspaceId = "headless-ws-retry";

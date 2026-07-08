@@ -538,6 +538,29 @@ describe("SessionUsageService", () => {
       expect(btwRecorded).toBeUndefined();
     });
 
+    it("writes the sidecar before the ledger so a sidecar failure leaves no ledger-only spend", async () => {
+      // Ordering contract: the sidecar is the ETL's only replay source, so a
+      // crash between the two writes must strand the LEDGER (self-heals via
+      // rebuild), never the sidecar. Behavioral proxy: an unwritable sidecar
+      // (directory at the path) must abort BEFORE the ledger update.
+      const workspaceId = "test-workspace";
+      const model = "anthropic:claude-sonnet-4-20250514";
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(path.join(sessionDir, "headless-usage.jsonl"), { recursive: true });
+
+      const recorded = await service.recordHeadlessUsage(
+        workspaceId,
+        model,
+        { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+        undefined,
+        { analyticsSource: "workspace_status" }
+      );
+
+      expect(recorded).toBeUndefined();
+      // Ledger untouched: no session-usage.json was created.
+      expect(existsSync(path.join(sessionDir, "session-usage.json"))).toBe(false);
+    });
+
     it("resolves mappedToModel aliases for pricing and stamps metadataModel in the sidecar", async () => {
       const workspaceId = "test-workspace";
       const mappedService = new SessionUsageService(config, historyService, () => ({

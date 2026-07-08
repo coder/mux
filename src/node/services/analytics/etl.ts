@@ -143,6 +143,62 @@ INSERT INTO events (
 )
 `;
 
+/**
+ * Make a JS number safe for untyped DuckDB parameter binding.
+ *
+ * @duckdb/node-api's typeForValue() infers EVERY integral JS number as INT32,
+ * so binding unix-ms timestamps or change signals (> 2^31-1) via
+ * conn.run(sql, params) silently wraps them (e.g. 1700000000000 →
+ * -807049216) regardless of the target column type. Convert large integers
+ * to BigInt so inference picks a wide integer type and DuckDB casts to the
+ * target column (BIGINT or DOUBLE) losslessly. Fractional numbers already
+ * infer as DOUBLE and small integers fit INT32.
+ */
+function toBindableNumber(value: number | null): number | bigint | null {
+  if (value === null || !Number.isInteger(value) || Math.abs(value) <= 0x7fffffff) {
+    return value;
+  }
+  return BigInt(value);
+}
+
+/** Insert one events row via INSERT_EVENT_SQL with bind-safe numeric params. */
+async function insertEventRow(
+  conn: DuckDBConnection,
+  row: EventRow,
+  date: string | null
+): Promise<void> {
+  await conn.run(INSERT_EVENT_SQL, [
+    row.workspace_id,
+    row.project_path,
+    row.project_name,
+    row.workspace_name,
+    row.parent_workspace_id,
+    row.agent_id,
+    toBindableNumber(row.timestamp),
+    date,
+    row.model,
+    row.tool_name,
+    row.thinking_level,
+    row.input_tokens,
+    row.output_tokens,
+    row.reasoning_tokens,
+    row.cached_tokens,
+    row.cache_create_tokens,
+    row.input_cost_usd,
+    row.output_cost_usd,
+    row.reasoning_cost_usd,
+    row.cached_cost_usd,
+    row.total_cost_usd,
+    toBindableNumber(row.duration_ms),
+    toBindableNumber(row.ttft_ms),
+    toBindableNumber(row.streaming_ms),
+    toBindableNumber(row.tool_execution_ms),
+    row.output_tps,
+    row.response_index,
+    row.is_sub_agent,
+  ]);
+}
+
 function appendVarcharOrNull(appender: DuckDBAppender, value: string | null | undefined): void {
   if (value != null) {
     appender.appendVarchar(value);
@@ -771,9 +827,14 @@ async function readWorkspaceEventRowCount(
   conn: DuckDBConnection,
   workspaceId: string
 ): Promise<number> {
-  const result = await conn.run(`SELECT COUNT(*) AS row_count FROM events WHERE workspace_id = ?`, [
-    workspaceId,
-  ]);
+  // Chat-derived rows only (headless sidecar rows use a NULL response_index):
+  // the truncation check compares this count against parsed chat.jsonl events,
+  // so counting headless rows would fake a truncation after sidecar growth
+  // and force needless full-workspace rebuilds.
+  const result = await conn.run(
+    `SELECT COUNT(*) AS row_count FROM events WHERE workspace_id = ? AND response_index IS NOT NULL`,
+    [workspaceId]
+  );
   const rows = await result.getRowObjectsJS();
   assert(rows.length === 1, "readWorkspaceEventRowCount: expected exactly one COUNT(*) result row");
 
@@ -842,9 +903,9 @@ export async function readPersistedWorkspaceHeadSignature(
     `
     SELECT timestamp, model, total_cost_usd
     FROM events
-    WHERE workspace_id = ?
+    WHERE workspace_id = ? AND response_index IS NOT NULL
     ORDER BY
-      response_index ASC NULLS LAST,
+      response_index ASC,
       CASE WHEN tool_name IS NULL THEN 0 ELSE 1 END ASC,
       timestamp ASC
     LIMIT 1
@@ -905,7 +966,14 @@ async function writeWatermark(
       SET last_sequence = excluded.last_sequence,
           last_modified = excluded.last_modified
     `,
-    [workspaceId, watermark.lastSequence, watermark.lastModified]
+    // toBindableNumber: lastSequence targets BIGINT and lastModified (change
+    // signal, mtime+size sums > 2^31) targets DOUBLE — untyped binding would
+    // truncate both to int32.
+    [
+      workspaceId,
+      toBindableNumber(watermark.lastSequence),
+      toBindableNumber(watermark.lastModified),
+    ]
   );
 }
 
@@ -956,37 +1024,7 @@ async function replaceEventsByResponseIndex(
     );
 
     for (const event of events) {
-      const row = event.row;
-      await conn.run(INSERT_EVENT_SQL, [
-        row.workspace_id,
-        row.project_path,
-        row.project_name,
-        row.workspace_name,
-        row.parent_workspace_id,
-        row.agent_id,
-        row.timestamp,
-        event.date,
-        row.model,
-        row.tool_name,
-        row.thinking_level,
-        row.input_tokens,
-        row.output_tokens,
-        row.reasoning_tokens,
-        row.cached_tokens,
-        row.cache_create_tokens,
-        row.input_cost_usd,
-        row.output_cost_usd,
-        row.reasoning_cost_usd,
-        row.cached_cost_usd,
-        row.total_cost_usd,
-        row.duration_ms,
-        row.ttft_ms,
-        row.streaming_ms,
-        row.tool_execution_ms,
-        row.output_tps,
-        row.response_index,
-        row.is_sub_agent,
-      ]);
+      await insertEventRow(conn, event.row, event.date);
     }
 
     await conn.run("COMMIT");
@@ -1006,41 +1044,11 @@ async function replaceWorkspaceEvents(
     await conn.run("DELETE FROM events WHERE workspace_id = ?", [workspaceId]);
 
     for (const event of events) {
-      const row = event.row;
       assert(
-        row.workspace_id === workspaceId,
+        event.row.workspace_id === workspaceId,
         "replaceWorkspaceEvents: all rows must belong to the target workspace"
       );
-      await conn.run(INSERT_EVENT_SQL, [
-        row.workspace_id,
-        row.project_path,
-        row.project_name,
-        row.workspace_name,
-        row.parent_workspace_id,
-        row.agent_id,
-        row.timestamp,
-        event.date,
-        row.model,
-        row.tool_name,
-        row.thinking_level,
-        row.input_tokens,
-        row.output_tokens,
-        row.reasoning_tokens,
-        row.cached_tokens,
-        row.cache_create_tokens,
-        row.input_cost_usd,
-        row.output_cost_usd,
-        row.reasoning_cost_usd,
-        row.cached_cost_usd,
-        row.total_cost_usd,
-        row.duration_ms,
-        row.ttft_ms,
-        row.streaming_ms,
-        row.tool_execution_ms,
-        row.output_tps,
-        row.response_index,
-        row.is_sub_agent,
-      ]);
+      await insertEventRow(conn, event.row, event.date);
     }
 
     await conn.run("COMMIT");
@@ -1191,7 +1199,6 @@ export async function ingestWorkspace(
     hasTruncation,
     hasHeadMismatch,
   });
-
   let newLastSequence: number;
   if (shouldRebuild) {
     // Rebuild on truncation, head mismatch, or max-sequence rewinds. This removes
@@ -1326,36 +1333,11 @@ async function ingestHeadlessUsage(
       workspaceId,
     ]);
     for (const row of rows) {
-      await conn.run(INSERT_EVENT_SQL, [
-        row.workspace_id,
-        row.project_path,
-        row.project_name,
-        row.workspace_name,
-        row.parent_workspace_id,
-        row.agent_id,
-        row.timestamp,
-        row.timestamp != null ? toUtcDateString(new Date(row.timestamp)) : null,
-        row.model,
-        row.tool_name,
-        row.thinking_level,
-        row.input_tokens,
-        row.output_tokens,
-        row.reasoning_tokens,
-        row.cached_tokens,
-        row.cache_create_tokens,
-        row.input_cost_usd,
-        row.output_cost_usd,
-        row.reasoning_cost_usd,
-        row.cached_cost_usd,
-        row.total_cost_usd,
-        row.duration_ms,
-        row.ttft_ms,
-        row.streaming_ms,
-        row.tool_execution_ms,
-        row.output_tps,
-        row.response_index,
-        row.is_sub_agent,
-      ]);
+      await insertEventRow(
+        conn,
+        row,
+        row.timestamp != null ? toUtcDateString(new Date(row.timestamp)) : null
+      );
     }
     await conn.run("COMMIT");
   } catch (error) {
@@ -1496,7 +1478,8 @@ async function writeDelegationRollupEntries(
         cacheCreateTokens,
         reportTokenEstimate,
         totalCostUsd,
-        rolledUpAtMs,
+        // Unix-ms value: untyped binding truncates large integers to int32.
+        toBindableNumber(rolledUpAtMs),
         dateBucket,
       ]);
     }

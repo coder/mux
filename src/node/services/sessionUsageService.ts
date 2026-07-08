@@ -252,25 +252,12 @@ export class SessionUsageService {
         metadataModel
       );
       if (!displayUsage) return undefined;
-      // Ledger update is isolated from the sidecar append below: a corrupt
-      // session-usage.json (readFile throws on bad JSON) must not drop the
-      // analytics row — headless callers have no chat-row fallback, so that
-      // would permanently hide provider-billed spend from the events table.
-      let ledgerRecorded = false;
-      if (options?.skipSessionLedger !== true) {
-        try {
-          await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
-            skipLastRequestUpdate: true,
-          });
-          ledgerRecorded = true;
-        } catch (error) {
-          log.warn("Failed to update session-usage ledger for headless usage", {
-            workspaceId,
-            modelString,
-            error,
-          });
-        }
-      }
+      // Sidecar append runs FIRST: it is the only source the analytics ETL
+      // can replay (there is no chat-row fallback for headless spend), so a
+      // crash between the two writes must leave the sidecar — a recorded
+      // ledger with a missing sidecar row would strand the spend out of the
+      // events table forever (startup sync would see no change to detect).
+      // The ledger is merely display state and self-heals via rebuilds.
       if (options?.analyticsSource) {
         // Raw usage + provider metadata (not display costs) so the ETL prices
         // with the current tables — repricing rebuilds then cover these rows.
@@ -290,7 +277,28 @@ export class SessionUsageService {
           path.dirname(this.getFilePath(workspaceId)),
           HEADLESS_USAGE_FILE_NAME
         );
+        await fs.mkdir(path.dirname(sidecarPath), { recursive: true });
         await fs.appendFile(sidecarPath, `${line}\n`);
+      }
+      // Ledger update is isolated: a corrupt session-usage.json (readFile
+      // throws on bad JSON) must not fail the whole call once the sidecar
+      // line is durable.
+      let ledgerRecorded = false;
+      if (options?.skipSessionLedger !== true) {
+        try {
+          await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
+            skipLastRequestUpdate: true,
+          });
+          ledgerRecorded = true;
+        } catch (error) {
+          log.warn("Failed to update session-usage ledger for headless usage", {
+            workspaceId,
+            modelString,
+            error,
+          });
+        }
+      }
+      if (options?.analyticsSource) {
         // Sidecar callers consume the return value to trigger an analytics
         // ingest pass, so signal success once the sidecar line is durable
         // even if the ledger update failed.
