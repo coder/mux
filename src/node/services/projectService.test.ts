@@ -1637,7 +1637,7 @@ exit 1
         parentProjectPath: parentPath,
         workspaces: [],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.assignWorkspaceToSubProject(
         subProjectPath,
@@ -1674,7 +1674,7 @@ exit 1
         parentProjectPath: "/other/project",
         workspaces: [],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.assignWorkspaceToSubProject(
         parentPath,
@@ -1693,7 +1693,7 @@ exit 1
       const projectPath = "/fake/project";
       const cfg = config.loadConfigOrDefault();
       cfg.projects.set(projectPath, { workspaces: [] });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 
@@ -1763,7 +1763,7 @@ exit 1
 
         const cfg = config.loadConfigOrDefault();
         cfg.projects.set(projectPath, { workspaces });
-        await config.saveConfig(cfg);
+        await config.editConfig(() => cfg);
 
         const removedWorkspaceIds: string[] = [];
         service.setWorkspaceService({
@@ -1793,7 +1793,7 @@ exit 1
       cfg.projects.set(projectPath, {
         workspaces: [{ path: archivedWorkspaceDir, archivedAt: ARCHIVED_AT }],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const legacyWorkspaceId = config.generateLegacyId(projectPath, archivedWorkspaceDir);
       const metadataPath = path.join(config.getSessionDir(legacyWorkspaceId), "metadata.json");
@@ -1832,7 +1832,7 @@ exit 1
       cfg.projects.set(projectPath, {
         workspaces: [{ id: "archived-workspace-1", path: archivedWorkspaceDir, archivedAt }],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       let removeCallCount = 0;
       service.setWorkspaceService({
@@ -1864,7 +1864,7 @@ exit 1
       cfg.projects.set(projectPath, {
         workspaces: [{ path: wsDir }],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 
@@ -1888,7 +1888,7 @@ exit 1
           },
         ],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 
@@ -1920,7 +1920,7 @@ exit 1
           },
         ],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 
@@ -1946,7 +1946,7 @@ exit 1
       cfg.projects.set(projectPath, {
         workspaces: [{ path: stalePath }],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 
@@ -1966,7 +1966,7 @@ exit 1
           },
         ],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 
@@ -1992,7 +1992,7 @@ exit 1
       cfg.projects.set(projectPath, {
         workspaces: [{ path: stalePath }, { path: realDir }],
       });
-      await config.saveConfig(cfg);
+      await config.editConfig(() => cfg);
 
       const result = await service.remove(projectPath);
 

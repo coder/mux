@@ -501,15 +501,37 @@ export class ProjectService {
         }
       }
 
-      const projectConfig: ProjectConfig = {
-        workspaces: [],
-        parentProjectPath: parentProjectPath ?? undefined,
-      };
-      config.projects.set(normalizedPath, projectConfig);
-      config.projects = deriveProjectHierarchy(config.projects);
-      await this.config.saveConfig(config);
+      // Register the project inside the serialized editConfig transform, re-checking for
+      // duplicates and re-deriving the hierarchy from FRESH config: persisting the pre-read
+      // snapshot would clobber concurrent config edits (lost-update race). The async
+      // validations above (git roots, sub-project depth) ran against the snapshot; the
+      // transform only re-resolves state that a concurrent edit could have changed.
+      let createResult: Result<{ projectConfig: ProjectConfig; normalizedPath: string }> =
+        Err("Project already exists");
+      await this.config.editConfig((freshConfig) => {
+        if (freshConfig.projects.has(normalizedPath) || freshConfig.projects.has(canonicalPath)) {
+          createResult = Err("Project already exists");
+          return freshConfig;
+        }
+        freshConfig.projects = deriveProjectHierarchy(freshConfig.projects);
+        const freshParentProjectPath = findDeepestTopLevelParentProject(
+          normalizedPath,
+          freshConfig.projects
+        );
+        const projectConfig: ProjectConfig = {
+          workspaces: [],
+          parentProjectPath: freshParentProjectPath ?? undefined,
+        };
+        freshConfig.projects.set(normalizedPath, projectConfig);
+        freshConfig.projects = deriveProjectHierarchy(freshConfig.projects);
+        createResult = Ok({ projectConfig, normalizedPath });
+        return freshConfig;
+      });
 
-      return Ok({ projectConfig, normalizedPath });
+      if (!createResult.success) {
+        await cleanupCreatedDirectory();
+      }
+      return createResult;
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to create project: ${message}`);
@@ -886,8 +908,8 @@ export class ProjectService {
       });
 
       if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
-        // Config.saveConfig logs-and-continues on write failures, so verify persistence
-        // explicitly before reporting success.
+        // Config persistence (editConfig → private saveConfig) logs-and-continues on write
+        // failures, so verify persistence explicitly before reporting success.
         try {
           await fsPromises.rm(normalizedPath, { recursive: true, force: true });
         } catch {
@@ -943,21 +965,28 @@ export class ProjectService {
       }
 
       if (projectConfig.parentProjectPath) {
-        const parentProject = config.projects.get(projectConfig.parentProjectPath);
-        if (parentProject) {
-          for (const workspace of parentProject.workspaces) {
-            if (workspace.subProjectPath === normalizedPath) {
-              workspace.subProjectPath = undefined;
-            }
-          }
-        }
         try {
           await this.config.updateProjectSecrets(normalizedPath, []);
         } catch (error) {
           log.error(`Failed to clean up secrets for sub-project ${normalizedPath}:`, error);
         }
-        config.projects.delete(normalizedPath);
-        await this.config.saveConfig(config);
+        // Mutate inside the serialized editConfig transform, re-resolving the sub-project
+        // and its parent from FRESH config: persisting the pre-read snapshot would clobber
+        // concurrent config edits (e.g. resurrect concurrently removed workspaces).
+        await this.config.editConfig((freshConfig) => {
+          const freshSubProject = freshConfig.projects.get(normalizedPath);
+          const parentPath = freshSubProject?.parentProjectPath;
+          const parentProject = parentPath ? freshConfig.projects.get(parentPath) : undefined;
+          if (parentProject) {
+            for (const workspace of parentProject.workspaces) {
+              if (workspace.subProjectPath === normalizedPath) {
+                workspace.subProjectPath = undefined;
+              }
+            }
+          }
+          freshConfig.projects.delete(normalizedPath);
+          return freshConfig;
+        });
         return Ok(undefined);
       }
 
@@ -966,7 +995,7 @@ export class ProjectService {
       // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
       // have paths on the remote host that won't exist locally.
       const localRuntimeTypes = new Set(["local", "worktree"]);
-      const survivingWorkspaces = [];
+      const survivingWorkspaces: ProjectConfig["workspaces"] = [];
       for (const ws of projectConfig.workspaces) {
         const runtimeType = ws.runtimeConfig?.type;
         const isLocal = runtimeType == null || localRuntimeTypes.has(runtimeType);
@@ -992,8 +1021,29 @@ export class ProjectService {
         }
       }
       if (survivingWorkspaces.length !== projectConfig.workspaces.length) {
-        projectConfig.workspaces = survivingWorkspaces;
-        await this.config.saveConfig(config);
+        // Prune inside the serialized editConfig transform, filtering the FRESH workspace
+        // list by the paths verified missing above: replacing the list from the pre-read
+        // snapshot would drop workspaces added concurrently (lost-update race).
+        const prunedWorkspacePaths = new Set(
+          projectConfig.workspaces
+            .filter((ws) => !survivingWorkspaces.includes(ws))
+            .map((ws) => ws.path)
+        );
+        await this.config.editConfig((freshConfig) => {
+          const freshProject = freshConfig.projects.get(normalizedPath);
+          if (freshProject) {
+            freshProject.workspaces = freshProject.workspaces.filter(
+              (ws) => !prunedWorkspacePaths.has(ws.path)
+            );
+          }
+          return freshConfig;
+        });
+        // Re-read so the counting below reflects the persisted state.
+        config = this.config.loadConfigOrDefault();
+        projectConfig = config.projects.get(normalizedPath);
+        if (!projectConfig) {
+          return Err({ type: "project_not_found" as const });
+        }
       }
 
       let counts = getProjectWorkspaceCounts(projectConfig.workspaces);
@@ -1082,15 +1132,21 @@ export class ProjectService {
         return Err({ type: "workspace_blockers" as const, ...counts });
       }
 
+      // Delete inside the serialized editConfig transform, re-collecting sub-projects from
+      // FRESH config: persisting the pre-read snapshot would clobber concurrent config
+      // edits (e.g. resurrect concurrently removed workspaces in other projects).
       const removedSubProjectPaths: string[] = [];
-      for (const [candidatePath, candidateConfig] of Array.from(config.projects.entries())) {
-        if (candidateConfig.parentProjectPath === normalizedPath) {
-          removedSubProjectPaths.push(candidatePath);
-          config.projects.delete(candidatePath);
+      await this.config.editConfig((freshConfig) => {
+        removedSubProjectPaths.length = 0;
+        for (const [candidatePath, candidateConfig] of Array.from(freshConfig.projects.entries())) {
+          if (candidateConfig.parentProjectPath === normalizedPath) {
+            removedSubProjectPaths.push(candidatePath);
+            freshConfig.projects.delete(candidatePath);
+          }
         }
-      }
-      config.projects.delete(normalizedPath);
-      await this.config.saveConfig(config);
+        freshConfig.projects.delete(normalizedPath);
+        return freshConfig;
+      });
 
       for (const subProjectPath of removedSubProjectPaths) {
         try {
@@ -1365,16 +1421,18 @@ export class ProjectService {
    */
   async setIdleCompactionHours(projectPath: string, hours: number | null): Promise<Result<void>> {
     try {
-      const config = this.config.loadConfigOrDefault();
-      const project = config.projects.get(projectPath);
-
-      if (!project) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      project.idleCompactionHours = hours;
-      await this.config.saveConfig(config);
-      return Ok(undefined);
+      // Mutate inside the serialized editConfig transform, re-finding the project from
+      // FRESH config: persisting a pre-read snapshot loses concurrent config edits.
+      let result: Result<void> = Err(`Project not found: ${projectPath}`);
+      await this.config.editConfig((freshConfig) => {
+        const project = freshConfig.projects.get(projectPath);
+        if (project) {
+          project.idleCompactionHours = hours;
+          result = Ok(undefined);
+        }
+        return freshConfig;
+      });
+      return result;
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to set idle compaction hours: ${message}`);
@@ -1418,14 +1476,25 @@ export class ProjectService {
         }
       }
 
-      const workspace = owningProject.workspaces.find((w) => w.id === workspaceId);
-      if (!workspace) {
+      if (!owningProject.workspaces.some((w) => w.id === workspaceId)) {
         return Err(`Workspace not found: ${workspaceId}`);
       }
 
-      workspace.subProjectPath = subProjectPath ?? undefined;
-      await this.config.saveConfig(config);
-      return Ok(undefined);
+      // Mutate inside the serialized editConfig transform, re-finding the workspace from
+      // FRESH config: persisting a pre-read snapshot loses concurrent config edits (e.g.
+      // resurrects concurrently removed workspaces). Entry gone meanwhile → Err.
+      let result: Result<void> = Err(`Workspace not found: ${workspaceId}`);
+      await this.config.editConfig((freshConfig) => {
+        const freshWorkspace = freshConfig.projects
+          .get(owningProjectPath)
+          ?.workspaces.find((w) => w.id === workspaceId);
+        if (freshWorkspace) {
+          freshWorkspace.subProjectPath = subProjectPath ?? undefined;
+          result = Ok(undefined);
+        }
+        return freshConfig;
+      });
+      return result;
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to assign workspace to sub-project: ${message}`);

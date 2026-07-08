@@ -295,7 +295,15 @@ type WorkspaceHeartbeatSettingsUpdate = Partial<WorkspaceHeartbeatSettings>;
 type WorkspaceGoalDefaultsOverride = z.infer<typeof WorkspaceGoalDefaultsOverrideSchema>;
 interface HeartbeatWorkspaceConfigEntry {
   normalizedWorkspaceId: string;
+  /** Project/workspace paths so editConfig transforms can re-find the FRESH entry. */
+  projectPath: string;
+  workspacePath: string;
   config: ProjectsConfig;
+  /**
+   * Entry from the pre-read snapshot: valid for read paths and input validation only.
+   * Mutations must re-resolve the entry from fresh config inside editConfig — persisting
+   * a stale snapshot loses concurrent edits (e.g. resurrects removed workspaces).
+   */
   workspaceEntry: Workspace;
 }
 interface HeartbeatExecutionRequest {
@@ -4559,7 +4567,31 @@ export class WorkspaceService extends EventEmitter {
       return Err("Workspace not found");
     }
 
-    return Ok({ normalizedWorkspaceId, config, workspaceEntry });
+    return Ok({
+      normalizedWorkspaceId,
+      projectPath: found.projectPath,
+      workspacePath: found.workspacePath,
+      config,
+      workspaceEntry,
+    });
+  }
+
+  /**
+   * Re-resolve a workspace entry from a FRESH config snapshot inside an editConfig
+   * transform. Mutating a pre-read snapshot entry and persisting that snapshot was a
+   * lost-update race: a stale full-config write racing removeWorkspace() resurrected
+   * the removed entry as a permanent sidebar ghost. All config mutations must re-find
+   * their target entry here (or equivalent) inside the serialized transform.
+   */
+  private findFreshWorkspaceEntry(
+    config: ProjectsConfig,
+    target: { projectPath: string; workspaceId: string; workspacePath: string }
+  ): Workspace | undefined {
+    const projectConfig = config.projects.get(target.projectPath);
+    return (
+      projectConfig?.workspaces.find((workspace) => workspace.id === target.workspaceId) ??
+      projectConfig?.workspaces.find((workspace) => workspace.path === target.workspacePath)
+    );
   }
 
   getHeartbeatSettings(workspaceId: string): WorkspaceHeartbeatSettings | null {
@@ -4595,13 +4627,30 @@ export class WorkspaceService extends EventEmitter {
         return Err(resolved.error);
       }
 
-      const { normalizedWorkspaceId, config, workspaceEntry } = resolved.data;
-      if (!workspaceEntry.heartbeat) {
+      const { normalizedWorkspaceId, projectPath, workspacePath } = resolved.data;
+      if (!resolved.data.workspaceEntry.heartbeat) {
         return Ok(undefined);
       }
 
-      delete workspaceEntry.heartbeat;
-      await this.config.saveConfig(config);
+      // Mutate inside the serialized editConfig transform, re-finding the entry from
+      // fresh config (see findFreshWorkspaceEntry). Entry gone meanwhile means the
+      // workspace was removed concurrently — unset is then trivially satisfied.
+      let removedHeartbeat = false;
+      await this.config.editConfig((freshConfig) => {
+        const entry = this.findFreshWorkspaceEntry(freshConfig, {
+          projectPath,
+          workspaceId: normalizedWorkspaceId,
+          workspacePath,
+        });
+        if (entry?.heartbeat) {
+          delete entry.heartbeat;
+          removedHeartbeat = true;
+        }
+        return freshConfig;
+      });
+      if (!removedHeartbeat) {
+        return Ok(undefined);
+      }
 
       const interactionTimestamp = Date.now();
       await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
@@ -4668,70 +4717,100 @@ export class WorkspaceService extends EventEmitter {
         return Err(resolved.error);
       }
 
-      const { normalizedWorkspaceId, config, workspaceEntry } = resolved.data;
-      const defaultIntervalMs = this.getHeartbeatDefaultIntervalMsFromConfig(config);
-      const currentSettings = normalizeHeartbeatSettings(
-        workspaceEntry.heartbeat,
-        defaultIntervalMs
-      );
-      const nextMessage = hasMessageUpdate
-        ? sanitizeHeartbeatMessage(settings.message)
-        : currentSettings?.message;
-      // trigger/whenBusy mirror the `message` pattern (not `contextMode`): a present key with
-      // null clears back to unset, an absent key preserves, and unset is never materialized
-      // into config so read-time defaulting stays intact (see resolveHeartbeatSchedulePolicy).
-      const nextTrigger = hasTriggerUpdate
-        ? (settings.trigger ?? undefined)
-        : currentSettings?.trigger;
-      const nextWhenBusy = hasWhenBusyUpdate
-        ? (settings.whenBusy ?? undefined)
-        : currentSettings?.whenBusy;
-      const nextEnabled = hasEnabledUpdate ? settings.enabled! : (currentSettings?.enabled ?? true);
-      const nextIntervalMs = hasIntervalUpdate
-        ? settings.intervalMs!
-        : (currentSettings?.intervalMs ?? defaultIntervalMs);
-      // Server-managed cadence-edit stamp: fixed-interval restart anchoring uses
-      // max(last persisted firing, scheduleUpdatedAt), so a heartbeat fired under the
-      // previous schedule cannot bypass this edit (HeartbeatService's
-      // deriveInitialIntervalNextEligibleAt). Only cadence-affecting fields count —
-      // resolved trigger, not raw, so an explicit no-op like null→"idle" does not
-      // re-anchor (mirroring ensureTrackedWorkspace's live re-anchor conditions).
+      const { normalizedWorkspaceId, projectPath, workspacePath } = resolved.data;
       const interactionTimestamp = Date.now();
-      const cadenceChanged =
-        currentSettings?.enabled !== nextEnabled ||
-        currentSettings?.intervalMs !== nextIntervalMs ||
-        resolveHeartbeatSchedulePolicy(currentSettings ?? undefined).trigger !==
-          resolveHeartbeatSchedulePolicy({ trigger: nextTrigger, whenBusy: nextWhenBusy }).trigger;
-      const nextScheduleUpdatedAt = cadenceChanged
-        ? interactionTimestamp
-        : currentSettings?.scheduleUpdatedAt;
-      // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
-      const nextSettings: WorkspaceHeartbeatSettings = {
-        enabled: nextEnabled,
-        intervalMs: nextIntervalMs,
-        contextMode: hasContextModeUpdate
-          ? sanitizeHeartbeatContextMode(settings.contextMode)
-          : (currentSettings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE),
-        ...(nextMessage != null ? { message: nextMessage } : {}),
-        ...(nextTrigger != null ? { trigger: nextTrigger } : {}),
-        ...(nextWhenBusy != null ? { whenBusy: nextWhenBusy } : {}),
-        ...(nextScheduleUpdatedAt != null ? { scheduleUpdatedAt: nextScheduleUpdatedAt } : {}),
-      };
+      // Merge with the FRESH entry inside the serialized editConfig transform (not the
+      // pre-read snapshot): merging against a stale entry could silently drop a concurrent
+      // heartbeat edit, and persisting the stale snapshot could resurrect concurrently
+      // removed workspaces (lost-update race). Entry gone meanwhile → Err.
+      let mergeResult: Result<{ settings: WorkspaceHeartbeatSettings; changed: boolean }, string> =
+        Err("Workspace not found");
+      await this.config.editConfig((freshConfig) => {
+        const workspaceEntry = this.findFreshWorkspaceEntry(freshConfig, {
+          projectPath,
+          workspaceId: normalizedWorkspaceId,
+          workspacePath,
+        });
+        if (!workspaceEntry) {
+          mergeResult = Err("Workspace not found");
+          return freshConfig;
+        }
 
-      const changed =
-        workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
-        workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs ||
-        workspaceEntry.heartbeat?.message !== nextSettings.message ||
-        sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode) !==
-          nextSettings.contextMode ||
-        (workspaceEntry.heartbeat?.trigger ?? undefined) !== nextSettings.trigger ||
-        (workspaceEntry.heartbeat?.whenBusy ?? undefined) !== nextSettings.whenBusy;
-      if (!changed) {
-        return Ok(nextSettings);
+        const defaultIntervalMs = this.getHeartbeatDefaultIntervalMsFromConfig(freshConfig);
+        const currentSettings = normalizeHeartbeatSettings(
+          workspaceEntry.heartbeat,
+          defaultIntervalMs
+        );
+        const nextMessage = hasMessageUpdate
+          ? sanitizeHeartbeatMessage(settings.message)
+          : currentSettings?.message;
+        // trigger/whenBusy mirror the `message` pattern (not `contextMode`): a present key with
+        // null clears back to unset, an absent key preserves, and unset is never materialized
+        // into config so read-time defaulting stays intact (see resolveHeartbeatSchedulePolicy).
+        const nextTrigger = hasTriggerUpdate
+          ? (settings.trigger ?? undefined)
+          : currentSettings?.trigger;
+        const nextWhenBusy = hasWhenBusyUpdate
+          ? (settings.whenBusy ?? undefined)
+          : currentSettings?.whenBusy;
+        const nextEnabled = hasEnabledUpdate
+          ? settings.enabled!
+          : (currentSettings?.enabled ?? true);
+        const nextIntervalMs = hasIntervalUpdate
+          ? settings.intervalMs!
+          : (currentSettings?.intervalMs ?? defaultIntervalMs);
+        // Server-managed cadence-edit stamp: fixed-interval restart anchoring uses
+        // max(last persisted firing, scheduleUpdatedAt), so a heartbeat fired under the
+        // previous schedule cannot bypass this edit (HeartbeatService's
+        // deriveInitialIntervalNextEligibleAt). Only cadence-affecting fields count —
+        // resolved trigger, not raw, so an explicit no-op like null→"idle" does not
+        // re-anchor (mirroring ensureTrackedWorkspace's live re-anchor conditions).
+        const cadenceChanged =
+          currentSettings?.enabled !== nextEnabled ||
+          currentSettings?.intervalMs !== nextIntervalMs ||
+          resolveHeartbeatSchedulePolicy(currentSettings ?? undefined).trigger !==
+            resolveHeartbeatSchedulePolicy({ trigger: nextTrigger, whenBusy: nextWhenBusy })
+              .trigger;
+        const nextScheduleUpdatedAt = cadenceChanged
+          ? interactionTimestamp
+          : currentSettings?.scheduleUpdatedAt;
+        // Keep the interval on disk even when disabled so re-enabling restores the user's choice.
+        const nextSettings: WorkspaceHeartbeatSettings = {
+          enabled: nextEnabled,
+          intervalMs: nextIntervalMs,
+          contextMode: hasContextModeUpdate
+            ? sanitizeHeartbeatContextMode(settings.contextMode)
+            : (currentSettings?.contextMode ?? HEARTBEAT_DEFAULT_CONTEXT_MODE),
+          ...(nextMessage != null ? { message: nextMessage } : {}),
+          ...(nextTrigger != null ? { trigger: nextTrigger } : {}),
+          ...(nextWhenBusy != null ? { whenBusy: nextWhenBusy } : {}),
+          ...(nextScheduleUpdatedAt != null ? { scheduleUpdatedAt: nextScheduleUpdatedAt } : {}),
+        };
+
+        const changed =
+          workspaceEntry.heartbeat?.enabled !== nextSettings.enabled ||
+          workspaceEntry.heartbeat?.intervalMs !== nextSettings.intervalMs ||
+          workspaceEntry.heartbeat?.message !== nextSettings.message ||
+          sanitizeHeartbeatContextMode(workspaceEntry.heartbeat?.contextMode) !==
+            nextSettings.contextMode ||
+          (workspaceEntry.heartbeat?.trigger ?? undefined) !== nextSettings.trigger ||
+          (workspaceEntry.heartbeat?.whenBusy ?? undefined) !== nextSettings.whenBusy;
+        if (!changed) {
+          mergeResult = Ok({ settings: nextSettings, changed: false });
+          return freshConfig;
+        }
+
+        workspaceEntry.heartbeat = nextSettings;
+        mergeResult = Ok({ settings: nextSettings, changed: true });
+        return freshConfig;
+      });
+
+      if (!mergeResult.success) {
+        return Err(mergeResult.error);
       }
-
-      workspaceEntry.heartbeat = nextSettings;
-      await this.config.saveConfig(config);
+      if (!mergeResult.data.changed) {
+        return Ok(mergeResult.data.settings);
+      }
 
       // Changing heartbeat settings is a real user interaction. Persist that recency before
       // emitting metadata so restarts preserve the post-config-change first-fire deadline
@@ -4739,7 +4818,7 @@ export class WorkspaceService extends EventEmitter {
       await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
 
-      return Ok(nextSettings);
+      return Ok(mergeResult.data.settings);
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to set heartbeat settings: ${message}`);
@@ -4827,18 +4906,6 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const { projectPath, workspacePath } = found;
-      const config = this.config.loadConfigOrDefault();
-      const projectConfig = config.projects.get(projectPath);
-      if (!projectConfig) {
-        return Err(`Project not found: ${projectPath}`);
-      }
-
-      const workspaceEntry =
-        projectConfig.workspaces.find((workspace) => workspace.id === normalizedWorkspaceId) ??
-        projectConfig.workspaces.find((workspace) => workspace.path === workspacePath);
-      if (!workspaceEntry) {
-        return Err("Workspace not found");
-      }
 
       // Drop the whole record when every field is null — keeps the
       // config.json minimal and makes "no override" the canonical state
@@ -4848,30 +4915,56 @@ export class WorkspaceService extends EventEmitter {
         override.defaultTurnCap == null &&
         override.alwaysRequireExplicitBudget == null;
 
-      const prior = workspaceEntry.goalDefaults;
-      if (allNull) {
-        if (prior == null) {
-          return Ok(undefined);
+      // Compare against the FRESH entry inside the serialized editConfig transform
+      // (see findFreshWorkspaceEntry): persisting a pre-read snapshot loses concurrent
+      // edits and can resurrect removed workspaces. Entry gone meanwhile → Err.
+      let writeResult: Result<{ changed: boolean }, string> = Err("Workspace not found");
+      await this.config.editConfig((freshConfig) => {
+        const workspaceEntry = this.findFreshWorkspaceEntry(freshConfig, {
+          projectPath,
+          workspaceId: normalizedWorkspaceId,
+          workspacePath,
+        });
+        if (!workspaceEntry) {
+          writeResult = Err("Workspace not found");
+          return freshConfig;
         }
-        delete workspaceEntry.goalDefaults;
-      } else {
-        const next: WorkspaceGoalDefaultsOverride = {
-          defaultBudgetCents: override.defaultBudgetCents ?? null,
-          defaultTurnCap: override.defaultTurnCap ?? null,
-          alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
-        };
-        const unchanged =
-          prior != null &&
-          (prior.defaultBudgetCents ?? null) === next.defaultBudgetCents &&
-          (prior.defaultTurnCap ?? null) === next.defaultTurnCap &&
-          (prior.alwaysRequireExplicitBudget ?? null) === next.alwaysRequireExplicitBudget;
-        if (unchanged) {
-          return Ok(undefined);
-        }
-        workspaceEntry.goalDefaults = next;
-      }
 
-      await this.config.saveConfig(config);
+        const prior = workspaceEntry.goalDefaults;
+        if (allNull) {
+          if (prior == null) {
+            writeResult = Ok({ changed: false });
+            return freshConfig;
+          }
+          delete workspaceEntry.goalDefaults;
+        } else {
+          const next: WorkspaceGoalDefaultsOverride = {
+            defaultBudgetCents: override.defaultBudgetCents ?? null,
+            defaultTurnCap: override.defaultTurnCap ?? null,
+            alwaysRequireExplicitBudget: override.alwaysRequireExplicitBudget ?? null,
+          };
+          const unchanged =
+            prior != null &&
+            (prior.defaultBudgetCents ?? null) === next.defaultBudgetCents &&
+            (prior.defaultTurnCap ?? null) === next.defaultTurnCap &&
+            (prior.alwaysRequireExplicitBudget ?? null) === next.alwaysRequireExplicitBudget;
+          if (unchanged) {
+            writeResult = Ok({ changed: false });
+            return freshConfig;
+          }
+          workspaceEntry.goalDefaults = next;
+        }
+
+        writeResult = Ok({ changed: true });
+        return freshConfig;
+      });
+
+      if (!writeResult.success) {
+        return Err(writeResult.error);
+      }
+      if (!writeResult.data.changed) {
+        return Ok(undefined);
+      }
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
       return Ok(undefined);
     } catch (error) {
@@ -6698,19 +6791,6 @@ export class WorkspaceService extends EventEmitter {
 
     const { projectPath, workspacePath } = found;
 
-    const config = this.config.loadConfigOrDefault();
-    const projectConfig = config.projects.get(projectPath);
-    if (!projectConfig) {
-      return Err(`Project not found: ${projectPath}`);
-    }
-
-    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
-    const workspaceEntryWithFallback =
-      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
-    if (!workspaceEntryWithFallback) {
-      return Err("Workspace not found");
-    }
-
     const normalizedAgentId = normalizeAgentId(agentId, "");
     if (!normalizedAgentId) {
       return Err("Agent ID is required");
@@ -6720,29 +6800,53 @@ export class WorkspaceService extends EventEmitter {
     // settings bucket. Persist whatever agent ID the caller chose so legacy Ask
     // settings can fade out naturally instead of being mixed into Auto.
 
-    const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
-    const aiSettingsChanged =
-      aiSettings != null &&
-      (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
-    const selectedAgentChanged =
-      options?.persistSelectedAgentId === true &&
-      workspaceEntryWithFallback.agentId !== normalizedAgentId;
-    if (!aiSettingsChanged && !selectedAgentChanged) {
+    // Compare/merge against the FRESH entry inside the serialized editConfig transform
+    // (see findFreshWorkspaceEntry): persisting a pre-read snapshot loses concurrent
+    // edits and can resurrect removed workspaces. Entry gone meanwhile → Err.
+    let writeResult: Result<boolean, string> = Err("Workspace not found");
+    await this.config.editConfig((freshConfig) => {
+      const workspaceEntry = this.findFreshWorkspaceEntry(freshConfig, {
+        projectPath,
+        workspaceId,
+        workspacePath,
+      });
+      if (!workspaceEntry) {
+        writeResult = Err("Workspace not found");
+        return freshConfig;
+      }
+
+      const prev = workspaceEntry.aiSettingsByAgent?.[normalizedAgentId];
+      const aiSettingsChanged =
+        aiSettings != null &&
+        (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+      const selectedAgentChanged =
+        options?.persistSelectedAgentId === true && workspaceEntry.agentId !== normalizedAgentId;
+      if (!aiSettingsChanged && !selectedAgentChanged) {
+        writeResult = Ok(false);
+        return freshConfig;
+      }
+
+      if (aiSettings != null) {
+        workspaceEntry.aiSettingsByAgent = {
+          ...(workspaceEntry.aiSettingsByAgent ?? {}),
+          [normalizedAgentId]: aiSettings,
+        };
+      }
+
+      if (options?.persistSelectedAgentId === true) {
+        workspaceEntry.agentId = normalizedAgentId;
+      }
+
+      writeResult = Ok(true);
+      return freshConfig;
+    });
+
+    if (!writeResult.success) {
+      return Err(writeResult.error);
+    }
+    if (!writeResult.data) {
       return Ok(false);
     }
-
-    if (aiSettings != null) {
-      workspaceEntryWithFallback.aiSettingsByAgent = {
-        ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
-        [normalizedAgentId]: aiSettings,
-      };
-    }
-
-    if (options?.persistSelectedAgentId === true) {
-      workspaceEntryWithFallback.agentId = normalizedAgentId;
-    }
-
-    await this.config.saveConfig(config);
 
     if (options?.emitMetadata !== false) {
       const allMetadata = await this.config.getAllWorkspaceMetadata();

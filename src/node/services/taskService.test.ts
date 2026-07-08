@@ -220,10 +220,10 @@ async function saveTestConfig(
   projects: Array<[string, ProjectConfig]>,
   overrides: TestConfigOverrides = {}
 ): Promise<void> {
-  await config.saveConfig({
+  await config.editConfig(() => ({
     projects: new Map(projects),
     ...overrides,
-  });
+  }));
 }
 
 async function saveWorkspaces(
@@ -4785,7 +4785,7 @@ describe("TaskService", () => {
       },
     ];
 
-    await config.saveConfig({
+    await config.editConfig(() => ({
       projects: new Map([
         [
           primaryProjectPath,
@@ -4818,7 +4818,7 @@ describe("TaskService", () => {
         [secondaryProjectPath, { trusted: true, workspaces: [] }],
       ]),
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    }));
 
     await config.updateProjectSecrets(primaryProjectPath, [
       { key: "PRIMARY_SECRET", value: "primary-secret" },
@@ -5336,7 +5336,7 @@ describe("TaskService", () => {
       },
     ];
 
-    await config.saveConfig({
+    await config.editConfig(() => ({
       projects: new Map([
         [
           primaryProjectPath,
@@ -5369,7 +5369,7 @@ describe("TaskService", () => {
         [secondaryProjectPath, { trusted: true, workspaces: [] }],
       ]),
       taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
-    });
+    }));
 
     await config.editConfig((cfg) => {
       const secondaryProject = cfg.projects.get(secondaryProjectPath);
@@ -15398,7 +15398,7 @@ describe("TaskService", () => {
     if (!childEntry) return;
 
     childEntry.taskModelString = "   ";
-    await config.saveConfig(preCfg);
+    await config.editConfig(() => preCfg);
 
     await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
 
@@ -16648,7 +16648,7 @@ describe("TaskService", () => {
     // This simulates the case where parent workspace name (e.g., from SSH)
     // doesn't correspond to a local branch in the project repository.
     const nonExistentBranchName = "non-existent-branch-xyz";
-    await config.saveConfig({
+    await config.editConfig(() => ({
       projects: new Map([
         [
           projectPath,
@@ -16667,7 +16667,7 @@ describe("TaskService", () => {
         ],
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    }));
     const { taskService } = createTaskServiceHarness(config);
 
     // Creating a task should succeed by falling back to "main" as trunkBranch
@@ -16700,7 +16700,7 @@ describe("TaskService", () => {
     }
 
     assert(removed, `Expected workspace ${workspaceId} to exist in test config`);
-    await config.saveConfig(cfg);
+    await config.editConfig(() => cfg);
   }
 
   test("reported leaf cleanup deletes the finished leaf but keeps siblings and parents", async () => {
@@ -16712,7 +16712,7 @@ describe("TaskService", () => {
     const childTaskAId = "child-a-333";
     const childTaskBId = "child-b-444";
 
-    await config.saveConfig({
+    await config.editConfig(() => ({
       projects: new Map([
         [
           projectPath,
@@ -16743,7 +16743,7 @@ describe("TaskService", () => {
         ],
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    }));
 
     const isStreaming = mock(() => false);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -16783,7 +16783,7 @@ describe("TaskService", () => {
     const parentTaskId = "parent-222";
     const childTaskId = "child-a-333";
 
-    await config.saveConfig({
+    await config.editConfig(() => ({
       projects: new Map([
         [
           projectPath,
@@ -16814,7 +16814,7 @@ describe("TaskService", () => {
         ],
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    }));
 
     const isStreaming = mock(() => false);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -16862,7 +16862,7 @@ describe("TaskService", () => {
     const childTaskId = "child-a-333";
     const completedAt = "2026-03-09T11:05:58.780Z";
 
-    await config.saveConfig({
+    await config.editConfig(() => ({
       projects: new Map([
         [
           projectPath,
@@ -16896,7 +16896,7 @@ describe("TaskService", () => {
         ],
       ]),
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-    });
+    }));
 
     const isStreaming = mock(() => false);
     const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
@@ -17341,7 +17341,7 @@ describe("TaskService", () => {
       const rootWorkspaceId = "root-resume-111";
       const childTaskId = "child-resume-222";
 
-      await config.saveConfig({
+      await config.editConfig(() => ({
         projects: new Map([
           [
             projectPath,
@@ -17362,7 +17362,7 @@ describe("TaskService", () => {
           ],
         ]),
         taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      });
+      }));
 
       const { aiService } = createAIServiceMocks(config);
       const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -17440,7 +17440,7 @@ describe("TaskService", () => {
       const rootWorkspaceId = "root-workflow-budget";
       const firstRunId = "wfr_budget_first";
       const secondRunId = "wfr_budget_second";
-      await config.saveConfig({
+      await config.editConfig(() => ({
         projects: new Map([
           [
             projectPath,
@@ -17451,7 +17451,7 @@ describe("TaskService", () => {
           ],
         ]),
         taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      });
+      }));
 
       const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(rootWorkspaceId) });
       await runStore.createRun({
@@ -17554,7 +17554,7 @@ describe("TaskService", () => {
       const childA = "child-A";
       const childB = "child-B";
 
-      await config.saveConfig({
+      await config.editConfig(() => ({
         projects: new Map([
           [
             projectPath,
@@ -17582,7 +17582,7 @@ describe("TaskService", () => {
           ],
         ]),
         taskSettings: { maxParallelAgentTasks: 5, maxTaskNestingDepth: 3 },
-      });
+      }));
 
       const { aiService } = createAIServiceMocks(config);
       const { workspaceService, sendMessage } = createWorkspaceServiceMocks();

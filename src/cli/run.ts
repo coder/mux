@@ -467,10 +467,8 @@ async function main(): Promise<number> {
     }
 
     if (trustOnlyProjects.size > 0) {
-      await config.saveConfig({
-        ...config.loadConfigOrDefault(),
-        projects: trustOnlyProjects,
-      });
+      // Config.saveConfig is private (lost-update safety); route through the queue.
+      await config.editConfig((cfg) => ({ ...cfg, projects: trustOnlyProjects }));
     }
   }
 

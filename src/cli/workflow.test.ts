@@ -21,7 +21,7 @@ async function getRejectedMessage(promise: Promise<unknown>): Promise<string> {
 }
 
 async function trustProject(muxRoot: string, repo: string): Promise<void> {
-  await Bun.$`${BUN_EXECUTABLE} -e ${`import { Config } from "./src/node/config"; const c = new Config(); const cfg = c.loadConfigOrDefault(); cfg.projects.set(process.argv[1], { workspaces: [], trusted: true }); await c.saveConfig(cfg);`} ${repo}`
+  await Bun.$`${BUN_EXECUTABLE} -e ${`import { Config } from "./src/node/config"; const c = new Config(); await c.editConfig((cfg) => { cfg.projects.set(process.argv[1], { workspaces: [], trusted: true }); return cfg; });`} ${repo}`
     .env({ ...process.env, MUX_ROOT: muxRoot })
     .quiet();
 }

@@ -674,6 +674,8 @@ export class Config {
   private readonly emitter = new EventEmitter();
   /** Serializes editConfig calls; see editConfig for why. */
   private editConfigQueue: Promise<void> = Promise.resolve();
+  /** One-shot guard for the queued load-time migration persist; see loadConfigOrDefault. */
+  private migrationPersist: Promise<void> | null = null;
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -1026,15 +1028,23 @@ export class Config {
           }
         }
 
-        if (configModified) {
-          try {
-            writeFileAtomic.sync(this.configFile, JSON.stringify(parsed, null, 2), {
-              encoding: "utf-8",
+        if (configModified && this.migrationPersist == null) {
+          // Persist load-time migrations through the serialized editConfig queue instead of
+          // writing `parsed` synchronously here: a sync write bypasses the queue, so a
+          // concurrent editConfig write landing between this load's read and the write-back
+          // would be clobbered with stale data (same lost-update class that resurrected
+          // removed workspaces via the old public saveConfig). Migrations are idempotent and
+          // re-applied on every load, so the identity transform re-reads disk, re-runs them,
+          // and persists the migrated form under the queue. One-shot guard: while a persist
+          // is in flight, the loads it performs internally must not re-schedule.
+          this.migrationPersist = this.editConfig((migratedConfig) => migratedConfig)
+            .catch((error: unknown) => {
+              // Keep startup resilient even if persisting migration fails.
+              log.warn("Failed to persist migrated config", { error });
+            })
+            .finally(() => {
+              this.migrationPersist = null;
             });
-          } catch (error) {
-            // Keep startup resilient even if persisting migration fails.
-            log.warn("Failed to persist migrated config", { error });
-          }
         }
 
         const coderWorkspaceArchiveBehavior = resolveCoderWorkspaceArchiveBehavior(
@@ -1140,7 +1150,17 @@ export class Config {
     };
   }
 
-  async saveConfig(config: ProjectsConfig): Promise<void> {
+  /**
+   * Write the full config snapshot to disk (atomic write, log-and-swallow errors).
+   *
+   * PRIVATE on purpose: this is editConfig's write primitive only. Direct external
+   * callers used to write stale full snapshots outside the editConfig queue, which
+   * caused lost-update races — e.g. a snapshot read before a concurrent
+   * removeWorkspace() and written after it resurrected the removed workspace entry
+   * as a permanent sidebar ghost. All mutations must go through editConfig so each
+   * write is derived from a fresh serialized read.
+   */
+  private async saveConfig(config: ProjectsConfig): Promise<void> {
     try {
       if (!fs.existsSync(this.rootDir)) {
         ensurePrivateDirSync(this.rootDir);
@@ -1689,7 +1709,23 @@ export class Config {
   async getAllWorkspaceMetadata(): Promise<FrontendWorkspaceMetadata[]> {
     const config = this.loadConfigOrDefault();
     const workspaceMetadata: FrontendWorkspaceMetadata[] = [];
-    let configModified = false;
+    // Read-time migrations recorded here are re-applied to a FRESH config snapshot inside
+    // editConfig below. Persisting the local `config` snapshot directly (the old
+    // saveConfig(config) call) raced concurrent removeWorkspace() edits and resurrected
+    // removed workspace entries (lost-update). Each `apply` only fills still-missing fields
+    // (??=), so re-application onto fresh state is idempotent and never clobbers newer data.
+    const pendingWorkspaceMigrations: Array<{
+      projectPath: string;
+      workspacePath: string;
+      apply: (entry: Workspace) => void;
+    }> = [];
+    const recordWorkspaceMigration = (
+      migrationProjectPath: string,
+      workspacePath: string,
+      apply: (entry: Workspace) => void
+    ) => {
+      pendingWorkspaceMigrations.push({ projectPath: migrationProjectPath, workspacePath, apply });
+    };
 
     for (const [projectPath, projectConfig] of config.projects) {
       // Validate project path is not empty (defensive check for corrupted config)
@@ -1763,7 +1799,9 @@ export class Config {
             // Migrate missing createdAt to config for next load
             if (!workspace.createdAt) {
               workspace.createdAt = metadata.createdAt;
-              configModified = true;
+              recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                entry.createdAt ??= metadata.createdAt;
+              });
             }
 
             // Migrate missing runtimeConfig to config for next load
@@ -1776,18 +1814,24 @@ export class Config {
                 : undefined;
               if (derived) {
                 workspace.aiSettingsByAgent = derived;
-                configModified = true;
+                recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                  entry.aiSettingsByAgent ??= derived;
+                });
               }
             }
 
             if (!workspace.runtimeConfig) {
               workspace.runtimeConfig = metadata.runtimeConfig;
-              configModified = true;
+              recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                entry.runtimeConfig ??= metadata.runtimeConfig;
+              });
             }
 
             if (!workspace.projects && metadata.projects) {
               workspace.projects = metadata.projects;
-              configModified = true;
+              recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                entry.projects ??= metadata.projects;
+              });
             }
 
             // Populate containerName for Docker workspaces (computed from project path and workspace name)
@@ -1864,12 +1908,16 @@ export class Config {
 
             if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
               workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
-              configModified = true;
+              recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                entry.aiSettingsByAgent ??= metadata.aiSettingsByAgent;
+              });
             }
 
             if (!workspace.heartbeat && metadata.heartbeat) {
               workspace.heartbeat = metadata.heartbeat;
-              configModified = true;
+              recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                entry.heartbeat ??= metadata.heartbeat;
+              });
             }
 
             // Migrate to config for next load
@@ -1878,11 +1926,19 @@ export class Config {
             workspace.createdAt = metadata.createdAt;
             workspace.runtimeConfig = metadata.runtimeConfig;
             workspace.forkFamilyBaseName = metadata.forkFamilyBaseName;
-            configModified = true;
+            recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+              entry.id ??= metadata.id;
+              entry.name ??= metadata.name;
+              entry.createdAt ??= metadata.createdAt;
+              entry.runtimeConfig ??= metadata.runtimeConfig;
+              entry.forkFamilyBaseName ??= metadata.forkFamilyBaseName;
+            });
 
             if (!workspace.projects && metadata.projects) {
               workspace.projects = metadata.projects;
-              configModified = true;
+              recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+                entry.projects ??= metadata.projects;
+              });
             }
 
             workspaceMetadata.push(
@@ -1939,7 +1995,12 @@ export class Config {
             workspace.name = metadata.name;
             workspace.createdAt = metadata.createdAt;
             workspace.runtimeConfig = metadata.runtimeConfig;
-            configModified = true;
+            recordWorkspaceMigration(projectPath, workspace.path, (entry) => {
+              entry.id ??= metadata.id;
+              entry.name ??= metadata.name;
+              entry.createdAt ??= metadata.createdAt;
+              entry.runtimeConfig ??= metadata.runtimeConfig;
+            });
 
             workspaceMetadata.push(
               await this.addPathsToMetadata(metadata, workspace.path, projectPath)
@@ -1993,9 +2054,21 @@ export class Config {
       }
     }
 
-    // Save config if we migrated any workspaces
-    if (configModified) {
-      await this.saveConfig(config);
+    // Persist migrated workspace fields under the editConfig queue, re-resolving each
+    // entry from the fresh snapshot. Entries removed concurrently are skipped so this
+    // write can never resurrect them.
+    if (pendingWorkspaceMigrations.length > 0) {
+      await this.editConfig((freshConfig) => {
+        for (const migration of pendingWorkspaceMigrations) {
+          const project = freshConfig.projects.get(migration.projectPath);
+          const entry = project?.workspaces.find(
+            (candidate) => candidate.path === migration.workspacePath
+          );
+          if (!entry) continue; // workspace removed concurrently — do not resurrect
+          migration.apply(entry);
+        }
+        return freshConfig;
+      });
     }
 
     return workspaceMetadata;

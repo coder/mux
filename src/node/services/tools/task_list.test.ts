@@ -42,7 +42,7 @@ async function writeWorkspaceConfig(tempDir: string, workspaces: Workspace[]): P
   const config = new Config(tempDir);
   const cfg = config.loadConfigOrDefault();
   cfg.projects.set(path.join(tempDir, "project"), { workspaces });
-  await config.saveConfig(cfg);
+  await config.editConfig(() => cfg);
 }
 
 function buildAgentTask(

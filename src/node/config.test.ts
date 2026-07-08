@@ -30,6 +30,14 @@ describe("Config", () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  // Load-time migrations persist through the serialized editConfig queue (an async
+  // identity transform) instead of a synchronous write-back, so tests asserting the
+  // migrated on-disk form must flush the queue first. Awaiting an identity edit is
+  // sufficient: it re-runs the idempotent load migrations and writes the result.
+  async function flushConfigEdits(): Promise<void> {
+    await config.editConfig((cfg) => cfg);
+  }
+
   describe("loadConfigOrDefault with trailing slash migration", () => {
     it("should strip trailing slashes from project paths on load", () => {
       // Create config file with trailing slashes in project paths
@@ -388,7 +396,7 @@ describe("Config", () => {
     const OPUS = KNOWN_MODELS.OPUS.id;
     const configFilePath = () => path.join(tempDir, "config.json");
 
-    it("seeds the default chain once on first load and persists the migration flag", () => {
+    it("seeds the default chain once on first load and persists the migration flag", async () => {
       fs.writeFileSync(configFilePath(), JSON.stringify({ projects: [] }));
 
       const loaded = config.loadConfigOrDefault();
@@ -396,6 +404,7 @@ describe("Config", () => {
       expect(loaded.migrations?.defaultModelFallbacksSeeded).toBe(true);
 
       // Seed is written back so the flag survives restarts even without saves.
+      await flushConfigEdits();
       const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
         modelFallbacks?: unknown;
         migrations?: { defaultModelFallbacksSeeded?: unknown };
@@ -416,7 +425,7 @@ describe("Config", () => {
       expect(config.loadConfigOrDefault().modelFallbacks).toBeUndefined();
     });
 
-    it("merges the seeded default with pre-existing chains for other source models", () => {
+    it("merges the seeded default with pre-existing chains for other source models", async () => {
       fs.writeFileSync(
         configFilePath(),
         JSON.stringify({
@@ -434,6 +443,7 @@ describe("Config", () => {
       });
 
       // The user's chain must survive the seed write-back on disk unchanged.
+      await flushConfigEdits();
       const raw = JSON.parse(fs.readFileSync(configFilePath(), "utf-8")) as {
         modelFallbacks?: unknown;
         migrations?: { defaultModelFallbacksSeeded?: unknown };
@@ -922,7 +932,7 @@ describe("Config", () => {
       );
     });
 
-    it("removes mirrored exec subagent fields on first load", () => {
+    it("removes mirrored exec subagent fields on first load", async () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
@@ -942,6 +952,7 @@ describe("Config", () => {
       expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
       expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
 
+      await flushConfigEdits();
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
         subagentAiDefaults?: Record<string, unknown>;
         migrations?: { execSubagentDefaultsSplit?: boolean };
@@ -950,7 +961,7 @@ describe("Config", () => {
       expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
     });
 
-    it("preserves session usage cache when only exec-split cleanup modifies config", () => {
+    it("preserves session usage cache when only exec-split cleanup modifies config", async () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
@@ -975,6 +986,7 @@ describe("Config", () => {
       expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
       expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
 
+      await flushConfigEdits();
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
         subagentAiDefaults?: Record<string, unknown>;
         migrations?: { execSubagentDefaultsSplit?: boolean };
@@ -1311,7 +1323,7 @@ describe("Config", () => {
       });
     }
 
-    it("preserves legacy fields on disk alongside synthesized modern routing state", () => {
+    it("preserves legacy fields on disk alongside synthesized modern routing state", async () => {
       writeRawConfig({
         muxGatewayEnabled: true,
         muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
@@ -1326,6 +1338,7 @@ describe("Config", () => {
         "anthropic:claude-sonnet-4-6": "mux-gateway",
       });
 
+      await flushConfigEdits();
       expect(readRawConfig()).toMatchObject({
         muxGatewayEnabled: true,
         muxGatewayModels: ["anthropic/claude-sonnet-4-6"],
@@ -1369,7 +1382,7 @@ describe("Config", () => {
       expect(loaded.routeOverrides).toBeUndefined();
     });
 
-    it("clears stale muxGatewayEnabled disables when routePriority already includes mux-gateway", () => {
+    it("clears stale muxGatewayEnabled disables when routePriority already includes mux-gateway", async () => {
       writeRawConfig({
         muxGatewayEnabled: false,
         routePriority: ["mux-gateway", "direct"],
@@ -1379,6 +1392,7 @@ describe("Config", () => {
 
       expect(loaded.routePriority).toEqual(["mux-gateway", "direct"]);
       expect(loaded.muxGatewayEnabled).toBeUndefined();
+      await flushConfigEdits();
       expect(readRawConfig().muxGatewayEnabled).toBeUndefined();
       expect(new Config(tempDir).loadConfigOrDefault().muxGatewayEnabled).toBeUndefined();
     });

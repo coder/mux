@@ -56,11 +56,11 @@ async function saveRoutePriority(
   routePriority: string[],
   overrides: Record<string, unknown> = {}
 ): Promise<void> {
-  await config.saveConfig({
+  await config.editConfig(() => ({
     ...config.loadConfigOrDefault(),
     ...overrides,
     routePriority,
-  });
+  }));
 }
 
 type ResolveAndCreateModelResult = Awaited<
