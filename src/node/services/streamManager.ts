@@ -3278,6 +3278,30 @@ export class StreamManager extends EventEmitter {
     // Write error state to disk - await to ensure consistent state before any resume.
     await this.historyService.writePartial(workspaceId as string, errorPartialMessage);
 
+    // Mirror of the abort path's tool-only routing: when the error partial
+    // will be dropped at commit time (no commit-worthy parts and no durable
+    // refusal metadata — commitPartial commits refusal placeholders even
+    // partless), its stamped usage would die with it and the billed turn
+    // would never reach the events table. Parts are frozen at error time, so
+    // this predicate matches the eventual commitPartial decision exactly;
+    // one of {chat row, sidecar row} carries the turn's usage, never both.
+    // skipSessionLedger: recordSessionUsage above already updated the ledger.
+    const errorPartialWillCommit =
+      hasCommitWorthyParts(errorPartialMessage.parts) || isRefusalFinishReason(refusalFinishReason);
+    if (errorUsage !== undefined && !errorPartialWillCommit) {
+      try {
+        await this.sessionUsageService?.recordHeadlessUsage(
+          workspaceId as string,
+          streamInfo.model,
+          cloneUsage(errorUsage),
+          errorProviderMetadata,
+          { analyticsSource: "errored_stream", skipSessionLedger: true }
+        );
+      } catch (error) {
+        log.error("Failed to record errored-stream usage in headless sidecar", { error });
+      }
+    }
+
     // Emit error event.
     this.emit("error", createErrorEvent(workspaceId as string, payload));
   }

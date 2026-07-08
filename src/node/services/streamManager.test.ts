@@ -4498,6 +4498,95 @@ describe("StreamManager - aborted stream usage persistence", () => {
     }
   });
 
+  test("routes non-durable errored usage to the headless sidecar (commit would drop it)", async () => {
+    // Provider/empty-output error before any commit-worthy output: the error
+    // placeholder is deleted at commit time, so the billed usage must ride
+    // the sidecar or the turn never reaches the events table.
+    const { historyService: hs, config, cleanup } = await createTestHistoryService();
+    try {
+      const sessionUsageService = new SessionUsageService(config, hs);
+      const streamManager = new StreamManager(hs, sessionUsageService);
+      streamManager.on("error", () => undefined);
+      const workspaceId = "error-nondurable-workspace";
+
+      const usage = { inputTokens: 900, outputTokens: 0, totalTokens: 900 };
+      const streamInfo = createStreamInfoForTests({
+        messageId: "error-nondurable-message",
+        parts: [],
+        cumulativeUsage: usage,
+        lastStepUsage: usage,
+      });
+
+      type PersistStreamErrorForTests = (
+        workspaceId: string,
+        streamInfo: unknown,
+        payload: { messageId: string; error: string; errorType: string }
+      ) => Promise<void>;
+      const persistError = getPrivateMethodForTests<PersistStreamErrorForTests>(
+        streamManager,
+        "persistStreamError"
+      );
+      await persistError.call(streamManager, workspaceId, streamInfo, {
+        messageId: "error-nondurable-message",
+        error: "provider exploded",
+        errorType: "empty_output",
+      });
+
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+      const record = JSON.parse((await fs.readFile(sidecarPath, "utf-8")).trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(record.source).toBe("errored_stream");
+      expect((record.usage as Record<string, unknown>).inputTokens).toBe(900);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("does not write the sidecar when the errored partial is commit-worthy", async () => {
+    // Text parts survive commit with usage attached — a sidecar row here
+    // would double-count the turn (chat row + headless row).
+    const { historyService: hs, config, cleanup } = await createTestHistoryService();
+    try {
+      const sessionUsageService = new SessionUsageService(config, hs);
+      const streamManager = new StreamManager(hs, sessionUsageService);
+      streamManager.on("error", () => undefined);
+      const workspaceId = "error-commit-worthy-workspace";
+
+      const usage = { inputTokens: 900, outputTokens: 40, totalTokens: 940 };
+      const streamInfo = createStreamInfoForTests({
+        messageId: "error-commit-worthy-message",
+        parts: [{ type: "text", text: "partial answer before failure", timestamp: Date.now() }],
+        cumulativeUsage: usage,
+        lastStepUsage: usage,
+      });
+
+      type PersistStreamErrorForTests = (
+        workspaceId: string,
+        streamInfo: unknown,
+        payload: { messageId: string; error: string; errorType: string }
+      ) => Promise<void>;
+      const persistError = getPrivateMethodForTests<PersistStreamErrorForTests>(
+        streamManager,
+        "persistStreamError"
+      );
+      await persistError.call(streamManager, workspaceId, streamInfo, {
+        messageId: "error-commit-worthy-message",
+        error: "stream truncated",
+        errorType: "stream_truncated",
+      });
+
+      const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
+      expect(existsSync(sidecarPath)).toBe(false);
+      // Usage rides the error partial into the eventual chat commit instead.
+      const partial = await hs.readPartial(workspaceId);
+      expect(partial?.metadata?.usage).toEqual(usage);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("does not rewrite the partial when the abort abandons it", async () => {
     const streamManager = new StreamManager(historyService);
     streamManager.on("stream-abort", () => undefined);

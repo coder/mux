@@ -23,6 +23,7 @@ import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
 import type {
+  ErrorEvent,
   ReasoningDeltaEvent,
   StreamAbortEvent,
   StreamDeltaEvent,
@@ -467,6 +468,13 @@ export class ServiceContainer {
       if (!data.abandonPartial) {
         ingestWorkspaceAnalytics(data.workspaceId);
       }
+    });
+    // Errored turns whose partial would be dropped at commit time route their
+    // usage to the headless sidecar (persistStreamError). The sidecar write
+    // precedes this event in the same async chain, so ingest here keeps the
+    // dashboard current instead of waiting for the next stream or restart.
+    this.aiService.on("error", (data: ErrorEvent) => {
+      ingestWorkspaceAnalytics(data.workspaceId);
     });
   }
 
