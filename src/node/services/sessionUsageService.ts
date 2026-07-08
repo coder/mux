@@ -144,13 +144,28 @@ export class SessionUsageService {
    * AND updates lastRequest in a single atomic write.
    * Model should already be normalized via normalizeToCanonical().
    */
-  async recordUsage(workspaceId: string, model: string, usage: ChatUsageDisplay): Promise<void> {
+  async recordUsage(
+    workspaceId: string,
+    model: string,
+    usage: ChatUsageDisplay,
+    options?: {
+      /**
+       * Accumulate into byModel without touching lastRequest. Used for
+       * headless telemetry (status generation, memory sweeps, /btw) so a tiny
+       * background call cannot replace the Costs tab's "Last request" data
+       * for the user's actual last agent turn.
+       */
+      skipLastRequestUpdate?: boolean;
+    }
+  ): Promise<void> {
     return this.fileLocks.withLock(workspaceId, async () => {
       const current = await this.readFile(workspaceId);
       const existing = current.byModel[model];
       // CRITICAL: Accumulate, don't overwrite
       current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
-      current.lastRequest = { model, usage, timestamp: Date.now() };
+      if (options?.skipLastRequestUpdate !== true) {
+        current.lastRequest = { model, usage, timestamp: Date.now() };
+      }
       await this.writeFile(workspaceId, current);
     });
   }
@@ -175,7 +190,9 @@ export class SessionUsageService {
       const canonicalModel = normalizeToCanonical(modelString);
       const displayUsage = createDisplayUsage(usage, canonicalModel, providerMetadata);
       if (!displayUsage) return;
-      await this.recordUsage(workspaceId, canonicalModel, displayUsage);
+      await this.recordUsage(workspaceId, canonicalModel, displayUsage, {
+        skipLastRequestUpdate: true,
+      });
     } catch (error) {
       log.warn("Failed to record headless usage", { workspaceId, modelString, error });
     }

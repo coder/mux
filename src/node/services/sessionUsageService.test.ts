@@ -431,6 +431,31 @@ describe("SessionUsageService", () => {
     });
   });
 
+  describe("recordHeadlessUsage", () => {
+    it("accumulates into byModel without replacing lastRequest", async () => {
+      const workspaceId = "test-workspace";
+      const agentModel = "anthropic:claude-sonnet-4-20250514";
+      const statusModel = "anthropic:claude-haiku-4-5";
+
+      // Normal agent turn establishes lastRequest.
+      await service.recordUsage(workspaceId, agentModel, createUsage(100, 50));
+
+      // Background status/memory/btw call must add spend but keep the user's
+      // actual last agent request visible in the Costs tab.
+      await service.recordHeadlessUsage(workspaceId, statusModel, {
+        inputTokens: 40,
+        outputTokens: 10,
+        totalTokens: 50,
+      });
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result?.byModel[statusModel]?.input.tokens).toBe(40);
+      expect(result?.byModel[statusModel]?.output.tokens).toBe(10);
+      expect(result?.lastRequest?.model).toBe(agentModel);
+      expect(result?.lastRequest?.usage.input.tokens).toBe(100);
+    });
+  });
+
   describe("resetSessionUsage", () => {
     it("should replace existing usage with an explicit empty ledger", async () => {
       const workspaceId = "test-workspace";

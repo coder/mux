@@ -444,9 +444,16 @@ export class ServiceContainer {
       this.analyticsService.clearWorkspace(event.workspaceId, { reingestAfterClear });
     });
 
-    this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
-      this.sessionTimingService.handleStreamAbort(data)
-    );
+    this.aiService.on("stream-abort", (data: StreamAbortEvent) => {
+      this.sessionTimingService.handleStreamAbort(data);
+      // Aborted turns commit their partial (now carrying usage) to chat.jsonl
+      // before AIService forwards this event (the commit runs in the same
+      // async chain that emits it), so ingest here or the interrupted turn's
+      // spend stays out of dashboard totals until the next stream-end.
+      if (!data.abandonPartial) {
+        ingestWorkspaceAnalytics(data.workspaceId);
+      }
+    });
   }
 
   get onePasswordService(): OnePasswordService | null {
