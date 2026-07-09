@@ -124,6 +124,7 @@ import type {
 } from "@/common/types/stream";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import {
+  computeActiveToolNames,
   prepareToolSearch,
   rebuildToolSearchState,
   seedToolSearchActivationsFromMessages,
@@ -2258,7 +2259,20 @@ export class AIService extends EventEmitter {
         systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
 
-      const toolNamesForSentinel = Object.keys(tools).sort();
+      // Re-activate deferred tools discovered by tool_search in earlier turns
+      // without requiring a new search. Must run before the sentinel list is
+      // computed so pre-activated tools are advertised in agent transitions.
+      if (toolSearchRuntime?.state) {
+        seedToolSearchActivationsFromMessages(toolSearchRuntime.state, messagesWithSentinel);
+      }
+
+      // Agent-transition sentinels must list only tools the model can actually
+      // see on the first step: deferred, not-yet-activated MCP tools are
+      // hidden by activeTools scoping, so advertising them would steer the
+      // model toward unavailable tool calls.
+      const toolNamesForSentinel = (
+        computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(tools)
+      ).sort();
 
       // Run the full message preparation pipeline (inject context, transform, validate).
       // This is a purely functional pipeline with no service dependencies.
@@ -2282,12 +2296,6 @@ export class AIService extends EventEmitter {
         workspaceId,
       });
       recordStartupPhaseTiming("prepareMessagesForProviderMs", prepareMessagesForProviderStartedAt);
-
-      // Re-activate deferred tools discovered by tool_search in earlier turns
-      // (or before a mid-turn stream retry) without requiring a new search.
-      if (toolSearchRuntime?.state) {
-        seedToolSearchActivationsFromMessages(toolSearchRuntime.state, finalMessages);
-      }
 
       captureMcpToolTelemetry({
         telemetryService: this.telemetryService,
@@ -2605,16 +2613,22 @@ export class AIService extends EventEmitter {
                         mcpToolNames: Object.keys(mcpTools ?? {}),
                         toolPolicy: effectiveToolPolicy,
                       }).tools;
-                    } else {
+                    } else if (!(mcpTools && "tool_search" in mcpTools)) {
                       // The primary-path gate deactivated deferral (e.g. every
                       // MCP tool was policy-disabled). StreamManager was never
                       // handed scoping state, so tool_search must not appear in
-                      // the fallback toolset either.
+                      // the fallback toolset either. Skipped when an MCP tool
+                      // collides with the name: that record entry is a
+                      // legitimate MCP tool, not our search tool.
                       const { tool_search: _removed, ...rest } = nextTools;
                       nextTools = rest;
                     }
                   }
-                  const nextToolNamesForSentinel = Object.keys(nextTools).sort();
+                  // Same active-set scoping as the primary sentinel: never
+                  // advertise deferred, not-yet-activated MCP tools.
+                  const nextToolNamesForSentinel = (
+                    computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(nextTools)
+                  ).sort();
                   const nextMemoryToolAvailable = nextTools.memory !== undefined;
                   const nextMemoryContext = await upgradeMemoryContextForModel(
                     nextMemoryToolAvailable,

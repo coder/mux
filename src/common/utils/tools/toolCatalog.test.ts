@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { Tool } from "ai";
-import type { ModelMessage } from "@/common/types/message";
+import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import {
   buildToolCatalog,
@@ -146,6 +146,22 @@ describe("prepareToolSearch (post-policy gate)", () => {
     expect(result.state).toBeUndefined();
     expect(Object.keys(result.tools)).not.toContain("tool_search");
   });
+
+  test("MCP name collision with tool_search: deactivates, record untouched", () => {
+    // Server "tool" + tool "search" normalize to "tool_search" and the MCP
+    // spread overwrites the built-in search tool — deferral must deactivate
+    // (no working search tool) and the colliding MCP tool must survive.
+    const tools = baseTools();
+    tools.tool_search = mcpTool("MCP tool that happens to be named tool_search");
+    const result = prepareToolSearch({
+      tools,
+      mcpToolNames: [...MCP_NAMES, "tool_search"],
+    });
+    expect(result.state).toBeUndefined();
+    expect(result.tools).toBe(tools);
+    expect(Object.keys(result.tools)).toContain("tool_search");
+    expect(Object.keys(result.tools)).toContain("slack_send_message");
+  });
 });
 
 describe("rebuildToolSearchState (model-fallback path)", () => {
@@ -284,6 +300,27 @@ describe("extractPreActivatedToolNames", () => {
       toolResultMessage("bash", { type: "json", value: matchesResult }),
     ]);
     expect(names.size).toBe(0);
+  });
+
+  test("reads MuxMessage dynamic-tool parts (pre-conversion seeding path)", () => {
+    // aiService seeds from MuxMessages (before Mux→Model conversion) so the
+    // agent-transition sentinel can include pre-activated tools.
+    const muxMessage = (toolName: string, state: string, output?: unknown): MuxMessage => {
+      const raw: unknown = {
+        id: "m1",
+        role: "assistant",
+        metadata: {},
+        parts: [{ type: "dynamic-tool", toolCallId: "call-1", toolName, input: {}, state, output }],
+      };
+      return raw as MuxMessage;
+    };
+    const names = extractPreActivatedToolNames([
+      muxMessage("tool_search", "output-available", matchesResult),
+      // Pending / other-tool parts must not contribute.
+      muxMessage("tool_search", "input-available"),
+      muxMessage("bash", "output-available", matchesResult),
+    ]);
+    expect([...names]).toEqual(["slack_send_message"]);
   });
 });
 

@@ -13,7 +13,7 @@
  */
 
 import type { Tool } from "ai";
-import type { ModelMessage } from "@/common/types/message";
+import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import { buildRequiredToolPatterns, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 
 export const TOOL_SEARCH_TOOL_NAME = "tool_search";
@@ -140,6 +140,11 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
  * Post-policy gate: decides whether tool-search deferral is active for this
  * stream and returns the (possibly adjusted) tool record plus the seed state.
  *
+ * - An MCP tool name collides with `tool_search` (e.g. server "tool" + tool
+ *   "search" normalize to "tool_search"): the MCP spread overwrites the
+ *   built-in search tool in the merged record, so deferring would leave MCP
+ *   tools unreachable with no working search tool ⇒ safe fallback: no state,
+ *   tools unchanged — the colliding entry behaves as a normal MCP tool.
  * - `tool_search` absent (policy-disabled) ⇒ safe fallback: no state, tools
  *   unchanged — MCP tools stay advertised exactly as without the experiment.
  * - Nothing deferred (all MCP tools policy-disabled / PTC-removed) ⇒ drop
@@ -153,6 +158,12 @@ export function prepareToolSearch(inputs: ToolCatalogInputs): {
   tools: Record<string, Tool>;
   state?: ToolSearchStreamState;
 } {
+  // Collision check must run before the empty-catalog branch below: when the
+  // record's `tool_search` entry is actually an MCP tool, dropping it would
+  // silently remove a legitimate MCP tool.
+  if (inputs.mcpToolNames.includes(TOOL_SEARCH_TOOL_NAME)) {
+    return { tools: inputs.tools };
+  }
   if (!(TOOL_SEARCH_TOOL_NAME in inputs.tools)) {
     return { tools: inputs.tools };
   }
@@ -274,16 +285,50 @@ function collectMatchNames(value: unknown, into: Set<string>): void {
   }
 }
 
+/** Decode a tool_search output in any persisted encoding and collect match names. */
+function collectMatchNamesFromOutput(output: unknown, into: Set<string>): void {
+  if (isPlainRecord(output) && output.type === "json") {
+    collectMatchNames(output.value, into);
+  } else if (isPlainRecord(output) && output.type === "text") {
+    if (typeof output.value === "string") {
+      try {
+        collectMatchNames(JSON.parse(output.value), into);
+      } catch {
+        // Not JSON — nothing to recover from a plain-text result.
+      }
+    }
+  } else {
+    collectMatchNames(output, into);
+  }
+}
+
 /**
  * Scan conversation history for prior `tool_search` tool results and return
  * the tool names they matched, so tools discovered in earlier turns (or
- * before a mid-turn stream retry) re-activate without a new search. Handles
- * both `{type:"json"}` and `{type:"text"}` output encodings plus raw result
- * objects. Callers intersect the result with the current deferred set.
+ * before a mid-turn stream retry) re-activate without a new search. Accepts
+ * both provider-shaped ModelMessages (tool-result parts, `{type:"json"}` /
+ * `{type:"text"}` output encodings plus raw result objects) and MuxMessages
+ * (dynamic-tool parts with raw outputs) — aiService seeds from MuxMessages
+ * because the agent-transition sentinel is computed before the Mux→Model
+ * conversion runs. Callers intersect the result with the current deferred set.
  */
-export function extractPreActivatedToolNames(messages: readonly ModelMessage[]): Set<string> {
+export function extractPreActivatedToolNames(
+  messages: ReadonlyArray<ModelMessage | MuxMessage>
+): Set<string> {
   const names = new Set<string>();
   for (const message of messages) {
+    if ("parts" in message && Array.isArray(message.parts)) {
+      for (const part of message.parts) {
+        if (
+          part.type === "dynamic-tool" &&
+          part.toolName === TOOL_SEARCH_TOOL_NAME &&
+          part.state === "output-available"
+        ) {
+          collectMatchNamesFromOutput(part.output, names);
+        }
+      }
+      continue;
+    }
     if (message.role !== "tool" || !Array.isArray(message.content)) {
       continue;
     }
@@ -291,20 +336,7 @@ export function extractPreActivatedToolNames(messages: readonly ModelMessage[]):
       if (part.type !== "tool-result" || part.toolName !== TOOL_SEARCH_TOOL_NAME) {
         continue;
       }
-      const output: unknown = part.output;
-      if (isPlainRecord(output) && output.type === "json") {
-        collectMatchNames(output.value, names);
-      } else if (isPlainRecord(output) && output.type === "text") {
-        if (typeof output.value === "string") {
-          try {
-            collectMatchNames(JSON.parse(output.value), names);
-          } catch {
-            // Not JSON — nothing to recover from a plain-text result.
-          }
-        }
-      } else {
-        collectMatchNames(output, names);
-      }
+      collectMatchNamesFromOutput(part.output, names);
     }
   }
   return names;
@@ -316,7 +348,7 @@ export function extractPreActivatedToolNames(messages: readonly ModelMessage[]):
  */
 export function seedToolSearchActivationsFromMessages(
   state: ToolSearchStreamState,
-  messages: readonly ModelMessage[]
+  messages: ReadonlyArray<ModelMessage | MuxMessage>
 ): void {
   for (const name of extractPreActivatedToolNames(messages)) {
     if (state.deferredToolNames.has(name)) {
