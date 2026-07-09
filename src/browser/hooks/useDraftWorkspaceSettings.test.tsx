@@ -40,6 +40,7 @@ async function importIsolatedDraftWorkspaceSettingsModules() {
   const isolatedProjectPath = join(contextsDir, `ProjectContext.real.${suffix}.tsx`);
   const isolatedThinkingPath = join(contextsDir, `ThinkingContext.real.${suffix}.tsx`);
   const isolatedThinkingLevelPath = join(hooksDir, `useThinkingLevel.real.${suffix}.ts`);
+  const isolatedReasoningModePath = join(hooksDir, `useReasoningMode.real.${suffix}.ts`);
   const isolatedHookPath = join(hooksDir, `useDraftWorkspaceSettings.real.${suffix}.ts`);
 
   await copyFile(join(contextsDir, "API.tsx"), isolatedApiPath);
@@ -80,6 +81,21 @@ async function importIsolatedDraftWorkspaceSettingsModules() {
 
   await writeFile(isolatedThinkingLevelPath, isolatedThinkingLevelSource);
 
+  // useReasoningMode reads the same ThinkingContext; without this rewrite the
+  // hook copy would resolve the canonical context (a different React context
+  // instance than the isolated ThinkingProvider in the wrapper) and throw.
+  const reasoningModeSource = await readFile(join(hooksDir, "useReasoningMode.ts"), "utf8");
+  const isolatedReasoningModeSource = reasoningModeSource.replace(
+    'from "@/browser/contexts/ThinkingContext";',
+    `from "../contexts/ThinkingContext.real.${suffix}.tsx";`
+  );
+
+  if (isolatedReasoningModeSource === reasoningModeSource) {
+    throw new Error("Failed to rewrite useReasoningMode ThinkingContext import");
+  }
+
+  await writeFile(isolatedReasoningModePath, isolatedReasoningModeSource);
+
   const hookSource = await readFile(join(hooksDir, "useDraftWorkspaceSettings.ts"), "utf8");
   const hookWithIsolatedThinkingLevel = hookSource.replace(
     'from "./useThinkingLevel";',
@@ -90,12 +106,21 @@ async function importIsolatedDraftWorkspaceSettingsModules() {
     throw new Error("Failed to rewrite useDraftWorkspaceSettings thinking hook import");
   }
 
-  const isolatedHookSource = hookWithIsolatedThinkingLevel.replace(
+  const hookWithIsolatedReasoningMode = hookWithIsolatedThinkingLevel.replace(
+    'from "./useReasoningMode";',
+    `from "./useReasoningMode.real.${suffix}.ts";`
+  );
+
+  if (hookWithIsolatedReasoningMode === hookWithIsolatedThinkingLevel) {
+    throw new Error("Failed to rewrite useDraftWorkspaceSettings reasoning-mode hook import");
+  }
+
+  const isolatedHookSource = hookWithIsolatedReasoningMode.replace(
     'from "@/browser/contexts/ProjectContext";',
     `from "../contexts/ProjectContext.real.${suffix}.tsx";`
   );
 
-  if (isolatedHookSource === hookWithIsolatedThinkingLevel) {
+  if (isolatedHookSource === hookWithIsolatedReasoningMode) {
     throw new Error("Failed to rewrite useDraftWorkspaceSettings project context import");
   }
 
@@ -119,6 +144,7 @@ async function importIsolatedDraftWorkspaceSettingsModules() {
     isolatedProjectPath,
     isolatedThinkingPath,
     isolatedThinkingLevelPath,
+    isolatedReasoningModePath,
     isolatedHookPath,
   ];
 }
