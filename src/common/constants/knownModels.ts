@@ -106,8 +106,9 @@ const MODEL_DEFINITIONS = {
   // ChatGPT, Codex, and the API (verified callable via plain API keys). New naming
   // system: the number is the generation, while Sol/Terra/Luna are durable capability
   // tiers. Cache writes bill at 1.25x input; cache reads keep the 90% discount.
-  // All tiers support a native "max" reasoning effort (see the thinking policy) and
-  // Responses API `reasoning.mode: "pro"` (see MUX_OPENAI_REASONING_MODE_HEADER).
+  // All tiers support a native "max" reasoning effort (see the thinking policy).
+  // The API also offers `reasoning.mode: "pro"`, not yet implemented in Mux (planned
+  // as a thinking-slider toggle; tracked in issue #3704).
   // GPT-5.6 Sol - flagship tier. $5/M input, $30/M output. Bare `gpt` alias lives here:
   // Sol succeeds gpt-5.5 as the flagship at the same list price.
   GPT_56_SOL: {

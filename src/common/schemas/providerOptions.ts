@@ -42,14 +42,6 @@ export const MuxProviderOptionsSchema = z.object({
       store: z.boolean().optional().meta({
         description: "Whether OpenAI stores responses. Set false for zero data retention (ZDR).",
       }),
-      reasoningMode: z
-        .enum(["default", "pro"])
-        .optional()
-        .meta({
-          description:
-            'OpenAI reasoning mode: "pro" performs more model work for reliability on difficult ' +
-            "tasks (GPT-5.6 family, Responses API only); default/unset uses standard reasoning",
-        }),
       forceContextLimitError: z.boolean().optional().meta({
         description: "Force context limit error (used in integration tests to simulate overflow)",
       }),

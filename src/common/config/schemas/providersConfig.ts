@@ -30,9 +30,6 @@ export const AnthropicProviderConfigSchema = BaseProviderConfigSchema.extend({
 
 export const OpenAIProviderConfigSchema = BaseProviderConfigSchema.extend({
   serviceTier: ServiceTierSchema.optional(),
-  // GPT-5.6 pro mode (reasoning.mode: "pro"). Provider-level intent; requests are
-  // still gated per-model to the GPT-5.6 family in buildRequestHeaders.
-  reasoningMode: z.enum(["default", "pro"]).optional(),
   organization: z.string().optional(),
   codexOauthDefaultAuth: CodexOauthDefaultAuthSchema.optional(),
   codexOauth: z.record(z.string(), z.unknown()).optional(),

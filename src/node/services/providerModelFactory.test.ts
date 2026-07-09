@@ -11,7 +11,6 @@ import { resolveProviderOptionsNamespaceKey } from "@/common/utils/ai/providerOp
 import { Ok } from "@/common/types/result";
 import {
   ProviderModelFactory,
-  applyOpenAIReasoningModeOverride,
   buildAIProviderRequestHeaders,
   classifyCopilotInitiator,
   countAnthropicCacheBreakpoints,
@@ -22,10 +21,7 @@ import {
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
 } from "./providerModelFactory";
-import {
-  MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
-  MUX_OPENAI_REASONING_MODE_HEADER,
-} from "@/common/utils/ai/providerOptions";
+import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
 import type { DevToolsService } from "./devToolsService";
 import { CodexOauthService } from "./codexOauthService";
@@ -1708,86 +1704,5 @@ describe("wrapFetchWithAnthropicCacheControl — gateway (AI SDK) body shape", (
       providerOptions: { anthropic: { effort: string } };
     };
     expect(sent.providerOptions.anthropic.effort).toBe("xhigh");
-  });
-});
-
-describe("applyOpenAIReasoningModeOverride", () => {
-  const HEADER = MUX_OPENAI_REASONING_MODE_HEADER;
-  const responsesRequest = { isOpenAIResponses: true, method: "POST" } as const;
-
-  it("returns init unchanged when the header is absent", () => {
-    const init: Parameters<typeof fetch>[1] = {
-      method: "POST",
-      body: JSON.stringify({ model: "gpt-5.6-sol" }),
-    };
-    expect(applyOpenAIReasoningModeOverride(init, responsesRequest)).toBe(init);
-  });
-
-  it("injects reasoning.mode and strips the header on Responses POSTs", () => {
-    const result = applyOpenAIReasoningModeOverride(
-      {
-        method: "POST",
-        headers: { [HEADER]: "pro", "content-type": "application/json" },
-        body: JSON.stringify({ model: "gpt-5.6-sol", reasoning: { effort: "high" } }),
-      },
-      responsesRequest
-    );
-
-    const headers = new Headers(result?.headers);
-    expect(headers.get(HEADER)).toBeNull();
-    expect(headers.get("content-type")).toBe("application/json");
-    const body = JSON.parse(result?.body as string) as {
-      reasoning: { effort: string; mode: string };
-    };
-    // SDK-built reasoning fields must survive alongside the injected mode.
-    expect(body.reasoning).toEqual({ effort: "high", mode: "pro" });
-  });
-
-  it("creates the reasoning object when the body has none", () => {
-    const result = applyOpenAIReasoningModeOverride(
-      {
-        method: "POST",
-        headers: { [HEADER]: "pro" },
-        body: JSON.stringify({ model: "gpt-5.6-sol" }),
-      },
-      responsesRequest
-    );
-
-    const body = JSON.parse(result?.body as string) as { reasoning: { mode: string } };
-    expect(body.reasoning).toEqual({ mode: "pro" });
-  });
-
-  it("strips stale content-length after rewriting the body", () => {
-    const result = applyOpenAIReasoningModeOverride(
-      {
-        method: "POST",
-        headers: { [HEADER]: "pro", "content-length": "42" },
-        body: JSON.stringify({ model: "gpt-5.6-sol" }),
-      },
-      responsesRequest
-    );
-
-    expect(new Headers(result?.headers).get("content-length")).toBeNull();
-  });
-
-  it("strips the header without touching the body on non-Responses endpoints", () => {
-    const body = JSON.stringify({ model: "gpt-5.6-sol" });
-    const result = applyOpenAIReasoningModeOverride(
-      { method: "POST", headers: { [HEADER]: "pro" }, body },
-      { isOpenAIResponses: false, method: "POST" }
-    );
-
-    expect(new Headers(result?.headers).get(HEADER)).toBeNull();
-    expect(result?.body).toBe(body);
-  });
-
-  it("strips the header and forwards non-JSON bodies unmodified", () => {
-    const result = applyOpenAIReasoningModeOverride(
-      { method: "POST", headers: { [HEADER]: "pro" }, body: "not-json" },
-      responsesRequest
-    );
-
-    expect(new Headers(result?.headers).get(HEADER)).toBeNull();
-    expect(result?.body).toBe("not-json");
   });
 });

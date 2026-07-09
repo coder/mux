@@ -51,7 +51,6 @@ import { createOpenAIWebSocketTransportFetch } from "@/node/services/openAIWebSo
 import { log } from "@/node/services/log";
 import {
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
-  MUX_OPENAI_REASONING_MODE_HEADER,
   resolveProviderOptionsNamespaceKey,
 } from "@/common/utils/ai/providerOptions";
 import { resolveRoute, type RouteContext } from "@/common/routing";
@@ -459,43 +458,6 @@ export function wrapFetchWithAnthropicCacheControl(
   };
 
   return Object.assign(cachingFetch, baseFetch) as typeof fetch;
-}
-
-/**
- * Consume the Mux-internal reasoning-mode header (see MUX_OPENAI_REASONING_MODE_HEADER):
- * strip it from the outgoing request and, for OpenAI Responses API POSTs, inject
- * `reasoning.mode` into the JSON body. The @ai-sdk/openai Responses schema only builds
- * reasoning.effort/summary, so GPT-5.6 pro mode must be added on the wire — the same
- * pattern as the Anthropic xhigh effort rewrite in wrapFetchWithAnthropicCacheControl.
- *
- * Exported for tests. Returns the (possibly replaced) RequestInit; never throws.
- */
-export function applyOpenAIReasoningModeOverride(
-  init: Parameters<typeof fetch>[1],
-  request: { isOpenAIResponses: boolean; method: string }
-): Parameters<typeof fetch>[1] {
-  if (!init) return init;
-  const headers = new Headers(init.headers);
-  const mode = headers.get(MUX_OPENAI_REASONING_MODE_HEADER);
-  if (mode == null) return init;
-  // Always strip the Mux-internal header so it never leaves the process, even
-  // when the body cannot be modified (non-Responses endpoint, non-JSON body).
-  headers.delete(MUX_OPENAI_REASONING_MODE_HEADER);
-
-  if (!(request.isOpenAIResponses && request.method === "POST" && typeof init.body === "string")) {
-    return { ...init, headers };
-  }
-
-  try {
-    const json = JSON.parse(init.body) as Record<string, unknown>;
-    // Preserve SDK-built reasoning fields (effort/summary) and add mode alongside them.
-    json.reasoning = { ...(isRecord(json.reasoning) ? json.reasoning : {}), mode };
-    headers.delete("content-length");
-    return { ...init, headers, body: JSON.stringify(json) };
-  } catch {
-    // Body isn't JSON — forward unmodified (minus the internal header).
-    return { ...init, headers };
-  }
 }
 
 /**
@@ -1343,8 +1305,7 @@ export class ProviderModelFactory {
         // when call sites omit options (e.g. TaskService, WorkspaceTitleGenerator).
         const configServiceTier = providerConfig.serviceTier as string | undefined;
         const configWireFormat = providerConfig.wireFormat as string | undefined;
-        const configReasoningMode = providerConfig.reasoningMode as string | undefined;
-        if (configServiceTier || configWireFormat || configReasoningMode) {
+        if (configServiceTier || configWireFormat) {
           muxProviderOptions ??= {};
           if (configServiceTier && muxProviderOptions.openai?.serviceTier == null) {
             muxProviderOptions.openai = {
@@ -1356,14 +1317,6 @@ export class ProviderModelFactory {
             muxProviderOptions.openai = {
               ...muxProviderOptions.openai,
               wireFormat: configWireFormat,
-            };
-          }
-          // GPT-5.6 pro mode from providers.jsonc. Request-level options win; per-model
-          // gating (GPT-5.6 family only) happens in buildRequestHeaders.
-          if (configReasoningMode === "pro" && muxProviderOptions.openai?.reasoningMode == null) {
-            muxProviderOptions.openai = {
-              ...muxProviderOptions.openai,
-              reasoningMode: configReasoningMode,
             };
           }
         }
@@ -1391,12 +1344,6 @@ export class ProviderModelFactory {
               const method = (init?.method ?? "GET").toUpperCase();
               const isOpenAIResponses = /\/v1\/responses(\?|$)/.test(urlString);
               const isOpenAIChatCompletions = /\/chat\/completions(\?|$)/.test(urlString);
-
-              // GPT-5.6 pro mode: consume the Mux-internal reasoning-mode header and
-              // inject `reasoning.mode` into the Responses body before any Codex
-              // normalization reads it. Reassigning `init` keeps every downstream
-              // consumer (Codex body handling, error fallback) on the rewritten request.
-              init = applyOpenAIReasoningModeOverride(init, { isOpenAIResponses, method });
 
               let nextInput: Parameters<typeof fetch>[0] = input;
               let nextInit: Parameters<typeof fetch>[1] | undefined = init;
