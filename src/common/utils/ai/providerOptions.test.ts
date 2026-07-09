@@ -415,6 +415,45 @@ describe("buildProviderOptions - OpenAI", () => {
     expect(openai!.parallelToolCalls).toBe(true);
   });
 
+  describe("GPT-5.6 native max reasoning effort", () => {
+    test.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
+      "sends native max effort for %s on the Responses API",
+      (modelId) => {
+        const result = buildProviderOptions(`openai:${modelId}`, "max");
+        const openai = getOpenAIOptions(result);
+
+        expect(openai).toBeDefined();
+        expect(openai!.reasoningEffort).toBe("max");
+      }
+    );
+
+    test("clamps max to xhigh on the Chat Completions wire format", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "max", undefined, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
+    });
+
+    test("keeps the max→xhigh clamp for non-GPT-5.6 models", () => {
+      const result = buildProviderOptions("openai:gpt-5.5", "max");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
+    });
+
+    test("non-max levels stay on the shared mapping for GPT-5.6", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "high");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("high");
+    });
+  });
+
   describe("store option", () => {
     test("should include store: false when muxProviderOptions sets store to false", () => {
       const result = buildProviderOptions("openai:gpt-5", "medium", undefined, undefined, {

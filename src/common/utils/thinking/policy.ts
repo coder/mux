@@ -12,6 +12,7 @@
  * - Multiple elements = User can select from options
  */
 
+import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   THINKING_LEVELS,
@@ -19,6 +20,7 @@ import {
   THINKING_LEVEL_OFF,
   anthropicRejectsDisabledThinking,
   anthropicSupportsNativeXhigh,
+  openaiSupportsNativeMaxEffort,
   stripModelProviderPrefixes,
   type ThinkingLevel,
   type ParsedThinkingInput,
@@ -54,6 +56,7 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.3-codex / Spark variants →
  *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
+ * - gpt-5.6 tiers (sol/terra/luna) → all 6 levels including native "max"
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
@@ -73,6 +76,59 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
  * reliable "supports reasoning" signal on its own (see getDefaultMinimumThinkingLevel).
  */
 const DEFAULT_THINKING_POLICY: ThinkingPolicy = ["off", "low", "medium", "high"];
+
+/**
+ * Whether a route provider delivers Mux-built openai providerOptions to OpenAI
+ * unchanged: OpenAI itself or a gateway marked passthrough in PROVIDER_DEFINITIONS
+ * (e.g. mux-gateway). Non-passthrough routes (openrouter, github-copilot, ...)
+ * rebuild reasoning params with their own effort maps and cannot express OpenAI's
+ * native "max".
+ */
+function isOpenAIPassthroughRoute(route: string): boolean {
+  if (route === "openai") return true;
+  const definition = PROVIDER_DEFINITIONS[route as keyof typeof PROVIDER_DEFINITIONS];
+  return definition != null && "passthrough" in definition && definition.passthrough === true;
+}
+
+/**
+ * Route inference from the model string alone (UI path, where the resolved route
+ * is not yet known). A bare/namespaced id without a route prefix is assumed direct;
+ * the request path re-clamps with the actually-resolved route via
+ * clampThinkingLevelForRoute, covering routePriority-based rerouting.
+ */
+function routeCanPassThroughOpenAIOptions(modelString: string): boolean {
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex === -1) return true; // bare model id — no route info, assume direct
+  return isOpenAIPassthroughRoute(modelString.slice(0, colonIndex).trim().toLowerCase());
+}
+
+/**
+ * Clamp a thinking level after route resolution.
+ *
+ * The UI policy can only infer the route from the model string, but routing may be
+ * decided at request time (routePriority/overrides) — e.g. `openai:gpt-5.6-sol`
+ * resolved through OpenRouter. Non-passthrough routes map "max" via their own effort
+ * tables (OpenRouter → "high", Copilot → "xhigh"), silently sending less effort than
+ * the user selected. Clamping to "xhigh" here keeps the request, metadata, and wire
+ * consistent with the best effort the route can express (xhigh is those routes' policy
+ * ceiling; their effort maps handle any further provider-side clamping).
+ *
+ * Only GPT-5.6's native max needs this: for every other model "max" and "xhigh"
+ * already share a wire value, so clamping would be a no-op.
+ */
+export function clampThinkingLevelForRoute(
+  modelString: string,
+  routeProvider: string | undefined,
+  level: ThinkingLevel
+): ThinkingLevel {
+  if (level !== "max") return level;
+  if (!openaiSupportsNativeMaxEffort(stripModelProviderPrefixes(modelString))) return level;
+  const passthrough =
+    routeProvider != null
+      ? isOpenAIPassthroughRoute(routeProvider)
+      : routeCanPassThroughOpenAIOptions(modelString);
+  return passthrough ? level : "xhigh";
+}
 
 /**
  * Returns the policy for a model that matches an explicit reasoning rule, or `null`
@@ -125,7 +181,22 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
     return ["medium", "high", "xhigh"];
   }
 
-  // gpt-5.2, gpt-5.5 and the gpt-5.4-mini / gpt-5.4-nano variants support 5 reasoning levels including xhigh.
+  // GPT-5.6 tiers (sol/terra/luna) support a native "max" reasoning effort for
+  // demanding tasks that need more exploration and verification. Only expose "max"
+  // on routes that can actually deliver it — direct OpenAI or passthrough gateways
+  // (which forward the openai providerOptions namespace verbatim). Non-passthrough
+  // routes build their own reasoning params (OpenRouter clamps max→"high", Copilot
+  // →"xhigh"), so offering MAX there would silently send a lower effort than the
+  // slider promises; those routes keep the 5-level policy below.
+  if (openaiSupportsNativeMaxEffort(withoutProviderNamespace)) {
+    if (routeCanPassThroughOpenAIOptions(modelString)) {
+      return ["off", "low", "medium", "high", "xhigh", "max"];
+    }
+    return ["off", "low", "medium", "high", "xhigh"];
+  }
+
+  // gpt-5.2, gpt-5.5 and the gpt-5.4-mini / gpt-5.4-nano variants support 5 reasoning
+  // levels including xhigh.
   if (
     /^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace) ||
     /^gpt-5\.(?:4|5)(?:-(?:mini|nano))?(?!-[a-z])/.test(withoutProviderNamespace)

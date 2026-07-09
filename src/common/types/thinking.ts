@@ -38,8 +38,13 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
     const normalized = modelString.trim().toLowerCase();
     const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
 
-    // OpenAI: both xhigh and max resolve to "xhigh" reasoning effort
-    if (normalized.startsWith("openai:") || withoutPrefix.startsWith("openai/")) return "XHIGH";
+    if (normalized.startsWith("openai:") || withoutPrefix.startsWith("openai/")) {
+      // GPT-5.6 has a native "max" reasoning effort distinct from xhigh, so both
+      // labels must stay distinguishable in settings dropdowns and the slider.
+      if (level === "max" && openaiSupportsNativeMaxEffort(modelString)) return "MAX";
+      // Other OpenAI models: both xhigh and max resolve to "xhigh" reasoning effort
+      return "XHIGH";
+    }
 
     // Anthropic Opus 4.7+: xhigh is a distinct effort level from max
     if (level === "xhigh" && anthropicSupportsNativeXhigh(modelString)) return "XHIGH";
@@ -238,6 +243,24 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
 }
 
 /**
+ * Whether the given OpenAI model supports the native "max" reasoning effort
+ * (GPT-5.6 family — Sol/Terra/Luna, GA July 9, 2026 — including version-suffixed
+ * ids like `gpt-5.6-sol-2026-07-09`). OpenAI recommends max effort "for demanding
+ * tasks that need more exploration and verification".
+ *
+ * Only valid on the Responses API path: the @ai-sdk/openai Responses schema
+ * accepts arbitrary effort strings, but the Chat Completions schema rejects
+ * anything outside its enum — callers must clamp to "xhigh" there.
+ *
+ * Note: GPT-5.6 also supports `reasoning.mode: "pro"` (more model work for
+ * reliability, single final answer). Mux does not implement it yet — planned as
+ * a toggle inside the thinking slider; tracked in issue #3704.
+ */
+export function openaiSupportsNativeMaxEffort(modelString: string): boolean {
+  return /^gpt-5\.6-(?:sol|terra|luna)(?!-[a-z])/.test(stripModelProviderPrefixes(modelString));
+}
+
+/**
  * Whether the given Anthropic model rejects `thinking: { type: "disabled" }`.
  *
  * Mythos-class models (Fable/Mythos) cannot turn thinking off: the API errors with
@@ -276,6 +299,9 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
   medium: "medium",
   high: "high",
   xhigh: "xhigh", // Maps 1:1 to OpenAI's reasoning effort value
+  // Shared clamp for models without a native max effort. GPT-5.6 (see
+  // openaiSupportsNativeMaxEffort) overrides this to "max" in buildProviderOptions
+  // on the Responses API path.
   max: "xhigh",
 };
 

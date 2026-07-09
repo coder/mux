@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
+  clampThinkingLevelForRoute,
   getThinkingPolicyForModel,
   enforceThinkingPolicy,
   resolveThinkingInput,
@@ -184,6 +185,77 @@ describe("getThinkingPolicyForModel", () => {
       "high",
       "xhigh",
     ]);
+  });
+
+  test.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
+    "returns all 6 levels including native max for %s",
+    (modelId) => {
+      expect(getThinkingPolicyForModel(`openai:${modelId}`)).toEqual([
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ]);
+    }
+  );
+
+  test("returns all 6 levels for gpt-5.6-sol behind mux-gateway with version suffix (passthrough)", () => {
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-sol-2026-06-26")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  // Non-passthrough routes rebuild reasoning params with their own effort maps
+  // (OpenRouter clamps max→high, Copilot →xhigh), so native max must not be offered.
+  test.each(["openrouter:openai/gpt-5.6-sol", "github-copilot:openai/gpt-5.6-terra"])(
+    "excludes native max for GPT-5.6 on non-passthrough route %s",
+    (modelString) => {
+      expect(getThinkingPolicyForModel(modelString)).toEqual([
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ]);
+    }
+  );
+
+  // Route may be decided at request time (routePriority), not by the model string:
+  // an `openai:` GPT-5.6 model can resolve onto OpenRouter/Copilot. The post-route
+  // clamp must downgrade native max there while leaving passthrough routes alone.
+  describe("clampThinkingLevelForRoute", () => {
+    test.each(["openrouter", "github-copilot"])(
+      "clamps max to xhigh for openai:gpt-5.6-sol resolved onto %s",
+      (route) => {
+        expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", route, "max")).toBe("xhigh");
+      }
+    );
+
+    test("keeps max on direct OpenAI and passthrough gateway routes", () => {
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", "openai", "max")).toBe("max");
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", "mux-gateway", "max")).toBe("max");
+      // No resolved route provided — falls back to model-string inference.
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", undefined, "max")).toBe("max");
+      expect(clampThinkingLevelForRoute("openrouter:openai/gpt-5.6-sol", undefined, "max")).toBe(
+        "xhigh"
+      );
+    });
+
+    test("leaves non-max levels and non-GPT-5.6 models untouched", () => {
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", "openrouter", "xhigh")).toBe("xhigh");
+      // Non-GPT-5.6: max and xhigh already share a wire value; no clamp needed.
+      expect(clampThinkingLevelForRoute("openai:gpt-5.5", "openrouter", "max")).toBe("max");
+      expect(clampThinkingLevelForRoute("anthropic:claude-opus-4-8", "openrouter", "max")).toBe(
+        "max"
+      );
+    });
   });
 
   test("returns 5 levels including xhigh for gpt-5.5", () => {

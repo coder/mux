@@ -23,6 +23,7 @@ import {
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
+  openaiSupportsNativeMaxEffort,
 } from "@/common/types/thinking";
 import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/policy";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -353,8 +354,6 @@ export function buildProviderOptions(
 
   // Build OpenAI-specific options
   if (formatProvider === "openai") {
-    const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
-
     // Mux always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
     // Chaining it on top of explicit history double-counts prior turns and caused GPT-5.4
@@ -373,6 +372,15 @@ export function buildProviderOptions(
     const isResponses = wireFormat === "responses";
     const truncationMode = openaiTruncationMode ?? "disabled";
     const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(capModelName);
+
+    // GPT-5.6 supports a native "max" reasoning effort for demanding tasks that need
+    // more exploration and verification. The Responses schema in @ai-sdk/openai accepts
+    // arbitrary effort strings, so "max" passes through unchanged; the Chat Completions
+    // schema enum rejects it, so that path keeps the shared max→"xhigh" clamp.
+    const reasoningEffort =
+      effectiveThinking === "max" && isResponses && openaiSupportsNativeMaxEffort(capModelName)
+        ? "max"
+        : OPENAI_REASONING_EFFORT[effectiveThinking];
 
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,

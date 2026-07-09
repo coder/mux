@@ -22,6 +22,16 @@ describe("getThinkingDisplayLabel", () => {
     expect(getThinkingDisplayLabel("max", "mux-gateway:openai/gpt-5.2")).toBe("XHIGH");
   });
 
+  test("keeps xhigh and max distinguishable on GPT-5.6 (native max effort)", () => {
+    expect(getThinkingDisplayLabel("xhigh", "openai:gpt-5.6-sol")).toBe("XHIGH");
+    expect(getThinkingDisplayLabel("max", "openai:gpt-5.6-sol")).toBe("MAX");
+    expect(getThinkingDisplayLabel("max", "openai:gpt-5.6-terra")).toBe("MAX");
+    expect(getThinkingDisplayLabel("max", "mux-gateway:openai/gpt-5.6-luna")).toBe("MAX");
+    // Option labels (settings dropdowns) must diverge too
+    expect(getThinkingOptionLabel("xhigh", "openai:gpt-5.6-sol")).toBe("xhigh");
+    expect(getThinkingOptionLabel("max", "openai:gpt-5.6-sol")).toBe("max");
+  });
+
   test("returns MAX for xhigh/max when no model specified (default)", () => {
     expect(getThinkingDisplayLabel("xhigh")).toBe("MAX");
     expect(getThinkingDisplayLabel("max")).toBe("MAX");
