@@ -261,6 +261,60 @@ export const modelsExtra: Record<string, ModelData> = {
     supported_endpoints: ["/v1/responses"],
   },
 
+  // GPT-5.6 family (Sol / Terra / Luna) - Previewed June 26, 2026
+  // Limited preview via the API and Codex; GA planned "in coming weeks".
+  // Published preview pricing per 1M tokens: Sol $5/$30, Terra $2.50/$15, Luna $1/$6.
+  // Prompt caching: cache reads keep the 90% discount; cache writes for GPT-5.6+ bill
+  // at 1.25x the uncached input rate (with explicit breakpoints and a 30-min minimum
+  // cache life). No long-context tiered pricing has been published for this family.
+  // OpenAI has not published official context specs yet; we mirror GPT-5.5's window
+  // (1.05M in / 128K out) as a provisional value until the model card lands.
+  // (Early preview reports suggest Sol may be larger, ~1.5M, but that's unconfirmed.)
+  "gpt-5.6-sol": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000005, // $5 per million input tokens
+    output_cost_per_token: 0.00003, // $30 per million output tokens
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens (90% off)
+    cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens (1.25x input)
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  "gpt-5.6-terra": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.0000025, // $2.50 per million input tokens
+    output_cost_per_token: 0.000015, // $15 per million output tokens
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens (90% off)
+    cache_creation_input_token_cost: 0.000003125, // $3.125 per million tokens (1.25x input)
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  "gpt-5.6-luna": {
+    max_input_tokens: 1050000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000001, // $1 per million input tokens
+    output_cost_per_token: 0.000006, // $6 per million output tokens
+    cache_read_input_token_cost: 0.0000001, // $0.10 per million cached input tokens (90% off)
+    cache_creation_input_token_cost: 0.00000125, // $1.25 per million tokens (1.25x input)
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5.4 mini - Released March 11, 2026
   // Smaller/faster gpt-5.4-mini tier with 400K context, 128K max output, and published
   // pricing of $0.75/M input, $4.50/M output, and $0.075/M cached input.

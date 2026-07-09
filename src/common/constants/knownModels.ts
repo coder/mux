@@ -101,6 +101,34 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
+  // GPT-5.6 family - previewed June 26, 2026. New naming system: the number is the
+  // generation, while Sol/Terra/Luna are durable capability tiers. Limited preview via
+  // the API and Codex for approved orgs only (not in ChatGPT); GA planned "in coming
+  // weeks". Cache writes bill at 1.25x input; cache reads keep the 90% discount.
+  // Not warmed and bare `gpt` alias stays on gpt-5.5 until broad availability
+  // (mirrors the MYTHOS precedent for restricted-access models).
+  // GPT-5.6 Sol - flagship tier. $5/M input, $30/M output.
+  GPT_56_SOL: {
+    provider: "openai",
+    providerModelId: "gpt-5.6-sol",
+    aliases: ["sol", "gpt-5.6-sol"],
+    tokenizerOverride: "openai/gpt-5",
+  },
+  // GPT-5.6 Terra - balanced tier; GPT-5.5-competitive at half the cost.
+  // $2.50/M input, $15/M output.
+  GPT_56_TERRA: {
+    provider: "openai",
+    providerModelId: "gpt-5.6-terra",
+    aliases: ["terra", "gpt-5.6-terra"],
+    tokenizerOverride: "openai/gpt-5",
+  },
+  // GPT-5.6 Luna - fastest/cheapest tier. $1/M input, $6/M output.
+  GPT_56_LUNA: {
+    provider: "openai",
+    providerModelId: "gpt-5.6-luna",
+    aliases: ["luna", "gpt-5.6-luna"],
+    tokenizerOverride: "openai/gpt-5",
+  },
   // GPT Mini alias tracks the latest stable GPT-5 mini tier.
   GPT_54_MINI: {
     provider: "openai",
