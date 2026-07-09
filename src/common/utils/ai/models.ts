@@ -113,10 +113,22 @@ export function resolveProviderOptionsNamespaceKey(
  * never emit the pro-mode header, so surfacing the toggle there would persist a
  * setting that can never affect the request.
  *
+ * Pro mode is a Responses API field: when the OpenAI provider is configured
+ * with `wireFormat: "chatCompletions"`, the fetch wrapper never injects
+ * `reasoning.mode` (it only rewrites `/responses` bodies), so pro mode must
+ * not be offered there either — otherwise the toggle looks active while sends
+ * silently run in standard mode.
+ *
  * Lives here (not providerOptions.ts) so browser components can import it —
  * providerOptions.ts pulls in node-only logging and breaks the renderer bundle.
  */
-export function openaiProModeAvailable(modelString: string): boolean {
+export function openaiProModeAvailable(
+  modelString: string,
+  openaiWireFormat?: "responses" | "chatCompletions" | null
+): boolean {
+  if (openaiWireFormat === "chatCompletions") {
+    return false;
+  }
   if (!openaiSupportsProMode(modelString)) {
     return false;
   }

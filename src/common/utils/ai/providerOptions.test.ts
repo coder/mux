@@ -1191,6 +1191,54 @@ describe("buildRequestHeaders", () => {
         )
       ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
     });
+
+    // Pro mode is Responses-only: the wrapper never injects into
+    // chat-completions bodies, so the header must not be emitted either —
+    // regardless of whether wireFormat comes from provider config or
+    // request-level options (config wins, mirroring providerModelFactory).
+    const openaiProviderInfoBase = { apiKeySet: true, isEnabled: true, isConfigured: true };
+
+    test("does not emit when provider config sets wireFormat chatCompletions", () => {
+      expect(
+        buildRequestHeaders(
+          "openai:gpt-5.6-sol",
+          undefined,
+          undefined,
+          { openai: { ...openaiProviderInfoBase, wireFormat: "chatCompletions" } },
+          undefined,
+          "off",
+          "pro"
+        )
+      ).toBeUndefined();
+    });
+
+    test("does not emit when request options set wireFormat chatCompletions", () => {
+      expect(
+        buildRequestHeaders(
+          "openai:gpt-5.6-sol",
+          { openai: { wireFormat: "chatCompletions" } },
+          undefined,
+          undefined,
+          undefined,
+          "off",
+          "pro"
+        )
+      ).toBeUndefined();
+    });
+
+    test("emits when provider config sets wireFormat responses explicitly", () => {
+      expect(
+        buildRequestHeaders(
+          "openai:gpt-5.6-sol",
+          undefined,
+          undefined,
+          { openai: { ...openaiProviderInfoBase, wireFormat: "responses" } },
+          undefined,
+          "off",
+          "pro"
+        )
+      ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
+    });
   });
 
   describe("openaiProModeAvailable", () => {
@@ -1215,6 +1263,14 @@ describe("buildRequestHeaders", () => {
         expect(openaiProModeAvailable(model)).toBe(expected);
       });
     }
+
+    // Pro mode is Responses-only: chatCompletions wire format disables it even
+    // for pro-capable models on passthrough routes.
+    test("chatCompletions wire format disables pro mode", () => {
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", "chatCompletions")).toBe(false);
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", "responses")).toBe(true);
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null)).toBe(true);
+    });
   });
 
   for (const { name, model, options, workspaceId, expected } of [

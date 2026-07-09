@@ -634,10 +634,18 @@ export function buildRequestHeaders(
   // through our OpenAI fetch wrapper (direct OpenAI or passthrough gateways
   // like mux-gateway); non-passthrough gateways (OpenRouter, github-copilot)
   // must never see this header.
+  //
+  // Pro mode is Responses-only: with wireFormat "chatCompletions" the wrapper
+  // never injects (it only rewrites /responses bodies), so skip the header to
+  // keep header state honest. Config precedence mirrors providerModelFactory,
+  // which overwrites request-level options with a configured wireFormat.
+  const openaiWireFormat =
+    providersConfig?.openai?.wireFormat ?? muxProviderOptions?.openai?.wireFormat ?? "responses";
   if (
     origin === "openai" &&
     routePassesHeaders &&
     reasoningMode === "pro" &&
+    openaiWireFormat === "responses" &&
     openaiSupportsProMode(modelString)
   ) {
     headers[MUX_OPENAI_REASONING_MODE_HEADER] = "pro";

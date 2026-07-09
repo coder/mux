@@ -105,6 +105,7 @@ import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner/Wind
 import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
@@ -445,6 +446,9 @@ function AppInner() {
     },
     [getModelForWorkspace]
   );
+
+  // Pro mode is Responses-only; the palette command hides under chatCompletions.
+  const { config: providersConfig } = useProvidersConfig();
 
   const getReasoningModeForWorkspace = useCallback((workspaceId: string): OpenAIReasoningMode => {
     if (!workspaceId) {
@@ -840,6 +844,7 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     getReasoningMode: getReasoningModeForWorkspace,
     onToggleReasoningMode: toggleReasoningModeFromPalette,
+    openaiWireFormat: providersConfig?.openai?.wireFormat,
     getMinThinkingOverride,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,

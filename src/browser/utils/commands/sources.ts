@@ -88,6 +88,8 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
   getReasoningMode: (workspaceId: string) => OpenAIReasoningMode;
   onToggleReasoningMode: (workspaceId: string) => void;
+  /** Effective OpenAI wire format; pro mode is Responses-only (see openaiProModeAvailable). */
+  openaiWireFormat?: "responses" | "chatCompletions";
   /**
    * Explicit per-model minimum thinking override (undefined → built-in default floor).
    * Used to hide off/low from the "Set Thinking Effort" picker, matching the slider.
@@ -1274,9 +1276,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
       // Pro reasoning mode is only meaningful for models that support it
       // (GPT-5.6 Sol/Terra) on routes that emit the pro-mode header (direct
-      // OpenAI or passthrough gateways); hide the action elsewhere to avoid
-      // inert toggles.
-      if (openaiProModeAvailable(currentModelString ?? "")) {
+      // OpenAI or passthrough gateways) with the Responses wire format; hide
+      // the action elsewhere to avoid inert toggles.
+      if (openaiProModeAvailable(currentModelString ?? "", p.openaiWireFormat)) {
         const proActive = p.getReasoningMode(workspaceId) === "pro";
         list.push({
           id: CommandIds.toggleProReasoning(),

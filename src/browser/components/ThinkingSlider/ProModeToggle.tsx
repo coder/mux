@@ -1,5 +1,6 @@
 import React from "react";
 import { openaiProModeAvailable } from "@/common/utils/ai/models";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 
@@ -16,8 +17,11 @@ interface ProModeToggleProps {
  */
 export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
   const [reasoningMode, setReasoningMode] = useReasoningMode();
+  // Pro mode is Responses-only: hide when the OpenAI provider is configured
+  // for chatCompletions, where the wire never carries reasoning.mode.
+  const { config: providersConfig } = useProvidersConfig();
 
-  if (!openaiProModeAvailable(props.modelString)) {
+  if (!openaiProModeAvailable(props.modelString, providersConfig?.openai?.wireFormat)) {
     return null;
   }
 
