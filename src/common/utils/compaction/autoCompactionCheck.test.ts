@@ -228,8 +228,10 @@ describe("checkAutoCompaction", () => {
     });
 
     test("uses GPT-5.5's native 1.05M limit without relying on the 1M toggle", () => {
-      const usage = createMockUsage(600_000, undefined, KNOWN_MODELS.GPT.id);
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT.id, false);
+      // Pin to the literal model string: gpt-5.5's 1.05M native window remains in
+      // production even though KNOWN_MODELS.GPT now points at gpt-5.6-sol (1M).
+      const usage = createMockUsage(600_000, undefined, "openai:gpt-5.5");
+      const result = checkAutoCompaction(usage, "openai:gpt-5.5", false);
 
       expect(result.usagePercentage).toBeCloseTo(57.14, 2);
       expect(result.shouldShowWarning).toBe(false);
