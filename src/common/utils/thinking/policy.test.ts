@@ -196,6 +196,58 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 6 levels including max for gpt-5.6-sol", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-sol")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-sol-2026-07-09")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+  });
+
+  test("returns 5 levels including xhigh for gpt-5.6-terra and gpt-5.6-luna (no max)", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-terra")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-luna")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-terra-2026-07-09")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("gpt-5.6-sol named variants fall through to the default policy", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-sol-mini")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for gpt-5.4-mini", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.4-mini")).toEqual([
       "off",

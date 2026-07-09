@@ -19,6 +19,15 @@ describe("codexOAuth model gating", () => {
     expect(isCodexOauthRequiredModelId("openai:gpt-5.5")).toBe(false);
   });
 
+  it("allows the GPT-5.6 family through Codex OAuth without requiring it", () => {
+    for (const model of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      expect(isCodexOauthAllowedModelId(model)).toBe(true);
+      expect(isCodexOauthAllowedModelId(`openai:${model}`)).toBe(true);
+      expect(isCodexOauthRequiredModelId(model)).toBe(false);
+      expect(isCodexOauthRequiredModelId(`openai:${model}`)).toBe(false);
+    }
+  });
+
   it("does not allow GPT-5.5 Pro through the Codex OAuth route", () => {
     expect(isCodexOauthAllowedModelId("gpt-5.5-pro")).toBe(false);
     expect(isCodexOauthAllowedModelId("openai:gpt-5.5-pro")).toBe(false);

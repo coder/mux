@@ -21,7 +21,7 @@ import {
   anthropicSupportsNativeXhigh,
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
-  OPENAI_REASONING_EFFORT,
+  getOpenAIReasoningEffort,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
 import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/policy";
@@ -353,7 +353,9 @@ export function buildProviderOptions(
 
   // Build OpenAI-specific options
   if (formatProvider === "openai") {
-    const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
+    // Model-aware: GPT-5.6 Sol maps ThinkingLevel "max" to the native "max" effort;
+    // other OpenAI models keep the max -> "xhigh" downgrade.
+    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, modelString);
 
     // Mux always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
@@ -507,7 +509,7 @@ export function buildProviderOptions(
   }
 
   if (origin === "openai" && formatProvider !== origin) {
-    const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
+    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, modelString);
     if (!reasoningEffort) {
       log.debug(
         "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",

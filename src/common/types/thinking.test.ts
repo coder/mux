@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   coerceThinkingLevel,
+  getOpenAIReasoningEffort,
   getThinkingDisplayLabel,
   getThinkingOptionLabel,
   MAX_THINKING_INDEX,
+  openaiSupportsNativeMaxEffort,
   parseThinkingInput,
 } from "./thinking";
 
@@ -20,6 +22,16 @@ describe("getThinkingDisplayLabel", () => {
     expect(getThinkingDisplayLabel("max", "openai:gpt-5.2")).toBe("XHIGH");
     expect(getThinkingDisplayLabel("xhigh", "mux-gateway:openai/gpt-5.2")).toBe("XHIGH");
     expect(getThinkingDisplayLabel("max", "mux-gateway:openai/gpt-5.2")).toBe("XHIGH");
+  });
+
+  test("returns MAX for max on GPT-5.6 Sol (native max effort), XHIGH for xhigh", () => {
+    expect(getThinkingDisplayLabel("max", "openai:gpt-5.6-sol")).toBe("MAX");
+    expect(getThinkingDisplayLabel("xhigh", "openai:gpt-5.6-sol")).toBe("XHIGH");
+    expect(getThinkingDisplayLabel("max", "mux-gateway:openai/gpt-5.6-sol")).toBe("MAX");
+    // Terra/Luna and gpt-5.5-pro keep the max -> XHIGH display.
+    expect(getThinkingDisplayLabel("max", "openai:gpt-5.6-terra")).toBe("XHIGH");
+    expect(getThinkingDisplayLabel("max", "openai:gpt-5.6-luna")).toBe("XHIGH");
+    expect(getThinkingDisplayLabel("max", "openai:gpt-5.5-pro")).toBe("XHIGH");
   });
 
   test("returns MAX for xhigh/max when no model specified (default)", () => {
@@ -45,8 +57,44 @@ describe("getThinkingOptionLabel", () => {
     expect(getThinkingOptionLabel("max", "openai:gpt-5.2")).toBe("xhigh");
   });
 
+  test("renders distinct max/xhigh options on GPT-5.6 Sol", () => {
+    expect(getThinkingOptionLabel("max", "openai:gpt-5.6-sol")).toBe("max");
+    expect(getThinkingOptionLabel("xhigh", "openai:gpt-5.6-sol")).toBe("xhigh");
+  });
+
   test("preserves non-xhigh labels", () => {
     expect(getThinkingOptionLabel("medium", "anthropic:claude-opus-4-6")).toBe("medium");
+  });
+});
+
+describe("openaiSupportsNativeMaxEffort", () => {
+  test("matches gpt-5.6-sol including prefixed and dated variants", () => {
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.6-sol")).toBe(true);
+    expect(openaiSupportsNativeMaxEffort("gpt-5.6-sol")).toBe(true);
+    expect(openaiSupportsNativeMaxEffort("mux-gateway:openai/gpt-5.6-sol")).toBe(true);
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.6-sol-2026-07-09")).toBe(true);
+  });
+
+  test("rejects other tiers and named variants", () => {
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.6-terra")).toBe(false);
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.6-luna")).toBe(false);
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.6-sol-mini")).toBe(false);
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.5")).toBe(false);
+    expect(openaiSupportsNativeMaxEffort("openai:gpt-5.5-pro")).toBe(false);
+  });
+});
+
+describe("getOpenAIReasoningEffort", () => {
+  test("maps max to the native max effort on GPT-5.6 Sol only", () => {
+    expect(getOpenAIReasoningEffort("max", "openai:gpt-5.6-sol")).toBe("max");
+    expect(getOpenAIReasoningEffort("xhigh", "openai:gpt-5.6-sol")).toBe("xhigh");
+    expect(getOpenAIReasoningEffort("max", "openai:gpt-5.6-terra")).toBe("xhigh");
+    expect(getOpenAIReasoningEffort("max", "openai:gpt-5.5-pro")).toBe("xhigh");
+  });
+
+  test("keeps the standard mapping for lower levels", () => {
+    expect(getOpenAIReasoningEffort("off", "openai:gpt-5.6-sol")).toBeUndefined();
+    expect(getOpenAIReasoningEffort("high", "openai:gpt-5.6-sol")).toBe("high");
   });
 });
 

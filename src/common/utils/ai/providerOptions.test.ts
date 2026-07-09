@@ -672,6 +672,54 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
+  describe("GPT-5.6 Sol native max reasoning effort", () => {
+    test("maps ThinkingLevel max to the native max effort on Sol", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "max");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("max");
+    });
+
+    test("keeps xhigh distinct from max on Sol", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "xhigh");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
+    });
+
+    test("keeps max -> xhigh for non-Sol OpenAI models", () => {
+      for (const model of ["openai:gpt-5.6-terra", "openai:gpt-5.6-luna", "openai:gpt-5.5-pro"]) {
+        const result = buildProviderOptions(model, "max");
+        const openai = getOpenAIOptions(result);
+
+        expect(openai).toBeDefined();
+        expect(openai!.reasoningEffort).toBe("xhigh");
+      }
+    });
+
+    test("carries the native max effort through the Copilot-routed gateway call site", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.6-sol",
+        "max",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "github-copilot"
+      );
+
+      expect(result).toEqual({
+        "github-copilot": {
+          reasoningEffort: "max",
+        },
+      });
+    });
+  });
+
   describe("OpenAI conversation state management", () => {
     test("does not reuse previousResponseId when Mux already sends explicit GPT-5.5 history", () => {
       const messages = [

@@ -38,8 +38,12 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
     const normalized = modelString.trim().toLowerCase();
     const withoutPrefix = normalized.replace(/^[a-z0-9_-]+:\s*/, "");
 
-    // OpenAI: both xhigh and max resolve to "xhigh" reasoning effort
-    if (normalized.startsWith("openai:") || withoutPrefix.startsWith("openai/")) return "XHIGH";
+    // OpenAI: both xhigh and max resolve to "xhigh" reasoning effort — except
+    // GPT-5.6 Sol, where "max" is a distinct native effort above xhigh.
+    if (normalized.startsWith("openai:") || withoutPrefix.startsWith("openai/")) {
+      if (level === "max" && openaiSupportsNativeMaxEffort(modelString)) return "MAX";
+      return "XHIGH";
+    }
 
     // Anthropic Opus 4.7+: xhigh is a distinct effort level from max
     if (level === "xhigh" && anthropicSupportsNativeXhigh(modelString)) return "XHIGH";
@@ -238,6 +242,19 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
 }
 
 /**
+ * Whether the given OpenAI model supports the native "max" reasoning effort.
+ *
+ * GPT-5.6 Sol (released July 9, 2026) introduced a new top reasoning effort above
+ * xhigh — Sol only; Terra/Luna top out at xhigh. The `(?!-[a-z])` lookahead
+ * tolerates version-date suffixes (e.g. gpt-5.6-sol-2026-07-09) while rejecting
+ * hypothetical named variants (e.g. gpt-5.6-sol-mini).
+ */
+export function openaiSupportsNativeMaxEffort(modelString: string): boolean {
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
+  return /^gpt-5\.6-sol(?!-[a-z])/.test(withoutPrefix);
+}
+
+/**
  * Whether the given Anthropic model rejects `thinking: { type: "disabled" }`.
  *
  * Mythos-class models (Fable/Mythos) cannot turn thinking off: the API errors with
@@ -278,6 +295,24 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
   xhigh: "xhigh", // Maps 1:1 to OpenAI's reasoning effort value
   max: "xhigh",
 };
+
+/**
+ * Model-aware OpenAI reasoning effort resolution.
+ *
+ * Most OpenAI models top out at "xhigh", so the ThinkingLevel "max" downgrades to
+ * "xhigh" (see OPENAI_REASONING_EFFORT). GPT-5.6 Sol ships a distinct native effort
+ * above xhigh; assumption: its wire value is the string "max" on the Responses API
+ * (launch docs name the effort "max"; not yet in the SDK's typed union).
+ */
+export function getOpenAIReasoningEffort(
+  level: ThinkingLevel,
+  modelString: string
+): string | undefined {
+  if (level === "max" && openaiSupportsNativeMaxEffort(modelString)) {
+    return "max";
+  }
+  return OPENAI_REASONING_EFFORT[level];
+}
 
 /**
  * OpenRouter reasoning effort mapping

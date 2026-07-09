@@ -28,9 +28,30 @@ describe("getModelStats", () => {
     ["mux-gateway:openai/gpt-5.5-pro-2026-04-23", "openai:gpt-5.5-pro"],
     ["mux-gateway:openai/gpt-5.4-mini-2026-03-11", "openai:gpt-5.4-mini"],
     ["mux-gateway:openai/gpt-5.4-nano-2026-03-17", "openai:gpt-5.4-nano"],
+    ["openai:gpt-5.6-sol-2026-07-09", "openai:gpt-5.6-sol"],
   ])("falls back from %s to the published %s family entry", (datedModel, canonicalModel) => {
     expect(expectStats(datedModel)).toEqual(expectStats(canonicalModel));
   });
+
+  test.each([
+    // [model, input, output, cacheRead, cacheCreation, maxInput]
+    ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625, 1000000],
+    ["openai:gpt-5.6-terra", 0.0000025, 0.000015, 0.00000025, 0.000003125, 1000000],
+    ["openai:gpt-5.6-luna", 0.000001, 0.000006, 0.0000001, 0.00000125, 400000],
+  ] as const)(
+    "resolves %s with the launch pricing and limits",
+    (model, input, output, cacheRead, cacheCreation, maxInput) => {
+      const stats = expectStats(model);
+      expect(stats.input_cost_per_token).toBe(input);
+      expect(stats.output_cost_per_token).toBe(output);
+      expect(stats.cache_read_input_token_cost).toBe(cacheRead);
+      expect(stats.cache_creation_input_token_cost).toBe(cacheCreation);
+      expect(stats.max_input_tokens).toBe(maxInput);
+      expect(stats.max_output_tokens).toBe(128000);
+      // GPT-5.6 pricing is flat: no long-context tier (unlike gpt-5.5).
+      expect(stats.tiered_pricing_threshold_tokens).toBeUndefined();
+    }
+  );
 
   test("resolves GPT-5.4 nano with the published limits and pricing", () => {
     const stats = expectStats(KNOWN_MODELS.GPT_54_NANO.id);

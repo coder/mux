@@ -54,6 +54,8 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.3-codex / Spark variants →
  *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
+ * - openai:gpt-5.6-sol → ["off", "low", "medium", "high", "xhigh", "max"] (6 levels; Sol-only native max)
+ * - openai:gpt-5.6-terra / openai:gpt-5.6-luna → ["off", "low", "medium", "high", "xhigh"]
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
@@ -117,6 +119,16 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
 
   // GPT-5.2/5.3 Codex models (including Spark) support 5 reasoning levels.
   if (/^gpt-5\.[23]-codex(?:-spark)?(?!-[a-z])/.test(withoutProviderNamespace)) {
+    return ["off", "low", "medium", "high", "xhigh"];
+  }
+
+  // gpt-5.6-sol supports the new native "max" reasoning effort (Sol only).
+  if (/^gpt-5\.6-sol(?!-[a-z])/.test(withoutProviderNamespace)) {
+    return ["off", "low", "medium", "high", "xhigh", "max"];
+  }
+
+  // gpt-5.6-terra / gpt-5.6-luna support the same 5 levels as gpt-5.5.
+  if (/^gpt-5\.6-(?:terra|luna)(?!-[a-z])/.test(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 

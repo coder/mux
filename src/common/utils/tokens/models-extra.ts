@@ -239,6 +239,64 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
+  // GPT-5.6 Sol - Released July 9, 2026 (flagship tier of the GPT-5.6 family).
+  // Launch-time docs: 1M context, flat pricing (no long-context tier, unlike GPT-5.5).
+  // Max output not published; assume 128K matching the GPT-5.5 family.
+  // $5/M input, $30/M output; cache writes billed at 1.25x input ($6.25/M),
+  // cache reads at the 90% discount ($0.50/M). Knowledge cutoff not published.
+  "gpt-5.6-sol": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000005, // $5 per million input tokens
+    output_cost_per_token: 0.00003, // $30 per million output tokens
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens
+    cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens (1.25x input)
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  // GPT-5.6 Terra - Released July 9, 2026 (balanced everyday tier).
+  // Launch-time docs: 1M context, flat pricing; max output assumed 128K (see Sol).
+  // $2.50/M input, $15/M output; cache writes 1.25x input ($3.125/M), cache reads
+  // 90% off ($0.25/M). Knowledge cutoff not published.
+  "gpt-5.6-terra": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.0000025, // $2.50 per million input tokens
+    output_cost_per_token: 0.000015, // $15 per million output tokens
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens
+    cache_creation_input_token_cost: 0.000003125, // $3.125 per million tokens (1.25x input)
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  // GPT-5.6 Luna - Released July 9, 2026 (fastest, most cost-efficient tier).
+  // Launch-time docs: 400K context, flat pricing; max output assumed 128K (see Sol).
+  // $1/M input, $6/M output; cache writes 1.25x input ($1.25/M), cache reads
+  // 90% off ($0.10/M). Knowledge cutoff not published.
+  "gpt-5.6-luna": {
+    max_input_tokens: 400000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000001, // $1 per million input tokens
+    output_cost_per_token: 0.000006, // $6 per million output tokens
+    cache_read_input_token_cost: 0.0000001, // $0.10 per million cached input tokens
+    cache_creation_input_token_cost: 0.00000125, // $1.25 per million tokens (1.25x input)
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5.5 Pro - Released April 23, 2026
   // Native 1.05M context, 128K max output; Responses API only.
   // Base pricing: $30/M input, $180/M output; OpenAI has not published cached-input pricing.

@@ -33,6 +33,16 @@ describe("Known Models Integration", () => {
     expect(MODEL_ABBREVIATIONS["gemini-flash"]).toBe("google:gemini-3.5-flash");
   });
 
+  test("gpt alias tracks the GPT-5.6 flagship tier alongside the tier aliases", () => {
+    expect(MODEL_ABBREVIATIONS.gpt).toBe("openai:gpt-5.6-sol");
+    expect(MODEL_ABBREVIATIONS.sol).toBe("openai:gpt-5.6-sol");
+    expect(MODEL_ABBREVIATIONS.terra).toBe("openai:gpt-5.6-terra");
+    expect(MODEL_ABBREVIATIONS.luna).toBe("openai:gpt-5.6-luna");
+    // The bare gpt-5.5 alias retired with the entry; openai:gpt-5.5 still
+    // resolves as a custom model string via models-extra stats.
+    expect(MODEL_ABBREVIATIONS["gpt-5.5"]).toBeUndefined();
+  });
+
   test("known model ids and aliases stay unique across the curated registry", () => {
     const seenIds = new Set<string>();
     const seenAliases = new Set<string>();

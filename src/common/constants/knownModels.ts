@@ -85,12 +85,34 @@ const MODEL_DEFINITIONS = {
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
-  // GPT alias tracks the latest stable GPT-5 tier.
+  // GPT-5.6 Sol - flagship tier of the GPT-5.6 family, released July 9, 2026.
+  // Sol/Terra/Luna are durable capability tiers; the bare `gpt` alias tracks the
+  // latest flagship GPT tier (previously gpt-5.5, which stays usable as the
+  // custom model string `openai:gpt-5.5`). $5/M input, $30/M output; 1M context
+  // (launch value). Sol is the only tier with the native "max" reasoning effort.
   GPT: {
     provider: "openai",
-    providerModelId: "gpt-5.5",
-    aliases: ["gpt", "gpt-5.5"],
+    providerModelId: "gpt-5.6-sol",
+    aliases: ["gpt", "sol"],
     warm: true,
+    // GPT-5.6 tokenizer not published upstream; reuse gpt-5 for approximate
+    // counting (same approach as gpt-5.5).
+    tokenizerOverride: "openai/gpt-5",
+  },
+  // GPT-5.6 Terra - balanced everyday tier, released July 9, 2026.
+  // GPT-5.5-class quality at half the cost: $2.50/M input, $15/M output; 1M context.
+  GPT_56_TERRA: {
+    provider: "openai",
+    providerModelId: "gpt-5.6-terra",
+    aliases: ["terra"],
+    tokenizerOverride: "openai/gpt-5",
+  },
+  // GPT-5.6 Luna - fastest, most cost-efficient tier, released July 9, 2026.
+  // $1/M input, $6/M output; 400K context (launch value).
+  GPT_56_LUNA: {
+    provider: "openai",
+    providerModelId: "gpt-5.6-luna",
+    aliases: ["luna"],
     tokenizerOverride: "openai/gpt-5",
   },
   // GPT Pro alias tracks the latest GPT-5 Pro tier.
