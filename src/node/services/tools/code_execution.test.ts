@@ -485,7 +485,12 @@ describe("createCodeExecutionTool", () => {
 
       const result = (await tool.execute!(
         { code: "return mux.slow_tool({})" },
-        { toolCallId: "test-1", messages: [], context: undefined, abortSignal: abortController.signal }
+        {
+          toolCallId: "test-1",
+          messages: [],
+          context: undefined,
+          abortSignal: abortController.signal,
+        }
       )) as PTCExecutionResult;
 
       expect(result.success).toBe(false);

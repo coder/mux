@@ -272,7 +272,8 @@ export async function runMemoryHarvest(args: {
     if (streamErrors.length > 0) break;
 
     try {
-      const totalUsage = await stream.totalUsage;
+      // AI SDK 7: top-level `usage` is the all-steps total (old `totalUsage`).
+      const totalUsage = await stream.usage;
       usage = {
         inputTokens: (usage?.inputTokens ?? 0) + (totalUsage.inputTokens ?? 0),
         outputTokens: (usage?.outputTokens ?? 0) + (totalUsage.outputTokens ?? 0),

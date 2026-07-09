@@ -7,6 +7,7 @@ import {
   type ModelMessage,
   type LanguageModel,
   type Tool,
+  type ToolSet,
   LoadAPIKeyError,
   APICallError,
   RetryError,
@@ -1581,7 +1582,10 @@ export class StreamManager extends EventEmitter {
     abortController: AbortController,
     stepTracker?: StepMessageTracker
   ): Awaited<ReturnType<typeof streamText>> {
-    return streamText({
+    // Explicit <ToolSet> pins RUNTIME_CONTEXT to its default: mux tools use
+    // Tool's `any` context, which would otherwise infect the inferred result
+    // type (no-unsafe-return).
+    return streamText<ToolSet>({
       model: request.model,
       messages: request.messages,
       system: request.system,

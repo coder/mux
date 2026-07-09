@@ -270,7 +270,8 @@ export async function runMemoryConsolidation(args: {
   let usage: MemoryConsolidationResult["usage"];
   if (streamErrors.length === 0) {
     try {
-      const totalUsage = await stream.totalUsage;
+      // AI SDK 7: top-level `usage` is the all-steps total (old `totalUsage`).
+      const totalUsage = await stream.usage;
       usage = {
         inputTokens: totalUsage.inputTokens ?? 0,
         outputTokens: totalUsage.outputTokens ?? 0,

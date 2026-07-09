@@ -383,7 +383,9 @@ describe("McpOauthService.startDesktopFlow", () => {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
-              issuer: baseUrl,
+              // RFC 8414 canonical issuer: no trailing slash at the root.
+              // @ai-sdk/mcp v2 strictly validates metadata issuer identity.
+              issuer: new URL(baseUrl).origin,
               authorization_endpoint: `${baseUrl}authorize`,
               token_endpoint: `${baseUrl}token`,
               registration_endpoint: `${baseUrl}register`,
@@ -475,7 +477,9 @@ describe("McpOauthService.startDesktopFlow", () => {
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
-              issuer: authorizationServerBaseUrl,
+              // RFC 8414 canonical issuer: no trailing slash at the root.
+              // @ai-sdk/mcp v2 strictly validates metadata issuer identity.
+              issuer: new URL(authorizationServerBaseUrl).origin,
               authorization_endpoint: `${authorizationServerBaseUrl}authorize`,
               token_endpoint: `${authorizationServerBaseUrl}token`,
               registration_endpoint: `${authorizationServerBaseUrl}register`,

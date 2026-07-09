@@ -214,13 +214,14 @@ export async function generateWorkspaceStatus(
 
       if (options.recordUsage) {
         try {
-          // Guard totalUsage with a short timeout (like the stream-end and
+          // Guard the usage read with a short timeout (like the stream-end and
           // /btw usage reads): a slow-settling SDK promise must not block the
           // already-produced status — AgentStatusService.runTick() awaits
           // in-flight generations, so a stuck read would wedge the workspace's
           // sidebar status loop. The recorder itself never throws.
           const settled = await Promise.race([
-            Promise.all([currentStream.totalUsage, currentStream.steps]),
+            // AI SDK 7: top-level `usage` is the all-steps total (old `totalUsage`).
+            Promise.all([currentStream.usage, currentStream.steps]),
             new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
           ]);
           if (settled !== undefined) {

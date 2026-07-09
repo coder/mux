@@ -299,7 +299,7 @@ describe("ProviderModelFactory.createModel", () => {
       }
 
       expect((listedModel.data as { provider?: unknown }).provider).toBe("local-vllm.chat");
-      expect(listedModel.data.constructor.name).toBe("OpenAICompatibleChatLanguageModel");
+      expect(listedModel.data.constructor.name).toMatch(/OpenAICompatibleChatLanguageModel$/);
 
       const unlistedModel = await factory.createModel("local-vllm:any-other-id");
       expect(unlistedModel.success).toBe(true);
@@ -507,7 +507,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         expect((result.data.model as { provider?: unknown }).provider).toBe("github-copilot.chat");
         expect(result.data.routeProvider).toBe("github-copilot");
         expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.5");
-        expect(result.data.model.constructor.name).toBe("OpenAIChatLanguageModel");
+        expect(result.data.model.constructor.name).toMatch(/OpenAIChatLanguageModel$/);
       } finally {
         PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
       }
@@ -769,7 +769,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
-      expect(result.data.constructor.name).toBe("OpenAIChatLanguageModel");
+      expect(result.data.constructor.name).toMatch(/OpenAIChatLanguageModel$/);
     });
   });
 
@@ -784,7 +784,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
-      expect(result.data.constructor.name).toBe("OpenAIChatLanguageModel");
+      expect(result.data.constructor.name).toMatch(/OpenAIChatLanguageModel$/);
     });
   });
 
@@ -799,7 +799,7 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         return;
       }
 
-      expect(result.data.constructor.name).toBe("OpenAIChatLanguageModel");
+      expect(result.data.constructor.name).toMatch(/OpenAIChatLanguageModel$/);
     });
   });
 });

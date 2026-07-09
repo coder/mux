@@ -3,8 +3,91 @@ import {
   addUsage,
   accumulateProviderMetadata,
   accumulateStepsProviderMetadata,
+  normalizeUsage,
+  withCacheWriteMetadata,
 } from "./usageHelpers";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+
+describe("normalizeUsage", () => {
+  test("maps AI SDK 7 nested details to the flat persisted shape", () => {
+    expect(
+      normalizeUsage({
+        inputTokens: 1000,
+        outputTokens: 200,
+        totalTokens: 1200,
+        inputTokenDetails: { noCacheTokens: 100, cacheReadTokens: 700, cacheWriteTokens: 200 },
+        outputTokenDetails: { textTokens: 150, reasoningTokens: 50 },
+      })
+    ).toEqual({
+      inputTokens: 1000,
+      outputTokens: 200,
+      totalTokens: 1200,
+      reasoningTokens: 50,
+      cachedInputTokens: 700,
+    });
+  });
+
+  test("passes already-flat (persisted v6) usage through unchanged", () => {
+    expect(
+      normalizeUsage({
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        reasoningTokens: 10,
+        cachedInputTokens: 20,
+      })
+    ).toEqual({
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      reasoningTokens: 10,
+      cachedInputTokens: 20,
+    });
+  });
+
+  test("prefers nested details over stale flat fields", () => {
+    const normalized = normalizeUsage({
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      reasoningTokens: 1,
+      cachedInputTokens: 2,
+      inputTokenDetails: { noCacheTokens: 60, cacheReadTokens: 40, cacheWriteTokens: 0 },
+      outputTokenDetails: { textTokens: 45, reasoningTokens: 5 },
+    });
+    expect(normalized.reasoningTokens).toBe(5);
+    expect(normalized.cachedInputTokens).toBe(40);
+  });
+
+  test("returns undefined for undefined usage", () => {
+    expect(normalizeUsage(undefined)).toBeUndefined();
+  });
+});
+
+describe("withCacheWriteMetadata", () => {
+  test("injects anthropic.cacheCreationInputTokens from v7 usage", () => {
+    expect(
+      withCacheWriteMetadata(
+        { anthropic: { usage: { foo: 1 } } },
+        { inputTokenDetails: { cacheWriteTokens: 321 } }
+      )
+    ).toEqual({
+      anthropic: { usage: { foo: 1 }, cacheCreationInputTokens: 321 },
+    });
+  });
+
+  test("creates metadata when none exists and cache writes are reported", () => {
+    expect(
+      withCacheWriteMetadata(undefined, { inputTokenDetails: { cacheWriteTokens: 5 } })
+    ).toEqual({ anthropic: { cacheCreationInputTokens: 5 } });
+  });
+
+  test("no-ops when the usage reports no cache writes", () => {
+    const metadata = { openai: { responseId: "resp_1" } };
+    expect(withCacheWriteMetadata(metadata, { inputTokens: 10 })).toBe(metadata);
+    expect(withCacheWriteMetadata(undefined, undefined)).toBeUndefined();
+  });
+});
 
 describe("addUsage", () => {
   test("sums all fields when both arguments have values", () => {
