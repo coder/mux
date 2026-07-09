@@ -347,14 +347,14 @@ export const modelsExtra: Record<string, ModelData> = {
 
   // GPT-5.6 Luna - Released July 2026
   // Lightweight tier consolidating the former 5.4 mini/nano slots: 400K context,
-  // 128K max output, $0.75/M input, $4.50/M output, $0.075/M cached input.
+  // 128K max output, $1/M input, $6/M output, $0.10/M cached input.
   // Text-only: no vision support (also disables PDF-support inference).
   "gpt-5.6-luna": {
     max_input_tokens: 400000,
     max_output_tokens: 128000,
-    input_cost_per_token: 0.00000075, // $0.75 per million input tokens
-    output_cost_per_token: 0.0000045, // $4.50 per million output tokens
-    cache_read_input_token_cost: 0.000000075, // $0.075 per million cached input tokens
+    input_cost_per_token: 0.000001, // $1 per million input tokens
+    output_cost_per_token: 0.000006, // $6 per million output tokens
+    cache_read_input_token_cost: 0.0000001, // $0.10 per million cached input tokens
     litellm_provider: "openai",
     mode: "chat",
     supports_function_calling: true,

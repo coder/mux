@@ -52,8 +52,8 @@ describe("getModelStats", () => {
     const luna = expectStats(KNOWN_MODELS.GPT_MINI.id);
     expect(luna.max_input_tokens).toBe(400000);
     expect(luna.max_output_tokens).toBe(128000);
-    expect(luna.input_cost_per_token).toBe(0.00000075);
-    expect(luna.output_cost_per_token).toBe(0.0000045);
+    expect(luna.input_cost_per_token).toBe(0.000001);
+    expect(luna.output_cost_per_token).toBe(0.000006);
     expect(luna.tiered_pricing_threshold_tokens).toBeUndefined();
   });
 
