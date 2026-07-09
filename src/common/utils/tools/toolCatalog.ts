@@ -154,6 +154,12 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
   return { catalog, deferredToolNames, allToolNames };
 }
 
+/** Return the tool record with the built-in `tool_search` entry removed. */
+function withoutToolSearch(tools: Record<string, Tool>): Record<string, Tool> {
+  const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = tools;
+  return rest;
+}
+
 /**
  * Post-policy gate: decides whether tool-search deferral is active for this
  * stream and returns the (possibly adjusted) tool record plus the seed state.
@@ -198,13 +204,11 @@ export function prepareToolSearch(inputs: ToolCatalogInputs): {
   // Gated on the actual PTC flag, not record presence: a `code_execution`
   // record entry may be a same-named MCP tool (classified as normal deferred).
   if (inputs.ptcEnabled === true) {
-    const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = inputs.tools;
-    return { tools: rest };
+    return { tools: withoutToolSearch(inputs.tools) };
   }
   const classification = buildToolCatalog(inputs);
   if (classification.deferredToolNames.size === 0) {
-    const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = inputs.tools;
-    return { tools: rest };
+    return { tools: withoutToolSearch(inputs.tools) };
   }
   return {
     tools: inputs.tools,
