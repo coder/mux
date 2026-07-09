@@ -238,6 +238,36 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
 }
 
 /**
+ * GPT-5.6 family (Sol / Terra / Luna), including version-suffixed ids like
+ * `gpt-5.6-sol-2026-07-09`. Kept as one predicate so the two GPT-5.6-only
+ * capabilities below stay in sync.
+ */
+const GPT_56_FAMILY_REGEX = /^gpt-5\.6-(?:sol|terra|luna)(?!-[a-z])/;
+
+/**
+ * Whether the given OpenAI model supports the native "max" reasoning effort
+ * (GPT-5.6 family, GA July 9, 2026). OpenAI recommends max effort "for demanding
+ * tasks that need more exploration and verification".
+ *
+ * Only valid on the Responses API path: the @ai-sdk/openai Responses schema
+ * accepts arbitrary effort strings, but the Chat Completions schema rejects
+ * anything outside its enum — callers must clamp to "xhigh" there.
+ */
+export function openaiSupportsNativeMaxEffort(modelString: string): boolean {
+  return GPT_56_FAMILY_REGEX.test(stripModelProviderPrefixes(modelString));
+}
+
+/**
+ * Whether the given OpenAI model supports `reasoning.mode: "pro"` on the
+ * Responses API (GPT-5.6 family). Pro mode performs more model work to improve
+ * reliability on difficult tasks and returns a single final answer — intended
+ * for when quality matters more than latency and token usage.
+ */
+export function openaiSupportsProReasoningMode(modelString: string): boolean {
+  return GPT_56_FAMILY_REGEX.test(stripModelProviderPrefixes(modelString));
+}
+
+/**
  * Whether the given Anthropic model rejects `thinking: { type: "disabled" }`.
  *
  * Mythos-class models (Fable/Mythos) cannot turn thinking off: the API errors with
@@ -276,6 +306,9 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
   medium: "medium",
   high: "high",
   xhigh: "xhigh", // Maps 1:1 to OpenAI's reasoning effort value
+  // Shared clamp for models without a native max effort. GPT-5.6 (see
+  // openaiSupportsNativeMaxEffort) overrides this to "max" in buildProviderOptions
+  // on the Responses API path.
   max: "xhigh",
 };
 

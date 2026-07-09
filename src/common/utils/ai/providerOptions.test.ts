@@ -14,6 +14,7 @@ import {
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
+  MUX_OPENAI_REASONING_MODE_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
@@ -413,6 +414,45 @@ describe("buildProviderOptions - OpenAI", () => {
 
     expect(openai).toBeDefined();
     expect(openai!.parallelToolCalls).toBe(true);
+  });
+
+  describe("GPT-5.6 native max reasoning effort", () => {
+    test.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
+      "sends native max effort for %s on the Responses API",
+      (modelId) => {
+        const result = buildProviderOptions(`openai:${modelId}`, "max");
+        const openai = getOpenAIOptions(result);
+
+        expect(openai).toBeDefined();
+        expect(openai!.reasoningEffort).toBe("max");
+      }
+    );
+
+    test("clamps max to xhigh on the Chat Completions wire format", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "max", undefined, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
+    });
+
+    test("keeps the max→xhigh clamp for non-GPT-5.6 models", () => {
+      const result = buildProviderOptions("openai:gpt-5.5", "max");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
+    });
+
+    test("non-max levels stay on the shared mapping for GPT-5.6", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "high");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("high");
+    });
   });
 
   describe("store option", () => {
@@ -1039,6 +1079,72 @@ describe("buildRequestHeaders", () => {
       test(name, () => {
         expect(
           buildRequestHeaders(model, undefined, undefined, undefined, routeProvider, thinkingLevel)
+        ).toEqual(expected);
+      });
+    }
+  });
+
+  describe("GPT-5.6 pro reasoning mode header", () => {
+    for (const { name, model, options, routeProvider, expected } of [
+      {
+        name: "emits pro mode header for gpt-5.6-sol with reasoningMode pro",
+        model: "openai:gpt-5.6-sol",
+        options: { openai: { reasoningMode: "pro" } },
+        routeProvider: undefined,
+        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+      },
+      {
+        name: "emits pro mode header for version-suffixed gpt-5.6-terra",
+        model: "openai:gpt-5.6-terra-2026-07-09",
+        options: { openai: { reasoningMode: "pro" } },
+        routeProvider: "openai",
+        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+      },
+      {
+        name: "does not emit header for non-GPT-5.6 model even with reasoningMode pro",
+        model: "openai:gpt-5.5",
+        options: { openai: { reasoningMode: "pro" } },
+        routeProvider: undefined,
+        expected: undefined,
+      },
+      {
+        name: "does not emit header when reasoningMode is default",
+        model: "openai:gpt-5.6-sol",
+        options: { openai: { reasoningMode: "default" } },
+        routeProvider: undefined,
+        expected: undefined,
+      },
+      {
+        name: "does not emit header when reasoningMode is unset",
+        model: "openai:gpt-5.6-sol",
+        options: { openai: {} },
+        routeProvider: undefined,
+        expected: undefined,
+      },
+      {
+        name: "does not emit header on the Chat Completions wire format",
+        model: "openai:gpt-5.6-sol",
+        options: { openai: { reasoningMode: "pro", wireFormat: "chatCompletions" } },
+        routeProvider: undefined,
+        expected: undefined,
+      },
+      {
+        name: "does not emit header for gateway-routed GPT-5.6 (wrapper not applied there)",
+        model: "mux-gateway:openai/gpt-5.6-sol",
+        options: { openai: { reasoningMode: "pro" } },
+        routeProvider: "mux-gateway",
+        expected: undefined,
+      },
+    ] as const) {
+      test(name, () => {
+        expect(
+          buildRequestHeaders(
+            model,
+            options as Parameters<typeof buildRequestHeaders>[1],
+            undefined,
+            undefined,
+            routeProvider
+          )
         ).toEqual(expected);
       });
     }

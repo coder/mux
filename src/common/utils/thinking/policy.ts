@@ -19,6 +19,7 @@ import {
   THINKING_LEVEL_OFF,
   anthropicRejectsDisabledThinking,
   anthropicSupportsNativeXhigh,
+  openaiSupportsNativeMaxEffort,
   stripModelProviderPrefixes,
   type ThinkingLevel,
   type ParsedThinkingInput,
@@ -53,8 +54,8 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.2-codex → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.3-codex / Spark variants →
  *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
- * - openai:gpt-5.2 / openai:gpt-5.5 / gpt-5.6 tiers (sol/terra/luna) →
- *   ["off", "low", "medium", "high", "xhigh"]
+ * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
+ * - gpt-5.6 tiers (sol/terra/luna) → all 6 levels including native "max"
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
@@ -126,15 +127,19 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
     return ["medium", "high", "xhigh"];
   }
 
-  // gpt-5.2, gpt-5.5, the gpt-5.4-mini / gpt-5.4-nano variants, and the gpt-5.6 tiers
-  // (sol/terra/luna) support 5 reasoning levels including xhigh.
-  // Note: preview reports say gpt-5.6-sol adds a native "max" effort; we keep it at
-  // xhigh until OpenAI publishes official reasoning-level docs (OPENAI_REASONING_EFFORT
-  // maps our "max" to "xhigh" anyway, so nothing would be sent differently today).
+  // GPT-5.6 tiers (sol/terra/luna) support all 6 levels: OpenAI documents a native
+  // "max" reasoning effort for demanding tasks that need more exploration and
+  // verification. On the Responses API we send "max" through as-is; the Chat
+  // Completions path clamps to "xhigh" (see buildProviderOptions).
+  if (openaiSupportsNativeMaxEffort(withoutProviderNamespace)) {
+    return ["off", "low", "medium", "high", "xhigh", "max"];
+  }
+
+  // gpt-5.2, gpt-5.5 and the gpt-5.4-mini / gpt-5.4-nano variants support 5 reasoning
+  // levels including xhigh.
   if (
     /^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace) ||
-    /^gpt-5\.(?:4|5)(?:-(?:mini|nano))?(?!-[a-z])/.test(withoutProviderNamespace) ||
-    /^gpt-5\.6-(?:sol|terra|luna)(?!-[a-z])/.test(withoutProviderNamespace)
+    /^gpt-5\.(?:4|5)(?:-(?:mini|nano))?(?!-[a-z])/.test(withoutProviderNamespace)
   ) {
     return ["off", "low", "medium", "high", "xhigh"];
   }

@@ -187,7 +187,7 @@ describe("getThinkingPolicyForModel", () => {
   });
 
   test.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])(
-    "returns 5 levels including xhigh for %s",
+    "returns all 6 levels including native max for %s",
     (modelId) => {
       expect(getThinkingPolicyForModel(`openai:${modelId}`)).toEqual([
         "off",
@@ -195,17 +195,19 @@ describe("getThinkingPolicyForModel", () => {
         "medium",
         "high",
         "xhigh",
+        "max",
       ]);
     }
   );
 
-  test("returns 5 levels including xhigh for gpt-5.6-sol behind mux-gateway with version suffix", () => {
+  test("returns all 6 levels for gpt-5.6-sol behind mux-gateway with version suffix", () => {
     expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-sol-2026-06-26")).toEqual([
       "off",
       "low",
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
   });
 

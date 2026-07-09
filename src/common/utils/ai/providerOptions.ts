@@ -23,6 +23,8 @@ import {
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
   OPENROUTER_REASONING_EFFORT,
+  openaiSupportsNativeMaxEffort,
+  openaiSupportsProReasoningMode,
 } from "@/common/types/thinking";
 import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/policy";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -38,6 +40,16 @@ import { normalizeToCanonical, supports1MContext } from "./models";
  * before the request reaches Anthropic).
  */
 export const MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER = "x-mux-anthropic-effort";
+
+/**
+ * Mux-internal request header that asks the OpenAI fetch wrapper to inject
+ * `reasoning.mode` into the Responses API body on the wire. The @ai-sdk/openai
+ * Responses schema has no mode field (it only builds reasoning.effort/summary),
+ * so — like the Anthropic effort override above — the option rides a header to
+ * the fetch wrapper, which rewrites the body and strips the header before the
+ * request leaves Mux. Value is the reasoning mode to inject (currently "pro").
+ */
+export const MUX_OPENAI_REASONING_MODE_HEADER = "x-mux-openai-reasoning-mode";
 
 /**
  * OpenRouter reasoning options
@@ -353,8 +365,6 @@ export function buildProviderOptions(
 
   // Build OpenAI-specific options
   if (formatProvider === "openai") {
-    const reasoningEffort = OPENAI_REASONING_EFFORT[effectiveThinking];
-
     // Mux always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
     // Chaining it on top of explicit history double-counts prior turns and caused GPT-5.4
@@ -373,6 +383,15 @@ export function buildProviderOptions(
     const isResponses = wireFormat === "responses";
     const truncationMode = openaiTruncationMode ?? "disabled";
     const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(capModelName);
+
+    // GPT-5.6 supports a native "max" reasoning effort for demanding tasks that need
+    // more exploration and verification. The Responses schema in @ai-sdk/openai accepts
+    // arbitrary effort strings, so "max" passes through unchanged; the Chat Completions
+    // schema enum rejects it, so that path keeps the shared max→"xhigh" clamp.
+    const reasoningEffort =
+      effectiveThinking === "max" && isResponses && openaiSupportsNativeMaxEffort(capModelName)
+        ? "max"
+        : OPENAI_REASONING_EFFORT[effectiveThinking];
 
     log.debug("buildProviderOptions: OpenAI config", {
       reasoningEffort,
@@ -618,6 +637,27 @@ export function buildRequestHeaders(
     anthropicSupportsNativeXhigh(modelString)
   ) {
     headers[MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER] = "xhigh";
+  }
+
+  // GPT-5.6 pro mode (`reasoning.mode: "pro"`): more model work for reliability on
+  // difficult tasks, returning a single final answer — for when quality matters more
+  // than latency and token usage. The SDK cannot send reasoning.mode, so emit a
+  // Mux-internal header for the OpenAI fetch wrapper to rewrite the body on the wire.
+  //
+  // Gates:
+  // - direct OpenAI route only: unlike the Anthropic wrapper, the OpenAI fetch
+  //   wrapper is not applied on passthrough gateways, so a header emitted there
+  //   would leak to the gateway verbatim instead of being consumed.
+  // - Responses API only (reasoning.mode does not exist on Chat Completions).
+  // - GPT-5.6 family only; other models would reject the parameter.
+  if (
+    origin === "openai" &&
+    (routeProvider == null || routeProvider === "openai") &&
+    muxProviderOptions?.openai?.reasoningMode === "pro" &&
+    (muxProviderOptions.openai.wireFormat ?? "responses") === "responses" &&
+    openaiSupportsProReasoningMode(modelString)
+  ) {
+    headers[MUX_OPENAI_REASONING_MODE_HEADER] = "pro";
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;
