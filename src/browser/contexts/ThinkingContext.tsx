@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import React, { createContext, useContext, useEffect, useMemo, useCallback } from "react";
 import {
   THINKING_LEVEL_OFF,
+  coerceOpenAIReasoningMode,
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
@@ -96,7 +97,13 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const reasoningKey = getReasoningModeKey(scopeId);
   const [persistedReasoningMode, setReasoningModeInternal] =
     usePersistedState<OpenAIReasoningMode | null>(reasoningKey, null, { listener: true });
-  const reasoningMode = persistedReasoningMode ?? metadataSettings.reasoningMode ?? "standard";
+  // Coerce untrusted persisted values (corrupt entries or a future downgrade) so
+  // bad state self-heals to "standard" instead of failing SendMessageOptionsSchema
+  // validation and bricking sends until storage is cleared.
+  const reasoningMode =
+    coerceOpenAIReasoningMode(persistedReasoningMode) ??
+    coerceOpenAIReasoningMode(metadataSettings.reasoningMode) ??
+    "standard";
 
   // One-time migration: if the new workspace-scoped key is missing, seed from the legacy per-model key.
   useEffect(() => {

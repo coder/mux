@@ -50,6 +50,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 import { getTopLevelProjectEntries } from "@/common/utils/subProjects";
 import {
   THINKING_LEVELS,
+  coerceOpenAIReasoningMode,
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
@@ -453,7 +454,8 @@ function AppInner() {
       getReasoningModeKey(workspaceId),
       null
     );
-    return stored ?? "standard";
+    // Coerce untrusted persisted values so corrupt entries self-heal to "standard".
+    return coerceOpenAIReasoningMode(stored) ?? "standard";
   }, []);
 
   const setThinkingLevelFromPalette = useCallback(

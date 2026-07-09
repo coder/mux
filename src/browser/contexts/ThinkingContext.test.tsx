@@ -17,10 +17,12 @@ import type { RecursivePartial } from "@/browser/testUtils";
 import {
   getModelKey,
   getProjectScopeId,
+  getReasoningModeKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
+import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
@@ -88,6 +90,11 @@ const ThinkingSetterComponent: React.FC = () => {
 const SendOptionsComponent: React.FC<{ workspaceId: string }> = (props) => {
   const options = useSendMessageOptions(props.workspaceId);
   return <div data-testid="base-model">{options.baseModel}</div>;
+};
+
+const ReasoningModeComponent: React.FC = () => {
+  const [reasoningMode] = useReasoningMode();
+  return <div data-testid="reasoning-mode">{reasoningMode}</div>;
 };
 
 function renderWithAPI(children: React.ReactNode) {
@@ -366,6 +373,43 @@ describe("ThinkingContext", () => {
         agentId: "exec",
         aiSettings: expectedSettings,
       });
+    }
+  });
+
+  test("self-heals corrupt persisted reasoningMode to standard but keeps valid pro", async () => {
+    // Corrupt persisted values (e.g. from a future downgrade) must coerce to
+    // "standard" instead of flowing into SendMessageOptionsSchema and bricking sends.
+    const cases = [
+      { workspaceId: "ws-reasoning-corrupt", persisted: "ultra", expected: "standard" },
+      { workspaceId: "ws-reasoning-valid", persisted: "pro", expected: "pro" },
+    ];
+
+    for (const testCase of cases) {
+      const metadata = createWorkspaceMetadata({ id: testCase.workspaceId });
+      setWorkspaceMetadata(metadata);
+      window.localStorage.setItem(
+        getReasoningModeKey(testCase.workspaceId),
+        JSON.stringify(testCase.persisted)
+      );
+
+      const view = renderWithWorkspaceMetadata({
+        workspaceId: testCase.workspaceId,
+        modelOverride: null,
+        children: (
+          <ProviderOptionsProvider>
+            <AgentProvider value={agentContextValue}>
+              <ThinkingProvider workspaceId={testCase.workspaceId}>
+                <ReasoningModeComponent />
+              </ThinkingProvider>
+            </AgentProvider>
+          </ProviderOptionsProvider>
+        ),
+      });
+
+      await waitFor(() => {
+        expect(view.getByTestId("reasoning-mode").textContent).toBe(testCase.expected);
+      }, METADATA_WAIT_OPTIONS);
+      cleanup();
     }
   });
 

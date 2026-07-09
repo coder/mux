@@ -9,7 +9,11 @@ import type {
 } from "@/common/types/runtime";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
-import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceOpenAIReasoningMode,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -113,11 +117,11 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
 
   // Mirror thinkingLevel: carry the creation-time pro reasoning-mode choice into
   // the new workspace's scope so it survives the project→workspace transition.
-  const projectReasoningMode = readPersistedState<OpenAIReasoningMode | null>(
-    getReasoningModeKey(projectScopeId),
-    null
+  // Coerced so a corrupt persisted value is dropped instead of copied forward.
+  const projectReasoningMode = coerceOpenAIReasoningMode(
+    readPersistedState<OpenAIReasoningMode | null>(getReasoningModeKey(projectScopeId), null)
   );
-  if (projectReasoningMode !== null) {
+  if (projectReasoningMode != null) {
     updatePersistedState(getReasoningModeKey(workspaceId), projectReasoningMode);
   }
 
