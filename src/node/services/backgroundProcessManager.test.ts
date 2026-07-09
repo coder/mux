@@ -896,6 +896,39 @@ describe("BackgroundProcessManager", () => {
       // End of "FAILED\n" (6 chars + newline).
       expect(event.payload.matchedThroughOffset).toBe(7);
     });
+
+    it("returns undefined when the live process started after the wake's origin (reused ID)", async () => {
+      // Process IDs are display-name-derived and reclaimed after a restart, so a pending wake for a
+      // dead instance could otherwise be answered with an unrelated newer process's frontier. The
+      // caller passes the wake record's createdAt: the originating instance necessarily started
+      // before its first match created the record, so a live process whose startTime is *after*
+      // createdAt reused the ID and the query returns undefined -- the drain then fails open.
+      const result = await manager.spawn(runtime, testWorkspaceId, "printf 'x\\n'; sleep 3", {
+        cwd: process.cwd(),
+        displayName: "reused-id",
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const proc = await manager.getProcess(result.processId);
+      const liveStartTime = proc?.startTime ?? 0;
+      expect(liveStartTime).toBeGreaterThan(0);
+
+      // Origin created at/after this instance started -> the real frontier (0 here, nothing read).
+      expect(await manager.getSettledShownThroughOffset(result.processId, liveStartTime)).toBe(0);
+      expect(
+        await manager.getSettledShownThroughOffset(result.processId, liveStartTime + 1000)
+      ).toBe(0);
+      // Origin predates this instance -> a reused ID from a newer process, so undefined and the
+      // prior instance's wake is never wrongly superseded.
+      expect(
+        await manager.getSettledShownThroughOffset(result.processId, liveStartTime - 1)
+      ).toBeUndefined();
+      // No origin bound -> unconditional frontier, preserving the legacy-record fail path.
+      expect(await manager.getSettledShownThroughOffset(result.processId)).toBe(0);
+
+      await manager.terminate(result.processId);
+    });
   });
 
   describe("getProcess", () => {

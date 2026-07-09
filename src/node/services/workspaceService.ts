@@ -2016,7 +2016,10 @@ export class WorkspaceService extends EventEmitter {
     // the cooldown). Here, at the moment each wake would become a transcript message, re-check its
     // matched offset against the settled shown-frontier and drop any match already shown. Records
     // without matchedThroughOffset (legacy on-disk) and managers without the query (partial test
-    // stubs) fail open -- the wake delivers, matching the pre-gate behavior.
+    // stubs) fail open -- the wake delivers, matching the pre-gate behavior. The record's createdAt
+    // pins the check to the instance that produced the match: process IDs are display-name-derived
+    // and reclaimed across restarts, so a fresh process that reused the ID started after createdAt,
+    // getSettledShownThroughOffset returns undefined, and the dead instance's wake still delivers.
     const canQueryShownFrontier =
       typeof this.backgroundProcessManager.getSettledShownThroughOffset === "function";
     const deliverable: BashMonitorWakeRecord[] = [];
@@ -2024,7 +2027,8 @@ export class WorkspaceService extends EventEmitter {
     for (const record of pending) {
       if (canQueryShownFrontier && record.kind === "match" && record.matchedThroughOffset != null) {
         const shown = await this.backgroundProcessManager.getSettledShownThroughOffset(
-          record.processId
+          record.processId,
+          Date.parse(record.createdAt)
         );
         if (shown != null && shown >= record.matchedThroughOffset) {
           supersededByShown.push(record);

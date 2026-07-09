@@ -69,6 +69,33 @@ describe("BashMonitorWakeStore", () => {
     expect(pending[0].totalMatches).toBe(2);
   });
 
+  test("merge advances the matched offset to the newest match", async () => {
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR one"], matchedThroughOffset: 50 }));
+    await store.enqueueOrMergePending(payload({ lines: ["ERROR two"], matchedThroughOffset: 80 }));
+
+    const pending = await store.listPending("owner-1");
+    expect(pending).toHaveLength(1);
+    expect(pending[0].lines).toEqual(["ERROR one", "ERROR two"]);
+    expect(pending[0].matchedThroughOffset).toBe(80);
+  });
+
+  test("merge takes the max offset even if a later enqueue reports a smaller one", async () => {
+    // Offsets only grow, so Math.max is defensive against out-of-order enqueues. Cross-generation
+    // fail-open (a restart reused this display-name-derived ID) is no longer handled here by
+    // clearing the offset -- the drain gate binds its check to the record's createdAt, so a newer
+    // instance fails that check and the whole record delivers. See the drain-gate coverage in
+    // workspaceService.test.ts and the createdAt guard in backgroundProcessManager.test.ts.
+    const store = new BashMonitorWakeStore(makeConfig(rootDir));
+    await store.enqueueOrMergePending(payload({ lines: ["OLD fail"], matchedThroughOffset: 50 }));
+    const merged = await store.enqueueOrMergePending(
+      payload({ lines: ["NEW fail"], matchedThroughOffset: 40 })
+    );
+
+    expect(merged.lines).toEqual(["OLD fail", "NEW fail"]);
+    expect(merged.matchedThroughOffset).toBe(50);
+  });
+
   test("delivered records allow later pending wakes for the same process", async () => {
     const store = new BashMonitorWakeStore(makeConfig(rootDir));
     const first = await store.enqueueOrMergePending(payload({ lines: ["ERROR one"] }));

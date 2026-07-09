@@ -1018,10 +1018,21 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * drainBashMonitorWakes to decide, at delivery time, whether a monitor match has already been
    * shown to the agent by a concurrent task_await. Returns undefined for an unknown process so the
    * drain fails open (delivers the wake) rather than silently dropping it.
+   *
+   * `originNotAfterMs` binds the answer to the process instance that produced the wake. Process
+   * IDs are derived from display_name and reclaimed across restarts, so a pending wake for a dead
+   * instance could otherwise be superseded by a newer process's frontier. Callers pass the wake
+   * record's createdAt: the originating instance necessarily started before its first match created
+   * the record, so an instance whose startTime is after createdAt reused the ID and we return
+   * undefined (fail open) rather than let it suppress the prior instance's undelivered output.
    */
-  async getSettledShownThroughOffset(processId: string): Promise<number | undefined> {
+  async getSettledShownThroughOffset(
+    processId: string,
+    originNotAfterMs?: number
+  ): Promise<number | undefined> {
     const proc = await this.getProcess(processId);
     if (!proc) return undefined;
+    if (originNotAfterMs != null && proc.startTime > originNotAfterMs) return undefined;
     // Await the current unfiltered read (if any). The matched output already exists on disk, so an
     // unfiltered long-poll picks it up on its first iteration and returns promptly -- this does not
     // hang on an idle process (no read in flight => field is undefined).

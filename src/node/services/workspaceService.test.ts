@@ -2012,6 +2012,71 @@ describe("WorkspaceService bash monitor wakes", () => {
       await cleanup();
     }
   });
+
+  test("delivers a stale-instance wake even after a reused process ID was read past the match", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-reused-id-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      // A wake from a dead instance is still pending. Its process ID was reclaimed by a newer live
+      // instance that has since been read past the match. The gate binds its shown-frontier query
+      // to the record's createdAt (the origin instance started before it), so the manager reports
+      // it cannot vouch (undefined) for a live process that started later -- the wake fails open and
+      // delivers rather than being superseded against the unrelated instance's frontier.
+      const getSettledShownThroughOffset = mock((_processId: string, _originNotAfterMs?: number) =>
+        Promise.resolve<number | undefined>(undefined)
+      );
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getSettledShownThroughOffset,
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      const beforeEnqueue = Date.now();
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-reused",
+        taskId: "bash:proc-reused",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED stale"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      const afterDelivery = Date.now();
+      expect(sendSpy.mock.calls[0][1]).toContain("FAILED stale");
+      // The gate binds the query to the record's createdAt (a wall-clock ms stamped at enqueue),
+      // not a persisted instance token -- so the forwarded origin bound falls in the enqueue window.
+      const forwardedOrigin = getSettledShownThroughOffset.mock.calls[0][1];
+      expect(typeof forwardedOrigin).toBe("number");
+      expect(forwardedOrigin).toBeGreaterThanOrEqual(beforeEnqueue);
+      expect(forwardedOrigin).toBeLessThanOrEqual(afterDelivery);
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 describe("WorkspaceService workflow activity", () => {
