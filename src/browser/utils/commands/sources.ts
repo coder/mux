@@ -10,7 +10,9 @@ import {
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
-import { normalizeToCanonical, openaiProModeAvailable } from "@/common/utils/ai/models";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { openaiProModeAvailable } from "@/common/utils/ai/proMode";
 import {
   enforceThinkingPolicy,
   getAvailableThinkingLevels,
@@ -88,8 +90,8 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
   getReasoningMode: (workspaceId: string) => OpenAIReasoningMode;
   onToggleReasoningMode: (workspaceId: string) => void;
-  /** Effective OpenAI wire format; pro mode is Responses-only (see openaiProModeAvailable). */
-  openaiWireFormat?: "responses" | "chatCompletions";
+  /** Providers config for pro-mode availability (wire format + Codex OAuth detection). */
+  providersConfig?: ProvidersConfigMap | null;
   /** Settings-resolved route for a canonical model ("direct" = no gateway). */
   getRouteForModel?: (canonicalModel: string) => string;
   /**
@@ -1283,7 +1285,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       const currentModelRoute = currentModelString
         ? p.getRouteForModel?.(normalizeToCanonical(currentModelString))
         : undefined;
-      if (openaiProModeAvailable(currentModelString ?? "", p.openaiWireFormat, currentModelRoute)) {
+      if (
+        openaiProModeAvailable(currentModelString ?? "", {
+          providersConfig: p.providersConfig,
+          resolvedRouteProvider: currentModelRoute,
+        })
+      ) {
         const proActive = p.getReasoningMode(workspaceId) === "pro";
         list.push({
           id: CommandIds.toggleProReasoning(),

@@ -35,10 +35,11 @@ import {
   supports1MContext,
 } from "./models";
 
-// Re-export for existing consumers (aiService, providerModelFactory): the
-// implementation moved to the browser-safe models.ts because this module
+// Re-export for existing consumers (aiService, providerModelFactory, tests):
+// the implementations moved to browser-safe modules because this module
 // imports node-only logging.
-export { openaiProModeAvailable, resolveProviderOptionsNamespaceKey } from "./models";
+export { resolveProviderOptionsNamespaceKey } from "./models";
+export { openaiProModeAvailable } from "./proMode";
 
 /**
  * Request header used to override Anthropic's `output_config.effort` at the

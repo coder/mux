@@ -4,7 +4,6 @@
 
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
-import { openaiSupportsProMode } from "@/common/types/thinking";
 import { formatModelDisplayName } from "./modelDisplay";
 
 export const defaultModel = DEFAULT_MODEL;
@@ -101,60 +100,6 @@ export function resolveProviderOptionsNamespaceKey(
   }
 
   return routeProvider;
-}
-
-/**
- * Route-aware pro-mode availability for UI surfaces (PRO toggle, palette command).
- *
- * Mirrors the buildRequestHeaders wire gating: pro mode only reaches OpenAI when
- * the request flows through our OpenAI fetch wrapper (direct `openai:` or a
- * passthrough gateway like mux-gateway). Explicit non-passthrough gateway model
- * strings (e.g. `openrouter:openai/gpt-5.6-sol`, `github-copilot:gpt-5.6-sol`)
- * never emit the pro-mode header, so surfacing the toggle there would persist a
- * setting that can never affect the request.
- *
- * Pro mode is a Responses API field: when the OpenAI provider is configured
- * with `wireFormat: "chatCompletions"`, the fetch wrapper never injects
- * `reasoning.mode` (it only rewrites `/responses` bodies), so pro mode must
- * not be offered there either — otherwise the toggle looks active while sends
- * silently run in standard mode.
- *
- * Canonical model strings can also be routed to a non-passthrough gateway by
- * routing settings (route priority/overrides); callers with access to the
- * resolved route (useRouting().resolveRoute) should pass it so the UI mirrors
- * the send path, which suppresses the pro header for those routes.
- *
- * Lives here (not providerOptions.ts) so browser components can import it —
- * providerOptions.ts pulls in node-only logging and breaks the renderer bundle.
- */
-export function openaiProModeAvailable(
-  modelString: string,
-  openaiWireFormat?: "responses" | "chatCompletions" | null,
-  resolvedRouteProvider?: string | null
-): boolean {
-  if (openaiWireFormat === "chatCompletions") {
-    return false;
-  }
-  if (!openaiSupportsProMode(modelString)) {
-    return false;
-  }
-
-  const normalized = normalizeToCanonical(modelString);
-  const [origin] = normalized.split(":", 2);
-  if (origin !== "openai") {
-    return false;
-  }
-
-  // Prefer an explicit gateway prefix on the model string; otherwise use the
-  // settings-resolved route ("direct" means no gateway). Unknown routes fail
-  // closed: resolveProviderOptionsNamespaceKey returns the route itself for
-  // non-passthrough definitions, hiding pro rather than showing an inert toggle.
-  const routeProvider =
-    getExplicitGatewayPrefix(modelString) ??
-    (resolvedRouteProvider != null && resolvedRouteProvider !== "direct"
-      ? (resolvedRouteProvider as ProviderName)
-      : undefined);
-  return resolveProviderOptionsNamespaceKey(origin, routeProvider) === origin;
 }
 
 /**

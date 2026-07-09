@@ -851,7 +851,7 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     getReasoningMode: getReasoningModeForWorkspace,
     onToggleReasoningMode: toggleReasoningModeFromPalette,
-    openaiWireFormat: providersConfig?.openai?.wireFormat,
+    providersConfig,
     getRouteForModel,
     getMinThinkingOverride,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,

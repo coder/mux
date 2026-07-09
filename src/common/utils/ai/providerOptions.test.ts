@@ -1267,21 +1267,50 @@ describe("buildRequestHeaders", () => {
     // Pro mode is Responses-only: chatCompletions wire format disables it even
     // for pro-capable models on passthrough routes.
     test("chatCompletions wire format disables pro mode", () => {
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", "chatCompletions")).toBe(false);
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", "responses")).toBe(true);
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null)).toBe(true);
+      expect(
+        openaiProModeAvailable("openai:gpt-5.6-sol", { openaiWireFormat: "chatCompletions" })
+      ).toBe(false);
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", { openaiWireFormat: "responses" })).toBe(
+        true
+      );
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", { openaiWireFormat: null })).toBe(true);
     });
 
     // Canonical model strings can be routed to a non-passthrough gateway by
     // routing settings; the resolved route must gate availability like the
     // send path gates the header.
     test("settings-resolved route gates canonical model strings", () => {
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "direct")).toBe(true);
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "mux-gateway")).toBe(true);
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "openrouter")).toBe(false);
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "github-copilot")).toBe(false);
+      const route = (r: string) =>
+        openaiProModeAvailable("openai:gpt-5.6-sol", { resolvedRouteProvider: r });
+      expect(route("direct")).toBe(true);
+      expect(route("mux-gateway")).toBe(true);
+      expect(route("openrouter")).toBe(false);
+      expect(route("github-copilot")).toBe(false);
       // Unknown route names fail closed.
-      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "some-future-gateway")).toBe(false);
+      expect(route("some-future-gateway")).toBe(false);
+    });
+
+    // Codex OAuth routes compose the fetch wrapper with inject:false (the
+    // ChatGPT backend is stricter than the public API), so when OAuth is the
+    // effective auth path pro mode must be unavailable.
+    test("Codex OAuth as the effective auth path disables pro mode", () => {
+      const withOpenAI = (openai: Partial<NonNullable<ProvidersConfigMap["openai"]>>) =>
+        openaiProModeAvailable("openai:gpt-5.6-sol", {
+          providersConfig: {
+            openai: { isEnabled: true, isConfigured: true, apiKeySet: false, ...openai },
+          },
+        });
+
+      // OAuth-only: routes through Codex OAuth.
+      expect(withOpenAI({ apiKeySet: false, codexOauthSet: true })).toBe(false);
+      // Both auth methods, default prefers OAuth (unset -> oauth).
+      expect(withOpenAI({ apiKeySet: true, codexOauthSet: true })).toBe(false);
+      // Both auth methods, user prefers the API key: pro stays available.
+      expect(
+        withOpenAI({ apiKeySet: true, codexOauthSet: true, codexOauthDefaultAuth: "apiKey" })
+      ).toBe(true);
+      // API key only: no OAuth routing.
+      expect(withOpenAI({ apiKeySet: true, codexOauthSet: false })).toBe(true);
     });
   });
 
