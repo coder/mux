@@ -14,9 +14,10 @@ import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRun
 import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 async function writeWorkflowScript(root: string): Promise<string> {

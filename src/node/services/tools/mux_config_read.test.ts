@@ -11,9 +11,10 @@ import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedact
 import { createMuxConfigReadTool } from "./mux_config_read";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 interface MuxConfigReadSuccess {

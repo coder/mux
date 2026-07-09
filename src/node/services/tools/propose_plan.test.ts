@@ -7,9 +7,10 @@ import { createProposePlanTool } from "./propose_plan";
 import { getTodosForSessionDir, setTodosForSessionDir } from "./todo";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
-const toolCallOptions: ToolExecutionOptions = {
+const toolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 describe("propose_plan tool", () => {

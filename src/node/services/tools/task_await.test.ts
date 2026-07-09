@@ -13,9 +13,10 @@ import { getSubagentGitPatchArtifactsFilePath } from "@/node/services/subagentGi
 import { ForegroundWaitBackgroundedError, type TaskService } from "@/node/services/taskService";
 import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflowRetryEligibility";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 type TestWorkflowService = NonNullable<ToolConfiguration["workflowService"]>;

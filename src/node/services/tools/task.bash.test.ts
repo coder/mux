@@ -9,9 +9,10 @@ import type { BackgroundProcessManager } from "@/node/services/backgroundProcess
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { TaskService } from "@/node/services/taskService";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 describe("bash + task_* (background bash tasks)", () => {

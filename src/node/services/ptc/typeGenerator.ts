@@ -255,7 +255,8 @@ export async function generateMuxTypes(tools: Record<string, Tool>): Promise<str
     }
 
     // Add JSDoc comment with tool description (first line only)
-    const description = tool.description ?? "";
+    // AI SDK 7 allows function-valued descriptions; mux tools only use strings.
+    const description = typeof tool.description === "string" ? tool.description : "";
     if (description) {
       const firstLine = description.split("\n")[0].trim();
       if (firstLine) {

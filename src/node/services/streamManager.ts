@@ -37,7 +37,13 @@ import {
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
 import { hasCommitWorthyParts, type HistoryService } from "./historyService";
-import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usageHelpers";
+import {
+  addUsage,
+  accumulateProviderMetadata,
+  normalizeUsage,
+  withCacheWriteMetadata,
+  type AiSdkUsageLike,
+} from "@/common/utils/tokens/usageHelpers";
 import { linkAbortSignal } from "@/node/utils/abort";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
@@ -914,25 +920,31 @@ export class StreamManager extends EventEmitter {
       ]).catch(() => undefined);
 
     // Fetch all metadata in parallel with independent timeouts
-    // - totalUsage: sum of all steps (for cost calculation)
-    // - contextUsage: last step only (for context window display)
+    // - totalUsage: sum of all steps (for cost calculation). AI SDK 7's
+    //   top-level `usage` accumulates across all steps (old `totalUsage`).
+    // - contextUsage: last step only (for context window display) — moved to
+    //   `finalStep.usage` in AI SDK 7.
     // - contextProviderMetadata: last step (for context window cache display)
     const streamResultWithFinishReason = streamInfo.streamResult as {
       finishReason?: PromiseLike<string>;
     };
-    const [totalUsage, contextUsage, contextProviderMetadata, finishReason] = await Promise.all([
-      withTimeout(streamInfo.streamResult.totalUsage),
+    const [totalUsageRaw, finalStep, finishReason] = await Promise.all([
       withTimeout(streamInfo.streamResult.usage),
-      withTimeout(streamInfo.streamResult.providerMetadata),
+      withTimeout(streamInfo.streamResult.finalStep),
       streamResultWithFinishReason.finishReason
         ? withTimeout(streamResultWithFinishReason.finishReason)
         : Promise.resolve(undefined),
     ]);
 
     return {
-      totalUsage,
-      contextUsage,
-      contextProviderMetadata,
+      totalUsage: normalizeUsage(totalUsageRaw),
+      contextUsage: normalizeUsage(finalStep?.usage),
+      // AI SDK 7 moved Anthropic cache-write tokens off provider metadata;
+      // re-inject from the final step's usage so cache display keeps working.
+      contextProviderMetadata: withCacheWriteMetadata(
+        finalStep?.providerMetadata,
+        finalStep?.usage
+      ),
       finishReason,
       duration: Date.now() - streamInfo.startTime,
     };
@@ -1039,42 +1051,24 @@ export class StreamManager extends EventEmitter {
       ]);
 
       if (!steps || steps.length === 0) {
-        // Fall back to last step's provider metadata
-        return await streamInfo.streamResult.providerMetadata;
+        // Fall back to the final step's provider metadata; AI SDK 7 reports
+        // cache writes on usage, so re-inject them for downstream pricing.
+        const finalStep = await streamInfo.streamResult.finalStep;
+        return withCacheWriteMetadata(finalStep.providerMetadata, finalStep.usage);
       }
 
-      // If only one step, no aggregation needed
-      if (steps.length === 1) {
-        return steps[0].providerMetadata;
-      }
-
-      // Aggregate cache creation tokens across all steps
-      let totalCacheCreationTokens = 0;
-      let lastStepMetadata: Record<string, unknown> | undefined;
-
+      // Aggregate cache creation tokens across all steps. AI SDK 7 moved
+      // per-step cache-write tokens from providerMetadata.anthropic to
+      // step.usage.inputTokenDetails, so inject them back per step before
+      // accumulating (accumulateProviderMetadata sums across steps).
+      let accumulated: Record<string, unknown> | undefined;
       for (const step of steps) {
-        lastStepMetadata = step.providerMetadata;
-        const anthropicMeta = step.providerMetadata?.anthropic as
-          | { cacheCreationInputTokens?: number }
-          | undefined;
-        if (anthropicMeta?.cacheCreationInputTokens) {
-          totalCacheCreationTokens += anthropicMeta.cacheCreationInputTokens;
-        }
+        accumulated = accumulateProviderMetadata(
+          accumulated,
+          withCacheWriteMetadata(step.providerMetadata, step.usage)
+        );
       }
-
-      // If no cache creation tokens found, just return last step's metadata
-      if (totalCacheCreationTokens === 0) {
-        return lastStepMetadata;
-      }
-
-      // Merge aggregated cache creation tokens into the last step's metadata
-      return {
-        ...lastStepMetadata,
-        anthropic: {
-          ...(lastStepMetadata?.anthropic as Record<string, unknown> | undefined),
-          cacheCreationInputTokens: totalCacheCreationTokens,
-        },
-      };
+      return accumulated;
     } catch (error) {
       log.debug("Could not aggregate provider metadata:", error);
       return undefined;
@@ -1591,6 +1585,11 @@ export class StreamManager extends EventEmitter {
       model: request.model,
       messages: request.messages,
       system: request.system,
+      // For Anthropic prompt caching, the system prompt is prepended to
+      // `messages` as a { role: "system" } message (createCachedSystemMessage).
+      // AI SDK 7 rejects system messages inside `messages` unless opted in.
+      // Trusted: mux builds these messages server-side.
+      allowSystemInMessages: true,
       abortSignal: abortController.signal,
       prepareStep: async ({ messages: stepMessages }) => {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
@@ -2862,30 +2861,35 @@ export class StreamManager extends EventEmitter {
                 // Emit usage-delta event with usage from this step
                 const finishStepPart = part as {
                   type: "finish-step";
-                  usage: LanguageModelV2Usage;
+                  usage: AiSdkUsageLike;
                   providerMetadata?: Record<string, unknown>;
                 };
 
-                // Update cumulative totals for this stream
-                streamInfo.cumulativeUsage = addUsage(
-                  streamInfo.cumulativeUsage,
+                // Normalize AI SDK 7 nested usage into mux's persisted flat shape,
+                // re-injecting Anthropic cache-write tokens into provider metadata.
+                const stepUsage = normalizeUsage(finishStepPart.usage);
+                const stepProviderMetadata = withCacheWriteMetadata(
+                  finishStepPart.providerMetadata,
                   finishStepPart.usage
                 );
+
+                // Update cumulative totals for this stream
+                streamInfo.cumulativeUsage = addUsage(streamInfo.cumulativeUsage, stepUsage);
                 streamInfo.cumulativeProviderMetadata = accumulateProviderMetadata(
                   streamInfo.cumulativeProviderMetadata,
-                  finishStepPart.providerMetadata
+                  stepProviderMetadata
                 );
 
                 // Track last step's data for context window display
-                streamInfo.lastStepUsage = finishStepPart.usage;
-                streamInfo.lastStepProviderMetadata = finishStepPart.providerMetadata;
+                streamInfo.lastStepUsage = stepUsage;
+                streamInfo.lastStepProviderMetadata = stepProviderMetadata;
 
                 const usageEvent = buildUsageDeltaEvent({
                   workspaceId: workspaceId as string,
                   messageId: streamInfo.messageId,
                   // Step-level (for context window display)
-                  usage: finishStepPart.usage,
-                  providerMetadata: finishStepPart.providerMetadata,
+                  usage: stepUsage,
+                  providerMetadata: stepProviderMetadata,
                   // Cumulative (for live cost display)
                   cumulativeUsage: streamInfo.cumulativeUsage,
                   cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,

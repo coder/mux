@@ -659,13 +659,15 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai!.include).toEqual(["reasoning.encrypted_content"]);
     });
 
-    test("should omit reasoningSummary for gpt-5.3-codex-spark", () => {
+    test("should disable reasoningSummary for gpt-5.3-codex-spark", () => {
       const result = buildProviderOptions("openai:gpt-5.3-codex-spark", "medium");
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
       expect(openai!.reasoningEffort).toBe("medium");
-      expect(openai!.reasoningSummary).toBeUndefined();
+      // AI SDK 7 defaults reasoningSummary to "detailed" when reasoningEffort
+      // is set; models that reject the parameter must opt out with null.
+      expect(openai!.reasoningSummary).toBeNull();
       expect(openai!.include).toEqual(["reasoning.encrypted_content"]);
     });
   });

@@ -399,10 +399,12 @@ export function buildProviderOptions(
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {
           reasoningEffort,
-          ...(isResponses &&
-            shouldSendReasoningSummary && {
-              reasoningSummary: "detailed", // Enable detailed reasoning summaries when the model supports it
-            }),
+          // AI SDK 7 defaults reasoningSummary to "detailed" whenever a
+          // reasoning effort is set, so models that reject the parameter must
+          // explicitly opt out with null.
+          ...(isResponses && {
+            reasoningSummary: shouldSendReasoningSummary ? ("detailed" as const) : null,
+          }),
           ...(isResponses && {
             // Include reasoning encrypted content to preserve reasoning context across conversation steps
             // Required when using reasoning models (gpt-5, o3, o4-mini) with tool calls

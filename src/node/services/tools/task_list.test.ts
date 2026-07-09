@@ -13,9 +13,10 @@ import type {
   WorkspaceTurnTaskStatus,
 } from "@/node/services/taskHandleStore";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 interface WorkspaceFixtureOptions {

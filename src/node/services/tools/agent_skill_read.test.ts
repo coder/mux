@@ -10,9 +10,10 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 async function writeProjectSkill(

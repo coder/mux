@@ -1714,7 +1714,7 @@ describe("BackgroundProcessManager", () => {
       const bashTool = createBashTool(config);
       const spawnResult = (await bashTool.execute!(
         { script: "echo 'hello from integration test'", run_in_background: true },
-        { toolCallId: "test", messages: [] }
+        { toolCallId: "test", messages: [], context: undefined }
       )) as BashToolResult;
 
       expect(spawnResult).toBeDefined();
@@ -1735,7 +1735,7 @@ describe("BackgroundProcessManager", () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const rawOutputResult = await outputTool.execute!(
         { process_id: processId },
-        { toolCallId: "test2", messages: [] }
+        { toolCallId: "test2", messages: [], context: undefined }
       );
 
       const outputResult = rawOutputResult as BashOutputToolResult;

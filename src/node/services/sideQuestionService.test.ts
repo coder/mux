@@ -64,7 +64,8 @@ function fakeTextStream(
   }
   return {
     textStream: gen(),
-    ...(opts?.usage !== undefined ? { totalUsage: Promise.resolve(opts.usage) } : {}),
+    // AI SDK 7: top-level `usage` is the all-steps total (old `totalUsage`).
+    ...(opts?.usage !== undefined ? { usage: Promise.resolve(opts.usage) } : {}),
   } as unknown as ReturnType<typeof aiSdk.streamText>;
 }
 

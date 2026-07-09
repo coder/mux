@@ -6,9 +6,10 @@ import type { TaskService } from "@/node/services/taskService";
 import { createTaskWorkspaceLifecycleTool } from "./task_workspace_lifecycle";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 describe("task_workspace_lifecycle tool", () => {

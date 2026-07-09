@@ -3,12 +3,12 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3GenerateResult,
-  LanguageModelV3Middleware,
-  LanguageModelV3StreamPart,
-  LanguageModelV3Usage,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4GenerateResult,
+  LanguageModelV4Middleware,
+  LanguageModelV4StreamPart,
+  LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 import { Config } from "@/node/config";
 import { createDevToolsMiddleware, extractUsage } from "@/node/services/devToolsMiddleware";
@@ -23,9 +23,9 @@ function createTestConfig(opts: { sessionsDir: string; enabled?: boolean }): Con
   return config;
 }
 
-function createMockModel(overrides: Partial<LanguageModelV3> = {}): LanguageModelV3 {
+function createMockModel(overrides: Partial<LanguageModelV4> = {}): LanguageModelV4 {
   return {
-    specificationVersion: "v3",
+    specificationVersion: "v4",
     provider: "test-provider",
     modelId: "test-model",
     supportedUrls: {},
@@ -37,7 +37,7 @@ function createMockModel(overrides: Partial<LanguageModelV3> = {}): LanguageMode
   };
 }
 
-function createMockParams(): LanguageModelV3CallOptions {
+function createMockParams(): LanguageModelV4CallOptions {
   return {
     prompt: [
       {
@@ -60,7 +60,7 @@ function createMockParams(): LanguageModelV3CallOptions {
   };
 }
 
-function createUsage(inputTokens: number, outputTokens: number): LanguageModelV3Usage {
+function createUsage(inputTokens: number, outputTokens: number): LanguageModelV4Usage {
   return {
     inputTokens: {
       total: inputTokens,
@@ -77,8 +77,8 @@ function createUsage(inputTokens: number, outputTokens: number): LanguageModelV3
 }
 
 function createGenerateResult(
-  overrides: Partial<LanguageModelV3GenerateResult> = {}
-): LanguageModelV3GenerateResult {
+  overrides: Partial<LanguageModelV4GenerateResult> = {}
+): LanguageModelV4GenerateResult {
   return {
     content: [{ type: "text", text: "Hello" }],
     finishReason: { unified: "stop", raw: "stop" },
@@ -90,7 +90,7 @@ function createGenerateResult(
   };
 }
 
-function getWrapGenerate(middleware: LanguageModelV3Middleware) {
+function getWrapGenerate(middleware: LanguageModelV4Middleware) {
   if (!middleware.wrapGenerate) {
     throw new Error("Expected wrapGenerate to be defined");
   }
@@ -98,7 +98,7 @@ function getWrapGenerate(middleware: LanguageModelV3Middleware) {
   return middleware.wrapGenerate;
 }
 
-function getWrapStream(middleware: LanguageModelV3Middleware) {
+function getWrapStream(middleware: LanguageModelV4Middleware) {
   if (!middleware.wrapStream) {
     throw new Error("Expected wrapStream to be defined");
   }
@@ -107,10 +107,10 @@ function getWrapStream(middleware: LanguageModelV3Middleware) {
 }
 
 async function collectStream(
-  stream: ReadableStream<LanguageModelV3StreamPart>
-): Promise<LanguageModelV3StreamPart[]> {
+  stream: ReadableStream<LanguageModelV4StreamPart>
+): Promise<LanguageModelV4StreamPart[]> {
   const reader = stream.getReader();
-  const chunks: LanguageModelV3StreamPart[] = [];
+  const chunks: LanguageModelV4StreamPart[] = [];
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -409,7 +409,7 @@ describe("createDevToolsMiddleware", () => {
         event: "response.output_text.delta",
         data: "world",
       };
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: "text-start", id: "t1" },
         { type: "text-delta", id: "t1", delta: "Hello " },
         { type: "raw", rawValue: rawChunkValue },
@@ -423,7 +423,7 @@ describe("createDevToolsMiddleware", () => {
       ];
       const expectedForwardedChunks = chunks.filter((chunk) => chunk.type !== "raw");
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           for (const chunk of chunks) {
             controller.enqueue(chunk);
@@ -490,7 +490,7 @@ describe("createDevToolsMiddleware", () => {
       const wrapStream = getWrapStream(middleware);
 
       const rawValue = { event: "response.output_text.delta", data: "hidden" };
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: "raw", rawValue },
         {
           type: "finish",
@@ -499,7 +499,7 @@ describe("createDevToolsMiddleware", () => {
         },
       ];
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           for (const chunk of chunks) {
             controller.enqueue(chunk);
@@ -531,7 +531,7 @@ describe("createDevToolsMiddleware", () => {
       const wrapStream = getWrapStream(middleware);
 
       const rawValue = { event: "response.output_text.delta", data: "visible" };
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         { type: "raw", rawValue },
         {
           type: "finish",
@@ -540,7 +540,7 @@ describe("createDevToolsMiddleware", () => {
         },
       ];
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           for (const chunk of chunks) {
             controller.enqueue(chunk);
@@ -575,7 +575,7 @@ describe("createDevToolsMiddleware", () => {
       const middleware = createDevToolsMiddleware("ws-1", service);
       const wrapStream = getWrapStream(middleware);
 
-      const chunks: LanguageModelV3StreamPart[] = [
+      const chunks: LanguageModelV4StreamPart[] = [
         {
           type: "tool-call",
           toolCallId: "call-1",
@@ -589,7 +589,7 @@ describe("createDevToolsMiddleware", () => {
         },
       ];
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           for (const chunk of chunks) {
             controller.enqueue(chunk);
@@ -629,7 +629,7 @@ describe("createDevToolsMiddleware", () => {
       const middleware = createDevToolsMiddleware("ws-1", service);
       const wrapStream = getWrapStream(middleware);
 
-      const neverEndingStream = new ReadableStream<LanguageModelV3StreamPart>({
+      const neverEndingStream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           controller.enqueue({ type: "text-start", id: "t1" });
           controller.enqueue({ type: "text-delta", id: "t1", delta: "partial" });
@@ -669,7 +669,7 @@ describe("createDevToolsMiddleware", () => {
       const wrapStream = getWrapStream(middleware);
       const abortController = new AbortController();
 
-      const neverEndingStream = new ReadableStream<LanguageModelV3StreamPart>({
+      const neverEndingStream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           controller.enqueue({ type: "text-start", id: "t1" });
           controller.enqueue({ type: "text-delta", id: "t1", delta: "partial" });
@@ -709,7 +709,7 @@ describe("createDevToolsMiddleware", () => {
       const wrapStream = getWrapStream(middleware);
       const abortController = new AbortController();
 
-      const stream = new ReadableStream<LanguageModelV3StreamPart>({
+      const stream = new ReadableStream<LanguageModelV4StreamPart>({
         start(controller) {
           controller.enqueue({
             type: "finish",

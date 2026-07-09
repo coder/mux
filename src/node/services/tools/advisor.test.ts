@@ -15,9 +15,10 @@ import { createAdvisorTool } from "./advisor";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
 const ADVISOR_MODEL = "anthropic:claude-sonnet-4-20250514";
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 function createTranscript(): ModelMessage[] {

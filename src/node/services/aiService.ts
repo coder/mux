@@ -2513,7 +2513,7 @@ export class AIService extends EventEmitter {
       const canQueueDevToolsRunMetadata =
         this.devToolsService?.enabled === true &&
         typeof modelResult.data.model !== "string" &&
-        modelResult.data.model.specificationVersion === "v3";
+        modelResult.data.model.specificationVersion === "v4";
 
       if (canQueueDevToolsRunMetadata) {
         // Correlate pending run metadata with the specific request that reaches

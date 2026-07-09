@@ -1,6 +1,5 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import writeFileAtomic from "write-file-atomic";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
@@ -9,6 +8,11 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
+import {
+  normalizeUsage,
+  withCacheWriteMetadata,
+  type AiSdkUsageLike,
+} from "@/common/utils/tokens/usageHelpers";
 import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import { HEADLESS_USAGE_FILE_NAME } from "@/common/constants/paths";
@@ -197,7 +201,7 @@ export class SessionUsageService {
   async recordHeadlessUsage(
     workspaceId: string,
     modelString: string,
-    usage: LanguageModelV2Usage | undefined,
+    usage: AiSdkUsageLike | undefined,
     providerMetadata?: Record<string, unknown>,
     options?: {
       /**
@@ -225,6 +229,12 @@ export class SessionUsageService {
   ): Promise<{ model: string; usage: ChatUsageDisplay } | undefined> {
     if (!usage) return undefined;
     try {
+      // Headless callers pass live AI SDK usage. Normalize to mux's persisted
+      // flat shape and re-inject cache-write tokens (moved off providerMetadata
+      // in AI SDK 7) before the sidecar write and pricing below. No-ops for
+      // callers that already normalized.
+      providerMetadata = withCacheWriteMetadata(providerMetadata, usage);
+      usage = normalizeUsage(usage);
       const canonicalModel = normalizeToCanonical(modelString);
       // Resolve mappedToModel aliases for pricing (mirrors StreamManager's
       // resolveMetadataModel): custom provider models would otherwise price

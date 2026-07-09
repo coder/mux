@@ -5,9 +5,9 @@
  * dependencies into the renderer bundle.
  */
 
-import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { getModelStats, type ModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
+import type { AiSdkUsageLike } from "./usageHelpers";
 
 interface UsageCostInputs {
   inputTokens: number;
@@ -100,7 +100,7 @@ function calculateUsageCosts(modelStats: ModelStats, usage: UsageCostInputs): Us
  * for display in the UI. It does NOT require the tokenizer.
  */
 export function createDisplayUsage(
-  usage: LanguageModelV2Usage | undefined,
+  usage: AiSdkUsageLike | undefined,
   model: string,
   providerMetadata?: Record<string, unknown>,
   metadataModelOverride?: string
@@ -112,14 +112,19 @@ export function createDisplayUsage(
   // but v6 changed this to match OpenAI/Google (inputTokens = total input including
   // cache_read + cache_write). We always subtract both cachedInputTokens and
   // cacheCreateTokens to get the true non-cached input count.
-  const cachedTokens = usage.cachedInputTokens ?? 0;
+  // Self-healing: mux persists the flat v6 shape, but fall back to AI SDK 7's
+  // nested token details in case an un-normalized usage object slips through.
+  const cachedTokens = usage.cachedInputTokens ?? usage.inputTokenDetails?.cacheReadTokens ?? 0;
   const rawInputTokens = usage.inputTokens ?? 0;
 
-  // Extract cache creation tokens from provider metadata (Anthropic-specific)
+  // Extract cache creation tokens from provider metadata (Anthropic-specific;
+  // AI SDK 7 reports them on usage.inputTokenDetails instead).
   // Needed before computing inputTokens since we subtract it from the total.
   const cacheCreateTokens =
     (providerMetadata?.anthropic as { cacheCreationInputTokens?: number } | undefined)
-      ?.cacheCreationInputTokens ?? 0;
+      ?.cacheCreationInputTokens ??
+    usage.inputTokenDetails?.cacheWriteTokens ??
+    0;
 
   // Subtract both cache-read and cache-create tokens to isolate non-cached input.
   // Math.max guards against pre-v6 historical data where inputTokens already excluded
@@ -129,6 +134,7 @@ export function createDisplayUsage(
   // Extract reasoning tokens with fallback to provider metadata (OpenAI-specific)
   const reasoningTokens =
     usage.reasoningTokens ??
+    usage.outputTokenDetails?.reasoningTokens ??
     (providerMetadata?.openai as { reasoningTokens?: number } | undefined)?.reasoningTokens ??
     0;
 

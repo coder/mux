@@ -9499,6 +9499,7 @@ export class WorkspaceService extends EventEmitter {
         {
           toolCallId: `bash-${Date.now()}`,
           messages: [],
+          context: undefined,
         }
       )) as BashToolResult;
 

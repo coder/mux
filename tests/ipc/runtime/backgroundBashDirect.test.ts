@@ -150,7 +150,7 @@ describe("Background Bash Direct Integration", () => {
         display_name: `spawn_${Date.now()}`,
         timeout_secs: 30,
       },
-      { toolCallId: "spawn", messages: [] }
+      { toolCallId: "spawn", messages: [], context: undefined }
     )) as ToolExecuteResult;
 
     expect(spawnResult.success).toBe(true);
@@ -162,7 +162,7 @@ describe("Background Bash Direct Integration", () => {
     const bashOutput2 = createBashOutputTool(toolConfig);
     const outputResult = (await bashOutput2.execute!(
       { process_id: processId, timeout_secs: 0 },
-      { toolCallId: "read", messages: [] }
+      { toolCallId: "read", messages: [], context: undefined }
     )) as ToolExecuteResult;
 
     expect(outputResult.success).toBe(true);
@@ -480,7 +480,7 @@ describe("Foreground to Background Migration", () => {
         display_name: testId,
         timeout_secs: 30,
       },
-      { toolCallId, messages: [] }
+      { toolCallId, messages: [], context: undefined }
     ) as Promise<ToolExecuteResult>;
 
     // Wait for foreground process to register and output first marker
@@ -525,7 +525,7 @@ describe("Foreground to Background Migration", () => {
     // Get output via bash_output tool (new tool instance)
     const outputResult = (await bashOutput2.execute!(
       { process_id: testId, timeout_secs: 0 },
-      { toolCallId: "output_read", messages: [] }
+      { toolCallId: "output_read", messages: [], context: undefined }
     )) as ToolExecuteResult;
 
     expect(outputResult.success).toBe(true);
@@ -571,7 +571,7 @@ describe("Foreground to Background Migration", () => {
         display_name: testId,
         timeout_secs: 30,
       },
-      { toolCallId, messages: [] }
+      { toolCallId, messages: [], context: undefined }
     ) as Promise<ToolExecuteResult>;
 
     // Wait for marker1 to output
@@ -631,7 +631,7 @@ describe("Foreground to Background Migration", () => {
         display_name: testId,
         timeout_secs: 30,
       },
-      { toolCallId, messages: [] }
+      { toolCallId, messages: [], context: undefined }
     ) as Promise<ToolExecuteResult>;
 
     // Small delay then try to background (might already be done)
@@ -716,7 +716,7 @@ describe("Foreground to Background Migration", () => {
         display_name: testId,
         timeout_secs: 30,
       },
-      { toolCallId, messages: [], abortSignal: abortController.signal }
+      { toolCallId, messages: [], context: undefined, abortSignal: abortController.signal }
     ) as Promise<ToolExecuteResult>;
 
     // Wait for first marker

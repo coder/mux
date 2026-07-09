@@ -48,6 +48,7 @@ import {
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { createUserMessageId, createAssistantMessageId } from "@/node/services/utils/messageIds";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
+import { normalizeUsage, withCacheWriteMetadata } from "@/common/utils/tokens/usageHelpers";
 
 /** Max non-/btw messages from the active context window we keep in a /btw transcript. */
 const SIDE_QUESTION_MAX_TRAILING_MESSAGES = 200;
@@ -407,8 +408,15 @@ export async function askSideQuestion(
             promise,
             new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 2000)),
           ]).catch(() => undefined);
-        usage = await withTimeout(stream.totalUsage);
-        usageProviderMetadata = await withTimeout(stream.providerMetadata);
+        // AI SDK 7: top-level `usage` accumulates across all steps (old
+        // `totalUsage`). Normalize to mux's persisted flat shape and re-inject
+        // cache-write tokens (moved off providerMetadata in v7) for pricing.
+        const rawUsage = await withTimeout(stream.usage);
+        usage = normalizeUsage(rawUsage);
+        usageProviderMetadata = withCacheWriteMetadata(
+          (await withTimeout(stream.providerMetadata)) as Record<string, unknown> | undefined,
+          rawUsage
+        );
         // Subscription-covered routing (Codex OAuth) must price at $0. The
         // StreamManager path stamps this via markProviderMetadataCostsIncluded;
         // /btw bypasses it, so stamp here — the persisted answer row (analytics

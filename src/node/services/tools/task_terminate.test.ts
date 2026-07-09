@@ -7,9 +7,10 @@ import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { TaskService } from "@/node/services/taskService";
 import { Err, Ok, type Result } from "@/common/types/result";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 describe("task_terminate tool", () => {

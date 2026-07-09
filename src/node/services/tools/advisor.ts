@@ -10,6 +10,7 @@ import {
 import type { ModelMessage } from "@/common/types/message";
 import { THINKING_LEVEL_OFF, coerceThinkingLevel } from "@/common/types/thinking";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import { normalizeUsage, withCacheWriteMetadata } from "@/common/utils/tokens/usageHelpers";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { getErrorMessage } from "@/common/utils/errors";
 import { sanitizeErrorMessageForDisplay } from "@/common/utils/providerOutputSanitization";
@@ -267,6 +268,11 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
           model,
           system: ADVISOR_SYSTEM_PROMPT,
           messages,
+          // The parent transcript snapshot can start with the cached
+          // { role: "system" } message StreamManager prepends for Anthropic
+          // caching; AI SDK 7 rejects it unless opted in. Trusted: mux builds
+          // the transcript server-side.
+          allowSystemInMessages: true,
           // Advisor requests are intentionally tool-less strategic consultations.
           tools: {},
           providerOptions,
@@ -304,8 +310,14 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         }
 
         const advice = finalAdvice.length > 0 ? finalAdvice : streamedAdviceChunks.join("");
-        const usage = await result.usage;
-        const providerMetadata = await result.providerMetadata;
+        // Normalize AI SDK 7 usage to mux's persisted flat shape and re-inject
+        // cache-write tokens (moved off providerMetadata in v7) for pricing.
+        const rawUsage = await result.usage;
+        const usage = normalizeUsage(rawUsage);
+        const providerMetadata = withCacheWriteMetadata(
+          (await result.providerMetadata) as Record<string, unknown> | undefined,
+          rawUsage
+        );
 
         emitAdvisorPhase("finalizing_result");
 
@@ -322,7 +334,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
               toolName: "advisor",
               model: advisorModelString,
               usage,
-              providerMetadata: providerMetadata as Record<string, unknown> | undefined,
+              providerMetadata,
               toolCallId,
               timestamp: Date.now(),
             });

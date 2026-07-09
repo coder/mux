@@ -9,9 +9,10 @@ import { MAX_ATTACH_FILE_SIZE_BYTES } from "@/node/utils/attachments/readAttachm
 import { createAttachFileTool } from "./attach_file";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 function createTestAttachFileTool(cwd: string) {

@@ -8,9 +8,10 @@ import type { ToolExecutionOptions } from "ai";
 import { WEB_FETCH_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 
 const itIntegration = process.env.TEST_INTEGRATION === "1" ? it : it.skip;
-const toolCallOptions: ToolExecutionOptions = {
+const toolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 function createTestWebFetchTool() {

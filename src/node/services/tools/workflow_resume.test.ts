@@ -8,9 +8,10 @@ import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflow
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 function buildRun(overrides: Partial<WorkflowRunRecord> = {}): WorkflowRunRecord {

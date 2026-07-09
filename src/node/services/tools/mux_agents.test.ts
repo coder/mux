@@ -16,9 +16,10 @@ import { createMuxAgentsReadTool } from "./mux_agents_read";
 import { createMuxAgentsWriteTool } from "./mux_agents_write";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 function createGlobalMuxAgentsToolConfig(muxHome: string, workspaceSessionDir: string) {

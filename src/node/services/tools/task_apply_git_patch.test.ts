@@ -19,9 +19,10 @@ import {
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "@/node/services/tools/testHelpers";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 function initGitRepo(repoPath: string): void {

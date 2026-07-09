@@ -16,9 +16,10 @@ import { createSetGoalTool } from "./set_goal";
 // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 const inertRuntime = {} as never;
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "goal-tool-call",
   messages: [],
+  context: undefined,
 };
 
 async function setGoalOk(

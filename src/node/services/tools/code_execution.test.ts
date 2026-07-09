@@ -10,9 +10,10 @@ import type { Tool, ToolExecutionOptions } from "ai";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 import { z } from "zod";
 
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 /**
@@ -484,7 +485,7 @@ describe("createCodeExecutionTool", () => {
 
       const result = (await tool.execute!(
         { code: "return mux.slow_tool({})" },
-        { toolCallId: "test-1", messages: [], abortSignal: abortController.signal }
+        { toolCallId: "test-1", messages: [], context: undefined, abortSignal: abortController.signal }
       )) as PTCExecutionResult;
 
       expect(result.success).toBe(false);

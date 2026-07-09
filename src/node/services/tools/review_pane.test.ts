@@ -22,7 +22,7 @@ type UpdateExecArgs = Parameters<
 async function runUpdate(
   tool: ReturnType<typeof createReviewPaneUpdateTool>,
   args: UpdateExecArgs,
-  options: ToolExecutionOptions = mockToolCallOptions
+  options: ToolExecutionOptions<unknown> = mockToolCallOptions
 ): Promise<ReviewPaneUpdateToolResult | { success: false; error: string }> {
   return (await tool.execute!(args, options)) as
     | ReviewPaneUpdateToolResult
@@ -31,7 +31,7 @@ async function runUpdate(
 
 async function runGet(
   tool: ReturnType<typeof createReviewPaneGetTool>,
-  options: ToolExecutionOptions = mockToolCallOptions
+  options: ToolExecutionOptions<unknown> = mockToolCallOptions
 ): Promise<ReviewPaneGetToolResult> {
   return (await tool.execute!({}, options)) as ReviewPaneGetToolResult;
 }

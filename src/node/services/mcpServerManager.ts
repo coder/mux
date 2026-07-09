@@ -459,6 +459,11 @@ async function runServerTest(
           url: server.url,
           headers: server.headers,
           fetch: challengeCapture.fetch,
+          // AI SDK 7 rejects HTTP redirects by default (SSRF hardening for
+          // untrusted URLs). MCP server URLs here are user-configured and
+          // already trusted to execute tools, so keep following redirects to
+          // avoid breaking existing setups (e.g. http→https, trailing slash).
+          redirect: "follow" as const,
           ...(server.authProvider ? { authProvider: server.authProvider } : {}),
         };
 
@@ -1864,6 +1869,9 @@ export class MCPServerManager {
     const transportBase = {
       url: info.url,
       headers,
+      // AI SDK 7 rejects HTTP redirects by default; these URLs are
+      // user-configured and trusted (see the test-connection transport above).
+      redirect: "follow" as const,
       ...(authProvider ? { authProvider } : {}),
     };
 

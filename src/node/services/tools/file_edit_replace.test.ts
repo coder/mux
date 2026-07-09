@@ -15,9 +15,10 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "./testHelpers";
 
 // Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolExecutionOptions = {
+const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 // Test helpers

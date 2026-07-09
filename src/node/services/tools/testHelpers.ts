@@ -27,9 +27,10 @@ export class TestTempDir implements Disposable {
 
 export const TEST_GLOBAL_WORKSPACE_ID = "workspace-global";
 
-export const mockToolCallOptions: ToolExecutionOptions = {
+export const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
   messages: [],
+  context: undefined,
 };
 
 interface SkillFixtureOptions {

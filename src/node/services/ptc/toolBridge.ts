@@ -102,6 +102,7 @@ export class ToolBridge {
           abortSignal,
           toolCallId: `ptc-${toolName}-${Date.now()}`,
           messages: [],
+          context: undefined,
         });
 
         // Ensure result is JSON-serializable

@@ -978,7 +978,7 @@ export class ProviderModelFactory {
     }
 
     // DevTools middleware wrappers currently support LanguageModelV3 instances only.
-    if (typeof result.data === "string" || result.data.specificationVersion !== "v3") {
+    if (typeof result.data === "string" || result.data.specificationVersion !== "v4") {
       return result;
     }
 
@@ -1525,7 +1525,10 @@ export class ProviderModelFactory {
           ...restOptions,
           fetch: providerFetch,
         });
-        return Ok(provider(modelId));
+        // AI SDK 7 switched xai(modelId) to the Responses API by default.
+        // Pin the Chat Completions API to preserve pre-upgrade behavior
+        // (e.g. providerOptions.xai.searchParameters routing).
+        return Ok(provider.chat(modelId));
       }
 
       // Handle Ollama provider
