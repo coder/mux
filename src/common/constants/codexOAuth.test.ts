@@ -36,6 +36,8 @@ describe("codexOAuth model gating", () => {
       openai: {
         models: [
           { id: "team-codex", mappedToModel: "openai:gpt-5.3-codex" },
+          { id: "team-bare", mappedToModel: "gpt-5.3-codex" },
+          { id: "team-litellm", mappedToModel: "openai/gpt-5.3-codex" },
           { id: "team-spark", mappedToModel: "openai:gpt-5.3-codex-spark" },
         ],
       },
@@ -43,6 +45,8 @@ describe("codexOAuth model gating", () => {
 
     expect(isCodexOauthAllowedModel("openai:team-codex", config)).toBe(true);
     expect(isCodexOauthRequiredModel("openai:team-codex", config)).toBe(false);
+    expect(isCodexOauthAllowedModel("openai:team-bare", config)).toBe(true);
+    expect(isCodexOauthAllowedModel("openai:team-litellm", config)).toBe(true);
     expect(isCodexOauthAllowedModel("openai:team-spark", config)).toBe(true);
     expect(isCodexOauthRequiredModel("openai:team-spark", config)).toBe(true);
   });

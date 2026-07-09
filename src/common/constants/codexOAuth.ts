@@ -147,13 +147,25 @@ export function isCodexOauthRequiredModelId(modelId: string): boolean {
   return CODEX_OAUTH_REQUIRED_MODELS.has(normalizeCodexOauthModelId(modelId));
 }
 
-function isOpenAIModelString(modelId: string): boolean {
-  const separatorIndex = modelId.indexOf(":");
-  return (
-    separatorIndex > 0 &&
-    separatorIndex < modelId.length - 1 &&
-    modelId.slice(0, separatorIndex) === "openai"
-  );
+function normalizeOpenAIModelString(modelId: string): string | null {
+  const trimmedModelId = modelId.trim();
+  if (!trimmedModelId) {
+    return null;
+  }
+
+  if (trimmedModelId.startsWith("openai:")) {
+    return trimmedModelId.length > "openai:".length ? trimmedModelId : null;
+  }
+
+  if (trimmedModelId.startsWith("openai/")) {
+    return trimmedModelId.length > "openai/".length
+      ? `openai:${trimmedModelId.slice("openai/".length)}`
+      : null;
+  }
+
+  return trimmedModelId.includes(":") || trimmedModelId.includes("/")
+    ? null
+    : `openai:${trimmedModelId}`;
 }
 
 /**
@@ -161,18 +173,20 @@ function isOpenAIModelString(modelId: string): boolean {
  *
  * Custom OpenAI IDs may opt into Codex OAuth compatibility by mapping to a known
  * OpenAI model. The runtime ID is still sent to OpenAI; only capability checks
- * inherit from mappedToModel.
+ * inherit from mappedToModel. Treat-as mappings also accept the bare and
+ * LiteLLM-style OpenAI IDs supported by metadata lookups.
  */
 export function getCodexOauthCompatibilityModelId(
   modelId: string,
   providersConfig: ProviderModelsConfig | null
 ): string | null {
-  if (!isOpenAIModelString(modelId)) {
+  const runtimeModelId = normalizeOpenAIModelString(modelId);
+  if (runtimeModelId === null || !modelId.trim().startsWith("openai:")) {
     return null;
   }
 
-  const mappedModelId = resolveModelForMetadata(modelId, providersConfig);
-  return isOpenAIModelString(mappedModelId) ? mappedModelId : modelId;
+  const mappedModelId = resolveModelForMetadata(runtimeModelId, providersConfig);
+  return normalizeOpenAIModelString(mappedModelId) ?? runtimeModelId;
 }
 
 export function isCodexOauthAllowedModel(
