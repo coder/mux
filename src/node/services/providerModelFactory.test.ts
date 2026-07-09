@@ -969,6 +969,31 @@ describe("ProviderModelFactory modelCostsIncluded", () => {
     });
   });
 
+  it("routes a custom OpenAI model through Codex OAuth when it inherits from a compatible model", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          codexOauth: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+          models: [{ id: "team-codex", mappedToModel: KNOWN_MODELS.GPT_53_CODEX.id }],
+        },
+      });
+
+      const result = await factory.createModel("openai:team-codex");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      expect(modelCostsIncluded(result.data)).toBe(true);
+    });
+  });
+
   it("does not mark gpt-5.3-codex as subscription-covered when routed through API key", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

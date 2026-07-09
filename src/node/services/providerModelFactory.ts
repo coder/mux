@@ -14,8 +14,8 @@ import {
 } from "@/common/constants/providers";
 import {
   CODEX_ENDPOINT,
-  isCodexOauthAllowedModelId,
-  isCodexOauthRequiredModelId,
+  isCodexOauthAllowedModel,
+  isCodexOauthRequiredModel,
 } from "@/common/constants/codexOAuth";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
@@ -1211,8 +1211,8 @@ export class ProviderModelFactory {
       if (providerName === "openai") {
         const fullModelId = `${providerName}:${modelId}`;
 
-        const codexOauthAllowed = isCodexOauthAllowedModelId(fullModelId);
-        const codexOauthRequired = isCodexOauthRequiredModelId(fullModelId);
+        const codexOauthAllowed = isCodexOauthAllowedModel(fullModelId, providersConfig);
+        const codexOauthRequired = isCodexOauthRequiredModel(fullModelId, providersConfig);
 
         const storedCodexOauth = parseCodexOauthAuth(
           (providerConfig as { codexOauth?: unknown }).codexOauth

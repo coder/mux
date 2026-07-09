@@ -20,7 +20,7 @@ describe("CodexOauthWarningBanner", () => {
 
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex-spark"
+        requiresCodexOauth={true}
         codexOauthSet={false}
         onOpenProviders={onOpenProviders}
       />
@@ -37,7 +37,7 @@ describe("CodexOauthWarningBanner", () => {
   test("does not render when Codex OAuth is connected", () => {
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex-spark"
+        requiresCodexOauth={true}
         codexOauthSet={true}
         onOpenProviders={() => undefined}
       />
@@ -49,7 +49,7 @@ describe("CodexOauthWarningBanner", () => {
   test("does not render when Codex OAuth status is still unknown", () => {
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex-spark"
+        requiresCodexOauth={true}
         codexOauthSet={null}
         onOpenProviders={() => undefined}
       />
@@ -61,19 +61,7 @@ describe("CodexOauthWarningBanner", () => {
   test("does not render for non-required models", () => {
     const view = render(
       <CodexOauthWarningBanner
-        activeModel="openai:gpt-5.3-codex"
-        codexOauthSet={false}
-        onOpenProviders={() => undefined}
-      />
-    );
-
-    expect(view.queryByTestId("codex-oauth-warning-banner")).toBeNull();
-  });
-
-  test("does not render for non-OpenAI providers even with matching model id", () => {
-    const view = render(
-      <CodexOauthWarningBanner
-        activeModel="openrouter:gpt-5.3-codex-spark"
+        requiresCodexOauth={false}
         codexOauthSet={false}
         onOpenProviders={() => undefined}
       />

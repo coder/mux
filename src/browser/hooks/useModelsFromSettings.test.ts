@@ -362,7 +362,10 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
         isEnabled: true,
         isConfigured: true,
         codexOauthSet: true,
-        models: SEEDED_OPENAI_CUSTOM_MODELS,
+        models: [
+          ...SEEDED_OPENAI_CUSTOM_MODELS,
+          { id: "team-codex", mappedToModel: KNOWN_MODELS.GPT_53_CODEX.id },
+        ],
       },
     };
 
@@ -373,6 +376,7 @@ describe("useModelsFromSettings OpenAI Codex OAuth gating", () => {
     expect(result.current.models).toContain("openai:gpt-5.2-codex");
     expect(result.current.models).toContain(KNOWN_MODELS.GPT_53_CODEX.id);
     expect(result.current.models).toContain("openai:gpt-5.3-codex-spark");
+    expect(result.current.models).toContain("openai:team-codex");
     expect(result.current.models).not.toContain("openai:gpt-5.2-pro");
   });
 

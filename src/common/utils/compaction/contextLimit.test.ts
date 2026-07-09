@@ -77,6 +77,19 @@ describe("getEffectiveContextLimit", () => {
     expect(defaultOauthLimit).toBe(272_000);
   });
 
+  test("inherits the Codex OAuth context cap from a mapped OpenAI model", () => {
+    const limit = getEffectiveContextLimit(
+      "openai:team-gpt",
+      false,
+      providersWithOpenAI({
+        codexOauthSet: true,
+        models: [{ id: "team-gpt", mappedToModel: KNOWN_MODELS.GPT.id }],
+      })
+    );
+
+    expect(limit).toBe(272_000);
+  });
+
   test("does not apply the GPT-5.5 OAuth cap to gateway-routed models", () => {
     const limit = getEffectiveContextLimit(
       "openrouter:openai/gpt-5.5",

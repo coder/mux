@@ -663,6 +663,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     defaultModel,
     setDefaultModel,
     codexOauthSet,
+    requiresCodexOauth,
   } = useModelsFromSettings();
 
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
@@ -3113,7 +3114,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {creationControlsProps && <CreationControls {...creationControlsProps} />}
 
           <CodexOauthWarningBanner
-            activeModel={baseModel}
+            requiresCodexOauth={requiresCodexOauth(baseModel)}
             codexOauthSet={codexOauthSet}
             onOpenProviders={() => open("providers", { expandProvider: "openai" })}
           />

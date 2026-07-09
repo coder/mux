@@ -8,6 +8,11 @@
  * UI can reference the same endpoints and model gating rules.
  */
 
+import {
+  resolveModelForMetadata,
+  type ProviderModelsConfig,
+} from "@/common/utils/providers/modelEntries";
+
 // NOTE: These endpoints + params follow the OpenCode Codex OAuth guide.
 // If OpenAI changes them, keep all updates centralized here.
 
@@ -140,6 +145,50 @@ export function isCodexOauthAllowedModelId(modelId: string): boolean {
 
 export function isCodexOauthRequiredModelId(modelId: string): boolean {
   return CODEX_OAUTH_REQUIRED_MODELS.has(normalizeCodexOauthModelId(modelId));
+}
+
+function isOpenAIModelString(modelId: string): boolean {
+  const separatorIndex = modelId.indexOf(":");
+  return (
+    separatorIndex > 0 &&
+    separatorIndex < modelId.length - 1 &&
+    modelId.slice(0, separatorIndex) === "openai"
+  );
+}
+
+/**
+ * Resolve the OpenAI model whose capabilities a runtime model inherits.
+ *
+ * Custom OpenAI IDs may opt into Codex OAuth compatibility by mapping to a known
+ * OpenAI model. The runtime ID is still sent to OpenAI; only capability checks
+ * inherit from mappedToModel.
+ */
+export function getCodexOauthCompatibilityModelId(
+  modelId: string,
+  providersConfig: ProviderModelsConfig | null
+): string | null {
+  if (!isOpenAIModelString(modelId)) {
+    return null;
+  }
+
+  const mappedModelId = resolveModelForMetadata(modelId, providersConfig);
+  return isOpenAIModelString(mappedModelId) ? mappedModelId : modelId;
+}
+
+export function isCodexOauthAllowedModel(
+  modelId: string,
+  providersConfig: ProviderModelsConfig | null
+): boolean {
+  const compatibilityModelId = getCodexOauthCompatibilityModelId(modelId, providersConfig);
+  return compatibilityModelId !== null && isCodexOauthAllowedModelId(compatibilityModelId);
+}
+
+export function isCodexOauthRequiredModel(
+  modelId: string,
+  providersConfig: ProviderModelsConfig | null
+): boolean {
+  const compatibilityModelId = getCodexOauthCompatibilityModelId(modelId, providersConfig);
+  return compatibilityModelId !== null && isCodexOauthRequiredModelId(compatibilityModelId);
 }
 
 export function getCodexOauthContextWindowOverride(modelId: string): number | null {

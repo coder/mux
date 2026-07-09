@@ -6,9 +6,10 @@
  */
 
 import {
+  getCodexOauthCompatibilityModelId,
   getCodexOauthContextWindowOverride,
-  isCodexOauthAllowedModelId,
-  isCodexOauthRequiredModelId,
+  isCodexOauthAllowedModel,
+  isCodexOauthRequiredModel,
 } from "@/common/constants/codexOAuth";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { supports1MContext } from "@/common/utils/ai/models";
@@ -27,20 +28,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function getOpenAIProviderModelId(model: string): string | null {
-  const separatorIndex = model.indexOf(":");
-  if (separatorIndex <= 0 || separatorIndex === model.length - 1) {
-    return null;
-  }
-
-  const provider = model.slice(0, separatorIndex);
-  if (provider !== "openai") {
-    return null;
-  }
-
-  return model.slice(separatorIndex + 1);
 }
 
 function hasCodexOauthTokens(config: unknown): boolean {
@@ -83,12 +70,12 @@ function getCodexOauthContextLimit(
   model: string,
   providersConfig: ProvidersConfigMap | null
 ): number | null {
-  const modelId = getOpenAIProviderModelId(model);
-  if (!modelId || !isCodexOauthAllowedModelId(modelId)) {
+  const compatibilityModelId = getCodexOauthCompatibilityModelId(model, providersConfig);
+  if (compatibilityModelId === null || !isCodexOauthAllowedModel(model, providersConfig)) {
     return null;
   }
 
-  const oauthLimit = getCodexOauthContextWindowOverride(modelId);
+  const oauthLimit = getCodexOauthContextWindowOverride(compatibilityModelId);
   if (oauthLimit == null) {
     return null;
   }
@@ -98,7 +85,7 @@ function getCodexOauthContextLimit(
     return null;
   }
 
-  if (isCodexOauthRequiredModelId(modelId)) {
+  if (isCodexOauthRequiredModel(model, providersConfig)) {
     return oauthLimit;
   }
 

@@ -1,10 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { readPersistedString, usePersistedState } from "./usePersistedState";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import {
-  isCodexOauthAllowedModelId,
-  isCodexOauthRequiredModelId,
-} from "@/common/constants/codexOAuth";
+import { isCodexOauthAllowedModel, isCodexOauthRequiredModel } from "@/common/constants/codexOAuth";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { useRouting } from "./useRouting";
@@ -212,6 +209,8 @@ export function useModelsFromSettings() {
   const openaiApiKeySet = config === null ? null : config.openai?.apiKeySet === true;
   const codexOauthSet = config === null ? null : config.openai?.codexOauthSet === true;
 
+  const requiresCodexOauth = (modelId: string) => isCodexOauthRequiredModel(modelId, config);
+
   const providerHiddenModels = useMemo(() => {
     if (config == null) {
       return [];
@@ -249,12 +248,12 @@ export function useModelsFromSettings() {
       // fail at send time (oauth_not_connected / api_key_not_found).
       if (modelId.startsWith("openai:")) {
         if (!hasOpenaiApiKey && hasCodexOauth) {
-          return isCodexOauthAllowedModelId(modelId);
+          return isCodexOauthAllowedModel(modelId, config);
         }
         if (hasOpenaiApiKey && hasCodexOauth) {
           return true;
         }
-        return !isCodexOauthRequiredModelId(modelId);
+        return !isCodexOauthRequiredModel(modelId, config);
       }
 
       return true;
@@ -322,10 +321,10 @@ export function useModelsFromSettings() {
       }
 
       if (!hasOpenaiApiKey && hasCodexOauth) {
-        return isCodexOauthAllowedModelId(modelId);
+        return isCodexOauthAllowedModel(modelId, config);
       }
 
-      return !isCodexOauthRequiredModelId(modelId);
+      return !isCodexOauthRequiredModel(modelId, config);
     });
 
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
@@ -436,5 +435,6 @@ export function useModelsFromSettings() {
     setDefaultModel: setDefaultModelAndPersist,
     openaiApiKeySet,
     codexOauthSet,
+    requiresCodexOauth,
   };
 }
