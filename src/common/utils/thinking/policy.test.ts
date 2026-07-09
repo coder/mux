@@ -200,7 +200,7 @@ describe("getThinkingPolicyForModel", () => {
     }
   );
 
-  test("returns all 6 levels for gpt-5.6-sol behind mux-gateway with version suffix", () => {
+  test("returns all 6 levels for gpt-5.6-sol behind mux-gateway with version suffix (passthrough)", () => {
     expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-sol-2026-06-26")).toEqual([
       "off",
       "low",
@@ -210,6 +210,21 @@ describe("getThinkingPolicyForModel", () => {
       "max",
     ]);
   });
+
+  // Non-passthrough routes rebuild reasoning params with their own effort maps
+  // (OpenRouter clamps max→high, Copilot →xhigh), so native max must not be offered.
+  test.each(["openrouter:openai/gpt-5.6-sol", "github-copilot:openai/gpt-5.6-terra"])(
+    "excludes native max for GPT-5.6 on non-passthrough route %s",
+    (modelString) => {
+      expect(getThinkingPolicyForModel(modelString)).toEqual([
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ]);
+    }
+  );
 
   test("returns 5 levels including xhigh for gpt-5.5", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.5")).toEqual([
