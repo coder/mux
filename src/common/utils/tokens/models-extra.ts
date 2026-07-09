@@ -261,15 +261,14 @@ export const modelsExtra: Record<string, ModelData> = {
     supported_endpoints: ["/v1/responses"],
   },
 
-  // GPT-5.6 family (Sol / Terra / Luna) - Previewed June 26, 2026
-  // Limited preview via the API and Codex; GA planned "in coming weeks".
-  // Published preview pricing per 1M tokens: Sol $5/$30, Terra $2.50/$15, Luna $1/$6.
+  // GPT-5.6 family (Sol / Terra / Luna) - Previewed June 26, 2026; GA July 9, 2026.
+  // Published pricing per 1M tokens: Sol $5/$30, Terra $2.50/$15, Luna $1/$6.
   // Prompt caching: cache reads keep the 90% discount; cache writes for GPT-5.6+ bill
   // at 1.25x the uncached input rate (with explicit breakpoints and a 30-min minimum
   // cache life). No long-context tiered pricing has been published for this family.
-  // OpenAI has not published official context specs yet; we mirror GPT-5.5's window
-  // (1.05M in / 128K out) as a provisional value until the model card lands.
-  // (Early preview reports suggest Sol may be larger, ~1.5M, but that's unconfirmed.)
+  // OpenAI has not published official context specs in the GA announcement; we mirror
+  // GPT-5.5's window (1.05M in / 128K out) as a provisional value until the model card
+  // lands. (Preview reports suggest Sol may be larger, ~1.5M, but that's unconfirmed.)
   "gpt-5.6-sol": {
     max_input_tokens: 1050000,
     max_output_tokens: 128000,

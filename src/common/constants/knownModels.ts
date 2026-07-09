@@ -85,11 +85,12 @@ const MODEL_DEFINITIONS = {
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
-  // GPT alias tracks the latest stable GPT-5 tier.
+  // Previous flagship tier; kept selectable via its explicit id alias.
+  // The bare `gpt` alias moved to GPT_56_SOL when GPT-5.6 went GA (July 9, 2026).
   GPT: {
     provider: "openai",
     providerModelId: "gpt-5.5",
-    aliases: ["gpt", "gpt-5.5"],
+    aliases: ["gpt-5.5"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
@@ -101,17 +102,17 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  // GPT-5.6 family - previewed June 26, 2026. New naming system: the number is the
-  // generation, while Sol/Terra/Luna are durable capability tiers. Limited preview via
-  // the API and Codex for approved orgs only (not in ChatGPT); GA planned "in coming
-  // weeks". Cache writes bill at 1.25x input; cache reads keep the 90% discount.
-  // Not warmed and bare `gpt` alias stays on gpt-5.5 until broad availability
-  // (mirrors the MYTHOS precedent for restricted-access models).
-  // GPT-5.6 Sol - flagship tier. $5/M input, $30/M output.
+  // GPT-5.6 family - previewed June 26, 2026; generally available July 9, 2026 across
+  // ChatGPT, Codex, and the API (verified callable via plain API keys). New naming
+  // system: the number is the generation, while Sol/Terra/Luna are durable capability
+  // tiers. Cache writes bill at 1.25x input; cache reads keep the 90% discount.
+  // GPT-5.6 Sol - flagship tier. $5/M input, $30/M output. Bare `gpt` alias lives here:
+  // Sol succeeds gpt-5.5 as the flagship at the same list price.
   GPT_56_SOL: {
     provider: "openai",
     providerModelId: "gpt-5.6-sol",
-    aliases: ["sol", "gpt-5.6-sol"],
+    aliases: ["gpt", "sol", "gpt-5.6-sol"],
+    warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
   // GPT-5.6 Terra - balanced tier; GPT-5.5-competitive at half the cost.

@@ -94,7 +94,7 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
   "gpt-5.2",
   "gpt-5.4-mini",
   "gpt-5.5",
-  // GPT-5.6 preview tiers are available "through the API and Codex" for approved orgs.
+  // GPT-5.6 tiers ship in both Codex and the public API (GA July 9, 2026).
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
