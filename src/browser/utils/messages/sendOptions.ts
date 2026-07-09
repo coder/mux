@@ -13,7 +13,11 @@ import {
   normalizeModelPreference,
 } from "@/browser/utils/messages/buildSendMessageOptions";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceOpenAIReasoningMode,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
@@ -66,9 +70,12 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   );
 
   // OpenAI pro reasoning mode (workspace-scoped); absent = standard.
+  // Coerce untrusted persisted values so corrupt entries self-heal to "standard"
+  // instead of failing SendMessageOptionsSchema on retry/resume/creation flows.
   const reasoningMode =
-    readPersistedState<OpenAIReasoningMode | null>(getReasoningModeKey(workspaceId), null) ??
-    "standard";
+    coerceOpenAIReasoningMode(
+      readPersistedState<OpenAIReasoningMode | null>(getReasoningModeKey(workspaceId), null)
+    ) ?? "standard";
 
   const providerOptions = getProviderOptions();
 

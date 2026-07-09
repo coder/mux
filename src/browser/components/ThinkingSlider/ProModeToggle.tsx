@@ -1,5 +1,5 @@
 import React from "react";
-import { openaiSupportsProMode } from "@/common/types/thinking";
+import { openaiProModeAvailable } from "@/common/utils/ai/providerOptions";
 import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 
@@ -9,13 +9,15 @@ interface ProModeToggleProps {
 
 /**
  * Small "PRO" toggle for OpenAI's pro reasoning mode (GPT-5.6 Sol/Terra only).
- * Renders nothing for models without pro-mode support; the persisted setting
- * stays inert for them (header gating guarantees wire-level inertness).
+ * Renders nothing for models without pro-mode support and for explicit
+ * non-passthrough gateway routes (OpenRouter, github-copilot) where the
+ * pro-mode header is never emitted — otherwise the toggle would persist a
+ * setting that can never affect the request.
  */
 export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
   const [reasoningMode, setReasoningMode] = useReasoningMode();
 
-  if (!openaiSupportsProMode(props.modelString)) {
+  if (!openaiProModeAvailable(props.modelString)) {
     return null;
   }
 

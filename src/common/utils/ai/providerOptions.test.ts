@@ -10,6 +10,7 @@ import {
   buildProviderOptions,
   buildRequestHeaders,
   isAnthropic1MEffectivelyEnabled,
+  openaiProModeAvailable,
   preserveAnthropic1MContextForFollowUp,
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
@@ -1190,6 +1191,30 @@ describe("buildRequestHeaders", () => {
         )
       ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
     });
+  });
+
+  describe("openaiProModeAvailable", () => {
+    // UI gating must mirror the wire gating: only routes that emit the
+    // pro-mode header (direct OpenAI or passthrough gateways) surface the toggle.
+    const cases: Array<[string, boolean]> = [
+      ["openai:gpt-5.6-sol", true],
+      ["openai:gpt-5.6-terra", true],
+      ["mux-gateway:openai/gpt-5.6-sol", true],
+      // Non-passthrough gateways never emit the header — toggle must hide.
+      ["openrouter:openai/gpt-5.6-sol", false],
+      ["github-copilot:gpt-5.6-sol", false],
+      // Non-pro-capable models.
+      ["openai:gpt-5.6-luna", false],
+      ["openai:gpt-5.5-pro", false],
+      ["anthropic:claude-opus-4-8", false],
+      ["", false],
+    ];
+
+    for (const [model, expected] of cases) {
+      test(`${JSON.stringify(model)} -> ${expected}`, () => {
+        expect(openaiProModeAvailable(model)).toBe(expected);
+      });
+    }
   });
 
   for (const { name, model, options, workspaceId, expected } of [

@@ -6,11 +6,11 @@ import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedb
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { PinnedMoveDirection } from "@/browser/utils/ui/pinnedReorder";
 import {
-  openaiSupportsProMode,
   THINKING_LEVELS,
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
+import { openaiProModeAvailable } from "@/common/utils/ai/providerOptions";
 import {
   enforceThinkingPolicy,
   getAvailableThinkingLevels,
@@ -1273,8 +1273,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       });
 
       // Pro reasoning mode is only meaningful for models that support it
-      // (GPT-5.6 Sol/Terra); hide the action elsewhere to avoid inert toggles.
-      if (openaiSupportsProMode(currentModelString ?? "")) {
+      // (GPT-5.6 Sol/Terra) on routes that emit the pro-mode header (direct
+      // OpenAI or passthrough gateways); hide the action elsewhere to avoid
+      // inert toggles.
+      if (openaiProModeAvailable(currentModelString ?? "")) {
         const proActive = p.getReasoningMode(workspaceId) === "pro";
         list.push({
           id: CommandIds.toggleProReasoning(),

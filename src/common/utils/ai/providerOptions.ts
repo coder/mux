@@ -29,7 +29,7 @@ import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/pol
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
-import { normalizeToCanonical, supports1MContext } from "./models";
+import { getExplicitGatewayPrefix, normalizeToCanonical, supports1MContext } from "./models";
 
 /**
  * Request header used to override Anthropic's `output_config.effort` at the
@@ -653,4 +653,29 @@ export function buildRequestHeaders(
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+/**
+ * Route-aware pro-mode availability for UI surfaces (PRO toggle, palette command).
+ *
+ * Mirrors the buildRequestHeaders wire gating: pro mode only reaches OpenAI when
+ * the request flows through our OpenAI fetch wrapper (direct `openai:` or a
+ * passthrough gateway like mux-gateway). Explicit non-passthrough gateway model
+ * strings (e.g. `openrouter:openai/gpt-5.6-sol`, `github-copilot:gpt-5.6-sol`)
+ * never emit the pro-mode header, so surfacing the toggle there would persist a
+ * setting that can never affect the request.
+ */
+export function openaiProModeAvailable(modelString: string): boolean {
+  if (!openaiSupportsProMode(modelString)) {
+    return false;
+  }
+
+  const normalized = normalizeToCanonical(modelString);
+  const [origin] = normalized.split(":", 2);
+  if (origin !== "openai") {
+    return false;
+  }
+
+  const explicitGateway = getExplicitGatewayPrefix(modelString);
+  return resolveProviderOptionsNamespaceKey(origin, explicitGateway) === origin;
 }
