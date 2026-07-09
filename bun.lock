@@ -24,7 +24,7 @@
         "@lydell/node-pty": "1.1.0",
         "@mozilla/readability": "^0.6.0",
         "@novnc/novnc": "^1.6.0",
-        "@openrouter/ai-sdk-provider": "^2.9.0",
+        "@openrouter/ai-sdk-provider": "^3.0.0",
         "@orpc/client": "^1.11.3",
         "@orpc/openapi": "^1.12.2",
         "@orpc/server": "^1.11.3",
@@ -883,7 +883,7 @@
 
     "@novnc/novnc": ["@novnc/novnc@1.6.0", "", {}, "sha512-CJrmdSe9Yt2ZbLsJpVFoVkEu0KICEvnr3njW25Nz0jodaiFJtg8AYLGZogRYy0/N5HUWkGUsCmegKXYBSqwygw=="],
 
-    "@openrouter/ai-sdk-provider": ["@openrouter/ai-sdk-provider@2.9.0", "", { "peerDependencies": { "ai": "^6.0.0", "zod": "^3.25.0 || ^4.0.0" } }, "sha512-Seva+NCa0WUQnJIUE5GzHsUv1WTIeyqwz0ELl2VtS6NP+eF+77yCXGFVOMbvoCM7QMjlnhv7931e89R+8pJdcQ=="],
+    "@openrouter/ai-sdk-provider": ["@openrouter/ai-sdk-provider@3.0.0", "", { "peerDependencies": { "ai": "^7.0.0", "zod": "^3.25.76 || ^4.1.8" } }, "sha512-m9XTSWoODH2RM5OsZpaGiN7QRR8cdP5paBWq699Tu3JVmGPBKT8xF8XwV0ZBVVsjikD/JgWfak4VSsTR4wAVbg=="],
 
     "@opentelemetry/api": ["@opentelemetry/api@1.9.0", "", {}, "sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg=="],
 
