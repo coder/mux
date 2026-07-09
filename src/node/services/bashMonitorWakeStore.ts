@@ -25,7 +25,7 @@ export type BashMonitorWakeStatus = (typeof BASH_MONITOR_WAKE_STATUSES)[number];
 // "match" wakes deliver monitor-matched output lines; "monitor-lost" wakes tell the owner
 // that a Mux restart terminated (or orphaned) the process and retired its monitor, so the
 // agent can decide whether to relaunch. The schema defaults to "match" so pending records
-// written before this field existed keep parsing despite `.strict()`.
+// written before this field existed still parse.
 const BASH_MONITOR_WAKE_KINDS = ["match", "monitor-lost"] as const;
 export type BashMonitorWakeKind = (typeof BASH_MONITOR_WAKE_KINDS)[number];
 
@@ -40,6 +40,8 @@ export interface BashMonitorWakePayload {
   totalMatches: number;
   droppedLines?: number;
   timestamp: number;
+  /** File byte offset at the end of the last matched line; see BashMonitorWakeRecord. */
+  matchedThroughOffset: number;
 }
 
 /**
@@ -71,6 +73,21 @@ export interface BashMonitorWakeRecord {
   lines: string[];
   totalMatches: number;
   droppedLines: number;
+  /**
+   * File byte offset at the end of the last matched line (match records only). drainBashMonitorWakes
+   * re-checks this against the settled shown-frontier at delivery time so a wake never re-reports
+   * output a concurrent task_await already showed the agent. The gate binds the check to the
+   * originating process instance via this record's createdAt (see getSettledShownThroughOffset), so
+   * no separate instance token is persisted. Optional so records written before this field existed
+   * still parse (they deliver as before -- fail open).
+   *
+   * This is the only field this delivery gate added to the persisted record. Downgrading to a build
+   * whose `.strict()` parser predates it drops an in-flight pending wake as malformed, but the file
+   * is not deleted, so re-upgrading recovers it; the loss is bounded to nightly builds mid-drain
+   * (stable v0.27.0 has no wake store at all). The schema below is `.strip()` so the reverse
+   * direction -- this build reading a newer record -- never chokes on future additive fields.
+   */
+  matchedThroughOffset?: number;
   status: BashMonitorWakeStatus;
   createdAt: string;
   updatedAt: string;
@@ -91,12 +108,16 @@ const BashMonitorWakeRecordSchema = z
     lines: z.array(z.string()),
     totalMatches: z.number().int().nonnegative(),
     droppedLines: z.number().int().nonnegative(),
+    matchedThroughOffset: z.number().int().nonnegative().optional(),
     status: z.enum(BASH_MONITOR_WAKE_STATUSES),
     createdAt: z.string().min(1),
     updatedAt: z.string().min(1),
     deliveredAt: z.string().optional(),
   })
-  .strict();
+  // Strip (not reject) unknown keys: this is a persisted, evolving record, so a record written by
+  // a newer build that added a field must still parse here and deliver rather than be dropped as
+  // malformed. Missing required fields and wrong types are still rejected -- only extra keys pass.
+  .strip();
 
 export function truncateUtf8Prefix(value: string, maxBytes: number): string {
   assert(maxBytes > 0, "truncateUtf8Prefix requires a positive byte limit");
@@ -255,6 +276,13 @@ export class BashMonitorWakeStore {
       // fresh match record instead of mislabeling live output as lost-monitor output.
       if (existing?.status === "pending" && existing.kind === "match") {
         const merged = boundLines([...existing.lines, ...payload.lines]);
+        // Offsets only grow (each match ends further into the append-only output file), so the
+        // merged frontier is the newest match's end; Math.max is defensive against out-of-order
+        // enqueues, and a legacy existing record with no offset falls back to the payload's. The
+        // merge does not reconcile process instances: the drain gate binds its shown-frontier check
+        // to this record's createdAt, which stays the originating instance's. So if a restart reused
+        // this display-name-derived ID, the live (newer) instance fails that createdAt check and the
+        // whole record delivers -- a now-dead instance's undelivered lines are never dropped.
         const record: BashMonitorWakeRecord = {
           ...existing,
           ...(payload.displayName != null ? { displayName: payload.displayName } : {}),
@@ -263,6 +291,10 @@ export class BashMonitorWakeStore {
           lines: merged.lines,
           totalMatches: payload.totalMatches,
           droppedLines: existing.droppedLines + (payload.droppedLines ?? 0) + merged.droppedLines,
+          matchedThroughOffset: Math.max(
+            existing.matchedThroughOffset ?? 0,
+            payload.matchedThroughOffset ?? 0
+          ),
           updatedAt: now,
         };
         await this.write(record);
@@ -281,6 +313,7 @@ export class BashMonitorWakeStore {
         lines: bounded.lines,
         totalMatches: payload.totalMatches,
         droppedLines: (payload.droppedLines ?? 0) + bounded.droppedLines,
+        matchedThroughOffset: payload.matchedThroughOffset,
         status: "pending",
         createdAt: now,
         updatedAt: now,
