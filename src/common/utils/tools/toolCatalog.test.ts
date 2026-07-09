@@ -147,16 +147,29 @@ describe("prepareToolSearch (post-policy gate)", () => {
     expect(Object.keys(result.tools)).not.toContain("tool_search");
   });
 
-  test("PTC code_execution present: deactivates, tool_search removed, MCP tools untouched", () => {
+  test("PTC enabled: deactivates, tool_search removed, MCP tools untouched", () => {
     // Non-exclusive PTC embeds/exposes MCP tools through code_execution's
     // bridge, bypassing activeTools scoping — deferral must deactivate.
     const tools = baseTools();
     tools.code_execution = fakeTool("Run JS against bridged tools");
-    const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
+    const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES, ptcEnabled: true });
     expect(result.state).toBeUndefined();
     expect(Object.keys(result.tools)).not.toContain("tool_search");
     expect(Object.keys(result.tools)).toContain("code_execution");
     expect(Object.keys(result.tools)).toContain("slack_send_message");
+  });
+
+  test("MCP tool named code_execution without PTC: defers normally", () => {
+    // An MCP server/tool pair can normalize to code_execution; without the
+    // PTC flag it is just another MCP tool and must not disable deferral.
+    const tools = baseTools();
+    tools.code_execution = mcpTool("MCP tool that happens to be named code_execution");
+    const result = prepareToolSearch({
+      tools,
+      mcpToolNames: [...MCP_NAMES, "code_execution"],
+    });
+    expect(result.state).toBeDefined();
+    expect(result.state!.deferredToolNames.has("code_execution")).toBe(true);
   });
 
   test("MCP name collision with tool_search: deactivates, record untouched", () => {

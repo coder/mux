@@ -94,6 +94,13 @@ interface ToolCatalogInputs {
   /** All MCP tool names for this workspace (pre-policy; classified by intersection). */
   mcpToolNames: readonly string[];
   toolPolicy?: ToolPolicy;
+  /**
+   * Whether PTC (programmatic tool calling) is enabled, i.e. the record's
+   * `code_execution` entry is the PTC tool rather than a same-named MCP tool.
+   * Presence-sniffing the record is not enough: an MCP server/tool pair can
+   * normalize to `code_execution` without PTC being active.
+   */
+  ptcEnabled?: boolean;
 }
 
 interface ToolCatalogClassification {
@@ -145,9 +152,11 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
  *   built-in search tool in the merged record, so deferring would leave MCP
  *   tools unreachable with no working search tool ⇒ safe fallback: no state,
  *   tools unchanged — the colliding entry behaves as a normal MCP tool.
- * - PTC `code_execution` present (non-exclusive programmatic tool calling):
- *   its bridge already embeds/exposes MCP tools, bypassing activeTools ⇒ drop
- *   `tool_search`, no state — MCP tools stay advertised as without deferral.
+ * - PTC enabled (`ptcEnabled`, non-exclusive programmatic tool calling): its
+ *   `code_execution` bridge already embeds/exposes MCP tools, bypassing
+ *   activeTools ⇒ drop `tool_search`, no state — MCP tools stay advertised as
+ *   without deferral. (Exclusive mode removes MCP tools from the record, so
+ *   the empty-catalog branch deactivates it anyway.)
  * - `tool_search` absent (policy-disabled) ⇒ safe fallback: no state, tools
  *   unchanged — MCP tools stay advertised exactly as without the experiment.
  * - Nothing deferred (all MCP tools policy-disabled / PTC-removed) ⇒ drop
@@ -175,7 +184,9 @@ export function prepareToolSearch(inputs: ToolCatalogInputs): {
   // functions, so activeTools scoping could neither reduce context nor gate
   // access. Deferral would be ineffective and silently bypassable ⇒ drop
   // tool_search and run without deferral when both experiments are enabled.
-  if ("code_execution" in inputs.tools) {
+  // Gated on the actual PTC flag, not record presence: a `code_execution`
+  // record entry may be a same-named MCP tool (classified as normal deferred).
+  if (inputs.ptcEnabled === true) {
     const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = inputs.tools;
     return { tools: rest };
   }

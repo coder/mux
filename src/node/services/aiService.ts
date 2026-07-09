@@ -2194,11 +2194,18 @@ export class AIService extends EventEmitter {
       // enter the deferred catalog. This runs before every downstream consumer
       // of `tools` (system-prompt rebuild, sentinel tool names, telemetry,
       // streaming) so a dropped tool_search cannot leak anywhere.
+      // PTC gate uses the same condition toolAssembly uses to add code_execution:
+      // presence-sniffing the record would misfire on an MCP tool named
+      // code_execution (see prepareToolSearch).
+      const ptcEnabled =
+        experiments?.programmaticToolCalling === true ||
+        experiments?.programmaticToolCallingExclusive === true;
       if (toolSearchRuntime) {
         const toolSearchPrep = prepareToolSearch({
           tools,
           mcpToolNames: Object.keys(mcpTools ?? {}),
           toolPolicy: effectiveToolPolicy,
+          ptcEnabled,
         });
         tools = toolSearchPrep.tools;
         if (toolSearchPrep.state) {
@@ -2612,6 +2619,7 @@ export class AIService extends EventEmitter {
                         tools: nextTools,
                         mcpToolNames: Object.keys(mcpTools ?? {}),
                         toolPolicy: effectiveToolPolicy,
+                        ptcEnabled,
                       }).tools;
                     } else if (!(mcpTools && "tool_search" in mcpTools)) {
                       // The primary-path gate deactivated deferral (e.g. every
