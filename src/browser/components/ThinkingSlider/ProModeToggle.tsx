@@ -1,7 +1,8 @@
 import React from "react";
-import { openaiProModeAvailable } from "@/common/utils/ai/models";
+import { normalizeToCanonical, openaiProModeAvailable } from "@/common/utils/ai/models";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
+import { useRouting } from "@/browser/hooks/useRouting";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 
 interface ProModeToggleProps {
@@ -20,8 +21,14 @@ export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
   // Pro mode is Responses-only: hide when the OpenAI provider is configured
   // for chatCompletions, where the wire never carries reasoning.mode.
   const { config: providersConfig } = useProvidersConfig();
+  // Also hide when routing settings resolve this model to a non-passthrough
+  // gateway (OpenRouter, github-copilot) — those routes never emit the header.
+  const routing = useRouting();
+  const resolvedRoute = routing.resolveRoute(normalizeToCanonical(props.modelString)).route;
 
-  if (!openaiProModeAvailable(props.modelString, providersConfig?.openai?.wireFormat)) {
+  if (
+    !openaiProModeAvailable(props.modelString, providersConfig?.openai?.wireFormat, resolvedRoute)
+  ) {
     return null;
   }
 

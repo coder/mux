@@ -1271,6 +1271,18 @@ describe("buildRequestHeaders", () => {
       expect(openaiProModeAvailable("openai:gpt-5.6-sol", "responses")).toBe(true);
       expect(openaiProModeAvailable("openai:gpt-5.6-sol", null)).toBe(true);
     });
+
+    // Canonical model strings can be routed to a non-passthrough gateway by
+    // routing settings; the resolved route must gate availability like the
+    // send path gates the header.
+    test("settings-resolved route gates canonical model strings", () => {
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "direct")).toBe(true);
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "mux-gateway")).toBe(true);
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "openrouter")).toBe(false);
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "github-copilot")).toBe(false);
+      // Unknown route names fail closed.
+      expect(openaiProModeAvailable("openai:gpt-5.6-sol", null, "some-future-gateway")).toBe(false);
+    });
   });
 
   for (const { name, model, options, workspaceId, expected } of [

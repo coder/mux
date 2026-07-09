@@ -119,12 +119,18 @@ export function resolveProviderOptionsNamespaceKey(
  * not be offered there either — otherwise the toggle looks active while sends
  * silently run in standard mode.
  *
+ * Canonical model strings can also be routed to a non-passthrough gateway by
+ * routing settings (route priority/overrides); callers with access to the
+ * resolved route (useRouting().resolveRoute) should pass it so the UI mirrors
+ * the send path, which suppresses the pro header for those routes.
+ *
  * Lives here (not providerOptions.ts) so browser components can import it —
  * providerOptions.ts pulls in node-only logging and breaks the renderer bundle.
  */
 export function openaiProModeAvailable(
   modelString: string,
-  openaiWireFormat?: "responses" | "chatCompletions" | null
+  openaiWireFormat?: "responses" | "chatCompletions" | null,
+  resolvedRouteProvider?: string | null
 ): boolean {
   if (openaiWireFormat === "chatCompletions") {
     return false;
@@ -139,8 +145,16 @@ export function openaiProModeAvailable(
     return false;
   }
 
-  const explicitGateway = getExplicitGatewayPrefix(modelString);
-  return resolveProviderOptionsNamespaceKey(origin, explicitGateway) === origin;
+  // Prefer an explicit gateway prefix on the model string; otherwise use the
+  // settings-resolved route ("direct" means no gateway). Unknown routes fail
+  // closed: resolveProviderOptionsNamespaceKey returns the route itself for
+  // non-passthrough definitions, hiding pro rather than showing an inert toggle.
+  const routeProvider =
+    getExplicitGatewayPrefix(modelString) ??
+    (resolvedRouteProvider != null && resolvedRouteProvider !== "direct"
+      ? (resolvedRouteProvider as ProviderName)
+      : undefined);
+  return resolveProviderOptionsNamespaceKey(origin, routeProvider) === origin;
 }
 
 /**

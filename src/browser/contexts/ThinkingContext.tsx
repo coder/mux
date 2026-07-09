@@ -193,10 +193,14 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
   // Read the sibling setting at call time (not from the render closure) so
   // rapid interleaved updates cannot persist a stale counterpart value.
+  // Coerced like the render path: a corrupt persisted value must not ride a
+  // thinking-level change into updateAgentAISettings and fail backend sync.
   const getCurrentReasoningMode = useCallback(
     (): OpenAIReasoningMode =>
-      readPersistedState<OpenAIReasoningMode | null>(reasoningKey, null) ??
-      metadataSettings.reasoningMode ??
+      coerceOpenAIReasoningMode(
+        readPersistedState<OpenAIReasoningMode | null>(reasoningKey, null)
+      ) ??
+      coerceOpenAIReasoningMode(metadataSettings.reasoningMode) ??
       "standard",
     [metadataSettings.reasoningMode, reasoningKey]
   );

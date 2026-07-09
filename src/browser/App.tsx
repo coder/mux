@@ -106,6 +106,7 @@ import { RosettaBanner } from "./components/RosettaBanner/RosettaBanner";
 
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { useRouting } from "@/browser/hooks/useRouting";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { getErrorMessage } from "@/common/utils/errors";
 import assert from "@/common/utils/assert";
@@ -447,8 +448,14 @@ function AppInner() {
     [getModelForWorkspace]
   );
 
-  // Pro mode is Responses-only; the palette command hides under chatCompletions.
+  // Pro mode is Responses-only; the palette command hides under chatCompletions
+  // and on non-passthrough routes (mirroring the send path's header gating).
   const { config: providersConfig } = useProvidersConfig();
+  const routing = useRouting();
+  const getRouteForModel = useCallback(
+    (canonicalModel: string) => routing.resolveRoute(canonicalModel).route,
+    [routing]
+  );
 
   const getReasoningModeForWorkspace = useCallback((workspaceId: string): OpenAIReasoningMode => {
     if (!workspaceId) {
@@ -845,6 +852,7 @@ function AppInner() {
     getReasoningMode: getReasoningModeForWorkspace,
     onToggleReasoningMode: toggleReasoningModeFromPalette,
     openaiWireFormat: providersConfig?.openai?.wireFormat,
+    getRouteForModel,
     getMinThinkingOverride,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,

@@ -10,7 +10,7 @@ import {
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
-import { openaiProModeAvailable } from "@/common/utils/ai/models";
+import { normalizeToCanonical, openaiProModeAvailable } from "@/common/utils/ai/models";
 import {
   enforceThinkingPolicy,
   getAvailableThinkingLevels,
@@ -90,6 +90,8 @@ export interface BuildSourcesParams {
   onToggleReasoningMode: (workspaceId: string) => void;
   /** Effective OpenAI wire format; pro mode is Responses-only (see openaiProModeAvailable). */
   openaiWireFormat?: "responses" | "chatCompletions";
+  /** Settings-resolved route for a canonical model ("direct" = no gateway). */
+  getRouteForModel?: (canonicalModel: string) => string;
   /**
    * Explicit per-model minimum thinking override (undefined → built-in default floor).
    * Used to hide off/low from the "Set Thinking Effort" picker, matching the slider.
@@ -1278,7 +1280,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       // (GPT-5.6 Sol/Terra) on routes that emit the pro-mode header (direct
       // OpenAI or passthrough gateways) with the Responses wire format; hide
       // the action elsewhere to avoid inert toggles.
-      if (openaiProModeAvailable(currentModelString ?? "", p.openaiWireFormat)) {
+      const currentModelRoute = currentModelString
+        ? p.getRouteForModel?.(normalizeToCanonical(currentModelString))
+        : undefined;
+      if (openaiProModeAvailable(currentModelString ?? "", p.openaiWireFormat, currentModelRoute)) {
         const proActive = p.getReasoningMode(workspaceId) === "pro";
         list.push({
           id: CommandIds.toggleProReasoning(),
