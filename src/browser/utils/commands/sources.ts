@@ -10,7 +10,7 @@ import {
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
-import { openaiProModeAvailable } from "@/common/utils/ai/providerOptions";
+import { openaiProModeAvailable } from "@/common/utils/ai/models";
 import {
   enforceThinkingPolicy,
   getAvailableThinkingLevels,

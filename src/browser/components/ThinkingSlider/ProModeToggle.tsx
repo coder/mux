@@ -1,5 +1,5 @@
 import React from "react";
-import { openaiProModeAvailable } from "@/common/utils/ai/providerOptions";
+import { openaiProModeAvailable } from "@/common/utils/ai/models";
 import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 

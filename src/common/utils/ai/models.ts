@@ -4,6 +4,7 @@
 
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
+import { openaiSupportsProMode } from "@/common/types/thinking";
 import { formatModelDisplayName } from "./modelDisplay";
 
 export const defaultModel = DEFAULT_MODEL;
@@ -76,6 +77,58 @@ export function getExplicitGatewayPrefix(modelString: string): ProviderName | un
 
   const providerName = trimmedModelString.slice(0, colonIndex) as ProviderName;
   return PROVIDER_DEFINITIONS[providerName]?.kind === "gateway" ? providerName : undefined;
+}
+
+/**
+ * Resolve which providerOptions namespace a request will use for a given
+ * canonical origin and route provider. Passthrough gateways (mux-gateway)
+ * keep the origin namespace; transforming gateways (openrouter,
+ * github-copilot, bedrock) use their own.
+ */
+export function resolveProviderOptionsNamespaceKey(
+  canonicalProviderName: string,
+  routeProvider?: ProviderName
+): string {
+  const routeDefinition = routeProvider ? PROVIDER_DEFINITIONS[routeProvider] : undefined;
+  if (
+    !routeProvider ||
+    routeProvider === canonicalProviderName ||
+    (routeDefinition != null &&
+      "passthrough" in routeDefinition &&
+      routeDefinition.passthrough === true)
+  ) {
+    return canonicalProviderName;
+  }
+
+  return routeProvider;
+}
+
+/**
+ * Route-aware pro-mode availability for UI surfaces (PRO toggle, palette command).
+ *
+ * Mirrors the buildRequestHeaders wire gating: pro mode only reaches OpenAI when
+ * the request flows through our OpenAI fetch wrapper (direct `openai:` or a
+ * passthrough gateway like mux-gateway). Explicit non-passthrough gateway model
+ * strings (e.g. `openrouter:openai/gpt-5.6-sol`, `github-copilot:gpt-5.6-sol`)
+ * never emit the pro-mode header, so surfacing the toggle there would persist a
+ * setting that can never affect the request.
+ *
+ * Lives here (not providerOptions.ts) so browser components can import it —
+ * providerOptions.ts pulls in node-only logging and breaks the renderer bundle.
+ */
+export function openaiProModeAvailable(modelString: string): boolean {
+  if (!openaiSupportsProMode(modelString)) {
+    return false;
+  }
+
+  const normalized = normalizeToCanonical(modelString);
+  const [origin] = normalized.split(":", 2);
+  if (origin !== "openai") {
+    return false;
+  }
+
+  const explicitGateway = getExplicitGatewayPrefix(modelString);
+  return resolveProviderOptionsNamespaceKey(origin, explicitGateway) === origin;
 }
 
 /**
