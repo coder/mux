@@ -27,6 +27,7 @@ export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
         <button
           type="button"
           data-component="ProModeToggle"
+          data-pro-mode-toggle
           aria-pressed={isActive}
           aria-label={`Pro reasoning mode: ${isActive ? "on" : "off"}. Click to toggle.`}
           onClick={() => setReasoningMode(isActive ? "standard" : "pro")}

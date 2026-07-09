@@ -3323,9 +3323,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   />
                 </div>
 
-                {/* On narrow layouts, hide the thinking paddles to prevent control overlap. */}
+                {/* On narrow layouts, hide the thinking paddles and PRO chip to prevent
+                    right-edge overflow (the chip pushed past a 375px viewport); pro mode
+                    stays reachable via the command palette. */}
                 <div
-                  className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
+                  className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
                   data-component="ThinkingSliderGroup"
                 >
                   <ThinkingSliderComponent modelString={baseModel} />
