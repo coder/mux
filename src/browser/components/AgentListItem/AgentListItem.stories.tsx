@@ -487,12 +487,47 @@ function renderWorkflowOnlyActivity() {
   );
 }
 
+// Idle workspace parked on an armed background bash monitor: pulsing
+// backgrounded-blue "waiting" dot + "Watching background bash" caption.
+function renderBashMonitorWaiting() {
+  const monitorWorkspace = createWorkspace({
+    id: "ws-bash-monitor",
+    name: "bash-monitor",
+    title: "Waiting on background bash monitor",
+    projectName: PROJECT_NAME,
+    projectPath: PROJECT_PATH,
+    createdAt: new Date(NOW - 6_000).toISOString(),
+  });
+
+  return (
+    <StoryScaffold
+      workspaces={[monitorWorkspace]}
+      workspaceActivitySnapshots={{
+        [monitorWorkspace.id]: {
+          recency: NOW,
+          streaming: false,
+          lastModel: null,
+          lastThinkingLevel: null,
+          activeBashMonitorCount: 1,
+        },
+      }}
+    >
+      <WorkspaceRow workspace={monitorWorkspace} />
+    </StoryScaffold>
+  );
+}
+
 // Composite gallery covering the primary single-workspace states. Replaces the
 // former FigmaStates, Selected, Active, ErrorState, Archiving, Question, and
 // Draft stories — one snapshot, all states preserved and labeled.
 export const WorkflowOnlyActivity: Story = {
   args: undefined as never,
   render: renderWorkflowOnlyActivity,
+};
+
+export const BashMonitorWaiting: Story = {
+  args: undefined as never,
+  render: renderBashMonitorWaiting,
 };
 
 export const States: Story = {

@@ -392,7 +392,10 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem();
     const rowView = within(row);
 
-    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    // Waiting-on-monitor renders the backgrounded-blue dot (same pulse as the
+    // active dot), NOT the green streaming dot — that ambiguity confused users.
+    expect(row.querySelector(".bg-content-success")).toBeNull();
+    expect(row.querySelector(".bg-backgrounded")).toBeTruthy();
     expect(rowView.getByText("Watching background bash")).toBeTruthy();
     expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
@@ -416,7 +419,7 @@ describe("AgentListItem", () => {
     expect(rowView.queryByTestId(`workspace-delegated-activity-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
-  test("keeps sidebar status text while an armed monitor drives the active dot", () => {
+  test("keeps sidebar status text while an armed monitor drives the waiting dot", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       activeBashMonitorCount: 1,
       agentStatus: { emoji: "⌛", message: "Awaiting PR readiness check" },
@@ -425,9 +428,23 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem();
     const rowView = within(row);
 
-    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    expect(row.querySelector(".bg-content-success")).toBeNull();
+    expect(row.querySelector(".bg-backgrounded")).toBeTruthy();
     expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
     expect(rowView.queryByText("Watching background bash")).toBeNull();
+  });
+
+  test("active streaming keeps the green dot even with an armed monitor", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      canInterrupt: true,
+      activeBashMonitorCount: 1,
+    });
+
+    const { row } = renderWorkspaceItem();
+
+    // Real streaming outranks the waiting-on-monitor blue.
+    expect(row.querySelector(".bg-content-success")).toBeTruthy();
+    expect(row.querySelector(".bg-backgrounded")).toBeNull();
   });
 
   test("shows active delegated workflow work on idle workspace rows", () => {

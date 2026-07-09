@@ -20,7 +20,8 @@ type StreamingPhase =
   | "interrupting" // User triggered interrupt, waiting for stream-abort
   | "streaming" // Normal streaming
   | "compacting" // Compaction in progress
-  | "awaiting-input"; // ask_user_question waiting for response
+  | "awaiting-input" // ask_user_question waiting for response
+  | "waiting-on-monitor"; // Turn ended; armed background bash monitor will wake the agent
 
 interface StreamingBarrierProps {
   workspaceId: string;
@@ -161,12 +162,16 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
     currentModel,
     pendingStreamModel,
     runtimeStatus,
+    activeBashMonitorCount,
   } = workspaceState;
 
   // Compute streaming phase
   const phase: StreamingPhase | null = (() => {
     if (isStarting) return "starting";
-    if (!canInterrupt) return null;
+    // No active stream: normally hide the barrier, but if an armed background
+    // bash monitor is still watching output, the agent will be woken on match.
+    // Surface that so the idle chat doesn't read as "done" or stalled.
+    if (!canInterrupt) return activeBashMonitorCount > 0 ? "waiting-on-monitor" : null;
     if (aggregator?.hasInterruptingStream()) return "interrupting";
     if (awaitingUserQuestion) return "awaiting-input";
     if (isCompacting) return "compacting";
@@ -221,6 +226,10 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
         return modelName ? `${modelName} compacting...` : "compacting...";
       case "streaming":
         return modelName ? `${modelName} streaming...` : "streaming...";
+      case "waiting-on-monitor":
+        return activeBashMonitorCount === 1
+          ? "Waiting on background bash monitor..."
+          : `Waiting on ${activeBashMonitorCount} background bash monitors...`;
     }
   })();
   const statusText = useStabilizedStreamingStatusText(workspaceId, phase, rawStatusText);
@@ -236,6 +245,8 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
         return "";
       case "awaiting-input":
         return "type a message to respond";
+      case "waiting-on-monitor":
+        return "agent wakes on matching output";
       case "starting":
       case "compacting":
       case "streaming":
@@ -290,6 +301,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       cancelText={cancelText}
       onCancel={canTapCancel ? handleCancelClick : undefined}
       cancelShortcutText={canTapCancel ? interruptKeybind : undefined}
+      // Waiting-on-monitor is not streaming-bound: drop the reserved stats slot
+      // and let the informational hint hide in narrow panes so the barrier fits
+      // phone-width transcripts (the label alone carries the state).
+      reserveStatsSlot={phase !== "waiting-on-monitor"}
+      hideHintOnNarrow={phase === "waiting-on-monitor"}
       className={className}
       hintElement={
         showCompactionHint ? (

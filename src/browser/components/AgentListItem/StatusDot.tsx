@@ -5,7 +5,14 @@ import { cn } from "@/common/lib/utils";
 
 // Shared sidebar status language: agent rows and task-group headers render the
 // same dot states so grouped rows read as native parts of the agent tree.
-export type VisualState = "active" | "idle" | "seen" | "hidden" | "error" | "question";
+// "waiting" = parked but will resume on its own (e.g. armed background bash
+// monitor): same pulse and geometry as "active", but in the shared
+// "backgrounded" soft blue (the token background-process badges use) so it
+// reads as live-but-waiting rather than actively streaming or finished. The
+// border must stay a near-background surface tint (like the green dot's) so
+// only the small core reads as colored — a colored/translucent border makes
+// the whole 12px circle read as the dot.
+export type VisualState = "active" | "waiting" | "idle" | "seen" | "hidden" | "error" | "question";
 
 export const LEADING_SLOT_CONTAINER_STYLE = {
   width: SIDEBAR_LEADING_SLOT_SIZE_PX,
@@ -53,6 +60,8 @@ export function StatusDot(props: {
         "block h-3 w-3",
         props.state === "active" &&
           "bg-content-success border-surface-green workspace-status-dot-active",
+        props.state === "waiting" &&
+          "bg-backgrounded border-surface-sky workspace-status-dot-active",
         usesSubAgentConnectorDot && "bg-border-light border-border-light h-2 w-2",
         props.state === "idle" &&
           props.isSubAgent !== true &&

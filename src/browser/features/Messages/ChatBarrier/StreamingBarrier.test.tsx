@@ -16,6 +16,7 @@ interface MockWorkspaceState {
   pendingStreamStartTime: number | null;
   pendingStreamModel: string | null;
   runtimeStatus: { phase: string; detail?: string } | null;
+  activeBashMonitorCount: number;
 }
 
 function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): MockWorkspaceState {
@@ -28,6 +29,7 @@ function createWorkspaceState(overrides: Partial<MockWorkspaceState> = {}): Mock
     pendingStreamStartTime: null,
     pendingStreamModel: null,
     runtimeStatus: null,
+    activeBashMonitorCount: 0,
     ...overrides,
   };
 
@@ -411,5 +413,46 @@ describe("StreamingBarrier", () => {
 
     expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
     expect(view.getByText("type a message to respond")).toBeTruthy();
+  });
+
+  test("idle workspace with an armed bash monitor shows the waiting state without a stop control", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      activeBashMonitorCount: 1,
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    // Shown immediately (not debounced) so the stream-end -> waiting handoff
+    // doesn't flash an empty transcript tail.
+    expect(view.getByText("Waiting on background bash monitor...")).toBeTruthy();
+    // Nothing to interrupt — the hint is informational, not a cancel control.
+    expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
+    expect(view.getByText("agent wakes on matching output")).toBeTruthy();
+    // Not streaming-bound: no reserved token-stats slot (frees narrow panes).
+    expect(view.queryByTestId("streaming-barrier-stats")).toBeNull();
+  });
+
+  test("idle workspace without armed monitors renders nothing", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: false,
+      activeBashMonitorCount: 0,
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.container.textContent).toBe("");
+  });
+
+  test("active streaming takes precedence over an armed bash monitor", () => {
+    currentWorkspaceState = createWorkspaceState({
+      canInterrupt: true,
+      activeBashMonitorCount: 2,
+    });
+
+    const view = render(<StreamingBarrier workspaceId="ws-1" />);
+
+    expect(view.getByText("gpt-4o-mini streaming...")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Stop streaming" })).toBeTruthy();
   });
 });
