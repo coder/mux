@@ -266,6 +266,13 @@ export const modelsExtra: Record<string, ModelData> = {
   // Prompt caching: cache reads keep the 90% discount; cache writes for GPT-5.6+ bill
   // at 1.25x the uncached input rate (with explicit breakpoints and a 30-min minimum
   // cache life). No long-context tiered pricing has been published for this family.
+  // KNOWN COST GAP: the API reports cache writes via input_tokens_details.cache_write_tokens
+  // (verified live), but @ai-sdk/openai (through at least 3.0.83) hardcodes cacheWrite to
+  // undefined and strips the field from its usage schema, so Mux cannot attribute the 1.25x
+  // write premium yet — cache-written tokens are costed at the base input rate (bounded
+  // underreport: 0.25x input rate on first-write tokens only). The
+  // cache_creation_input_token_cost values below are kept so pricing lights up automatically
+  // once the SDK surfaces cache-write usage. Tracked in issue #3705.
   // OpenAI has not published official context specs in the GA announcement; we mirror
   // GPT-5.5's window (1.05M in / 128K out) as a provisional value until the model card
   // lands. (Preview reports suggest Sol may be larger, ~1.5M, but that's unconfirmed.)
