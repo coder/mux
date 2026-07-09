@@ -392,9 +392,8 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem();
     const rowView = within(row);
 
-    // Waiting-on-monitor renders the backgrounded-blue dot, NOT the pulsing
-    // green streaming dot — that ambiguity confused users.
-    expect(row.querySelector(".workspace-status-dot-active")).toBeNull();
+    // Waiting-on-monitor renders the backgrounded-blue dot (same pulse as the
+    // active dot), NOT the green streaming dot — that ambiguity confused users.
     expect(row.querySelector(".bg-content-success")).toBeNull();
     expect(row.querySelector(".bg-backgrounded")).toBeTruthy();
     expect(rowView.getByText("Watching background bash")).toBeTruthy();
@@ -429,13 +428,13 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem();
     const rowView = within(row);
 
-    expect(row.querySelector(".workspace-status-dot-active")).toBeNull();
+    expect(row.querySelector(".bg-content-success")).toBeNull();
     expect(row.querySelector(".bg-backgrounded")).toBeTruthy();
     expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
     expect(rowView.queryByText("Watching background bash")).toBeNull();
   });
 
-  test("active streaming keeps the pulsing dot even with an armed monitor", () => {
+  test("active streaming keeps the green dot even with an armed monitor", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       canInterrupt: true,
       activeBashMonitorCount: 1,
@@ -443,7 +442,9 @@ describe("AgentListItem", () => {
 
     const { row } = renderWorkspaceItem();
 
-    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    // Real streaming outranks the waiting-on-monitor blue.
+    expect(row.querySelector(".bg-content-success")).toBeTruthy();
+    expect(row.querySelector(".bg-backgrounded")).toBeNull();
   });
 
   test("shows active delegated workflow work on idle workspace rows", () => {

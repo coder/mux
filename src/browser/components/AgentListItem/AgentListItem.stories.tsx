@@ -487,9 +487,8 @@ function renderWorkflowOnlyActivity() {
   );
 }
 
-// Idle workspace parked on an armed background bash monitor: static
-// backgrounded-blue "waiting" dot (no streaming pulse) + "Watching background
-// bash" caption.
+// Idle workspace parked on an armed background bash monitor: pulsing
+// backgrounded-blue "waiting" dot + "Watching background bash" caption.
 function renderBashMonitorWaiting() {
   const monitorWorkspace = createWorkspace({
     id: "ws-bash-monitor",
