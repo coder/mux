@@ -78,19 +78,56 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
 const DEFAULT_THINKING_POLICY: ThinkingPolicy = ["off", "low", "medium", "high"];
 
 /**
- * Whether the model string's route delivers Mux-built openai providerOptions to
- * OpenAI unchanged: direct `openai:` (or a bare/namespaced id with no route prefix),
- * or a gateway marked passthrough in PROVIDER_DEFINITIONS (e.g. mux-gateway).
- * Non-passthrough routes (openrouter, github-copilot, ...) rebuild reasoning params
- * with their own effort maps and cannot express OpenAI's native "max".
+ * Whether a route provider delivers Mux-built openai providerOptions to OpenAI
+ * unchanged: OpenAI itself or a gateway marked passthrough in PROVIDER_DEFINITIONS
+ * (e.g. mux-gateway). Non-passthrough routes (openrouter, github-copilot, ...)
+ * rebuild reasoning params with their own effort maps and cannot express OpenAI's
+ * native "max".
+ */
+function isOpenAIPassthroughRoute(route: string): boolean {
+  if (route === "openai") return true;
+  const definition = PROVIDER_DEFINITIONS[route as keyof typeof PROVIDER_DEFINITIONS];
+  return definition != null && "passthrough" in definition && definition.passthrough === true;
+}
+
+/**
+ * Route inference from the model string alone (UI path, where the resolved route
+ * is not yet known). A bare/namespaced id without a route prefix is assumed direct;
+ * the request path re-clamps with the actually-resolved route via
+ * clampThinkingLevelForRoute, covering routePriority-based rerouting.
  */
 function routeCanPassThroughOpenAIOptions(modelString: string): boolean {
   const colonIndex = modelString.indexOf(":");
   if (colonIndex === -1) return true; // bare model id — no route info, assume direct
-  const route = modelString.slice(0, colonIndex).trim().toLowerCase();
-  if (route === "openai") return true;
-  const definition = PROVIDER_DEFINITIONS[route as keyof typeof PROVIDER_DEFINITIONS];
-  return definition != null && "passthrough" in definition && definition.passthrough === true;
+  return isOpenAIPassthroughRoute(modelString.slice(0, colonIndex).trim().toLowerCase());
+}
+
+/**
+ * Clamp a thinking level after route resolution.
+ *
+ * The UI policy can only infer the route from the model string, but routing may be
+ * decided at request time (routePriority/overrides) — e.g. `openai:gpt-5.6-sol`
+ * resolved through OpenRouter. Non-passthrough routes map "max" via their own effort
+ * tables (OpenRouter → "high", Copilot → "xhigh"), silently sending less effort than
+ * the user selected. Clamping to "xhigh" here keeps the request, metadata, and wire
+ * consistent with the best effort the route can express (xhigh is those routes' policy
+ * ceiling; their effort maps handle any further provider-side clamping).
+ *
+ * Only GPT-5.6's native max needs this: for every other model "max" and "xhigh"
+ * already share a wire value, so clamping would be a no-op.
+ */
+export function clampThinkingLevelForRoute(
+  modelString: string,
+  routeProvider: string | undefined,
+  level: ThinkingLevel
+): ThinkingLevel {
+  if (level !== "max") return level;
+  if (!openaiSupportsNativeMaxEffort(stripModelProviderPrefixes(modelString))) return level;
+  const passthrough =
+    routeProvider != null
+      ? isOpenAIPassthroughRoute(routeProvider)
+      : routeCanPassThroughOpenAIOptions(modelString);
+  return passthrough ? level : "xhigh";
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
+  clampThinkingLevelForRoute,
   getThinkingPolicyForModel,
   enforceThinkingPolicy,
   resolveThinkingInput,
@@ -225,6 +226,37 @@ describe("getThinkingPolicyForModel", () => {
       ]);
     }
   );
+
+  // Route may be decided at request time (routePriority), not by the model string:
+  // an `openai:` GPT-5.6 model can resolve onto OpenRouter/Copilot. The post-route
+  // clamp must downgrade native max there while leaving passthrough routes alone.
+  describe("clampThinkingLevelForRoute", () => {
+    test.each(["openrouter", "github-copilot"])(
+      "clamps max to xhigh for openai:gpt-5.6-sol resolved onto %s",
+      (route) => {
+        expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", route, "max")).toBe("xhigh");
+      }
+    );
+
+    test("keeps max on direct OpenAI and passthrough gateway routes", () => {
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", "openai", "max")).toBe("max");
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", "mux-gateway", "max")).toBe("max");
+      // No resolved route provided — falls back to model-string inference.
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", undefined, "max")).toBe("max");
+      expect(clampThinkingLevelForRoute("openrouter:openai/gpt-5.6-sol", undefined, "max")).toBe(
+        "xhigh"
+      );
+    });
+
+    test("leaves non-max levels and non-GPT-5.6 models untouched", () => {
+      expect(clampThinkingLevelForRoute("openai:gpt-5.6-sol", "openrouter", "xhigh")).toBe("xhigh");
+      // Non-GPT-5.6: max and xhigh already share a wire value; no clamp needed.
+      expect(clampThinkingLevelForRoute("openai:gpt-5.5", "openrouter", "max")).toBe("max");
+      expect(clampThinkingLevelForRoute("anthropic:claude-opus-4-8", "openrouter", "max")).toBe(
+        "max"
+      );
+    });
+  });
 
   test("returns 5 levels including xhigh for gpt-5.5", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.5")).toEqual([

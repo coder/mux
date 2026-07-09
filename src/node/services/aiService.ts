@@ -111,6 +111,7 @@ import { mergeGoalDefaults } from "@/common/utils/goals/resolveGoalSetIntent";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 import {
+  clampThinkingLevelForRoute,
   enforceThinkingPolicy,
   resolveEffectiveThinkingLevel,
   resolveMinimumThinkingLevel,
@@ -1087,7 +1088,7 @@ export class AIService extends EventEmitter {
       // disable thinking) so provider options, replay transforms, and metadata
       // all agree with the provider's actual thinking behavior. Providers config
       // is passed so aliases mapped to Mythos models get the same treatment.
-      const effectiveThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
+      let effectiveThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
         modelString,
         thinkingLevel,
         this.providerService.getConfig()
@@ -1112,6 +1113,17 @@ export class AIService extends EventEmitter {
         routedThroughGateway,
         routeProvider,
       } = modelResult.data;
+
+      // Re-clamp with the resolved route: routing may be decided at request time
+      // (routePriority/overrides), so an `openai:` GPT-5.6 model can end up on a
+      // non-passthrough route (OpenRouter/Copilot) that cannot express native "max".
+      // Must happen before provider options, headers, and metadata are built so
+      // they all agree with what the wire can deliver.
+      effectiveThinkingLevel = clampThinkingLevelForRoute(
+        canonicalModelString,
+        routeProvider,
+        effectiveThinkingLevel
+      );
 
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
@@ -2584,6 +2596,13 @@ export class AIService extends EventEmitter {
                   return Err(formatSendMessageError(nextModelResult.error).message);
                 }
                 const next = nextModelResult.data;
+                // Same post-route clamp as the primary path: the fallback model's
+                // resolved route may not support GPT-5.6 native "max".
+                const routedNextThinkingLevel = clampThinkingLevelForRoute(
+                  next.canonicalModelString,
+                  next.routeProvider,
+                  nextThinkingLevel
+                );
 
                 try {
                   // Rebuild the toolset for the fallback model: provider-native
@@ -2672,7 +2691,7 @@ export class AIService extends EventEmitter {
                     prepareProviderRequestMessages(
                       fallbackSourceMessages,
                       next.canonicalProviderName,
-                      nextThinkingLevel
+                      routedNextThinkingLevel
                     );
                   const nextFinalMessages = await prepareMessagesForProvider({
                     messagesWithSentinel: addInterruptedSentinel(nextProviderRequestMessages),
@@ -2686,7 +2705,7 @@ export class AIService extends EventEmitter {
                     workspacePath,
                     abortSignal: combinedAbortSignal,
                     providerForMessages: next.canonicalProviderName,
-                    effectiveThinkingLevel: nextThinkingLevel,
+                    effectiveThinkingLevel: routedNextThinkingLevel,
                     modelString: next.canonicalModelString,
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
                     workspaceId,
@@ -2694,7 +2713,7 @@ export class AIService extends EventEmitter {
 
                   const nextProviderOptions = buildProviderOptions(
                     next.canonicalModelString,
-                    nextThinkingLevel,
+                    routedNextThinkingLevel,
                     nextProviderRequestMessages,
                     (id) => this.streamManager.isResponseIdLost(id),
                     effectiveMuxProviderOptions,
@@ -2711,7 +2730,7 @@ export class AIService extends EventEmitter {
                     workspaceId,
                     this.providerService.getConfig(),
                     next.routeProvider,
-                    nextThinkingLevel
+                    routedNextThinkingLevel
                   );
                   if (pendingRunMetadataId != null) {
                     // Keep DevTools run correlation on fallback requests too.
@@ -2756,7 +2775,7 @@ export class AIService extends EventEmitter {
                     headers: nextHeaders,
                     callSettingsOverrides: nextOverrides.standard,
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
-                    thinkingLevel: nextThinkingLevel,
+                    thinkingLevel: routedNextThinkingLevel,
                     initialMetadataPatch: {
                       routedThroughGateway: next.routedThroughGateway,
                       ...(next.routeProvider != null ? { routeProvider: next.routeProvider } : {}),
