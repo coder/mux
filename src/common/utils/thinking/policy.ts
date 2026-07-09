@@ -53,8 +53,9 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.2-codex → ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.3-codex / Spark variants →
  *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
- * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
- * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
+ * - openai:gpt-5.2 / openai:gpt-5.5 / openai:gpt-5.6-terra / openai:gpt-5.6-luna →
+ *   ["off", "low", "medium", "high", "xhigh"]
+ * - openai:gpt-5.2-pro / openai:gpt-5.5-pro / openai:gpt-5.6-sol → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
  * - gemini-3 Pro variants → ["low", "high"] (thinking level only)
@@ -120,15 +121,20 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
-  // gpt-5.2-pro and gpt-5.5-pro support medium, high, xhigh reasoning levels
-  if (/^gpt-5\.(?:2|5)-pro(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // gpt-5.2-pro, gpt-5.5-pro, and gpt-5.6-sol support medium, high, xhigh reasoning levels
+  if (
+    /^gpt-5\.(?:2|5)-pro(?!-[a-z])/.test(withoutProviderNamespace) ||
+    /^gpt-5\.6-sol(?!-[a-z])/.test(withoutProviderNamespace)
+  ) {
     return ["medium", "high", "xhigh"];
   }
 
-  // gpt-5.2, gpt-5.5 and the gpt-5.4-mini / gpt-5.4-nano variants support 5 reasoning levels including xhigh.
+  // gpt-5.2, gpt-5.5, the gpt-5.4-mini / gpt-5.4-nano variants, and gpt-5.6 Terra/Luna
+  // support 5 reasoning levels including xhigh.
   if (
     /^gpt-5\.2(?!-[a-z])/.test(withoutProviderNamespace) ||
-    /^gpt-5\.(?:4|5)(?:-(?:mini|nano))?(?!-[a-z])/.test(withoutProviderNamespace)
+    /^gpt-5\.(?:4|5)(?:-(?:mini|nano))?(?!-[a-z])/.test(withoutProviderNamespace) ||
+    /^gpt-5\.6(?:-(?:terra|luna))?(?!-[a-z])/.test(withoutProviderNamespace)
   ) {
     return ["off", "low", "medium", "high", "xhigh"];
   }

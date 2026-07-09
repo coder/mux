@@ -227,18 +227,18 @@ describe("checkAutoCompaction", () => {
       expect(result.shouldShowWarning).toBe(true);
     });
 
-    test("uses GPT-5.5's native 1.05M limit without relying on the 1M toggle", () => {
-      const usage = createMockUsage(600_000, undefined, KNOWN_MODELS.GPT.id);
+    test("uses GPT-5.6 Terra's native 1M limit without relying on the 1M toggle", () => {
+      const usage = createMockUsage(500_000, undefined, KNOWN_MODELS.GPT.id);
       const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT.id, false);
 
-      expect(result.usagePercentage).toBeCloseTo(57.14, 2);
+      expect(result.usagePercentage).toBe(50);
       expect(result.shouldShowWarning).toBe(false);
     });
 
     test("ignores use1M for models that don't support it (GPT)", () => {
-      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.GPT_MINI.id);
-      // GPT Mini has 272k context, so 100k = 36.76%
-      const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT_MINI.id, true);
+      const usage = createMockUsage(100_000, undefined, KNOWN_MODELS.GPT_CODEX_MINI.id);
+      // Codex Mini has 272k context, so 100k = 36.76%
+      const result = checkAutoCompaction(usage, KNOWN_MODELS.GPT_CODEX_MINI.id, true);
 
       // Should use standard 272k, not 1M (use1M ignored for GPT)
       expect(result.usagePercentage).toBeCloseTo(36.76, 1);

@@ -297,6 +297,72 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
+  // GPT-5.6 Terra - Released July 2026
+  // Balanced tier: native 1M context, 128K max output.
+  // Base pricing: $2.50/M input, $15/M output, $0.25/M cached input (half of GPT-5.5).
+  // Above 272K prompt tokens: $5/M input, $22.50/M output, $0.50/M cached input.
+  "gpt-5.6-terra": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.0000025, // $2.50 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.000005, // $5 per million input tokens (>272K)
+    output_cost_per_token: 0.000015, // $15 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.0000225, // $22.50 per million output tokens (>272K)
+    cache_read_input_token_cost: 0.00000025, // $0.25 per million cached input tokens (<272K)
+    cache_read_input_token_cost_above_200k_tokens: 0.0000005, // $0.50 per million cached input tokens (>272K)
+    // OpenAI's published long-context boundary is 272K even though LiteLLM's field names say 200K.
+    tiered_pricing_threshold_tokens: 272000,
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    knowledge_cutoff: "2025-08-31",
+  },
+
+  // GPT-5.6 Sol - Released July 2026
+  // Flagship tier: native 1M context, 128K max output; Responses API only.
+  // Base pricing matches GPT-5.5: $5/M input, $30/M output, $0.50/M cached input.
+  // Above 272K prompt tokens: $10/M input, $45/M output, $1/M cached input.
+  "gpt-5.6-sol": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.000005, // $5 per million input tokens (<272K prompt tokens)
+    input_cost_per_token_above_200k_tokens: 0.00001, // $10 per million input tokens (>272K)
+    output_cost_per_token: 0.00003, // $30 per million output tokens (<272K prompt tokens)
+    output_cost_per_token_above_200k_tokens: 0.000045, // $45 per million output tokens (>272K)
+    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens (<272K)
+    cache_read_input_token_cost_above_200k_tokens: 0.000001, // $1 per million cached input tokens (>272K)
+    tiered_pricing_threshold_tokens: 272000,
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/responses"],
+    knowledge_cutoff: "2025-12-01",
+  },
+
+  // GPT-5.6 Luna - Released July 2026
+  // Lightweight tier consolidating the former 5.4 mini/nano slots: 400K context,
+  // 128K max output, $0.75/M input, $4.50/M output, $0.075/M cached input.
+  // Text-only: no vision support (also disables PDF-support inference).
+  "gpt-5.6-luna": {
+    max_input_tokens: 400000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00000075, // $0.75 per million input tokens
+    output_cost_per_token: 0.0000045, // $4.50 per million output tokens
+    cache_read_input_token_cost: 0.000000075, // $0.075 per million cached input tokens
+    litellm_provider: "openai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: false,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5.2 / GPT-5.2 Codex - keep aligned
   // LiteLLM reports 400k context for Codex, but it should match GPT-5.2 (272k)
   // $1.75/M input, $14/M output

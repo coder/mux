@@ -85,34 +85,28 @@ const MODEL_DEFINITIONS = {
     aliases: ["haiku"],
     tokenizerOverride: "anthropic/claude-3.5-haiku",
   },
-  // GPT alias tracks the latest stable GPT-5 tier.
+  // GPT alias tracks the latest stable GPT tier (GPT-5.6 Terra, released July 2026).
   GPT: {
     provider: "openai",
-    providerModelId: "gpt-5.5",
-    aliases: ["gpt", "gpt-5.5"],
+    providerModelId: "gpt-5.6-terra",
+    aliases: ["gpt", "gpt-5.6", "gpt-5.6-terra"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  // GPT Pro alias tracks the latest GPT-5 Pro tier.
+  // GPT Pro alias tracks the latest GPT Pro tier (GPT-5.6 Sol).
   GPT_PRO: {
     provider: "openai",
-    providerModelId: "gpt-5.5-pro",
-    aliases: ["gpt-pro", "gpt-5.5-pro"],
+    providerModelId: "gpt-5.6-sol",
+    aliases: ["gpt-pro", "gpt-5.6-pro", "gpt-5.6-sol"],
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  // GPT Mini alias tracks the latest stable GPT-5 mini tier.
-  GPT_54_MINI: {
+  // GPT Mini alias tracks the latest lightweight GPT tier (GPT-5.6 Luna consolidates the
+  // former 5.4 mini/nano tiers).
+  GPT_MINI: {
     provider: "openai",
-    providerModelId: "gpt-5.4-mini",
-    aliases: ["gpt-mini"],
-    tokenizerOverride: "openai/gpt-5",
-  },
-  // GPT Nano alias tracks the latest stable GPT-5 nano tier.
-  GPT_54_NANO: {
-    provider: "openai",
-    providerModelId: "gpt-5.4-nano",
-    aliases: ["gpt-nano"],
+    providerModelId: "gpt-5.6-luna",
+    aliases: ["gpt-mini", "gpt-5.6-mini", "gpt-5.6-luna"],
     tokenizerOverride: "openai/gpt-5",
   },
   // GPT-5.3-Codex is the released API model id.
@@ -132,7 +126,7 @@ const MODEL_DEFINITIONS = {
     warm: true,
     tokenizerOverride: "openai/gpt-5",
   },
-  GPT_MINI: {
+  GPT_CODEX_MINI: {
     provider: "openai",
     providerModelId: "gpt-5.1-codex-mini",
     aliases: ["codex-mini"],

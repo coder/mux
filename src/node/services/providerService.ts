@@ -1076,7 +1076,7 @@ export class ProviderService {
           providerConfig.models = [
             "anthropic/claude-sonnet-5",
             "anthropic/claude-opus-4-8",
-            "openai/gpt-5.5",
+            "openai/gpt-5.6-terra",
           ];
         }
       }

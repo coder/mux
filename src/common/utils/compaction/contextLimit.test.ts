@@ -53,15 +53,15 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(mappedStats?.max_input_tokens ?? null);
   });
 
-  test("uses GPT-5.5's native 1.05M context without the 1M toggle", () => {
+  test("uses GPT-5.6 Terra's native 1M context without the 1M toggle", () => {
     const baseLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, false, null);
     const toggledLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, true, null);
 
-    expect(baseLimit).toBe(1_050_000);
-    expect(toggledLimit).toBe(1_050_000);
+    expect(baseLimit).toBe(1_000_000);
+    expect(toggledLimit).toBe(1_000_000);
   });
 
-  test("caps GPT-5.5 at the Codex OAuth context window when OAuth is the active auth route", () => {
+  test("caps GPT-5.6 Terra at the Codex OAuth context window when OAuth is the active auth route", () => {
     const oauthOnlyLimit = getEffectiveContextLimit(
       KNOWN_MODELS.GPT.id,
       false,
@@ -87,7 +87,7 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(1_050_000);
   });
 
-  test("keeps GPT-5.5's API context window when API key auth is selected", () => {
+  test("keeps GPT-5.6 Terra's API context window when API key auth is selected", () => {
     const limit = getEffectiveContextLimit(
       KNOWN_MODELS.GPT.id,
       false,
@@ -98,7 +98,7 @@ describe("getEffectiveContextLimit", () => {
       })
     );
 
-    expect(limit).toBe(1_050_000);
+    expect(limit).toBe(1_000_000);
   });
 
   test("does not treat unresolved API-key files as active API-key auth", () => {
@@ -115,7 +115,7 @@ describe("getEffectiveContextLimit", () => {
     expect(limit).toBe(272_000);
   });
 
-  test("uses GPT-5.5's API context window for resolved API-key files", () => {
+  test("uses GPT-5.6 Terra's API context window for resolved API-key files", () => {
     const limit = getEffectiveContextLimit(
       KNOWN_MODELS.GPT.id,
       false,
@@ -127,10 +127,10 @@ describe("getEffectiveContextLimit", () => {
       })
     );
 
-    expect(limit).toBe(1_050_000);
+    expect(limit).toBe(1_000_000);
   });
 
-  test("detects env-sourced API keys when deciding GPT-5.5 Codex OAuth routing", () => {
+  test("detects env-sourced API keys when deciding GPT-5.6 Terra Codex OAuth routing", () => {
     const limit = getEffectiveContextLimit(
       KNOWN_MODELS.GPT.id,
       false,
@@ -141,7 +141,7 @@ describe("getEffectiveContextLimit", () => {
       })
     );
 
-    expect(limit).toBe(1_050_000);
+    expect(limit).toBe(1_000_000);
   });
 
   test("uses Claude Sonnet 4.6's native 1M context without the beta toggle", () => {

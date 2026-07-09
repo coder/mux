@@ -86,6 +86,26 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns medium/high/xhigh for gpt-5.6-sol", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-sol")).toEqual(["medium", "high", "xhigh"]);
+  });
+
+  test("returns medium/high/xhigh for gpt-5.6-sol behind mux-gateway", () => {
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-sol")).toEqual([
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns medium/high/xhigh for gpt-5.6-sol with version suffix", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-sol-2026-07-09")).toEqual([
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for gpt-5.3-codex", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.3-codex")).toEqual([
       "off",
@@ -222,6 +242,40 @@ describe("getThinkingPolicyForModel", () => {
       "xhigh",
     ]);
     expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.4-nano-2026-03-17")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns 5 levels including xhigh for gpt-5.6-terra", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-terra")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-terra-2026-07-09")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
+  test("returns 5 levels including xhigh for gpt-5.6-luna", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.6-luna")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-luna-2026-07-09")).toEqual([
       "off",
       "low",
       "medium",
@@ -660,6 +714,33 @@ describe("enforceThinkingPolicy", () => {
 
     test("allows xhigh", () => {
       expect(enforceThinkingPolicy("openai:gpt-5.5-pro", "xhigh")).toBe("xhigh");
+    });
+  });
+
+  describe("GPT-5.6 (5 levels including xhigh)", () => {
+    test("allows xhigh for terra and luna", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.6-terra", "xhigh")).toBe("xhigh");
+      expect(enforceThinkingPolicy("openai:gpt-5.6-luna", "xhigh")).toBe("xhigh");
+    });
+
+    test("keeps off for terra and luna", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.6-terra", "off")).toBe("off");
+      expect(enforceThinkingPolicy("openai:gpt-5.6-luna", "off")).toBe("off");
+    });
+  });
+
+  describe("GPT-5.6 Sol (medium/high/xhigh)", () => {
+    test("clamps off and low to medium", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.6-sol", "off")).toBe("medium");
+      expect(enforceThinkingPolicy("openai:gpt-5.6-sol", "low")).toBe("medium");
+    });
+
+    test("allows xhigh", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.6-sol", "xhigh")).toBe("xhigh");
+    });
+
+    test("clamps low to medium for versioned model", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.6-sol-2026-07-09", "low")).toBe("medium");
     });
   });
 

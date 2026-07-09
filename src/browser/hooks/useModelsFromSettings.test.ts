@@ -542,7 +542,7 @@ describe("useModelsFromSettings provider availability gating", () => {
         apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
-        models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
+        models: [KNOWN_MODELS.GPT_MINI.providerModelId],
       },
     };
     routePriority = ["github-copilot", "direct"];
@@ -560,7 +560,7 @@ describe("useModelsFromSettings provider availability gating", () => {
         apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
-        models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
+        models: [KNOWN_MODELS.GPT_MINI.providerModelId],
       },
     };
     routePriority = ["github-copilot", "direct"];

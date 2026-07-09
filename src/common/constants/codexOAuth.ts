@@ -94,6 +94,8 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
   "gpt-5.2",
   "gpt-5.4-mini",
   "gpt-5.5",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
   "gpt-5.2-codex",
   "gpt-5.3-codex",
   "gpt-5.3-codex-spark",
@@ -122,6 +124,9 @@ const CODEX_OAUTH_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
   // User-reported routing limit: GPT-5.5's public API window is 1.05M, but the
   // ChatGPT/Codex OAuth backend rejects prompts near that size and must compact at ~270K.
   "gpt-5.5": 272_000,
+  // Inherited from the observed GPT-5.5 ChatGPT-routing cap pending verification:
+  // Terra's public API window is 1M, but assume the OAuth backend still tops out near 272K.
+  "gpt-5.6-terra": 272_000,
 };
 
 function normalizeCodexOauthModelId(modelId: string): string {

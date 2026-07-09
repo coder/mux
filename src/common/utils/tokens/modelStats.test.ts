@@ -28,12 +28,39 @@ describe("getModelStats", () => {
     ["mux-gateway:openai/gpt-5.5-pro-2026-04-23", "openai:gpt-5.5-pro"],
     ["mux-gateway:openai/gpt-5.4-mini-2026-03-11", "openai:gpt-5.4-mini"],
     ["mux-gateway:openai/gpt-5.4-nano-2026-03-17", "openai:gpt-5.4-nano"],
+    ["openai:gpt-5.6-terra-2026-07-09", "openai:gpt-5.6-terra"],
+    ["mux-gateway:openai/gpt-5.6-sol-2026-07-09", "openai:gpt-5.6-sol"],
   ])("falls back from %s to the published %s family entry", (datedModel, canonicalModel) => {
     expect(expectStats(datedModel)).toEqual(expectStats(canonicalModel));
   });
 
+  test("resolves the GPT-5.6 family with the published limits and pricing", () => {
+    const terra = expectStats(KNOWN_MODELS.GPT.id);
+    expect(terra.max_input_tokens).toBe(1000000);
+    expect(terra.max_output_tokens).toBe(128000);
+    expect(terra.input_cost_per_token).toBe(0.0000025);
+    expect(terra.output_cost_per_token).toBe(0.000015);
+    expect(terra.tiered_pricing_threshold_tokens).toBe(272000);
+
+    const sol = expectStats(KNOWN_MODELS.GPT_PRO.id);
+    expect(sol.max_input_tokens).toBe(1000000);
+    expect(sol.input_cost_per_token).toBe(0.000005);
+    expect(sol.output_cost_per_token).toBe(0.00003);
+    expect(sol.cache_read_input_token_cost).toBe(0.0000005);
+    expect(sol.tiered_pricing_threshold_tokens).toBe(272000);
+
+    const luna = expectStats(KNOWN_MODELS.GPT_MINI.id);
+    expect(luna.max_input_tokens).toBe(400000);
+    expect(luna.max_output_tokens).toBe(128000);
+    expect(luna.input_cost_per_token).toBe(0.00000075);
+    expect(luna.output_cost_per_token).toBe(0.0000045);
+    expect(luna.tiered_pricing_threshold_tokens).toBeUndefined();
+  });
+
   test("resolves GPT-5.4 nano with the published limits and pricing", () => {
-    const stats = expectStats(KNOWN_MODELS.GPT_54_NANO.id);
+    // No picker entry anymore (consolidated into GPT_MINI/luna), but the stats
+    // entry stays for cost display on existing 5.4 workspaces.
+    const stats = expectStats("openai:gpt-5.4-nano");
     expect(stats.max_input_tokens).toBe(400000);
     expect(stats.max_output_tokens).toBe(128000);
     expect(stats.input_cost_per_token).toBe(0.0000002);

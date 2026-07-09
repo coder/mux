@@ -81,7 +81,7 @@ describe("useRouting", () => {
         apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
-        models: [KNOWN_MODELS.GPT_54_MINI.providerModelId],
+        models: [KNOWN_MODELS.GPT_MINI.providerModelId],
       },
     };
 
