@@ -14,6 +14,7 @@ import {
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
+  MUX_OPENAI_REASONING_MODE_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
@@ -1092,6 +1093,103 @@ describe("buildRequestHeaders", () => {
         ).toEqual(expected);
       });
     }
+  });
+
+  describe("OpenAI pro reasoning-mode header", () => {
+    for (const { name, model, routeProvider, reasoningMode, expected } of [
+      {
+        name: "emits pro header for direct Sol with reasoningMode=pro",
+        model: "openai:gpt-5.6-sol",
+        routeProvider: undefined,
+        reasoningMode: "pro",
+        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+      },
+      {
+        name: "emits pro header for direct Terra with reasoningMode=pro",
+        model: "openai:gpt-5.6-terra",
+        routeProvider: undefined,
+        reasoningMode: "pro",
+        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+      },
+      {
+        name: "emits pro header for gateway-routed Sol (passthrough)",
+        model: "mux-gateway:openai/gpt-5.6-sol",
+        routeProvider: "mux-gateway",
+        reasoningMode: "pro",
+        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+      },
+      {
+        name: "does not emit for reasoningMode=standard",
+        model: "openai:gpt-5.6-sol",
+        routeProvider: undefined,
+        reasoningMode: "standard",
+        expected: undefined,
+      },
+      {
+        name: "does not emit when reasoningMode is undefined",
+        model: "openai:gpt-5.6-sol",
+        routeProvider: undefined,
+        reasoningMode: undefined,
+        expected: undefined,
+      },
+      {
+        name: "does not emit for Luna (no pro support)",
+        model: "openai:gpt-5.6-luna",
+        routeProvider: undefined,
+        reasoningMode: "pro",
+        expected: undefined,
+      },
+      {
+        name: "does not emit for Anthropic origin even with reasoningMode=pro",
+        model: "anthropic:claude-opus-4-7",
+        routeProvider: undefined,
+        reasoningMode: "pro",
+        expected: undefined,
+      },
+      {
+        // Non-passthrough gateways must never see the Mux-internal header.
+        name: "does not emit for non-passthrough route (openrouter)",
+        model: "openai:gpt-5.6-sol",
+        routeProvider: "openrouter",
+        reasoningMode: "pro",
+        expected: undefined,
+      },
+      {
+        name: "does not emit for non-passthrough route (github-copilot)",
+        model: "openai:gpt-5.6-sol",
+        routeProvider: "github-copilot",
+        reasoningMode: "pro",
+        expected: undefined,
+      },
+    ] as const) {
+      test(name, () => {
+        expect(
+          buildRequestHeaders(
+            model,
+            undefined,
+            undefined,
+            undefined,
+            routeProvider,
+            undefined,
+            reasoningMode
+          )
+        ).toEqual(expected);
+      });
+    }
+
+    test("pro header is independent of thinkingLevel (mode is orthogonal to effort)", () => {
+      expect(
+        buildRequestHeaders(
+          "openai:gpt-5.6-sol",
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "max",
+          "pro"
+        )
+      ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
+    });
   });
 
   for (const { name, model, options, workspaceId, expected } of [

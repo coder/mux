@@ -6,6 +6,7 @@ import {
   getThinkingOptionLabel,
   MAX_THINKING_INDEX,
   openaiSupportsNativeMaxEffort,
+  openaiSupportsProMode,
   parseThinkingInput,
 } from "./thinking";
 
@@ -81,6 +82,22 @@ describe("openaiSupportsNativeMaxEffort", () => {
     expect(openaiSupportsNativeMaxEffort("openai:gpt-5.6-sol-mini")).toBe(false);
     expect(openaiSupportsNativeMaxEffort("openai:gpt-5.5")).toBe(false);
     expect(openaiSupportsNativeMaxEffort("openai:gpt-5.5-pro")).toBe(false);
+  });
+});
+
+describe("openaiSupportsProMode", () => {
+  test("matches Sol and Terra including prefixed and dated variants", () => {
+    expect(openaiSupportsProMode("openai:gpt-5.6-sol")).toBe(true);
+    expect(openaiSupportsProMode("openai:gpt-5.6-terra")).toBe(true);
+    expect(openaiSupportsProMode("mux-gateway:openai/gpt-5.6-sol")).toBe(true);
+    expect(openaiSupportsProMode("gpt-5.6-terra-2026-07-09")).toBe(true);
+  });
+
+  test("rejects Luna, older models, and named variants", () => {
+    expect(openaiSupportsProMode("openai:gpt-5.6-luna")).toBe(false);
+    expect(openaiSupportsProMode("openai:gpt-5.5-pro")).toBe(false);
+    expect(openaiSupportsProMode("openai:gpt-5.6-sol-mini")).toBe(false);
+    expect(openaiSupportsProMode("anthropic:claude-opus-4-7")).toBe(false);
   });
 });
 

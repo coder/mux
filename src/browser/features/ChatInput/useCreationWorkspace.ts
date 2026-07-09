@@ -133,9 +133,9 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState<AgentSettingsCache>(
       getWorkspaceAISettingsByAgentKey(workspaceId),
       (prev) => {
-        const record = prev && typeof prev === "object" ? prev : {};
+        const record: AgentSettingsCache = prev && typeof prev === "object" ? prev : {};
         return {
-          ...(record as AgentSettingsCache),
+          ...record,
           [effectiveAgentId]: {
             model: projectModel,
             thinkingLevel: effectiveThinking,

@@ -20,8 +20,12 @@ import {
   resolveAIProviderHeaderSource,
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
+  wrapFetchWithOpenAIReasoningMode,
 } from "./providerModelFactory";
-import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
+import {
+  MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
+  MUX_OPENAI_REASONING_MODE_HEADER,
+} from "@/common/utils/ai/providerOptions";
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
 import type { DevToolsService } from "./devToolsService";
 import { CodexOauthService } from "./codexOauthService";
@@ -226,6 +230,34 @@ describe("normalizeCodexResponsesBody", () => {
 
     expect(normalized.truncation).toBeUndefined();
     expect(normalized.store).toBe(false);
+  });
+
+  it("strips reasoning.mode while preserving effort/summary (Codex backend must never see it)", () => {
+    const normalized = JSON.parse(
+      normalizeCodexResponsesBody(
+        JSON.stringify({
+          model: "gpt-5.6-sol",
+          input: [{ role: "user", content: "Hello" }],
+          reasoning: { effort: "high", summary: "auto", mode: "pro" },
+        })
+      )
+    ) as { reasoning?: Record<string, unknown> };
+
+    expect(normalized.reasoning).toEqual({ effort: "high", summary: "auto" });
+  });
+
+  it("drops the reasoning object entirely when mode was its only key", () => {
+    const normalized = JSON.parse(
+      normalizeCodexResponsesBody(
+        JSON.stringify({
+          model: "gpt-5.6-sol",
+          input: [{ role: "user", content: "Hello" }],
+          reasoning: { mode: "pro" },
+        })
+      )
+    ) as { reasoning?: unknown };
+
+    expect(normalized.reasoning).toBeUndefined();
   });
 });
 
@@ -1729,5 +1761,156 @@ describe("wrapFetchWithAnthropicCacheControl — gateway (AI SDK) body shape", (
       providerOptions: { anthropic: { effort: string } };
     };
     expect(sent.providerOptions.anthropic.effort).toBe("xhigh");
+  });
+});
+
+describe("wrapFetchWithOpenAIReasoningMode", () => {
+  const RESPONSES_URL = "https://api.openai.com/v1/responses";
+
+  it("merges reasoning.mode=pro into an existing reasoning object, preserving effort/summary", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({
+      model: "gpt-5.6-sol",
+      reasoning: { effort: "high", summary: "auto" },
+    });
+    await wrapped(RESPONSES_URL, {
+      method: "POST",
+      body,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    expect(calls.length).toBe(1);
+    const sent = parseSentBody(calls[0]);
+    expect(sent.reasoning).toEqual({ effort: "high", summary: "auto", mode: "pro" });
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+  });
+
+  it("creates the reasoning object when absent", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({ model: "gpt-5.6-terra" });
+    await wrapped(RESPONSES_URL, {
+      method: "POST",
+      body,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    expect(parseSentBody(calls[0]).reasoning).toEqual({ mode: "pro" });
+  });
+
+  it("forwards byte-identical when the header is absent", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({ model: "gpt-5.6-sol", reasoning: { effort: "high" } });
+    await wrapped(RESPONSES_URL, { method: "POST", body, headers: { "x-other": "1" } });
+    expect(calls[0].init.body).toBe(body);
+    expect(new Headers(calls[0].init.headers).get("x-other")).toBe("1");
+  });
+
+  it("strips the header on non-POST requests without touching the body (never leak)", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    await wrapped(RESPONSES_URL, {
+      method: "GET",
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+    expect(calls[0].init.body).toBeUndefined();
+  });
+
+  it("strips the header but leaves the body unchanged for non-Responses URLs (chat completions)", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({ model: "gpt-5.6-sol", messages: [] });
+    await wrapped("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      body,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    expect(calls[0].init.body).toBe(body);
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+  });
+
+  it("strips the header but does not inject for invalid header values", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({ model: "gpt-5.6-sol" });
+    await wrapped(RESPONSES_URL, {
+      method: "POST",
+      body,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "ultra" },
+    });
+    expect(calls[0].init.body).toBe(body);
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+  });
+
+  it("injects providerOptions.openai.reasoningMode for the gateway body shape", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      providerOptions: { openai: { reasoningEffort: "high" } },
+    });
+    await wrapped("https://gateway.example.com/v1/language-model", {
+      method: "POST",
+      body,
+      headers: {
+        "ai-model-id": "openai/gpt-5.6-sol",
+        [MUX_OPENAI_REASONING_MODE_HEADER]: "pro",
+      },
+    });
+    const sent = parseSentBody(calls[0]) as {
+      providerOptions: { openai: Record<string, unknown> };
+    };
+    expect(sent.providerOptions.openai).toEqual({ reasoningEffort: "high", reasoningMode: "pro" });
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+  });
+
+  it("creates providerOptions.openai for gateway bodies that lack it", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const body = JSON.stringify({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    await wrapped("https://gateway.example.com/v1/language-model", {
+      method: "POST",
+      body,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    const sent = parseSentBody(calls[0]) as {
+      providerOptions: { openai: Record<string, unknown> };
+    };
+    expect(sent.providerOptions.openai).toEqual({ reasoningMode: "pro" });
+  });
+
+  it("strips the header without injecting when inject=false (Codex OAuth route)", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch, { inject: false });
+    const body = JSON.stringify({ model: "gpt-5.6-sol" });
+    await wrapped(RESPONSES_URL, {
+      method: "POST",
+      body,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    expect(calls[0].init.body).toBe(body);
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+  });
+
+  it("forwards malformed JSON with the header stripped", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    await wrapped(RESPONSES_URL, {
+      method: "POST",
+      body: "{not json",
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    expect(calls[0].init.body).toBe("{not json");
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
   });
 });
