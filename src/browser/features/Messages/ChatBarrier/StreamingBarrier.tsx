@@ -301,6 +301,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({
       cancelText={cancelText}
       onCancel={canTapCancel ? handleCancelClick : undefined}
       cancelShortcutText={canTapCancel ? interruptKeybind : undefined}
+      // Waiting-on-monitor is not streaming-bound: drop the reserved stats slot
+      // and let the informational hint hide in narrow panes so the barrier fits
+      // phone-width transcripts (the label alone carries the state).
+      reserveStatsSlot={phase !== "waiting-on-monitor"}
+      hideHintOnNarrow={phase === "waiting-on-monitor"}
       className={className}
       hintElement={
         showCompactionHint ? (

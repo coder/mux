@@ -429,6 +429,8 @@ describe("StreamingBarrier", () => {
     // Nothing to interrupt — the hint is informational, not a cancel control.
     expect(view.queryByRole("button", { name: "Stop streaming" })).toBeNull();
     expect(view.getByText("agent wakes on matching output")).toBeTruthy();
+    // Not streaming-bound: no reserved token-stats slot (frees narrow panes).
+    expect(view.queryByTestId("streaming-barrier-stats")).toBeNull();
   });
 
   test("idle workspace without armed monitors renders nothing", () => {

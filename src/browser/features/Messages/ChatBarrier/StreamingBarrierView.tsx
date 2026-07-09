@@ -17,6 +17,18 @@ export interface StreamingBarrierViewProps {
   className?: string;
   /** Optional hint element shown after status (e.g., settings link) */
   hintElement?: React.ReactNode;
+  /**
+   * Reserve the token-stats slot (default true). Streaming-bound phases keep it
+   * so the starting -> streaming transition doesn't reflow the row; idle phases
+   * (e.g. waiting on a bash monitor) skip it to fit narrow panes.
+   */
+  reserveStatsSlot?: boolean;
+  /**
+   * Hide the plain-text cancel hint when the barrier's container is narrow.
+   * Use for low-priority informational hints that would overflow phone-width
+   * transcripts; keep instructional hints (e.g. awaiting-input) always visible.
+   */
+  hideHintOnNarrow?: boolean;
 }
 
 /**
@@ -27,29 +39,34 @@ export interface StreamingBarrierViewProps {
  */
 export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props) => {
   return (
-    <div className={`flex items-center justify-between gap-4 ${props.className ?? ""}`}>
+    // @container scopes the narrow-hint query to the barrier's own width, so it
+    // tracks the chat pane (which can be narrow on wide desktops), not the viewport.
+    <div className={`@container flex items-center justify-between gap-4 ${props.className ?? ""}`}>
       <div className="flex flex-1 items-center gap-2">
         <BaseBarrier text={props.statusText} color="var(--color-assistant-border)" animate />
         {props.hintElement}
-        {/* Always render the stats slot so the row geometry is identical across the
-            starting -> streaming transition; only its visibility toggles. Previously
-            this slot mounted exactly when streaming began, reflowing the row (layout
-            flash). Reserving it (with placeholder values) keeps the layout stable. */}
-        <span
-          data-testid="streaming-barrier-stats"
-          aria-hidden={props.tokenCount === undefined}
-          className={cn(
-            "text-assistant-border counter-nums-mono inline-flex min-w-[14ch] items-baseline justify-end text-[11px] whitespace-nowrap select-none",
-            props.tokenCount === undefined && "invisible"
-          )}
-        >
-          <span>~{(props.tokenCount ?? 0).toLocaleString()} tokens</span>
-          <span className="text-dim ml-1 inline-flex min-w-[7ch] items-baseline justify-end gap-1">
-            <span>@</span>
-            <span>{props.tps !== undefined && props.tps > 0 ? props.tps : "--"}</span>
-            <span>t/s</span>
+        {/* Render the stats slot for streaming-bound phases so the row geometry is
+            identical across the starting -> streaming transition; only its visibility
+            toggles. Previously this slot mounted exactly when streaming began,
+            reflowing the row (layout flash). Reserving it (with placeholder values)
+            keeps the layout stable. */}
+        {props.reserveStatsSlot !== false && (
+          <span
+            data-testid="streaming-barrier-stats"
+            aria-hidden={props.tokenCount === undefined}
+            className={cn(
+              "text-assistant-border counter-nums-mono inline-flex min-w-[14ch] items-baseline justify-end text-[11px] whitespace-nowrap select-none",
+              props.tokenCount === undefined && "invisible"
+            )}
+          >
+            <span>~{(props.tokenCount ?? 0).toLocaleString()} tokens</span>
+            <span className="text-dim ml-1 inline-flex min-w-[7ch] items-baseline justify-end gap-1">
+              <span>@</span>
+              <span>{props.tps !== undefined && props.tps > 0 ? props.tps : "--"}</span>
+              <span>t/s</span>
+            </span>
           </span>
-        </span>
+        )}
       </div>
       <div className="ml-auto">
         {props.onCancel && props.cancelText.length > 0 ? (
@@ -70,7 +87,14 @@ export const StreamingBarrierView: React.FC<StreamingBarrierViewProps> = (props)
             </button>
           </TooltipIfPresent>
         ) : (
-          <span className="text-muted text-[11px] whitespace-nowrap select-none">
+          <span
+            className={cn(
+              "text-muted text-[11px] whitespace-nowrap select-none",
+              // Low-priority hints yield to the status label in narrow panes
+              // instead of forcing horizontal overflow.
+              props.hideHintOnNarrow && "hidden @md:inline"
+            )}
+          >
             {props.cancelText}
           </span>
         )}
