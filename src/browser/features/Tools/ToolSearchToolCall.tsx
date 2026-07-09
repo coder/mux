@@ -42,10 +42,16 @@ export function toToolSearchView(result: unknown): ToolSearchView {
     kind: "matches",
     result: {
       query: typeof candidate.query === "string" ? candidate.query : "",
-      matches: candidate.matches.filter(
-        (match): match is ToolSearchToolResult["matches"][number] =>
-          match != null && typeof match === "object" && typeof match.name === "string"
-      ),
+      matches: candidate.matches
+        .filter(
+          (match): match is ToolSearchToolResult["matches"][number] =>
+            match != null && typeof match === "object" && typeof match.name === "string"
+        )
+        // Coerce non-string descriptions (corrupted/persisted results) so the
+        // expanded card never renders an object/array as a React child.
+        .map((match) =>
+          typeof match.description === "string" ? match : { ...match, description: "" }
+        ),
       totalDeferred: typeof candidate.totalDeferred === "number" ? candidate.totalDeferred : 0,
     },
   };

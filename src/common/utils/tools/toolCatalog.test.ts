@@ -147,6 +147,18 @@ describe("prepareToolSearch (post-policy gate)", () => {
     expect(Object.keys(result.tools)).not.toContain("tool_search");
   });
 
+  test("PTC code_execution present: deactivates, tool_search removed, MCP tools untouched", () => {
+    // Non-exclusive PTC embeds/exposes MCP tools through code_execution's
+    // bridge, bypassing activeTools scoping — deferral must deactivate.
+    const tools = baseTools();
+    tools.code_execution = fakeTool("Run JS against bridged tools");
+    const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
+    expect(result.state).toBeUndefined();
+    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    expect(Object.keys(result.tools)).toContain("code_execution");
+    expect(Object.keys(result.tools)).toContain("slack_send_message");
+  });
+
   test("MCP name collision with tool_search: deactivates, record untouched", () => {
     // Server "tool" + tool "search" normalize to "tool_search" and the MCP
     // spread overwrites the built-in search tool — deferral must deactivate

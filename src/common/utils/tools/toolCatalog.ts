@@ -145,6 +145,9 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
  *   built-in search tool in the merged record, so deferring would leave MCP
  *   tools unreachable with no working search tool ⇒ safe fallback: no state,
  *   tools unchanged — the colliding entry behaves as a normal MCP tool.
+ * - PTC `code_execution` present (non-exclusive programmatic tool calling):
+ *   its bridge already embeds/exposes MCP tools, bypassing activeTools ⇒ drop
+ *   `tool_search`, no state — MCP tools stay advertised as without deferral.
  * - `tool_search` absent (policy-disabled) ⇒ safe fallback: no state, tools
  *   unchanged — MCP tools stay advertised exactly as without the experiment.
  * - Nothing deferred (all MCP tools policy-disabled / PTC-removed) ⇒ drop
@@ -166,6 +169,15 @@ export function prepareToolSearch(inputs: ToolCatalogInputs): {
   }
   if (!(TOOL_SEARCH_TOOL_NAME in inputs.tools)) {
     return { tools: inputs.tools };
+  }
+  // PTC's code_execution embeds ToolBridge TypeScript definitions for every
+  // bridged MCP tool in its description and exposes them as callable `mux.*`
+  // functions, so activeTools scoping could neither reduce context nor gate
+  // access. Deferral would be ineffective and silently bypassable ⇒ drop
+  // tool_search and run without deferral when both experiments are enabled.
+  if ("code_execution" in inputs.tools) {
+    const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = inputs.tools;
+    return { tools: rest };
   }
   const classification = buildToolCatalog(inputs);
   if (classification.deferredToolNames.size === 0) {

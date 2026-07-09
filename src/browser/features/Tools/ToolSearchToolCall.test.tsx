@@ -78,4 +78,39 @@ describe("ToolSearchToolCall", () => {
       expect(view.result.totalDeferred).toBe(0);
     }
   });
+
+  test("toToolSearchView coerces non-string descriptions so React never renders objects", () => {
+    const view = toToolSearchView({
+      query: "q",
+      matches: [
+        { name: "obj_desc", description: { nested: true } },
+        { name: "arr_desc", description: ["a", "b"] },
+      ],
+      totalDeferred: 2,
+    });
+    expect(view.kind).toBe("matches");
+    if (view.kind === "matches") {
+      expect(view.result.matches).toEqual([
+        { name: "obj_desc", description: "" },
+        { name: "arr_desc", description: "" },
+      ]);
+    }
+
+    // Rendering the coerced result must not throw.
+    const rendered = render(
+      <TooltipProvider>
+        <ToolSearchToolCall
+          args={{ query: "q" }}
+          status="completed"
+          defaultExpanded={true}
+          result={{
+            query: "q",
+            matches: [{ name: "obj_desc", description: { nested: true } }],
+            totalDeferred: 1,
+          }}
+        />
+      </TooltipProvider>
+    );
+    expect(rendered.getByText("obj_desc")).toBeTruthy();
+  });
 });
