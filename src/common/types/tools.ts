@@ -431,6 +431,16 @@ export type WebFetchToolArgs = z.infer<typeof TOOL_DEFINITIONS.web_fetch.schema>
 // WebFetchToolResult derived from Zod schema (single source of truth)
 export type WebFetchToolResult = z.infer<typeof WebFetchToolResultSchema>;
 
+// Tool Search Tool Types (tool-search experiment), derived from schema (avoid drift)
+export type ToolSearchToolArgs = z.infer<typeof TOOL_DEFINITIONS.tool_search.schema>;
+
+export interface ToolSearchToolResult {
+  query: string;
+  matches: Array<{ name: string; description: string }>;
+  /** Total deferred-catalog size, so the model/UI can see there are more undiscovered tools. */
+  totalDeferred: number;
+}
+
 // Notify Tool Types
 export type NotifyToolResult =
   | (ToolOutputUiOnlyFields & {

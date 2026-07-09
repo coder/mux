@@ -123,6 +123,12 @@ import type {
   StreamEndEvent,
 } from "@/common/types/stream";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import {
+  prepareToolSearch,
+  rebuildToolSearchState,
+  seedToolSearchActivationsFromMessages,
+  type ToolSearchRuntime,
+} from "@/common/utils/tools/toolCatalog";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
@@ -1383,6 +1389,9 @@ export class AIService extends EventEmitter {
       const workspaceHeartbeatsExperimentEnabled =
         experiments?.workspaceHeartbeats ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS) === true;
+      const toolSearchExperimentEnabled =
+        experiments?.toolSearch ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.TOOL_SEARCH) === true;
       const memoryHotSetExperimentEnabled =
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true;
       // Once final tool policy keeps the memory tool, upgrade the index-only
@@ -1638,6 +1647,14 @@ export class AIService extends EventEmitter {
           startupPhaseTimingsMs.mcpToolSetupMs = mcpSetupDurationMs;
         }
       }
+
+      // Tool search (tool-search experiment): assembly-time gate. The runtime
+      // holder makes getToolsForModel create the tool_search tool; its `state`
+      // is assigned only after policy filtering builds the deferred catalog
+      // (see prepareToolSearch below). Without MCP tools there is nothing to
+      // defer, so the feature stays fully inactive.
+      const toolSearchRuntime: ToolSearchRuntime | undefined =
+        toolSearchExperimentEnabled && Object.keys(mcpTools ?? {}).length > 0 ? {} : undefined;
 
       const createTempDirForStreamStartedAt = Date.now();
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
@@ -1999,6 +2016,7 @@ export class AIService extends EventEmitter {
               },
             }
           : {}),
+        ...(toolSearchRuntime ? { toolSearchRuntime } : {}),
         openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
         backgroundProcessManager: this.backgroundProcessManager,
         // Plan agent configuration for plan file access.
@@ -2121,6 +2139,7 @@ export class AIService extends EventEmitter {
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
           memory: memoryExperimentEnabled,
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
+          toolSearch: toolSearchExperimentEnabled,
         },
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,
@@ -2157,7 +2176,7 @@ export class AIService extends EventEmitter {
 
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const applyToolPolicyAndExperimentsStartedAt = Date.now();
-      const tools = await applyToolPolicyAndExperiments({
+      let tools = await applyToolPolicyAndExperiments({
         allTools: toolsWithDelegation,
         extraTools: this.extraTools,
         effectiveToolPolicy,
@@ -2168,6 +2187,23 @@ export class AIService extends EventEmitter {
         "applyToolPolicyAndExperimentsMs",
         applyToolPolicyAndExperimentsStartedAt
       );
+
+      // Tool search (tool-search experiment): post-policy gate. Classification
+      // must consume the policy-filtered record so policy-disabled tools never
+      // enter the deferred catalog. This runs before every downstream consumer
+      // of `tools` (system-prompt rebuild, sentinel tool names, telemetry,
+      // streaming) so a dropped tool_search cannot leak anywhere.
+      if (toolSearchRuntime) {
+        const toolSearchPrep = prepareToolSearch({
+          tools,
+          mcpToolNames: Object.keys(mcpTools ?? {}),
+          toolPolicy: effectiveToolPolicy,
+        });
+        tools = toolSearchPrep.tools;
+        if (toolSearchPrep.state) {
+          toolSearchRuntime.state = toolSearchPrep.state;
+        }
+      }
 
       const advisorToolAvailable = tools.advisor !== undefined;
       const memoryToolAvailable = tools.memory !== undefined;
@@ -2246,6 +2282,12 @@ export class AIService extends EventEmitter {
         workspaceId,
       });
       recordStartupPhaseTiming("prepareMessagesForProviderMs", prepareMessagesForProviderStartedAt);
+
+      // Re-activate deferred tools discovered by tool_search in earlier turns
+      // (or before a mid-turn stream retry) without requiring a new search.
+      if (toolSearchRuntime?.state) {
+        seedToolSearchActivationsFromMessages(toolSearchRuntime.state, finalMessages);
+      }
 
       captureMcpToolTelemetry({
         telemetryService: this.telemetryService,
@@ -2541,7 +2583,7 @@ export class AIService extends EventEmitter {
                     toolInstructions,
                     mcpTools
                   );
-                  const nextTools = await applyToolPolicyAndExperiments({
+                  let nextTools = await applyToolPolicyAndExperiments({
                     allTools: this.wrapToolsForDelegation(
                       workspaceId,
                       nextAllTools,
@@ -2552,6 +2594,26 @@ export class AIService extends EventEmitter {
                     experiments,
                     emitNestedToolEvent: emitNestedPtcToolEvent,
                   });
+                  // Tool search: keep the per-stream state consistent with the
+                  // fallback model's re-assembled toolset. rebuildToolSearchState
+                  // mutates the state object in place — StreamManager's request
+                  // holds a reference to it, so prepareStep reads current state.
+                  if (toolSearchRuntime) {
+                    if (toolSearchRuntime.state) {
+                      nextTools = rebuildToolSearchState(toolSearchRuntime.state, {
+                        tools: nextTools,
+                        mcpToolNames: Object.keys(mcpTools ?? {}),
+                        toolPolicy: effectiveToolPolicy,
+                      }).tools;
+                    } else {
+                      // The primary-path gate deactivated deferral (e.g. every
+                      // MCP tool was policy-disabled). StreamManager was never
+                      // handed scoping state, so tool_search must not appear in
+                      // the fallback toolset either.
+                      const { tool_search: _removed, ...rest } = nextTools;
+                      nextTools = rest;
+                    }
+                  }
                   const nextToolNamesForSentinel = Object.keys(nextTools).sort();
                   const nextMemoryToolAvailable = nextTools.memory !== undefined;
                   const nextMemoryContext = await upgradeMemoryContextForModel(
@@ -2739,7 +2801,8 @@ export class AIService extends EventEmitter {
             }
           : undefined,
         runtimeTempDir,
-        modelFallback
+        modelFallback,
+        toolSearchRuntime?.state
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 

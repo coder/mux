@@ -8,6 +8,7 @@ import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
 import type { CompletedMessagePart, WorkflowRunAttachedEvent } from "@/common/types/stream";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import type { ToolSearchStreamState } from "@/common/utils/tools/toolCatalog";
 import { StreamManager, type ModelFallbackPrepareOptions } from "./streamManager";
 import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
 import * as aiSdk from "ai";
@@ -4695,3 +4696,163 @@ describe("StreamManager - aborted stream usage persistence", () => {
 // Note: Comprehensive Anthropic cache control tests are in cacheStrategy.test.ts
 // Those unit tests cover all cache control functionality without requiring
 // complex setup. StreamManager integrates those functions directly.
+
+describe("StreamManager - tool search activeTools scoping", () => {
+  interface StreamRequestConfigForTests {
+    model: unknown;
+    messages: ModelMessage[];
+    system?: string;
+    tools?: Record<string, Tool>;
+    toolSearchState?: ToolSearchStreamState;
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
+  type CreateStreamResult = (
+    request: StreamRequestConfigForTests,
+    abortController: AbortController
+  ) => unknown;
+
+  // prepareStep only destructures `messages`; the remaining PrepareStepFunction
+  // fields are irrelevant to this behavior.
+  type CapturedPrepareStep = (options: {
+    messages: ModelMessage[];
+  }) => Promise<{ messages?: ModelMessage[]; activeTools?: string[] } | undefined>;
+
+  const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+  const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+  function getRequestHelpers(streamManager: StreamManager): {
+    buildRequestConfig: BuildStreamRequestConfig;
+    createStreamResult: CreateStreamResult;
+  } {
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | BuildStreamRequestConfig
+      | undefined;
+    const createStreamResultMethod = Reflect.get(streamManager, "createStreamResult") as
+      | CreateStreamResult
+      | undefined;
+
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof createStreamResultMethod).toBe("function");
+
+    if (!buildRequestConfig || !createStreamResultMethod) {
+      throw new Error("Expected StreamManager private helpers to exist");
+    }
+
+    return {
+      buildRequestConfig,
+      createStreamResult: (request, abortController) =>
+        createStreamResultMethod.call(streamManager, request, abortController),
+    };
+  }
+
+  function setupStreamTextSpy() {
+    return spyOn(aiSdk, "streamText").mockReturnValue({
+      fullStream: (async function* asyncGenerator() {
+        yield* [] as unknown[];
+        await Promise.resolve();
+      })(),
+      usage: Promise.resolve(undefined),
+      providerMetadata: Promise.resolve(undefined),
+      totalUsage: Promise.resolve(undefined),
+      steps: Promise.resolve([]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+  }
+
+  function capturePrepareStep(
+    streamTextSpy: ReturnType<typeof setupStreamTextSpy>
+  ): CapturedPrepareStep {
+    const prepareStep = streamTextSpy.mock.calls[0]?.[0]?.prepareStep as
+      | CapturedPrepareStep
+      | undefined;
+    expect(typeof prepareStep).toBe("function");
+    if (!prepareStep) {
+      throw new Error("Expected prepareStep to be captured");
+    }
+    return prepareStep;
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("returns undefined (not {}) without tool search state and unchanged messages", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    createStreamResult({ model, messages, system: "system" }, new AbortController());
+
+    const prepareStep = capturePrepareStep(streamTextSpy);
+    // Feature-off path must stay byte-identical to today's behavior.
+    expect(await prepareStep({ messages })).toBeUndefined();
+  });
+
+  test("scopes activeTools to core + activated deferred tools, reflecting live activations", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    const toolSearchState: ToolSearchStreamState = {
+      catalog: [
+        { name: "slack_send_message", description: "Send a message", paramText: "" },
+        { name: "slack_list_channels", description: "List channels", paramText: "" },
+      ],
+      deferredToolNames: new Set(["slack_send_message", "slack_list_channels"]),
+      allToolNames: ["bash", "tool_search", "slack_send_message", "slack_list_channels"],
+      activatedToolNames: new Set(),
+    };
+
+    createStreamResult(
+      { model, messages, system: "system", toolSearchState },
+      new AbortController()
+    );
+
+    const prepareStep = capturePrepareStep(streamTextSpy);
+
+    const firstStep = await prepareStep({ messages });
+    expect(firstStep?.activeTools).toEqual(["bash", "tool_search"]);
+    // Messages were unchanged, so no messages key should be introduced.
+    expect(firstStep && "messages" in firstStep).toBe(false);
+
+    // Simulate tool_search.execute activating a tool mid-stream: the next
+    // prepareStep call must advertise it without rebuilding the request.
+    toolSearchState.activatedToolNames.add("slack_send_message");
+    const nextStep = await prepareStep({ messages });
+    expect(nextStep?.activeTools).toEqual(["bash", "tool_search", "slack_send_message"]);
+  });
+
+  test("buildStreamRequestConfig forwards the tool search state reference", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig } = getRequestHelpers(streamManager);
+
+    const toolSearchState: ToolSearchStreamState = {
+      catalog: [],
+      deferredToolNames: new Set(["mcp_tool"]),
+      allToolNames: ["bash", "mcp_tool"],
+      activatedToolNames: new Set(),
+    };
+
+    const request = buildRequestConfig(
+      model,
+      KNOWN_MODELS.SONNET.id,
+      messages,
+      "system",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      toolSearchState
+    );
+
+    // Same reference, not a copy — tool_search.execute mutations must be
+    // visible to prepareStep.
+    expect(request.toolSearchState).toBe(toolSearchState);
+  });
+});

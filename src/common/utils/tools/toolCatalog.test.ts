@@ -1,0 +1,352 @@
+import { describe, expect, test } from "bun:test";
+import type { Tool } from "ai";
+import type { ModelMessage } from "@/common/types/message";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import {
+  buildToolCatalog,
+  computeActiveToolNames,
+  extractPreActivatedToolNames,
+  prepareToolSearch,
+  rebuildToolSearchState,
+  searchToolCatalog,
+  seedToolSearchActivationsFromMessages,
+  type ToolCatalogEntry,
+  type ToolSearchStreamState,
+} from "@/common/utils/tools/toolCatalog";
+
+/** Minimal Tool stand-in: the catalog only reads description + inputSchema. */
+function fakeTool(description?: string, jsonSchema?: unknown): Tool {
+  const raw: unknown = {
+    description,
+    ...(jsonSchema !== undefined ? { inputSchema: { jsonSchema } } : {}),
+  };
+  return raw as Tool;
+}
+
+function mcpTool(description: string, params?: Record<string, { description?: string }>): Tool {
+  return fakeTool(description, {
+    type: "object",
+    properties: Object.fromEntries(
+      Object.entries(params ?? {}).map(([name, spec]) => [name, { type: "string", ...spec }])
+    ),
+  });
+}
+
+const MCP_NAMES = ["slack_send_message", "slack_list_channels", "github_create_issue"];
+
+function baseTools(): Record<string, Tool> {
+  return {
+    bash: fakeTool("Run a shell command"),
+    file_read: fakeTool("Read a file"),
+    tool_search: fakeTool("Search deferred tools"),
+    slack_send_message: mcpTool("Send a message to a Slack channel", {
+      channel: { description: "Slack channel ID" },
+    }),
+    slack_list_channels: mcpTool("List available Slack channels"),
+    github_create_issue: mcpTool("Create a GitHub issue", {
+      title: { description: "Issue title" },
+    }),
+  };
+}
+
+describe("buildToolCatalog", () => {
+  test("defers only MCP tools; built-ins stay core", () => {
+    const result = buildToolCatalog({ tools: baseTools(), mcpToolNames: MCP_NAMES });
+    expect([...result.deferredToolNames].sort()).toEqual([...MCP_NAMES].sort());
+    expect(result.deferredToolNames.has("bash")).toBe(false);
+    expect(result.deferredToolNames.has("file_read")).toBe(false);
+    expect(result.allToolNames.sort()).toEqual(Object.keys(baseTools()).sort());
+  });
+
+  test("never defers tools matched by a policy require rule", () => {
+    const policy: ToolPolicy = [{ regex_match: "slack_send_message", action: "require" }];
+    const result = buildToolCatalog({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      toolPolicy: policy,
+    });
+    expect(result.deferredToolNames.has("slack_send_message")).toBe(false);
+    expect(result.deferredToolNames.has("slack_list_channels")).toBe(true);
+  });
+
+  test("policy-disabled tools (absent from the record) never enter the catalog", () => {
+    const tools = baseTools();
+    delete tools.github_create_issue; // simulates post-policy removal
+    const result = buildToolCatalog({ tools, mcpToolNames: MCP_NAMES });
+    expect(result.deferredToolNames.has("github_create_issue")).toBe(false);
+    expect(result.catalog.some((entry) => entry.name === "github_create_issue")).toBe(false);
+  });
+
+  test("tool_search itself is never deferred, even if listed as an MCP name", () => {
+    const result = buildToolCatalog({
+      tools: baseTools(),
+      mcpToolNames: [...MCP_NAMES, "tool_search"],
+    });
+    expect(result.deferredToolNames.has("tool_search")).toBe(false);
+  });
+
+  test("extracts description and param text; degrades gracefully on odd schemas", () => {
+    const tools: Record<string, Tool> = {
+      tool_search: fakeTool("Search deferred tools"),
+      weird: fakeTool("Weird tool", "not-an-object"),
+      slack_send_message: mcpTool("Send a message", { channel: { description: "channel ID" } }),
+    };
+    const result = buildToolCatalog({
+      tools,
+      mcpToolNames: ["weird", "slack_send_message"],
+    });
+    const weird = result.catalog.find((entry) => entry.name === "weird");
+    expect(weird?.paramText).toBe("");
+    const slack = result.catalog.find((entry) => entry.name === "slack_send_message");
+    expect(slack?.paramText).toContain("channel");
+    expect(slack?.paramText).toContain("channel ID");
+  });
+});
+
+describe("prepareToolSearch (post-policy gate)", () => {
+  test("happy path: tools unchanged, state seeded with empty activation set", () => {
+    const tools = baseTools();
+    const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
+    expect(result.tools).toBe(tools);
+    expect(result.state).toBeDefined();
+    expect(result.state!.activatedToolNames.size).toBe(0);
+    expect(result.state!.deferredToolNames.size).toBe(3);
+  });
+
+  test("tool_search policy-disabled (absent): no state, MCP tools untouched", () => {
+    const tools = baseTools();
+    delete tools.tool_search;
+    const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
+    expect(result.state).toBeUndefined();
+    expect(result.tools).toBe(tools);
+    expect(Object.keys(result.tools)).toContain("slack_send_message");
+  });
+
+  test("all MCP tools policy-disabled: tool_search removed, no state", () => {
+    const tools = baseTools();
+    for (const name of MCP_NAMES) {
+      delete tools[name];
+    }
+    const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
+    expect(result.state).toBeUndefined();
+    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    expect(Object.keys(result.tools).sort()).toEqual(["bash", "file_read"]);
+  });
+
+  test("all MCP tools required: nothing left to defer, tool_search removed", () => {
+    const policy: ToolPolicy = MCP_NAMES.map((name) => ({
+      regex_match: name,
+      action: "require" as const,
+    }));
+    const result = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      toolPolicy: policy,
+    });
+    expect(result.state).toBeUndefined();
+    expect(Object.keys(result.tools)).not.toContain("tool_search");
+  });
+});
+
+describe("rebuildToolSearchState (model-fallback path)", () => {
+  function activeState(): ToolSearchStreamState {
+    const prepared = prepareToolSearch({ tools: baseTools(), mcpToolNames: MCP_NAMES });
+    const state = prepared.state!;
+    state.activatedToolNames.add("slack_send_message");
+    state.activatedToolNames.add("github_create_issue");
+    return state;
+  }
+
+  test("intersects activations with the surviving deferred set", () => {
+    const state = activeState();
+    const nextTools = baseTools();
+    delete nextTools.github_create_issue; // dropped in the fallback toolset
+    const result = rebuildToolSearchState(state, { tools: nextTools, mcpToolNames: MCP_NAMES });
+    expect(result.tools).toBe(nextTools);
+    expect([...state.activatedToolNames]).toEqual(["slack_send_message"]);
+    expect(state.deferredToolNames.has("github_create_issue")).toBe(false);
+  });
+
+  test("deactivates in place when the fallback toolset has nothing to defer", () => {
+    const state = activeState();
+    const nextTools = baseTools();
+    for (const name of MCP_NAMES) {
+      delete nextTools[name];
+    }
+    const result = rebuildToolSearchState(state, { tools: nextTools, mcpToolNames: MCP_NAMES });
+    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    // Same state object deactivates: prepareStep stops returning activeTools.
+    expect(computeActiveToolNames(state)).toBeUndefined();
+  });
+
+  test("deactivates in place when tool_search is gone from the fallback toolset", () => {
+    const state = activeState();
+    const nextTools = baseTools();
+    delete nextTools.tool_search;
+    const result = rebuildToolSearchState(state, { tools: nextTools, mcpToolNames: MCP_NAMES });
+    expect(result.tools).toBe(nextTools);
+    expect(computeActiveToolNames(state)).toBeUndefined();
+  });
+});
+
+describe("searchToolCatalog", () => {
+  const catalog: ToolCatalogEntry[] = [
+    { name: "slack_send_message", description: "Send a message to a channel", paramText: "" },
+    { name: "slack_list_channels", description: "List channels", paramText: "" },
+    {
+      name: "github_create_issue",
+      description: "Create an issue",
+      paramText: "title Issue title body",
+    },
+    { name: "unrelated_tool", description: "Does something else entirely", paramText: "" },
+  ];
+
+  test("matches on name tokens with highest weight", () => {
+    const matches = searchToolCatalog(catalog, "slack");
+    expect(matches.map((match) => match.name)).toEqual([
+      "slack_list_channels",
+      "slack_send_message",
+    ]);
+  });
+
+  test("matches on description and param text", () => {
+    expect(searchToolCatalog(catalog, "channel").map((m) => m.name)).toContain(
+      "slack_send_message"
+    );
+    expect(searchToolCatalog(catalog, "body").map((m) => m.name)).toEqual(["github_create_issue"]);
+  });
+
+  test("drops zero-score entries", () => {
+    const matches = searchToolCatalog(catalog, "issue");
+    expect(matches.map((m) => m.name)).not.toContain("unrelated_tool");
+  });
+
+  test("respects and clamps the limit", () => {
+    expect(searchToolCatalog(catalog, "slack", 1)).toHaveLength(1);
+    // Clamp to at least 1 even for nonsense limits.
+    expect(searchToolCatalog(catalog, "slack", -5)).toHaveLength(1);
+  });
+
+  test("deterministic order with lexicographic tie-break", () => {
+    const tied: ToolCatalogEntry[] = [
+      { name: "b_tool", description: "alpha", paramText: "" },
+      { name: "a_tool", description: "alpha", paramText: "" },
+    ];
+    expect(searchToolCatalog(tied, "alpha").map((m) => m.name)).toEqual(["a_tool", "b_tool"]);
+  });
+
+  test("empty query returns nothing", () => {
+    expect(searchToolCatalog(catalog, "   ")).toEqual([]);
+  });
+});
+
+describe("extractPreActivatedToolNames", () => {
+  function toolResultMessage(toolName: string, output: unknown): ModelMessage {
+    const raw: unknown = {
+      role: "tool",
+      content: [{ type: "tool-result", toolCallId: "call-1", toolName, output }],
+    };
+    return raw as ModelMessage;
+  }
+
+  const matchesResult = {
+    query: "slack",
+    matches: [{ name: "slack_send_message", description: "Send" }],
+    totalDeferred: 3,
+  };
+
+  test("reads json-encoded outputs", () => {
+    const names = extractPreActivatedToolNames([
+      toolResultMessage("tool_search", { type: "json", value: matchesResult }),
+    ]);
+    expect([...names]).toEqual(["slack_send_message"]);
+  });
+
+  test("reads text-encoded (stringified) outputs", () => {
+    const names = extractPreActivatedToolNames([
+      toolResultMessage("tool_search", { type: "text", value: JSON.stringify(matchesResult) }),
+    ]);
+    expect([...names]).toEqual(["slack_send_message"]);
+  });
+
+  test("reads raw object outputs and ignores non-JSON text", () => {
+    const names = extractPreActivatedToolNames([
+      toolResultMessage("tool_search", matchesResult),
+      toolResultMessage("tool_search", { type: "text", value: "not json" }),
+    ]);
+    expect([...names]).toEqual(["slack_send_message"]);
+  });
+
+  test("ignores other tools' results and non-tool messages", () => {
+    const userMessage: ModelMessage = { role: "user", content: "hello" };
+    const names = extractPreActivatedToolNames([
+      userMessage,
+      toolResultMessage("bash", { type: "json", value: matchesResult }),
+    ]);
+    expect(names.size).toBe(0);
+  });
+});
+
+describe("seedToolSearchActivationsFromMessages", () => {
+  test("intersects history matches with the current deferred set", () => {
+    const state = prepareToolSearch({ tools: baseTools(), mcpToolNames: MCP_NAMES }).state!;
+    const raw: unknown = {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "tool_search",
+          output: {
+            type: "json",
+            value: {
+              query: "anything",
+              matches: [
+                { name: "slack_send_message", description: "Send" },
+                { name: "no_longer_available_tool", description: "Gone" },
+              ],
+              totalDeferred: 3,
+            },
+          },
+        },
+      ],
+    };
+    seedToolSearchActivationsFromMessages(state, [raw as ModelMessage]);
+    expect([...state.activatedToolNames]).toEqual(["slack_send_message"]);
+  });
+});
+
+describe("computeActiveToolNames", () => {
+  test("undefined without state (feature off / gated out)", () => {
+    expect(computeActiveToolNames(undefined)).toBeUndefined();
+  });
+
+  test("undefined when deactivated (empty deferred set)", () => {
+    const state: ToolSearchStreamState = {
+      catalog: [],
+      deferredToolNames: new Set(),
+      allToolNames: ["bash"],
+      activatedToolNames: new Set(),
+    };
+    expect(computeActiveToolNames(state)).toBeUndefined();
+  });
+
+  test("excludes non-activated deferred tools; includes them after activation", () => {
+    const state = prepareToolSearch({ tools: baseTools(), mcpToolNames: MCP_NAMES }).state!;
+
+    const firstStep = computeActiveToolNames(state)!;
+    expect(firstStep).toContain("bash");
+    expect(firstStep).toContain("file_read");
+    expect(firstStep).toContain("tool_search");
+    for (const name of MCP_NAMES) {
+      expect(firstStep).not.toContain(name);
+    }
+
+    // Simulate tool_search.execute activating a match: the next step's
+    // activeTools must advertise it (acceptance criteria 2–3).
+    state.activatedToolNames.add("slack_send_message");
+    const nextStep = computeActiveToolNames(state)!;
+    expect(nextStep).toContain("slack_send_message");
+    expect(nextStep).not.toContain("slack_list_channels");
+  });
+});

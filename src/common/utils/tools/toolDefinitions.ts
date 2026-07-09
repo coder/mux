@@ -2479,6 +2479,30 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
       .strict(),
   },
   // #endregion NOTIFY_DOCS
+  tool_search: {
+    description:
+      "Search the catalog of deferred tools. Some tools (provided by MCP servers) are deferred: " +
+      "they exist but are not currently visible in your tool list. " +
+      "Call tool_search with task/capability keywords to discover them; matched tools become available on the next step. " +
+      "Returns matched tool names and descriptions plus the total number of deferred tools (there may be more undiscovered — refine the query to find them).",
+    schema: z
+      .object({
+        query: z
+          .string()
+          .min(1)
+          .describe(
+            "Task or capability keywords to search for (matched against tool names, descriptions, and parameter names)"
+          ),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(25)
+          .nullish()
+          .describe("Maximum number of matches to return (default 10, max 25)"),
+      })
+      .strict(),
+  },
 } as const;
 
 // -----------------------------------------------------------------------------
@@ -2966,6 +2990,8 @@ export function getAvailableTools(
     enableDynamicWorkflows?: boolean;
     /** Whether the agent memory tool is available (memory experiment enabled). */
     enableMemory?: boolean;
+    /** Whether tool_search is available (tool-search experiment + deferred MCP tools present). */
+    enableToolSearch?: boolean;
     /**
      * Whether the Review pane tools (review_pane_update/review_pane_get) are
      * available. The Review pane belongs to the user-facing parent workspace,
@@ -2983,6 +3009,7 @@ export function getAvailableTools(
   const enableAdvisor = options?.enableAdvisor ?? false;
   const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
   const enableMemory = options?.enableMemory ?? false;
+  const enableToolSearch = options?.enableToolSearch ?? false;
   const enableReviewPane = options?.enableReviewPane ?? true;
 
   // Base tools available for all models
@@ -3014,6 +3041,7 @@ export function getAvailableTools(
     "file_edit_insert",
     ...(enableMemory ? ["memory"] : []),
     ...(enableAdvisor ? ["advisor"] : []),
+    ...(enableToolSearch ? ["tool_search"] : []),
     "ask_user_question",
     "propose_plan",
     "bash",

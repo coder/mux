@@ -45,6 +45,23 @@ export function applyToolPolicyToNames(toolNames: string[], policy?: ToolPolicy)
 }
 
 /**
+ * Build anchored regexes for the policy's `require` rules.
+ *
+ * Strips existing anchors to avoid double-anchoring recovery policies
+ * (e.g. "^agent_report$" would otherwise become "^^agent_report$$").
+ * Shared by StreamManager's stop-when condition and the tool-search catalog
+ * classifier (required tools must never be deferred).
+ */
+export function buildRequiredToolPatterns(policy?: ToolPolicy): RegExp[] {
+  return (policy ?? [])
+    .filter((filter) => filter.action === "require")
+    .map((filter) => {
+      const rawPattern = filter.regex_match.replace(/^\^/, "").replace(/\$$/, "");
+      return new RegExp(`^${rawPattern}$`);
+    });
+}
+
+/**
  * Apply tool policy to filter available tools
  * @param tools All available tools
  * @param policy Optional policy to apply (default: allow all)

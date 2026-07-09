@@ -20,6 +20,7 @@ export const EXPERIMENT_IDS = {
   MEMORY: "memory",
   MEMORY_HOT_SET: "memory-hot-set",
   MEMORY_CONSOLIDATION: "memory-consolidation",
+  TOOL_SEARCH: "tool-search",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -172,6 +173,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Memory Consolidation",
     description:
       "Background dream agent that consolidates memory files after compaction, on idle, and at archive",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.TOOL_SEARCH]: {
+    id: EXPERIMENT_IDS.TOOL_SEARCH,
+    name: "Tool Search",
+    description:
+      "Defer MCP tool definitions out of the model-visible tool list until the model discovers them via the tool_search tool",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

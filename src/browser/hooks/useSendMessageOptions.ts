@@ -63,6 +63,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   );
   const dynamicWorkflows = useExperimentOverrideValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const memory = useExperimentOverrideValue(EXPERIMENT_IDS.MEMORY);
+  const toolSearch = useExperimentOverrideValue(EXPERIMENT_IDS.TOOL_SEARCH);
 
   // Prefer metadata over the global default until workspace localStorage seeding catches up.
   const metadataSettings = getWorkspaceAiSettingsFromMetadata(
@@ -86,6 +87,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
       execSubagentHardRestart,
       dynamicWorkflows,
       memory,
+      toolSearch,
     },
     disableWorkspaceAgents,
   });

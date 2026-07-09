@@ -750,6 +750,16 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>tool_search (2)</summary>
+
+| Env var                | JSON path | Type   | Description                                                                                               |
+| ---------------------- | --------- | ------ | --------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_LIMIT` | `limit`   | number | Maximum number of matches to return (default 10, max 25)                                                  |
+| `MUX_TOOL_INPUT_QUERY` | `query`   | string | Task or capability keywords to search for (matched against tool names, descriptions, and parameter names) |
+
+</details>
+
+<details>
 <summary>web_fetch (1)</summary>
 
 | Env var              | JSON path | Type   | Description                      |

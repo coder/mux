@@ -41,7 +41,11 @@ import { addUsage, accumulateProviderMetadata } from "@/common/utils/tokens/usag
 import { linkAbortSignal } from "@/node/utils/abort";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
-import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import { buildRequiredToolPatterns, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import {
+  computeActiveToolNames,
+  type ToolSearchStreamState,
+} from "@/common/utils/tools/toolCatalog";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
 import { countTokens } from "@/node/utils/main/tokenizer";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -163,6 +167,12 @@ interface StreamRequestConfig {
   /** Optional hook for callers that need the live prepared step transcript. */
   onStepMessages?: (messages: ModelMessage[]) => void;
   toolPolicy?: ToolPolicy;
+  /**
+   * Tool-search deferral state (tool-search experiment). Owned and mutated by
+   * aiService/tool_search.execute; prepareStep reads it each step to compute
+   * `activeTools`. Absent when the feature is inactive.
+   */
+  toolSearchState?: ToolSearchStreamState;
 }
 
 /**
@@ -1461,7 +1471,8 @@ export class StreamManager extends EventEmitter {
     headers?: Record<string, string | undefined>,
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     onChunk?: StreamTextOnChunk,
-    onStepMessages?: (messages: ModelMessage[]) => void
+    onStepMessages?: (messages: ModelMessage[]) => void,
+    toolSearchState?: ToolSearchStreamState
   ): StreamRequestConfig {
     const finalProviderOptions = providerOptions;
 
@@ -1518,6 +1529,7 @@ export class StreamManager extends EventEmitter {
       onChunk,
       onStepMessages,
       toolPolicy,
+      toolSearchState,
     };
   }
 
@@ -1547,14 +1559,7 @@ export class StreamManager extends EventEmitter {
       return true;
     };
 
-    const requiredPatterns = (request.toolPolicy ?? [])
-      .filter((filter) => filter.action === "require")
-      .map((filter) => {
-        // Strip existing anchors to avoid double-anchoring recovery policies
-        // (e.g. "^agent_report$" would otherwise become "^^agent_report$$").
-        const rawPattern = filter.regex_match.replace(/^\^/, "").replace(/\$$/, "");
-        return new RegExp(`^${rawPattern}$`);
-      });
+    const requiredPatterns = buildRequiredToolPatterns(request.toolPolicy);
 
     const hasSuccessfulRequiredToolResult: ReturnType<typeof stepCountIs> = ({ steps }) => {
       if (requiredPatterns.length === 0) {
@@ -1600,8 +1605,17 @@ export class StreamManager extends EventEmitter {
           stepTracker.latestMessages = effectiveMessages;
         }
         request.onStepMessages?.(effectiveMessages);
-        if (rewritten === stepMessages) return undefined;
-        return { messages: rewritten };
+        // Tool search (tool-search experiment): scope the advertised tool list
+        // to core tools + activated deferred tools. Read per step so tools
+        // activated by tool_search.execute appear on the following step.
+        // undefined when the feature is inactive, keeping the return value
+        // byte-identical to the pre-feature behavior.
+        const activeTools = computeActiveToolNames(request.toolSearchState);
+        if (rewritten === stepMessages && activeTools === undefined) return undefined;
+        return {
+          ...(rewritten === stepMessages ? {} : { messages: rewritten }),
+          ...(activeTools !== undefined ? { activeTools } : {}),
+        };
       },
       onChunk: request.onChunk,
       tools: request.tools,
@@ -1642,7 +1656,8 @@ export class StreamManager extends EventEmitter {
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
-    modelFallback?: ModelFallbackOptions
+    modelFallback?: ModelFallbackOptions,
+    toolSearchState?: ToolSearchStreamState
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1662,7 +1677,8 @@ export class StreamManager extends EventEmitter {
       headers,
       anthropicCacheTtlOverride,
       onChunk,
-      onStepMessages
+      onStepMessages,
+      toolSearchState
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -2318,7 +2334,10 @@ export class StreamManager extends EventEmitter {
       prepared.data.headers,
       prepared.data.anthropicCacheTtl,
       streamInfo.request.onChunk,
-      streamInfo.request.onStepMessages
+      streamInfo.request.onStepMessages,
+      // Same state object: aiService's fallback prepare() rebuilt it in place
+      // against the fallback toolset, so prepareStep keeps reading live state.
+      streamInfo.request.toolSearchState
     );
     // createStreamResult may eagerly prepare the first fallback step and update
     // latestMessages. Clear stale source-step messages before starting it so a
@@ -3758,7 +3777,8 @@ export class StreamManager extends EventEmitter {
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
     providedRuntimeTempDir?: string,
-    modelFallback?: ModelFallbackOptions
+    modelFallback?: ModelFallbackOptions,
+    toolSearchState?: ToolSearchStreamState
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -3841,7 +3861,8 @@ export class StreamManager extends EventEmitter {
           anthropicCacheTtlOverride,
           onChunk,
           onStepMessages,
-          modelFallback
+          modelFallback,
+          toolSearchState
         );
 
         // Guard against a narrow race:

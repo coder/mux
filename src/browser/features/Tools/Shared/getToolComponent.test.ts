@@ -13,6 +13,7 @@ import { SetGoalToolCall } from "../SetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { HeartbeatToolCall } from "../HeartbeatToolCall";
+import { ToolSearchToolCall } from "../ToolSearchToolCall";
 import { getToolComponent } from "./getToolComponent";
 
 describe("getToolComponent", () => {
@@ -138,6 +139,19 @@ describe("getToolComponent", () => {
   test("server:GOOGLE_SEARCH_WEB falls back to GenericToolCall when args don't conform", () => {
     const component = getToolComponent("server:GOOGLE_SEARCH_WEB", { queries: "not-an-array" });
     expect(component).toBe(GenericToolCall);
+  });
+
+  test("returns ToolSearchToolCall for tool_search with valid args", () => {
+    expect(getToolComponent("tool_search", { query: "send slack message" })).toBe(
+      ToolSearchToolCall
+    );
+    expect(getToolComponent("tool_search", { query: "send slack message", limit: 5 })).toBe(
+      ToolSearchToolCall
+    );
+  });
+
+  test("tool_search falls back to GenericToolCall when args don't conform", () => {
+    expect(getToolComponent("tool_search", { query: 42 })).toBe(GenericToolCall);
   });
 
   test("Object.prototype member names fall back to GenericToolCall instead of throwing", () => {
