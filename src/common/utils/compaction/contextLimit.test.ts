@@ -54,8 +54,8 @@ describe("getEffectiveContextLimit", () => {
   });
 
   test("uses GPT-5.5's native 1.05M context without the 1M toggle", () => {
-    const baseLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, false, null);
-    const toggledLimit = getEffectiveContextLimit(KNOWN_MODELS.GPT.id, true, null);
+    const baseLimit = getEffectiveContextLimit("openai:gpt-5.5", false, null);
+    const toggledLimit = getEffectiveContextLimit("openai:gpt-5.5", true, null);
 
     expect(baseLimit).toBe(1_050_000);
     expect(toggledLimit).toBe(1_050_000);
@@ -63,31 +63,43 @@ describe("getEffectiveContextLimit", () => {
 
   test("caps GPT-5.5 at the Codex OAuth context window when OAuth is the active auth route", () => {
     const oauthOnlyLimit = getEffectiveContextLimit(
-      KNOWN_MODELS.GPT.id,
+      "openai:gpt-5.5",
       false,
       providersWithOpenAI({ codexOauthSet: true })
     );
     expect(oauthOnlyLimit).toBe(272_000);
 
     const defaultOauthLimit = getEffectiveContextLimit(
-      KNOWN_MODELS.GPT.id,
+      "openai:gpt-5.5",
       false,
       providersWithOpenAI({ apiKeySet: true, codexOauthSet: true })
     );
     expect(defaultOauthLimit).toBe(272_000);
   });
 
+  // Pinned to the literal "gpt-5.5" (not KNOWN_MODELS.GPT.id): the GPT alias now
+  // tracks gpt-5.6-sol, which has no Codex OAuth context override, while the cap
+  // under test belongs to the retired-but-still-priced gpt-5.5 model string.
   test("inherits the Codex OAuth context cap from a mapped OpenAI model", () => {
     const limit = getEffectiveContextLimit(
       "openai:team-gpt",
       false,
       providersWithOpenAI({
         codexOauthSet: true,
-        models: [{ id: "team-gpt", mappedToModel: KNOWN_MODELS.GPT.id }],
+        models: [{ id: "team-gpt", mappedToModel: "gpt-5.5" }],
       })
     );
 
     expect(limit).toBe(272_000);
+  });
+
+  test("does not cap GPT-5.6 Sol under Codex OAuth (no context-window override published)", () => {
+    const oauthOnlyLimit = getEffectiveContextLimit(
+      "openai:gpt-5.6-sol",
+      false,
+      providersWithOpenAI({ codexOauthSet: true })
+    );
+    expect(oauthOnlyLimit).toBe(1_000_000);
   });
 
   test("does not apply the GPT-5.5 OAuth cap to gateway-routed models", () => {
@@ -102,7 +114,7 @@ describe("getEffectiveContextLimit", () => {
 
   test("keeps GPT-5.5's API context window when API key auth is selected", () => {
     const limit = getEffectiveContextLimit(
-      KNOWN_MODELS.GPT.id,
+      "openai:gpt-5.5",
       false,
       providersWithOpenAI({
         apiKeySet: true,
@@ -116,7 +128,7 @@ describe("getEffectiveContextLimit", () => {
 
   test("does not treat unresolved API-key files as active API-key auth", () => {
     const limit = getEffectiveContextLimit(
-      KNOWN_MODELS.GPT.id,
+      "openai:gpt-5.5",
       false,
       providersWithOpenAI({
         apiKeyFile: "/missing/openai-key",
@@ -130,7 +142,7 @@ describe("getEffectiveContextLimit", () => {
 
   test("uses GPT-5.5's API context window for resolved API-key files", () => {
     const limit = getEffectiveContextLimit(
-      KNOWN_MODELS.GPT.id,
+      "openai:gpt-5.5",
       false,
       providersWithOpenAI({
         apiKeyFile: "/readable/openai-key",
@@ -145,7 +157,7 @@ describe("getEffectiveContextLimit", () => {
 
   test("detects env-sourced API keys when deciding GPT-5.5 Codex OAuth routing", () => {
     const limit = getEffectiveContextLimit(
-      KNOWN_MODELS.GPT.id,
+      "openai:gpt-5.5",
       false,
       providersWithOpenAI({
         apiKeySource: "env",
