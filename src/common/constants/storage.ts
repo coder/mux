@@ -179,6 +179,14 @@ export function getThinkingLevelKey(scopeId: string): string {
 }
 
 /**
+ * Get the localStorage key for the OpenAI pro reasoning-mode toggle per scope
+ * (workspace/project). Format: "reasoningMode:{scopeId}"
+ */
+export function getReasoningModeKey(scopeId: string): string {
+  return `reasoningMode:${scopeId}`;
+}
+
+/**
  * Get the localStorage key for per-agent workspace AI overrides cache.
  * Format: "workspaceAiSettingsByAgent:{workspaceId}"
  */

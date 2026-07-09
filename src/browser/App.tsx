@@ -48,7 +48,11 @@ import {
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { getTopLevelProjectEntries } from "@/common/utils/subProjects";
-import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  THINKING_LEVELS,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
@@ -57,6 +61,7 @@ import {
   getModelKey,
   getNotifyOnResponseKey,
   getThinkingLevelByModelKey,
+  getReasoningModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceLastReadKey,
@@ -440,6 +445,17 @@ function AppInner() {
     [getModelForWorkspace]
   );
 
+  const getReasoningModeForWorkspace = useCallback((workspaceId: string): OpenAIReasoningMode => {
+    if (!workspaceId) {
+      return "standard";
+    }
+    const stored = readPersistedState<OpenAIReasoningMode | null>(
+      getReasoningModeKey(workspaceId),
+      null
+    );
+    return stored ?? "standard";
+  }, []);
+
   const setThinkingLevelFromPalette = useCallback(
     (workspaceId: string, level: ThinkingLevel) => {
       if (!workspaceId) {
@@ -449,13 +465,19 @@ function AppInner() {
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
       const model = getModelForWorkspace(workspaceId);
       const key = getThinkingLevelKey(workspaceId);
+      // Carry the current pro-mode choice: the backend replaces the agent's
+      // settings wholesale, so omitting reasoningMode would wipe it.
+      const reasoningMode = getReasoningModeForWorkspace(workspaceId);
 
       // Use the utility function which handles localStorage and event dispatch
       // ThinkingProvider will pick this up via its listener
       updatePersistedState(key, normalized);
 
       type WorkspaceAISettingsByAgentCache = Partial<
-        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+        Record<
+          string,
+          { model: string; thinkingLevel: ThinkingLevel; reasoningMode?: OpenAIReasoningMode }
+        >
       >;
 
       const normalizedAgentId =
@@ -470,7 +492,7 @@ function AppInner() {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [normalizedAgentId]: { model, thinkingLevel: normalized },
+            [normalizedAgentId]: { model, thinkingLevel: normalized, reasoningMode },
           };
         },
         {}
@@ -481,13 +503,14 @@ function AppInner() {
         markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
           model,
           thinkingLevel: normalized,
+          reasoningMode,
         });
 
         api.workspace
           .updateAgentAISettings({
             workspaceId,
             agentId: normalizedAgentId,
-            aiSettings: { model, thinkingLevel: normalized },
+            aiSettings: { model, thinkingLevel: normalized, reasoningMode },
           })
           .then((result) => {
             if (!result.success) {
@@ -509,7 +532,75 @@ function AppInner() {
         );
       }
     },
-    [api, getModelForWorkspace]
+    [api, getModelForWorkspace, getReasoningModeForWorkspace]
+  );
+
+  // Palette toggle for the OpenAI pro reasoning mode. Persists like the
+  // thinking-level palette action: localStorage first (ThinkingProvider listens),
+  // then best-effort backend sync with the full settings payload.
+  const toggleReasoningModeFromPalette = useCallback(
+    (workspaceId: string) => {
+      if (!workspaceId) {
+        return;
+      }
+
+      const next: OpenAIReasoningMode =
+        getReasoningModeForWorkspace(workspaceId) === "pro" ? "standard" : "pro";
+      const model = getModelForWorkspace(workspaceId);
+      const thinkingLevel = getThinkingLevelForWorkspace(workspaceId);
+
+      updatePersistedState(getReasoningModeKey(workspaceId), next);
+
+      type WorkspaceAISettingsByAgentCache = Partial<
+        Record<
+          string,
+          { model: string; thinkingLevel: ThinkingLevel; reasoningMode?: OpenAIReasoningMode }
+        >
+      >;
+
+      const normalizedAgentId =
+        readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId)
+          .trim()
+          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
+
+      updatePersistedState<WorkspaceAISettingsByAgentCache>(
+        getWorkspaceAISettingsByAgentKey(workspaceId),
+        (prev) => {
+          const record: WorkspaceAISettingsByAgentCache =
+            prev && typeof prev === "object" ? prev : {};
+          return {
+            ...record,
+            [normalizedAgentId]: { model, thinkingLevel, reasoningMode: next },
+          };
+        },
+        {}
+      );
+
+      if (api) {
+        markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
+          model,
+          thinkingLevel,
+          reasoningMode: next,
+        });
+
+        api.workspace
+          .updateAgentAISettings({
+            workspaceId,
+            agentId: normalizedAgentId,
+            aiSettings: { model, thinkingLevel, reasoningMode: next },
+          })
+          .then((result) => {
+            if (!result.success) {
+              clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
+            }
+          })
+          .catch(() => {
+            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
+            // Best-effort only.
+          });
+      }
+    },
+    [api, getModelForWorkspace, getReasoningModeForWorkspace, getThinkingLevelForWorkspace]
   );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
@@ -745,6 +836,8 @@ function AppInner() {
     themePreference,
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
+    getReasoningMode: getReasoningModeForWorkspace,
+    onToggleReasoningMode: toggleReasoningModeFromPalette,
     getMinThinkingOverride,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,

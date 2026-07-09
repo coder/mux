@@ -69,6 +69,7 @@ export const CommandIds = {
   modeToggle: () => "mode:toggle" as const,
   modelChange: () => "model:change" as const,
   thinkingSetLevel: () => "thinking:set-level" as const,
+  toggleProReasoning: () => "thinking:toggle-pro-reasoning" as const,
 
   // Project commands
   projectAdd: () => "project:add" as const,

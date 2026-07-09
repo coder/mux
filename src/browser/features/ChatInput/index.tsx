@@ -29,6 +29,7 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
+import { ProModeToggle } from "@/browser/components/ThinkingSlider/ProModeToggle";
 import { ThinkingSliderComponent } from "@/browser/components/ThinkingSlider/ThinkingSlider";
 import {
   getAllowedRuntimeModesForUi,
@@ -36,6 +37,7 @@ import {
 } from "@/browser/utils/policyUi";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
+import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
@@ -144,7 +146,11 @@ import {
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceThinkingLevel,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { DEFAULT_RUNTIME_ENABLEMENT, normalizeRuntimeEnablement } from "@/common/types/runtime";
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
@@ -270,6 +276,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationProject =
     variant === "creation" ? userProjects.get(creationParentProjectPath) : undefined;
   const [thinkingLevel] = useThinkingLevel();
+  const [reasoningMode] = useReasoningMode();
   const dynamicWorkflowsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const workspaceHeartbeatsExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
@@ -777,7 +784,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const setPreferredModel = useCallback(
     (model: string) => {
       type WorkspaceAISettingsByAgentCache = Partial<
-        Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+        Record<
+          string,
+          { model: string; thinkingLevel: ThinkingLevel; reasoningMode?: OpenAIReasoningMode }
+        >
       >;
 
       const selectedModel = normalizeSelectedModel(model);
@@ -821,7 +831,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [normalizedAgentId]: { model: selectedModel, thinkingLevel },
+            // Include reasoningMode so a model change cannot wipe the persisted
+            // pro-mode choice (backend replaces the agent's settings wholesale).
+            [normalizedAgentId]: { model: selectedModel, thinkingLevel, reasoningMode },
           };
         },
         {}
@@ -835,13 +847,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
         model: selectedModel,
         thinkingLevel,
+        reasoningMode,
       });
 
       api.workspace
         .updateAgentAISettings({
           workspaceId,
           agentId: normalizedAgentId,
-          aiSettings: { model: selectedModel, thinkingLevel },
+          aiSettings: { model: selectedModel, thinkingLevel, reasoningMode },
         })
         .then((result) => {
           if (!result.success) {
@@ -861,6 +874,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       providersConfig,
       onModelChange,
       thinkingLevel,
+      reasoningMode,
       variant,
       workspaceGoal,
       workspaceId,
@@ -3315,6 +3329,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   data-component="ThinkingSliderGroup"
                 >
                   <ThinkingSliderComponent modelString={baseModel} />
+                  <ProModeToggle modelString={baseModel} />
                 </div>
               </div>
 

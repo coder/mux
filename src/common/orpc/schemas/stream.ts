@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AgentIdSchema } from "./agentDefinition";
-import { ThinkingLevelSchema } from "../../types/thinking";
+import { OpenAIReasoningModeSchema, ThinkingLevelSchema } from "../../types/thinking";
 import { AgentModeSchema } from "../../types/mode";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
@@ -726,6 +726,8 @@ export const GoalInterventionPolicySchema = z.enum(["steer", "pause"]);
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
+  /** OpenAI reasoning mode (pro toggle); inert for models without pro-mode support. */
+  reasoningMode: OpenAIReasoningModeSchema.optional(),
   model: z.string("No model specified"),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),

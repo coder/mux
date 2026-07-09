@@ -9,7 +9,7 @@ import type {
 } from "@/common/types/runtime";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -21,6 +21,7 @@ import {
   getModelKey,
   getNotifyOnResponseAutoEnableKey,
   getNotifyOnResponseKey,
+  getReasoningModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
@@ -110,16 +111,36 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
   }
 
+  // Mirror thinkingLevel: carry the creation-time pro reasoning-mode choice into
+  // the new workspace's scope so it survives the project→workspace transition.
+  const projectReasoningMode = readPersistedState<OpenAIReasoningMode | null>(
+    getReasoningModeKey(projectScopeId),
+    null
+  );
+  if (projectReasoningMode !== null) {
+    updatePersistedState(getReasoningModeKey(workspaceId), projectReasoningMode);
+  }
+
   if (projectModel) {
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
-    updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
+    type AgentSettingsCache = Partial<
+      Record<
+        string,
+        { model: string; thinkingLevel: ThinkingLevel; reasoningMode?: OpenAIReasoningMode }
+      >
+    >;
+    updatePersistedState<AgentSettingsCache>(
       getWorkspaceAISettingsByAgentKey(workspaceId),
       (prev) => {
         const record = prev && typeof prev === "object" ? prev : {};
         return {
-          ...(record as Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>),
-          [effectiveAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
+          ...(record as AgentSettingsCache),
+          [effectiveAgentId]: {
+            model: projectModel,
+            thinkingLevel: effectiveThinking,
+            ...(projectReasoningMode != null ? { reasoningMode: projectReasoningMode } : {}),
+          },
         };
       },
       {}
@@ -531,6 +552,7 @@ export function useCreationWorkspace({
             aiSettings: {
               model: settings.model,
               thinkingLevel: settings.thinkingLevel,
+              reasoningMode: settings.reasoningMode,
             },
             persistSelectedAgentId: true,
           })
@@ -692,6 +714,7 @@ export function useCreationWorkspace({
       settings.agentId,
       settings.model,
       settings.thinkingLevel,
+      settings.reasoningMode,
       settings.trunkBranch,
       waitForGeneration,
       workspaceNameState.autoGenerate,

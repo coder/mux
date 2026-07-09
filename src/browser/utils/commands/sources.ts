@@ -5,7 +5,12 @@ import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogConte
 import { getContextResetSuccessMessage } from "@/browser/utils/contextResetFeedback";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { PinnedMoveDirection } from "@/browser/utils/ui/pinnedReorder";
-import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  openaiSupportsProMode,
+  THINKING_LEVELS,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import {
   enforceThinkingPolicy,
   getAvailableThinkingLevels,
@@ -81,6 +86,8 @@ export interface BuildSourcesParams {
   // UI actions
   getThinkingLevel: (workspaceId: string) => ThinkingLevel;
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
+  getReasoningMode: (workspaceId: string) => OpenAIReasoningMode;
+  onToggleReasoningMode: (workspaceId: string) => void;
   /**
    * Explicit per-model minimum thinking override (undefined → built-in default floor).
    * Used to hide off/low from the "Set Thinking Effort" picker, matching the slider.
@@ -1264,6 +1271,21 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           },
         },
       });
+
+      // Pro reasoning mode is only meaningful for models that support it
+      // (GPT-5.6 Sol/Terra); hide the action elsewhere to avoid inert toggles.
+      if (openaiSupportsProMode(currentModelString ?? "")) {
+        const proActive = p.getReasoningMode(workspaceId) === "pro";
+        list.push({
+          id: CommandIds.toggleProReasoning(),
+          title: "Toggle Pro Reasoning Mode",
+          subtitle: `Current: ${proActive ? "Pro — slower, more thorough" : "Standard"}`,
+          section: section.mode,
+          run: () => {
+            p.onToggleReasoningMode(workspaceId);
+          },
+        });
+      }
     }
 
     return list;

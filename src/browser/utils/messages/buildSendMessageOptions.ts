@@ -1,5 +1,5 @@
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { normalizeSelectedModel } from "@/common/utils/ai/models";
 
@@ -16,6 +16,7 @@ export interface ExperimentValues {
 export interface SendMessageOptionsInput {
   model: string;
   thinkingLevel: ThinkingLevel;
+  reasoningMode: OpenAIReasoningMode;
   agentId: string;
   providerOptions: MuxProviderOptions;
   experiments: ExperimentValues;
@@ -36,6 +37,7 @@ export function normalizeModelPreference(rawModel: unknown, fallbackModel: strin
 export function buildSendMessageOptions(input: SendMessageOptionsInput): SendMessageOptions {
   return {
     thinkingLevel: input.thinkingLevel,
+    reasoningMode: input.reasoningMode,
     model: input.model,
     agentId: input.agentId,
     providerOptions: input.providerOptions,

@@ -175,7 +175,12 @@ import {
   modelHasPricingData,
   UNPRICED_TARGET_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceOpenAIReasoningMode,
+  coerceThinkingLevel,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 import {
@@ -6797,6 +6802,7 @@ export class WorkspaceService extends EventEmitter {
     return Ok({
       model,
       thinkingLevel: aiSettings.thinkingLevel,
+      ...(aiSettings.reasoningMode != null ? { reasoningMode: aiSettings.reasoningMode } : {}),
     });
   }
 
@@ -6837,7 +6843,11 @@ export class WorkspaceService extends EventEmitter {
 
     const thinkingLevel = requestedThinking;
 
-    return { model, thinkingLevel };
+    // reasoningMode is optional: old clients omit it and the persist path then
+    // preserves any previously stored value instead of wiping it.
+    const reasoningMode = options?.reasoningMode;
+
+    return { model, thinkingLevel, ...(reasoningMode != null ? { reasoningMode } : {}) };
   }
 
   /**
@@ -6944,7 +6954,11 @@ export class WorkspaceService extends EventEmitter {
       const prev = snapshotEntry.aiSettingsByAgent?.[normalizedAgentId];
       const aiSettingsChanged =
         aiSettings != null &&
-        (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+        (prev?.model !== aiSettings.model ||
+          prev?.thinkingLevel !== aiSettings.thinkingLevel ||
+          // Absent reasoningMode preserves the previous value (see write below),
+          // so only an explicit different value counts as a change.
+          (aiSettings.reasoningMode != null && prev?.reasoningMode !== aiSettings.reasoningMode));
       const selectedAgentChanged =
         options?.persistSelectedAgentId === true && snapshotEntry.agentId !== normalizedAgentId;
       if (!aiSettingsChanged && !selectedAgentChanged) {
@@ -6970,7 +6984,9 @@ export class WorkspaceService extends EventEmitter {
       const prev = workspaceEntry.aiSettingsByAgent?.[normalizedAgentId];
       const aiSettingsChanged =
         aiSettings != null &&
-        (prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel);
+        (prev?.model !== aiSettings.model ||
+          prev?.thinkingLevel !== aiSettings.thinkingLevel ||
+          (aiSettings.reasoningMode != null && prev?.reasoningMode !== aiSettings.reasoningMode));
       const selectedAgentChanged =
         options?.persistSelectedAgentId === true && workspaceEntry.agentId !== normalizedAgentId;
       if (!aiSettingsChanged && !selectedAgentChanged) {
@@ -6979,9 +6995,15 @@ export class WorkspaceService extends EventEmitter {
       }
 
       if (aiSettings != null) {
+        // Callers that omit reasoningMode (older clients, thinking-only updates)
+        // must not wipe a previously persisted value — self-healing merge.
+        const mergedReasoningMode = aiSettings.reasoningMode ?? prev?.reasoningMode;
         workspaceEntry.aiSettingsByAgent = {
           ...(workspaceEntry.aiSettingsByAgent ?? {}),
-          [normalizedAgentId]: aiSettings,
+          [normalizedAgentId]: {
+            ...aiSettings,
+            ...(mergedReasoningMode != null ? { reasoningMode: mergedReasoningMode } : {}),
+          },
         };
       }
 
@@ -9700,17 +9722,30 @@ export class WorkspaceService extends EventEmitter {
     // with an implicit "off" (aiService defaults undefined -> off), which both
     // ignored the user's UI selection and sent `thinking: { type: "disabled" }`
     // to Anthropic models that reject disabled thinking (e.g. Fable/Mythos).
-    const candidates: Array<{ model?: string; thinkingLevel?: ThinkingLevel }> = [
-      { model: selectedAgentSettings?.model, thinkingLevel: selectedAgentSettings?.thinkingLevel },
+    const candidates: Array<{
+      model?: string;
+      thinkingLevel?: ThinkingLevel;
+      reasoningMode?: OpenAIReasoningMode;
+    }> = [
+      {
+        model: selectedAgentSettings?.model,
+        thinkingLevel: selectedAgentSettings?.thinkingLevel,
+        reasoningMode: selectedAgentSettings?.reasoningMode,
+      },
       {
         model: workspaceEntry?.aiSettings?.model,
         thinkingLevel: workspaceEntry?.aiSettings?.thinkingLevel,
+        reasoningMode: workspaceEntry?.aiSettings?.reasoningMode,
       },
       {
         model: config.agentAiDefaults?.[agentId]?.modelString,
         thinkingLevel: config.agentAiDefaults?.[agentId]?.thinkingLevel,
       },
-      { model: execAgentSettings?.model, thinkingLevel: execAgentSettings?.thinkingLevel },
+      {
+        model: execAgentSettings?.model,
+        thinkingLevel: execAgentSettings?.thinkingLevel,
+        reasoningMode: execAgentSettings?.reasoningMode,
+      },
       agentId !== WORKSPACE_DEFAULTS.agentId
         ? {
             model: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString,
@@ -9728,10 +9763,12 @@ export class WorkspaceService extends EventEmitter {
       const normalized = normalizeToCanonical(raw.trim());
       if (isValidModelFormat(normalized)) {
         const thinkingLevel = coerceThinkingLevel(candidate.thinkingLevel);
+        const reasoningMode = coerceOpenAIReasoningMode(candidate.reasoningMode);
         return {
           model: normalized,
           agentId,
           ...(thinkingLevel != null ? { thinkingLevel } : {}),
+          ...(reasoningMode != null ? { reasoningMode } : {}),
         };
       }
     }
@@ -9961,10 +9998,17 @@ export class WorkspaceService extends EventEmitter {
     const normalizedThinkingLevel =
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
+    // Same persisted-settings fallback order as thinkingLevel (global defaults
+    // and activity snapshots do not carry reasoningMode).
+    const reasoningMode = coerceOpenAIReasoningMode(
+      compactAgentSettings?.reasoningMode ?? execAgentSettings?.reasoningMode
+    );
+
     return {
       model,
       agentId: "compact",
       thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+      ...(reasoningMode != null ? { reasoningMode } : {}),
       maxOutputTokens: undefined,
       // Disable all tools during compaction - regex .* matches all tool names.
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
@@ -10360,11 +10404,18 @@ export class WorkspaceService extends EventEmitter {
     const normalizedThinkingLevel =
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
+    // Same persisted-settings fallback order as thinkingLevel (global defaults
+    // and activity snapshots do not carry reasoningMode).
+    const reasoningMode = coerceOpenAIReasoningMode(
+      agentSettings?.reasoningMode ?? execAgentSettings?.reasoningMode
+    );
+
     return {
       sendOptions: {
         model,
         agentId,
         thinkingLevel: enforceThinkingPolicy(model, normalizedThinkingLevel),
+        ...(reasoningMode != null ? { reasoningMode } : {}),
         maxOutputTokens: undefined,
         // Heartbeats are idle control loops; their prompt may ask the agent to seed a bounded
         // goal before continuing. AIService still gates set_goal to top-level exec-like agents.

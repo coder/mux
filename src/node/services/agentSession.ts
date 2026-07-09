@@ -55,7 +55,11 @@ import {
 } from "@/node/services/utils/fileChangeTracker";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceOpenAIReasoningMode,
+  coerceThinkingLevel,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { enforceThinkingPolicy, resolveMinimumThinkingLevel } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
@@ -1416,6 +1420,17 @@ export class AgentSession {
       ? (agentSettingsThinkingLevel ?? persistedThinkingLevel ?? assistantThinkingLevel)
       : (persistedThinkingLevel ?? assistantThinkingLevel ?? agentSettingsThinkingLevel);
 
+    // Pro reasoning mode threads alongside thinkingLevel from the same sources
+    // (assistant message metadata does not carry it), so startup retries do not
+    // silently downgrade a pro-mode turn to standard.
+    const persistedReasoningMode = coerceOpenAIReasoningMode(
+      persistedRetrySendOptions?.reasoningMode
+    );
+    const agentSettingsReasoningMode = coerceOpenAIReasoningMode(agentSettings?.reasoningMode);
+    const baseReasoningMode = isChildTaskWorkspace
+      ? (agentSettingsReasoningMode ?? persistedReasoningMode)
+      : (persistedReasoningMode ?? agentSettingsReasoningMode);
+
     const persistedToolPolicy =
       lastUserMessage?.metadata?.toolPolicy ?? persistedRetrySendOptions?.toolPolicy;
     const persistedDisableWorkspaceAgents =
@@ -1438,10 +1453,14 @@ export class AgentSession {
       const requestedThinkingLevel =
         baseThinkingLevel ?? coerceThinkingLevel(compactSettings?.thinkingLevel) ?? "off";
 
+      const requestedReasoningMode =
+        baseReasoningMode ?? coerceOpenAIReasoningMode(compactSettings?.reasoningMode);
+
       const compactionRequest: StartupRetrySendOptions = {
         model: compactionModel,
         agentId: "compact",
         thinkingLevel: enforceThinkingPolicy(compactionModel, requestedThinkingLevel),
+        ...(requestedReasoningMode != null ? { reasoningMode: requestedReasoningMode } : {}),
         maxOutputTokens:
           typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
             ? lastUserMuxMetadata.parsed.maxOutputTokens
@@ -1476,6 +1495,9 @@ export class AgentSession {
     };
     if (baseThinkingLevel) {
       retryRequest.thinkingLevel = baseThinkingLevel;
+    }
+    if (baseReasoningMode) {
+      retryRequest.reasoningMode = baseReasoningMode;
     }
     if (persistedToolPolicy) {
       retryRequest.toolPolicy = persistedToolPolicy;
@@ -3625,6 +3647,8 @@ export class AgentSession {
       modelString,
       abortSignal,
       thinkingLevel: effectiveThinkingLevel,
+      // Orthogonal to thinking level; buildRequestHeaders gates it per model.
+      reasoningMode: options?.reasoningMode,
       toolPolicy: options?.toolPolicy,
       additionalSystemContext: options?.additionalSystemContext,
       additionalSystemInstructions: options?.additionalSystemInstructions,
@@ -5479,6 +5503,7 @@ export class AgentSession {
       model: effectiveModel,
       agentId: effectiveAgentId,
       thinkingLevel: followUp.thinkingLevel,
+      reasoningMode: followUp.reasoningMode,
       additionalSystemInstructions: followUp.additionalSystemInstructions,
       providerOptions: followUp.providerOptions,
       experiments: followUp.experiments,

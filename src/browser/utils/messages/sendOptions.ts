@@ -1,6 +1,7 @@
 import {
   getAgentIdKey,
   getModelKey,
+  getReasoningModeKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getDisableWorkspaceAgentsKey,
@@ -12,7 +13,7 @@ import {
   normalizeModelPreference,
 } from "@/browser/utils/messages/buildSendMessageOptions";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
@@ -64,6 +65,11 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     WORKSPACE_DEFAULTS.agentId
   );
 
+  // OpenAI pro reasoning mode (workspace-scoped); absent = standard.
+  const reasoningMode =
+    readPersistedState<OpenAIReasoningMode | null>(getReasoningModeKey(workspaceId), null) ??
+    "standard";
+
   const providerOptions = getProviderOptions();
 
   const disableWorkspaceAgents = readPersistedState<boolean>(
@@ -75,6 +81,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     model: baseModel,
     agentId,
     thinkingLevel,
+    reasoningMode,
     providerOptions,
     disableWorkspaceAgents,
     experiments: {

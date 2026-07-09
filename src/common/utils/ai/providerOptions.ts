@@ -14,7 +14,7 @@ import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import {
   getAnthropicEffort,
   anthropicRejectsDisabledThinking,
@@ -22,6 +22,7 @@ import {
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   getOpenAIReasoningEffort,
+  openaiSupportsProMode,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
 import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/policy";
@@ -38,6 +39,15 @@ import { normalizeToCanonical, supports1MContext } from "./models";
  * before the request reaches Anthropic).
  */
 export const MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER = "x-mux-anthropic-effort";
+
+/**
+ * Request header used to inject OpenAI's `reasoning.mode` at the wire level.
+ * @ai-sdk/openai only maps reasoningEffort/reasoningSummary into the wire
+ * `reasoning` object and drops unknown providerOptions keys, so pro mode for
+ * GPT-5.6 Sol/Terra is delivered via this Mux-internal header, which the
+ * OpenAI fetch wrapper strips and rewrites into `reasoning.mode` on the wire.
+ */
+export const MUX_OPENAI_REASONING_MODE_HEADER = "x-mux-openai-reasoning-mode";
 
 /**
  * OpenRouter reasoning options
@@ -584,7 +594,8 @@ export function buildRequestHeaders(
   workspaceId?: string,
   providersConfig?: ProvidersConfigMap | null,
   routeProvider?: ProviderName,
-  thinkingLevel?: ThinkingLevel
+  thinkingLevel?: ThinkingLevel,
+  reasoningMode?: OpenAIReasoningMode
 ): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
 
@@ -622,6 +633,23 @@ export function buildRequestHeaders(
     anthropicSupportsNativeXhigh(modelString)
   ) {
     headers[MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER] = "xhigh";
+  }
+
+  // OpenAI pro reasoning mode (GPT-5.6 Sol/Terra). The @ai-sdk/openai responses
+  // model drops unknown providerOptions keys, so `reasoning.mode` cannot ride
+  // providerOptions — emit a Mux-internal header that the OpenAI fetch wrapper
+  // strips and rewrites into the wire body. Mode is orthogonal to effort, so
+  // this is independent of thinkingLevel. Only emit when the route passes
+  // through our OpenAI fetch wrapper (direct OpenAI or passthrough gateways
+  // like mux-gateway); non-passthrough gateways (OpenRouter, github-copilot)
+  // must never see this header.
+  if (
+    origin === "openai" &&
+    routePassesHeaders &&
+    reasoningMode === "pro" &&
+    openaiSupportsProMode(modelString)
+  ) {
+    headers[MUX_OPENAI_REASONING_MODE_HEADER] = "pro";
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;

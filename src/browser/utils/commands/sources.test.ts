@@ -45,6 +45,8 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     streamingModels: new Map<string, string>(),
     getThinkingLevel: () => "off",
     onSetThinkingLevel: () => undefined,
+    getReasoningMode: () => "standard",
+    onToggleReasoningMode: () => undefined,
     onStartWorkspaceCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
     multiProjectWorkspacesEnabled: true,

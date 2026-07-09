@@ -109,7 +109,11 @@ import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/work
 import { DEFAULT_GOAL_DEFAULTS, normalizeGoalDefaults } from "@/constants/goals";
 import { mergeGoalDefaults } from "@/common/utils/goals/resolveGoalSetIntent";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
-import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  THINKING_LEVEL_OFF,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import {
   enforceThinkingPolicy,
   resolveEffectiveThinkingLevel,
@@ -225,6 +229,8 @@ export interface StreamMessageOptions {
   workspaceId: string;
   modelString: string;
   thinkingLevel?: ThinkingLevel;
+  /** OpenAI pro reasoning mode; delivered via buildRequestHeaders (inert for unsupported models). */
+  reasoningMode?: OpenAIReasoningMode;
   toolPolicy?: ToolPolicy;
   abortSignal?: AbortSignal;
   /** Live workspace scratchpad snapshot from the renderer; when present it wins over disk. */
@@ -998,6 +1004,7 @@ export class AIService extends EventEmitter {
       workspaceId,
       modelString,
       thinkingLevel,
+      reasoningMode,
       toolPolicy,
       abortSignal,
       additionalSystemContext,
@@ -2403,7 +2410,8 @@ export class AIService extends EventEmitter {
         workspaceId,
         this.providerService.getConfig(),
         routeProvider,
-        effectiveThinkingLevel
+        effectiveThinkingLevel,
+        reasoningMode
       );
 
       // --- Model parameter overrides from providers.jsonc ---
@@ -2705,13 +2713,16 @@ export class AIService extends EventEmitter {
                     promptCacheScope
                   );
 
+                  // The pro-mode predicate re-gates per fallback model inside
+                  // buildRequestHeaders, so pro never leaks onto unsupported fallbacks.
                   let nextHeaders = buildRequestHeaders(
                     next.canonicalModelString,
                     effectiveMuxProviderOptions,
                     workspaceId,
                     this.providerService.getConfig(),
                     next.routeProvider,
-                    nextThinkingLevel
+                    nextThinkingLevel,
+                    reasoningMode
                   );
                   if (pendingRunMetadataId != null) {
                     // Keep DevTools run correlation on fallback requests too.

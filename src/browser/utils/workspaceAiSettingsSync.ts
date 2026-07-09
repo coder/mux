@@ -1,20 +1,27 @@
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
 interface WorkspaceAiSettingsSnapshot {
   model: string;
   thinkingLevel: ThinkingLevel;
+  /** Optional: legacy settings (and non-OpenAI workflows) omit it. */
+  reasoningMode?: OpenAIReasoningMode;
 }
 
 export function getWorkspaceAiSettingsFromMetadata(
   metadata: FrontendWorkspaceMetadata | undefined,
   agentId: string | undefined
-): { model: string | undefined; thinkingLevel: ThinkingLevel | undefined } {
+): {
+  model: string | undefined;
+  thinkingLevel: ThinkingLevel | undefined;
+  reasoningMode: OpenAIReasoningMode | undefined;
+} {
   const settings =
     (agentId ? metadata?.aiSettingsByAgent?.[agentId] : undefined) ?? metadata?.aiSettings;
   return {
     model: settings?.model,
     thinkingLevel: settings?.thinkingLevel,
+    reasoningMode: settings?.reasoningMode,
   };
 }
 
@@ -58,7 +65,10 @@ export function shouldApplyWorkspaceAiSettingsFromBackend(
   }
 
   const matches =
-    pending.model === incoming.model && pending.thinkingLevel === incoming.thinkingLevel;
+    pending.model === incoming.model &&
+    pending.thinkingLevel === incoming.thinkingLevel &&
+    // Absent reasoningMode is semantically "standard" on both sides.
+    (pending.reasoningMode ?? "standard") === (incoming.reasoningMode ?? "standard");
   if (matches) {
     pendingAiSettingsByWorkspace.delete(key);
     return true;

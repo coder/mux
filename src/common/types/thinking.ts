@@ -255,6 +255,37 @@ export function openaiSupportsNativeMaxEffort(modelString: string): boolean {
 }
 
 /**
+ * OpenAI Responses API reasoning mode (orthogonal to reasoning effort).
+ * Absent/"standard" is the API default; "pro" enables the slower, more
+ * thorough pro-mode serving introduced with GPT-5.6 Sol/Terra.
+ */
+export const OPENAI_REASONING_MODES = ["standard", "pro"] as const;
+export type OpenAIReasoningMode = (typeof OPENAI_REASONING_MODES)[number];
+export const OpenAIReasoningModeSchema = z.enum(OPENAI_REASONING_MODES);
+
+/** Coerce an untrusted persisted value to an OpenAIReasoningMode (or undefined). */
+export function coerceOpenAIReasoningMode(value: unknown): OpenAIReasoningMode | undefined {
+  return OPENAI_REASONING_MODES.includes(value as OpenAIReasoningMode)
+    ? (value as OpenAIReasoningMode)
+    : undefined;
+}
+
+/**
+ * Whether the given OpenAI model supports `reasoning.mode: "pro"` on the
+ * Responses API.
+ *
+ * "GPT-5.6 Sol Pro" / "GPT-5.6 Terra Pro" are not separate model ids: the same
+ * `gpt-5.6-sol` / `gpt-5.6-terra` ids are served with `reasoning.mode: "pro"`.
+ * There is no Luna Pro. The `(?!-[a-z])` lookahead tolerates version-date
+ * suffixes (e.g. gpt-5.6-sol-2026-07-09) while rejecting hypothetical named
+ * variants (e.g. gpt-5.6-sol-mini).
+ */
+export function openaiSupportsProMode(modelString: string): boolean {
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
+  return /^gpt-5\.6-(?:sol|terra)(?!-[a-z])/.test(withoutPrefix);
+}
+
+/**
  * Whether the given Anthropic model rejects `thinking: { type: "disabled" }`.
  *
  * Mythos-class models (Fable/Mythos) cannot turn thinking off: the API errors with
