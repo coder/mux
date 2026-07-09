@@ -349,7 +349,13 @@ describe("ThinkingContext", () => {
       button.click();
     });
 
-    const expectedSettings = { model: "metadataModel:abc", thinkingLevel: "medium" as const };
+    // setThinkingLevel persists the full settings payload including the current
+    // reasoningMode (default "standard") so partial writes cannot clobber it.
+    const expectedSettings = {
+      model: "metadataModel:abc",
+      thinkingLevel: "medium" as const,
+      reasoningMode: "standard" as const,
+    };
     await waitFor(() => {
       expect(readWorkspaceAISettingsCache(workspaceId).exec).toEqual(expectedSettings);
     }, METADATA_WAIT_OPTIONS);
@@ -522,7 +528,11 @@ describe("ThinkingContext", () => {
       );
     });
 
-    const expectedSettings = { model: metadataModel, thinkingLevel: expectedThinkingLevel };
+    const expectedSettings = {
+      model: metadataModel,
+      thinkingLevel: expectedThinkingLevel,
+      reasoningMode: "standard" as const,
+    };
     await waitFor(() => {
       expect(readWorkspaceAISettingsCache(workspaceId).exec).toEqual(expectedSettings);
     }, METADATA_WAIT_OPTIONS);
