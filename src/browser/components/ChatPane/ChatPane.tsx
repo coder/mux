@@ -1030,12 +1030,14 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       isHydratingTranscript,
       chatViewDataReady,
       hasRenderableMessages: deferredMessages.length > 0,
-      shouldShowStreamingBarrier,
+      // Any mounted barrier (including waiting-on-monitor) counts: a cleared
+      // transcript with an armed monitor must not flash placeholders under it.
+      shouldShowStreamingBarrier: shouldMountStreamingBarrier,
     });
   const showEmptyTranscriptPlaceholder =
     deferredMessages.length === 0 &&
     !showTranscriptHydrationPlaceholder &&
-    !shouldShowStreamingBarrier;
+    !shouldMountStreamingBarrier;
   const showRetryBarrier =
     !isHydratingTranscript && !shouldShowStreamingBarrier && hasInterruptedStream;
   const isAutoRetryActive =
