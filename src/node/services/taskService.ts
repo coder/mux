@@ -3101,8 +3101,18 @@ export class TaskService {
           parentMeta.aiSettings?.thinkingLevel);
     // Per-workspace pro mode inherits alongside model/thinking; the send path
     // re-gates per model/route so this is inert for non-GPT-5.6 models.
+    // The user toggles pro on the parent's ACTIVE agent, so after the exec
+    // bucket fall back to the active-agent bucket (then legacy settings) —
+    // mirroring resolveTaskAISettings — or a workspace turn launched from a
+    // non-exec parent agent would silently drop back to standard mode.
+    const activeParentAiSettings = this.resolveWorkspaceAISettings(
+      parentMeta,
+      normalizeAgentId(parentMeta.agentId)
+    );
     const reasoningMode = coerceOpenAIReasoningMode(
-      parentMeta.aiSettingsByAgent?.exec?.reasoningMode ?? parentMeta.aiSettings?.reasoningMode
+      parentMeta.aiSettingsByAgent?.exec?.reasoningMode ??
+        activeParentAiSettings?.reasoningMode ??
+        parentMeta.aiSettings?.reasoningMode
     );
 
     const record: WorkspaceTurnTaskHandleRecord = {

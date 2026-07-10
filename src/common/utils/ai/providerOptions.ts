@@ -360,10 +360,13 @@ export function buildProviderOptions(
     // capabilityModel so mapped aliases (mappedToModel) inherit their target's
     // native effort. Live-verified (2026-07-10): the Responses API accepts
     // reasoning.effort "max" on every GPT-5.6 tier (gpt-5.5 rejects it), but
-    // @ai-sdk/openai's Chat Completions schema still caps reasoningEffort at
-    // xhigh (z.enum without "max"), so a native-max request over the
-    // chatCompletions wire format would fail client-side Zod validation —
-    // degrade it to xhigh there instead.
+    // @ai-sdk/openai's Chat Completions schema caps reasoningEffort at xhigh
+    // (z.enum(["none", ..., "xhigh"]) — no "max"), so a native-max request
+    // over the chatCompletions wire format would fail client-side Zod
+    // validation — degrade it to xhigh there instead. "none" needs no such
+    // handling: it is a first-class member of that enum with dedicated
+    // chat-model handling, and omitting it would default GPT-5.6 back to
+    // medium reasoning (the exact bug the explicit "none" mapping fixes).
     const nativeReasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
     const chatCompletionsWire =
       (muxProviderOptions?.openai?.wireFormat ?? "responses") === "chatCompletions";
