@@ -116,9 +116,16 @@ describe("getOpenAIReasoningEffort", () => {
     expect(getOpenAIReasoningEffort("max", "openai:gpt-5.5-pro")).toBe("xhigh");
   });
 
+  test("maps off to the explicit none effort on GPT-5.6 (omission defaults to medium)", () => {
+    expect(getOpenAIReasoningEffort("off", "openai:gpt-5.6-sol")).toBe("none");
+    expect(getOpenAIReasoningEffort("off", "openai:gpt-5.6-luna")).toBe("none");
+    // Pre-5.6 models keep the omit-on-off behavior.
+    expect(getOpenAIReasoningEffort("off", "openai:gpt-5.5")).toBeUndefined();
+  });
+
   test("keeps the standard mapping for lower levels", () => {
-    expect(getOpenAIReasoningEffort("off", "openai:gpt-5.6-sol")).toBeUndefined();
     expect(getOpenAIReasoningEffort("high", "openai:gpt-5.6-sol")).toBe("high");
+    expect(getOpenAIReasoningEffort("low", "openai:gpt-5.6-sol")).toBe("low");
   });
 });
 

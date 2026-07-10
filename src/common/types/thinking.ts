@@ -340,16 +340,21 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
  * Model-aware OpenAI reasoning effort resolution.
  *
  * Most OpenAI models top out at "xhigh", so the ThinkingLevel "max" downgrades to
- * "xhigh" (see OPENAI_REASONING_EFFORT). GPT-5.6 Sol ships a distinct native effort
- * above xhigh; assumption: its wire value is the string "max" on the Responses API
- * (launch docs name the effort "max"; not yet in the SDK's typed union).
+ * "xhigh" (see OPENAI_REASONING_EFFORT). The GPT-5.6 family ships a distinct native
+ * effort above xhigh with the wire value "max" on the Responses API (live-verified:
+ * the response echoes `effort: max`; not yet in the SDK's typed union).
+ *
+ * GPT-5.6 "off" maps to the explicit "none" effort: omitting the field defaults
+ * the request to medium (live-verified 2026-07-10 — an effort-less request echoed
+ * `effort: medium`), which would silently ignore the user's off selection.
  */
 export function getOpenAIReasoningEffort(
   level: ThinkingLevel,
   modelString: string
 ): string | undefined {
-  if (level === "max" && openaiSupportsNativeMaxEffort(modelString)) {
-    return "max";
+  if (isGpt56FamilyModel(modelString)) {
+    if (level === "max") return "max";
+    if (level === "off") return "none";
   }
   return OPENAI_REASONING_EFFORT[level];
 }

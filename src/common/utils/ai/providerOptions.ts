@@ -523,11 +523,16 @@ export function buildProviderOptions(
 
   if (origin === "openai" && formatProvider !== origin) {
     // capabilityModel keeps mapped aliases consistent with raw ids on the same route.
-    // Copilot's Chat Completions upstream has not published native-max support,
-    // so degrade GPT-5.6 "max" to xhigh (the pre-5.6 top effort) instead of
-    // risking a request rejection.
+    // Copilot's Chat Completions upstream has not published native-max or
+    // explicit-none support, so degrade GPT-5.6 "max" to xhigh (the pre-5.6 top
+    // effort) and "none" back to omission instead of risking a rejection.
     const nativeReasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
-    const reasoningEffort = nativeReasoningEffort === "max" ? "xhigh" : nativeReasoningEffort;
+    const reasoningEffort =
+      nativeReasoningEffort === "max"
+        ? "xhigh"
+        : nativeReasoningEffort === "none"
+          ? undefined
+          : nativeReasoningEffort;
     if (!reasoningEffort) {
       log.debug(
         "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",

@@ -709,6 +709,39 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai!.reasoningEffort).toBe("xhigh");
     });
 
+    test("sends the explicit none effort for GPT-5.6 off (omission defaults to medium)", () => {
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "off");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      // Live-verified: effort-less GPT-5.6 requests run at medium; none + summary coexist.
+      expect(openai!.reasoningEffort).toBe("none");
+    });
+
+    test("keeps omitting reasoning options for pre-5.6 OpenAI off", () => {
+      const result = buildProviderOptions("openai:gpt-5.5", "off");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBeUndefined();
+    });
+
+    test("omits the effort for GPT-5.6 off on the Copilot gateway (none unpublished upstream)", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.6-sol",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "github-copilot"
+      );
+
+      expect(result).toEqual({});
+    });
+
     test("degrades native max to xhigh on the chatCompletions wire format", () => {
       // @ai-sdk/openai's Chat Completions schema caps reasoningEffort at xhigh
       // (z.enum without "max"); sending "max" would throw client-side.
