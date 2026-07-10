@@ -709,7 +709,21 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai!.reasoningEffort).toBe("xhigh");
     });
 
-    test("carries the native max effort through the Copilot-routed gateway call site", () => {
+    test("degrades native max to xhigh on the chatCompletions wire format", () => {
+      // @ai-sdk/openai's Chat Completions schema caps reasoningEffort at xhigh
+      // (z.enum without "max"); sending "max" would throw client-side.
+      const result = buildProviderOptions("openai:gpt-5.6-sol", "max", undefined, undefined, {
+        openai: { wireFormat: "chatCompletions" },
+      });
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
+    });
+
+    test("degrades native max to xhigh through the Copilot-routed gateway call site", () => {
+      // Copilot's Chat Completions upstream has not published native-max
+      // support, so the gateway path degrades to the pre-5.6 top effort.
       const result = buildProviderOptions(
         "openai:gpt-5.6-sol",
         "max",
@@ -724,7 +738,7 @@ describe("buildProviderOptions - OpenAI", () => {
 
       expect(result).toEqual({
         "github-copilot": {
-          reasoningEffort: "max",
+          reasoningEffort: "xhigh",
         },
       });
     });

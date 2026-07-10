@@ -355,10 +355,20 @@ export function buildProviderOptions(
 
   // Build OpenAI-specific options
   if (formatProvider === "openai") {
-    // Model-aware: GPT-5.6 Sol maps ThinkingLevel "max" to the native "max" effort;
-    // other OpenAI models keep the max -> "xhigh" downgrade. Use capabilityModel
-    // so mapped aliases (mappedToModel) inherit their target's native effort.
-    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
+    // Model-aware: the GPT-5.6 family maps ThinkingLevel "max" to the native
+    // "max" effort; other OpenAI models keep the max -> "xhigh" downgrade. Use
+    // capabilityModel so mapped aliases (mappedToModel) inherit their target's
+    // native effort. Live-verified (2026-07-10): the Responses API accepts
+    // reasoning.effort "max" on every GPT-5.6 tier (gpt-5.5 rejects it), but
+    // @ai-sdk/openai's Chat Completions schema still caps reasoningEffort at
+    // xhigh (z.enum without "max"), so a native-max request over the
+    // chatCompletions wire format would fail client-side Zod validation —
+    // degrade it to xhigh there instead.
+    const nativeReasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
+    const chatCompletionsWire =
+      (muxProviderOptions?.openai?.wireFormat ?? "responses") === "chatCompletions";
+    const reasoningEffort =
+      chatCompletionsWire && nativeReasoningEffort === "max" ? "xhigh" : nativeReasoningEffort;
 
     // Mux always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
@@ -513,7 +523,11 @@ export function buildProviderOptions(
 
   if (origin === "openai" && formatProvider !== origin) {
     // capabilityModel keeps mapped aliases consistent with raw ids on the same route.
-    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
+    // Copilot's Chat Completions upstream has not published native-max support,
+    // so degrade GPT-5.6 "max" to xhigh (the pre-5.6 top effort) instead of
+    // risking a request rejection.
+    const nativeReasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
+    const reasoningEffort = nativeReasoningEffort === "max" ? "xhigh" : nativeReasoningEffort;
     if (!reasoningEffort) {
       log.debug(
         "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",
