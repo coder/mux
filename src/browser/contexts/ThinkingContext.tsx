@@ -25,6 +25,7 @@ import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
 import { useMinThinkingLevels } from "@/browser/hooks/useMinThinkingLevels";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
 import {
   clearPendingWorkspaceAiSettings,
@@ -74,6 +75,8 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
   const { api } = useAPI();
   const workspaceContext = useOptionalWorkspaceContext();
   const { getMinimum } = useMinThinkingLevels();
+  // Resolve mapped aliases so keybind stepping walks the target model's ladder.
+  const { config: providersConfig } = useProvidersConfig();
   const defaultModel = getDefaultModel();
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
   const thinkingKey = getThinkingLevelKey(scopeId);
@@ -274,12 +277,17 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
       const model = getModelForThinkingUpdate(scopeId, metadataSettings.model, defaultModel);
       // Step only within levels at or above the model's minimum floor.
       const minimum = getMinimum(model);
-      const allowed = getAvailableThinkingLevels(model, minimum);
+      const allowed = getAvailableThinkingLevels(model, minimum, providersConfig);
       if (allowed.length <= 1) {
         return;
       }
 
-      const effectiveThinkingLevel = enforceThinkingPolicy(model, thinkingLevel, minimum);
+      const effectiveThinkingLevel = enforceThinkingPolicy(
+        model,
+        thinkingLevel,
+        minimum,
+        providersConfig
+      );
       const currentIndex = allowed.indexOf(effectiveThinkingLevel);
 
       // Increase/decrease are directional: clamp at the ends instead of wrapping,
@@ -296,7 +304,15 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [defaultModel, getMinimum, metadataSettings.model, scopeId, thinkingLevel, setThinkingLevel]);
+  }, [
+    defaultModel,
+    getMinimum,
+    metadataSettings.model,
+    providersConfig,
+    scopeId,
+    thinkingLevel,
+    setThinkingLevel,
+  ]);
 
   // Memoize context value to prevent unnecessary re-renders of consumers.
   const contextValue = useMemo(

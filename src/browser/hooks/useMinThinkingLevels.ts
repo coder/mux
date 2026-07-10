@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAPI } from "@/browser/contexts/API";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import {
   getAvailableThinkingLevels,
@@ -33,6 +34,9 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
   // Optional so providers that mount this (e.g. ThinkingProvider) don't crash when rendered
   // outside an APIProvider in isolated test harnesses; without an api we degrade to defaults.
   const api = useOptionalAPI()?.api ?? null;
+  // Resolve mapped aliases (mappedToModel) to their capability model so floors
+  // and ladders match the target model; degrades to null outside APIProvider.
+  const { config: providersConfig } = useProvidersConfig();
   const [minThinkingLevelByModel, setMap] = useState<Record<string, ThinkingLevel>>({});
   // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
   const fetchVersionRef = useRef(0);
@@ -103,9 +107,10 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
     (modelString: string): ThinkingLevel =>
       resolveMinimumThinkingLevel(
         modelString,
-        minThinkingLevelByModel[normalizeToCanonical(modelString)]
+        minThinkingLevelByModel[normalizeToCanonical(modelString)],
+        providersConfig
       ),
-    [minThinkingLevelByModel]
+    [minThinkingLevelByModel, providersConfig]
   );
 
   const setMinThinkingLevel = useCallback(
@@ -118,9 +123,11 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
       // medium default and an explicit "high" both yield ["high"]).
       const defaultFloor = getAvailableThinkingLevels(
         modelString,
-        getDefaultMinimumThinkingLevel(modelString)
+        getDefaultMinimumThinkingLevel(modelString, providersConfig),
+        providersConfig
       )[0];
-      const pickedFloor = level == null ? null : getAvailableThinkingLevels(modelString, level)[0];
+      const pickedFloor =
+        level == null ? null : getAvailableThinkingLevels(modelString, level, providersConfig)[0];
       if (level == null || pickedFloor === defaultFloor) {
         delete next[key];
       } else {
@@ -137,7 +144,7 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
         void fetchConfig();
       });
     },
-    [api, fetchConfig, minThinkingLevelByModel]
+    [api, fetchConfig, minThinkingLevelByModel, providersConfig]
   );
 
   return {

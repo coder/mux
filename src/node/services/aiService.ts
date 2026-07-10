@@ -1796,7 +1796,9 @@ export class AIService extends EventEmitter {
       // providerOptions actually sent to generateText().
       const advisorReasoningLevel = enforceThinkingPolicy(
         advisorModelString,
-        cfg.advisorThinkingLevel ?? THINKING_LEVEL_OFF
+        cfg.advisorThinkingLevel ?? THINKING_LEVEL_OFF,
+        undefined,
+        this.providerService.getConfig()
       );
       const runtimeType = getRuntimeType(metadata.runtimeConfig);
       const muxEnv = getMuxEnv(metadata.projectPath, runtimeType, metadata.name, {
@@ -2578,8 +2580,10 @@ export class AIService extends EventEmitter {
                     nextModelString,
                     this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
                       normalizeToCanonical(nextModelString)
-                    ]
-                  )
+                    ],
+                    this.providerService.getConfig()
+                  ),
+                  this.providerService.getConfig()
                 );
 
                 const nextModelResult = await this.providerModelFactory.resolveAndCreateModel(

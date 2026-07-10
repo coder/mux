@@ -1459,7 +1459,12 @@ export class AgentSession {
       const compactionRequest: StartupRetrySendOptions = {
         model: compactionModel,
         agentId: "compact",
-        thinkingLevel: enforceThinkingPolicy(compactionModel, requestedThinkingLevel),
+        thinkingLevel: enforceThinkingPolicy(
+          compactionModel,
+          requestedThinkingLevel,
+          undefined,
+          this.getProvidersConfigSafe()
+        ),
         ...(requestedReasoningMode != null ? { reasoningMode: requestedReasoningMode } : {}),
         maxOutputTokens:
           typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
@@ -2668,7 +2673,7 @@ export class AgentSession {
       // stream events have populated lastUsageState.
       await this.seedUsageStateFromHistory();
 
-      const providersConfigForCompaction = this.getProvidersConfigForCompaction();
+      const providersConfigForCompaction = this.getProvidersConfigSafe();
       const compactionResult = this.compactionMonitor.checkBeforeSend({
         model: modelForStream,
         usage: this.getUsageState(),
@@ -3011,7 +3016,7 @@ export class AgentSession {
     return this.lastUsageState;
   }
 
-  private getProvidersConfigForCompaction(): ProvidersConfigMap | null {
+  private getProvidersConfigSafe(): ProvidersConfigMap | null {
     try {
       // Prefer ProviderService's safe config view: it includes env/file API-key source
       // metadata plus the Codex OAuth presence bit, which context-limit resolution needs
@@ -3306,7 +3311,9 @@ export class AgentSession {
       // stream's level was chosen for its model, not the compaction model.
       thinkingLevel: enforceThinkingPolicy(
         compactionModel,
-        compactSettings.thinkingLevel ?? params.baseOptions.thinkingLevel ?? "off"
+        compactSettings.thinkingLevel ?? params.baseOptions.thinkingLevel ?? "off",
+        undefined,
+        this.getProvidersConfigSafe()
       ),
       maxOutputTokens: undefined,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
@@ -3514,14 +3521,14 @@ export class AgentSession {
     this.activeStreamErrorEventReceived = false;
     this.activeStreamFailureHandled = false;
     this.activeStreamHadPostCompactionInjection = false;
-    const providersConfigForCompaction = this.getProvidersConfigForCompaction();
+    const providersConfig = this.getProvidersConfigSafe();
     this.activeStreamContext = {
       modelString,
       options,
       agentInitiated,
       openaiTruncationModeOverride,
       ...(goalKind != null ? { goalKind } : {}),
-      providersConfig: providersConfigForCompaction,
+      providersConfig,
     };
     this.activeStreamUserMessageId = undefined;
 
@@ -3619,9 +3626,17 @@ export class AgentSession {
             normalizeToCanonical(modelString)
           ]
         : undefined;
-    const minThinkingLevel = resolveMinimumThinkingLevel(modelString, minThinkingOverride);
+    // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
+    // clamp against the target model's policy — otherwise a capability level
+    // like native max would be stripped here before buildProviderOptions can
+    // resolve the alias.
+    const minThinkingLevel = resolveMinimumThinkingLevel(
+      modelString,
+      minThinkingOverride,
+      providersConfig
+    );
     const effectiveThinkingLevel = options?.thinkingLevel
-      ? enforceThinkingPolicy(modelString, options.thinkingLevel, minThinkingLevel)
+      ? enforceThinkingPolicy(modelString, options.thinkingLevel, minThinkingLevel, providersConfig)
       : undefined;
 
     // Bind recordFileState to this session for the propose_plan tool

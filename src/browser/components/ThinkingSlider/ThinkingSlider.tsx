@@ -7,6 +7,7 @@ import {
 } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { useMinThinkingLevels } from "@/browser/hooks/useMinThinkingLevels";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
@@ -45,9 +46,17 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
   // Apply the per-model minimum floor so off/low are hidden unless the user lowers it
   // in Models settings. The floor must match the backend send-path enforcement.
   const { getMinimum } = useMinThinkingLevels();
+  // Resolve mapped aliases so the slider offers the target model's ladder
+  // (e.g. an alias mapped to GPT-5.6 exposes native max).
+  const { config: providersConfig } = useProvidersConfig();
   const minimum = getMinimum(modelString);
-  const allowed = getAvailableThinkingLevels(modelString, minimum);
-  const effectiveThinkingLevel = enforceThinkingPolicy(modelString, thinkingLevel, minimum);
+  const allowed = getAvailableThinkingLevels(modelString, minimum, providersConfig);
+  const effectiveThinkingLevel = enforceThinkingPolicy(
+    modelString,
+    thinkingLevel,
+    minimum,
+    providersConfig
+  );
 
   // Map current level to index within the *allowed* subset
   const currentIndex = allowed.indexOf(effectiveThinkingLevel);
