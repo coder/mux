@@ -329,6 +329,35 @@ async function fetchProtectedResourceScopes(url: URL): Promise<string[]> {
   }
 }
 
+/**
+ * Parses the @ai-sdk/mcp authorization-server binding fields
+ * (authorization_server / token_endpoint) from a stored credentials object.
+ *
+ * These MUST survive the store round-trip: auth() refuses to use a stored
+ * refresh_token without them and instead invalidates the tokens and demands
+ * interactive re-login (i.e. dropping them silently breaks token refresh
+ * after an app restart).
+ */
+function parseAuthorizationServerBinding(value: Record<string, unknown>): {
+  authorization_server?: string;
+  token_endpoint?: string;
+} {
+  // Defensive: only accept parseable URLs so a corrupted store value cannot
+  // make the SDK's normalizeUrl()/new URL() throw during auth().
+  const asUrlString = (raw: unknown): string | undefined =>
+    typeof raw === "string" && URL.canParse(raw) ? raw : undefined;
+
+  const authorizationServer = asUrlString(value.authorization_server);
+  const tokenEndpoint = asUrlString(value.token_endpoint);
+
+  // The SDK requires both to consider the binding usable; keep the pair atomic.
+  if (!authorizationServer || !tokenEndpoint) {
+    return {};
+  }
+
+  return { authorization_server: authorizationServer, token_endpoint: tokenEndpoint };
+}
+
 function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | null {
   if (!isPlainObject(value)) {
     return null;
@@ -365,6 +394,7 @@ function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | nul
           typeof clientInformationRaw.client_secret_expires_at === "number"
             ? clientInformationRaw.client_secret_expires_at
             : undefined,
+        ...parseAuthorizationServerBinding(clientInformationRaw),
       }
     : undefined;
 
@@ -383,6 +413,7 @@ function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | nul
         scope: typeof tokensRaw.scope === "string" ? tokensRaw.scope : undefined,
         refresh_token:
           typeof tokensRaw.refresh_token === "string" ? tokensRaw.refresh_token : undefined,
+        ...parseAuthorizationServerBinding(tokensRaw),
       }
     : undefined;
 

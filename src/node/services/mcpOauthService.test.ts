@@ -205,6 +205,78 @@ describe("McpOauthService store", () => {
 
     expect(await readStoreFile()).toEqual({ version: 2, entries: {} });
   });
+
+  // Regression test: @ai-sdk/mcp auth() only uses a stored refresh_token when
+  // the persisted tokens/clientInformation retain the authorization_server +
+  // token_endpoint binding it saved. Stripping them during store parsing made
+  // auth() invalidate the tokens and demand interactive re-login after every
+  // app restart.
+  test("authorization server binding survives store round-trip", async () => {
+    const populatedStore = {
+      version: 2,
+      entries: {
+        "https://example.com/": {
+          serverUrl,
+          updatedAtMs: Date.now(),
+          clientInformation: {
+            client_id: "client-id",
+            authorization_server: "https://auth.example.com/",
+            token_endpoint: "https://auth.example.com/token",
+          },
+          tokens: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-token",
+            authorization_server: "https://auth.example.com/",
+            token_endpoint: "https://auth.example.com/token",
+          },
+        },
+      },
+    };
+    await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(populatedStore), "utf-8");
+
+    const provider = await service.getAuthProviderForServer({ serverUrl });
+    expect(provider).toBeDefined();
+
+    const tokens = await provider!.tokens();
+    expect(tokens?.refresh_token).toBe("refresh-token");
+    expect(tokens?.authorization_server).toBe("https://auth.example.com/");
+    expect(tokens?.token_endpoint).toBe("https://auth.example.com/token");
+
+    const clientInformation = await provider!.clientInformation();
+    expect(clientInformation?.authorization_server).toBe("https://auth.example.com/");
+    expect(clientInformation?.token_endpoint).toBe("https://auth.example.com/token");
+  });
+
+  test("invalid or partial authorization server binding is dropped as a pair", async () => {
+    const populatedStore = {
+      version: 2,
+      entries: {
+        "https://example.com/": {
+          serverUrl,
+          updatedAtMs: Date.now(),
+          clientInformation: { client_id: "client-id" },
+          tokens: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-token",
+            // Corrupted: not a parseable URL.
+            authorization_server: "not a url",
+            token_endpoint: "https://auth.example.com/token",
+          },
+        },
+      },
+    };
+    await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(populatedStore), "utf-8");
+
+    const provider = await service.getAuthProviderForServer({ serverUrl });
+    expect(provider).toBeDefined();
+
+    const tokens = await provider!.tokens();
+    expect(tokens?.refresh_token).toBe("refresh-token");
+    expect(tokens?.authorization_server).toBeUndefined();
+    expect(tokens?.token_endpoint).toBeUndefined();
+  });
 });
 
 describe("parseBearerWwwAuthenticate", () => {
