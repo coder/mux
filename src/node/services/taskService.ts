@@ -1586,6 +1586,8 @@ export class TaskService {
   private resolveTaskAISettings(params: {
     cfg: ReturnType<Config["loadConfigOrDefault"]>;
     parentMeta: {
+      /** Parent's persisted selected agent (see persistSelectedAgentId). */
+      agentId?: string;
       aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
       aiSettings?: ResolvedWorkspaceAiSettings;
     };
@@ -1632,9 +1634,18 @@ export class TaskService {
 
     // Pro reasoning mode is a per-workspace choice (agent/subagent defaults do
     // not carry it), so tasks inherit it from the parent's persisted settings.
+    // The user toggles pro on the parent's ACTIVE agent, so the target agent's
+    // bucket rarely carries one — fall back to the parent's active-agent bucket
+    // (persisted selected agent, defaulting to exec), then legacy settings.
     // Safe to pass through unconditionally: the send path re-gates per model
     // (buildRequestHeaders is inert for unsupported models/routes).
-    const effectiveReasoningMode = coerceOpenAIReasoningMode(parentAiSettings?.reasoningMode);
+    const activeParentAiSettings = this.resolveWorkspaceAISettings(
+      params.parentMeta,
+      normalizeAgentId(params.parentMeta.agentId)
+    );
+    const effectiveReasoningMode = coerceOpenAIReasoningMode(
+      parentAiSettings?.reasoningMode ?? activeParentAiSettings?.reasoningMode
+    );
 
     return {
       taskModelString,

@@ -5819,6 +5819,54 @@ describe("TaskService", () => {
     });
   }, 20_000);
 
+  test("falls back to the parent's active-agent pro mode when spawning another agent type", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          // Pro was toggled while the exec agent was active; the spawned
+          // explore agent has no per-agent bucket of its own, so inheritance
+          // must fall back to the parent's active-agent settings.
+          agentId: "exec",
+          aiSettingsByAgent: {
+            exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+          },
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(
+      taskService,
+      parentId,
+      "run explore with parent pro mode"
+    );
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run explore with parent pro mode",
+      expect.objectContaining({ agentId: "explore", reasoningMode: "pro" }),
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
   test("resolves a numeric thinking override against the inherited model's policy", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
