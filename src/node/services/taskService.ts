@@ -1660,7 +1660,12 @@ export class TaskService {
     },
     fallbackModel: string,
     hint?: ParentAutoResumeHint
-  ): Promise<{ model: string; agentId: string; thinkingLevel?: ThinkingLevel }> {
+  ): Promise<{
+    model: string;
+    agentId: string;
+    thinkingLevel?: ThinkingLevel;
+    reasoningMode?: OpenAIReasoningMode;
+  }> {
     // 1) Try stream-end hint metadata (available in handleStreamEnd path)
     let agentId = hint?.agentId;
 
@@ -1688,10 +1693,14 @@ export class TaskService {
     agentId = agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
 
     const aiSettings = this.resolveWorkspaceAISettings(parentEntry.workspace, agentId);
+    const reasoningMode = coerceOpenAIReasoningMode(aiSettings?.reasoningMode);
     return {
       model: aiSettings?.model ?? fallbackModel,
       agentId,
       thinkingLevel: aiSettings?.thinkingLevel,
+      // Per-workspace pro mode carries into synthetic auto-resumes; the send
+      // path re-gates per model/route so this is inert for unsupported models.
+      ...(reasoningMode != null ? { reasoningMode } : {}),
     };
   }
 
@@ -4848,6 +4857,7 @@ export class TaskService {
       model: resumeOptions.model,
       agentId: resumeOptions.agentId,
       thinkingLevel: resumeOptions.thinkingLevel,
+      reasoningMode: resumeOptions.reasoningMode,
     };
     let sendResult = await this.workspaceService.sendMessage(
       ownerWorkspaceId,
@@ -8344,6 +8354,7 @@ export class TaskService {
         model: resumeOptions.model,
         agentId: resumeOptions.agentId,
         thinkingLevel: resumeOptions.thinkingLevel,
+        reasoningMode: resumeOptions.reasoningMode,
         ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
       };
       let sendResult = await this.workspaceService.sendMessage(
