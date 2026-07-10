@@ -102,8 +102,9 @@ describe("calculateTokenMeterData", () => {
       },
     });
 
-    expect(result.maxTokens).toBe(1_000_000);
-    expect(result.totalPercentage).toBeCloseTo(1.1);
+    // GA model page: 1.05M-token context window for every GPT-5.6 tier.
+    expect(result.maxTokens).toBe(1_050_000);
+    expect(result.totalPercentage).toBeCloseTo((11_000 / 1_050_000) * 100);
   });
 
   test("uses Claude Sonnet 4.6's native 1M context even when the beta toggle is off", () => {
