@@ -1913,4 +1913,59 @@ describe("wrapFetchWithOpenAIReasoningMode", () => {
     const outHeaders = new Headers(calls[0].init.headers);
     expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
   });
+
+  it("injects and strips when called with a Request object carrying headers and body", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const request = new Request(RESPONSES_URL, {
+      method: "POST",
+      body: JSON.stringify({ model: "gpt-5.6-sol", reasoning: { effort: "high" } }),
+      headers: {
+        "content-type": "application/json",
+        [MUX_OPENAI_REASONING_MODE_HEADER]: "pro",
+      },
+    });
+    await wrapped(request);
+    expect(calls.length).toBe(1);
+    const sent = parseSentBody(calls[0]);
+    expect(sent.reasoning).toEqual({ effort: "high", mode: "pro" });
+    // The stripped header set is passed via init, overriding the Request's
+    // headers so the internal header cannot leak upstream.
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+    expect(outHeaders.get("content-type")).toBe("application/json");
+  });
+
+  it("strips Request-object headers on non-POST without touching the body", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const request = new Request(RESPONSES_URL, {
+      method: "GET",
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    await wrapped(request);
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+    expect(calls[0].init.body).toBeUndefined();
+  });
+
+  it("prefers init members over Request members per fetch semantics", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithOpenAIReasoningMode(fakeFetch);
+    const initBody = JSON.stringify({ model: "gpt-5.6-terra" });
+    const request = new Request(RESPONSES_URL, {
+      method: "POST",
+      body: JSON.stringify({ model: "ignored-request-body" }),
+      headers: { "content-type": "application/json" },
+    });
+    // init.headers fully replaces the Request's headers; init.body wins too.
+    await wrapped(request, {
+      body: initBody,
+      headers: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+    });
+    const sent = parseSentBody(calls[0]);
+    expect(sent).toEqual({ model: "gpt-5.6-terra", reasoning: { mode: "pro" } });
+    const outHeaders = new Headers(calls[0].init.headers);
+    expect(outHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER)).toBeNull();
+  });
 });

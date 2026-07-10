@@ -485,20 +485,30 @@ export function wrapFetchWithOpenAIReasoningMode(
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1]
   ): Promise<Response> => {
+    // Callers may pass a Request object instead of (url, init) — read headers,
+    // method, and body from the same source the underlying fetch would use
+    // (init members override the Request's per fetch semantics), or the header
+    // would both be missed here and leak upstream inside the Request.
+    const requestInput = input instanceof Request ? input : undefined;
+
     // Fast path: nothing to strip or inject — forward byte-identical.
-    const incomingHeaders = new Headers(init?.headers);
+    // init.headers, when present, fully replaces Request-input headers.
+    const incomingHeaders = new Headers(init?.headers ?? requestInput?.headers);
     const reasoningMode = incomingHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER);
     if (reasoningMode == null) {
       return baseFetch(input, init);
     }
 
-    // Strip the Mux-internal header before ANY forwarding path below.
+    // Strip the Mux-internal header before ANY forwarding path below. Passing
+    // the stripped set via init also overrides Request-input headers, so the
+    // header cannot leak through either source.
     incomingHeaders.delete(MUX_OPENAI_REASONING_MODE_HEADER);
     const strippedInit: Parameters<typeof fetch>[1] = { ...init, headers: incomingHeaders };
 
-    // Only rewrite POST requests with a JSON string body; anything else is
-    // forwarded untouched (header already stripped).
-    if (init?.method?.toUpperCase() !== "POST" || typeof init?.body !== "string") {
+    // Only rewrite POST requests; anything else is forwarded untouched
+    // (header already stripped).
+    const method = init?.method ?? requestInput?.method;
+    if (method?.toUpperCase() !== "POST") {
       return baseFetch(input, strippedInit);
     }
 
@@ -508,8 +518,28 @@ export function wrapFetchWithOpenAIReasoningMode(
       return baseFetch(input, strippedInit);
     }
 
+    // Resolve a JSON string body with the same precedence (init.body wins over
+    // the Request's body). Non-string init bodies and body-read failures fall
+    // through to strip-only forwarding.
+    let body: string;
+    if (init?.body != null) {
+      if (typeof init.body !== "string") {
+        return baseFetch(input, strippedInit);
+      }
+      body = init.body;
+    } else if (requestInput?.body != null) {
+      try {
+        // Read from a clone so the original stays forwardable on failure paths.
+        body = await requestInput.clone().text();
+      } catch {
+        return baseFetch(input, strippedInit);
+      }
+    } else {
+      return baseFetch(input, strippedInit);
+    }
+
     try {
-      const json = JSON.parse(init.body) as Record<string, unknown>;
+      const json = JSON.parse(body) as Record<string, unknown>;
 
       if (Array.isArray(json.prompt)) {
         // AI SDK gateway body shape ({ prompt, providerOptions: { openai } }):
