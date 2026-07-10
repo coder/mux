@@ -520,6 +520,24 @@ describe("MessageQueue", () => {
       expect(queue.getMessages()).toEqual(["User follow-up", "Heartbeat"]);
     });
 
+    it("prioritizeNextUserEntry moves user input ahead of hidden background work", () => {
+      queue.add("Background wake", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
+      queue.add("User send now", { model: "gpt-4", agentId: "exec" });
+      queue.add(
+        "Later background wake",
+        { model: "gpt-4", agentId: "exec" },
+        {
+          synthetic: true,
+        }
+      );
+
+      expect(queue.prioritizeNextUserEntry()).toBe(true);
+      expect(queue.dequeueNext().message).toBe("User send now");
+      expect(queue.dequeueNext().message).toBe("Background wake");
+      expect(queue.dequeueNext().message).toBe("Later background wake");
+      expect(queue.prioritizeNextUserEntry()).toBe(false);
+    });
+
     it("should release a dedupe key when its entry dispatches", () => {
       queue.addOnce("Heartbeat", { model: "gpt-4", agentId: "exec" }, "heartbeat-request");
       expect(queue.hasDedupeKey("heartbeat-request")).toBe(true);

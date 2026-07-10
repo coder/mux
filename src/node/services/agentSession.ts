@@ -5270,6 +5270,19 @@ export class AgentSession {
   }
 
   /**
+   * Dispatch the next user-authored queued entry immediately. Hidden synthetic
+   * entries remain queued behind it and resume through the normal drain lifecycle.
+   */
+  sendNextUserQueuedMessage(): boolean {
+    this.assertNotDisposed("sendNextUserQueuedMessage");
+    if (!this.messageQueue.prioritizeNextUserEntry()) {
+      return false;
+    }
+    this.sendQueuedMessages();
+    return true;
+  }
+
+  /**
    * Send queued messages if any exist.
    * Called when tool execution completes, stream ends, or user clicks send immediately.
    */

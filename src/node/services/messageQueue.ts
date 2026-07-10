@@ -467,6 +467,23 @@ export class MessageQueue {
   }
 
   /**
+   * Move the oldest user-authored entry to the head so an explicit user "Send now"
+   * action cannot be blocked by hidden synthetic/background work queued before it.
+   * Returns false when no user-authored entry is pending.
+   */
+  prioritizeNextUserEntry(): boolean {
+    const index = this.entries.findIndex((entry) => entry.userAuthored);
+    if (index === -1) {
+      return false;
+    }
+    if (index > 0) {
+      const [entry] = this.entries.splice(index, 1);
+      this.entries.unshift(entry);
+    }
+    return true;
+  }
+
+  /**
    * Remove the first entry and return its combined message and options for sending.
    * Later entries stay queued and dispatch on subsequent drains (FIFO).
    * Caller must check {@link isEmpty} first.

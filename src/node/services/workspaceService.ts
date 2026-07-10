@@ -8305,8 +8305,9 @@ export class WorkspaceService extends EventEmitter {
         // `sendQueuedMessages()` routes through AgentSession directly, so explicitly
         // clear hard-interrupt suppression first (it won't flow through sendMessage()).
         this.taskService?.resetAutoResumeCount(workspaceId);
-        // Send queued messages immediately instead of restoring to input
-        session.sendQueuedMessages();
+        // The card represents only user-authored queue content. Prioritize that
+        // entry over hidden synthetic/background work before dispatching.
+        session.sendNextUserQueuedMessage();
       } else {
         // Restore queued messages to input box for user-initiated interrupts
         session.restoreQueueToInput();

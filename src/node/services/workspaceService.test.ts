@@ -11461,12 +11461,12 @@ describe("WorkspaceService interruptStream", () => {
       terminateAllDescendantAgentTasks,
     } as unknown as TaskService);
 
-    const sendQueuedMessages = mock(() => undefined);
+    const sendNextUserQueuedMessage = mock(() => true);
     const restoreQueueToInput = mock(() => undefined);
     const interruptStream = mock(() => Promise.resolve(Ok(undefined)));
     const fakeSession = {
       interruptStream,
-      sendQueuedMessages,
+      sendNextUserQueuedMessage,
       restoreQueueToInput,
     };
     const getOrCreateSessionSpy = spyOn(workspaceService, "getOrCreateSession").mockReturnValue(
@@ -11482,7 +11482,7 @@ describe("WorkspaceService interruptStream", () => {
       expect(markParentWorkspaceInterrupted).toHaveBeenCalledWith(workspaceId);
       expect(terminateAllDescendantAgentTasks).toHaveBeenCalledWith(workspaceId);
       expect(resetAutoResumeCount).toHaveBeenCalledTimes(2);
-      expect(sendQueuedMessages).toHaveBeenCalledTimes(1);
+      expect(sendNextUserQueuedMessage).toHaveBeenCalledTimes(1);
       expect(restoreQueueToInput).not.toHaveBeenCalled();
     } finally {
       getOrCreateSessionSpy.mockRestore();
