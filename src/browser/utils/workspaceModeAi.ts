@@ -1,9 +1,17 @@
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  coerceOpenAIReasoningMode,
+  coerceThinkingLevel,
+  type OpenAIReasoningMode,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { normalizeAgentId as normalizeWorkspaceAgentId } from "@/common/utils/agentIds";
 
 export type WorkspaceAISettingsCache = Partial<
-  Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+  Record<
+    string,
+    { model: string; thinkingLevel: ThinkingLevel; reasoningMode?: OpenAIReasoningMode }
+  >
 >;
 
 function normalizeAgentId(agentId: string): string {
@@ -20,7 +28,12 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   fallbackModel: string;
   existingModel: string;
   existingThinking: ThinkingLevel;
-}): { resolvedModel: string; resolvedThinking: ThinkingLevel } {
+  existingReasoningMode?: OpenAIReasoningMode;
+}): {
+  resolvedModel: string;
+  resolvedThinking: ThinkingLevel;
+  resolvedReasoningMode: OpenAIReasoningMode;
+} {
   const normalizedAgentId = normalizeAgentId(args.agentId);
   const globalDefault = args.agentAiDefaults[normalizedAgentId];
   const workspaceOverride = args.workspaceByAgent?.[normalizedAgentId];
@@ -53,5 +66,16 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   const resolvedThinking =
     coerceThinkingLevel(globalDefault?.thinkingLevel) ?? inheritedThinking ?? "off";
 
-  return { resolvedModel, resolvedThinking };
+  // Restore the agent's saved pro-mode choice alongside model/thinking on
+  // explicit switches; otherwise inherit the workspace's current mode.
+  // (Agent AI defaults carry no reasoningMode — it is a per-workspace choice.)
+  const workspaceOverrideReasoning = args.useWorkspaceByAgentFallback
+    ? coerceOpenAIReasoningMode(workspaceOverride?.reasoningMode)
+    : undefined;
+  const resolvedReasoningMode =
+    workspaceOverrideReasoning ??
+    coerceOpenAIReasoningMode(args.existingReasoningMode) ??
+    "standard";
+
+  return { resolvedModel, resolvedThinking, resolvedReasoningMode };
 }

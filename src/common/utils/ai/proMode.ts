@@ -6,10 +6,12 @@
  * - model must be pro-capable (GPT-5.6 Sol/Terra — openaiSupportsProMode);
  * - pro mode is a Responses API field, so `wireFormat: "chatCompletions"`
  *   disables it (the OpenAI fetch wrapper only rewrites /responses bodies);
- * - only routes that flow through our OpenAI fetch wrapper inject the mode:
- *   direct `openai:` or passthrough gateways (mux-gateway). Explicit
- *   non-passthrough gateway model strings (openrouter:openai/...,
- *   github-copilot:...) and settings-resolved non-passthrough routes hide it;
+ * - only the direct `openai:` route delivers the mode. Gateways hide it:
+ *   non-passthrough ones (openrouter:openai/..., github-copilot:...) never see
+ *   the header, and mux-gateway currently drops the rewritten
+ *   `providerOptions.openai.reasoningMode` server-side (verified empirically —
+ *   the Responses API echoed `mode: "standard"`), so it fails closed until the
+ *   gateway forwards the field;
  * - Codex OAuth routes never inject (`inject: false` — the ChatGPT backend is
  *   stricter than the public API), so when OAuth is the effective auth path
  *   for the model, pro mode is unavailable too.
@@ -21,13 +23,8 @@
 
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { openaiSupportsProMode } from "@/common/types/thinking";
-import {
-  getExplicitGatewayPrefix,
-  normalizeToCanonical,
-  resolveProviderOptionsNamespaceKey,
-} from "@/common/utils/ai/models";
+import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
 import { wouldRouteOpenAIThroughCodexOauth } from "@/common/utils/providers/codexOauthRouting";
-import type { ProviderName } from "@/common/constants/providers";
 
 export interface ProModeAvailabilityOptions {
   /** Overrides the providersConfig-derived OpenAI wire format when provided. */
@@ -65,15 +62,12 @@ export function openaiProModeAvailable(
     return false;
   }
 
-  // Prefer an explicit gateway prefix on the model string; otherwise use the
-  // settings-resolved route ("direct" means no gateway). Unknown routes fail
-  // closed: resolveProviderOptionsNamespaceKey returns the route itself for
-  // non-passthrough definitions, hiding pro rather than showing an inert toggle.
+  // Direct-only: any gateway route (explicit model-string prefix or
+  // settings-resolved) fails closed — including mux-gateway, which drops the
+  // field today. Unknown routes fail closed too.
+  if (getExplicitGatewayPrefix(modelString) != null) {
+    return false;
+  }
   const resolvedRouteProvider = options?.resolvedRouteProvider;
-  const routeProvider =
-    getExplicitGatewayPrefix(modelString) ??
-    (resolvedRouteProvider != null && resolvedRouteProvider !== "direct"
-      ? (resolvedRouteProvider as ProviderName)
-      : undefined);
-  return resolveProviderOptionsNamespaceKey(origin, routeProvider) === origin;
+  return resolvedRouteProvider == null || resolvedRouteProvider === "direct";
 }

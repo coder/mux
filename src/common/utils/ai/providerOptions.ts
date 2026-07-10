@@ -631,20 +631,23 @@ export function buildRequestHeaders(
   // model drops unknown providerOptions keys, so `reasoning.mode` cannot ride
   // providerOptions — emit a Mux-internal header that the OpenAI fetch wrapper
   // strips and rewrites into the wire body. Mode is orthogonal to effort, so
-  // this is independent of thinkingLevel. Only emit when the route passes
-  // through our OpenAI fetch wrapper (direct OpenAI or passthrough gateways
-  // like mux-gateway); non-passthrough gateways (OpenRouter, github-copilot)
-  // must never see this header.
+  // this is independent of thinkingLevel.
   //
-  // Pro mode is Responses-only: with wireFormat "chatCompletions" the wrapper
-  // never injects (it only rewrites /responses bodies), so skip the header to
-  // keep header state honest. Config precedence mirrors providerModelFactory,
-  // which overwrites request-level options with a configured wireFormat.
+  // Pro mode is direct-route-only: mux-gateway currently drops the rewritten
+  // providerOptions.openai.reasoningMode server-side (verified — the Responses
+  // API echoed mode "standard"), so passthrough gateways don't get the header
+  // either until the gateway forwards the field. Direct-only emission also
+  // scopes the wireFormat gate to the one config that actually applies here:
+  // the direct OpenAI provider's (config wins over request-level options,
+  // mirroring providerModelFactory). Pro mode is Responses-only — with
+  // wireFormat "chatCompletions" the wrapper never injects (it only rewrites
+  // /responses bodies), so skip the header to keep header state honest.
+  const routeIsDirect = routeProvider == null || routeProvider === origin;
   const openaiWireFormat =
     providersConfig?.openai?.wireFormat ?? muxProviderOptions?.openai?.wireFormat ?? "responses";
   if (
     origin === "openai" &&
-    routePassesHeaders &&
+    routeIsDirect &&
     reasoningMode === "pro" &&
     openaiWireFormat === "responses" &&
     openaiSupportsProMode(modelString)

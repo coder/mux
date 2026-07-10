@@ -258,17 +258,19 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     updatePersistedState(thinkingKey, active.thinkingLevel);
   }
 
-  // Only seed when the backend actually carries the field so metadata persisted
-  // before the pro-mode feature cannot clear a newer local choice.
-  if (active.reasoningMode != null) {
-    const reasoningKey = getReasoningModeKey(workspaceId);
-    const existingReasoning = readPersistedState<OpenAIReasoningMode | undefined>(
-      reasoningKey,
-      undefined
-    );
-    if (existingReasoning !== active.reasoningMode) {
-      updatePersistedState(reasoningKey, active.reasoningMode);
-    }
+  // Absent reasoningMode means "standard": seed it explicitly so switching to
+  // an agent whose settings never carried the field cannot inherit another
+  // agent's "pro" from the shared workspace-scoped key. Newer local choices
+  // are already protected by the pending-settings guard above
+  // (shouldApplyWorkspaceAiSettingsFromBackend).
+  const reasoningKey = getReasoningModeKey(workspaceId);
+  const nextReasoning = active.reasoningMode ?? "standard";
+  const existingReasoning = readPersistedState<OpenAIReasoningMode | undefined>(
+    reasoningKey,
+    undefined
+  );
+  if (existingReasoning !== nextReasoning) {
+    updatePersistedState(reasoningKey, nextReasoning);
   }
 }
 

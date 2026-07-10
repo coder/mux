@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import { resolveWorkspaceAiSettingsForAgent } from "./workspaceModeAi";
 
 describe("resolveWorkspaceAiSettingsForAgent", () => {
@@ -17,6 +17,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "openai:gpt-5.3-codex",
       resolvedThinking: "high",
+      resolvedReasoningMode: "standard",
     });
   });
 
@@ -32,6 +33,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "anthropic:claude-opus-4-6",
       resolvedThinking: "medium",
+      resolvedReasoningMode: "standard",
     });
   });
 
@@ -51,6 +53,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "openai:gpt-5.2",
       resolvedThinking: "medium",
+      resolvedReasoningMode: "standard",
     });
   });
 
@@ -70,6 +73,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "anthropic:claude-opus-4-6",
       resolvedThinking: "off",
+      resolvedReasoningMode: "standard",
     });
   });
 
@@ -87,6 +91,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "anthropic:claude-opus-4-6",
       resolvedThinking: "low",
+      resolvedReasoningMode: "standard",
     });
   });
 
@@ -104,7 +109,66 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "anthropic:claude-opus-4-6",
       resolvedThinking: "off",
+      resolvedReasoningMode: "standard",
     });
+  });
+
+  // Per-agent pro-mode restore: explicit switches (useWorkspaceByAgentFallback)
+  // must restore the agent's saved reasoningMode alongside model/thinking;
+  // background sync inherits the workspace's current mode.
+  test("restores the agent's saved pro mode on explicit switches", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "medium", reasoningMode: "pro" },
+      },
+      useWorkspaceByAgentFallback: true,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "standard",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
+  test("inherits the workspace's current pro mode during background sync", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "medium", reasoningMode: "standard" },
+      },
+      useWorkspaceByAgentFallback: false,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "pro",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
+  test("self-heals a corrupt saved reasoning mode to standard", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      workspaceByAgent: {
+        exec: {
+          model: "openai:gpt-5.6-sol",
+          thinkingLevel: "medium",
+          reasoningMode: "ultra" as unknown as OpenAIReasoningMode,
+        },
+      },
+      useWorkspaceByAgentFallback: true,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "corrupt" as unknown as OpenAIReasoningMode,
+    });
+
+    expect(result.resolvedReasoningMode).toBe("standard");
   });
 
   test("self-heals invalid inherited workspace settings", () => {
@@ -119,6 +183,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "openai:gpt-5.2",
       resolvedThinking: "off",
+      resolvedReasoningMode: "standard",
     });
   });
 
@@ -134,6 +199,7 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result).toEqual({
       resolvedModel: "openai:gpt-5.2",
       resolvedThinking: "off",
+      resolvedReasoningMode: "standard",
     });
   });
 });

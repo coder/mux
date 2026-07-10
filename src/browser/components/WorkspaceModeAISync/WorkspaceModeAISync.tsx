@@ -7,6 +7,7 @@ import {
 } from "@/browser/hooks/usePersistedState";
 import {
   getModelKey,
+  getReasoningModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
@@ -17,7 +18,7 @@ import {
   resolveWorkspaceAiSettingsForAgent,
   type WorkspaceAISettingsCache,
 } from "@/browser/utils/workspaceModeAi";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 
@@ -60,19 +61,23 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
+    const reasoningKey = getReasoningModeKey(workspaceId);
+    const existingReasoning = readPersistedState<OpenAIReasoningMode>(reasoningKey, "standard");
 
-    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
-      agentId: normalizedAgentId,
-      agentAiDefaults,
-      // Keep deterministic handoff behavior: background sync should trust the
-      // currently active workspace model, but explicit mode switches should
-      // restore the selected agent's per-workspace override (if any).
-      workspaceByAgent,
-      useWorkspaceByAgentFallback: isExplicitAgentSwitch,
-      fallbackModel,
-      existingModel,
-      existingThinking,
-    });
+    const { resolvedModel, resolvedThinking, resolvedReasoningMode } =
+      resolveWorkspaceAiSettingsForAgent({
+        agentId: normalizedAgentId,
+        agentAiDefaults,
+        // Keep deterministic handoff behavior: background sync should trust the
+        // currently active workspace model, but explicit mode switches should
+        // restore the selected agent's per-workspace override (if any).
+        workspaceByAgent,
+        useWorkspaceByAgentFallback: isExplicitAgentSwitch,
+        fallbackModel,
+        existingModel,
+        existingThinking,
+        existingReasoningMode: existingReasoning,
+      });
 
     if (existingModel !== resolvedModel) {
       setWorkspaceModelWithOrigin(
@@ -84,6 +89,10 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
+    }
+
+    if (existingReasoning !== resolvedReasoningMode) {
+      updatePersistedState(reasoningKey, resolvedReasoningMode);
     }
   }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
 

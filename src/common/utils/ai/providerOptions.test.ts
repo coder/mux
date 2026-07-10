@@ -1113,11 +1113,13 @@ describe("buildRequestHeaders", () => {
         expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
       },
       {
-        name: "emits pro header for gateway-routed Sol (passthrough)",
+        // Direct-route-only: mux-gateway drops the rewritten reasoningMode
+        // server-side today, so even passthrough gateways get no header.
+        name: "does not emit for gateway-routed Sol (mux-gateway drops the field)",
         model: "mux-gateway:openai/gpt-5.6-sol",
         routeProvider: "mux-gateway",
         reasoningMode: "pro",
-        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+        expected: undefined,
       },
       {
         name: "does not emit for reasoningMode=standard",
@@ -1247,8 +1249,8 @@ describe("buildRequestHeaders", () => {
     const cases: Array<[string, boolean]> = [
       ["openai:gpt-5.6-sol", true],
       ["openai:gpt-5.6-terra", true],
-      ["mux-gateway:openai/gpt-5.6-sol", true],
-      // Non-passthrough gateways never emit the header — toggle must hide.
+      // All gateways fail closed — mux-gateway drops the field server-side.
+      ["mux-gateway:openai/gpt-5.6-sol", false],
       ["openrouter:openai/gpt-5.6-sol", false],
       ["github-copilot:gpt-5.6-sol", false],
       // Non-pro-capable models.
@@ -1283,7 +1285,8 @@ describe("buildRequestHeaders", () => {
       const route = (r: string) =>
         openaiProModeAvailable("openai:gpt-5.6-sol", { resolvedRouteProvider: r });
       expect(route("direct")).toBe(true);
-      expect(route("mux-gateway")).toBe(true);
+      // mux-gateway drops the field server-side today — fail closed.
+      expect(route("mux-gateway")).toBe(false);
       expect(route("openrouter")).toBe(false);
       expect(route("github-copilot")).toBe(false);
       // Unknown route names fail closed.

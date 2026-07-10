@@ -45,6 +45,7 @@ import {
   getAgentIdKey,
   getModelKey,
   getPlanContentKey,
+  getReasoningModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
@@ -59,7 +60,7 @@ import {
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ReviewActionCallbacks } from "../Shared/InlineReviewNote";
 import { isPlanFilePath, normalizePlanFilePath } from "@/common/types/review";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import {
   Check,
   Clipboard,
@@ -477,27 +478,31 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   }): { resolvedModel: string; resolvedThinking: ThinkingLevel } => {
     const modelKey = getModelKey(args.workspaceId);
     const thinkingKey = getThinkingLevelKey(args.workspaceId);
+    const reasoningKey = getReasoningModeKey(args.workspaceId);
     const fallbackModel = getDefaultModel();
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
+    const existingReasoning = readPersistedState<OpenAIReasoningMode>(reasoningKey, "standard");
     const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
     const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
       getWorkspaceAISettingsByAgentKey(args.workspaceId),
       {}
     );
 
-    const { resolvedModel, resolvedThinking } = resolveWorkspaceAiSettingsForAgent({
-      agentId: args.targetAgentId,
-      agentAiDefaults,
-      // Propose-plan actions are explicit mode switches; honor any per-agent
-      // workspace override before inheriting the previously active plan settings.
-      workspaceByAgent,
-      useWorkspaceByAgentFallback: true,
-      fallbackModel,
-      existingModel,
-      existingThinking,
-    });
+    const { resolvedModel, resolvedThinking, resolvedReasoningMode } =
+      resolveWorkspaceAiSettingsForAgent({
+        agentId: args.targetAgentId,
+        agentAiDefaults,
+        // Propose-plan actions are explicit mode switches; honor any per-agent
+        // workspace override before inheriting the previously active plan settings.
+        workspaceByAgent,
+        useWorkspaceByAgentFallback: true,
+        fallbackModel,
+        existingModel,
+        existingThinking,
+        existingReasoningMode: existingReasoning,
+      });
 
     updatePersistedState(getAgentIdKey(args.workspaceId), args.targetAgentId);
 
@@ -506,6 +511,10 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     }
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
+    }
+    // Persist before getSendOptionsFromStorage reads the key for the follow-up send.
+    if (existingReasoning !== resolvedReasoningMode) {
+      updatePersistedState(reasoningKey, resolvedReasoningMode);
     }
 
     return { resolvedModel, resolvedThinking };
