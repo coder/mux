@@ -1214,14 +1214,18 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       // medium floor reads as "medium").
       const currentModelString = p.selectedWorkspaceState?.currentModel;
       const rawCurrentLevel = p.getThinkingLevel(workspaceId);
+      // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
+      // resolve to the target's ladder, matching the slider and send path.
       const currentLevel = currentModelString
         ? enforceThinkingPolicy(
             currentModelString,
             rawCurrentLevel,
             resolveMinimumThinkingLevel(
               currentModelString,
-              p.getMinThinkingOverride?.(currentModelString)
-            )
+              p.getMinThinkingOverride?.(currentModelString),
+              p.providersConfig
+            ),
+            p.providersConfig
           )
         : rawCurrentLevel;
 
@@ -1251,8 +1255,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                       modelString,
                       resolveMinimumThinkingLevel(
                         modelString,
-                        p.getMinThinkingOverride?.(modelString)
-                      )
+                        p.getMinThinkingOverride?.(modelString),
+                        p.providersConfig
+                      ),
+                      p.providersConfig
                     )
                   : THINKING_LEVELS;
                 return allowedLevels.map((level) => ({
