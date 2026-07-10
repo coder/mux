@@ -248,7 +248,17 @@ describe("McpOauthService store", () => {
     expect(clientInformation?.token_endpoint).toBe("https://auth.example.com/token");
   });
 
-  test("invalid or partial authorization server binding is dropped as a pair", async () => {
+  test.each([
+    // Corrupted: not a parseable URL.
+    "not a url",
+    // Parseable but rejected by @ai-sdk/mcp's SafeUrlSchema; must be dropped
+    // for self-healing rather than surfacing as a metadata mismatch in auth().
+    "javascript:alert(1)",
+    "data:text/plain,x",
+    "vbscript:x",
+    // Parseable non-http(s) scheme: OAuth endpoints are always http(s).
+    "ftp://auth.example.com/",
+  ])("invalid authorization server binding %j is dropped as a pair", async (badUrl) => {
     const populatedStore = {
       version: 2,
       entries: {
@@ -260,8 +270,7 @@ describe("McpOauthService store", () => {
             access_token: "access-token",
             token_type: "Bearer",
             refresh_token: "refresh-token",
-            // Corrupted: not a parseable URL.
-            authorization_server: "not a url",
+            authorization_server: badUrl,
             token_endpoint: "https://auth.example.com/token",
           },
         },

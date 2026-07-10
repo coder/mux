@@ -342,10 +342,19 @@ function parseAuthorizationServerBinding(value: Record<string, unknown>): {
   authorization_server?: string;
   token_endpoint?: string;
 } {
-  // Defensive: only accept parseable URLs so a corrupted store value cannot
-  // make the SDK's normalizeUrl()/new URL() throw during auth().
-  const asUrlString = (raw: unknown): string | undefined =>
-    typeof raw === "string" && URL.canParse(raw) ? raw : undefined;
+  // Defensive: only accept parseable http(s) URLs so a corrupted store value
+  // cannot make the SDK's normalizeUrl()/new URL() throw during auth(), and
+  // so SDK-invalid schemes (SafeUrlSchema rejects javascript:/data:/vbscript:)
+  // are dropped for self-healing instead of surfacing as a metadata mismatch.
+  // http(s)-only is stricter than SafeUrlSchema, which is fine: OAuth
+  // authorization servers and token endpoints are always fetched over http(s).
+  const asUrlString = (raw: unknown): string | undefined => {
+    if (typeof raw !== "string" || !URL.canParse(raw)) {
+      return undefined;
+    }
+    const protocol = new URL(raw).protocol;
+    return protocol === "http:" || protocol === "https:" ? raw : undefined;
+  };
 
   const authorizationServer = asUrlString(value.authorization_server);
   const tokenEndpoint = asUrlString(value.token_endpoint);
