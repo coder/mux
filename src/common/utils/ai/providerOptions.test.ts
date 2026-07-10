@@ -720,6 +720,30 @@ describe("buildProviderOptions - OpenAI", () => {
         },
       });
     });
+
+    // Mapped aliases inherit capabilities from their target like the other
+    // capability checks (resolveModelForMetadata), so a custom entry mapped to
+    // Sol must also get the native max effort.
+    test("resolves mapped aliases to the target for native max effort", () => {
+      const providersConfig = createMockProvidersConfig({
+        "openai:team-sol": "openai:gpt-5.6-sol",
+      });
+
+      const result = buildProviderOptions(
+        "openai:team-sol",
+        "max",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        providersConfig
+      );
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("max");
+    });
   });
 
   describe("OpenAI conversation state management", () => {
@@ -1241,6 +1265,39 @@ describe("buildRequestHeaders", () => {
         )
       ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
     });
+
+    // The send-path gate must resolve mapped aliases like the UI gate does,
+    // otherwise a persisted "pro" choice silently stops emitting the header.
+    test("emits for mapped aliases whose target supports pro mode", () => {
+      const providersConfig = createMockProvidersConfig({
+        "openai:team-sol": "openai:gpt-5.6-sol",
+      });
+
+      expect(
+        buildRequestHeaders(
+          "openai:team-sol",
+          undefined,
+          undefined,
+          providersConfig,
+          undefined,
+          "off",
+          "pro"
+        )
+      ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
+
+      // Unmapped custom ids still fail closed.
+      expect(
+        buildRequestHeaders(
+          "openai:team-sol",
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          "off",
+          "pro"
+        )
+      ).toBeUndefined();
+    });
   });
 
   describe("openaiProModeAvailable", () => {
@@ -1265,6 +1322,21 @@ describe("buildRequestHeaders", () => {
         expect(openaiProModeAvailable(model)).toBe(expected);
       });
     }
+
+    // Mapped aliases (models: [{ id, mappedToModel }]) inherit pro capability
+    // from their target via resolveModelForMetadata, matching the send path.
+    test("mapped aliases inherit pro capability from their target", () => {
+      const providersConfig = createMockProvidersConfig({
+        "openai:team-sol": "openai:gpt-5.6-sol",
+        "openai:team-luna": "openai:gpt-5.6-luna",
+      });
+
+      expect(openaiProModeAvailable("openai:team-sol", { providersConfig })).toBe(true);
+      // Targets without pro capability stay hidden.
+      expect(openaiProModeAvailable("openai:team-luna", { providersConfig })).toBe(false);
+      // Without a mapping the custom id fails closed.
+      expect(openaiProModeAvailable("openai:team-sol")).toBe(false);
+    });
 
     // Pro mode is Responses-only: chatCompletions wire format disables it even
     // for pro-capable models on passthrough routes.

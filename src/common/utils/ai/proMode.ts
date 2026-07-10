@@ -24,6 +24,7 @@
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { openaiSupportsProMode } from "@/common/types/thinking";
 import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { wouldRouteOpenAIThroughCodexOauth } from "@/common/utils/providers/codexOauthRouting";
 
 export interface ProModeAvailabilityOptions {
@@ -44,21 +45,16 @@ export function openaiProModeAvailable(
   if (wireFormat === "chatCompletions") {
     return false;
   }
-  if (!openaiSupportsProMode(modelString)) {
-    return false;
-  }
-
   const normalized = normalizeToCanonical(modelString);
   const [origin] = normalized.split(":", 2);
   if (origin !== "openai") {
     return false;
   }
 
-  // Codex OAuth routes strip the pro-mode header without injecting.
-  if (
-    options?.providersConfig != null &&
-    wouldRouteOpenAIThroughCodexOauth(normalized, options.providersConfig)
-  ) {
+  // Mapped aliases (models: [{ id, mappedToModel }]) inherit capabilities from
+  // their target, mirroring buildProviderOptions' capabilityModel resolution.
+  const capabilityModel = resolveModelForMetadata(normalized, options?.providersConfig ?? null);
+  if (!openaiSupportsProMode(capabilityModel)) {
     return false;
   }
 
@@ -69,5 +65,15 @@ export function openaiProModeAvailable(
     return false;
   }
   const resolvedRouteProvider = options?.resolvedRouteProvider;
-  return resolvedRouteProvider == null || resolvedRouteProvider === "direct";
+  if (resolvedRouteProvider != null && resolvedRouteProvider !== "direct") {
+    return false;
+  }
+
+  // Codex OAuth routes strip the pro-mode header without injecting. Checked
+  // after route resolution so the exclusion only applies to direct OpenAI
+  // routing — gateway sends never use Codex OAuth (they fail closed above).
+  return !(
+    options?.providersConfig != null &&
+    wouldRouteOpenAIThroughCodexOauth(normalized, options.providersConfig)
+  );
 }

@@ -356,8 +356,9 @@ export function buildProviderOptions(
   // Build OpenAI-specific options
   if (formatProvider === "openai") {
     // Model-aware: GPT-5.6 Sol maps ThinkingLevel "max" to the native "max" effort;
-    // other OpenAI models keep the max -> "xhigh" downgrade.
-    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, modelString);
+    // other OpenAI models keep the max -> "xhigh" downgrade. Use capabilityModel
+    // so mapped aliases (mappedToModel) inherit their target's native effort.
+    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
 
     // Mux always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
@@ -511,7 +512,8 @@ export function buildProviderOptions(
   }
 
   if (origin === "openai" && formatProvider !== origin) {
-    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, modelString);
+    // capabilityModel keeps mapped aliases consistent with raw ids on the same route.
+    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
     if (!reasoningEffort) {
       log.debug(
         "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",
@@ -650,7 +652,8 @@ export function buildRequestHeaders(
     routeIsDirect &&
     reasoningMode === "pro" &&
     openaiWireFormat === "responses" &&
-    openaiSupportsProMode(modelString)
+    // Mapped aliases (mappedToModel) inherit pro capability from their target.
+    openaiSupportsProMode(resolveModelForMetadata(normalized, providersConfig ?? null))
   ) {
     headers[MUX_OPENAI_REASONING_MODE_HEADER] = "pro";
   }
