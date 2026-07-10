@@ -5761,6 +5761,64 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("xhigh");
   }, 20_000);
 
+  test("inherits the parent's pro reasoning mode into task sends and child settings", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run task inheriting pro mode");
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    // The child's kickoff send must carry the parent's pro mode (the send path
+    // re-gates per model, so this is safe even for non-GPT-5.6 task models).
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task inheriting pro mode",
+      {
+        model: "openai:gpt-5.6-sol",
+        agentId: "explore",
+        thinkingLevel: "high",
+        reasoningMode: "pro",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+
+    // Persisted child settings carry it too, so queued/restart resumes
+    // (which rebuild options from the record) keep pro mode.
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry?.aiSettings).toEqual({
+      model: "openai:gpt-5.6-sol",
+      thinkingLevel: "high",
+      reasoningMode: "pro",
+    });
+  }, 20_000);
+
   test("resolves a numeric thinking override against the inherited model's policy", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
