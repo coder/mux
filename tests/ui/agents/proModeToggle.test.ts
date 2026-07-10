@@ -19,7 +19,9 @@ import { createAppHarness } from "../harness";
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 const SOL_MODEL = KNOWN_MODELS.GPT.id;
-const LUNA_MODEL = KNOWN_MODELS.GPT_56_LUNA.id;
+// Pro mode is family-wide across GPT-5.6 (incl. Luna), so the "hidden" case
+// must use a pre-5.6 model without pro support.
+const NON_PRO_MODEL = KNOWN_MODELS.GPT_PRO.id;
 
 async function openModelSelector(container: HTMLElement): Promise<HTMLInputElement> {
   window.dispatchEvent(new CustomEvent(CUSTOM_EVENTS.OPEN_MODEL_SELECTOR));
@@ -117,8 +119,8 @@ describeIntegration("Pro reasoning-mode toggle", () => {
       fireEvent.click(toggle);
       await expectTogglePressed(container, true);
 
-      // Hidden on Luna (no pro support).
-      await selectModel(container, harness.workspaceId, LUNA_MODEL);
+      // Hidden on GPT-5.5 Pro (no reasoning.mode pro support).
+      await selectModel(container, harness.workspaceId, NON_PRO_MODEL);
       await expectToggleHidden(container);
 
       // Back to Sol: persisted PRO state survives the switch.
