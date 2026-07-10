@@ -1281,15 +1281,17 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       // Pro reasoning mode is only meaningful for models that support it
       // (GPT-5.6 family) on routes that emit the pro-mode header (direct
       // OpenAI) with the Responses wire format; hide the action elsewhere to
-      // avoid inert toggles. New/idle workspaces have no activity snapshot
-      // (currentModel is null), so fall back to the chat input's persisted
-      // selection — the mobile layout hides the PRO chip and relies on this
-      // palette action being reachable before the first send.
-      const proGateModelString =
-        currentModelString ??
-        (typeof window === "undefined"
+      // avoid inert toggles. Gate on the chat input's persisted selection —
+      // that is the model the NEXT send will use — and only fall back to the
+      // activity snapshot's currentModel (last streamed model, stale after a
+      // model switch) when no selection exists. The mobile layout hides the
+      // PRO chip and relies on this palette action being reachable before the
+      // first send with the newly selected model.
+      const persistedSelectionModel =
+        typeof window === "undefined"
           ? undefined
-          : getSendOptionsFromStorage(workspaceId).model || undefined);
+          : getSendOptionsFromStorage(workspaceId).model || undefined;
+      const proGateModelString = persistedSelectionModel ?? currentModelString;
       const currentModelRoute = proGateModelString
         ? p.getRouteForModel?.(normalizeToCanonical(proGateModelString))
         : undefined;
