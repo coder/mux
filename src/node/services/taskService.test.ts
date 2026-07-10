@@ -15777,6 +15777,7 @@ describe("TaskService", () => {
   async function setupPlanModeStreamEndHarness(options?: {
     childAgentId?: string;
     childTaskStatus?: WorkspaceConfigEntry["taskStatus"];
+    childAiSettingsByAgent?: WorkspaceConfigEntry["aiSettingsByAgent"];
     workflowTask?: WorkspaceConfigEntry["workflowTask"];
     projectName?: string;
     maxTaskNestingDepth?: number;
@@ -15840,6 +15841,7 @@ describe("TaskService", () => {
           taskStatus: options?.childTaskStatus ?? "running",
           workflowTask: options?.workflowTask,
           aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "max" },
+          aiSettingsByAgent: options?.childAiSettingsByAgent,
           taskModelString: "openai:gpt-4o-mini",
           runtimeConfig,
         },
@@ -15943,6 +15945,33 @@ describe("TaskService", () => {
 
     expect(updatedTask?.agentId).toBe("exec");
     expect(updatedTask?.taskStatus).toBe("running");
+  });
+
+  test("plan handoff preserves a pro mode persisted under the plan agent bucket", async () => {
+    // A PRO toggle during the plan phase lands in aiSettingsByAgent.plan;
+    // legacy workspace.aiSettings still holds the original standard setting.
+    const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
+      childAiSettingsByAgent: {
+        plan: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+      },
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({ agentId: "exec", reasoningMode: "pro" }),
+      expect.objectContaining({ synthetic: true })
+    );
+
+    // The rewritten exec-phase settings persist it too.
+    const postCfg = config.loadConfigOrDefault();
+    const updatedTask = Array.from(postCfg.projects.values())
+      .flatMap((project) => project.workspaces)
+      .find((workspace) => workspace.id === childId);
+    expect(updatedTask?.aiSettings?.reasoningMode).toBe("pro");
   });
 
   test("stream-end with propose_plan success uses global exec defaults for handoff", async () => {

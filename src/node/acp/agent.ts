@@ -587,6 +587,9 @@ export class MuxAgent implements Agent {
       options: {
         model: sessionState.aiSettings.model,
         thinkingLevel: sessionState.aiSettings.thinkingLevel,
+        // Per-workspace pro mode from workspace metadata; the send path
+        // re-gates per model/route so this is inert for unsupported models.
+        reasoningMode: sessionState.aiSettings.reasoningMode,
         agentId: sessionState.agentId,
       },
       fileParts: parsedPrompt.fileParts,
@@ -867,6 +870,7 @@ export class MuxAgent implements Agent {
         const options: SendMessageOptions = {
           model: sessionState.aiSettings.model,
           thinkingLevel: sessionState.aiSettings.thinkingLevel,
+          reasoningMode: sessionState.aiSettings.reasoningMode,
           agentId: sessionState.agentId,
           muxMetadata: buildAgentSkillMetadata({
             rawCommand: parsedCommand.rawCommand,
@@ -917,6 +921,7 @@ export class MuxAgent implements Agent {
             options: {
               model: sessionState.aiSettings.model,
               thinkingLevel: sessionState.aiSettings.thinkingLevel,
+              reasoningMode: sessionState.aiSettings.reasoningMode,
               agentId: sessionState.agentId,
             },
           });
@@ -980,6 +985,7 @@ export class MuxAgent implements Agent {
             options: {
               model: sessionState.aiSettings.model,
               thinkingLevel: sessionState.aiSettings.thinkingLevel,
+              reasoningMode: sessionState.aiSettings.reasoningMode,
               agentId: sessionState.agentId,
             },
           });
@@ -1023,6 +1029,7 @@ export class MuxAgent implements Agent {
           model: sessionState.aiSettings.model,
           agentId: sessionState.agentId,
           thinkingLevel: sessionState.aiSettings.thinkingLevel,
+          reasoningMode: sessionState.aiSettings.reasoningMode,
         }
       : undefined;
 
@@ -1044,6 +1051,7 @@ export class MuxAgent implements Agent {
     const options: SendMessageOptions = {
       model: compactionModel,
       thinkingLevel: sessionState.aiSettings.thinkingLevel,
+      reasoningMode: sessionState.aiSettings.reasoningMode,
       agentId: "compact",
       maxOutputTokens: command.maxOutputTokens,
       skipAiSettingsPersistence: true,

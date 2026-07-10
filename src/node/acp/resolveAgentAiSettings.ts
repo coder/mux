@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import type { ORPCClient } from "./serverConnection";
 
 export interface ResolvedAiSettings {
   model: string;
   thinkingLevel: ThinkingLevel;
+  /**
+   * OpenAI pro reasoning mode. A per-workspace choice: populated only when
+   * session state is read from workspace metadata buckets (agent AI defaults
+   * never carry it), and threaded into prompt sends so ACP sessions do not
+   * silently downgrade pro workspaces to standard.
+   */
+  reasoningMode?: OpenAIReasoningMode;
 }
 
 const DEFAULT_PLAN_AGENT_ID = "plan";

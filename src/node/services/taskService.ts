@@ -9213,8 +9213,15 @@ export class TaskService {
 
       // Plan -> Exec continues in the same workspace, so its own persisted pro
       // choice carries over (resolveTaskAISettings sees an empty parentMeta here).
+      // A PRO toggle during the plan phase persists under the plan agent's
+      // bucket (aiSettingsByAgent), so read the still-current plan agent's
+      // settings first and only then fall back to legacy aiSettings.
+      const planAgentSettings = this.resolveWorkspaceAISettings(
+        args.entry.workspace,
+        normalizeAgentId(args.entry.workspace.agentId, "plan")
+      );
       const planPhaseReasoningMode = coerceOpenAIReasoningMode(
-        args.entry.workspace.aiSettings?.reasoningMode
+        planAgentSettings?.reasoningMode ?? args.entry.workspace.aiSettings?.reasoningMode
       );
       await this.editWorkspaceEntry(args.workspaceId, (workspace) => {
         workspace.agentId = targetAgentId;
