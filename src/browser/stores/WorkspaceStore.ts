@@ -1025,7 +1025,15 @@ export class WorkspaceStore {
         (data.reviews?.length ?? 0) > 0;
       const queuedMessage: QueuedMessage | null = hasContent
         ? {
-            id: `queued-${workspaceId}`,
+            // Change identity whenever the visible queue projection changes so
+            // per-card actions (notably Send now) reset after a partial FIFO drain.
+            id: `queued-${workspaceId}-${JSON.stringify([
+              data.displayText,
+              data.fileParts ?? [],
+              data.reviews ?? [],
+              data.queueDispatchMode,
+              data.hasCompactionRequest,
+            ])}`,
             content: data.displayText,
             fileParts: data.fileParts,
             reviews: data.reviews,

@@ -4405,6 +4405,42 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  it("queued message identity changes when a partial FIFO drain changes visible content", async () => {
+    const workspaceId = "queued-message-identity";
+    mockChatStreamFor(workspaceId, async function* () {
+      yield {
+        type: "queued-message-changed",
+        workspaceId,
+        hasQueuedMessages: true,
+        queuedMessages: ["first", "second"],
+        displayText: "first\nsecond",
+      };
+      yield { type: "caught-up", hasOlderHistory: false };
+      await tick(25);
+      yield {
+        type: "queued-message-changed",
+        workspaceId,
+        hasQueuedMessages: true,
+        queuedMessages: ["second"],
+        displayText: "second",
+      };
+    });
+
+    createAndAddWorkspace(store, workspaceId);
+    expect(await waitUntil(() => store.getWorkspaceState(workspaceId).queuedMessage != null)).toBe(
+      true
+    );
+    const firstId = store.getWorkspaceState(workspaceId).queuedMessage?.id;
+
+    expect(
+      await waitUntil(
+        () =>
+          store.getWorkspaceState(workspaceId).queuedMessage?.content === "second" &&
+          store.getWorkspaceState(workspaceId).queuedMessage?.id !== firstId
+      )
+    ).toBe(true);
+  });
+
   describe("bash-output events", () => {
     it("retains live output when bash tool result has no output", async () => {
       const workspaceId = "bash-output-workspace-1";
