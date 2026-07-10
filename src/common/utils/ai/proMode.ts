@@ -22,6 +22,7 @@
  */
 
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 import { openaiSupportsProMode } from "@/common/types/thinking";
 import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -61,8 +62,27 @@ export function openaiProModeAvailable(
   // Direct-only: any gateway route (explicit model-string prefix or
   // settings-resolved) fails closed — including mux-gateway, which drops the
   // field today. Unknown routes fail closed too.
-  if (getExplicitGatewayPrefix(modelString) != null) {
-    return false;
+  //
+  // An explicit prefix only wins the route while the gateway can actually
+  // serve it: the backend (resolveModelString) preserves the prefix only when
+  // the gateway is configured and enabled, and otherwise falls back to the
+  // settings-resolved route — which may be direct OpenAI, where pro mode
+  // works. Mirror that here so the toggle isn't hidden in the fallback case.
+  // Without a providersConfig we cannot tell, so fail closed conservatively.
+  const explicitGateway = getExplicitGatewayPrefix(modelString);
+  if (explicitGateway != null) {
+    const gatewayConfig = options?.providersConfig?.[explicitGateway];
+    const gatewayDefinition = PROVIDER_DEFINITIONS[explicitGateway];
+    const gatewayWinsRoute =
+      options?.providersConfig == null ||
+      (gatewayConfig?.isConfigured === true &&
+        gatewayConfig.isEnabled !== false &&
+        gatewayDefinition.kind === "gateway" &&
+        // Each gateway definition narrows routes to its literal tuple; widen for the membership check.
+        (gatewayDefinition.routes as readonly string[]).includes("openai"));
+    if (gatewayWinsRoute) {
+      return false;
+    }
   }
   const resolvedRouteProvider = options?.resolvedRouteProvider;
   if (resolvedRouteProvider != null && resolvedRouteProvider !== "direct") {

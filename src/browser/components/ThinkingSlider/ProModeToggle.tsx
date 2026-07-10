@@ -11,11 +11,13 @@ interface ProModeToggleProps {
 }
 
 /**
- * Small "PRO" toggle for OpenAI's pro reasoning mode (GPT-5.6 Sol/Terra only).
- * Renders nothing for models without pro-mode support and for explicit
- * non-passthrough gateway routes (OpenRouter, github-copilot) where the
- * pro-mode header is never emitted — otherwise the toggle would persist a
- * setting that can never affect the request.
+ * Small "PRO" toggle for OpenAI's pro reasoning mode (GPT-5.6 family).
+ * Renders nothing for models without pro-mode support and for gateway routes
+ * where the pro-mode header is never emitted — otherwise the toggle would
+ * persist a setting that can never affect the request. An explicit gateway
+ * prefix (openrouter:openai/...) only hides the toggle while that gateway can
+ * win the route; when it is disabled/unconfigured the backend falls back to
+ * the resolved route, which openaiProModeAvailable re-checks.
  */
 export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
   const [reasoningMode, setReasoningMode] = useReasoningMode();

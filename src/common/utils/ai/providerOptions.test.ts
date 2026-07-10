@@ -1355,6 +1355,65 @@ describe("buildRequestHeaders", () => {
       });
     }
 
+    // Explicit gateway prefixes hide the toggle only while that gateway can
+    // win the route. When the gateway is disabled/unconfigured the backend
+    // (resolveModelString) falls back to the settings-resolved route, which
+    // may be direct OpenAI — where the send path delivers pro mode.
+    describe("explicit gateway prefix with route fallback", () => {
+      const openaiDirect = {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+      };
+
+      test("fails closed while the explicit gateway is configured and enabled", () => {
+        const providersConfig: ProvidersConfigMap = {
+          openai: openaiDirect,
+          openrouter: { apiKeySet: true, isEnabled: true, isConfigured: true },
+        };
+        expect(
+          openaiProModeAvailable("openrouter:openai/gpt-5.6-sol", {
+            providersConfig,
+            resolvedRouteProvider: "direct",
+          })
+        ).toBe(false);
+      });
+
+      test("allows pro mode when the gateway is unavailable and the route falls back to direct", () => {
+        // openrouter absent from config (unconfigured) — backend routing falls
+        // back to direct OpenAI, so the toggle must stay visible.
+        const unconfigured: ProvidersConfigMap = { openai: openaiDirect };
+        expect(
+          openaiProModeAvailable("openrouter:openai/gpt-5.6-sol", {
+            providersConfig: unconfigured,
+            resolvedRouteProvider: "direct",
+          })
+        ).toBe(true);
+
+        // Disabled gateway behaves the same as unconfigured.
+        const disabled: ProvidersConfigMap = {
+          openai: openaiDirect,
+          openrouter: { apiKeySet: true, isEnabled: false, isConfigured: true },
+        };
+        expect(
+          openaiProModeAvailable("openrouter:openai/gpt-5.6-sol", {
+            providersConfig: disabled,
+            resolvedRouteProvider: "direct",
+          })
+        ).toBe(true);
+      });
+
+      test("still fails closed when the fallback route is another gateway", () => {
+        const providersConfig: ProvidersConfigMap = { openai: openaiDirect };
+        expect(
+          openaiProModeAvailable("openrouter:openai/gpt-5.6-sol", {
+            providersConfig,
+            resolvedRouteProvider: "mux-gateway",
+          })
+        ).toBe(false);
+      });
+    });
+
     // Mapped aliases (models: [{ id, mappedToModel }]) inherit pro capability
     // from their target via resolveModelForMetadata, matching the send path.
     test("mapped aliases inherit pro capability from their target", () => {
