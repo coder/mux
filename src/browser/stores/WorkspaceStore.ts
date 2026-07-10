@@ -1030,8 +1030,7 @@ export class WorkspaceStore {
             id: `queued-${workspaceId}-${JSON.stringify([
               data.displayText,
               data.fileParts?.map((part) => [part.mediaType, part.filename, part.url.length]) ?? [],
-              data.reviews?.map((review) => [review.filePath, review.lineStart, review.lineEnd]) ??
-                [],
+              data.reviews?.map((review) => [review.filePath, review.lineRange]) ?? [],
               data.queueDispatchMode,
               data.hasCompactionRequest,
             ])}`,
