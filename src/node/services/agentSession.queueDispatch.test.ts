@@ -319,6 +319,58 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("synthetic background entries neither surface in queue UI nor restore over user input", async () => {
+    const workspaceId = "queue-dispatch-hide-synthetic";
+    const { session, cleanup } = await createAgentSessionHarness({ workspaceId });
+
+    try {
+      const queuedSnapshots: string[][] = [];
+      const hasQueuedSnapshots: boolean[] = [];
+      const restoredTexts: string[] = [];
+      const canceledReasons: string[] = [];
+      const unsubscribe = session.onChatEvent((event) => {
+        if (event.message.type === "queued-message-changed") {
+          queuedSnapshots.push(event.message.queuedMessages);
+          hasQueuedSnapshots.push(event.message.hasQueuedMessages ?? false);
+        }
+        if (event.message.type === "restore-to-input") {
+          restoredTexts.push(event.message.text);
+        }
+      });
+
+      session.queueMessage(
+        "Background monitor wake",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          onCanceled: (reason) => {
+            canceledReasons.push(reason);
+          },
+        }
+      );
+      expect(hasQueuedSnapshots.at(-1)).toBe(true);
+      expect(queuedSnapshots.at(-1)).toEqual([]);
+
+      session.queueMessage("my own words", {
+        model: TEST_MODEL,
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+      expect(queuedSnapshots.at(-1)).toEqual(["my own words"]);
+
+      session.restoreQueueToInput();
+      unsubscribe();
+
+      expect(restoredTexts).toEqual(["my own words"]);
+      expect(canceledReasons).toHaveLength(1);
+      expect(session.hasQueuedMessages()).toBe(false);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("does not send the queued message after a user abort", async () => {
     const workspaceId = "queue-dispatch-user-abort";
     const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({

@@ -150,6 +150,8 @@ export interface CustomEventPayloads {
     mode?: "replace" | "append";
     fileParts?: FilePart[];
     reviews?: ReviewNoteDataForDisplay[];
+    /** When set, only the matching workspace composer may apply this update. */
+    workspaceId?: string;
   };
   [CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER]: {
     workspaceId: string;

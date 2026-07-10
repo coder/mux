@@ -992,8 +992,12 @@ describe("WorkspaceService bash monitor wakes", () => {
         runtimeConfig: { type: "local" },
       });
 
+      const getForegroundToolCallIds = mock(() => ["tool-call-1"]);
+      const sendToBackground = mock(() => ({ success: true as const }));
       const backgroundProcessManager = Object.assign(new EventEmitter(), {
         cleanup: mock(() => Promise.resolve()),
+        getForegroundToolCallIds,
+        sendToBackground,
       }) as unknown as BackgroundProcessManager & EventEmitter;
       const workspaceService = createWorkspaceServiceForTest({
         config,
@@ -1025,9 +1029,11 @@ describe("WorkspaceService bash monitor wakes", () => {
         timestamp: Date.now(),
       });
 
-      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      await waitForCondition(() => sendToBackground.mock.calls.length === 1);
       expect(sendSpy.mock.calls[0][2]).toMatchObject({ queueDispatchMode: "tool-end" });
       expect(sendSpy.mock.calls[0][3]?.requireIdle).toBeUndefined();
+      expect(getForegroundToolCallIds).toHaveBeenCalledWith(workspaceId);
+      expect(sendToBackground).toHaveBeenCalledWith("tool-call-1");
       expect(waitForIdleSpy).not.toHaveBeenCalled();
     } finally {
       await cleanup();

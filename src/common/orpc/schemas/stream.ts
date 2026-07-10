@@ -602,6 +602,8 @@ export const GoalBudgetLimitedEventSchema = z.object({
 export const QueuedMessageChangedEventSchema = z.object({
   type: z.literal("queued-message-changed"),
   workspaceId: z.string(),
+  /** True when any entry is queued, including hidden synthetic/background entries. */
+  hasQueuedMessages: z.boolean().optional(),
   queuedMessages: z.array(z.string()),
   displayText: z.string(),
   fileParts: z.array(FilePartSchema).optional(),

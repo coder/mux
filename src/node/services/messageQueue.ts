@@ -104,6 +104,8 @@ interface QueueEntry {
    * Later messages queue as a new entry behind them instead.
    */
   sealed: boolean;
+  /** User-originated entries are the only ones exposed to/restored into the composer. */
+  userAuthored: boolean;
   addCount: number;
   syntheticCount: number;
   agentInitiatedCount: number;
@@ -123,6 +125,8 @@ interface QueueEntry {
  *   never blocks later sends — they simply dispatch after it (no enqueue errors).
  * - Agent-skill / workspace-turn / callback entries are sealed: later messages
  *   start a new entry instead of adopting their metadata or callbacks.
+ * - User-authored and background/agent-initiated messages never share an entry,
+ *   so renderer/restoration projections can omit background work precisely.
  * - Compaction entries stay open: a follow-up typed behind a pending /compact
  *   batches under the compaction request (long-standing behavior).
  *
@@ -150,18 +154,28 @@ export class MessageQueue {
     );
   }
 
+  private getDispatchMode(entries: readonly QueueEntry[]): QueueDispatchMode {
+    if (entries.length === 0) {
+      return "tool-end";
+    }
+    return entries.some((entry) => entry.dispatchMode === "tool-end") ? "tool-end" : "turn-end";
+  }
+
   /**
    * Effective dispatch mode across pending entries: any entry queued for tool-end
    * makes the whole queue dispatch at tool-end (sticky, matching pre-entry behavior),
    * otherwise turn-end. Empty queue reports the tool-end default.
    */
   getQueueDispatchMode(): QueueDispatchMode {
-    if (this.entries.length === 0) {
-      return "tool-end";
-    }
-    return this.entries.some((entry) => entry.dispatchMode === "tool-end")
-      ? "tool-end"
-      : "turn-end";
+    return this.getDispatchMode(this.entries);
+  }
+
+  /**
+   * Dispatch mode for user-visible entries only. Backend-initiated maintenance/wake
+   * messages should not change the queue badge shown beside the user's own follow-up.
+   */
+  getVisibleQueueDispatchMode(): QueueDispatchMode {
+    return this.getDispatchMode(this.getVisibleEntries());
   }
 
   /**
@@ -235,6 +249,8 @@ export class MessageQueue {
       internal?.onAccepted != null ||
       internal?.onAcceptedPreStreamFailure != null ||
       internal?.onCanceled != null;
+    const incomingIsUserAuthored =
+      internal?.synthetic !== true && internal?.agentInitiated !== true;
     // Sealed entries must own their turn end-to-end: workspace-turn metadata and
     // internal callbacks correlate to exactly one dispatch, and agent-skill metadata
     // must not leak onto batched follow-ups.
@@ -250,7 +266,12 @@ export class MessageQueue {
 
     const tail = this.entries[this.entries.length - 1];
     let entry: QueueEntry;
-    if (tail !== undefined && !tail.sealed && !incomingStartsNewEntry) {
+    if (
+      tail !== undefined &&
+      !tail.sealed &&
+      !incomingStartsNewEntry &&
+      tail.userAuthored === incomingIsUserAuthored
+    ) {
       entry = tail;
       // tool-end is sticky within an entry; turn-end never downgrades an entry
       // that something already queued for tool-end dispatch.
@@ -264,6 +285,7 @@ export class MessageQueue {
         dedupeKeys: new Set<string>(),
         dispatchMode: incomingMode,
         sealed: incomingIsSealed,
+        userAuthored: incomingIsUserAuthored,
         addCount: 0,
         syntheticCount: 0,
         agentInitiatedCount: 0,
@@ -317,19 +339,20 @@ export class MessageQueue {
   }
 
   /**
-   * Get all queued message texts across entries (for editing/restoration).
+   * Entries containing user-originated input. Fully synthetic entries (background
+   * monitor wakes, scheduled maintenance, internal follow-ups) remain dispatchable
+   * but must not appear in or restore over the user's composer.
    */
-  getMessages(): string[] {
-    return this.entries.flatMap((entry) => entry.messages);
+  private getVisibleEntries(): QueueEntry[] {
+    return this.entries.filter((entry) => entry.userAuthored);
   }
 
-  /**
-   * Get display text for queued messages.
-   * - A single-message compaction/agent-skill entry shows its rawCommand (/compact, /{skill})
-   * - Otherwise entries show their actual message texts, joined with newlines
-   */
-  getDisplayText(): string {
-    return this.entries
+  private getMessagesForEntries(entries: readonly QueueEntry[]): string[] {
+    return entries.flatMap((entry) => entry.messages);
+  }
+
+  private getDisplayTextForEntries(entries: readonly QueueEntry[]): string {
+    return entries
       .map((entry) => {
         if (
           entry.messages.length <= 1 &&
@@ -343,21 +366,64 @@ export class MessageQueue {
       .join("\n");
   }
 
-  /**
-   * Get accumulated file parts across entries for display.
-   */
-  getFileParts(): FilePart[] {
-    return this.entries.flatMap((entry) => entry.fileParts);
+  private getFilePartsForEntries(entries: readonly QueueEntry[]): FilePart[] {
+    return entries.flatMap((entry) => entry.fileParts);
   }
 
-  /**
-   * Get reviews across entries' metadata for display.
-   */
-  getReviews(): ReviewNoteData[] | undefined {
-    const reviews = this.entries.flatMap((entry) =>
+  private getReviewsForEntries(entries: readonly QueueEntry[]): ReviewNoteData[] | undefined {
+    const reviews = entries.flatMap((entry) =>
       hasReviews(entry.muxMetadata) ? (entry.muxMetadata.reviews ?? []) : []
     );
     return reviews.length > 0 ? reviews : undefined;
+  }
+
+  /** Get all queued message texts across entries (including synthetic entries). */
+  getMessages(): string[] {
+    return this.getMessagesForEntries(this.entries);
+  }
+
+  /** Get user-visible queued message texts for the renderer/composer. */
+  getVisibleMessages(): string[] {
+    return this.getMessagesForEntries(this.getVisibleEntries());
+  }
+
+  /**
+   * Get display text for queued messages.
+   * - A single-message compaction/agent-skill entry shows its rawCommand (/compact, /{skill})
+   * - Otherwise entries show their actual message texts, joined with newlines
+   */
+  getDisplayText(): string {
+    return this.getDisplayTextForEntries(this.entries);
+  }
+
+  /** Get display text for user-visible entries only. */
+  getVisibleDisplayText(): string {
+    return this.getDisplayTextForEntries(this.getVisibleEntries());
+  }
+
+  /** Get accumulated file parts across all entries. */
+  getFileParts(): FilePart[] {
+    return this.getFilePartsForEntries(this.entries);
+  }
+
+  /** Get accumulated file parts for user-visible entries only. */
+  getVisibleFileParts(): FilePart[] {
+    return this.getFilePartsForEntries(this.getVisibleEntries());
+  }
+
+  /** Get reviews across all entries' metadata. */
+  getReviews(): ReviewNoteData[] | undefined {
+    return this.getReviewsForEntries(this.entries);
+  }
+
+  /** Get reviews across user-visible entries' metadata only. */
+  getVisibleReviews(): ReviewNoteData[] | undefined {
+    return this.getReviewsForEntries(this.getVisibleEntries());
+  }
+
+  /** Whether a user-visible queued entry is a compaction request. */
+  hasVisibleCompactionRequest(): boolean {
+    return this.getVisibleEntries().some((entry) => isCompactionMetadata(entry.muxMetadata));
   }
 
   /**

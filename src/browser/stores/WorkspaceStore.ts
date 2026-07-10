@@ -1036,7 +1036,7 @@ export class WorkspaceStore {
 
       // Mirror the queue signal onto active streams so response notifications follow
       // user-visible terminal turns instead of every intermediate handoff.
-      aggregator.setActiveQueuedFollowUp(queuedMessage !== null);
+      aggregator.setActiveQueuedFollowUp(data.hasQueuedMessages ?? queuedMessage !== null);
       this.assertChatTransientState(workspaceId).queuedMessage = queuedMessage;
       this.states.bump(workspaceId);
     },
@@ -1050,6 +1050,9 @@ export class WorkspaceStore {
           mode: "replace",
           fileParts: data.fileParts,
           reviews: data.reviews,
+          // Restore events can arrive for a background workspace; never let them
+          // overwrite the composer currently mounted for another workspace.
+          workspaceId: data.workspaceId,
         })
       );
     },

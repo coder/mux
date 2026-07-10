@@ -18,6 +18,31 @@ describe("MessageQueue", () => {
       expect(queue.getDisplayText()).toBe("First message\nSecond message");
     });
 
+    it("should hide synthetic background entries from the user-visible queue snapshot", () => {
+      queue.add(
+        "Background monitor wake",
+        { model: "gpt-4", agentId: "exec", queueDispatchMode: "tool-end" },
+        { synthetic: true, agentInitiated: true }
+      );
+      queue.add("User follow-up", {
+        model: "gpt-4",
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      // Dispatch state still includes both FIFO entries, but the composer/queue card
+      // only exposes the user's own input and its chosen dispatch boundary.
+      expect(queue.getMessages()).toEqual(["Background monitor wake", "User follow-up"]);
+      expect(queue.getVisibleMessages()).toEqual(["User follow-up"]);
+      expect(queue.getVisibleDisplayText()).toBe("User follow-up");
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+      expect(queue.getVisibleQueueDispatchMode()).toBe("turn-end");
+      const background = queue.dequeueNext();
+      expect(background.message).toBe("Background monitor wake");
+      expect(background.internal).toMatchObject({ synthetic: true, agentInitiated: true });
+      expect(queue.dequeueNext().message).toBe("User follow-up");
+    });
+
     it("should return rawCommand for compaction request", () => {
       const metadata: MuxMessageMetadata = {
         type: "compaction-request",
@@ -661,12 +686,17 @@ describe("MessageQueue", () => {
       expect(internal).toEqual({ synthetic: true });
     });
 
-    it("should not mark mixed synthetic + user batches as synthetic", () => {
+    it("should keep synthetic and user messages in separate entries", () => {
       queue.add("Idle compaction", { model: "gpt-4", agentId: "compact" }, { synthetic: true });
       queue.add("User follow-up", { model: "gpt-4", agentId: "exec" });
 
-      const { internal } = queue.dequeueNext();
-      expect(internal).toBeUndefined();
+      const background = queue.dequeueNext();
+      expect(background.message).toBe("Idle compaction");
+      expect(background.internal).toEqual({ synthetic: true });
+
+      const user = queue.dequeueNext();
+      expect(user.message).toBe("User follow-up");
+      expect(user.internal).toBeUndefined();
     });
 
     it("should clear synthetic flag when queue is cleared", () => {
