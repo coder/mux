@@ -215,13 +215,15 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns 5 levels including xhigh for gpt-5.6-terra and gpt-5.6-luna (no max)", () => {
+  // Native max is family-wide at GA (Sol/Terra/Luna and the bare alias).
+  test("returns 6 levels including max for gpt-5.6-terra and gpt-5.6-luna", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.6-terra")).toEqual([
       "off",
       "low",
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(getThinkingPolicyForModel("openai:gpt-5.6-luna")).toEqual([
       "off",
@@ -229,6 +231,7 @@ describe("getThinkingPolicyForModel", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(getThinkingPolicyForModel("mux-gateway:openai/gpt-5.6-terra-2026-07-09")).toEqual([
       "off",
@@ -236,6 +239,7 @@ describe("getThinkingPolicyForModel", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
   });
 

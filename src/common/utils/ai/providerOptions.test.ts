@@ -691,14 +691,22 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(openai!.reasoningEffort).toBe("xhigh");
     });
 
-    test("keeps max -> xhigh for non-Sol OpenAI models", () => {
-      for (const model of ["openai:gpt-5.6-terra", "openai:gpt-5.6-luna", "openai:gpt-5.5-pro"]) {
+    test("maps max to the native effort across the GPT-5.6 family", () => {
+      for (const model of ["openai:gpt-5.6-terra", "openai:gpt-5.6-luna"]) {
         const result = buildProviderOptions(model, "max");
         const openai = getOpenAIOptions(result);
 
         expect(openai).toBeDefined();
-        expect(openai!.reasoningEffort).toBe("xhigh");
+        expect(openai!.reasoningEffort).toBe("max");
       }
+    });
+
+    test("keeps max -> xhigh for pre-5.6 OpenAI models", () => {
+      const result = buildProviderOptions("openai:gpt-5.5-pro", "max");
+      const openai = getOpenAIOptions(result);
+
+      expect(openai).toBeDefined();
+      expect(openai!.reasoningEffort).toBe("xhigh");
     });
 
     test("carries the native max effort through the Copilot-routed gateway call site", () => {
@@ -1160,8 +1168,16 @@ describe("buildRequestHeaders", () => {
         expected: undefined,
       },
       {
-        name: "does not emit for Luna (no pro support)",
+        // Pro mode is family-wide at GA, including Luna.
+        name: "emits pro header for direct Luna with reasoningMode=pro",
         model: "openai:gpt-5.6-luna",
+        routeProvider: undefined,
+        reasoningMode: "pro",
+        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
+      },
+      {
+        name: "does not emit for pre-5.6 models (no pro support)",
+        model: "openai:gpt-5.5-pro",
         routeProvider: undefined,
         reasoningMode: "pro",
         expected: undefined,
@@ -1306,12 +1322,14 @@ describe("buildRequestHeaders", () => {
     const cases: Array<[string, boolean]> = [
       ["openai:gpt-5.6-sol", true],
       ["openai:gpt-5.6-terra", true],
+      // Pro mode is family-wide at GA (including Luna and the bare alias).
+      ["openai:gpt-5.6-luna", true],
+      ["openai:gpt-5.6", true],
       // All gateways fail closed — mux-gateway drops the field server-side.
       ["mux-gateway:openai/gpt-5.6-sol", false],
       ["openrouter:openai/gpt-5.6-sol", false],
       ["github-copilot:gpt-5.6-sol", false],
       // Non-pro-capable models.
-      ["openai:gpt-5.6-luna", false],
       ["openai:gpt-5.5-pro", false],
       ["anthropic:claude-opus-4-8", false],
       ["", false],
@@ -1328,12 +1346,12 @@ describe("buildRequestHeaders", () => {
     test("mapped aliases inherit pro capability from their target", () => {
       const providersConfig = createMockProvidersConfig({
         "openai:team-sol": "openai:gpt-5.6-sol",
-        "openai:team-luna": "openai:gpt-5.6-luna",
+        "openai:team-pro": "openai:gpt-5.5-pro",
       });
 
       expect(openaiProModeAvailable("openai:team-sol", { providersConfig })).toBe(true);
       // Targets without pro capability stay hidden.
-      expect(openaiProModeAvailable("openai:team-luna", { providersConfig })).toBe(false);
+      expect(openaiProModeAvailable("openai:team-pro", { providersConfig })).toBe(false);
       // Without a mapping the custom id fails closed.
       expect(openaiProModeAvailable("openai:team-sol")).toBe(false);
     });

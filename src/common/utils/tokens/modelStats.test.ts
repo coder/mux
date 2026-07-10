@@ -34,22 +34,33 @@ describe("getModelStats", () => {
   });
 
   test.each([
-    // [model, input, output, cacheRead, cacheCreation, maxInput]
-    ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625, 1000000],
-    ["openai:gpt-5.6-terra", 0.0000025, 0.000015, 0.00000025, 0.000003125, 1000000],
-    ["openai:gpt-5.6-luna", 0.000001, 0.000006, 0.0000001, 0.00000125, 400000],
+    // [model, input, output, cacheRead, cacheCreation]
+    ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625],
+    ["openai:gpt-5.6-terra", 0.0000025, 0.000015, 0.00000025, 0.000003125],
+    ["openai:gpt-5.6-luna", 0.000001, 0.000006, 0.0000001, 0.00000125],
   ] as const)(
-    "resolves %s with the launch pricing and limits",
-    (model, input, output, cacheRead, cacheCreation, maxInput) => {
+    "resolves %s with the GA pricing and limits",
+    (model, input, output, cacheRead, cacheCreation) => {
       const stats = expectStats(model);
       expect(stats.input_cost_per_token).toBe(input);
       expect(stats.output_cost_per_token).toBe(output);
       expect(stats.cache_read_input_token_cost).toBe(cacheRead);
       expect(stats.cache_creation_input_token_cost).toBe(cacheCreation);
-      expect(stats.max_input_tokens).toBe(maxInput);
+      // GA model pages list a 1.05M context window / 128K max output for every tier
+      // (Luna's 400K launch figure was stale and caused premature compaction).
+      expect(stats.max_input_tokens).toBe(1050000);
       expect(stats.max_output_tokens).toBe(128000);
-      // GPT-5.6 pricing is flat: no long-context tier (unlike gpt-5.5).
-      expect(stats.tiered_pricing_threshold_tokens).toBeUndefined();
+      // Long-context tier: >272K prompt tokens bill the full request at 2x
+      // input / 1.5x output, with cache writes at 1.25x the active input rate
+      // (so 2x their base rate). Assert the multipliers, not fresh constants.
+      expect(stats.tiered_pricing_threshold_tokens).toBe(272000);
+      expect(stats.input_cost_per_token_above_200k_tokens).toBeCloseTo(input * 2, 12);
+      expect(stats.output_cost_per_token_above_200k_tokens).toBeCloseTo(output * 1.5, 12);
+      expect(stats.cache_read_input_token_cost_above_200k_tokens).toBeCloseTo(cacheRead * 2, 12);
+      expect(stats.cache_creation_input_token_cost_above_200k_tokens).toBeCloseTo(
+        cacheCreation * 2,
+        12
+      );
     }
   );
 

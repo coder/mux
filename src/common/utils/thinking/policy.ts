@@ -19,6 +19,7 @@ import {
   THINKING_LEVEL_OFF,
   anthropicRejectsDisabledThinking,
   anthropicSupportsNativeXhigh,
+  openaiSupportsNativeMaxEffort,
   stripModelProviderPrefixes,
   type ThinkingLevel,
   type ParsedThinkingInput,
@@ -54,8 +55,8 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5.3-codex / Spark variants →
  *   ["off", "low", "medium", "high", "xhigh"] (5 levels including xhigh)
  * - openai:gpt-5.2 / openai:gpt-5.5 → ["off", "low", "medium", "high", "xhigh"]
- * - openai:gpt-5.6-sol → ["off", "low", "medium", "high", "xhigh", "max"] (6 levels; Sol-only native max)
- * - openai:gpt-5.6-terra / openai:gpt-5.6-luna → ["off", "low", "medium", "high", "xhigh"]
+ * - openai:gpt-5.6 family (Sol/Terra/Luna and the bare alias) →
+ *   ["off", "low", "medium", "high", "xhigh", "max"] (6 levels; native max at GA)
  * - openai:gpt-5.2-pro / openai:gpt-5.5-pro → ["medium", "high", "xhigh"] (3 levels)
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
@@ -122,14 +123,10 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
     return ["off", "low", "medium", "high", "xhigh"];
   }
 
-  // gpt-5.6-sol supports the new native "max" reasoning effort (Sol only).
-  if (/^gpt-5\.6-sol(?!-[a-z])/.test(withoutProviderNamespace)) {
+  // The GPT-5.6 family (Sol/Terra/Luna and the bare gpt-5.6 alias) supports
+  // the native "max" reasoning effort introduced at GA.
+  if (openaiSupportsNativeMaxEffort(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high", "xhigh", "max"];
-  }
-
-  // gpt-5.6-terra / gpt-5.6-luna support the same 5 levels as gpt-5.5.
-  if (/^gpt-5\.6-(?:terra|luna)(?!-[a-z])/.test(withoutProviderNamespace)) {
-    return ["off", "low", "medium", "high", "xhigh"];
   }
 
   // gpt-5.2-pro and gpt-5.5-pro support medium, high, xhigh reasoning levels

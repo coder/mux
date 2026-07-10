@@ -242,22 +242,32 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
 }
 
 /**
+ * GPT-5.6 family matcher: the bare `gpt-5.6` alias (OpenAI routes it to Sol)
+ * plus the Sol/Terra/Luna tiers. The `\b` + lookaheads tolerate version-date
+ * suffixes (e.g. gpt-5.6-sol-2026-07-09) while rejecting hypothetical named
+ * variants (e.g. gpt-5.6-sol-mini) and other ids (e.g. gpt-5.61).
+ */
+function isGpt56FamilyModel(modelString: string): boolean {
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
+  return /^gpt-5\.6(?:-(?:sol|terra|luna))?\b(?!\.)(?!-[a-z])/.test(withoutPrefix);
+}
+
+/**
  * Whether the given OpenAI model supports the native "max" reasoning effort.
  *
- * GPT-5.6 Sol (released July 9, 2026) introduced a new top reasoning effort above
- * xhigh — Sol only; Terra/Luna top out at xhigh. The `(?!-[a-z])` lookahead
- * tolerates version-date suffixes (e.g. gpt-5.6-sol-2026-07-09) while rejecting
- * hypothetical named variants (e.g. gpt-5.6-sol-mini).
+ * The GPT-5.6 GA launch (July 9, 2026) added a top reasoning effort above
+ * xhigh for the whole family — Sol, Terra, Luna, and the bare `gpt-5.6` alias
+ * (see the OpenAI changelog: "GPT-5.6 adds ... max reasoning effort, and Pro
+ * mode"). Earlier preview coverage described it as Sol-only, which is stale.
  */
 export function openaiSupportsNativeMaxEffort(modelString: string): boolean {
-  const withoutPrefix = stripModelProviderPrefixes(modelString);
-  return /^gpt-5\.6-sol(?!-[a-z])/.test(withoutPrefix);
+  return isGpt56FamilyModel(modelString);
 }
 
 /**
  * OpenAI Responses API reasoning mode (orthogonal to reasoning effort).
  * Absent/"standard" is the API default; "pro" enables the slower, more
- * thorough pro-mode serving introduced with GPT-5.6 Sol/Terra.
+ * thorough pro-mode serving introduced with the GPT-5.6 family.
  */
 export const OPENAI_REASONING_MODES = ["standard", "pro"] as const;
 export type OpenAIReasoningMode = (typeof OPENAI_REASONING_MODES)[number];
@@ -274,15 +284,14 @@ export function coerceOpenAIReasoningMode(value: unknown): OpenAIReasoningMode |
  * Whether the given OpenAI model supports `reasoning.mode: "pro"` on the
  * Responses API.
  *
- * "GPT-5.6 Sol Pro" / "GPT-5.6 Terra Pro" are not separate model ids: the same
- * `gpt-5.6-sol` / `gpt-5.6-terra` ids are served with `reasoning.mode: "pro"`.
- * There is no Luna Pro. The `(?!-[a-z])` lookahead tolerates version-date
- * suffixes (e.g. gpt-5.6-sol-2026-07-09) while rejecting hypothetical named
- * variants (e.g. gpt-5.6-sol-mini).
+ * "GPT-5.6 Sol Pro" is not a separate model id: the same GPT-5.6 ids are
+ * served with `reasoning.mode: "pro"`. Per the Responses API reasoning guide,
+ * pro mode is available on every GPT-5.6 model (Sol, Terra, Luna, and the bare
+ * `gpt-5.6` alias) — the Sol/Terra-only restriction came from stale preview
+ * coverage.
  */
 export function openaiSupportsProMode(modelString: string): boolean {
-  const withoutPrefix = stripModelProviderPrefixes(modelString);
-  return /^gpt-5\.6-(?:sol|terra)(?!-[a-z])/.test(withoutPrefix);
+  return isGpt56FamilyModel(modelString);
 }
 
 /**

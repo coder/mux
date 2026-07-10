@@ -100,7 +100,7 @@ const MODEL_DEFINITIONS = {
     tokenizerOverride: "openai/gpt-5",
   },
   // GPT-5.6 Terra - balanced everyday tier, released July 9, 2026.
-  // GPT-5.5-class quality at half the cost: $2.50/M input, $15/M output; 1M context.
+  // GPT-5.5-class quality at half the cost: $2.50/M input, $15/M output; 1.05M context.
   GPT_56_TERRA: {
     provider: "openai",
     providerModelId: "gpt-5.6-terra",
@@ -108,7 +108,7 @@ const MODEL_DEFINITIONS = {
     tokenizerOverride: "openai/gpt-5",
   },
   // GPT-5.6 Luna - fastest, most cost-efficient tier, released July 9, 2026.
-  // $1/M input, $6/M output; 400K context (launch value).
+  // $1/M input, $6/M output; 1.05M context (GA model page; 400K was a stale launch value).
   GPT_56_LUNA: {
     provider: "openai",
     providerModelId: "gpt-5.6-luna",

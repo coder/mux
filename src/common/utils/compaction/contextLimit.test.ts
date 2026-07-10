@@ -99,7 +99,7 @@ describe("getEffectiveContextLimit", () => {
       false,
       providersWithOpenAI({ codexOauthSet: true })
     );
-    expect(oauthOnlyLimit).toBe(1_000_000);
+    expect(oauthOnlyLimit).toBe(1_050_000);
   });
 
   test("does not apply the GPT-5.5 OAuth cap to gateway-routed models", () => {
