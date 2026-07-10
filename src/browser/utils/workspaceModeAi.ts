@@ -69,13 +69,14 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   // Restore the agent's saved pro-mode choice alongside model/thinking on
   // explicit switches; otherwise inherit the workspace's current mode.
   // (Agent AI defaults carry no reasoningMode — it is a per-workspace choice.)
-  const workspaceOverrideReasoning = args.useWorkspaceByAgentFallback
-    ? coerceOpenAIReasoningMode(workspaceOverride?.reasoningMode)
-    : undefined;
+  // When a per-agent entry exists but lacks reasoningMode (legacy entry saved
+  // before pro mode shipped), treat absent as "standard" — matching the
+  // WorkspaceContext seeding semantics — instead of inheriting a possibly-pro
+  // workspace mode from the previously active agent.
   const resolvedReasoningMode =
-    workspaceOverrideReasoning ??
-    coerceOpenAIReasoningMode(args.existingReasoningMode) ??
-    "standard";
+    args.useWorkspaceByAgentFallback && workspaceOverride != null
+      ? (coerceOpenAIReasoningMode(workspaceOverride.reasoningMode) ?? "standard")
+      : (coerceOpenAIReasoningMode(args.existingReasoningMode) ?? "standard");
 
   return { resolvedModel, resolvedThinking, resolvedReasoningMode };
 }

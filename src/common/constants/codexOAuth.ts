@@ -100,6 +100,9 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
   "gpt-5.4-mini",
   "gpt-5.5",
   // GPT-5.6 family (July 9, 2026): available via both the public API and Codex.
+  // The bare alias is a servable model id (OpenAI routes it to Sol), so it must
+  // be allowed too or OAuth-only users selecting it fall to the API-key path.
+  "gpt-5.6",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",

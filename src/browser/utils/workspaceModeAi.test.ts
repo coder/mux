@@ -150,6 +150,43 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result.resolvedReasoningMode).toBe("pro");
   });
 
+  test("defaults legacy per-agent entries without reasoningMode to standard on explicit switches", () => {
+    // A workspaceByAgent entry saved before pro mode shipped has no
+    // reasoningMode field. Explicitly switching to that agent must not inherit
+    // the previous agent's pro mode — absent means "standard" (same semantics
+    // as WorkspaceContext seeding).
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "medium" },
+      },
+      useWorkspaceByAgentFallback: true,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "pro",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("standard");
+  });
+
+  test("inherits the workspace mode on explicit switches without a per-agent entry", () => {
+    // No workspaceByAgent entry at all: nothing saved for this agent, so the
+    // workspace's current mode carries over (distinct from the legacy-entry case).
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {},
+      useWorkspaceByAgentFallback: true,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "pro",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
   test("self-heals a corrupt saved reasoning mode to standard", () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "exec",

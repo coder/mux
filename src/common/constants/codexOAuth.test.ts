@@ -20,7 +20,8 @@ describe("codexOAuth model gating", () => {
   });
 
   it("allows the GPT-5.6 family through Codex OAuth without requiring it", () => {
-    for (const model of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    // Includes the bare alias: it is a servable model id (OpenAI routes it to Sol).
+    for (const model of ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
       expect(isCodexOauthAllowedModelId(model)).toBe(true);
       expect(isCodexOauthAllowedModelId(`openai:${model}`)).toBe(true);
       expect(isCodexOauthRequiredModelId(model)).toBe(false);
