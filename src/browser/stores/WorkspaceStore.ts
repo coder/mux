@@ -1029,8 +1029,9 @@ export class WorkspaceStore {
             // per-card actions (notably Send now) reset after a partial FIFO drain.
             id: `queued-${workspaceId}-${JSON.stringify([
               data.displayText,
-              data.fileParts ?? [],
-              data.reviews ?? [],
+              data.fileParts?.map((part) => [part.mediaType, part.filename, part.url.length]) ?? [],
+              data.reviews?.map((review) => [review.filePath, review.lineStart, review.lineEnd]) ??
+                [],
               data.queueDispatchMode,
               data.hasCompactionRequest,
             ])}`,
