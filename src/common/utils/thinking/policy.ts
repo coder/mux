@@ -358,13 +358,16 @@ export function enforceThinkingPolicy(
  */
 export function resolveThinkingInput(
   input: ParsedThinkingInput,
-  modelString: string
+  modelString: string,
+  providersConfig?: ProvidersConfigMap | null
 ): ThinkingLevel {
   // Named levels pass through directly
   if (typeof input === "string") return input;
 
-  // Numeric: index into the model's allowed levels (sorted lowest → highest)
-  const policy = getThinkingPolicyForModel(modelString);
+  // Numeric: index into the model's allowed levels (sorted lowest → highest).
+  // providersConfig resolves mapped aliases (mappedToModel) to their target's
+  // policy so indices map into the real ladder (e.g. GPT-5.6 native max).
+  const policy = getThinkingPolicyForModel(modelString, providersConfig);
   const sorted = [...policy].sort(
     (a, b) => THINKING_LEVELS.indexOf(a) - THINKING_LEVELS.indexOf(b)
   );

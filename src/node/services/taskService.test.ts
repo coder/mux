@@ -57,6 +57,7 @@ import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
 } from "@/common/utils/workflowRunMessages";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -293,6 +294,7 @@ function createAIServiceMocks(
     stopStream: ReturnType<typeof mock>;
     createModel: ReturnType<typeof mock>;
     getStreamInfo: ReturnType<typeof mock>;
+    getProvidersConfig: ReturnType<typeof mock>;
     on: ReturnType<typeof mock>;
     off: ReturnType<typeof mock>;
   }>
@@ -303,6 +305,7 @@ function createAIServiceMocks(
   stopStream: ReturnType<typeof mock>;
   createModel: ReturnType<typeof mock>;
   getStreamInfo: ReturnType<typeof mock>;
+  getProvidersConfig: ReturnType<typeof mock>;
   on: ReturnType<typeof mock>;
   off: ReturnType<typeof mock>;
 } {
@@ -321,6 +324,7 @@ function createAIServiceMocks(
     overrides?.createModel ??
     mock((): Promise<Result<never>> => Promise.resolve(Err("createModel not mocked")));
   const getStreamInfo = overrides?.getStreamInfo ?? mock(() => undefined);
+  const getProvidersConfig = overrides?.getProvidersConfig ?? mock(() => null);
 
   const on = overrides?.on ?? mock(() => undefined);
   const off = overrides?.off ?? mock(() => undefined);
@@ -332,6 +336,7 @@ function createAIServiceMocks(
       stopStream,
       createModel,
       getStreamInfo,
+      getProvidersConfig,
       on,
       off,
     } as unknown as AIService,
@@ -340,6 +345,7 @@ function createAIServiceMocks(
     stopStream,
     createModel,
     getStreamInfo,
+    getProvidersConfig,
     on,
     off,
   };
@@ -5933,6 +5939,61 @@ describe("TaskService", () => {
       created.data.taskId,
       "run explore with parent pro mode",
       expect.objectContaining({ agentId: "explore", reasoningMode: "pro" }),
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
+  test("keeps a mapped alias's native max thinking level when spawning a task", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          // A configured alias mapped to GPT-5.6: without the providers config
+          // threaded into the task-path clamp, "max" would be downgraded to
+          // "high" against the default four-level ladder.
+          aiSettings: { model: "openai:team-sol", thinkingLevel: "max" },
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const providersConfig: ProvidersConfigMap = {
+      openai: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "team-sol", mappedToModel: "openai:gpt-5.6-sol" }],
+      },
+    };
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const aiMocks = createAIServiceMocks(config, {
+      getProvidersConfig: mock(() => providersConfig),
+    });
+    const { taskService } = createTaskServiceHarness(config, {
+      aiService: aiMocks.aiService,
+      workspaceService,
+    });
+
+    const created = await createAgentTask(taskService, parentId, "run with mapped alias max");
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run with mapped alias max",
+      expect.objectContaining({ model: "openai:team-sol", thinkingLevel: "max" }),
       { agentInitiated: true }
     );
   }, 20_000);

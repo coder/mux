@@ -1619,9 +1619,13 @@ export class TaskService {
 
     // Resolve an explicit override first so numeric thinking indices map into the
     // chosen model's allowed levels (named levels pass through unchanged).
+    // Providers config threads through so mapped aliases (mappedToModel, e.g.
+    // openai:team-sol -> gpt-5.6-sol) keep their target's native levels instead
+    // of being clamped to the default four-level ladder.
+    const providersConfig = this.aiService.getProvidersConfig();
     const overrideThinkingLevel =
       params.thinkingLevel != null
-        ? resolveThinkingInput(params.thinkingLevel, canonicalModel)
+        ? resolveThinkingInput(params.thinkingLevel, canonicalModel, providersConfig)
         : undefined;
     const requestedThinkingLevel: ThinkingLevel =
       overrideThinkingLevel ??
@@ -1630,7 +1634,12 @@ export class TaskService {
       parentRuntimeAiSettings?.thinkingLevel ??
       parentAiSettings?.thinkingLevel ??
       "off";
-    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
+    const effectiveThinkingLevel = enforceThinkingPolicy(
+      canonicalModel,
+      requestedThinkingLevel,
+      undefined,
+      providersConfig
+    );
 
     // Pro reasoning mode is a per-workspace choice (agent/subagent defaults do
     // not carry it), so tasks inherit it from the parent's persisted settings.
@@ -3095,7 +3104,13 @@ export class TaskService {
       defaultModel;
     const thinkingLevel =
       args.thinkingLevel != null
-        ? resolveThinkingInput(args.thinkingLevel, normalizeToCanonical(model))
+        ? // Providers config keeps mapped aliases on their target's ladder
+          // (see resolveTaskAISettings).
+          resolveThinkingInput(
+            args.thinkingLevel,
+            normalizeToCanonical(model),
+            this.aiService.getProvidersConfig()
+          )
         : (args.parentRuntimeAiSettings?.thinkingLevel ??
           parentMeta.aiSettingsByAgent?.exec?.thinkingLevel ??
           parentMeta.aiSettings?.thinkingLevel);
