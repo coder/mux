@@ -36,6 +36,38 @@ interface ModelData {
   supported_endpoints?: string[];
 }
 
+// GPT-5.6 Sol - Released July 9, 2026 (flagship tier of the GPT-5.6 family).
+// GA model page: 1.05M context window, 128K max output, Feb 16 2026 cutoff.
+// Base pricing: $5/M input, $30/M output, $0.50/M cached input; cache writes
+// billed at 1.25x the active input rate ($6.25/M base). Prompts above 272K
+// input tokens bill the full request at 2x input / 1.5x output: $10/M input,
+// $45/M output, $1/M cached input, $12.50/M cache writes.
+// Shared const: the bare "gpt-5.6" alias is a servable id that OpenAI routes
+// to Sol (the response echoes model gpt-5.6-sol), so both ids resolve to the
+// same stats — otherwise token meters/compaction/pricing treat the documented
+// bare alias as unknown.
+const GPT_56_SOL_STATS: ModelData = {
+  max_input_tokens: 1050000,
+  max_output_tokens: 128000,
+  input_cost_per_token: 0.000005, // $5 per million input tokens (<272K prompt tokens)
+  input_cost_per_token_above_200k_tokens: 0.00001, // $10 per million input tokens (>272K)
+  output_cost_per_token: 0.00003, // $30 per million output tokens (<272K prompt tokens)
+  output_cost_per_token_above_200k_tokens: 0.000045, // $45 per million output tokens (>272K)
+  cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens (<272K)
+  cache_read_input_token_cost_above_200k_tokens: 0.000001, // $1 per million cached input tokens (>272K)
+  cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens (1.25x input)
+  cache_creation_input_token_cost_above_200k_tokens: 0.0000125, // $12.50 per million tokens (1.25x long-context input)
+  // OpenAI's published long-context boundary is 272K even though LiteLLM's field names say 200K.
+  tiered_pricing_threshold_tokens: 272000,
+  litellm_provider: "openai",
+  mode: "chat",
+  supports_function_calling: true,
+  supports_vision: true,
+  supports_reasoning: true,
+  supports_response_schema: true,
+  knowledge_cutoff: "2026-02-16",
+};
+
 export const modelsExtra: Record<string, ModelData> = {
   // GPT Image 2 - image-generation model not yet in LiteLLM's bundled models.json.
   // OpenAI prices text input at $5/M tokens, image input at $8/M, cached text input at
@@ -239,33 +271,10 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-08-31",
   },
 
-  // GPT-5.6 Sol - Released July 9, 2026 (flagship tier of the GPT-5.6 family).
-  // GA model page: 1.05M context window, 128K max output, Feb 16 2026 cutoff.
-  // Base pricing: $5/M input, $30/M output, $0.50/M cached input; cache writes
-  // billed at 1.25x the active input rate ($6.25/M base). Prompts above 272K
-  // input tokens bill the full request at 2x input / 1.5x output: $10/M input,
-  // $45/M output, $1/M cached input, $12.50/M cache writes.
-  "gpt-5.6-sol": {
-    max_input_tokens: 1050000,
-    max_output_tokens: 128000,
-    input_cost_per_token: 0.000005, // $5 per million input tokens (<272K prompt tokens)
-    input_cost_per_token_above_200k_tokens: 0.00001, // $10 per million input tokens (>272K)
-    output_cost_per_token: 0.00003, // $30 per million output tokens (<272K prompt tokens)
-    output_cost_per_token_above_200k_tokens: 0.000045, // $45 per million output tokens (>272K)
-    cache_read_input_token_cost: 0.0000005, // $0.50 per million cached input tokens (<272K)
-    cache_read_input_token_cost_above_200k_tokens: 0.000001, // $1 per million cached input tokens (>272K)
-    cache_creation_input_token_cost: 0.00000625, // $6.25 per million tokens (1.25x input)
-    cache_creation_input_token_cost_above_200k_tokens: 0.0000125, // $12.50 per million tokens (1.25x long-context input)
-    // OpenAI's published long-context boundary is 272K even though LiteLLM's field names say 200K.
-    tiered_pricing_threshold_tokens: 272000,
-    litellm_provider: "openai",
-    mode: "chat",
-    supports_function_calling: true,
-    supports_vision: true,
-    supports_reasoning: true,
-    supports_response_schema: true,
-    knowledge_cutoff: "2026-02-16",
-  },
+  // GPT-5.6 Sol (see GPT_56_SOL_STATS above for pricing/context details).
+  "gpt-5.6-sol": GPT_56_SOL_STATS,
+  // Bare GPT-5.6 alias — servable id that OpenAI routes to Sol; same stats.
+  "gpt-5.6": GPT_56_SOL_STATS,
 
   // GPT-5.6 Terra - Released July 9, 2026 (balanced everyday tier).
   // GA docs: 1.05M context window, 128K max output, Feb 16 2026 cutoff (family).

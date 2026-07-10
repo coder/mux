@@ -1279,14 +1279,22 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       });
 
       // Pro reasoning mode is only meaningful for models that support it
-      // (GPT-5.6 Sol/Terra) on routes that emit the pro-mode header (direct
-      // OpenAI or passthrough gateways) with the Responses wire format; hide
-      // the action elsewhere to avoid inert toggles.
-      const currentModelRoute = currentModelString
-        ? p.getRouteForModel?.(normalizeToCanonical(currentModelString))
+      // (GPT-5.6 family) on routes that emit the pro-mode header (direct
+      // OpenAI) with the Responses wire format; hide the action elsewhere to
+      // avoid inert toggles. New/idle workspaces have no activity snapshot
+      // (currentModel is null), so fall back to the chat input's persisted
+      // selection — the mobile layout hides the PRO chip and relies on this
+      // palette action being reachable before the first send.
+      const proGateModelString =
+        currentModelString ??
+        (typeof window === "undefined"
+          ? undefined
+          : getSendOptionsFromStorage(workspaceId).model || undefined);
+      const currentModelRoute = proGateModelString
+        ? p.getRouteForModel?.(normalizeToCanonical(proGateModelString))
         : undefined;
       if (
-        openaiProModeAvailable(currentModelString ?? "", {
+        openaiProModeAvailable(proGateModelString ?? "", {
           providersConfig: p.providersConfig,
           resolvedRouteProvider: currentModelRoute,
         })

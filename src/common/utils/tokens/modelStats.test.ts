@@ -33,6 +33,12 @@ describe("getModelStats", () => {
     expect(expectStats(datedModel)).toEqual(expectStats(canonicalModel));
   });
 
+  test("resolves the bare gpt-5.6 alias to Sol's stats", () => {
+    // The bare alias is a servable id that OpenAI routes to Sol; without its
+    // own entry, token meters/compaction/pricing would treat it as unknown.
+    expect(expectStats("openai:gpt-5.6")).toEqual(expectStats("openai:gpt-5.6-sol"));
+  });
+
   test.each([
     // [model, input, output, cacheRead, cacheCreation]
     ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625],
