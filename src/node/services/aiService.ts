@@ -1909,6 +1909,9 @@ export class AIService extends EventEmitter {
                     {
                       model: modelString,
                       thinkingLevel: effectiveThinkingLevel,
+                      // Carry the turn's pro mode so the workflow-result
+                      // continuation does not silently drop back to standard.
+                      reasoningMode,
                       agentId: effectiveAgentId,
                       toolPolicy: effectiveToolPolicy,
                       additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
