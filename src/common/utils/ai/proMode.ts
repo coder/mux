@@ -1,20 +1,17 @@
 /**
  * Route-aware pro-mode availability for UI surfaces (PRO toggle, palette command).
  *
- * Mirrors the send path's wire gating so the UI never offers a toggle that
+ * Mirrors the send path's provider-option gating so the UI never offers a toggle that
  * cannot affect the request:
- * - model must be pro-capable (GPT-5.6 Sol/Terra — openaiSupportsProMode);
- * - pro mode is a Responses API field, so `wireFormat: "chatCompletions"`
- *   disables it (the OpenAI fetch wrapper only rewrites /responses bodies);
+ * - model must be pro-capable (the GPT-5.6 family — openaiSupportsProMode);
+ * - pro mode is a Responses API field, so `wireFormat: "chatCompletions"` disables it;
  * - only the direct `openai:` route delivers the mode. Gateways hide it:
- *   non-passthrough ones (openrouter:openai/..., github-copilot:...) never see
- *   the header, and mux-gateway currently drops the rewritten
- *   `providerOptions.openai.reasoningMode` server-side (verified empirically —
+ *   non-passthrough ones use another provider schema, and mux-gateway currently
+ *   drops `providerOptions.openai.reasoningMode` server-side (verified empirically —
  *   the Responses API echoed `mode: "standard"`), so it fails closed until the
  *   gateway forwards the field;
- * - Codex OAuth routes never inject (`inject: false` — the ChatGPT backend is
- *   stricter than the public API), so when OAuth is the effective auth path
- *   for the model, pro mode is unavailable too.
+ * - Codex OAuth routes strip `reasoning.mode` before calling the stricter ChatGPT
+ *   backend, so when OAuth is the effective auth path, pro mode is unavailable too.
  *
  * Lives in its own module because the Codex OAuth mirror imports the codexOAuth
  * constants, which sit above models.ts in the import graph (codexOAuth →
@@ -61,7 +58,7 @@ export function openaiProModeAvailable(
 
   // Direct-only: any gateway route (explicit model-string prefix or
   // settings-resolved) fails closed — including mux-gateway, which drops the
-  // field today. Unknown routes fail closed too.
+  // native provider option today. Unknown routes fail closed too.
   //
   // An explicit prefix only wins the route while the gateway can actually
   // serve it: the backend (resolveModelString) preserves the prefix only when
@@ -89,7 +86,7 @@ export function openaiProModeAvailable(
     return false;
   }
 
-  // Codex OAuth routes strip the pro-mode header without injecting. Checked
+  // Codex OAuth routes strip reasoning.mode before forwarding. Checked
   // after route resolution so the exclusion only applies to direct OpenAI
   // routing — gateway sends never use Codex OAuth (they fail closed above).
   return !(

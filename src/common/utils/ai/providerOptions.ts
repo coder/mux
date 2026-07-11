@@ -51,15 +51,6 @@ export { openaiProModeAvailable } from "./proMode";
 export const MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER = "x-mux-anthropic-effort";
 
 /**
- * Request header used to inject OpenAI's `reasoning.mode` at the wire level.
- * @ai-sdk/openai only maps reasoningEffort/reasoningSummary into the wire
- * `reasoning` object and drops unknown providerOptions keys, so pro mode for
- * GPT-5.6 Sol/Terra is delivered via this Mux-internal header, which the
- * OpenAI fetch wrapper strips and rewrites into `reasoning.mode` on the wire.
- */
-export const MUX_OPENAI_REASONING_MODE_HEADER = "x-mux-openai-reasoning-mode";
-
-/**
  * OpenRouter reasoning options
  * @see https://openrouter.ai/docs/use-cases/reasoning-tokens
  */
@@ -217,6 +208,7 @@ export function preserveAnthropic1MContextForFollowUp(
  * @param providersConfig - Optional providers config for mapped model capability detection
  * @param routeProvider - Optional route provider (gateway/direct) for SDK format selection
  * @param promptCacheScope - Optional stable project-scoped cache routing key
+ * @param reasoningMode - Optional OpenAI Responses reasoning mode
  * @returns Provider options object for AI SDK
  */
 export function buildProviderOptions(
@@ -229,7 +221,8 @@ export function buildProviderOptions(
   openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"],
   providersConfig?: ProvidersConfigMap | null,
   routeProvider?: ProviderName,
-  promptCacheScope?: string
+  promptCacheScope?: string,
+  reasoningMode?: OpenAIReasoningMode
 ): ProviderOptions {
   // Caller is responsible for enforcing thinking policy before calling this function.
   // agentSession.ts is the canonical enforcement point.
@@ -358,20 +351,10 @@ export function buildProviderOptions(
     // Model-aware: the GPT-5.6 family maps ThinkingLevel "max" to the native
     // "max" effort; other OpenAI models keep the max -> "xhigh" downgrade. Use
     // capabilityModel so mapped aliases (mappedToModel) inherit their target's
-    // native effort. Live-verified (2026-07-10): the Responses API accepts
-    // reasoning.effort "max" on every GPT-5.6 tier (gpt-5.5 rejects it), but
-    // @ai-sdk/openai's Chat Completions schema caps reasoningEffort at xhigh
-    // (z.enum(["none", ..., "xhigh"]) — no "max"), so a native-max request
-    // over the chatCompletions wire format would fail client-side Zod
-    // validation — degrade it to xhigh there instead. "none" needs no such
-    // handling: it is a first-class member of that enum with dedicated
-    // chat-model handling, and omitting it would default GPT-5.6 back to
-    // medium reasoning (the exact bug the explicit "none" mapping fixes).
-    const nativeReasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
-    const chatCompletionsWire =
-      (muxProviderOptions?.openai?.wireFormat ?? "responses") === "chatCompletions";
-    const reasoningEffort =
-      chatCompletionsWire && nativeReasoningEffort === "max" ? "xhigh" : nativeReasoningEffort;
+    // native effort. @ai-sdk/openai 4.0.11 accepts native max on both Responses
+    // and Chat Completions, so both wire formats now preserve the selected level.
+    // GPT-5.6 "off" remains explicit "none" because omission defaults to medium.
+    const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
 
     // Mux always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
@@ -389,6 +372,12 @@ export function buildProviderOptions(
     const wireFormat = muxProviderOptions?.openai?.wireFormat ?? "responses";
     const store = muxProviderOptions?.openai?.store;
     const isResponses = wireFormat === "responses";
+    const routeIsDirect = routeProvider == null || routeProvider === origin;
+    const shouldUseProMode =
+      isResponses &&
+      routeIsDirect &&
+      reasoningMode === "pro" &&
+      openaiSupportsProMode(capabilityModel);
     const truncationMode = openaiTruncationMode ?? "disabled";
     const shouldSendReasoningSummary = supportsOpenAIReasoningSummary(capModelName);
 
@@ -398,6 +387,7 @@ export function buildProviderOptions(
       thinkingLevel: effectiveThinking,
       historyMessages: messages?.length ?? 0,
       promptCacheKey,
+      reasoningMode: shouldUseProMode ? "pro" : undefined,
       truncation: truncationMode,
       wireFormat,
     });
@@ -410,6 +400,10 @@ export function buildProviderOptions(
         ...(isResponses && {
           // Default to disabled; allow auto truncation for compaction to avoid context errors
           truncation: truncationMode,
+          // Pro mode is a native Responses option in @ai-sdk/openai 4.0.11.
+          // Keep the existing direct-route capability gate because mux-gateway
+          // currently drops this provider option and Codex OAuth strips it.
+          ...(shouldUseProMode && { reasoningMode: "pro" as const }),
           // Stable prompt cache key to improve OpenAI cache hit rates
           // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
           ...(promptCacheKey && { promptCacheKey }),
@@ -610,8 +604,7 @@ export function buildRequestHeaders(
   workspaceId?: string,
   providersConfig?: ProvidersConfigMap | null,
   routeProvider?: ProviderName,
-  thinkingLevel?: ThinkingLevel,
-  reasoningMode?: OpenAIReasoningMode
+  thinkingLevel?: ThinkingLevel
 ): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
 
@@ -649,35 +642,6 @@ export function buildRequestHeaders(
     anthropicSupportsNativeXhigh(modelString)
   ) {
     headers[MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER] = "xhigh";
-  }
-
-  // OpenAI pro reasoning mode (GPT-5.6 Sol/Terra). The @ai-sdk/openai responses
-  // model drops unknown providerOptions keys, so `reasoning.mode` cannot ride
-  // providerOptions — emit a Mux-internal header that the OpenAI fetch wrapper
-  // strips and rewrites into the wire body. Mode is orthogonal to effort, so
-  // this is independent of thinkingLevel.
-  //
-  // Pro mode is direct-route-only: mux-gateway currently drops the rewritten
-  // providerOptions.openai.reasoningMode server-side (verified — the Responses
-  // API echoed mode "standard"), so passthrough gateways don't get the header
-  // either until the gateway forwards the field. Direct-only emission also
-  // scopes the wireFormat gate to the one config that actually applies here:
-  // the direct OpenAI provider's (config wins over request-level options,
-  // mirroring providerModelFactory). Pro mode is Responses-only — with
-  // wireFormat "chatCompletions" the wrapper never injects (it only rewrites
-  // /responses bodies), so skip the header to keep header state honest.
-  const routeIsDirect = routeProvider == null || routeProvider === origin;
-  const openaiWireFormat =
-    providersConfig?.openai?.wireFormat ?? muxProviderOptions?.openai?.wireFormat ?? "responses";
-  if (
-    origin === "openai" &&
-    routeIsDirect &&
-    reasoningMode === "pro" &&
-    openaiWireFormat === "responses" &&
-    // Mapped aliases (mappedToModel) inherit pro capability from their target.
-    openaiSupportsProMode(resolveModelForMetadata(normalized, providersConfig ?? null))
-  ) {
-    headers[MUX_OPENAI_REASONING_MODE_HEADER] = "pro";
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;

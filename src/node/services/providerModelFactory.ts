@@ -51,7 +51,6 @@ import { createOpenAIWebSocketTransportFetch } from "@/node/services/openAIWebSo
 import { log } from "@/node/services/log";
 import {
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
-  MUX_OPENAI_REASONING_MODE_HEADER,
   resolveProviderOptionsNamespaceKey,
 } from "@/common/utils/ai/providerOptions";
 import { resolveRoute, type RouteContext } from "@/common/routing";
@@ -462,121 +461,6 @@ export function wrapFetchWithAnthropicCacheControl(
 }
 
 /**
- * Wrap fetch to inject OpenAI's `reasoning.mode: "pro"` on the wire.
- *
- * The @ai-sdk/openai responses model only maps reasoningEffort/reasoningSummary
- * into the wire `reasoning` object and drops unknown providerOptions keys, so
- * pro mode rides the Mux-internal MUX_OPENAI_REASONING_MODE_HEADER (emitted by
- * buildRequestHeaders) and is rewritten into the JSON body here — mirroring
- * wrapFetchWithAnthropicCacheControl's header + body-rewrite pattern.
- *
- * The header is stripped unconditionally (before any early return) so no
- * request shape can forward it upstream. Pass `inject: false` to strip-only
- * (used for the Codex OAuth route, whose stricter ChatGPT backend could
- * hard-fail on unknown nested reasoning fields — a silent standard-mode no-op
- * is strictly safer there).
- */
-export function wrapFetchWithOpenAIReasoningMode(
-  baseFetch: typeof fetch,
-  options?: { inject?: boolean }
-): typeof fetch {
-  const inject = options?.inject ?? true;
-  const reasoningModeFetch = async (
-    input: Parameters<typeof fetch>[0],
-    init?: Parameters<typeof fetch>[1]
-  ): Promise<Response> => {
-    // Callers may pass a Request object instead of (url, init) — read headers,
-    // method, and body from the same source the underlying fetch would use
-    // (init members override the Request's per fetch semantics), or the header
-    // would both be missed here and leak upstream inside the Request.
-    const requestInput = input instanceof Request ? input : undefined;
-
-    // Fast path: nothing to strip or inject — forward byte-identical.
-    // init.headers, when present, fully replaces Request-input headers.
-    const incomingHeaders = new Headers(init?.headers ?? requestInput?.headers);
-    const reasoningMode = incomingHeaders.get(MUX_OPENAI_REASONING_MODE_HEADER);
-    if (reasoningMode == null) {
-      return baseFetch(input, init);
-    }
-
-    // Strip the Mux-internal header before ANY forwarding path below. Passing
-    // the stripped set via init also overrides Request-input headers, so the
-    // header cannot leak through either source.
-    incomingHeaders.delete(MUX_OPENAI_REASONING_MODE_HEADER);
-    const strippedInit: Parameters<typeof fetch>[1] = { ...init, headers: incomingHeaders };
-
-    // Only rewrite POST requests; anything else is forwarded untouched
-    // (header already stripped).
-    const method = init?.method ?? requestInput?.method;
-    if (method?.toUpperCase() !== "POST") {
-      return baseFetch(input, strippedInit);
-    }
-
-    // Defensive: only "pro" is a valid injection value today; treat anything
-    // else as invalid and forward strip-only.
-    if (!inject || reasoningMode !== "pro") {
-      return baseFetch(input, strippedInit);
-    }
-
-    // Resolve a JSON string body with the same precedence (init.body wins over
-    // the Request's body). Non-string init bodies and body-read failures fall
-    // through to strip-only forwarding.
-    let body: string;
-    if (init?.body != null) {
-      if (typeof init.body !== "string") {
-        return baseFetch(input, strippedInit);
-      }
-      body = init.body;
-    } else if (requestInput?.body != null) {
-      try {
-        // Read from a clone so the original stays forwardable on failure paths.
-        body = await requestInput.clone().text();
-      } catch {
-        return baseFetch(input, strippedInit);
-      }
-    } else {
-      return baseFetch(input, strippedInit);
-    }
-
-    try {
-      const json = JSON.parse(body) as Record<string, unknown>;
-
-      if (Array.isArray(json.prompt)) {
-        // AI SDK gateway body shape ({ prompt, providerOptions: { openai } }):
-        // best-effort inject providerOptions.openai.reasoningMode and let the
-        // gateway-side SDK translate it. NOTE: gateway-side support for this
-        // key is unverified — the gateway's @ai-sdk/openai may drop it; the
-        // guaranteed delivery path is the direct Responses body below.
-        const providerOpts = isRecord(json.providerOptions) ? json.providerOptions : {};
-        const openaiOpts = isRecord(providerOpts.openai) ? providerOpts.openai : {};
-        openaiOpts.reasoningMode = "pro";
-        providerOpts.openai = openaiOpts;
-        json.providerOptions = providerOpts;
-      } else {
-        // Direct body shape. `reasoning.mode` is a Responses API field; blindly
-        // adding top-level `reasoning` to chat-completions bodies could
-        // hard-fail, so only inject when the URL path is Responses-like.
-        // Unknown URL shape ⇒ do not inject (strip-only).
-        const isResponsesUrl = /\/responses(\?|$)/.test(getFetchInputUrl(input));
-        if (!isResponsesUrl) {
-          return baseFetch(input, strippedInit);
-        }
-        // Merge, never clobber existing effort/summary keys.
-        json.reasoning = { ...(isRecord(json.reasoning) ? json.reasoning : {}), mode: "pro" };
-      }
-
-      incomingHeaders.delete("content-length"); // Body size changed
-      return baseFetch(input, { ...strippedInit, body: JSON.stringify(json) });
-    } catch {
-      // Malformed JSON: forward with the header stripped, body untouched.
-      return baseFetch(input, strippedInit);
-    }
-  };
-
-  return Object.assign(reasoningModeFetch, baseFetch) as typeof fetch;
-}
-
-/**
  * Wrap fetch so any mux-gateway 401 response clears local credentials (best-effort).
  *
  * This ensures the UI immediately reflects that the user has been logged out
@@ -879,11 +763,9 @@ export function normalizeCodexResponsesBody(body: string): string {
   // and currently rejects the `truncation` field entirely.
   delete json.truncation;
 
-  // Defense in depth for pro reasoning mode: the Codex-routed fetch wrapper
-  // already skips injection (inject: false), but strip `reasoning.mode` here
-  // too so the stricter ChatGPT backend can never see it even if a future path
-  // emits it — unknown nested reasoning fields risk a hard 4xx, and a silent
-  // standard-mode no-op is strictly safer. Preserve effort/summary.
+  // Strip the native pro-mode field before forwarding to the stricter ChatGPT
+  // backend. Unknown nested reasoning fields risk a hard 4xx, and falling back
+  // to standard mode is safer. Preserve effort/summary.
   if (isRecord(json.reasoning)) {
     delete json.reasoning.mode;
     if (Object.keys(json.reasoning).length === 0) {
@@ -1555,20 +1437,11 @@ export class ProviderModelFactory {
 
         // Lazy-load OpenAI provider to reduce startup time
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
-        // Outermost (SDK-facing) so the pro-mode body rewrite happens before any
-        // transport decision and the Mux-internal header is stripped before the
-        // Codex/WebSocket layers regardless of route. Codex normalization runs
-        // later in the request flow and keeps top-level `reasoning`, so ordering
-        // is safe. Codex OAuth routes strip-only (see wrapper doc + D3 comment
-        // in normalizeCodexResponsesBody).
-        const providerFetch = wrapFetchWithOpenAIReasoningMode(webSocketTransport.fetch, {
-          inject: !shouldRouteThroughCodexOauth,
-        });
         const provider = createOpenAI({
           ...configWithCreds,
           // Cast is safe: our fetch implementation is compatible with the SDK's fetch type.
           // The preconnect method is optional in our implementation but required by the SDK type.
-          fetch: providerFetch,
+          fetch: webSocketTransport.fetch,
         });
         // OpenAI reasoning state is preserved via explicit history, so no extra
         // middleware is needed beyond the provider's standard Responses handling.
@@ -1854,12 +1727,7 @@ export class ProviderModelFactory {
           fetchWithCacheControl,
           this.providerService
         );
-        // OpenAI models via gateway: strip the Mux-internal pro-mode header
-        // (never leak it upstream, even to our own gateway) and best-effort
-        // inject reasoningMode into the gateway body shape.
-        const providerFetch = modelId.startsWith("openai/")
-          ? wrapFetchWithOpenAIReasoningMode(fetchWithAutoLogout)
-          : fetchWithAutoLogout;
+        const providerFetch = fetchWithAutoLogout;
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";

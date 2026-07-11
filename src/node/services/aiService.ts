@@ -229,7 +229,7 @@ export interface StreamMessageOptions {
   workspaceId: string;
   modelString: string;
   thinkingLevel?: ThinkingLevel;
-  /** OpenAI pro reasoning mode; delivered via buildRequestHeaders (inert for unsupported models). */
+  /** OpenAI pro reasoning mode; delivered via provider options (inert for unsupported models). */
   reasoningMode?: OpenAIReasoningMode;
   toolPolicy?: ToolPolicy;
   abortSignal?: AbortSignal;
@@ -2400,7 +2400,8 @@ export class AIService extends EventEmitter {
         truncationMode,
         this.providerService.getConfig(),
         routeProvider,
-        promptCacheScope
+        promptCacheScope,
+        reasoningMode
       );
       recordStartupPhaseTiming("buildProviderOptionsMs", buildProviderOptionsStartedAt);
 
@@ -2415,8 +2416,7 @@ export class AIService extends EventEmitter {
         workspaceId,
         this.providerService.getConfig(),
         routeProvider,
-        effectiveThinkingLevel,
-        reasoningMode
+        effectiveThinkingLevel
       );
 
       // --- Model parameter overrides from providers.jsonc ---
@@ -2717,19 +2717,19 @@ export class AIService extends EventEmitter {
                     truncationMode,
                     this.providerService.getConfig(),
                     next.routeProvider,
-                    promptCacheScope
+                    promptCacheScope,
+                    reasoningMode
                   );
 
-                  // The pro-mode predicate re-gates per fallback model inside
-                  // buildRequestHeaders, so pro never leaks onto unsupported fallbacks.
+                  // buildProviderOptions re-gates pro mode for each fallback model,
+                  // so the native option never leaks onto unsupported fallbacks.
                   let nextHeaders = buildRequestHeaders(
                     next.canonicalModelString,
                     effectiveMuxProviderOptions,
                     workspaceId,
                     this.providerService.getConfig(),
                     next.routeProvider,
-                    nextThinkingLevel,
-                    reasoningMode
+                    nextThinkingLevel
                   );
                   if (pendingRunMetadataId != null) {
                     // Keep DevTools run correlation on fallback requests too.
