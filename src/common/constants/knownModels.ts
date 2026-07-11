@@ -89,7 +89,7 @@ const MODEL_DEFINITIONS = {
   // Sol/Terra/Luna are durable capability tiers; the bare `gpt` alias tracks the
   // latest flagship GPT tier (previously gpt-5.5, which stays usable as the
   // custom model string `openai:gpt-5.5`). $5/M input, $30/M output; 1M context
-  // (launch value). Sol is the only tier with the native "max" reasoning effort.
+  // (launch value). Native "max" reasoning effort is available across the GPT-5.6 family.
   GPT: {
     provider: "openai",
     providerModelId: "gpt-5.6-sol",

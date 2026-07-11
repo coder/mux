@@ -2,7 +2,8 @@
  * Tests for provider options builder
  */
 
-import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import { createOpenAI, type OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
+import { generateText } from "ai";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
 import { describe, test, expect, mock } from "bun:test";
@@ -15,7 +16,6 @@ import {
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
   MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
-  MUX_OPENAI_REASONING_MODE_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
@@ -742,16 +742,15 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(result).toEqual({});
     });
 
-    test("degrades native max to xhigh on the chatCompletions wire format", () => {
-      // @ai-sdk/openai's Chat Completions schema caps reasoningEffort at xhigh
-      // (z.enum without "max"); sending "max" would throw client-side.
+    test("preserves native max on the chatCompletions wire format", () => {
+      // @ai-sdk/openai 4.0.11 added "max" to its Chat Completions schema.
       const result = buildProviderOptions("openai:gpt-5.6-sol", "max", undefined, undefined, {
         openai: { wireFormat: "chatCompletions" },
       });
       const openai = getOpenAIOptions(result);
 
       expect(openai).toBeDefined();
-      expect(openai!.reasoningEffort).toBe("xhigh");
+      expect(openai!.reasoningEffort).toBe("max");
     });
 
     test("degrades native max to xhigh through the Copilot-routed gateway call site", () => {
@@ -798,6 +797,160 @@ describe("buildProviderOptions - OpenAI", () => {
 
       expect(openai).toBeDefined();
       expect(openai!.reasoningEffort).toBe("max");
+    });
+  });
+
+  describe("GPT-5.6 native pro reasoning mode", () => {
+    const buildWithMode = (
+      model: string,
+      reasoningMode: Parameters<typeof buildProviderOptions>[10],
+      options?: {
+        thinkingLevel?: Parameters<typeof buildProviderOptions>[1];
+        muxProviderOptions?: Parameters<typeof buildProviderOptions>[4];
+        providersConfig?: Parameters<typeof buildProviderOptions>[7];
+        routeProvider?: Parameters<typeof buildProviderOptions>[8];
+      }
+    ): OpenAIResponsesProviderOptions | undefined =>
+      getOpenAIOptions(
+        buildProviderOptions(
+          model,
+          options?.thinkingLevel ?? "off",
+          undefined,
+          undefined,
+          options?.muxProviderOptions,
+          undefined,
+          undefined,
+          options?.providersConfig,
+          options?.routeProvider,
+          undefined,
+          reasoningMode
+        )
+      );
+
+    test("sets the native Responses option independently of reasoning effort", () => {
+      const openai = buildWithMode("openai:gpt-5.6-sol", "pro", { thinkingLevel: "max" });
+
+      expect(openai?.reasoningEffort).toBe("max");
+      expect(openai?.reasoningMode).toBe("pro");
+    });
+
+    test("supports pro mode across the GPT-5.6 family", () => {
+      for (const model of [
+        "openai:gpt-5.6",
+        "openai:gpt-5.6-sol",
+        "openai:gpt-5.6-terra",
+        "openai:gpt-5.6-luna",
+      ]) {
+        expect(buildWithMode(model, "pro")?.reasoningMode).toBe("pro");
+      }
+    });
+
+    test("omits pro mode for standard mode, unsupported models, gateways, and Chat Completions", () => {
+      const cases = [
+        buildWithMode("openai:gpt-5.6-sol", "standard"),
+        buildWithMode("openai:gpt-5.5-pro", "pro"),
+        buildWithMode("openai:gpt-5.6-sol", "pro", { routeProvider: "mux-gateway" }),
+        buildWithMode("openai:gpt-5.6-sol", "pro", {
+          muxProviderOptions: { openai: { wireFormat: "chatCompletions" } },
+        }),
+      ];
+
+      for (const openai of cases) {
+        expect(openai?.reasoningMode).toBeUndefined();
+      }
+    });
+
+    test("resolves mapped aliases before applying the pro-mode capability gate", () => {
+      const providersConfig = createMockProvidersConfig({
+        "openai:team-sol": "openai:gpt-5.6-sol",
+      });
+
+      expect(buildWithMode("openai:team-sol", "pro", { providersConfig })?.reasoningMode).toBe(
+        "pro"
+      );
+    });
+
+    test("serializes native max and pro through @ai-sdk/openai 4.0.11", async () => {
+      const capturedBodies: Array<Record<string, unknown>> = [];
+      const captureFetch = Object.assign(
+        (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1]
+        ): Promise<Response> => {
+          if (typeof init?.body !== "string") {
+            throw new Error("Expected the OpenAI provider to send a JSON string body");
+          }
+          capturedBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+          const url =
+            typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          const responseBody = url.endsWith("/responses")
+            ? {
+                id: "resp_test",
+                model: "gpt-5.6-sol",
+                output: [],
+                usage: { input_tokens: 1, output_tokens: 0 },
+              }
+            : {
+                id: "chat_test",
+                model: "gpt-5.6-sol",
+                choices: [
+                  {
+                    index: 0,
+                    message: { role: "assistant", content: "ok" },
+                    finish_reason: "stop",
+                  },
+                ],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              };
+          return Promise.resolve(
+            new Response(JSON.stringify(responseBody), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+          );
+        },
+        { preconnect: fetch.preconnect.bind(fetch) }
+      );
+      const openai = createOpenAI({
+        apiKey: "test",
+        baseURL: "https://example.test/v1",
+        fetch: captureFetch,
+      });
+      const responsesOptions = buildWithMode("openai:gpt-5.6-sol", "pro", {
+        thinkingLevel: "max",
+      });
+      if (!responsesOptions) {
+        throw new Error("Expected OpenAI Responses provider options");
+      }
+
+      const chatOptions = getOpenAIOptions(
+        buildProviderOptions("openai:gpt-5.6-sol", "max", undefined, undefined, {
+          openai: { wireFormat: "chatCompletions" },
+        })
+      );
+      if (!chatOptions) {
+        throw new Error("Expected OpenAI Chat Completions provider options");
+      }
+
+      await generateText({
+        model: openai.responses("gpt-5.6-sol"),
+        prompt: "Return ok.",
+        providerOptions: { openai: responsesOptions },
+        maxRetries: 0,
+      });
+      await generateText({
+        model: openai.chat("gpt-5.6-sol"),
+        prompt: "Return ok.",
+        providerOptions: { openai: chatOptions },
+        maxRetries: 0,
+      });
+
+      expect(capturedBodies[0].reasoning).toEqual({
+        effort: "max",
+        summary: "detailed",
+        mode: "pro",
+      });
+      expect(capturedBodies[1].reasoning_effort).toBe("max");
     });
   });
 
@@ -1175,197 +1328,9 @@ describe("buildRequestHeaders", () => {
     }
   });
 
-  describe("OpenAI pro reasoning-mode header", () => {
-    for (const { name, model, routeProvider, reasoningMode, expected } of [
-      {
-        name: "emits pro header for direct Sol with reasoningMode=pro",
-        model: "openai:gpt-5.6-sol",
-        routeProvider: undefined,
-        reasoningMode: "pro",
-        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
-      },
-      {
-        name: "emits pro header for direct Terra with reasoningMode=pro",
-        model: "openai:gpt-5.6-terra",
-        routeProvider: undefined,
-        reasoningMode: "pro",
-        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
-      },
-      {
-        // Direct-route-only: mux-gateway drops the rewritten reasoningMode
-        // server-side today, so even passthrough gateways get no header.
-        name: "does not emit for gateway-routed Sol (mux-gateway drops the field)",
-        model: "mux-gateway:openai/gpt-5.6-sol",
-        routeProvider: "mux-gateway",
-        reasoningMode: "pro",
-        expected: undefined,
-      },
-      {
-        name: "does not emit for reasoningMode=standard",
-        model: "openai:gpt-5.6-sol",
-        routeProvider: undefined,
-        reasoningMode: "standard",
-        expected: undefined,
-      },
-      {
-        name: "does not emit when reasoningMode is undefined",
-        model: "openai:gpt-5.6-sol",
-        routeProvider: undefined,
-        reasoningMode: undefined,
-        expected: undefined,
-      },
-      {
-        // Pro mode is family-wide at GA, including Luna.
-        name: "emits pro header for direct Luna with reasoningMode=pro",
-        model: "openai:gpt-5.6-luna",
-        routeProvider: undefined,
-        reasoningMode: "pro",
-        expected: { [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" },
-      },
-      {
-        name: "does not emit for pre-5.6 models (no pro support)",
-        model: "openai:gpt-5.5-pro",
-        routeProvider: undefined,
-        reasoningMode: "pro",
-        expected: undefined,
-      },
-      {
-        name: "does not emit for Anthropic origin even with reasoningMode=pro",
-        model: "anthropic:claude-opus-4-7",
-        routeProvider: undefined,
-        reasoningMode: "pro",
-        expected: undefined,
-      },
-      {
-        // Non-passthrough gateways must never see the Mux-internal header.
-        name: "does not emit for non-passthrough route (openrouter)",
-        model: "openai:gpt-5.6-sol",
-        routeProvider: "openrouter",
-        reasoningMode: "pro",
-        expected: undefined,
-      },
-      {
-        name: "does not emit for non-passthrough route (github-copilot)",
-        model: "openai:gpt-5.6-sol",
-        routeProvider: "github-copilot",
-        reasoningMode: "pro",
-        expected: undefined,
-      },
-    ] as const) {
-      test(name, () => {
-        expect(
-          buildRequestHeaders(
-            model,
-            undefined,
-            undefined,
-            undefined,
-            routeProvider,
-            undefined,
-            reasoningMode
-          )
-        ).toEqual(expected);
-      });
-    }
-
-    test("pro header is independent of thinkingLevel (mode is orthogonal to effort)", () => {
-      expect(
-        buildRequestHeaders(
-          "openai:gpt-5.6-sol",
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          "max",
-          "pro"
-        )
-      ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
-    });
-
-    // Pro mode is Responses-only: the wrapper never injects into
-    // chat-completions bodies, so the header must not be emitted either —
-    // regardless of whether wireFormat comes from provider config or
-    // request-level options (config wins, mirroring providerModelFactory).
-    const openaiProviderInfoBase = { apiKeySet: true, isEnabled: true, isConfigured: true };
-
-    test("does not emit when provider config sets wireFormat chatCompletions", () => {
-      expect(
-        buildRequestHeaders(
-          "openai:gpt-5.6-sol",
-          undefined,
-          undefined,
-          { openai: { ...openaiProviderInfoBase, wireFormat: "chatCompletions" } },
-          undefined,
-          "off",
-          "pro"
-        )
-      ).toBeUndefined();
-    });
-
-    test("does not emit when request options set wireFormat chatCompletions", () => {
-      expect(
-        buildRequestHeaders(
-          "openai:gpt-5.6-sol",
-          { openai: { wireFormat: "chatCompletions" } },
-          undefined,
-          undefined,
-          undefined,
-          "off",
-          "pro"
-        )
-      ).toBeUndefined();
-    });
-
-    test("emits when provider config sets wireFormat responses explicitly", () => {
-      expect(
-        buildRequestHeaders(
-          "openai:gpt-5.6-sol",
-          undefined,
-          undefined,
-          { openai: { ...openaiProviderInfoBase, wireFormat: "responses" } },
-          undefined,
-          "off",
-          "pro"
-        )
-      ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
-    });
-
-    // The send-path gate must resolve mapped aliases like the UI gate does,
-    // otherwise a persisted "pro" choice silently stops emitting the header.
-    test("emits for mapped aliases whose target supports pro mode", () => {
-      const providersConfig = createMockProvidersConfig({
-        "openai:team-sol": "openai:gpt-5.6-sol",
-      });
-
-      expect(
-        buildRequestHeaders(
-          "openai:team-sol",
-          undefined,
-          undefined,
-          providersConfig,
-          undefined,
-          "off",
-          "pro"
-        )
-      ).toEqual({ [MUX_OPENAI_REASONING_MODE_HEADER]: "pro" });
-
-      // Unmapped custom ids still fail closed.
-      expect(
-        buildRequestHeaders(
-          "openai:team-sol",
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          "off",
-          "pro"
-        )
-      ).toBeUndefined();
-    });
-  });
-
   describe("openaiProModeAvailable", () => {
-    // UI gating must mirror the wire gating: only routes that emit the
-    // pro-mode header (direct OpenAI or passthrough gateways) surface the toggle.
+    // UI gating must mirror provider-option delivery: only direct OpenAI routes
+    // surface the toggle while gateways still drop or reject the field.
     const cases: Array<[string, boolean]> = [
       ["openai:gpt-5.6-sol", true],
       ["openai:gpt-5.6-terra", true],

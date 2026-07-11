@@ -1285,9 +1285,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       });
 
       // Pro reasoning mode is only meaningful for models that support it
-      // (GPT-5.6 family) on routes that emit the pro-mode header (direct
-      // OpenAI) with the Responses wire format; hide the action elsewhere to
-      // avoid inert toggles. Gate on the chat input's persisted selection —
+      // (GPT-5.6 family) on routes that deliver the native provider option
+      // (direct OpenAI) with the Responses wire format; hide the action
+      // elsewhere to avoid inert toggles. Gate on the chat input's persisted selection —
       // that is the model the NEXT send will use — and only fall back to the
       // activity snapshot's currentModel (last streamed model, stale after a
       // model switch) when no selection exists. The mobile layout hides the

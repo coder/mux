@@ -13,7 +13,7 @@ interface ProModeToggleProps {
 /**
  * Small "PRO" toggle for OpenAI's pro reasoning mode (GPT-5.6 family).
  * Renders nothing for models without pro-mode support and for gateway routes
- * where the pro-mode header is never emitted — otherwise the toggle would
+ * where the native provider option is not delivered — otherwise the toggle would
  * persist a setting that can never affect the request. An explicit gateway
  * prefix (openrouter:openai/...) only hides the toggle while that gateway can
  * win the route; when it is disabled/unconfigured the backend falls back to
@@ -22,7 +22,7 @@ interface ProModeToggleProps {
 export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
   const [reasoningMode, setReasoningMode] = useReasoningMode();
   // Availability mirrors the send path (see openaiProModeAvailable): hides for
-  // chatCompletions wire format, non-passthrough routes, and Codex OAuth auth.
+  // chatCompletions wire format, gateway routes, and Codex OAuth auth.
   const { config: providersConfig } = useProvidersConfig();
   const routing = useRouting();
   const resolvedRoute = routing.resolveRoute(normalizeToCanonical(props.modelString)).route;
