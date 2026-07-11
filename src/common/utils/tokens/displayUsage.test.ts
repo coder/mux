@@ -190,6 +190,34 @@ describe("createDisplayUsage", () => {
     expect(result!.cached.tokens).toBe(0);
   });
 
+  test("separates GPT-5.6 input, cache reads, and cache writes with 0.1x read / 1.25x write rates", () => {
+    // OpenAI explicit-caching accounting: inputTokens is inclusive of cache
+    // reads and writes; writes arrive through the legacy provider-neutral
+    // `anthropic.cacheCreationInputTokens` metadata key (withCacheWriteMetadata
+    // re-injects it from AI SDK 7 usage.inputTokenDetails.cacheWriteTokens).
+    const usage: LanguageModelV2Usage = {
+      inputTokens: 105500, // 500 uncached + 100000 cache-read + 5000 cache-write
+      outputTokens: 1000,
+      totalTokens: 106500,
+      cachedInputTokens: 100000,
+    };
+
+    const result = createDisplayUsage(usage, "openai:gpt-5.6-luna", {
+      anthropic: { cacheCreationInputTokens: 5000 },
+    });
+
+    expect(result).toBeDefined();
+    expect(result!.input.tokens).toBe(500);
+    expect(result!.cached.tokens).toBe(100000);
+    expect(result!.cacheCreate.tokens).toBe(5000);
+    // Luna base rates: $1/M input, $0.10/M cache read (0.1x), $1.25/M cache
+    // write (1.25x), $6/M output.
+    expect(result!.input.cost_usd).toBeCloseTo(0.0005);
+    expect(result!.cached.cost_usd).toBeCloseTo(0.01);
+    expect(result!.cacheCreate.cost_usd).toBeCloseTo(0.00625);
+    expect(result!.output.cost_usd).toBeCloseTo(0.006);
+  });
+
   describe("tiered long-context pricing", () => {
     test("keeps GPT-5.5 on base rates at the published 272K boundary", () => {
       const usage: LanguageModelV2Usage = {

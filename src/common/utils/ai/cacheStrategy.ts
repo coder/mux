@@ -1,7 +1,11 @@
-import { tool as createTool, type ModelMessage, type Tool } from "ai";
+import { tool as createTool, type ModelMessage, type SystemModelMessage, type Tool } from "ai";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { isGpt56FamilyModel } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
-import { normalizeToCanonical } from "./models";
+import { wouldRouteOpenAIThroughCodexOauth } from "@/common/utils/providers/codexOauthRouting";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import { getExplicitGatewayPrefix, normalizeToCanonical } from "./models";
 
 /**
  * Anthropic prompt cache TTL value.
@@ -133,6 +137,140 @@ export function createCachedSystemMessage(
     content: systemContent,
     providerOptions: cacheTtl ? anthropicCacheControl(cacheTtl) : ANTHROPIC_CACHE_CONTROL,
   };
+}
+
+/**
+ * Whether an official-endpoint host check passes for direct OpenAI explicit
+ * prompt caching. Absence of any override means the SDK's official default;
+ * any configured value must resolve to the canonical https://api.openai.com
+ * endpoint (root or /v1 path, default port, no credentials/query/hash).
+ */
+function isOfficialOpenAIBaseUrl(baseUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return false;
+  }
+
+  return (
+    url.protocol === "https:" &&
+    url.hostname === "api.openai.com" &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === "" &&
+    (url.pathname === "/" || url.pathname === "/v1" || url.pathname === "/v1/")
+  );
+}
+
+/**
+ * Route-aware eligibility for GPT-5.6 explicit prompt cache breakpoints.
+ *
+ * Explicit breakpoints (and the Chat Completions promptCacheKey extension) are
+ * only known to work on the official direct OpenAI API with API-key auth, so
+ * every branch fails closed until proven eligible:
+ * - the request model's parsed origin must be exactly `openai` (raw unprefixed
+ *   strings and non-OpenAI namespaces never infer a provider here);
+ * - mapped aliases resolve through resolveModelForMetadata and the resolved
+ *   capability target must itself be an OpenAI GPT-5.6-family model;
+ * - the backend-resolved route provider must be exactly "openai" — missing,
+ *   legacy, gateway, or unknown route metadata fails closed;
+ * - Codex OAuth precedence (mirrored by wouldRouteOpenAIThroughCodexOauth)
+ *   fails closed because the ChatGPT backend strips these fields;
+ * - a configured custom base URL fails closed unless it is the official
+ *   endpoint. Transport-level HTTP proxy env vars are not endpoint overrides
+ *   and stay outside this check.
+ */
+export function openaiExplicitPromptCachingAvailable(
+  modelString: string,
+  routeProvider: string | undefined,
+  providersConfig: ProvidersConfigMap | null
+): boolean {
+  if (routeProvider !== "openai") {
+    return false;
+  }
+
+  // Explicit gateway namespaces (e.g. openrouter:openai/gpt-5.6) fail closed
+  // even though they canonicalize to an openai: origin — the request namespace
+  // itself must be OpenAI.
+  if (getExplicitGatewayPrefix(modelString) != null) {
+    return false;
+  }
+
+  const normalized = normalizeToCanonical(modelString);
+  const [origin, modelName] = normalized.split(":", 2);
+  if (origin !== "openai" || !modelName) {
+    return false;
+  }
+
+  // Mapped aliases inherit eligibility only when the resolved capability
+  // target is also an OpenAI GPT-5.6-family model.
+  const capabilityModel = resolveModelForMetadata(normalized, providersConfig);
+  const [capabilityOrigin, capabilityModelName] = capabilityModel.split(":", 2);
+  if (capabilityOrigin !== "openai" || !capabilityModelName) {
+    return false;
+  }
+  if (!isGpt56FamilyModel(capabilityModel)) {
+    return false;
+  }
+
+  // Without a providers config view we cannot verify auth precedence or the
+  // active endpoint, so eligibility cannot be established.
+  const openaiConfig = providersConfig?.openai;
+  if (openaiConfig == null) {
+    return false;
+  }
+
+  if (wouldRouteOpenAIThroughCodexOauth(normalized, providersConfig)) {
+    return false;
+  }
+
+  // baseUrl is the config-set value (which wins over env in the provider
+  // factory); baseUrlResolved carries the active env value when config is
+  // unset. Absence of both means the SDK's official default endpoint.
+  const activeBaseUrl = openaiConfig.baseUrl ?? openaiConfig.baseUrlResolved;
+  if (activeBaseUrl != null && !isOfficialOpenAIBaseUrl(activeBaseUrl)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Create a structured system message carrying one explicit GPT-5.6 prompt
+ * cache breakpoint at the end of Mux's stable system/developer instructions.
+ *
+ * The AI SDK reads message-level providerOptions.openai.promptCacheBreakpoint
+ * on system messages (string content — not a content-part array) and
+ * serializes it to a `prompt_cache_breakpoint` content block on both the
+ * Responses and Chat Completions wire formats. Request-wide caching stays
+ * implicit (no promptCacheOptions), preserving OpenAI's automatic
+ * latest-message breakpoint alongside this stable-prefix one.
+ */
+export function createOpenAICachedSystemMessage(
+  systemContent: string,
+  modelString: string,
+  routeProvider: string | undefined,
+  providersConfig: ProvidersConfigMap | null
+): SystemModelMessage | null {
+  if (
+    !systemContent ||
+    !openaiExplicitPromptCachingAvailable(modelString, routeProvider, providersConfig)
+  ) {
+    return null;
+  }
+
+  return {
+    role: "system",
+    content: systemContent,
+    providerOptions: {
+      openai: {
+        promptCacheBreakpoint: { mode: "explicit" },
+      },
+    },
+  } satisfies SystemModelMessage;
 }
 
 /**

@@ -3,9 +3,10 @@
  */
 
 import { createOpenAI, type OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
+import { createOpenAICachedSystemMessage } from "./cacheStrategy";
 import { describe, test, expect, mock } from "bun:test";
 import {
   buildProviderOptions,
@@ -558,6 +559,145 @@ describe("buildProviderOptions - OpenAI", () => {
     });
   });
 
+  describe("GPT-5.6 Chat Completions promptCacheKey", () => {
+    const chatWireFormat = { openai: { wireFormat: "chatCompletions" as const } };
+    const directOpenAIConfig: ProvidersConfigMap = {
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    function buildChatOptions(
+      model: string,
+      opts?: {
+        providersConfig?: ProvidersConfigMap;
+        routeProvider?: Parameters<typeof buildProviderOptions>[8];
+      }
+    ): OpenAIResponsesProviderOptions | undefined {
+      return getOpenAIOptions(
+        buildProviderOptions(
+          model,
+          "medium",
+          undefined,
+          undefined,
+          chatWireFormat,
+          "workspace-1",
+          undefined,
+          opts?.providersConfig ?? directOpenAIConfig,
+          opts?.routeProvider,
+          "project-scope"
+        )
+      );
+    }
+
+    test("direct GPT-5.6 Chat Completions receives the stable cache key", () => {
+      const openai = buildChatOptions("openai:gpt-5.6-luna", { routeProvider: "openai" });
+
+      expect(openai?.promptCacheKey).toBe("mux-v1-project-scope");
+      // Responses-only fields stay omitted on Chat Completions.
+      expect(openai?.truncation).toBeUndefined();
+      expect(openai?.include).toBeUndefined();
+      expect(openai?.reasoningSummary).toBeUndefined();
+    });
+
+    test("mapped GPT-5.6 aliases inherit the cache key; non-GPT-5.6 aliases do not", () => {
+      const aliasConfig: ProvidersConfigMap = {
+        openai: {
+          apiKeySet: true,
+          isEnabled: true,
+          isConfigured: true,
+          models: [
+            { id: "team-sol", mappedToModel: "openai:gpt-5.6-sol" },
+            { id: "team-old", mappedToModel: "openai:gpt-5.2" },
+          ],
+        },
+      };
+
+      expect(
+        buildChatOptions("openai:team-sol", {
+          providersConfig: aliasConfig,
+          routeProvider: "openai",
+        })?.promptCacheKey
+      ).toBe("mux-v1-project-scope");
+      expect(
+        buildChatOptions("openai:team-old", {
+          providersConfig: aliasConfig,
+          routeProvider: "openai",
+        })?.promptCacheKey
+      ).toBeUndefined();
+    });
+
+    test("older models, missing routes, gateways, Codex OAuth, and custom endpoints get no key", () => {
+      // Older model on the eligible route.
+      expect(
+        buildChatOptions("openai:gpt-5.2", { routeProvider: "openai" })?.promptCacheKey
+      ).toBeUndefined();
+      // Missing route metadata fails closed.
+      expect(buildChatOptions("openai:gpt-5.6-luna")?.promptCacheKey).toBeUndefined();
+      // Passthrough gateway route fails closed.
+      expect(
+        buildChatOptions("openai:gpt-5.6-luna", { routeProvider: "mux-gateway" })?.promptCacheKey
+      ).toBeUndefined();
+      // Codex OAuth wins the auth path.
+      expect(
+        buildChatOptions("openai:gpt-5.6-luna", {
+          routeProvider: "openai",
+          providersConfig: {
+            openai: { apiKeySet: false, isEnabled: true, isConfigured: true, codexOauthSet: true },
+          },
+        })?.promptCacheKey
+      ).toBeUndefined();
+      // Custom base URL fails closed.
+      expect(
+        buildChatOptions("openai:gpt-5.6-luna", {
+          routeProvider: "openai",
+          providersConfig: {
+            openai: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              baseUrl: "https://proxy.example.com/v1",
+            },
+          },
+        })?.promptCacheKey
+      ).toBeUndefined();
+    });
+
+    test("GPT-5.6 Responses keeps the legacy broader key behavior unchanged", () => {
+      // Route-absent Responses request: legacy behavior still derives the key.
+      const routeAbsent = getOpenAIOptions(
+        buildProviderOptions(
+          "openai:gpt-5.6-luna",
+          "medium",
+          undefined,
+          undefined,
+          undefined,
+          "workspace-1",
+          undefined,
+          undefined,
+          undefined,
+          "project-scope"
+        )
+      );
+      expect(routeAbsent?.promptCacheKey).toBe("mux-v1-project-scope");
+
+      // Passthrough gateway Responses request: legacy behavior still applies.
+      const passthrough = getOpenAIOptions(
+        buildProviderOptions(
+          "mux-gateway:openai/gpt-5.6-luna",
+          "medium",
+          undefined,
+          undefined,
+          undefined,
+          "workspace-1",
+          undefined,
+          undefined,
+          "mux-gateway",
+          "project-scope"
+        )
+      );
+      expect(passthrough?.promptCacheKey).toBe("mux-v1-project-scope");
+    });
+  });
+
   describe("route provider format selection", () => {
     test("uses the transforming route provider format for gateway-routed OpenAI models", () => {
       const result = buildProviderOptions(
@@ -951,6 +1091,191 @@ describe("buildProviderOptions - OpenAI", () => {
         mode: "pro",
       });
       expect(capturedBodies[1].reasoning_effort).toBe("max");
+    });
+  });
+
+  describe("GPT-5.6 explicit prompt caching serialization", () => {
+    // Production-path wire test: createOpenAI + capture fetch + streamText
+    // (the same streaming parser Mux uses), not intermediate TS objects.
+    const providersConfig: ProvidersConfigMap = {
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    };
+
+    function sseResponse(events: unknown[]): Response {
+      const body =
+        events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n";
+      return new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+
+    // Synthetic usage: 1200 input = 48 uncached + 1024 cache-read + 128 cache-write.
+    const responsesSse = [
+      {
+        type: "response.created",
+        response: { id: "resp_1", created_at: 0, model: "gpt-5.6-luna" },
+      },
+      {
+        type: "response.completed",
+        response: {
+          usage: {
+            input_tokens: 1200,
+            input_tokens_details: { cached_tokens: 1024, cache_write_tokens: 128 },
+            output_tokens: 5,
+            output_tokens_details: { reasoning_tokens: 0 },
+          },
+        },
+      },
+    ];
+    const chatCompletionsSse = [
+      {
+        id: "chat_1",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: "gpt-5.6-luna",
+        choices: [{ index: 0, delta: { role: "assistant", content: "ok" }, finish_reason: null }],
+      },
+      {
+        id: "chat_1",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: "gpt-5.6-luna",
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: {
+          prompt_tokens: 1200,
+          completion_tokens: 5,
+          total_tokens: 1205,
+          prompt_tokens_details: { cached_tokens: 1024, cache_write_tokens: 128 },
+        },
+      },
+    ];
+
+    test("serializes the breakpoint and cache key without disabling implicit mode on both wire formats", async () => {
+      const capturedBodies: Array<Record<string, unknown>> = [];
+      const captureFetch = Object.assign(
+        (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1]
+        ): Promise<Response> => {
+          if (typeof init?.body !== "string") {
+            throw new Error("Expected the OpenAI provider to send a JSON string body");
+          }
+          capturedBodies.push(JSON.parse(init.body) as Record<string, unknown>);
+          const url =
+            typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+          return Promise.resolve(
+            sseResponse(url.endsWith("/responses") ? responsesSse : chatCompletionsSse)
+          );
+        },
+        { preconnect: fetch.preconnect.bind(fetch) }
+      );
+      const openai = createOpenAI({ apiKey: "test", fetch: captureFetch });
+
+      // Production system-message shape from the cache strategy helper.
+      const cachedSystem = createOpenAICachedSystemMessage(
+        "You are Mux.",
+        "openai:gpt-5.6-luna",
+        "openai",
+        providersConfig
+      );
+      if (!cachedSystem) {
+        throw new Error("Expected an eligible cached system message");
+      }
+
+      const responsesOptions = getOpenAIOptions(
+        buildProviderOptions(
+          "openai:gpt-5.6-luna",
+          "medium",
+          undefined,
+          undefined,
+          undefined,
+          "workspace-1",
+          undefined,
+          providersConfig,
+          "openai",
+          "test-scope"
+        )
+      );
+      const chatOptions = getOpenAIOptions(
+        buildProviderOptions(
+          "openai:gpt-5.6-luna",
+          "medium",
+          undefined,
+          undefined,
+          { openai: { wireFormat: "chatCompletions" } },
+          "workspace-1",
+          undefined,
+          providersConfig,
+          "openai",
+          "test-scope"
+        )
+      );
+      if (!responsesOptions || !chatOptions) {
+        throw new Error("Expected OpenAI provider options for both wire formats");
+      }
+
+      const responsesResult = streamText({
+        model: openai.responses("gpt-5.6-luna"),
+        system: cachedSystem,
+        prompt: "hi",
+        providerOptions: { openai: responsesOptions },
+        maxRetries: 0,
+      });
+      for await (const _part of responsesResult.fullStream) {
+        // Fully consume the stream so usage resolves through the SSE parser.
+      }
+      const responsesUsage = await responsesResult.usage;
+
+      const chatResult = streamText({
+        model: openai.chat("gpt-5.6-luna"),
+        system: cachedSystem,
+        prompt: "hi",
+        providerOptions: { openai: chatOptions },
+        maxRetries: 0,
+      });
+      for await (const _part of chatResult.fullStream) {
+        // Fully consume the stream so usage resolves through the SSE parser.
+      }
+      const chatUsage = await chatResult.usage;
+
+      // Responses wire format: input_text block carrying the breakpoint.
+      const responsesBody = capturedBodies[0];
+      const responsesInput = responsesBody.input as Array<Record<string, unknown>>;
+      const responsesSystem = responsesInput.find(
+        (message) => message.role === "system" || message.role === "developer"
+      );
+      expect(responsesSystem?.content).toEqual([
+        {
+          type: "input_text",
+          text: "You are Mux.",
+          prompt_cache_breakpoint: { mode: "explicit" },
+        },
+      ]);
+      expect(responsesBody.prompt_cache_key).toBe("mux-v1-test-scope");
+      expect(responsesBody.prompt_cache_options).toBeUndefined();
+
+      // Chat Completions wire format: text block carrying the breakpoint.
+      const chatBody = capturedBodies[1];
+      const chatMessages = chatBody.messages as Array<Record<string, unknown>>;
+      const chatSystem = chatMessages.find(
+        (message) => message.role === "system" || message.role === "developer"
+      );
+      expect(chatSystem?.content).toEqual([
+        {
+          type: "text",
+          text: "You are Mux.",
+          prompt_cache_breakpoint: { mode: "explicit" },
+        },
+      ]);
+      expect(chatBody.prompt_cache_key).toBe("mux-v1-test-scope");
+      expect(chatBody.prompt_cache_options).toBeUndefined();
+
+      // Both parsers expose cache reads and writes on nested v7 usage details.
+      expect(responsesUsage.inputTokenDetails?.cacheReadTokens).toBe(1024);
+      expect(responsesUsage.inputTokenDetails?.cacheWriteTokens).toBe(128);
+      expect(chatUsage.inputTokenDetails?.cacheReadTokens).toBe(1024);
+      expect(chatUsage.inputTokenDetails?.cacheWriteTokens).toBe(128);
     });
   });
 

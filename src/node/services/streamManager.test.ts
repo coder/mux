@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import * as path from "node:path";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
 import type { CompletedMessagePart, WorkflowRunAttachedEvent } from "@/common/types/stream";
 import { Ok, Err } from "@/common/types/result";
@@ -589,6 +590,7 @@ describe("StreamManager - Anthropic cache TTL overrides", () => {
       modelString,
       messages,
       "You are a helpful assistant",
+      undefined, // routeProvider
       tools,
       providerOptions,
       undefined,
@@ -647,6 +649,189 @@ describe("StreamManager - Anthropic cache TTL overrides", () => {
       type: "ephemeral",
       ttl: "1h",
     });
+  });
+});
+
+describe("StreamManager - OpenAI GPT-5.6 cached system instructions", () => {
+  interface StreamRequestConfigForTests {
+    messages: ModelMessage[];
+    system?: string | { role: string; content: string; providerOptions?: unknown };
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => StreamRequestConfigForTests;
+
+  const eligibleProvidersConfig: ProvidersConfigMap = {
+    openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+  };
+
+  const structuredSystem = {
+    role: "system",
+    content: "You are a helpful assistant",
+    providerOptions: { openai: { promptCacheBreakpoint: { mode: "explicit" } } },
+  };
+
+  function buildRequestForRoute(
+    providersConfig: ProvidersConfigMap | null,
+    routeProvider: string | undefined,
+    modelString = "openai:gpt-5.6-luna"
+  ): StreamRequestConfigForTests {
+    const streamManager = new StreamManager(historyService, undefined, () => providersConfig);
+    const buildRequestConfig = getPrivateMethodForTests<BuildStreamRequestConfig>(
+      streamManager,
+      "buildStreamRequestConfig"
+    );
+    // .call: the transform reads this.getProvidersConfig for route eligibility.
+    return buildRequestConfig.call(
+      streamManager,
+      createTestLanguageModel(),
+      modelString,
+      [{ role: "user", content: "hello" }],
+      "You are a helpful assistant",
+      routeProvider
+    );
+  }
+
+  test("direct GPT-5.6 replaces the system string with a structured cached message", () => {
+    const request = buildRequestForRoute(eligibleProvidersConfig, "openai");
+
+    expect(request.system).toEqual(structuredSystem);
+    // Unlike the Anthropic transform, messages stay untouched (no prepend).
+    expect(request.messages).toEqual([{ role: "user", content: "hello" }]);
+  });
+
+  test("ineligible routes and endpoints preserve the original system string", () => {
+    // Missing route metadata (legacy/test-stub) fails closed.
+    expect(buildRequestForRoute(eligibleProvidersConfig, undefined).system).toBe(
+      "You are a helpful assistant"
+    );
+    // Gateway routes fail closed.
+    expect(buildRequestForRoute(eligibleProvidersConfig, "mux-gateway").system).toBe(
+      "You are a helpful assistant"
+    );
+    // Custom base URLs fail closed.
+    expect(
+      buildRequestForRoute(
+        {
+          openai: {
+            ...eligibleProvidersConfig.openai,
+            baseUrl: "https://proxy.example.com/v1",
+          },
+        },
+        "openai"
+      ).system
+    ).toBe("You are a helpful assistant");
+    // Non-GPT-5.6 models keep the plain string.
+    expect(buildRequestForRoute(eligibleProvidersConfig, "openai", "openai:gpt-5.2").system).toBe(
+      "You are a helpful assistant"
+    );
+  });
+
+  // The fallback swap must evaluate the fallback's freshly-resolved route
+  // (initialMetadataPatch.routeProvider), not the stale source metadata that
+  // streamInfo.initialMetadata still holds when the swapped request is built.
+  async function runRefusalFallbackForTests(options: {
+    workspaceId: string;
+    staleRouteProvider: string;
+    initialMetadataPatch?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    const streamManager = new StreamManager(
+      historyService,
+      undefined,
+      () => eligibleProvidersConfig
+    );
+    streamManager.on("error", () => undefined);
+    Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+
+    const messageId = `${options.workspaceId}-message`;
+    const historySequence = 1;
+    await appendPartialAssistantForTests(options.workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+
+    const createStreamResult = mock(() =>
+      createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "text-delta", text: "fallback answer" };
+          yield { type: "finish", finishReason: "stop" };
+        })()
+      )
+    );
+    expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
+
+    const prepare = mock((nextModelString: string, _options?: ModelFallbackPrepareOptions) =>
+      Promise.resolve(
+        Ok({
+          model: createTestLanguageModel("fallback-model"),
+          modelString: nextModelString,
+          messages: [],
+          system: "You are a helpful assistant",
+          tools: undefined,
+          thinkingLevel: "off",
+          ...(options.initialMetadataPatch
+            ? { initialMetadataPatch: options.initialMetadataPatch }
+            : {}),
+        })
+      )
+    );
+
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
+        })(),
+        { inputTokens: 10, outputTokens: 0, totalTokens: 10 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      initialMetadata: { agentId: "plan", routeProvider: options.staleRouteProvider },
+      request: { model: createTestLanguageModel(), messages: [], providerOptions: undefined },
+      modelFallback: {
+        options: { chain: ["openai:gpt-5.6-luna"], prepare },
+        requestedModel: KNOWN_MODELS.SONNET.id,
+        refusedModels: [],
+        original: { maxOutputTokens: undefined },
+      },
+    });
+
+    await processStreamWithCleanup.call(
+      streamManager,
+      options.workspaceId,
+      streamInfo,
+      historySequence
+    );
+    expect(prepare).toHaveBeenCalledTimes(1);
+    return streamInfo.request as Record<string, unknown>;
+  }
+
+  test("fallback swap applies the cached system when the route patch resolves to direct OpenAI", async () => {
+    const request = await runRefusalFallbackForTests({
+      workspaceId: "gpt56-fallback-eligible-workspace",
+      staleRouteProvider: "mux-gateway",
+      initialMetadataPatch: { routedThroughGateway: false, routeProvider: "openai" },
+    });
+
+    expect(request.system).toEqual(structuredSystem);
+  });
+
+  test("fallback swap keeps the plain system string when the route patch omits the route", async () => {
+    // Stale source metadata says direct OpenAI, but the fallback prepare could
+    // not resolve a route — the transform must fail closed on the patch.
+    const request = await runRefusalFallbackForTests({
+      workspaceId: "gpt56-fallback-ineligible-workspace",
+      staleRouteProvider: "openai",
+      initialMetadataPatch: { routedThroughGateway: false },
+    });
+
+    expect(request.system).toBe("You are a helpful assistant");
   });
 });
 
@@ -772,6 +957,7 @@ describe("StreamManager - sequential tool execution", () => {
       KNOWN_MODELS.SONNET.id,
       [{ role: "user", content: "hello" }],
       "system",
+      undefined, // routeProvider
       tools,
       undefined,
       undefined,
@@ -879,6 +1065,7 @@ describe("StreamManager - call settings overrides", () => {
       modelString,
       messages,
       "system",
+      undefined, // routeProvider
       undefined,
       undefined,
       options.maxOutputTokens,
@@ -980,6 +1167,7 @@ describe("StreamManager - call settings overrides", () => {
       modelString,
       messages,
       "system",
+      undefined, // routeProvider
       undefined,
       undefined,
       undefined,
@@ -4838,6 +5026,7 @@ describe("StreamManager - tool search activeTools scoping", () => {
       KNOWN_MODELS.SONNET.id,
       messages,
       "system",
+      undefined, // routeProvider
       undefined,
       undefined,
       undefined,

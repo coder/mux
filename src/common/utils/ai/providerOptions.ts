@@ -26,6 +26,7 @@ import {
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
 import { isGeminiFlashThinkingLevelModelName } from "@/common/utils/thinking/policy";
+import { openaiExplicitPromptCachingAvailable } from "@/common/utils/ai/cacheStrategy";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
@@ -408,6 +409,16 @@ export function buildProviderOptions(
           // See: https://sdk.vercel.ai/providers/ai-sdk-providers/openai#responses-models
           ...(promptCacheKey && { promptCacheKey }),
         }),
+        // Chat Completions gets the same stable routing key only for GPT-5.6
+        // on the direct official OpenAI API (the stricter explicit-caching
+        // gate). The broader legacy Responses behavior above stays unchanged.
+        ...(!isResponses &&
+          promptCacheKey &&
+          openaiExplicitPromptCachingAvailable(
+            modelString,
+            routeProvider,
+            providersConfig ?? null
+          ) && { promptCacheKey }),
         // Conditionally add reasoning configuration
         ...(reasoningEffort && {
           reasoningEffort,

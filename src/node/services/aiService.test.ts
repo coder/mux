@@ -1622,6 +1622,150 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     );
   });
 
+  // GPT-5.6 Chat Completions explicit-caching seam: fallback provider options
+  // and route metadata must be rebuilt from the fallback model/route so cache
+  // fields cannot leak across routes in either direction.
+  function stubPerModelRouteResolution(service: AIService): void {
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in fallback route test");
+    }
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockImplementation(
+      (requestedModelString) => {
+        const isGateway = requestedModelString.startsWith("mux-gateway:");
+        const canonicalModelString = isGateway
+          ? requestedModelString.replace("mux-gateway:openai/", "openai:")
+          : requestedModelString;
+        return Promise.resolve({
+          success: true,
+          data: {
+            model: Object.create(null) as LanguageModel,
+            effectiveModelString: requestedModelString,
+            canonicalModelString,
+            canonicalProviderName: "openai" as ProviderName,
+            canonicalModelId: canonicalModelString.split(":")[1] ?? canonicalModelString,
+            routedThroughGateway: isGateway,
+            routeProvider: (isGateway ? "mux-gateway" : "openai") as ProviderName,
+          },
+        });
+      }
+    );
+
+    const providerService = Reflect.get(service, "providerService") as ProviderService | undefined;
+    if (!providerService) {
+      throw new Error("Expected AIService.providerService in fallback route test");
+    }
+    spyOn(providerService, "getConfig").mockReturnValue({
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    });
+  }
+
+  async function runChatCompletionsFallback(options: {
+    tempDirName: string;
+    workspaceId: string;
+    sourceModel: string;
+    fallbackModel: string;
+  }): Promise<{
+    primaryOpenAIOptions: Record<string, unknown>;
+    primaryInitialMetadata: Record<string, unknown>;
+    preparedOpenAIOptions: Record<string, unknown>;
+    preparedMetadataPatch: Record<string, unknown>;
+  }> {
+    using muxHome = new DisposableTempDir(options.tempDirName);
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    await writeMainConfig(muxHome.path, {
+      modelFallbacks: {
+        [options.sourceModel]: { models: [options.fallbackModel] },
+      },
+    });
+
+    const metadata = createLocalWorkspaceMetadata(options.workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    stubPerModelRouteResolution(harness.service);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId: options.workspaceId,
+      modelString: options.sourceModel,
+      thinkingLevel: "off",
+      muxProviderOptions: { openai: { wireFormat: "chatCompletions" } },
+    });
+    expect(result.success).toBe(true);
+    expect(harness.startStreamCalls).toHaveLength(1);
+
+    const startStreamArgs = harness.startStreamCalls[0];
+    const modelFallback = startStreamArgs[START_STREAM_MODEL_FALLBACK_INDEX] as
+      | ModelFallbackOptions
+      | undefined;
+    if (!modelFallback) {
+      throw new Error("Expected modelFallback options on startStream");
+    }
+
+    const prepared = await modelFallback.prepare(options.fallbackModel);
+    expect(prepared.success).toBe(true);
+    if (!prepared.success) {
+      throw new Error(prepared.error);
+    }
+
+    const preparedOpenAIOptions = (prepared.data.providerOptions as { openai?: unknown })
+      ?.openai as Record<string, unknown>;
+    expect(preparedOpenAIOptions).toBeDefined();
+
+    return {
+      primaryOpenAIOptions: openAIOptionsFromStartStreamCall(startStreamArgs),
+      primaryInitialMetadata: initialMetadataFromStartStreamCall(startStreamArgs),
+      preparedOpenAIOptions,
+      preparedMetadataPatch: (prepared.data.initialMetadataPatch ?? {}) as Record<string, unknown>,
+    };
+  }
+
+  it("drops the Chat Completions cache key when an eligible source falls back to a gateway route", async () => {
+    const {
+      primaryOpenAIOptions,
+      primaryInitialMetadata,
+      preparedOpenAIOptions,
+      preparedMetadataPatch,
+    } = await runChatCompletionsFallback({
+      tempDirName: "ai-service-fallback-cache-key-drop",
+      workspaceId: "workspace-fallback-cache-key-drop",
+      sourceModel: "openai:gpt-5.6-luna",
+      fallbackModel: "mux-gateway:openai/gpt-5.6-sol",
+    });
+
+    // Source: direct official OpenAI GPT-5.6 Chat Completions gets the key.
+    expect(primaryOpenAIOptions.promptCacheKey).toStartWith("mux-v1-");
+    expect(primaryInitialMetadata.routeProvider).toBe("openai");
+    // Fallback: gateway route — the rebuilt options must not carry the key.
+    expect(preparedOpenAIOptions.promptCacheKey).toBeUndefined();
+    expect(preparedMetadataPatch.routeProvider).toBe("mux-gateway");
+    expect(preparedMetadataPatch.routedThroughGateway).toBe(true);
+  });
+
+  it("adds the Chat Completions cache key when a gateway source falls back to direct OpenAI", async () => {
+    const {
+      primaryOpenAIOptions,
+      primaryInitialMetadata,
+      preparedOpenAIOptions,
+      preparedMetadataPatch,
+    } = await runChatCompletionsFallback({
+      tempDirName: "ai-service-fallback-cache-key-add",
+      workspaceId: "workspace-fallback-cache-key-add",
+      sourceModel: "mux-gateway:openai/gpt-5.6-luna",
+      fallbackModel: "openai:gpt-5.6-sol",
+    });
+
+    // Source: gateway-routed GPT-5.6 Chat Completions gets no key.
+    expect(primaryOpenAIOptions.promptCacheKey).toBeUndefined();
+    expect(primaryInitialMetadata.routeProvider).toBe("mux-gateway");
+    // Fallback: direct official OpenAI — the rebuilt options carry the key.
+    expect(preparedOpenAIOptions.promptCacheKey).toStartWith("mux-v1-");
+    expect(preparedMetadataPatch.routeProvider).toBe("openai");
+    expect(preparedMetadataPatch.routedThroughGateway).toBe(false);
+  });
+
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
     const continuationAssistant: MuxMessage = {
       id: "assistant-reasoning-only",

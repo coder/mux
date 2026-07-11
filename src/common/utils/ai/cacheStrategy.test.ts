@@ -4,13 +4,33 @@ import { openai } from "@ai-sdk/openai";
 import type { ModelMessage, Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
   supportsAnthropicCache,
   applyCacheControl,
   createCachedSystemMessage,
+  createOpenAICachedSystemMessage,
+  openaiExplicitPromptCachingAvailable,
   applyCacheControlToTools,
 } from "./cacheStrategy";
 import { markBuiltInTaskTool, isBuiltInTaskTool } from "@/node/services/tools/task";
+
+/** Direct-OpenAI providers config with API-key auth and no base URL override. */
+function openaiProvidersConfig(
+  overrides?: Partial<ProvidersConfigMap[string]>,
+  extraProviders?: ProvidersConfigMap
+): ProvidersConfigMap {
+  return {
+    openai: {
+      apiKeySet: true,
+      isEnabled: true,
+      isConfigured: true,
+      apiKeySource: "config",
+      ...overrides,
+    },
+    ...extraProviders,
+  };
+}
 
 describe("cacheStrategy", () => {
   describe("supportsAnthropicCache", () => {
@@ -229,6 +249,184 @@ describe("cacheStrategy", () => {
           },
         },
       });
+    });
+  });
+
+  describe("openaiExplicitPromptCachingAvailable", () => {
+    const config = openaiProvidersConfig();
+
+    it("accepts every GPT-5.6 tier on the direct official OpenAI route", () => {
+      for (const model of [
+        "openai:gpt-5.6",
+        "openai:gpt-5.6-sol",
+        "openai:gpt-5.6-terra",
+        "openai:gpt-5.6-luna",
+        "openai:gpt-5.6-sol-2026-07-09",
+      ]) {
+        expect(openaiExplicitPromptCachingAvailable(model, "openai", config)).toBe(true);
+      }
+    });
+
+    it("accepts openai: aliases mapped to GPT-5.6 targets", () => {
+      const aliasConfig = openaiProvidersConfig({
+        models: [{ id: "team-sol", mappedToModel: "openai:gpt-5.6-sol" }],
+      });
+      expect(openaiExplicitPromptCachingAvailable("openai:team-sol", "openai", aliasConfig)).toBe(
+        true
+      );
+    });
+
+    it("rejects aliases whose resolved target is not OpenAI GPT-5.6", () => {
+      const aliasConfig = openaiProvidersConfig({
+        models: [
+          { id: "team-old", mappedToModel: "openai:gpt-5.2" },
+          { id: "team-claude", mappedToModel: "anthropic:claude-opus-4-6" },
+          { id: "team-bare", mappedToModel: "gpt-5.6-sol" },
+        ],
+      });
+      for (const alias of ["openai:team-old", "openai:team-claude", "openai:team-bare"]) {
+        expect(openaiExplicitPromptCachingAvailable(alias, "openai", aliasConfig)).toBe(false);
+      }
+    });
+
+    it("rejects raw unprefixed and non-OpenAI-origin model strings", () => {
+      for (const model of [
+        "gpt-5.6-sol", // raw unprefixed: never infer a provider
+        "anthropic:claude-opus-4-6",
+        "openrouter:openai/gpt-5.6-sol",
+        "github-copilot:gpt-5.6-sol",
+      ]) {
+        expect(openaiExplicitPromptCachingAvailable(model, "openai", config)).toBe(false);
+      }
+    });
+
+    it("rejects older OpenAI models and near-miss ids", () => {
+      for (const model of ["openai:gpt-5.2", "openai:gpt-5.5", "openai:gpt-5.61"]) {
+        expect(openaiExplicitPromptCachingAvailable(model, "openai", config)).toBe(false);
+      }
+    });
+
+    it("rejects missing, unknown, and gateway routes", () => {
+      for (const route of [undefined, "unknown", "mux-gateway", "openrouter", "github-copilot"]) {
+        expect(openaiExplicitPromptCachingAvailable("openai:gpt-5.6-sol", route, config)).toBe(
+          false
+        );
+      }
+    });
+
+    it("rejects when Codex OAuth wins the auth path", () => {
+      // OAuth tokens without an API key: OAuth wins.
+      expect(
+        openaiExplicitPromptCachingAvailable(
+          "openai:gpt-5.6-sol",
+          "openai",
+          openaiProvidersConfig({ apiKeySet: false, apiKeySource: undefined, codexOauthSet: true })
+        )
+      ).toBe(false);
+      // OAuth tokens + API key with default precedence: OAuth still wins.
+      expect(
+        openaiExplicitPromptCachingAvailable(
+          "openai:gpt-5.6-sol",
+          "openai",
+          openaiProvidersConfig({ codexOauthSet: true })
+        )
+      ).toBe(false);
+      // Explicit apiKey precedence restores API-key routing.
+      expect(
+        openaiExplicitPromptCachingAvailable(
+          "openai:gpt-5.6-sol",
+          "openai",
+          openaiProvidersConfig({ codexOauthSet: true, codexOauthDefaultAuth: "apiKey" })
+        )
+      ).toBe(true);
+    });
+
+    it("rejects when the providers config view is unavailable", () => {
+      expect(openaiExplicitPromptCachingAvailable("openai:gpt-5.6-sol", "openai", null)).toBe(
+        false
+      );
+      expect(openaiExplicitPromptCachingAvailable("openai:gpt-5.6-sol", "openai", {})).toBe(false);
+    });
+
+    it("accepts official explicit and env-resolved base URLs", () => {
+      for (const overrides of [
+        { baseUrl: "https://api.openai.com/v1" },
+        { baseUrl: "https://api.openai.com/v1/" },
+        { baseUrl: "https://api.openai.com" },
+        { baseUrlResolved: "https://api.openai.com/v1" },
+      ]) {
+        expect(
+          openaiExplicitPromptCachingAvailable(
+            "openai:gpt-5.6-sol",
+            "openai",
+            openaiProvidersConfig(overrides)
+          )
+        ).toBe(true);
+      }
+    });
+
+    it("rejects custom, malformed, and non-HTTPS base URLs", () => {
+      for (const overrides of [
+        { baseUrl: "https://proxy.example.com/v1" },
+        { baseUrl: "http://api.openai.com/v1" },
+        { baseUrl: "https://api.openai.com:8443/v1" },
+        { baseUrl: "https://user:pass@api.openai.com/v1" },
+        { baseUrl: "https://api.openai.com/v1?beta=1" },
+        { baseUrl: "https://api.openai.com/v2" },
+        { baseUrl: "not a url" },
+        // Config-set baseUrl wins over an official env-resolved value.
+        { baseUrl: "https://proxy.example.com/v1", baseUrlResolved: "https://api.openai.com/v1" },
+        { baseUrlResolved: "http://localhost:11434/v1" },
+      ]) {
+        expect(
+          openaiExplicitPromptCachingAvailable(
+            "openai:gpt-5.6-sol",
+            "openai",
+            openaiProvidersConfig(overrides)
+          )
+        ).toBe(false);
+      }
+    });
+  });
+
+  describe("createOpenAICachedSystemMessage", () => {
+    const config = openaiProvidersConfig();
+
+    it("returns the exact typed system-message shape for eligible requests", () => {
+      const result = createOpenAICachedSystemMessage(
+        "You are a helpful assistant",
+        "openai:gpt-5.6-luna",
+        "openai",
+        config
+      );
+
+      expect(result).toEqual({
+        role: "system",
+        content: "You are a helpful assistant",
+        providerOptions: {
+          openai: {
+            promptCacheBreakpoint: { mode: "explicit" },
+          },
+        },
+      });
+    });
+
+    it("returns null for empty system content", () => {
+      expect(createOpenAICachedSystemMessage("", "openai:gpt-5.6-luna", "openai", config)).toBe(
+        null
+      );
+    });
+
+    it("returns null for ineligible models and routes", () => {
+      expect(
+        createOpenAICachedSystemMessage("prompt", "openai:gpt-5.2", "openai", config)
+      ).toBeNull();
+      expect(
+        createOpenAICachedSystemMessage("prompt", "openai:gpt-5.6-luna", "mux-gateway", config)
+      ).toBeNull();
+      expect(
+        createOpenAICachedSystemMessage("prompt", "openai:gpt-5.6-luna", undefined, config)
+      ).toBeNull();
     });
   });
 

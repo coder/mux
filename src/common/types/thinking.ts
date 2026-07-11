@@ -247,7 +247,7 @@ export function anthropicSupportsNativeXhigh(modelString: string): boolean {
  * suffixes (e.g. gpt-5.6-sol-2026-07-09) while rejecting hypothetical named
  * variants (e.g. gpt-5.6-sol-mini) and other ids (e.g. gpt-5.61).
  */
-function isGpt56FamilyModel(modelString: string): boolean {
+export function isGpt56FamilyModel(modelString: string): boolean {
   const withoutPrefix = stripModelProviderPrefixes(modelString);
   return /^gpt-5\.6(?:-(?:sol|terra|luna))?\b(?!\.)(?!-[a-z])/.test(withoutPrefix);
 }

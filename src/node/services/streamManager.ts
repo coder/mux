@@ -5,6 +5,7 @@ import {
   streamText,
   stepCountIs,
   type ModelMessage,
+  type SystemModelMessage,
   type LanguageModel,
   type Tool,
   type ToolSet,
@@ -59,6 +60,7 @@ import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { Runtime } from "@/node/runtime/Runtime";
 import {
   createCachedSystemMessage,
+  createOpenAICachedSystemMessage,
   applyCacheControlToTools,
   type AnthropicCacheTtl,
 } from "@/common/utils/ai/cacheStrategy";
@@ -161,7 +163,13 @@ interface StepMessageTracker {
 interface StreamRequestConfig {
   model: LanguageModel;
   messages: ModelMessage[];
-  system?: string;
+  /**
+   * System instructions for streamText. Direct official OpenAI GPT-5.6
+   * requests carry a structured SystemModelMessage with an explicit prompt
+   * cache breakpoint (createOpenAICachedSystemMessage); everything else keeps
+   * the plain string.
+   */
+  system?: string | SystemModelMessage;
   tools?: Record<string, Tool>;
   providerOptions?: Record<string, unknown>;
   /** Per-request HTTP headers (e.g., anthropic-beta for 1M context). */
@@ -1457,6 +1465,10 @@ export class StreamManager extends EventEmitter {
     modelString: string,
     messages: ModelMessage[],
     system: string,
+    // Backend-resolved route provider (initialMetadata.routeProvider for the
+    // primary request, initialMetadataPatch.routeProvider for fallbacks).
+    // Missing route metadata fails closed for OpenAI explicit prompt caching.
+    routeProvider?: string,
     tools?: Record<string, Tool>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
@@ -1474,7 +1486,7 @@ export class StreamManager extends EventEmitter {
     // Apply cache control for Anthropic models
     let finalMessages = messages;
     let finalTools = tools;
-    let finalSystem: string | undefined = system;
+    let finalSystem: string | SystemModelMessage | undefined = system;
     const anthropicCacheTtl =
       anthropicCacheTtlOverride ?? getAnthropicCacheTtl(finalProviderOptions);
 
@@ -1485,6 +1497,23 @@ export class StreamManager extends EventEmitter {
       // Note: Must be undefined, not empty string, to avoid Anthropic API error
       finalMessages = [cachedSystemMessage, ...messages];
       finalSystem = undefined;
+    } else {
+      // Direct official OpenAI GPT-5.6: put one explicit prompt cache
+      // breakpoint at the end of the stable system instructions. The system
+      // stays in streamText's `system` argument (as a structured message);
+      // request-wide caching remains implicit so OpenAI keeps placing its
+      // automatic latest-message breakpoint. Ineligible routes (gateways,
+      // Codex OAuth, custom base URLs, missing route metadata) keep the
+      // original string.
+      const openaiCachedSystem = createOpenAICachedSystemMessage(
+        system,
+        modelString,
+        routeProvider,
+        this.getProvidersConfig()
+      );
+      if (openaiCachedSystem) {
+        finalSystem = openaiCachedSystem;
+      }
     }
 
     // Apply cache control to tools for Anthropic models
@@ -1671,6 +1700,7 @@ export class StreamManager extends EventEmitter {
       modelString,
       messages,
       system,
+      initialMetadata?.routeProvider,
       tools,
       providerOptions,
       maxOutputTokens,
@@ -2328,6 +2358,10 @@ export class StreamManager extends EventEmitter {
       prepared.data.modelString,
       prepared.data.messages,
       prepared.data.system,
+      // Use the fallback's freshly-resolved route (not stale source metadata,
+      // which streamInfo.initialMetadata still holds at this point) so the
+      // OpenAI cached-system transform evaluates the fallback route.
+      prepared.data.initialMetadataPatch?.routeProvider,
       prepared.data.tools,
       prepared.data.providerOptions,
       fallbackState.original.maxOutputTokens,
