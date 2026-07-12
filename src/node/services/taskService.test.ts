@@ -15431,6 +15431,66 @@ describe("TaskService", () => {
     expect(report?.structuredOutput).toBeUndefined();
   });
 
+  test("legacy invalid workflow schemas recover with a final response instead of structured agent_report", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-legacy-invalid-recovery";
+    const childId = "child-legacy-invalid-recovery";
+    const workflowRunId = "wfr_legacy_invalid_recovery";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: { $ref: "#/defs/pre-upgrade" },
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "legacy-invalid-recovery",
+        description: "Legacy invalid recovery",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      agentOutputSchemaRequired: false,
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const internal = taskService as unknown as {
+      promptTaskForRequiredCompletionTool: (workspaceId: string) => Promise<boolean>;
+    };
+
+    expect(await internal.promptTaskForRequiredCompletionTool(childId)).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("respond with your final assistant message"),
+      expect.any(Object),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(sendMessage.mock.calls[0]?.[1]).not.toContain("First call agent_report");
+  });
+
   test("workflow subagent treats strict-provider null optional fields as omitted", async () => {
     const config = await createTestConfig(rootDir);
 

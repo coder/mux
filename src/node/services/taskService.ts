@@ -5677,7 +5677,9 @@ export class TaskService {
     const completionKind = (await this.isPlanLikeTaskWorkspace(freshEntry))
       ? "propose_plan"
       : "final_response";
-    const requiresStructuredOutput = freshEntry.workspace.workflowTask?.outputSchema !== undefined;
+    const requiresStructuredOutput =
+      freshEntry.workspace.workflowTask?.outputSchema !== undefined &&
+      !(await this.shouldAllowLegacyInvalidWorkflowOutputSchema(taskId, freshEntry));
     const model = freshEntry.workspace.taskModelString ?? defaultModel;
     const agentId = resolveTaskAgentIdForResume(freshEntry.workspace);
     const sendResult = await this.workspaceService.sendMessage(
@@ -8050,7 +8052,9 @@ export class TaskService {
 
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const completionKind = isPlanLike ? "propose_plan" : "final_response";
-    const requiresStructuredOutput = entry.workspace.workflowTask?.outputSchema !== undefined;
+    const requiresStructuredOutput =
+      entry.workspace.workflowTask?.outputSchema !== undefined &&
+      !(await this.shouldAllowLegacyInvalidWorkflowOutputSchema(workspaceId, entry));
 
     // Persisted circuit breaker: a task that keeps consuming recovery prompts
     // without ever completing is stuck (repeated empty output, repeated
