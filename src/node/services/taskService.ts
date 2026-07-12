@@ -281,6 +281,19 @@ function stringifyStructuredOutputForSubagentReport(structuredOutput: unknown): 
   return json;
 }
 
+function parseSubagentReportEnvelope(text: string): { taskId: string; status?: string } | null {
+  const envelope = /^<mux_subagent_report>\n([\s\S]*?)\n<\/mux_subagent_report>$/.exec(text);
+  if (envelope == null) {
+    return null;
+  }
+  const taskId = /^<task_id>([^<]+)<\/task_id>$/m.exec(envelope[1])?.[1]?.trim();
+  if (!taskId) {
+    return null;
+  }
+  const status = /^<status>([^<]+)<\/status>$/m.exec(envelope[1])?.[1]?.trim();
+  return { taskId, ...(status ? { status } : {}) };
+}
+
 function formatSubagentReportUserMessage(params: {
   childWorkspaceId: string;
   agentType: string;
@@ -9840,18 +9853,11 @@ export class TaskService {
             .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
             .map((part) => part.text)
             .join("\n");
-          if (
-            !text.includes("<mux_subagent_report>") ||
-            text.includes("<status>in_progress</status>")
-          ) {
+          const reportEnvelope = parseSubagentReportEnvelope(text);
+          if (reportEnvelope == null || reportEnvelope.status === "in_progress") {
             continue;
           }
-          for (const match of text.matchAll(/<task_id>([^<]+)<\/task_id>/g)) {
-            const taskId = coerceNonEmptyString(match[1]);
-            if (taskId) {
-              syntheticReportTaskIds.add(taskId);
-            }
-          }
+          syntheticReportTaskIds.add(reportEnvelope.taskId);
         }
       }
 

@@ -16444,6 +16444,84 @@ describe("TaskService", () => {
     expect(serialized).toContain("Terminal result");
   });
 
+  test("completed best-of reports may quote the in-progress status tag without bypassing dedupe", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-status-quote";
+    const childOneId = "child-best-of-status-quote-1";
+    const childTwoId = "child-best-of-status-quote-2";
+    const bestOf = { groupId: "best-of-status-quote-group", index: 0, total: 2 } as const;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child-1", childOneId, {
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          bestOf,
+        }),
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const quoted = "Terminal report quoting <status>in_progress</status>.";
+    expect(
+      (
+        await historyService.appendToHistory(
+          parentId,
+          createMuxMessage(
+            "completed-report",
+            "user",
+            `<mux_subagent_report>\n<task_id>${childOneId}</task_id>\n<agent_type>explore</agent_type>\n<status>completed</status>\n<title>Result</title>\n<report_markdown>\n${quoted}\n</report_markdown>\n</mux_subagent_report>`,
+            { timestamp: Date.now(), synthetic: true }
+          )
+        )
+      ).success
+    ).toBe(true);
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childOneId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: quoted,
+      nowMs: Date.now(),
+    });
+
+    const internal = taskService as unknown as {
+      deliverDeferredBestOfSiblingReports: (params: {
+        parentWorkspaceId: string;
+        groupId: string;
+        total: number;
+      }) => Promise<void>;
+    };
+    await internal.deliverDeferredBestOfSiblingReports({
+      parentWorkspaceId: parentId,
+      groupId: bestOf.groupId,
+      total: bestOf.total,
+    });
+
+    const serialized = JSON.stringify(await collectFullHistory(historyService, parentId));
+    expect(serialized.match(/Terminal report quoting/g)).toHaveLength(1);
+  });
+
   test("concurrent direct and deferred best-of fallback delivery does not duplicate reports", async () => {
     const config = await createTestConfig(rootDir);
 
