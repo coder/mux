@@ -344,8 +344,8 @@ function buildRetryAgentSpec(
     prompt:
       `${spec.prompt}\n\n` +
       `Previous workflow attempt ${attempt} failed output validation: ${validationMessage}\n` +
-      "Rerun the task from scratch and submit a final report whose structured output satisfies the requested schema. " +
-      "In file-backed report mode, rewrite structured-output.json and call agent_report with reportMarkdownPath, structuredOutputPath, and title all set to null.",
+      "Rerun the task from scratch, call agent_report with structured output that satisfies the requested schema, then summarize the result in the final assistant response. " +
+      "In file-backed report mode, rewrite structured-output.json before sending the structured update.",
   };
 }
 
@@ -1910,7 +1910,7 @@ export class WorkflowRunner {
         return acceptedReportBeforeHardTimeout;
       }
 
-      const errorMessage = `Workflow agent step ${step.spec.id} exceeded its soft timeout (${timeout.softMs}ms) and did not produce a valid agent_report within the grace period (${timeout.graceMs}ms).`;
+      const errorMessage = `Workflow agent step ${step.spec.id} exceeded its soft timeout (${timeout.softMs}ms) and did not produce a valid final response within the grace period (${timeout.graceMs}ms).`;
       const hardTimedOutAt = this.clock.nowIso();
       await this.recordStepTimeoutMetadata(runId, {
         stepId: step.spec.id,

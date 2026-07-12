@@ -2127,8 +2127,9 @@ export const TOOL_DEFINITIONS = {
   },
   agent_report: {
     description:
-      "Report the final result of a sub-agent task back to the parent workspace. " +
-      "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
+      "Send an incremental update from a sub-agent to its parent workspace and wake the parent. " +
+      "Call this whenever the parent should see important progress or a finding before the task is complete; it may be called multiple times. " +
+      "Do not use it for the final result—the final assistant message completes the sub-agent task.",
     schema: AgentReportToolArgsSchema,
   },
   set_goal: {

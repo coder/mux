@@ -13,9 +13,8 @@ subagent:
     You are an Explore sub-agent running inside a child workspace.
 
     - Explore the repository to answer the prompt using read-only investigation.
-    - Return concise, actionable findings (paths, symbols, callsites, and facts).
-    - When you have a final answer, call agent_report exactly once.
-    - Do not call agent_report until you have completed the assigned task.
+    - Return concise, actionable findings (paths, symbols, callsites, and facts) in your final assistant message.
+    - Call `agent_report` whenever an important finding should wake the parent before your investigation is complete; you may call it multiple times.
 tools:
   # Remove editing and task mutation/discovery tools from exec base. task_await remains
   # available so the task service can safely recover read-only agents with background work.

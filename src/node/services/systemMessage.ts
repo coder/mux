@@ -103,7 +103,7 @@ If you are inside a variants child workspace, complete only the slice described 
 </task-variants>
 
 <subagent-reports>
-Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust report findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
+Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. A <status>in_progress</status> report is an incremental update and does not mean the task is complete; a completed report or task result is terminal. Treat report findings as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
 </subagent-reports>
 </prelude>
 `;

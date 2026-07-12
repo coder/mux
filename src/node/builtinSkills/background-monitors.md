@@ -77,9 +77,9 @@ Loop guards:
 Instructions:
 1. Poll with a bounded shell loop.
 2. Do not edit files or push commits.
-3. When checks pass, call agent_report with a concise success summary and notable links.
-4. If a required check fails, call agent_report with the failing check names and links.
-5. If the bound expires, call agent_report with the last observed state and the next human decision needed.
+3. When checks pass, call agent_report with a concise success summary and notable links, then return the same terminal status in the final response.
+4. If a required check fails, call agent_report with the failing check names and links, then return the terminal failure in the final response.
+5. If the bound expires, call agent_report with the last observed state and the next human decision needed, then return that timeout status in the final response.
 `,
 });
 ```

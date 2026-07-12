@@ -137,9 +137,10 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
       runtimePolicy.push({ regex_match: "propose_plan", action: "require" });
       runtimePolicy.push({ regex_match: "agent_report", action: "disable" });
     } else {
-      // Non-plan subagents should complete through agent_report.
+      // Non-plan subagents complete with their final assistant message. agent_report remains
+      // available for optional incremental updates that wake the parent while work continues.
       runtimePolicy.push({ regex_match: "propose_plan", action: "disable" });
-      runtimePolicy.push({ regex_match: "agent_report", action: "require" });
+      runtimePolicy.push({ regex_match: "agent_report", action: "enable" });
     }
   }
 

@@ -10585,10 +10585,8 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("interrupted");
     expect(sendMessage).toHaveBeenCalledWith(
       parentTaskId,
-      expect.stringContaining("awaiting its final agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("awaiting its final assistant response"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true })
     );
   });
@@ -11123,10 +11121,8 @@ describe("TaskService", () => {
 
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
-      expect.stringContaining("awaiting its final agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("awaiting its final assistant response"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true })
     );
   });
@@ -11189,9 +11185,10 @@ describe("TaskService", () => {
 
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
-      expect.stringContaining("awaiting its final propose_plan"),
+      expect.stringContaining("awaiting its propose_plan"),
       expect.objectContaining({
         toolPolicy: [{ regex_match: "^propose_plan$", action: "require" }],
+        agentId: customAgentId,
       }),
       expect.objectContaining({ synthetic: true })
     );
@@ -11254,9 +11251,10 @@ describe("TaskService", () => {
 
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
-      expect.stringContaining("awaiting its final propose_plan"),
+      expect.stringContaining("awaiting its propose_plan"),
       expect.objectContaining({
         toolPolicy: [{ regex_match: "^propose_plan$", action: "require" }],
+        agentId: "exec",
       }),
       expect.objectContaining({ synthetic: true })
     );
@@ -11524,7 +11522,7 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
-      expect.stringContaining("Your stream ended without calling agent_report"),
+      expect.stringContaining("Your stream ended without a final assistant response"),
       expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
@@ -14866,6 +14864,58 @@ describe("TaskService", () => {
     expect(maybeStartQueuedTasks).toHaveBeenCalledTimes(1);
   });
 
+  test("agent_report wakes the parent repeatedly without completing the subagent", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-progress";
+    const childId = "child-progress";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_review_child",
+          parentWorkspaceId: parentId,
+          agentType: "review",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.reportAgentProgress(childId, "progress-1", {
+      reportMarkdown: "Found a correctness issue.",
+      title: "Finding",
+    });
+    await taskService.reportAgentProgress(childId, "progress-2", {
+      reportMarkdown: "Found a second issue.",
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenNthCalledWith(
+      1,
+      parentId,
+      expect.stringContaining("Found a correctness issue."),
+      expect.any(Object),
+      expect.objectContaining({
+        synthetic: true,
+        agentInitiated: true,
+        startStreamInBackground: true,
+        queueDedupeKey: "agent-report:child-progress:progress-1",
+      })
+    );
+    expect(sendMessage.mock.calls[0]?.[1]).toContain("<status>in_progress</status>");
+    expect(sendMessage.mock.calls[1]?.[1]).toContain("Found a second issue.");
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
+    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+  });
+
   test("non-plan subagent stream-end with final assistant text finalizes an implicit report", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -14923,7 +14973,25 @@ describe("TaskService", () => {
       workspaceId: childId,
       messageId: "assistant-child-output",
       metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
-      parts: [{ type: "text", text: "## Final answer\n\nImplicit report content from the child." }],
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-progress-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Early finding", title: "Finding" },
+          state: "output-available",
+          output: { success: true },
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-progress-2",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Later finding", title: "Latest update" },
+          state: "output-available",
+          output: { success: true },
+        },
+        { type: "text", text: "## Final answer\n\nImplicit report content from the child." },
+      ],
     });
 
     const updatedParentPartial = await partialService.readPartial(parentId);
@@ -14953,7 +15021,7 @@ describe("TaskService", () => {
     expect(report?.reportMarkdown).toBe(
       "## Final answer\n\nImplicit report content from the child."
     );
-    expect(report?.title).toBeUndefined();
+    expect(report?.title).toBe("Latest update");
 
     const postCfg = config.loadConfigOrDefault();
     const ws = Array.from(postCfg.projects.values())
@@ -14970,7 +15038,94 @@ describe("TaskService", () => {
     }
   });
 
-  test("workflow subagent stream-end with final assistant text still requires structured agent_report", async () => {
+  test("workflow subagent reuses structured agent_report metadata from an earlier turn", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-structured-history";
+    const childId = "child-structured-history";
+    const workflowRunId = "wfr_structured_history";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: {
+            runId: workflowRunId,
+            stepId: "collect",
+            outputSchema: {
+              type: "object",
+              required: ["claims"],
+              properties: { claims: { type: "array", items: { type: "string" } } },
+              additionalProperties: false,
+            },
+          },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "structured-history",
+        description: "Structured history",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    const progressMessage = createMuxMessage(
+      "assistant-progress",
+      "assistant",
+      "",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-progress",
+          toolName: "agent_report",
+          input: { claims: ["persisted"] },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+    expect((await historyService.appendToHistory(childId, progressMessage)).success).toBe(true);
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [{ type: "text", text: "## Final answer\n\nFinal prose after an earlier update." }],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.reportMarkdown).toBe("## Final answer\n\nFinal prose after an earlier update.");
+    expect(report?.structuredOutput).toEqual({ claims: ["persisted"] });
+  });
+
+  test("workflow subagent uses agent_report metadata with the final assistant response", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -15032,19 +15187,26 @@ describe("TaskService", () => {
       workspaceId: childId,
       messageId: "assistant-child-output",
       metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
-      parts: [{ type: "text", text: "## Final answer\n\nThis prose is not structured output." }],
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-structured",
+          toolName: "agent_report",
+          input: { claims: ["verified"] },
+          state: "output-available",
+          output: { success: true },
+        },
+        { type: "text", text: "## Final answer\n\nThis prose is the final workflow summary." },
+      ],
     });
 
-    expect(sendMessage).toHaveBeenCalledWith(
-      childId,
-      expect.stringContaining("Your stream ended without calling agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
-      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.reportMarkdown).toBe(
+      "## Final answer\n\nThis prose is the final workflow summary."
     );
-    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
-    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+    expect(report?.structuredOutput).toEqual({ claims: ["verified"] });
   });
 
   test("workflow subagent invalid structured agent_report does not finalize", async () => {
@@ -15122,15 +15284,14 @@ describe("TaskService", () => {
           state: "output-available",
           output: { success: true },
         },
+        { type: "text", text: "Final summary with invalid structured metadata." },
       ],
     });
 
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
-      expect.stringContaining("The previous agent_report attempt failed"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("The previous final assistant response attempt failed"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
@@ -15207,6 +15368,7 @@ describe("TaskService", () => {
           state: "output-available",
           output: { success: true },
         },
+        { type: "text", text: "Legacy report" },
       ],
     });
 
@@ -15306,6 +15468,7 @@ describe("TaskService", () => {
           state: "output-available",
           output: { success: true },
         },
+        { type: "text", text: "Optional fields normalized." },
       ],
     });
 
@@ -15388,13 +15551,14 @@ describe("TaskService", () => {
           state: "output-available",
           output: { success: true },
         },
+        { type: "text", text: "Done" },
       ],
     });
 
     expect(sendMessage).not.toHaveBeenCalled();
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
     const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
-    expect(report?.reportMarkdown).toBe(STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN);
+    expect(report?.reportMarkdown).toBe("Done");
     expect(report?.structuredOutput).toEqual({ reportMarkdown: "Done", title: null });
   });
 
@@ -15439,10 +15603,8 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
-      expect.stringContaining("Your stream ended without calling agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("Your stream ended without a final assistant response"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
 
@@ -15525,19 +15687,15 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
       childId,
-      expect.stringContaining("Your stream ended without calling agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("Your stream ended without a final assistant response"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
     expect(sendMessage).toHaveBeenNthCalledWith(
       2,
       childId,
       expect.stringContaining("Do not continue investigating or call other tools"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
 
@@ -17039,21 +17197,17 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
       childId,
-      expect.stringContaining("Your stream ended without calling agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("Your stream ended without a final assistant response"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
     expect(sendMessage).toHaveBeenNthCalledWith(
       2,
       childId,
       expect.stringContaining(
-        "The previous agent_report attempt failed (last error: empty_output)"
+        "The previous final assistant response attempt failed (last error: empty_output)"
       ),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
 
@@ -17121,10 +17275,8 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
       childId,
-      expect.stringContaining("Your stream ended without calling agent_report"),
-      expect.objectContaining({
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }),
+      expect.stringContaining("Your stream ended without a final assistant response"),
+      expect.any(Object),
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
     expect(sendMessage.mock.calls[1]?.[0]).toBe(parentId);

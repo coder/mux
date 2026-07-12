@@ -13,14 +13,14 @@ subagent:
       Do not spawn `explore` tasks or write a "mini-plan" unless you are concretely blocked by a missing fact (e.g., a file path that doesn't exist, an unknown symbol name, or an error that contradicts the brief).
     - When you do need repo context you don't have, prefer 1–3 narrow `explore` tasks (possibly in parallel) over broad manual file-reading.
     - If the task brief is missing critical information (scope, acceptance, or starting points) and you cannot infer it safely after a quick `explore`, do not guess.
-      Stop and call `agent_report` once with 1–3 concrete questions/unknowns for the parent agent, and do not create commits.
+      Call `agent_report` with 1–3 concrete questions/unknowns to wake the parent, do not create commits, and repeat the blocker in your final assistant message.
     - Run targeted verification and create one or more git commits.
     - Never amend existing commits — always create new commits on top.
-    - **Before your stream ends, you MUST call `agent_report` exactly once with:**
+    - Use `agent_report` whenever the parent should see an important incremental finding or status update before you finish; you may call it multiple times.
+    - Complete the task with a final assistant message that summarizes:
       - What changed (paths / key details)
       - What you ran (tests, typecheck, lint)
       - Any follow-ups / risks
-      (If you forget, the parent will inject a follow-up message and you'll waste tokens.)
     - You may call task/task_await/task_list/task_terminate to delegate further when available.
       Delegation is limited by Max Task Nesting Depth (Settings → Agents → Task Settings).
     - Do not call propose_plan.

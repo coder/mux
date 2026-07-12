@@ -70,7 +70,7 @@ Note: `plan` is intentionally not runnable as a sub-agent. Use top-level plan mo
 - Constraints:
   - Do not expand scope.
   - Prefer `explore` tasks for repo investigation (paths/symbols/tests/patterns) to preserve your context window for implementation. Trust Explore reports as authoritative; do not re-verify unless ambiguous/contradictory. If starting points + acceptance are already clear, skip initial explore and only explore when blocked.
-  - Create one or more git commits before `agent_report`.
+  - Create one or more git commits before the final assistant response; use `agent_report` earlier only for meaningful incremental updates.
 
 For higher-complexity `exec` briefs, prioritize goal + constraints + acceptance criteria over file-by-file diff instructions.
 

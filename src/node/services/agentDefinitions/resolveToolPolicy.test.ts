@@ -107,7 +107,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "require" },
+      { regex_match: "agent_report", action: "enable" },
       advisorDisabledRule,
     ]);
   });
@@ -126,7 +126,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "file_read", action: "enable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "require" },
+      { regex_match: "agent_report", action: "enable" },
       advisorDisabledRule,
     ]);
   });
@@ -187,7 +187,7 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "task_.*", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
-      { regex_match: "agent_report", action: "require" },
+      { regex_match: "agent_report", action: "enable" },
       advisorDisabledRule,
     ]);
   });

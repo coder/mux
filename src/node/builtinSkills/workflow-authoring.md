@@ -202,7 +202,7 @@ Runs one workflow-owned sub-agent and waits for its final report.
 Required options:
 
 - `id`: stable step ID used for replay; never derive from unstable ordering unless the input ordering is stable.
-- `schema`: optional JSON object schema. When present, the child reports schema-shaped data through `agent_report` and `agent()` returns that structured object directly. When omitted, non-Plan agents return the child report markdown string.
+- `schema`: optional JSON object schema. When present, the child sends schema-shaped data through `agent_report`, finishes with a final assistant response, and `agent()` returns the structured object directly. When omitted, non-Plan agents return the final assistant response markdown.
 
 Workflow agents default to `exec`. Optional fields include `title`, `agentId`, `model`, `thinking`, `isolation`, and `onRefusal`. Use `agentId: "explore"` for read-only research/discovery stages. Use `agentId: "plan"` for planning stages that complete through `propose_plan` and return `{ reportMarkdown, planFilePath }`. Do not provide `schema` for Plan agents; model plan → exec explicitly in workflow code. `model` accepts the same aliases/full model strings as the UI, `thinking` accepts `off|low|medium|high|xhigh|max` or a numeric index, and `effort` is rejected to avoid ambiguous provider-specific behavior.
 
@@ -278,7 +278,7 @@ const report = agent("Investigate and report useful partial findings if time exp
 });
 ```
 
-The soft budget starts when the child task begins running; queued/starting time does not count. If the soft timeout expires, Mux soft-interrupts the child turn, sends a synthetic prompt requiring `agent_report` (or `propose_plan` for Plan agents), and waits for the explicit grace period. A valid report during grace completes the step normally; otherwise Mux hard-times-out the child and fails the step. For schema-backed agents, design the schema so partial-but-useful results can still be represented.
+The soft budget starts when the child task begins running; queued/starting time does not count. If the soft timeout expires, Mux soft-interrupts the child turn, asks for a final assistant response (or requires `propose_plan` for Plan agents), and waits for the explicit grace period. Schema-backed agents must send valid structured output through `agent_report` before that final response. A valid response during grace completes the step normally; otherwise Mux hard-times-out the child and fails the step. Design schemas so partial-but-useful results can still be represented.
 
 ### `parallel(thunks, options?)`
 

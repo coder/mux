@@ -52,12 +52,12 @@ export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
   result,
   status = "pending",
 }) => {
-  // Default to expanded: the report is the entire point of this tool.
+  // Default to expanded so incremental findings are visible when they wake the parent.
   const { expanded, toggleExpanded } = useToolExpansion(true);
 
   const errorResult = isToolErrorResult(result) ? result : null;
 
-  const title = args.title ?? "Agent report";
+  const title = args.title ?? "Agent update";
   const reportMarkdown = getSubmittedReportMarkdown(args, result);
 
   // Show a small preview when collapsed so the card still has some useful context.

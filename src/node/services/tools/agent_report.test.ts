@@ -12,35 +12,36 @@ const mockToolCallOptions: ToolExecutionOptions<unknown> = {
 };
 
 describe("agent_report tool", () => {
-  it("throws when the task has active descendants", async () => {
+  it("sends multiple incremental updates without completing the task", async () => {
     using tempDir = new TestTempDir("test-agent-report-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" });
-
-    const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => true),
-    } as unknown as TaskService;
-
+    const reportAgentProgress = mock(() => Promise.resolve());
+    const taskService = { reportAgentProgress } as unknown as TaskService;
     const tool = createAgentReportTool({ ...baseConfig, taskService });
 
-    let caught: unknown = null;
-    try {
-      await Promise.resolve(
-        tool.execute!({ reportMarkdown: "done", title: "t" }, mockToolCallOptions)
-      );
-    } catch (error: unknown) {
-      caught = error;
-    }
+    const first: unknown = await Promise.resolve(
+      tool.execute!({ reportMarkdown: "first finding", title: "Finding" }, mockToolCallOptions)
+    );
+    const second: unknown = await Promise.resolve(
+      tool.execute!({ reportMarkdown: "second finding", title: null }, mockToolCallOptions)
+    );
 
-    expect(caught).toBeInstanceOf(Error);
-    if (caught instanceof Error) {
-      expect(caught.message).toMatch(/still has running\/queued/i);
-    }
+    expect(first).toEqual({ success: true, message: "Update sent to the parent workspace." });
+    expect(second).toEqual({ success: true, message: "Update sent to the parent workspace." });
+    expect(reportAgentProgress).toHaveBeenNthCalledWith(1, "task-workspace", "test-call-id", {
+      reportMarkdown: "first finding",
+      title: "Finding",
+    });
+    expect(reportAgentProgress).toHaveBeenNthCalledWith(2, "task-workspace", "test-call-id", {
+      reportMarkdown: "second finding",
+      title: undefined,
+    });
   });
 
   it("omits structuredOutput from non-workflow agent_report input", async () => {
     using tempDir = new TestTempDir("test-agent-report-tool-no-structured-schema");
     const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      reportAgentProgress: mock(() => Promise.resolve()),
     } as unknown as TaskService;
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
@@ -73,7 +74,7 @@ describe("agent_report tool", () => {
   it("treats legacy invalid workflow output schemas as markdown-only", async () => {
     using tempDir = new TestTempDir("test-agent-report-tool-legacy-invalid-schema");
     const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      reportAgentProgress: mock(() => Promise.resolve()),
     } as unknown as TaskService;
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
@@ -93,7 +94,7 @@ describe("agent_report tool", () => {
     );
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 
@@ -108,7 +109,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+        reportAgentProgress: mock(() => Promise.resolve()),
       } as unknown as TaskService,
       workflowAgentOutputSchema: outputSchema,
     });
@@ -133,7 +134,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+        reportAgentProgress: mock(() => Promise.resolve()),
       } as unknown as TaskService,
       workflowAgentOutputSchema: outputSchema,
     });
@@ -167,7 +168,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+        reportAgentProgress: mock(() => Promise.resolve()),
       } as unknown as TaskService,
       workflowAgentOutputSchema: {
         type: "object",
@@ -204,7 +205,7 @@ describe("agent_report tool", () => {
 
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 
@@ -213,7 +214,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+        reportAgentProgress: mock(() => Promise.resolve()),
       } as unknown as TaskService,
       workflowAgentOutputSchema: {
         type: "object",
@@ -243,7 +244,7 @@ describe("agent_report tool", () => {
 
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 
@@ -252,7 +253,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+        reportAgentProgress: mock(() => Promise.resolve()),
       } as unknown as TaskService,
       workflowAgentOutputSchema: {
         type: "object",
@@ -294,11 +295,11 @@ describe("agent_report tool", () => {
 
     expect(nullableResult).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
     expect(optionalResult).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 
@@ -307,7 +308,7 @@ describe("agent_report tool", () => {
     const tool = createAgentReportTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" }),
       taskService: {
-        hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+        reportAgentProgress: mock(() => Promise.resolve()),
       } as unknown as TaskService,
       workflowAgentOutputSchema: {
         type: "object",
@@ -323,7 +324,7 @@ describe("agent_report tool", () => {
 
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 
@@ -334,7 +335,7 @@ describe("agent_report tool", () => {
     });
 
     const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      reportAgentProgress: mock(() => Promise.resolve()),
     } as unknown as TaskService;
 
     const tool = createAgentReportTool({
@@ -366,7 +367,7 @@ describe("agent_report tool", () => {
     });
 
     const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      reportAgentProgress: mock(() => Promise.resolve()),
     } as unknown as TaskService;
 
     const tool = createAgentReportTool({
@@ -386,7 +387,7 @@ describe("agent_report tool", () => {
 
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 
@@ -395,7 +396,7 @@ describe("agent_report tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "task-workspace" });
 
     const taskService = {
-      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+      reportAgentProgress: mock(() => Promise.resolve()),
     } as unknown as TaskService;
 
     const tool = createAgentReportTool({ ...baseConfig, taskService });
@@ -406,7 +407,7 @@ describe("agent_report tool", () => {
 
     expect(result).toEqual({
       success: true,
-      message: "Report submitted successfully.",
+      message: "Update sent to the parent workspace.",
     });
   });
 });

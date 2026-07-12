@@ -1,4 +1,4 @@
-import { jsonSchema, tool } from "ai";
+import { jsonSchema, tool, type ToolExecutionOptions } from "ai";
 import type { JSONSchema7 } from "@ai-sdk/provider";
 
 import {
@@ -19,6 +19,12 @@ import { requireTaskService, requireWorkspaceId } from "./toolUtils";
 interface AgentReportSuccessResult {
   success: true;
   message: string;
+}
+
+interface AgentProgressReport {
+  reportMarkdown: string;
+  title?: string;
+  structuredOutput?: unknown;
 }
 
 interface AgentReportFailureResult {
@@ -107,7 +113,10 @@ function buildInlineInputSchema(config: ToolConfiguration) {
   });
 }
 
-function executeInlineReport(config: ToolConfiguration, rawArgs: unknown): AgentReportResult {
+function parseProgressReport(
+  config: ToolConfiguration,
+  rawArgs: unknown
+): { report: AgentProgressReport } | { failure: AgentReportFailureResult } {
   const workflowOutputSchema = getWorkflowAgentOutputSchema(config);
   if (workflowOutputSchema != null) {
     const normalizedArgs = normalizeWorkflowAgentReportPayloadForHostSchema(
@@ -116,24 +125,28 @@ function executeInlineReport(config: ToolConfiguration, rawArgs: unknown): Agent
     );
     const structuredValidation = validateStructuredOutput(config, normalizedArgs);
     if (structuredValidation) {
-      return structuredValidation;
+      return { failure: structuredValidation };
     }
-    // Intentionally no report payload on success. The backend orchestrator consumes inline
-    // tool-call args from persisted history once the tool call completes successfully.
     return {
-      success: true,
-      message: "Report submitted successfully.",
+      report: {
+        reportMarkdown: "Structured workflow update submitted.",
+        structuredOutput: normalizedArgs,
+      },
     };
   }
 
   const parsed = AgentReportInlineToolArgsSchema.safeParse(rawArgs);
   if (!parsed.success) {
-    return zodValidationFailure("Report arguments failed validation.", parsed.error);
+    return {
+      failure: zodValidationFailure("Report arguments failed validation.", parsed.error),
+    };
   }
 
   return {
-    success: true,
-    message: "Report submitted successfully.",
+    report: {
+      reportMarkdown: parsed.data.reportMarkdown,
+      title: parsed.data.title ?? undefined,
+    },
   };
 }
 
@@ -141,18 +154,22 @@ export const createAgentReportTool: ToolFactory = (config: ToolConfiguration) =>
   return tool({
     description: TOOL_DEFINITIONS.agent_report.description,
     inputSchema: buildInlineInputSchema(config),
-    execute: (args: unknown): AgentReportResult => {
+    execute: async (
+      args: unknown,
+      options: ToolExecutionOptions<unknown>
+    ): Promise<AgentReportResult> => {
       const workspaceId = requireWorkspaceId(config, "agent_report");
       const taskService = requireTaskService(config, "agent_report");
-
-      if (taskService.hasActiveDescendantAgentTasksForWorkspace(workspaceId)) {
-        throw new Error(
-          "agent_report rejected: this task still has running/queued descendant tasks. " +
-            "Call task_await (or wait for tasks to finish) before reporting."
-        );
+      const parsed = parseProgressReport(config, args);
+      if ("failure" in parsed) {
+        return parsed.failure;
       }
 
-      return executeInlineReport(config, args);
+      await taskService.reportAgentProgress(workspaceId, options.toolCallId, parsed.report);
+      return {
+        success: true,
+        message: "Update sent to the parent workspace.",
+      };
     },
   });
 };

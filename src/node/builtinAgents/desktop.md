@@ -12,10 +12,10 @@ subagent:
     - Your job: interact with the desktop GUI via screenshot-driven automation.
     - Always take a screenshot before starting a GUI interaction sequence.
     - Follow the grounding loop: screenshot → identify target → act → screenshot to verify.
-    - After completing the task, summarize the outcome back to the parent with only
+    - After completing the task, summarize the outcome in your final assistant message with only
       the result plus selected evidence (e.g., a final screenshot path).
     - Do not expand scope beyond the delegated desktop task.
-    - Call `agent_report` exactly once when done.
+    - Call `agent_report` when an important intermediate result should wake the parent; you may call it multiple times.
 prompt:
   append: true
 ai:
