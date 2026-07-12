@@ -15451,6 +15451,91 @@ describe("TaskService", () => {
     );
   });
 
+  test("newer valid in-turn workflow agent_report corrects an earlier failure", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-corrected-structured";
+    const childId = "child-corrected-structured";
+    const workflowRunId = "wfr_corrected_structured";
+    const outputSchema = {
+      type: "object",
+      required: ["claims"],
+      properties: { claims: { type: "array", items: { type: "string" } } },
+      additionalProperties: false,
+    } as const;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: { runId: workflowRunId, stepId: "collect", outputSchema },
+        }),
+      ],
+      testTaskSettings()
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "corrected-structured",
+        description: "Corrected structured",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-failed",
+          toolName: "agent_report",
+          input: { claims: [1] },
+          state: "output-available",
+          output: {
+            success: false,
+            message: "Structured output failed schema validation.",
+            errors: [{ path: "$.claims[0]", message: "must be string" }],
+          },
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-corrected",
+          toolName: "agent_report",
+          input: { claims: ["corrected"] },
+          state: "output-available",
+          output: { success: true },
+        },
+        { type: "text", text: "Final summary after correcting structured output." },
+      ],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const report = await readSubagentReportArtifact(config.getSessionDir(parentId), childId);
+    expect(report?.reportMarkdown).toBe("Final summary after correcting structured output.");
+    expect(report?.structuredOutput).toEqual({ claims: ["corrected"] });
+  });
+
   test("recovery final text does not scan past a failed workflow agent_report", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

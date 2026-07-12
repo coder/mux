@@ -10381,12 +10381,12 @@ export class TaskService {
       }
       // A failed newer report invalidates all older structured candidates. Recovery must
       // produce a fresh successful report rather than scanning backward to stale metadata.
-      if (this.hasFailedAgentReportInParts(message.parts)) {
+      const outcome = this.findLatestAgentReportOutcomeInParts(message.parts, options);
+      if (outcome?.kind === "failure") {
         return null;
       }
-      const report = this.findAgentReportArgsInParts(message.parts, options);
-      if (report != null) {
-        return report;
+      if (outcome?.kind === "success") {
+        return outcome.report;
       }
     }
     return null;
@@ -10402,17 +10402,15 @@ export class TaskService {
       return null;
     }
 
-    // Any failed report in the final turn invalidates successful candidates earlier in that turn
-    // as well as older history: the failed call is the newest attempted structured value.
-    const hasFailedProgressInTurn = this.hasFailedAgentReportInParts(parts);
-    const latestProgressInTurn = hasFailedProgressInTurn
-      ? null
-      : this.findAgentReportArgsInParts(parts, options);
+    // The newest agent_report attempt controls replacement semantics: a newer correction may
+    // recover from an earlier failure, while a newer failure invalidates older successes.
+    const latestOutcomeInTurn = this.findLatestAgentReportOutcomeInParts(parts, options);
     const latestProgress =
-      latestProgressInTurn ??
-      (hasFailedProgressInTurn
-        ? null
-        : await this.findLatestAgentReportArgsInHistory(workspaceId, options));
+      latestOutcomeInTurn?.kind === "success"
+        ? latestOutcomeInTurn.report
+        : latestOutcomeInTurn?.kind === "failure"
+          ? null
+          : await this.findLatestAgentReportArgsInHistory(workspaceId, options);
     return {
       reportMarkdown: finalResponse.reportMarkdown,
       ...(latestProgress?.title !== undefined ? { title: latestProgress.title } : {}),
@@ -10422,14 +10420,31 @@ export class TaskService {
     };
   }
 
-  private hasFailedAgentReportInParts(parts: readonly unknown[]): boolean {
-    return parts.some(
-      (part) =>
-        isDynamicToolPart(part) &&
-        part.toolName === "agent_report" &&
-        part.state === "output-available" &&
-        !isSuccessfulToolResult(part.output)
-    );
+  private findLatestAgentReportOutcomeInParts(
+    parts: readonly unknown[],
+    options: { acceptSchemaShapedWorkflowReport?: boolean } = {}
+  ):
+    | {
+        kind: "success";
+        report: { reportMarkdown: string; title?: string; structuredOutput?: unknown };
+      }
+    | { kind: "failure" }
+    | null {
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (!isDynamicToolPart(part) || part.toolName !== "agent_report") {
+        continue;
+      }
+      if (part.state !== "output-available") {
+        continue;
+      }
+      if (!isSuccessfulToolResult(part.output)) {
+        return { kind: "failure" };
+      }
+      const report = this.findAgentReportArgsInParts([part], options);
+      return report == null ? { kind: "failure" } : { kind: "success", report };
+    }
+    return null;
   }
 
   private findAgentReportArgsInParts(
