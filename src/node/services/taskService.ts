@@ -8776,18 +8776,15 @@ export class TaskService {
     const acceptsSchemaShapedWorkflowReport =
       workflowOutputSchema !== undefined &&
       validateJsonSchemaSubsetSchema(workflowOutputSchema, { requireObjectSchema: true }).success;
+    // Missing finish reasons are not proof of a clean stop: providers may omit them and metadata
+    // collection may time out. Only explicit `stop` can promote the final assistant response to the
+    // terminal report; otherwise recovery asks the child to finish instead of finalizing an update.
     const finalAgentReportArgs =
       event.metadata.finishReason === "stop"
         ? await this.resolveFinalAgentReportArgs(workspaceId, event.parts, {
             acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
           })
-        : event.metadata.finishReason == null
-          ? // Compatibility for persisted/in-flight turns produced before final assistant messages
-            // became the terminal contract. New streams carry an explicit finish reason.
-            this.findAgentReportArgsInParts(event.parts, {
-              acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
-            })
-          : null;
+        : null;
     const isPlanLike = await this.isPlanLikeTaskWorkspace(entry);
     const reportArgs = isPlanLike ? null : finalAgentReportArgs;
     const proposePlanResult = this.findProposePlanSuccessInParts(event.parts);
