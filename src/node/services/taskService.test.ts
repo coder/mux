@@ -2890,10 +2890,13 @@ describe("TaskService", () => {
     const sendMessage = mock(
       (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
     );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { workspaceService, setPendingBackgroundWake } = createWorkspaceServiceMocks({
+      sendMessage,
+    });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     await taskService.initialize();
+    expect(setPendingBackgroundWake).toHaveBeenCalledWith(parentId);
     await flushTerminalAttentionDrains(taskService);
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
