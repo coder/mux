@@ -4892,12 +4892,14 @@ export class TaskService {
       for (const notification of pending) {
         await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
       }
+      await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
     };
 
     const markPendingForRetry = async () => {
       for (const notification of pending) {
         await this.terminalAttentionStore.markPending(ownerWorkspaceId, notification.id);
       }
+      await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
     };
 
     const resumeOptions = await this.resolveParentAutoResumeOptions(

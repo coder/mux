@@ -2245,7 +2245,9 @@ describe("TaskService", () => {
     const sendMessage = mock(
       (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
     );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { workspaceService, refreshPendingBackgroundWake } = createWorkspaceServiceMocks({
+      sendMessage,
+    });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
     const internal = taskService as unknown as {
       drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
@@ -2253,6 +2255,7 @@ describe("TaskService", () => {
 
     await internal.drainTerminalAttention(parentId);
 
+    expect(refreshPendingBackgroundWake).toHaveBeenCalledWith(parentId);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const prompt = String(sendMessage.mock.calls[0]?.[1]);
     expect(prompt).toContain("Background sub-agent task(s) have completed");
