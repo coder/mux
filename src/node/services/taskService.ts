@@ -2181,6 +2181,9 @@ export class TaskService {
     const pendingTerminalAttentionOwnerWorkspaceIds =
       await this.terminalAttentionStore.listPendingOwnerWorkspaceIds();
     for (const ownerWorkspaceId of pendingTerminalAttentionOwnerWorkspaceIds) {
+      // Persisted terminal attention survives restarts, so seed the live activity handoff before
+      // any drain-triggered metadata emit can otherwise report the workspace as idle.
+      this.workspaceService.setPendingBackgroundWake(ownerWorkspaceId);
       this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
     }
     const terminalAttentionDrainMs = Date.now() - terminalAttentionDrainStartedAt;
