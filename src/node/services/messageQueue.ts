@@ -232,9 +232,6 @@ export class MessageQueue {
     const didAdd = this.addInternal(message, options, internal);
     if (didAdd && dedupeKey !== undefined) {
       this.entries[this.entries.length - 1].dedupeKeys.add(dedupeKey);
-      if (internal?.removableDedupeKey === true) {
-        this.entries[this.entries.length - 1].sealed = true;
-      }
     }
     return didAdd;
   }
@@ -263,6 +260,7 @@ export class MessageQueue {
     // must not leak onto batched follow-ups.
     const incomingIsSealed =
       internal?.sealed === true ||
+      internal?.removableDedupeKey === true ||
       isAgentSkillMetadata(options?.muxMetadata) ||
       isWorkspaceTurnMetadata(options?.muxMetadata) ||
       incomingHasAcceptedCallbacks;
