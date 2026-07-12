@@ -14916,6 +14916,40 @@ describe("TaskService", () => {
     expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
   });
 
+  test("workflow-owned agent_report updates do not wake the parent", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-workflow-progress";
+    const childId = "child-workflow-progress";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "running",
+          workflowTask: { runId: "wfr_progress", stepId: "collect", outputSchema: {} },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.reportAgentProgress(childId, "workflow-progress", {
+      reportMarkdown: "Structured workflow update submitted.",
+      structuredOutput: { claims: ["verified"] },
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
+  });
+
   test("non-plan subagent stream-end with final assistant text finalizes an implicit report", async () => {
     const config = await createTestConfig(rootDir);
 

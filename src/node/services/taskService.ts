@@ -5509,6 +5509,13 @@ export class TaskService {
         throw new Error("agent_report cannot send updates from an interrupted sub-agent");
       }
 
+      if (childEntry.workspace.workflowTask != null) {
+        // Workflow-owned tasks deliver structured output through WorkflowRunner's journal/result
+        // path. Waking the parent here would background a foreground workflow wait and expose the
+        // internal schema handoff as a user-visible sub-agent update.
+        return;
+      }
+
       const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
       if (!parentEntry) {
         throw new Error("agent_report could not find the parent workspace");
