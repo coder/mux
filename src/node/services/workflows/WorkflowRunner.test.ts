@@ -1350,7 +1350,7 @@ describe("WorkflowRunner", () => {
     });
 
     await expect(runner.run("wfr_agent_timeout_hard")).rejects.toThrow(
-      "Workflow agent step slow-step exceeded its soft timeout (1000ms) and did not produce a valid agent_report within the grace period (2000ms)."
+      "Workflow agent step slow-step exceeded its soft timeout (1000ms) and did not produce a valid final response within the grace period (2000ms)."
     );
     expect(hardTimeouts).toHaveLength(1);
     const run = await store.getRun("wfr_agent_timeout_hard");
