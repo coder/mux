@@ -15362,6 +15362,110 @@ describe("TaskService", () => {
     );
   });
 
+  test("recovery final text does not scan past a failed workflow agent_report", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-recovery-stale-structured";
+    const childId = "child-recovery-stale-structured";
+    const workflowRunId = "wfr_recovery_stale_structured";
+    const outputSchema = {
+      type: "object",
+      required: ["claims"],
+      properties: { claims: { type: "array", items: { type: "string" } } },
+      additionalProperties: false,
+    } as const;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: { runId: workflowRunId, stepId: "collect", outputSchema },
+        }),
+      ],
+      testTaskSettings()
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "recovery-stale-structured",
+        description: "Recovery stale structured",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+    for (const message of [
+      createMuxMessage("assistant-old-progress", "assistant", "", { timestamp: Date.now() - 2 }, [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-old",
+          toolName: "agent_report",
+          input: { claims: ["stale"] },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]),
+      createMuxMessage(
+        "assistant-failed-progress",
+        "assistant",
+        "",
+        { timestamp: Date.now() - 1 },
+        [
+          {
+            type: "dynamic-tool",
+            toolCallId: "agent-report-failed",
+            toolName: "agent_report",
+            input: { claims: [1] },
+            state: "output-available",
+            output: {
+              success: false,
+              message: "Structured output failed schema validation.",
+              errors: [{ path: "$.claims[0]", message: "must be string" }],
+            },
+          },
+        ]
+      ),
+    ]) {
+      expect((await historyService.appendToHistory(childId, message)).success).toBe(true);
+    }
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-recovery-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [{ type: "text", text: "Recovery final text without a fresh structured report." }],
+    });
+
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
+    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("First call agent_report"),
+      expect.any(Object),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+  });
+
   test("workflow subagent invalid structured agent_report does not finalize", async () => {
     const config = await createTestConfig(rootDir);
 

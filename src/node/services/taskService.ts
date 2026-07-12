@@ -10379,6 +10379,11 @@ export class TaskService {
       if (message.role !== "assistant") {
         continue;
       }
+      // A failed newer report invalidates all older structured candidates. Recovery must
+      // produce a fresh successful report rather than scanning backward to stale metadata.
+      if (this.hasFailedAgentReportInParts(message.parts)) {
+        return null;
+      }
       const report = this.findAgentReportArgsInParts(message.parts, options);
       if (report != null) {
         return report;
