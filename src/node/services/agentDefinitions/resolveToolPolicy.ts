@@ -115,8 +115,17 @@ export function resolveToolPolicyForAgent(options: ResolveToolPolicyOptions): To
 
   if (effectiveRequirePattern) {
     // Subagents must not require tools that are hard-denied at runtime: a disabled
-    // required tool can collapse the entire toolset.
-    if (!(isSubagent && matchesSubagentHardDeniedTool(effectiveRequirePattern))) {
+    // required tool can collapse the entire toolset. Legacy non-plan agents may still
+    // require agent_report from the old terminal-tool contract; drop that requirement
+    // so progress updates cannot stop the turn before the final assistant response.
+    const isLegacySubagentAgentReportRequire =
+      isSubagent &&
+      effectiveRequirePattern === "agent_report" &&
+      !isPlanLikeInResolvedChain(agents);
+    if (
+      !isLegacySubagentAgentReportRequire &&
+      !(isSubagent && matchesSubagentHardDeniedTool(effectiveRequirePattern))
+    ) {
       agentPolicy.push({ regex_match: effectiveRequirePattern, action: "require" });
     }
   }

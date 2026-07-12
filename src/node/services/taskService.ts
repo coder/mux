@@ -9840,7 +9840,10 @@ export class TaskService {
             .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
             .map((part) => part.text)
             .join("\n");
-          if (!text.includes("<mux_subagent_report>")) {
+          if (
+            !text.includes("<mux_subagent_report>") ||
+            text.includes("<status>in_progress</status>")
+          ) {
             continue;
           }
           for (const match of text.matchAll(/<task_id>([^<]+)<\/task_id>/g)) {

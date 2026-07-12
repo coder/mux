@@ -131,6 +131,23 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
+  test("non-plan subagents drop inherited agent_report requirements", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { require: ["agent_report"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "agent_report", action: "enable" },
+      advisorDisabledRule,
+    ]);
+  });
+
   test("plan-like subagents enable propose_plan and disable agent_report", () => {
     const agents: AgentLikeForPolicy[] = [
       { tools: { add: ["propose_plan", "file_read", "agent_report"] } },
