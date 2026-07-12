@@ -1,7 +1,7 @@
 import React, { useMemo, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceStoreRaw, type WorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { cn } from "@/common/lib/utils";
 import { isLocalProjectRuntime } from "@/common/types/runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -12,11 +12,27 @@ interface ConcurrentLocalWarningProps {
   runtimeConfig?: RuntimeConfig;
 }
 
+type ConcurrentLocalWorkspaceActivity = Pick<
+  WorkspaceSidebarState,
+  "canInterrupt" | "isStarting" | "activeWorkflowRunCount" | "activeBashMonitorCount"
+>;
+
+export function isConcurrentLocalWorkspaceActive(state: ConcurrentLocalWorkspaceActivity): boolean {
+  // User rationale: background work briefly transitions through idle and startup states as it wakes
+  // the owning agent. Treat the whole wake cycle as active so the warning does not flash between turns.
+  return (
+    state.canInterrupt ||
+    state.isStarting ||
+    state.activeWorkflowRunCount > 0 ||
+    state.activeBashMonitorCount > 0
+  );
+}
+
 /**
- * Returns the name of another local-project workspace that is actively streaming in the same
- * project directory, or null when there is no conflicting local stream to warn about.
+ * Returns the name of another active local-project workspace in the same project directory, or null
+ * when there is no conflicting local agent to warn about.
  */
-export function useConcurrentLocalStreamingWorkspaceName(
+export function useConcurrentLocalActiveWorkspaceName(
   props: ConcurrentLocalWarningProps
 ): string | null {
   const isLocalProject = isLocalProjectRuntime(props.runtimeConfig);
@@ -53,7 +69,7 @@ export function useConcurrentLocalStreamingWorkspaceName(
       for (const id of otherLocalWorkspaceIds) {
         try {
           const state = store.getWorkspaceSidebarState(id);
-          if (state.canInterrupt) {
+          if (isConcurrentLocalWorkspaceActive(state)) {
             const meta = workspaceMetadata.get(id);
             return meta?.name ?? id;
           }
