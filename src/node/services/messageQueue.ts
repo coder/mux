@@ -71,6 +71,8 @@ type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
   agentInitiated?: boolean;
+  /** Keep this queued add isolated so its dedupe key can be removed without affecting siblings. */
+  sealed?: boolean;
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   onCanceled?: (reason: string) => Promise<void> | void;
@@ -225,7 +227,12 @@ export class MessageQueue {
       return false;
     }
 
-    const didAdd = this.addInternal(message, options, internal);
+    const didAdd = this.addInternal(message, options, {
+      ...internal,
+      // Keyed entries must remain individually removable. This also prevents a progress update
+      // for one child from batching with sibling updates under the same queue entry.
+      sealed: dedupeKey !== undefined,
+    });
     if (didAdd && dedupeKey !== undefined) {
       this.entries[this.entries.length - 1].dedupeKeys.add(dedupeKey);
     }
@@ -255,6 +262,7 @@ export class MessageQueue {
     // internal callbacks correlate to exactly one dispatch, and agent-skill metadata
     // must not leak onto batched follow-ups.
     const incomingIsSealed =
+      internal?.sealed === true ||
       isAgentSkillMetadata(options?.muxMetadata) ||
       isWorkspaceTurnMetadata(options?.muxMetadata) ||
       incomingHasAcceptedCallbacks;
@@ -472,9 +480,30 @@ export class MessageQueue {
       return [];
     }
     const removedCallbacks: QueueClearCallbacks[] = [];
-    this.entries = this.entries.filter((entry) => {
-      if (![...entry.dedupeKeys].some((dedupeKey) => dedupeKey.startsWith(prefix))) {
-        return true;
+    this.entries = this.entries.flatMap((entry) => {
+      const matchingKeys = [...entry.dedupeKeys].filter((dedupeKey) =>
+        dedupeKey.startsWith(prefix)
+      );
+      if (matchingKeys.length === 0) {
+        return [entry];
+      }
+      // Dedupe-keyed progress sends are agent-initiated and therefore isolated from user entries,
+      // but multiple progress sends can still batch together. Remove only the matched messages and
+      // preserve unrelated keys/messages that share the same entry.
+      const matchingKeySet = new Set(matchingKeys);
+      const keptMessages = entry.messages.filter((_message, index) => {
+        const key = [...entry.dedupeKeys][index];
+        return key == null || !matchingKeySet.has(key);
+      });
+      if (keptMessages.length > 0) {
+        entry.messages = keptMessages;
+        for (const key of matchingKeys) {
+          entry.dedupeKeys.delete(key);
+        }
+        entry.addCount -= matchingKeys.length;
+        entry.syntheticCount = Math.min(entry.syntheticCount, entry.addCount);
+        entry.agentInitiatedCount = Math.min(entry.agentInitiatedCount, entry.addCount);
+        return [entry];
       }
       if (entry.onCanceled != null || entry.onAcceptedPreStreamFailure != null) {
         removedCallbacks.push({
@@ -484,7 +513,7 @@ export class MessageQueue {
             : {}),
         });
       }
-      return false;
+      return [];
     });
     return removedCallbacks;
   }

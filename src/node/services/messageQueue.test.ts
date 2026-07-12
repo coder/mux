@@ -482,14 +482,15 @@ describe("MessageQueue", () => {
 
     it("removes entries by dedupe key prefix while preserving unrelated messages", () => {
       const queue = new MessageQueue();
-      queue.addOnce("progress one", undefined, "agent-report:child:one", { synthetic: true });
-      queue.addOnce("progress two", undefined, "agent-report:child:two", { synthetic: true });
-      queue.addOnce("other", undefined, "other-key");
+      queue.addOnce("child one", undefined, "agent-report:child-one:update", { synthetic: true });
+      queue.addOnce("child two", undefined, "agent-report:child-two:update", { synthetic: true });
+      queue.add("other synthetic", undefined, { synthetic: true });
 
-      expect(queue.removeByDedupeKeyPrefix("agent-report:child:")).toEqual([]);
-      expect(queue.hasDedupeKey("agent-report:child:one")).toBe(false);
-      expect(queue.hasDedupeKey("agent-report:child:two")).toBe(false);
-      expect(queue.dequeueNext().message).toBe("other");
+      expect(queue.removeByDedupeKeyPrefix("agent-report:child-one:")).toEqual([]);
+      expect(queue.hasDedupeKey("agent-report:child-one:update")).toBe(false);
+      expect(queue.hasDedupeKey("agent-report:child-two:update")).toBe(true);
+      expect(queue.dequeueNext().message).toBe("child two");
+      expect(queue.dequeueNext().message).toBe("other synthetic");
     });
 
     it("should report pending dedupe keys and reset them when the queue clears", () => {
