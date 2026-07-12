@@ -9146,16 +9146,12 @@ export class WorkspaceService extends EventEmitter {
             const hadBashMonitorActivityCache = this.bashMonitorSeenWorkspaces.has(workspaceId);
             const hadPendingBackgroundWake =
               this.pendingBackgroundWakeSeenWorkspaces.has(workspaceId);
+            // The list response should report current durable/session state, but must not mutate the
+            // live cache: a concurrent refresh may have a newer clear/set in flight, and list must
+            // never invalidate it or restore a stale pending value after the handoff finishes.
             const pendingBackgroundWake = await this.computePendingBackgroundWake(workspaceId);
-            this.pendingBackgroundWakeRefreshVersions.set(
-              workspaceId,
-              (this.pendingBackgroundWakeRefreshVersions.get(workspaceId) ?? 0) + 1
-            );
             if (pendingBackgroundWake) {
-              this.pendingBackgroundWakes.add(workspaceId);
               this.pendingBackgroundWakeSeenWorkspaces.add(workspaceId);
-            } else {
-              this.pendingBackgroundWakes.delete(workspaceId);
             }
             const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId);
             const activeBashMonitorCount = this.getActiveBashMonitorCount(workspaceId);
