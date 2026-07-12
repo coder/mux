@@ -15362,6 +15362,95 @@ describe("TaskService", () => {
     );
   });
 
+  test("failed newer in-turn workflow agent_report invalidates an earlier success", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-in-turn-stale-structured";
+    const childId = "child-in-turn-stale-structured";
+    const workflowRunId = "wfr_in_turn_stale_structured";
+    const outputSchema = {
+      type: "object",
+      required: ["claims"],
+      properties: { claims: { type: "array", items: { type: "string" } } },
+      additionalProperties: false,
+    } as const;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_exec_child",
+          parentWorkspaceId: parentId,
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-4o-mini",
+          workflowTask: { runId: workflowRunId, stepId: "collect", outputSchema },
+        }),
+      ],
+      testTaskSettings()
+    );
+    const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(parentId) });
+    await runStore.createRun({
+      id: workflowRunId,
+      workspaceId: parentId,
+      workflow: {
+        name: "in-turn-stale-structured",
+        description: "In-turn stale structured",
+        scope: "built-in",
+        executable: true,
+      },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-06-04T00:00:00.000Z",
+    });
+    await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-child-output",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-success",
+          toolName: "agent_report",
+          input: { claims: ["stale"] },
+          state: "output-available",
+          output: { success: true },
+        },
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-failed",
+          toolName: "agent_report",
+          input: { claims: [1] },
+          state: "output-available",
+          output: {
+            success: false,
+            message: "Structured output failed schema validation.",
+            errors: [{ path: "$.claims[0]", message: "must be string" }],
+          },
+        },
+        { type: "text", text: "Final summary after failed replacement." },
+      ],
+    });
+
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("awaiting_report");
+    expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("First call agent_report"),
+      expect.any(Object),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+  });
+
   test("recovery final text does not scan past a failed workflow agent_report", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

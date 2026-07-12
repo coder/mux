@@ -10402,13 +10402,15 @@ export class TaskService {
       return null;
     }
 
-    const latestProgressInTurn = this.findAgentReportArgsInParts(parts, options);
-    // A failed report in the final turn is an explicit attempt to replace prior structured output.
-    // Do not silently fall back to stale metadata from an earlier progress update; let validation
-    // trigger the bounded recovery prompt instead.
+    // Any failed report in the final turn invalidates successful candidates earlier in that turn
+    // as well as older history: the failed call is the newest attempted structured value.
+    const hasFailedProgressInTurn = this.hasFailedAgentReportInParts(parts);
+    const latestProgressInTurn = hasFailedProgressInTurn
+      ? null
+      : this.findAgentReportArgsInParts(parts, options);
     const latestProgress =
       latestProgressInTurn ??
-      (this.hasFailedAgentReportInParts(parts)
+      (hasFailedProgressInTurn
         ? null
         : await this.findLatestAgentReportArgsInHistory(workspaceId, options));
     return {
