@@ -5242,6 +5242,24 @@ export class AgentSession {
     });
   }
 
+  removeQueuedMessagesByDedupeKeyPrefix(prefix: string, cancelReason: string): number {
+    this.assertNotDisposed("removeQueuedMessagesByDedupeKeyPrefix");
+    assert(prefix.length > 0, "removeQueuedMessagesByDedupeKeyPrefix requires prefix");
+    const callbackSets = this.messageQueue.removeByDedupeKeyPrefix(prefix);
+    if (callbackSets.length === 0) {
+      return 0;
+    }
+    this.emitQueuedMessageChanged();
+    this.backgroundProcessManager.setMessageQueued(
+      this.workspaceId,
+      !this.messageQueue.isEmpty() && this.messageQueue.getQueueDispatchMode() === "tool-end"
+    );
+    for (const callbacks of callbackSets) {
+      this.notifyQueuedMessageCleared(callbacks, cancelReason);
+    }
+    return callbackSets.length;
+  }
+
   hasQueuedWorkspaceTurn(handleId: string): boolean {
     assert(handleId.length > 0, "hasQueuedWorkspaceTurn requires handleId");
     return this.messageQueue.hasWorkspaceTurn(handleId);

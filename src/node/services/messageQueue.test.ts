@@ -480,6 +480,18 @@ describe("MessageQueue", () => {
       expect(queue.getFileParts()).toEqual([image]);
     });
 
+    it("removes entries by dedupe key prefix while preserving unrelated messages", () => {
+      const queue = new MessageQueue();
+      queue.addOnce("progress one", undefined, "agent-report:child:one", { synthetic: true });
+      queue.addOnce("progress two", undefined, "agent-report:child:two", { synthetic: true });
+      queue.addOnce("other", undefined, "other-key");
+
+      expect(queue.removeByDedupeKeyPrefix("agent-report:child:")).toEqual([]);
+      expect(queue.hasDedupeKey("agent-report:child:one")).toBe(false);
+      expect(queue.hasDedupeKey("agent-report:child:two")).toBe(false);
+      expect(queue.dequeueNext().message).toBe("other");
+    });
+
     it("should report pending dedupe keys and reset them when the queue clears", () => {
       expect(queue.hasDedupeKey("heartbeat-request")).toBe(false);
 

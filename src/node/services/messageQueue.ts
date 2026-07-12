@@ -466,6 +466,29 @@ export class MessageQueue {
     };
   }
 
+  /** Remove queued entries carrying a dedupe key with the given prefix. */
+  removeByDedupeKeyPrefix(prefix: string): QueueClearCallbacks[] {
+    if (prefix.length === 0) {
+      return [];
+    }
+    const removedCallbacks: QueueClearCallbacks[] = [];
+    this.entries = this.entries.filter((entry) => {
+      if (![...entry.dedupeKeys].some((dedupeKey) => dedupeKey.startsWith(prefix))) {
+        return true;
+      }
+      if (entry.onCanceled != null || entry.onAcceptedPreStreamFailure != null) {
+        removedCallbacks.push({
+          ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+          ...(entry.onAcceptedPreStreamFailure != null
+            ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
+            : {}),
+        });
+      }
+      return false;
+    });
+    return removedCallbacks;
+  }
+
   /**
    * Move the oldest user-authored entry to the head so an explicit user "Send now"
    * action cannot be blocked by hidden synthetic/background work queued before it.

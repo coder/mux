@@ -10175,6 +10175,19 @@ export class TaskService {
 
     await this.maybeStartPatchGenerationForReportedTask(childWorkspaceId);
 
+    const queuedProgressRemoval = this.workspaceService.removeQueuedMessagesByDedupeKeyPrefix(
+      parentWorkspaceId,
+      `agent-report:${childWorkspaceId}:`,
+      { cancelReason: "Incremental sub-agent update superseded by the terminal report." }
+    );
+    if (!queuedProgressRemoval.success) {
+      log.warn("Failed to remove queued incremental sub-agent reports", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: queuedProgressRemoval.error,
+      });
+    }
+
     await this.deliverReportToParent(
       parentWorkspaceId,
       childWorkspaceId,

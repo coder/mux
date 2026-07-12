@@ -8979,6 +8979,29 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  removeQueuedMessagesByDedupeKeyPrefix(
+    workspaceId: string,
+    prefix: string,
+    options?: { cancelReason?: string }
+  ): Result<number> {
+    try {
+      const session = this.sessions.get(workspaceId.trim());
+      if (session == null) {
+        return Ok(0);
+      }
+      return Ok(
+        session.removeQueuedMessagesByDedupeKeyPrefix(
+          prefix,
+          options?.cancelReason ?? "Queued message superseded before dispatch."
+        )
+      );
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error removing queued messages by dedupe prefix:", error);
+      return Err(`Failed to remove queued messages: ${errorMessage}`);
+    }
+  }
+
   isBusyForMessage(workspaceId: string): boolean {
     return this.sessions.get(workspaceId.trim())?.isBusy() === true;
   }

@@ -378,6 +378,7 @@ function createWorkspaceServiceMocks(
     resumeStream: ReturnType<typeof mock>;
     clearQueue: ReturnType<typeof mock>;
     removeQueuedWorkspaceTurn: ReturnType<typeof mock>;
+    removeQueuedMessagesByDedupeKeyPrefix: ReturnType<typeof mock>;
     hasQueuedWorkspaceTurn: ReturnType<typeof mock>;
     hasQueuedMessages: ReturnType<typeof mock>;
     isBusyForMessage: ReturnType<typeof mock>;
@@ -404,6 +405,7 @@ function createWorkspaceServiceMocks(
   resumeStream: ReturnType<typeof mock>;
   clearQueue: ReturnType<typeof mock>;
   removeQueuedWorkspaceTurn: ReturnType<typeof mock>;
+  removeQueuedMessagesByDedupeKeyPrefix: ReturnType<typeof mock>;
   hasQueuedWorkspaceTurn: ReturnType<typeof mock>;
   hasQueuedMessages: ReturnType<typeof mock>;
   isBusyForMessage: ReturnType<typeof mock>;
@@ -432,6 +434,7 @@ function createWorkspaceServiceMocks(
   const clearQueue = overrides?.clearQueue ?? mock((): Result<void> => Ok(undefined));
   const removeQueuedWorkspaceTurn =
     overrides?.removeQueuedWorkspaceTurn ?? mock((): Result<boolean> => Ok(true));
+  const removeQueuedMessagesByDedupeKeyPrefix = mock((): Result<number> => Ok(0));
   const hasQueuedWorkspaceTurn = overrides?.hasQueuedWorkspaceTurn ?? mock(() => false);
   const hasQueuedMessages = overrides?.hasQueuedMessages ?? mock(() => false);
   const isBusyForMessage = overrides?.isBusyForMessage ?? mock(() => false);
@@ -476,6 +479,7 @@ function createWorkspaceServiceMocks(
       resumeStream,
       clearQueue,
       removeQueuedWorkspaceTurn,
+      removeQueuedMessagesByDedupeKeyPrefix,
       isBusyForMessage,
       hasQueuedWorkspaceTurn,
       hasQueuedMessages,
@@ -500,6 +504,7 @@ function createWorkspaceServiceMocks(
     resumeStream,
     clearQueue,
     removeQueuedWorkspaceTurn,
+    removeQueuedMessagesByDedupeKeyPrefix,
     hasQueuedWorkspaceTurn,
     hasQueuedMessages,
     isBusyForMessage,
@@ -14932,6 +14937,47 @@ describe("TaskService", () => {
     expect(sendMessage.mock.calls[1]?.[1]).toContain("Found a second issue.");
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
     expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+  });
+
+  test("terminal reports supersede queued incremental updates for the same child", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-queued-progress";
+    const childId = "child-queued-progress";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const removeQueuedMessagesByDedupeKeyPrefix = mock((): Result<number> => Ok(1));
+    const { workspaceService } = createWorkspaceServiceMocks();
+    workspaceService.removeQueuedMessagesByDedupeKeyPrefix = removeQueuedMessagesByDedupeKeyPrefix;
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-final",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [{ type: "text", text: "Terminal result" }],
+    });
+
+    expect(removeQueuedMessagesByDedupeKeyPrefix).toHaveBeenCalledWith(
+      parentId,
+      `agent-report:${childId}:`,
+      { cancelReason: "Incremental sub-agent update superseded by the terminal report." }
+    );
   });
 
   test("workflow-owned agent_report updates do not wake the parent", async () => {
