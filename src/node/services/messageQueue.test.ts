@@ -480,13 +480,30 @@ describe("MessageQueue", () => {
       expect(queue.getFileParts()).toEqual([image]);
     });
 
+    it("keeps ordinary addOnce batching semantics for non-removable dedupe keys", () => {
+      const queue = new MessageQueue();
+      queue.add("User follow-up");
+      queue.addOnce("Heartbeat", undefined, "heartbeat-request");
+
+      expect(queue.getMessages()).toEqual(["User follow-up", "Heartbeat"]);
+    });
+
     it("removes entries by dedupe key prefix while preserving unrelated messages", () => {
       const queue = new MessageQueue();
-      queue.addOnce("child one", undefined, "agent-report:child-one:update", { synthetic: true });
-      queue.addOnce("child two", undefined, "agent-report:child-two:update", { synthetic: true });
+      queue.addOnce("child one", undefined, "agent-report:child-one:update", {
+        synthetic: true,
+        removableDedupeKey: true,
+      });
+      queue.addOnce("child two", undefined, "agent-report:child-two:update", {
+        synthetic: true,
+        removableDedupeKey: true,
+      });
       queue.add("other synthetic", undefined, { synthetic: true });
 
-      expect(queue.removeByDedupeKeyPrefix("agent-report:child-one:")).toEqual([]);
+      expect(queue.removeByDedupeKeyPrefix("agent-report:child-one:")).toEqual({
+        removedCount: 1,
+        callbacks: [],
+      });
       expect(queue.hasDedupeKey("agent-report:child-one:update")).toBe(false);
       expect(queue.hasDedupeKey("agent-report:child-two:update")).toBe(true);
       expect(queue.dequeueNext().message).toBe("child two");

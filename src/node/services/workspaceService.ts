@@ -8129,6 +8129,8 @@ export class WorkspaceService extends EventEmitter {
       requireIdle?: boolean;
       /** Coalescing for queued sends: drop the message when the same key is already queued. */
       queueDedupeKey?: string;
+      /** Keep this dedupe-keyed queue entry isolated so it can be selectively superseded. */
+      removableQueueDedupeKey?: boolean;
       /**
        * For queued sends: quietly drop the message (success) when other messages are already
        * queued at enqueue time. Scheduled heartbeats use this so a user send racing the awaits
@@ -8331,6 +8333,7 @@ export class WorkspaceService extends EventEmitter {
           synthetic: internal?.synthetic,
           agentInitiated: internal?.agentInitiated,
           dedupeKey: internal?.queueDedupeKey,
+          removableDedupeKey: internal?.removableQueueDedupeKey,
           onCanceled: internal?.onCanceled,
           onAccepted: internal?.onAccepted,
           onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,

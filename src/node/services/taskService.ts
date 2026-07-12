@@ -5570,6 +5570,7 @@ export class TaskService {
           agentInitiated: true,
           startStreamInBackground: true,
           queueDedupeKey: `agent-report:${childWorkspaceId}:${toolCallId}`,
+          removableQueueDedupeKey: true,
         }
       );
       if (!sendResult.success) {

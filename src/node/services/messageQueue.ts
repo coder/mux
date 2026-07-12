@@ -73,6 +73,8 @@ interface QueuedMessageInternalOptions {
   agentInitiated?: boolean;
   /** Keep this queued add isolated so its dedupe key can be removed without affecting siblings. */
   sealed?: boolean;
+  /** Dedupe-keyed maintenance sends are removable by prefix without changing global queue rules. */
+  removableDedupeKey?: boolean;
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   onCanceled?: (reason: string) => Promise<void> | void;
@@ -227,14 +229,12 @@ export class MessageQueue {
       return false;
     }
 
-    const didAdd = this.addInternal(message, options, {
-      ...internal,
-      // Keyed entries must remain individually removable. This also prevents a progress update
-      // for one child from batching with sibling updates under the same queue entry.
-      sealed: dedupeKey !== undefined,
-    });
+    const didAdd = this.addInternal(message, options, internal);
     if (didAdd && dedupeKey !== undefined) {
       this.entries[this.entries.length - 1].dedupeKeys.add(dedupeKey);
+      if (internal?.removableDedupeKey === true) {
+        this.entries[this.entries.length - 1].sealed = true;
+      }
     }
     return didAdd;
   }
@@ -475,10 +475,14 @@ export class MessageQueue {
   }
 
   /** Remove queued entries carrying a dedupe key with the given prefix. */
-  removeByDedupeKeyPrefix(prefix: string): QueueClearCallbacks[] {
+  removeByDedupeKeyPrefix(prefix: string): {
+    removedCount: number;
+    callbacks: QueueClearCallbacks[];
+  } {
     if (prefix.length === 0) {
-      return [];
+      return { removedCount: 0, callbacks: [] };
     }
+    let removedCount = 0;
     const removedCallbacks: QueueClearCallbacks[] = [];
     this.entries = this.entries.flatMap((entry) => {
       const matchingKeys = [...entry.dedupeKeys].filter((dedupeKey) =>
@@ -487,6 +491,7 @@ export class MessageQueue {
       if (matchingKeys.length === 0) {
         return [entry];
       }
+      removedCount += matchingKeys.length;
       // Dedupe-keyed progress sends are agent-initiated and therefore isolated from user entries,
       // but multiple progress sends can still batch together. Remove only the matched messages and
       // preserve unrelated keys/messages that share the same entry.
@@ -515,7 +520,7 @@ export class MessageQueue {
       }
       return [];
     });
-    return removedCallbacks;
+    return { removedCount, callbacks: removedCallbacks };
   }
 
   /**
