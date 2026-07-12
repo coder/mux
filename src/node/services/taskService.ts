@@ -10397,9 +10397,15 @@ export class TaskService {
       return null;
     }
 
+    const latestProgressInTurn = this.findAgentReportArgsInParts(parts, options);
+    // A failed report in the final turn is an explicit attempt to replace prior structured output.
+    // Do not silently fall back to stale metadata from an earlier progress update; let validation
+    // trigger the bounded recovery prompt instead.
     const latestProgress =
-      this.findAgentReportArgsInParts(parts, options) ??
-      (await this.findLatestAgentReportArgsInHistory(workspaceId, options));
+      latestProgressInTurn ??
+      (this.hasFailedAgentReportInParts(parts)
+        ? null
+        : await this.findLatestAgentReportArgsInHistory(workspaceId, options));
     return {
       reportMarkdown: finalResponse.reportMarkdown,
       ...(latestProgress?.title !== undefined ? { title: latestProgress.title } : {}),
@@ -10407,6 +10413,16 @@ export class TaskService {
         ? { structuredOutput: latestProgress.structuredOutput }
         : {}),
     };
+  }
+
+  private hasFailedAgentReportInParts(parts: readonly unknown[]): boolean {
+    return parts.some(
+      (part) =>
+        isDynamicToolPart(part) &&
+        part.toolName === "agent_report" &&
+        part.state === "output-available" &&
+        !isSuccessfulToolResult(part.output)
+    );
   }
 
   private findAgentReportArgsInParts(
