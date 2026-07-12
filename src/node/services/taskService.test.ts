@@ -389,6 +389,8 @@ function createWorkspaceServiceMocks(
     updateAgentStatus: ReturnType<typeof mock>;
     isExperimentEnabled: ReturnType<typeof mock>;
     emitChatEvent: ReturnType<typeof mock>;
+    setPendingBackgroundWake: ReturnType<typeof mock>;
+    refreshPendingBackgroundWake: ReturnType<typeof mock>;
     isWorkflowInvocationCurrent: ReturnType<typeof mock>;
     create: ReturnType<typeof mock>;
   }>
@@ -414,6 +416,8 @@ function createWorkspaceServiceMocks(
   updateAgentStatus: ReturnType<typeof mock>;
   isExperimentEnabled: ReturnType<typeof mock>;
   emitChatEvent: ReturnType<typeof mock>;
+  setPendingBackgroundWake: ReturnType<typeof mock>;
+  refreshPendingBackgroundWake: ReturnType<typeof mock>;
   isWorkflowInvocationCurrent: ReturnType<typeof mock>;
   create: ReturnType<typeof mock>;
 } {
@@ -454,6 +458,10 @@ function createWorkspaceServiceMocks(
   const isWorkflowInvocationCurrent =
     overrides?.isWorkflowInvocationCurrent ?? mock(() => Promise.resolve(true));
 
+  const setPendingBackgroundWake = overrides?.setPendingBackgroundWake ?? mock(() => undefined);
+  const refreshPendingBackgroundWake =
+    overrides?.refreshPendingBackgroundWake ?? mock((): Promise<void> => Promise.resolve());
+
   const create =
     overrides?.create ??
     mock(
@@ -484,6 +492,8 @@ function createWorkspaceServiceMocks(
       updateAgentStatus,
       isExperimentEnabled,
       emitChatEvent,
+      setPendingBackgroundWake,
+      refreshPendingBackgroundWake,
       isWorkflowInvocationCurrent,
     } as unknown as WorkspaceService,
     create,
@@ -507,6 +517,8 @@ function createWorkspaceServiceMocks(
     updateAgentStatus,
     isExperimentEnabled,
     emitChatEvent,
+    setPendingBackgroundWake,
+    refreshPendingBackgroundWake,
     isWorkflowInvocationCurrent,
   };
 }

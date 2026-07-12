@@ -14,7 +14,11 @@ interface ConcurrentLocalWarningProps {
 
 type ConcurrentLocalWorkspaceActivity = Pick<
   WorkspaceSidebarState,
-  "canInterrupt" | "isStarting" | "activeWorkflowRunCount" | "activeBashMonitorCount"
+  | "canInterrupt"
+  | "isStarting"
+  | "pendingBackgroundWake"
+  | "activeWorkflowRunCount"
+  | "activeBashMonitorCount"
 >;
 
 export function isConcurrentLocalWorkspaceActive(state: ConcurrentLocalWorkspaceActivity): boolean {
@@ -23,6 +27,7 @@ export function isConcurrentLocalWorkspaceActive(state: ConcurrentLocalWorkspace
   return (
     state.canInterrupt ||
     state.isStarting ||
+    state.pendingBackgroundWake === true ||
     state.activeWorkflowRunCount > 0 ||
     state.activeBashMonitorCount > 0
   );

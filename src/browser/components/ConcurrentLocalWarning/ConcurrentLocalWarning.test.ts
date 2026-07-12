@@ -7,24 +7,28 @@ describe("isConcurrentLocalWorkspaceActive", () => {
       {
         canInterrupt: true,
         isStarting: false,
+        pendingBackgroundWake: false,
         activeWorkflowRunCount: 0,
         activeBashMonitorCount: 1,
       },
       {
         canInterrupt: false,
         isStarting: false,
+        pendingBackgroundWake: true,
         activeWorkflowRunCount: 0,
-        activeBashMonitorCount: 1,
+        activeBashMonitorCount: 0,
       },
       {
         canInterrupt: false,
         isStarting: true,
+        pendingBackgroundWake: true,
         activeWorkflowRunCount: 0,
         activeBashMonitorCount: 0,
       },
       {
         canInterrupt: true,
         isStarting: false,
+        pendingBackgroundWake: false,
         activeWorkflowRunCount: 0,
         activeBashMonitorCount: 0,
       },
@@ -38,6 +42,7 @@ describe("isConcurrentLocalWorkspaceActive", () => {
       isConcurrentLocalWorkspaceActive({
         canInterrupt: false,
         isStarting: false,
+        pendingBackgroundWake: false,
         activeWorkflowRunCount: 1,
         activeBashMonitorCount: 0,
       })
@@ -49,6 +54,7 @@ describe("isConcurrentLocalWorkspaceActive", () => {
       isConcurrentLocalWorkspaceActive({
         canInterrupt: false,
         isStarting: false,
+        pendingBackgroundWake: false,
         activeWorkflowRunCount: 0,
         activeBashMonitorCount: 0,
       })
