@@ -21,7 +21,6 @@ import {
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
 } from "./providerModelFactory";
-import { MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER } from "@/common/utils/ai/providerOptions";
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
 import type { DevToolsService } from "./devToolsService";
 import { CodexOauthService } from "./codexOauthService";
@@ -1634,82 +1633,44 @@ function parseSentBody(call: CapturedFetchCall): Record<string, unknown> {
   return JSON.parse(call.init.body as string) as Record<string, unknown>;
 }
 
-describe("wrapFetchWithAnthropicCacheControl — Opus 4.7+ / Sonnet 5+ wire transforms", () => {
-  for (const model of ["claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"] as const) {
-    it(`injects thinking.display=summarized for ${model} adaptive thinking`, async () => {
-      const { calls, fakeFetch } = createCapturingFetch();
-      const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
-      const body = JSON.stringify({
-        model,
-        thinking: { type: "adaptive" },
-        output_config: { effort: "medium" },
-      });
-      await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
-      expect(calls.length).toBe(1);
-      const sent = parseSentBody(calls[0]);
-      expect(sent.thinking).toEqual({ type: "adaptive", display: "summarized" });
-    });
-  }
-
-  it("preserves a user-supplied display value on Opus 4.7", async () => {
+// Effort "xhigh" and thinking.display flow through the SDK directly as of
+// @ai-sdk/anthropic 4.0.11 (see buildProviderOptions), so the wrapper must NOT
+// rewrite reasoning fields — it only normalizes cache_control.
+describe("wrapFetchWithAnthropicCacheControl — reasoning fields pass through unchanged", () => {
+  it("passes native xhigh effort and summarized display through on the direct body", async () => {
     const { calls, fakeFetch } = createCapturingFetch();
-    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch, null, {
+      injectCacheControl: false,
+    });
     const body = JSON.stringify({
       model: "claude-opus-4-7",
-      thinking: { type: "adaptive", display: "omitted" },
+      thinking: { type: "adaptive", display: "summarized" },
+      output_config: { effort: "xhigh" },
     });
     await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
-    const sent = parseSentBody(calls[0]) as { thinking: { display: string } };
-    expect(sent.thinking.display).toBe("omitted");
+    expect(calls.length).toBe(1);
+    const sent = parseSentBody(calls[0]);
+    expect(sent.thinking).toEqual({ type: "adaptive", display: "summarized" });
+    expect(sent.output_config).toEqual({ effort: "xhigh" });
   });
 
-  it("rewrites output_config.effort to xhigh when override header is present", async () => {
+  it("does not inject display or rewrite effort for adaptive requests without them", async () => {
     const { calls, fakeFetch } = createCapturingFetch();
-    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
-    const body = JSON.stringify({
-      model: "claude-opus-4-7",
-      thinking: { type: "adaptive" },
-      output_config: { effort: "max" },
+    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch, null, {
+      injectCacheControl: false,
     });
-    await wrapped("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      body,
-      headers: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
-    });
-    const sent = parseSentBody(calls[0]) as { output_config: { effort: string } };
-    expect(sent.output_config.effort).toBe("xhigh");
-    // Override header is stripped before forwarding
-    const outHeaders = new Headers(calls[0].init.headers);
-    expect(outHeaders.get(MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER)).toBeNull();
-  });
-
-  it("does not inject display for Opus 4.6 adaptive thinking", async () => {
-    const { calls, fakeFetch } = createCapturingFetch();
-    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
     const body = JSON.stringify({
       model: "claude-opus-4-6",
       thinking: { type: "adaptive" },
+      output_config: { effort: "max" },
     });
     await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
     const sent = parseSentBody(calls[0]);
     expect(sent.thinking).toEqual({ type: "adaptive" });
+    expect(sent.output_config).toEqual({ effort: "max" });
   });
 
-  it("does not inject display when thinking is disabled", async () => {
-    const { calls, fakeFetch } = createCapturingFetch();
-    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch);
-    const body = JSON.stringify({
-      model: "claude-opus-4-7",
-      thinking: { type: "disabled" },
-    });
-    await wrapped("https://api.anthropic.com/v1/messages", { method: "POST", body });
-    const sent = parseSentBody(calls[0]);
-    expect(sent.thinking).toEqual({ type: "disabled" });
-  });
-});
-
-describe("wrapFetchWithAnthropicCacheControl — gateway (AI SDK) body shape", () => {
-  it("injects display=summarized into providerOptions.anthropic.thinking for Opus 4.7 via gateway", async () => {
+  it("passes gateway (AI SDK) body providerOptions through unchanged", async () => {
     const { calls, fakeFetch } = createCapturingFetch();
     const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch, null, {
       injectCacheControl: false,
@@ -1717,7 +1678,7 @@ describe("wrapFetchWithAnthropicCacheControl — gateway (AI SDK) body shape", (
     const body = JSON.stringify({
       prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
       providerOptions: {
-        anthropic: { thinking: { type: "adaptive" }, effort: "medium" },
+        anthropic: { thinking: { type: "adaptive", display: "summarized" }, effort: "xhigh" },
       },
     });
     await wrapped("https://gateway.example.com/v1/language-model", {
@@ -1726,36 +1687,12 @@ describe("wrapFetchWithAnthropicCacheControl — gateway (AI SDK) body shape", (
       headers: { "ai-model-id": "anthropic/claude-opus-4-7" },
     });
     const sent = parseSentBody(calls[0]) as {
-      providerOptions: { anthropic: { thinking: unknown } };
+      providerOptions: { anthropic: { thinking: unknown; effort: string } };
     };
     expect(sent.providerOptions.anthropic.thinking).toEqual({
       type: "adaptive",
       display: "summarized",
     });
-  });
-
-  it("rewrites providerOptions.anthropic.effort to xhigh via gateway", async () => {
-    const { calls, fakeFetch } = createCapturingFetch();
-    const wrapped = wrapFetchWithAnthropicCacheControl(fakeFetch, null, {
-      injectCacheControl: false,
-    });
-    const body = JSON.stringify({
-      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
-      providerOptions: {
-        anthropic: { thinking: { type: "adaptive" }, effort: "max" },
-      },
-    });
-    await wrapped("https://gateway.example.com/v1/language-model", {
-      method: "POST",
-      body,
-      headers: {
-        "ai-model-id": "anthropic/claude-opus-4-7",
-        [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh",
-      },
-    });
-    const sent = parseSentBody(calls[0]) as {
-      providerOptions: { anthropic: { effort: string } };
-    };
     expect(sent.providerOptions.anthropic.effort).toBe("xhigh");
   });
 });

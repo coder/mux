@@ -168,14 +168,8 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 
 /**
  * Anthropic effort type - matches SDK's AnthropicProviderOptions["effort"].
- *
- * Note: Opus 4.7 and Sonnet 5 introduced a native "xhigh" effort level in the API,
- * but the SDK's Zod validator still rejects "xhigh". Mux handles this by sending
- * "max" through the SDK and rewriting `output_config.effort` to "xhigh" in a fetch
- * wrapper for native-xhigh Anthropic models when the user selected the xhigh ThinkingLevel.
- * See `wrapFetchWithAnthropicCacheControl` and `buildRequestHeaders`.
  */
-export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
+export type AnthropicEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * Anthropic effort parameter mapping (Opus 4.5+)
@@ -183,22 +177,38 @@ export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
  * The effort parameter controls how much computational work the model applies.
  * - Opus 4.5 supports: low, medium, high (policy clamps xhigh → high)
  * - Opus 4.6 supports: low, medium, high, max (xhigh maps to "max" effort)
- * - Opus 4.7+ and Sonnet 5+ support: low, medium, high, xhigh, max (xhigh requires wire override)
+ * - Opus 4.7+ and Sonnet 5+ support: low, medium, high, xhigh, max (native xhigh)
  *
- * Because the @ai-sdk/anthropic Zod schema doesn't accept "xhigh" yet, we send
- * "max" through the SDK for native-xhigh Anthropic models and rewrite
- * `output_config.effort` to "xhigh" in the Anthropic fetch wrapper.
+ * The table keeps `xhigh: "max"` as the non-native fallback; `getAnthropicEffort`
+ * upgrades it to the native "xhigh" wire value on models that support it.
+ *
+ * SDK coupling note: explicit `providerOptions.anthropic.effort` values flow
+ * verbatim into `output_config.effort` as of @ai-sdk/anthropic 4.0.11 (its Zod
+ * schema accepts "xhigh"; its `supportsXhighEffort` model gating applies only to
+ * the SDK's top-level `reasoning` CallOption mapping, which Mux does not use).
+ * Re-verify this pass-through on major SDK upgrades.
  */
 const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   off: "low",
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "max", // SDK placeholder; fetch wrapper rewrites to "xhigh" on native-xhigh models
+  xhigh: "max", // Non-native fallback; native-xhigh models get "xhigh" via getAnthropicEffort
   max: "max",
 };
 
-export function getAnthropicEffort(level: ThinkingLevel): AnthropicEffortLevel {
+/**
+ * Model-aware Anthropic effort resolution: `xhigh` maps to the native "xhigh"
+ * wire value only on models that support it (Opus 4.7+, Sonnet 5+, Mythos);
+ * everywhere else it falls back to "max" per the table above.
+ */
+export function getAnthropicEffort(
+  level: ThinkingLevel,
+  capabilityModel: string
+): AnthropicEffortLevel {
+  if (level === "xhigh" && anthropicSupportsNativeXhigh(capabilityModel)) {
+    return "xhigh";
+  }
   return ANTHROPIC_EFFORT[level];
 }
 

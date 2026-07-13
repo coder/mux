@@ -16,7 +16,6 @@ import {
   preserveAnthropic1MContextForFollowUp,
   resolveProviderOptionsNamespaceKey,
   ANTHROPIC_1M_CONTEXT_HEADER,
-  MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER,
   MUX_WORKSPACE_ID_HEADER,
 } from "./providerOptions";
 
@@ -111,7 +110,9 @@ describe("buildProviderOptions - Anthropic", () => {
     });
   });
 
-  for (const model of ["claude-opus-4-6", "claude-sonnet-4-6", "claude-sonnet-5"] as const) {
+  // Non-native-xhigh adaptive models: xhigh falls back to "max" effort and
+  // adaptive thinking carries no `display` field.
+  for (const model of ["claude-opus-4-6", "claude-sonnet-4-6"] as const) {
     describe(`${model} (adaptive thinking + effort)`, () => {
       for (const { thinking, expectedThinking, effort } of [
         { thinking: "medium", expectedThinking: { type: "adaptive" }, effort: "medium" },
@@ -134,12 +135,49 @@ describe("buildProviderOptions - Anthropic", () => {
     });
   }
 
+  // Native-xhigh models (Opus 4.7+ / Sonnet 5+): xhigh is a distinct native
+  // effort and adaptive thinking requires `display: "summarized"` to return
+  // thinking content.
+  for (const model of ["claude-opus-4-7", "claude-sonnet-5"] as const) {
+    describe(`${model} (native xhigh effort + summarized display)`, () => {
+      for (const { thinking, expectedThinking, effort } of [
+        {
+          thinking: "medium",
+          expectedThinking: { type: "adaptive", display: "summarized" },
+          effort: "medium",
+        },
+        {
+          thinking: "xhigh",
+          expectedThinking: { type: "adaptive", display: "summarized" },
+          effort: "xhigh",
+        },
+        {
+          thinking: "max",
+          expectedThinking: { type: "adaptive", display: "summarized" },
+          effort: "max",
+        },
+        { thinking: "off", expectedThinking: { type: "disabled" }, effort: "low" },
+      ] as const) {
+        test(`maps ${thinking} to ${effort} effort`, () => {
+          const anthropic = anthropicProviderOptions(
+            buildProviderOptions(`anthropic:${model}`, thinking)
+          );
+
+          expect(anthropic.thinking).toEqual(expectedThinking);
+          expect(anthropic.effort).toBe(effort);
+        });
+      }
+    });
+  }
+
   describe("claude-fable-5 (Mythos-class: API rejects disabled thinking)", () => {
     test("maps medium to adaptive thinking like other adaptive models", () => {
       const anthropic = anthropicProviderOptions(
         buildProviderOptions("anthropic:claude-fable-5", "medium")
       );
-      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      // Mythos-class models are native-xhigh tier, so adaptive thinking carries
+      // the summarized display flag.
+      expect(anthropic.thinking).toEqual({ type: "adaptive", display: "summarized" });
       expect(anthropic.effort).toBe("medium");
     });
 
@@ -1590,67 +1628,12 @@ describe("buildRequestHeaders", () => {
     });
   }
 
-  describe("Opus 4.7+ xhigh effort override", () => {
-    for (const { name, model, routeProvider, thinkingLevel, expected } of [
-      {
-        name: "emits override header when thinkingLevel=xhigh for Opus 4.7",
-        model: "anthropic:claude-opus-4-7",
-        routeProvider: undefined,
-        thinkingLevel: "xhigh",
-        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
-      },
-      {
-        name: "emits override header for gateway-routed Opus 4.7 with xhigh (passthrough)",
-        model: "mux-gateway:anthropic/claude-opus-4-7",
-        routeProvider: "mux-gateway",
-        thinkingLevel: "xhigh",
-        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
-      },
-      {
-        name: "emits override header for Opus 4.8",
-        model: "anthropic:claude-opus-4-8",
-        routeProvider: undefined,
-        thinkingLevel: "xhigh",
-        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
-      },
-      {
-        // Sonnet 5 added native xhigh for the Sonnet tier, so it needs the wire rewrite too.
-        name: "emits override header for Sonnet 5",
-        model: "anthropic:claude-sonnet-5",
-        routeProvider: undefined,
-        thinkingLevel: "xhigh",
-        expected: { [MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER]: "xhigh" },
-      },
-      {
-        name: "does not emit override header for Opus 4.7 with thinkingLevel=max",
-        model: "anthropic:claude-opus-4-7",
-        routeProvider: undefined,
-        thinkingLevel: "max",
-        expected: undefined,
-      },
-      {
-        name: "does not emit override header for Opus 4.6 with xhigh",
-        // Opus 4.6 maps xhigh -> "max" effort; SDK accepts "max" so no wire rewrite needed.
-        model: "anthropic:claude-opus-4-6",
-        routeProvider: undefined,
-        thinkingLevel: "xhigh",
-        expected: undefined,
-      },
-      {
-        name: "does not emit override header for non-passthrough gateway (openrouter)",
-        // Non-passthrough gateways must not receive this Mux-internal header.
-        model: "anthropic:claude-opus-4-7",
-        routeProvider: "openrouter",
-        thinkingLevel: "xhigh",
-        expected: undefined,
-      },
-    ] as const) {
-      test(name, () => {
-        expect(
-          buildRequestHeaders(model, undefined, undefined, undefined, routeProvider, thinkingLevel)
-        ).toEqual(expected);
-      });
-    }
+  // Native xhigh effort no longer needs a Mux-internal override header: the
+  // SDK accepts effort "xhigh" directly (see buildProviderOptions tests above),
+  // so buildRequestHeaders is thinking-level-independent.
+  test("does not emit any Mux-internal effort header for native-xhigh models", () => {
+    expect(buildRequestHeaders("anthropic:claude-opus-4-7")).toBeUndefined();
+    expect(buildRequestHeaders("anthropic:claude-sonnet-5")).toBeUndefined();
   });
 
   describe("openaiProModeAvailable", () => {

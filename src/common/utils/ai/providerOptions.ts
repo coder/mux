@@ -43,15 +43,6 @@ export { resolveProviderOptionsNamespaceKey } from "./models";
 export { openaiProModeAvailable } from "./proMode";
 
 /**
- * Request header used to override Anthropic's `output_config.effort` at the
- * wire level. The @ai-sdk/anthropic Zod schema rejects "xhigh", so for
- * Opus 4.7+ with xhigh ThinkingLevel we send "max" through the SDK and ask the
- * fetch wrapper to rewrite it to "xhigh" via this header (which is then stripped
- * before the request reaches Anthropic).
- */
-export const MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER = "x-mux-anthropic-effort";
-
-/**
  * OpenRouter reasoning options
  * @see https://openrouter.ai/docs/use-cases/reasoning-tokens
  */
@@ -281,11 +272,9 @@ export function buildProviderOptions(
     const usesAdaptiveThinking = isOpus46 || supportsNativeXhigh || isSonnet46;
 
     if (isOpus45 || usesAdaptiveThinking) {
-      // Map to SDK-accepted effort. For Opus 4.7+ / Sonnet 5+ with xhigh ThinkingLevel, the
-      // SDK gets "max" as a placeholder and the Anthropic fetch wrapper rewrites
-      // `output_config.effort` to "xhigh" via the X-Mux-Anthropic-Effort header
-      // (added in buildRequestHeaders).
-      const effortLevel = getAnthropicEffort(effectiveThinking);
+      // Model-aware effort: native-xhigh models (Opus 4.7+ / Sonnet 5+ / Mythos)
+      // get the native "xhigh" wire value; other adaptive models keep xhigh → "max".
+      const effortLevel = getAnthropicEffort(effectiveThinking, capabilityModel);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
       // Opus 4.6+ / Sonnet 4.6 / Sonnet 5: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
@@ -293,12 +282,19 @@ export function buildProviderOptions(
       // excludes "off" for them and AIService clamps the effective level via
       // resolveEffectiveThinkingLevel, so "off" should not reach here — but if a stray
       // path does, omit `thinking` (API defaults to adaptive) rather than hard-erroring.
+      //
+      // Native-xhigh models require `thinking.display: "summarized"` to return
+      // thinking content on adaptive requests; non-native adaptive models
+      // (Opus 4.6 / Sonnet 4.6) must not receive `display`.
+      // See https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#summarized-thinking
       const thinking: AnthropicProviderOptions["thinking"] = usesAdaptiveThinking
         ? effectiveThinking === "off"
           ? anthropicRejectsDisabledThinking(capabilityModel)
             ? undefined
             : { type: "disabled" }
-          : { type: "adaptive" }
+          : supportsNativeXhigh
+            ? { type: "adaptive", display: "summarized" }
+            : { type: "adaptive" }
         : budgetTokens > 0
           ? { type: "enabled", budgetTokens }
           : undefined;
@@ -309,10 +305,6 @@ export function buildProviderOptions(
         thinkingLevel: effectiveThinking,
       });
 
-      // Note: Opus 4.7+ requires `thinking.display: "summarized"` to receive
-      // thinking content, but the SDK's Zod schema strips unknown keys so we
-      // can't add it here. The Anthropic fetch wrapper injects `display` on the
-      // wire for Opus 4.7+ adaptive thinking requests.
       const anthropicOptions: AnthropicProviderOptions = {
         disableParallelToolUse: false,
         sendReasoning: true,
@@ -614,8 +606,7 @@ export function buildRequestHeaders(
   muxProviderOptions?: MuxProviderOptions,
   workspaceId?: string,
   providersConfig?: ProvidersConfigMap | null,
-  routeProvider?: ProviderName,
-  thinkingLevel?: ThinkingLevel
+  routeProvider?: ProviderName
 ): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
 
@@ -636,23 +627,6 @@ export function buildRequestHeaders(
     isAnthropic1MEffectivelyEnabled(modelString, muxProviderOptions, providersConfig)
   ) {
     headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
-  }
-
-  // Native-xhigh Anthropic models use an "xhigh" effort level that the
-  // @ai-sdk/anthropic Zod schema doesn't accept yet. Emit a Mux-internal header
-  // so the Anthropic fetch wrapper can rewrite `output_config.effort` to "xhigh" on the wire.
-  //
-  // Only emit when the route will pass through our Anthropic fetch wrapper
-  // (direct Anthropic or passthrough gateways like mux-gateway). Non-passthrough
-  // gateways (OpenRouter, Bedrock, github-copilot) must not see this header —
-  // they would forward it externally verbatim and strict proxies may reject it.
-  if (
-    origin === "anthropic" &&
-    routePassesHeaders &&
-    thinkingLevel === "xhigh" &&
-    anthropicSupportsNativeXhigh(modelString)
-  ) {
-    headers[MUX_ANTHROPIC_EFFORT_OVERRIDE_HEADER] = "xhigh";
   }
 
   return Object.keys(headers).length > 0 ? headers : undefined;

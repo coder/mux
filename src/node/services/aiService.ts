@@ -2416,8 +2416,7 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions,
         workspaceId,
         this.providerService.getConfig(),
-        routeProvider,
-        effectiveThinkingLevel
+        routeProvider
       );
 
       // --- Model parameter overrides from providers.jsonc ---
@@ -2729,8 +2728,7 @@ export class AIService extends EventEmitter {
                     effectiveMuxProviderOptions,
                     workspaceId,
                     this.providerService.getConfig(),
-                    next.routeProvider,
-                    nextThinkingLevel
+                    next.routeProvider
                   );
                   if (pendingRunMetadataId != null) {
                     // Keep DevTools run correlation on fallback requests too.
