@@ -3,6 +3,11 @@ import * as fsPromises from "fs/promises";
 
 import type { z } from "zod";
 
+import {
+  TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS,
+  TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS,
+} from "@/constants/terminationTimeouts";
+import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { Config, ProjectsConfig, Workspace as WorkspaceConfigEntry } from "@/node/config";
@@ -3832,6 +3837,7 @@ export class TaskService {
     assert(taskId.length > 0, "terminateDescendantAgentTask: taskId must be non-empty");
 
     const terminatedTaskIds: string[] = [];
+    const terminationErrors: string[] = [];
 
     {
       await using _lock = await this.mutex.acquire();
@@ -3866,8 +3872,21 @@ export class TaskService {
       for (const id of toTerminate) {
         // Best-effort: stop any active stream immediately to avoid further token usage.
         try {
-          const stopResult = await this.aiService.stopStream(id, { abandonPartial: true });
-          if (!stopResult.success) {
+          const stopPromise = this.aiService.stopStream(id, { abandonPartial: true });
+          const stopOutcome = await raceWithAbortAndTimeout(stopPromise, {
+            timeoutMs: TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS,
+          });
+          if (stopOutcome.kind !== "ok") {
+            void stopPromise.catch((error: unknown) => {
+              log.debug("terminateDescendantAgentTask: timed-out stopStream later threw", {
+                taskId: id,
+                error,
+              });
+            });
+            terminationErrors.push(`Timed out stopping task stream (${id})`);
+            continue;
+          }
+          if (!stopOutcome.value.success) {
             log.debug("terminateDescendantAgentTask: stopStream failed", { taskId: id });
           }
         } catch (error: unknown) {
@@ -3877,9 +3896,32 @@ export class TaskService {
         this.completedReportsByTaskId.delete(id);
         this.rejectWaiters(id, terminationError);
 
-        const removeResult = await this.workspaceService.remove(id, true);
-        if (!removeResult.success) {
-          return Err(`Failed to remove task workspace (${id}): ${removeResult.error}`);
+        try {
+          const removePromise = this.workspaceService.remove(id, true);
+          const removeOutcome = await raceWithAbortAndTimeout(removePromise, {
+            timeoutMs: TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS,
+          });
+          if (removeOutcome.kind !== "ok") {
+            void removePromise.catch((error: unknown) => {
+              log.debug("terminateDescendantAgentTask: timed-out workspace removal later threw", {
+                taskId: id,
+                error,
+              });
+            });
+            terminationErrors.push(`Timed out removing task workspace (${id})`);
+            continue;
+          }
+          if (!removeOutcome.value.success) {
+            terminationErrors.push(
+              `Failed to remove task workspace (${id}): ${removeOutcome.value.error}`
+            );
+            continue;
+          }
+        } catch (error: unknown) {
+          terminationErrors.push(
+            `Failed to remove task workspace (${id}): ${getErrorMessage(error)}`
+          );
+          continue;
         }
 
         terminatedTaskIds.push(id);
@@ -3889,6 +3931,9 @@ export class TaskService {
     // Free slots and start any queued tasks (best-effort).
     await this.maybeStartQueuedTasks();
 
+    if (terminationErrors.length > 0) {
+      return Err(terminationErrors.join("; "));
+    }
     return Ok({ terminatedTaskIds });
   }
 
@@ -6585,9 +6630,14 @@ export class TaskService {
     );
 
     const result: string[] = [];
+    const visited = new Set([workspaceId]);
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
+      if (visited.has(next)) {
+        continue;
+      }
+      visited.add(next);
       result.push(next);
       const children = index.childrenByParent.get(next);
       if (children) {

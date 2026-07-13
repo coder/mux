@@ -4,6 +4,7 @@ import * as path from "path";
 import * as os from "os";
 import { execSync } from "node:child_process";
 
+import { TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS } from "@/constants/terminationTimeouts";
 import {
   Config,
   type ProjectConfig,
@@ -9195,6 +9196,105 @@ describe("TaskService", () => {
 
     expect(remove).toHaveBeenNthCalledWith(1, childTaskId, true);
     expect(remove).toHaveBeenNthCalledWith(2, parentTaskId, true);
+  });
+
+  test("terminateDescendantAgentTask skips a timed-out stream and continues other descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-parent";
+    const stuckTaskId = "task-stuck";
+    const siblingTaskId = "task-sibling";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "stuck-task", stuckTaskId, {
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "sibling-task", siblingTaskId, {
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const stopStream = mock((workspaceId: string): Promise<Result<void>> => {
+      return workspaceId === stuckTaskId
+        ? new Promise(() => undefined)
+        : Promise.resolve(Ok(undefined));
+    });
+    const { aiService } = createAIServiceMocks(config, { stopStream });
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const originalSetTimeout = globalThis.setTimeout;
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      timeout?: number
+    ) => {
+      if (timeout === TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS) {
+        queueMicrotask(() => {
+          if (typeof handler === "function") {
+            handler();
+          }
+        });
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return originalSetTimeout(handler, timeout);
+    }) as typeof setTimeout);
+
+    const terminateResult = await taskService.terminateDescendantAgentTask(
+      rootWorkspaceId,
+      parentTaskId
+    );
+    timeoutSpy.mockRestore();
+
+    expect(terminateResult.success).toBe(false);
+    if (terminateResult.success) return;
+    expect(terminateResult.error).toContain(`Timed out stopping task stream (${stuckTaskId})`);
+    expect(remove).not.toHaveBeenCalledWith(stuckTaskId, true);
+    expect(remove).toHaveBeenCalledWith(siblingTaskId, true);
+    expect(remove).toHaveBeenCalledWith(parentTaskId, true);
+  });
+
+  test("descendant traversal terminates when task metadata contains a cycle", () => {
+    const config = new Config(rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+    const traversal = taskService as unknown as {
+      listDescendantAgentTaskIdsFromIndex: (
+        index: {
+          byId: Map<string, unknown>;
+          childrenByParent: Map<string, string[]>;
+          parentById: Map<string, string>;
+        },
+        workspaceId: string
+      ) => string[];
+    };
+    const index = {
+      byId: new Map<string, unknown>(),
+      childrenByParent: new Map([
+        ["root", ["child"]],
+        ["child", ["grandchild"]],
+        ["grandchild", ["child", "root"]],
+      ]),
+      parentById: new Map<string, string>(),
+    };
+
+    expect(traversal.listDescendantAgentTaskIdsFromIndex(index, "root")).toEqual([
+      "child",
+      "grandchild",
+    ]);
   });
 
   test("terminateAllDescendantAgentTasks interrupts entire subtree leaf-first", async () => {

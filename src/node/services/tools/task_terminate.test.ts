@@ -88,6 +88,52 @@ describe("task_terminate tool", () => {
     });
   });
 
+  it("returns an interrupted error promptly while completed task IDs still resolve", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-abort");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const controller = new AbortController();
+
+    const taskService = {
+      terminateDescendantAgentTask: mock(
+        (
+          _workspaceId: string,
+          taskId: string
+        ): Promise<Result<{ terminatedTaskIds: string[] }, string>> => {
+          if (taskId === "stuck-task") {
+            return new Promise(() => undefined);
+          }
+          return Promise.resolve(Ok({ terminatedTaskIds: [taskId] }));
+        }
+      ),
+    } as unknown as TaskService;
+    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+
+    const resultPromise = Promise.resolve(
+      tool.execute!(
+        { task_ids: ["stuck-task", "finished-task"] },
+        { ...mockToolCallOptions, abortSignal: controller.signal }
+      )
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    controller.abort();
+
+    expect(await resultPromise).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "stuck-task",
+          error: "Termination interrupted; cleanup continues in the background",
+        },
+        {
+          status: "terminated",
+          taskId: "finished-task",
+          terminatedTaskIds: ["finished-task"],
+        },
+      ],
+    });
+  });
+
   it("interrupts a workspace turn without deleting the workspace", async () => {
     using tempDir = new TestTempDir("test-task-terminate-workspace-turn");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
@@ -178,6 +224,28 @@ describe("task_terminate tool", () => {
           note: expect.stringContaining("workflow_resume"),
         },
       ],
+    });
+  });
+
+  it("returns a per-task error when a workflow branch throws", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow-throws");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: {} as unknown as TaskService,
+      workflowService: {
+        getRun: mock(() => Promise.reject(new Error("workflow lookup failed"))),
+        interruptRun: mock(() => Promise.reject(new Error("unused"))),
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_run_1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "error", taskId: "wfr_run_1", error: "workflow lookup failed" }],
     });
   });
 

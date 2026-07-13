@@ -7,7 +7,7 @@ import type {
   InitLogger,
 } from "@/node/runtime/Runtime";
 import { listLocalBranches, cleanStaleLock, getCurrentBranch } from "@/node/git";
-import { execAsync, execFileAsync } from "@/node/utils/disposableExec";
+import { execAsync, execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -16,10 +16,11 @@ import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { toPosixPath } from "@/node/utils/paths";
 import { log } from "@/node/services/log";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
+import { WORKTREE_DELETE_GIT_TIMEOUT_MS } from "@/constants/terminationTimeouts";
 import { syncLocalGitSubmodules } from "@/node/runtime/submoduleSync";
 import { syncMuxignoreFiles } from "./muxignore";
 
-type GitExecOptions = { env?: Record<string, string>; signal?: AbortSignal } | undefined;
+type GitExecOptions = Pick<ExecFileAsyncOptions, "env" | "signal" | "timeoutMs"> | undefined;
 
 function isAbortError(_error: unknown, signal?: AbortSignal): boolean {
   return signal?.aborted ?? false;
@@ -498,8 +499,11 @@ export class WorktreeManager {
     // Clean up stale lock before git operations on main repo
     cleanStaleLock(projectPath);
 
-    // Disable git hooks for untrusted projects
-    const noHooksEnv = this.getGitExecOptions(trusted);
+    // Disable git hooks for untrusted projects and bound every git cleanup command.
+    const noHooksEnv: GitExecOptions = {
+      ...(this.getGitExecOptions(trusted) ?? {}),
+      timeoutMs: WORKTREE_DELETE_GIT_TIMEOUT_MS,
+    };
 
     // In-place workspaces are identified by projectPath === workspaceName.
     // These are direct workspace directories (e.g., CLI/benchmark sessions), not git worktrees.
@@ -749,7 +753,7 @@ export class WorktreeManager {
 
     let localBranches: string[];
     try {
-      localBranches = await listLocalBranches(args.projectPath);
+      localBranches = await listLocalBranches(args.projectPath, args.noHooksEnv);
     } catch (error) {
       log.debug("Failed to list local branches; skipping branch deletion", {
         projectPath: args.projectPath,
@@ -820,7 +824,7 @@ export class WorktreeManager {
       protectedBranches.add(localBranches[0]);
     }
 
-    const currentBranch = await getCurrentBranch(projectPath);
+    const currentBranch = await getCurrentBranch(projectPath, noHooksEnv);
     if (currentBranch) {
       protectedBranches.add(currentBranch);
     }
