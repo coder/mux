@@ -4440,6 +4440,70 @@ describe("StreamManager - replayStream", () => {
 
     expect(replayedToolEnds).toEqual(["tool-new"]);
   });
+
+  test("replayStream replays queued tool parts whose execute() began after the cursor", async () => {
+    const streamManager = createReplayStreamManager();
+
+    const workspaceId = "ws-replay-exec-start";
+
+    const replayedToolStarts: Array<{ toolCallId: string; executionStartedAt?: number }> = [];
+    streamManager.on(
+      "tool-call-start",
+      (event: {
+        replay?: boolean | undefined;
+        toolCallId: string;
+        executionStartedAt?: number;
+      }) => {
+        expect(event.replay).toBe(true);
+        replayedToolStarts.push({
+          toolCallId: event.toolCallId,
+          executionStartedAt: event.executionStartedAt,
+        });
+      }
+    );
+
+    const streamInfo = {
+      state: "streaming",
+      messageId: "msg-exec-start",
+      model: "claude-sonnet-4",
+      historySequence: 1,
+      startTime: 123,
+      initialMetadata: {},
+      toolCompletionTimestamps: new Map(),
+      parts: [
+        {
+          // Queued before the cursor, still waiting for the execution lock: not replayed.
+          type: "dynamic-tool",
+          toolCallId: "tool-still-queued",
+          toolName: "bash",
+          input: {},
+          state: "input-available",
+          timestamp: 10,
+        },
+        {
+          // Queued before the cursor, execute() began after it: replayed with the
+          // enriched executionStartedAt so the renderer can start the elapsed timer.
+          type: "dynamic-tool",
+          toolCallId: "tool-started-after-cursor",
+          toolName: "bash",
+          input: {},
+          state: "input-available",
+          timestamp: 12,
+          executionStartedAt: 25,
+        },
+      ],
+    };
+
+    setReplayStreamInfo(streamManager, workspaceId, streamInfo);
+    stubReplayTokenTracker(streamManager);
+
+    await streamManager.replayStream(workspaceId, { afterTimestamp: 20 });
+
+    expect(replayedToolStarts).toEqual([
+      { toolCallId: "tool-started-after-cursor", executionStartedAt: 25 },
+    ]);
+  });
+
   test("replayStream emits replay usage-delta from tracked step/cumulative usage", async () => {
     const streamManager = createReplayStreamManager();
 

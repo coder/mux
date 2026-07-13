@@ -2368,6 +2368,17 @@ export class StreamingMessageAggregator {
     );
 
     if (existingToolPart) {
+      // A `since` replay re-sends tool-call-start when a queued tool's execute() began
+      // after the reconnect cursor. Merge the enriched execution start into the existing
+      // row (otherwise the elapsed timer stays hidden) instead of dropping the event.
+      if (
+        data.executionStartedAt !== undefined &&
+        existingToolPart.executionStartedAt === undefined
+      ) {
+        existingToolPart.executionStartedAt = data.executionStartedAt;
+        this.markMessageDirty(data.messageId);
+        return;
+      }
       console.warn(`Tool call ${data.toolCallId} already exists, skipping duplicate`);
       return;
     }

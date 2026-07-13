@@ -4361,6 +4361,17 @@ export class StreamManager extends EventEmitter {
 
                 return completionTimestamp > afterTimestamp;
               }
+
+              // A queued tool's execute() can begin after the reconnect cursor while the
+              // part's own timestamp (model emission) is older. Replay the part so the
+              // enriched tool-call-start carries executionStartedAt and the renderer can
+              // start the elapsed timer (the aggregator merges it into the existing row).
+              if (
+                part.executionStartedAt !== undefined &&
+                part.executionStartedAt > afterTimestamp
+              ) {
+                return true;
+              }
             }
 
             return false;

@@ -1935,6 +1935,38 @@ describe("StreamingMessageAggregator", () => {
     expect(executingRow?.type === "tool" ? executingRow.executionStartedAt : undefined).toBe(5_000);
   });
 
+  test("replayed tool-call-start merges executionStartedAt into an existing tool part", () => {
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+    startTestStream(aggregator, { messageId: "msg-1" });
+    // Client saw the queued tool-call-start live (no execution start yet)...
+    startToolCall(aggregator, {
+      toolCallId: "tool-reconnect",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      timestamp: 1_000,
+    });
+
+    // ...disconnected, execute() began, and the `since` replay re-sends the enriched start.
+    aggregator.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-reconnect",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      tokens: 0,
+      timestamp: 1_000,
+      executionStartedAt: 6_000,
+      replay: true,
+    });
+
+    const row = aggregator
+      .getDisplayedMessages()
+      .find((m) => m.type === "tool" && m.toolCallId === "tool-reconnect");
+    expect(row?.type === "tool" ? row.executionStartedAt : undefined).toBe(6_000);
+  });
+
   test("keeps richer in-memory parts when append replay sends a stale duplicate", () => {
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
