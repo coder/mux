@@ -3869,6 +3869,19 @@ export class TaskService {
 
       const terminationError = new Error("Task terminated");
 
+      // When a descendant workspace could not be removed, keep every ancestor of it
+      // so the surviving child never points at removed parent metadata.
+      const ancestorsBlockedByFailedChild = new Set<string>();
+      const blockAncestorsOf = (id: string) => {
+        for (
+          let cur = parentById.get(id);
+          cur != null && !ancestorsBlockedByFailedChild.has(cur);
+          cur = parentById.get(cur)
+        ) {
+          ancestorsBlockedByFailedChild.add(cur);
+        }
+      };
+
       for (const id of toTerminate) {
         // Best-effort: stop any active stream immediately to avoid further token usage.
         try {
@@ -3884,6 +3897,7 @@ export class TaskService {
               });
             });
             terminationErrors.push(`Timed out stopping task stream (${id})`);
+            blockAncestorsOf(id);
             continue;
           }
           if (!stopOutcome.value.success) {
@@ -3891,6 +3905,13 @@ export class TaskService {
           }
         } catch (error: unknown) {
           log.debug("terminateDescendantAgentTask: stopStream threw", { taskId: id, error });
+        }
+
+        if (ancestorsBlockedByFailedChild.has(id)) {
+          terminationErrors.push(
+            `Skipped removing task workspace (${id}): a descendant task workspace was not removed`
+          );
+          continue;
         }
 
         this.completedReportsByTaskId.delete(id);
@@ -3909,18 +3930,21 @@ export class TaskService {
               });
             });
             terminationErrors.push(`Timed out removing task workspace (${id})`);
+            blockAncestorsOf(id);
             continue;
           }
           if (!removeOutcome.value.success) {
             terminationErrors.push(
               `Failed to remove task workspace (${id}): ${removeOutcome.value.error}`
             );
+            blockAncestorsOf(id);
             continue;
           }
         } catch (error: unknown) {
           terminationErrors.push(
             `Failed to remove task workspace (${id}): ${getErrorMessage(error)}`
           );
+          blockAncestorsOf(id);
           continue;
         }
 

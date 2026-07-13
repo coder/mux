@@ -9263,9 +9263,14 @@ describe("TaskService", () => {
     expect(terminateResult.success).toBe(false);
     if (terminateResult.success) return;
     expect(terminateResult.error).toContain(`Timed out stopping task stream (${stuckTaskId})`);
+    expect(terminateResult.error).toContain(
+      `Skipped removing task workspace (${parentTaskId}): a descendant task workspace was not removed`
+    );
     expect(remove).not.toHaveBeenCalledWith(stuckTaskId, true);
     expect(remove).toHaveBeenCalledWith(siblingTaskId, true);
-    expect(remove).toHaveBeenCalledWith(parentTaskId, true);
+    // The stuck child survives, so its ancestor must survive too: a live child
+    // must never point at removed parent metadata.
+    expect(remove).not.toHaveBeenCalledWith(parentTaskId, true);
   });
 
   test("descendant traversal terminates when task metadata contains a cycle", () => {
