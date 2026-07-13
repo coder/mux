@@ -17,6 +17,7 @@ import {
   type StreamEndEvent,
   type StreamAbortEvent,
   type StreamAbortReasonSnapshot,
+  type ToolCallExecutionStartEvent,
   type ToolCallStartEvent,
   type ToolCallDeltaEvent,
   type ToolCallEndEvent,
@@ -2386,6 +2387,10 @@ export class StreamingMessageAggregator {
       state: "input-available",
       input: data.args,
       timestamp: data.timestamp,
+      // Present on replay when execute() had already begun before reconnect.
+      ...(data.executionStartedAt !== undefined
+        ? { executionStartedAt: data.executionStartedAt }
+        : {}),
     };
     message.parts.push(toolPart);
 
@@ -2399,6 +2404,25 @@ export class StreamingMessageAggregator {
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
     // Tool deltas are for display - args are in dynamic-tool part
+  }
+
+  /**
+   * Mark when a tool call's execute() actually began running. Parallel tool calls are
+   * serialized in the backend, so this arrives once the call reaches the front of the
+   * queue — elapsed timers start here instead of at tool-call-start.
+   */
+  handleToolCallExecutionStart(data: ToolCallExecutionStartEvent): void {
+    const message = this.messages.get(data.messageId);
+    if (!message) return;
+
+    const toolPart = message.parts.find(
+      (part): part is DynamicToolPart =>
+        part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
+    );
+    if (!toolPart) return;
+
+    toolPart.executionStartedAt = data.timestamp;
+    this.markMessageDirty(data.messageId);
   }
 
   private trackLoadedSkill(skill: LoadedSkill): void {

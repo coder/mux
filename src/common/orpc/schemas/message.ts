@@ -39,6 +39,11 @@ const MuxToolPartBase = z.object({
   toolName: z.string(),
   input: z.unknown(),
   timestamp: z.number().optional(),
+  // When the tool's execute() actually began running. Parallel tool calls are
+  // serialized (withSequentialExecution), so this can be much later than
+  // `timestamp` (when the model emitted the call). UI elapsed timers must use
+  // this so queued-but-not-yet-executing tools don't appear to run.
+  executionStartedAt: z.number().optional(),
   workflowRun: WorkflowRunToolAttachmentSchema.optional(),
 });
 

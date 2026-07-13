@@ -817,6 +817,12 @@ export type DisplayedMessage =
       streamSequence?: number; // Local ordering within this assistant message
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
+      /**
+       * When the tool's execute() actually began running. Parallel tool calls are
+       * serialized, so this can be much later than `timestamp`; elapsed timers must
+       * start here (and stay hidden while the call is still queued).
+       */
+      executionStartedAt?: number;
       /** Durable workflow run attachment recovered from partial history. */
       workflowRun?: MuxToolPart["workflowRun"];
       // Nested tool calls for code_execution (from PTC streaming or reconstructed from result)

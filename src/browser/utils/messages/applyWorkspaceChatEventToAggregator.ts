@@ -24,6 +24,7 @@ import {
   isStreamStart,
   isToolCallDelta,
   isToolCallEnd,
+  isToolCallExecutionStart,
   isToolCallStart,
   isUsageDelta,
 } from "@/common/orpc/types";
@@ -36,6 +37,7 @@ import type {
   StreamStartEvent,
   ToolCallDeltaEvent,
   ToolCallEndEvent,
+  ToolCallExecutionStartEvent,
   ToolCallStartEvent,
   UsageDeltaEvent,
   RuntimeStatusEvent,
@@ -67,6 +69,7 @@ export interface WorkspaceChatEventAggregator {
   handleStreamError(data: StreamErrorMessage): void;
 
   handleToolCallStart(data: ToolCallStartEvent): void;
+  handleToolCallExecutionStart(data: ToolCallExecutionStartEvent): void;
   handleToolCallDelta(data: ToolCallDeltaEvent): void;
   handleToolCallEnd(data: ToolCallEndEvent): void;
 
@@ -164,6 +167,11 @@ export function applyWorkspaceChatEventToAggregator(
 
   if (isToolCallStart(event)) {
     aggregator.handleToolCallStart(event);
+    return "immediate";
+  }
+
+  if (isToolCallExecutionStart(event)) {
+    aggregator.handleToolCallExecutionStart(event);
     return "immediate";
   }
 

@@ -6,7 +6,11 @@ import * as path from "node:path";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { StreamEndEventSchema } from "@/common/orpc/schemas/stream";
-import type { CompletedMessagePart, WorkflowRunAttachedEvent } from "@/common/types/stream";
+import type {
+  CompletedMessagePart,
+  ToolCallExecutionStartEvent,
+  WorkflowRunAttachedEvent,
+} from "@/common/types/stream";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ToolSearchStreamState } from "@/common/utils/tools/toolCatalog";
@@ -203,6 +207,7 @@ function createStreamInfoForTests(
     lastPartTimestamp: now,
     toolCompletionTimestamps: new Map<string, number>(),
     pendingWorkflowRunAttachments: new Map<string, unknown>(),
+    pendingToolExecutionStarts: new Map<string, number>(),
     model,
     metadataModel: overrides.metadataModel ?? model,
     historySequence: 1,
@@ -345,6 +350,100 @@ describe("StreamManager - workflow run attachments", () => {
       runId: "wfr_race",
       timestamp: timestamp + 1,
     });
+  });
+});
+
+describe("StreamManager - tool execution start timing", () => {
+  test("stamps executionStartedAt and emits tool-call-execution-start when the part already exists", () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "execution-start-workspace";
+    const messageId = "execution-start-message";
+    const timestamp = Date.now();
+    const streamInfo = createStreamInfoForTests({
+      messageId,
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-call-1",
+          toolName: "bash",
+          input: { command: "echo hi" },
+          state: "input-available",
+          timestamp,
+        },
+      ],
+    });
+    getWorkspaceStreamsForTests(streamManager).set(workspaceId, streamInfo);
+
+    const events: ToolCallExecutionStartEvent[] = [];
+    streamManager.on("tool-call-execution-start", (event: ToolCallExecutionStartEvent) => {
+      events.push(event);
+    });
+
+    const handleToolExecutionStart = getPrivateMethodForTests<
+      (workspaceId: string, messageId: string, toolCallId: string) => void
+    >(streamManager, "handleToolExecutionStart");
+    handleToolExecutionStart.call(streamManager, workspaceId, messageId, "tool-call-1");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "tool-call-execution-start",
+      workspaceId,
+      messageId,
+      toolCallId: "tool-call-1",
+    });
+
+    const parts = streamInfo.parts as Array<Record<string, unknown>>;
+    expect(parts[0].executionStartedAt).toBe(events[0].timestamp);
+  });
+
+  test("applies execution starts that arrive before the tool part lands", async () => {
+    const streamManager = new StreamManager(historyService);
+    const workspaceId = "execution-start-race-workspace";
+    const messageId = "execution-start-race-message";
+    const streamInfo = createStreamInfoForTests({ messageId, parts: [] });
+    getWorkspaceStreamsForTests(streamManager).set(workspaceId, streamInfo);
+
+    const events: ToolCallExecutionStartEvent[] = [];
+    streamManager.on("tool-call-execution-start", (event: ToolCallExecutionStartEvent) => {
+      events.push(event);
+    });
+
+    // execute() wins the race: no part yet, so the start is parked as pending.
+    const handleToolExecutionStart = getPrivateMethodForTests<
+      (workspaceId: string, messageId: string, toolCallId: string) => void
+    >(streamManager, "handleToolExecutionStart");
+    handleToolExecutionStart.call(streamManager, workspaceId, messageId, "tool-call-race");
+    expect(events).toHaveLength(0);
+
+    const appendPartAndEmit = getPrivateMethodForTests<
+      (
+        workspaceId: string,
+        streamInfo: Record<string, unknown>,
+        part: CompletedMessagePart,
+        schedulePartialWrite?: boolean
+      ) => Promise<void>
+    >(streamManager, "appendPartAndEmit");
+    await appendPartAndEmit.call(
+      streamManager,
+      workspaceId,
+      streamInfo,
+      {
+        type: "dynamic-tool",
+        toolCallId: "tool-call-race",
+        toolName: "bash",
+        input: { command: "echo hi" },
+        state: "input-available",
+        timestamp: Date.now(),
+      },
+      false
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].toolCallId).toBe("tool-call-race");
+
+    const parts = streamInfo.parts as Array<Record<string, unknown>>;
+    expect(parts[0].executionStartedAt).toBe(events[0].timestamp);
+    expect((streamInfo.pendingToolExecutionStarts as Map<string, number>).size).toBe(0);
   });
 });
 

@@ -15,6 +15,7 @@ import {
 } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { Result } from "@/common/types/result";
+import assert from "@/common/utils/assert";
 import { Ok, Err } from "@/common/types/result";
 import { log, type Logger } from "./log";
 import type {
@@ -23,6 +24,7 @@ import type {
   StreamAbortReason,
   UsageDeltaEvent,
   ToolCallEndEvent,
+  ToolCallExecutionStartEvent,
   CompletedMessagePart,
   WorkflowRunAttachedEvent,
 } from "@/common/types/stream";
@@ -477,6 +479,11 @@ interface WorkspaceStreamInfo {
   // attachment and apply it as soon as the matching dynamic-tool part lands.
   pendingWorkflowRunAttachments: Map<string, WorkflowRunToolAttachment>;
 
+  // execute() can begin (lock acquired in withSequentialExecution) before the fullStream
+  // consumer has stored the matching dynamic-tool part. Keep the execution-start timestamp
+  // and apply it as soon as the part lands.
+  pendingToolExecutionStarts: Map<string, number>;
+
   model: string;
   /** Metadata model resolved from provider mapping for cost/token metadata lookups. */
   metadataModel: string;
@@ -710,6 +717,60 @@ export class StreamManager extends EventEmitter {
 
     await this.flushPartialWrite(workspaceId, streamInfo);
     return true;
+  }
+
+  /**
+   * Record on the dynamic-tool part when its execute() actually began running and notify
+   * the UI. Returns false when the part has not landed in streamInfo.parts yet.
+   */
+  private applyToolExecutionStart(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    toolCallId: string,
+    timestamp: number
+  ): boolean {
+    const partIndex = streamInfo.parts.findIndex(
+      (part) => part.type === "dynamic-tool" && part.toolCallId === toolCallId
+    );
+    if (partIndex === -1) {
+      return false;
+    }
+
+    const part = streamInfo.parts[partIndex];
+    assert(part.type === "dynamic-tool", "applyToolExecutionStart matched a non-tool part");
+    streamInfo.parts[partIndex] = { ...part, executionStartedAt: timestamp };
+
+    this.emit("tool-call-execution-start", {
+      type: "tool-call-execution-start",
+      workspaceId: workspaceId as string,
+      messageId: streamInfo.messageId,
+      toolCallId,
+      timestamp,
+    } satisfies ToolCallExecutionStartEvent);
+    return true;
+  }
+
+  /**
+   * Called from withSequentialExecution the moment a tool call's execute() acquires the
+   * execution lock. Parallel tool calls run sequentially, so this is the honest start of
+   * execution — the part's own `timestamp` only marks when the model emitted the call.
+   */
+  private handleToolExecutionStart(
+    workspaceId: WorkspaceId,
+    messageId: string,
+    toolCallId: string
+  ): void {
+    const streamInfo = this.workspaceStreams.get(workspaceId);
+    if (streamInfo?.messageId !== messageId) {
+      return;
+    }
+
+    const timestamp = Date.now();
+    if (!this.applyToolExecutionStart(workspaceId, streamInfo, toolCallId, timestamp)) {
+      // execute() won the race against the fullStream consumer; the "tool-call" case
+      // consumes this entry right after storing the part.
+      (streamInfo.pendingToolExecutionStarts ??= new Map()).set(toolCallId, timestamp);
+    }
   }
 
   /**
@@ -1145,6 +1206,11 @@ export class StreamManager extends EventEmitter {
         args: part.input,
         tokens,
         timestamp,
+        // Replays rebuild parts from scratch; carry the real execution start so
+        // elapsed timers don't restart from the model-emission timestamp.
+        ...(part.executionStartedAt !== undefined
+          ? { executionStartedAt: part.executionStartedAt }
+          : {}),
       });
 
       if (part.workflowRun != null) {
@@ -1193,13 +1259,35 @@ export class StreamManager extends EventEmitter {
       // Always persist the part in-memory (and to partial.json, if enabled), even if emit fails.
       let partToPersist = part;
       let pendingAttachment: WorkflowRunToolAttachment | undefined;
+      let pendingExecutionStart: number | undefined;
       if (part.type === "dynamic-tool") {
         pendingAttachment = this.takePendingWorkflowRunAttachment(streamInfo, part.toolCallId);
-        if (pendingAttachment != null) {
-          partToPersist = { ...part, workflowRun: pendingAttachment };
+        // execute() may have started (lock acquired) before the fullStream consumer
+        // stored this part; carry the real execution start onto the persisted part.
+        pendingExecutionStart = streamInfo.pendingToolExecutionStarts?.get(part.toolCallId);
+        if (pendingExecutionStart !== undefined) {
+          streamInfo.pendingToolExecutionStarts.delete(part.toolCallId);
+        }
+        if (pendingAttachment != null || pendingExecutionStart !== undefined) {
+          partToPersist = {
+            ...part,
+            ...(pendingAttachment != null ? { workflowRun: pendingAttachment } : {}),
+            ...(pendingExecutionStart !== undefined
+              ? { executionStartedAt: pendingExecutionStart }
+              : {}),
+          };
         }
       }
       streamInfo.parts.push(partToPersist);
+      if (pendingExecutionStart !== undefined && part.type === "dynamic-tool") {
+        this.emit("tool-call-execution-start", {
+          type: "tool-call-execution-start",
+          workspaceId: workspaceId as string,
+          messageId: streamInfo.messageId,
+          toolCallId: part.toolCallId,
+          timestamp: pendingExecutionStart,
+        } satisfies ToolCallExecutionStartEvent);
+      }
       if (pendingAttachment != null && part.type === "dynamic-tool") {
         await this.flushPartialWrite(workspaceId, streamInfo);
         this.emitWorkflowRunAttachedFromAttachment({
@@ -1479,7 +1567,8 @@ export class StreamManager extends EventEmitter {
     anthropicCacheTtlOverride?: AnthropicCacheTtl,
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
-    toolSearchState?: ToolSearchStreamState
+    toolSearchState?: ToolSearchStreamState,
+    onToolExecutionStart?: (toolCallId: string) => void
   ): StreamRequestConfig {
     const finalProviderOptions = providerOptions;
 
@@ -1543,7 +1632,7 @@ export class StreamManager extends EventEmitter {
       system: finalSystem,
       // Keep provider-level parallel tool planning enabled, but serialize sibling
       // execute() handlers inside this stream so shared mutable state cannot race.
-      tools: withSequentialExecution(finalTools),
+      tools: withSequentialExecution(finalTools, onToolExecutionStart),
       providerOptions: finalProviderOptions,
       headers,
       maxOutputTokens: effectiveMaxOutputTokens,
@@ -1711,7 +1800,8 @@ export class StreamManager extends EventEmitter {
       anthropicCacheTtlOverride,
       onChunk,
       onStepMessages,
-      toolSearchState
+      toolSearchState,
+      (toolCallId) => this.handleToolExecutionStart(workspaceId, messageId, toolCallId)
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -1737,6 +1827,7 @@ export class StreamManager extends EventEmitter {
       lastPartTimestamp: startTime,
       toolCompletionTimestamps: new Map(),
       pendingWorkflowRunAttachments: new Map(),
+      pendingToolExecutionStarts: new Map(),
       model: modelString,
       metadataModel,
       thinkingLevel,
@@ -2374,7 +2465,8 @@ export class StreamManager extends EventEmitter {
       streamInfo.request.onStepMessages,
       // Same state object: aiService's fallback prepare() rebuilt it in place
       // against the fallback toolset, so prepareStep keeps reading live state.
-      streamInfo.request.toolSearchState
+      streamInfo.request.toolSearchState,
+      (toolCallId) => this.handleToolExecutionStart(workspaceId, streamInfo.messageId, toolCallId)
     );
     // createStreamResult may eagerly prepare the first fallback step and update
     // latestMessages. Clear stale source-step messages before starting it so a

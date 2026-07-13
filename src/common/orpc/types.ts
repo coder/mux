@@ -8,6 +8,7 @@ import type {
   StreamEndEvent,
   StreamAbortEvent,
   ToolCallStartEvent,
+  ToolCallExecutionStartEvent,
   ToolCallDeltaEvent,
   ToolCallEndEvent,
   AdvisorOutputEvent,
@@ -97,6 +98,12 @@ export function isStreamAbort(msg: WorkspaceChatMessage): msg is StreamAbortEven
 
 export function isToolCallStart(msg: WorkspaceChatMessage): msg is ToolCallStartEvent {
   return (msg as { type?: string }).type === "tool-call-start";
+}
+
+export function isToolCallExecutionStart(
+  msg: WorkspaceChatMessage
+): msg is ToolCallExecutionStartEvent {
+  return (msg as { type?: string }).type === "tool-call-execution-start";
 }
 
 export function isToolCallDelta(msg: WorkspaceChatMessage): msg is ToolCallDeltaEvent {

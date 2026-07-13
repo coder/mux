@@ -4550,6 +4550,9 @@ export class AgentSession {
       this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);
     });
+    forward("tool-call-execution-start", (payload) => {
+      this.emitChatEvent(payload);
+    });
     forward("bash-output", (payload) => {
       this.markActiveStreamHadAnyOutput();
       this.emitChatEvent(payload);

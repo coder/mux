@@ -123,6 +123,51 @@ describe("withSequentialExecution", () => {
     expect(executionLog).toEqual(["start A", "end A", "start B", "end B", "start C", "end C"]);
   });
 
+  test("reports execution start only after the lock is acquired", async () => {
+    const events: string[] = [];
+    const startedA = createDeferred<void>();
+    const releaseA = createDeferred<void>();
+
+    const tools = {
+      a: tool({
+        description: "Tool A",
+        inputSchema: z.object({}),
+        execute: async () => {
+          events.push("run A");
+          startedA.resolve();
+          await releaseA.promise;
+          return { tool: "A" };
+        },
+      }),
+      b: tool({
+        description: "Tool B",
+        inputSchema: z.object({}),
+        execute: () => {
+          events.push("run B");
+          return Promise.resolve({ tool: "B" });
+        },
+      }),
+    };
+
+    const wrappedTools = withSequentialExecution(tools, (toolCallId) => {
+      events.push(`execution-start ${toolCallId}`);
+    });
+
+    const resultsPromise = Promise.all([
+      callWrappedExecute(wrappedTools!.a as Record<string, unknown>, {}, { toolCallId: "call-a" }),
+      callWrappedExecute(wrappedTools!.b as Record<string, unknown>, {}, { toolCallId: "call-b" }),
+    ]);
+
+    await startedA.promise;
+    await Promise.resolve();
+    // B is queued behind A: its execution start must not have been reported yet.
+    expect(events).toEqual(["execution-start call-a", "run A"]);
+
+    releaseA.resolve();
+    await resultsPromise;
+    expect(events).toEqual(["execution-start call-a", "run A", "execution-start call-b", "run B"]);
+  });
+
   test("does not execute queued siblings after stream abort", async () => {
     const executionLog: string[] = [];
     const startedA = createDeferred<void>();

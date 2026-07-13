@@ -335,7 +335,26 @@ export const ToolCallStartEventSchema = z.object({
   args: z.unknown(),
   tokens: z.number().meta({ description: "Token count for tool input" }),
   timestamp: z.number().meta({ description: "When tool call started (Date.now())" }),
+  executionStartedAt: z.number().optional().meta({
+    description:
+      "When the tool's execute() began running, if it already had by the time this event was built (replay); live streams deliver it via tool-call-execution-start instead",
+  }),
   parentToolCallId: z.string().optional().meta({ description: "Set for nested PTC calls" }),
+});
+
+/**
+ * Emitted when a tool call's execute() actually begins running.
+ *
+ * Parallel tool calls are serialized by withSequentialExecution, so this can fire
+ * long after tool-call-start (which marks when the model emitted the call).
+ * The UI uses this to start the elapsed timer only once real execution begins.
+ */
+export const ToolCallExecutionStartEventSchema = z.object({
+  type: z.literal("tool-call-execution-start"),
+  workspaceId: z.string(),
+  messageId: z.string(),
+  toolCallId: z.string(),
+  timestamp: z.number().meta({ description: "When execute() began running (Date.now())" }),
 });
 
 export const ToolCallDeltaEventSchema = z.object({
@@ -637,6 +656,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   StreamAbortEventSchema,
   // Tool events
   ToolCallStartEventSchema,
+  ToolCallExecutionStartEventSchema,
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   BashOutputEventSchema,

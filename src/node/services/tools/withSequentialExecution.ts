@@ -14,6 +14,7 @@ interface ParallelTaskArgs {
 
 interface ToolExecutionContext {
   abortSignal?: AbortSignal;
+  toolCallId?: string;
 }
 
 function getAbortSignal(options: unknown): AbortSignal | undefined {
@@ -23,6 +24,15 @@ function getAbortSignal(options: unknown): AbortSignal | undefined {
 
   const context = options as ToolExecutionContext;
   return context.abortSignal;
+}
+
+function getToolCallId(options: unknown): string | undefined {
+  if (typeof options !== "object" || options === null) {
+    return undefined;
+  }
+
+  const { toolCallId } = options as ToolExecutionContext;
+  return typeof toolCallId === "string" ? toolCallId : undefined;
 }
 
 function getRequestedAgentId(args: unknown): string | undefined {
@@ -198,9 +208,14 @@ class SharedExecutionLock {
  * provider's parallel-tool-call planning behavior. Built-in forked explore
  * tasks share the read side so they can overlap with each other, while every
  * other tool call stays exclusive.
+ *
+ * `onExecutionStart` fires right after the execution lock is acquired (i.e.
+ * when the tool actually starts running, not when the model emitted the call),
+ * so queued siblings don't count wait time as execution time.
  */
 export function withSequentialExecution(
-  tools: Record<string, Tool> | undefined
+  tools: Record<string, Tool> | undefined,
+  onExecutionStart?: (toolCallId: string) => void
 ): Record<string, Tool> | undefined {
   if (!tools) {
     return tools;
@@ -231,6 +246,10 @@ export function withSequentialExecution(
       await using _lock = canRunWithSiblingExploreTasks(baseTool, args)
         ? await executionLock.acquireRead(abortSignal)
         : await executionLock.acquireWrite(abortSignal);
+      const toolCallId = getToolCallId(options);
+      if (onExecutionStart && toolCallId !== undefined) {
+        onExecutionStart(toolCallId);
+      }
       return await executeFn.call(baseTool, args, options);
     };
 

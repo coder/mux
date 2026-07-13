@@ -258,6 +258,7 @@ export {
   StreamStartEventSchema,
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
+  ToolCallExecutionStartEventSchema,
   ToolCallStartEventSchema,
   BashOutputEventSchema,
   TaskCreatedEventSchema,

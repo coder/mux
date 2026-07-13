@@ -897,6 +897,10 @@ export class WorkspaceStore {
       applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
+    "tool-call-execution-start": (workspaceId, aggregator, data) => {
+      applyWorkspaceChatEventToAggregator(aggregator, data);
+      this.states.bump(workspaceId);
+    },
     "tool-call-delta": (workspaceId, aggregator, data) => {
       applyWorkspaceChatEventToAggregator(aggregator, data);
       this.scheduleStreamingStateBump(workspaceId);

@@ -646,6 +646,7 @@ export class AIService extends EventEmitter {
       "stream-start",
       "stream-delta",
       "tool-call-start",
+      "tool-call-execution-start",
       "tool-call-delta",
       "tool-call-end",
       "reasoning-delta",

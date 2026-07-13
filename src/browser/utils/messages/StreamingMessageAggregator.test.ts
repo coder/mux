@@ -1903,6 +1903,38 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  test("tool-call-execution-start stamps executionStartedAt onto the displayed tool row", () => {
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+    startTestStream(aggregator, { messageId: "msg-1" });
+    startToolCall(aggregator, {
+      toolCallId: "tool-queued",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      timestamp: 1_000,
+    });
+
+    // Queued behind a sibling: no execution start yet.
+    const queuedRow = aggregator
+      .getDisplayedMessages()
+      .find((m) => m.type === "tool" && m.toolCallId === "tool-queued");
+    expect(queuedRow?.type).toBe("tool");
+    expect(queuedRow?.type === "tool" ? queuedRow.executionStartedAt : null).toBeUndefined();
+
+    aggregator.handleToolCallExecutionStart({
+      type: "tool-call-execution-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-queued",
+      timestamp: 5_000,
+    });
+
+    const executingRow = aggregator
+      .getDisplayedMessages()
+      .find((m) => m.type === "tool" && m.toolCallId === "tool-queued");
+    expect(executingRow?.type === "tool" ? executingRow.executionStartedAt : undefined).toBe(5_000);
+  });
+
   test("keeps richer in-memory parts when append replay sends a stale duplicate", () => {
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
