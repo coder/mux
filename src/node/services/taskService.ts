@@ -3930,16 +3930,24 @@ export class TaskService {
             this.pendingTaskWorkspaceRemovals.set(id, removePromise);
             const trackedPromise = removePromise;
             void trackedPromise
-              .catch((error: unknown) => {
-                log.debug("terminateDescendantAgentTask: workspace removal threw", {
-                  taskId: id,
-                  error,
-                });
-                return undefined;
-              })
-              .finally(() => {
+              .then(
+                (result) => result.success,
+                (error: unknown) => {
+                  log.debug("terminateDescendantAgentTask: workspace removal threw", {
+                    taskId: id,
+                    error,
+                  });
+                  return false;
+                }
+              )
+              .then(async (removed) => {
                 if (this.pendingTaskWorkspaceRemovals.get(id) === trackedPromise) {
                   this.pendingTaskWorkspaceRemovals.delete(id);
+                }
+                // A removal that outlived its termination timeout frees the task slot
+                // only when it settles, so kick the scheduler for queued tasks then.
+                if (removed) {
+                  await this.maybeStartQueuedTasks();
                 }
               });
           }
