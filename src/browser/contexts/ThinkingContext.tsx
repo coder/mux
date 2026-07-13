@@ -27,6 +27,7 @@ import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/util
 import { useMinThinkingLevels } from "@/browser/hooks/useMinThinkingLevels";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useAPI } from "@/browser/contexts/API";
+import { requestActiveTurnThinkingLevel } from "@/browser/utils/activeTurnThinking";
 import {
   clearPendingWorkspaceAiSettings,
   getWorkspaceAiSettingsFromMetadata,
@@ -227,14 +228,10 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         reasoningMode: getCurrentReasoningMode(),
       });
       // Mid-turn change: also request the new level for the active turn's next
-      // model step. No streaming gate here — the backend no-ops cheaply when
-      // idle, and gating on store state would break non-workspace mounts.
+      // model step. Non-workspace (project/global) mounts have no workspaceId
+      // and skip this inside the helper.
       if (props.workspaceId) {
-        api?.workspace
-          .setActiveTurnThinkingLevel({ workspaceId: props.workspaceId, thinkingLevel: level })
-          .catch(() => {
-            // Best-effort: no active stream / transient IPC failure.
-          });
+        requestActiveTurnThinkingLevel(api, props.workspaceId, level);
       }
     },
     [

@@ -77,6 +77,7 @@ import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
+import { requestActiveTurnThinkingLevel } from "@/browser/utils/activeTurnThinking";
 import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
@@ -534,6 +535,10 @@ function AppInner() {
             clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
             // Best-effort only.
           });
+
+        // Mid-turn change: also apply to the active turn's next model step so
+        // the palette/keybind path behaves like the slider (ThinkingProvider).
+        requestActiveTurnThinkingLevel(api, workspaceId, normalized);
       }
 
       // Dispatch toast notification event for UI feedback
