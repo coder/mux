@@ -4095,6 +4095,15 @@ export const router = (authToken?: string) => {
             input.aiSettings
           );
         }),
+      setActiveTurnThinkingLevel: t
+        .input(schemas.workspace.setActiveTurnThinkingLevel.input)
+        .output(schemas.workspace.setActiveTurnThinkingLevel.output)
+        .handler(({ context, input }) => {
+          return context.workspaceService.setActiveTurnThinkingLevel(
+            input.workspaceId,
+            input.thinkingLevel
+          );
+        }),
       updateTitle: t
         .input(schemas.workspace.updateTitle.input)
         .output(schemas.workspace.updateTitle.output)

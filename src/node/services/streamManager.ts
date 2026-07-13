@@ -1,3 +1,4 @@
+import assert from "node:assert";
 import { EventEmitter } from "events";
 import * as path from "path";
 import { PlatformPaths } from "@/common/utils/paths";
@@ -14,6 +15,7 @@ import {
   RetryError,
 } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import { Ok, Err } from "@/common/types/result";
@@ -32,6 +34,10 @@ import type {
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type {
+  ActiveTurnThinkingOverride,
+  RebuildProviderOptionsForThinkingLevel,
+} from "@/node/services/thinkingOverride";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import {
@@ -190,6 +196,19 @@ interface StreamRequestConfig {
    * `activeTools`. Absent when the feature is inactive.
    */
   toolSearchState?: ToolSearchStreamState;
+  /**
+   * Mid-turn thinking override holder — the SESSION'S object, by reference
+   * (never created inside StreamManager: a locally-created object would be
+   * invisible to AgentSession.setActiveTurnThinkingLevel). prepareStep
+   * consumes `pending` before every model step.
+   */
+  thinkingOverrideState?: ActiveTurnThinkingOverride;
+  /**
+   * Closure built by AIService that re-runs the effective-level pipeline
+   * (policy clamp + resolveEffectiveThinkingLevel) and rebuilds provider
+   * options for the stream's model. `null` ⇒ not applicable / no-op.
+   */
+  rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
 }
 
 /**
@@ -220,6 +239,12 @@ export interface PreparedModelFallback {
   thinkingLevel?: string;
   /** Route attribution corrections (routedThroughGateway, routeProvider, costsIncluded). */
   initialMetadataPatch?: Partial<MuxMetadata>;
+  /**
+   * Rebuild closure bound to the FALLBACK model so mid-turn thinking changes
+   * keep working after a fallback hop (the source model's closure would build
+   * options for the wrong model).
+   */
+  rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
 }
 
 export interface ModelFallbackPrepareOptions {
@@ -229,6 +254,12 @@ export interface ModelFallbackPrepareOptions {
    * receives it so provider-message preparation cannot mutate live UI parts.
    */
   continuation?: { assistantMessage: MuxMessage };
+  /**
+   * Mid-turn thinking level to fold into the fallback's baseline: pending (not
+   * yet applied) or already-applied override from the refused stream. The
+   * fallback prepare re-clamps it for the next model.
+   */
+  thinkingLevelOverride?: ThinkingLevel;
 }
 
 export interface ModelFallbackOptions {
@@ -1573,9 +1604,16 @@ export class StreamManager extends EventEmitter {
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
     toolSearchState?: ToolSearchStreamState,
-    onToolExecutionStart?: (toolCallId: string) => void
+    onToolExecutionStart?: (toolCallId: string) => void,
+    thinkingOverrideState?: ActiveTurnThinkingOverride,
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel
   ): StreamRequestConfig {
-    const finalProviderOptions = providerOptions;
+    // Mid-turn thinking overrides mutate providerOptions IN PLACE (the SDK's
+    // per-step deep-merge reads the object passed at streamText() time, so
+    // identity must stay stable). An initially-undefined value would make that
+    // mutation unobservable — normalize to a guaranteed mutable object.
+    const finalProviderOptions =
+      rebuildProviderOptionsForThinkingLevel != null ? (providerOptions ?? {}) : providerOptions;
 
     // Apply cache control for Anthropic models
     let finalMessages = messages;
@@ -1648,6 +1686,8 @@ export class StreamManager extends EventEmitter {
       onStepMessages,
       toolPolicy,
       toolSearchState,
+      thinkingOverrideState,
+      rebuildProviderOptionsForThinkingLevel,
     };
   }
 
@@ -1703,6 +1743,57 @@ export class StreamManager extends EventEmitter {
     ];
   }
 
+  /**
+   * Consume a pending mid-turn thinking-level override for the next step.
+   *
+   * Consume-once: `pending` is always cleared (a failed/no-op application must
+   * not retry on every subsequent step). On success the CONTENT of
+   * `request.providerOptions` is replaced in place — object identity is
+   * preserved because the SDK's per-step deep-merge reads the reference passed
+   * at streamText() time, and deep-merge alone cannot delete keys (e.g. the
+   * Anthropic `thinking` object when moving to "off").
+   *
+   * Returns the rebuilt options (for the prepareStep return value) or
+   * undefined when there is nothing to apply.
+   */
+  private applyPendingThinkingOverride(
+    request: StreamRequestConfig
+  ): Record<string, unknown> | undefined {
+    const state = request.thinkingOverrideState;
+    const pending = state?.pending;
+    if (state == null || pending == null) {
+      return undefined;
+    }
+    state.pending = undefined;
+    const rebuild = request.rebuildProviderOptionsForThinkingLevel;
+    if (rebuild == null) {
+      return undefined;
+    }
+    const rebuilt = rebuild(pending);
+    if (rebuilt == null) {
+      log.debug("Mid-turn thinking override skipped (not applicable / no-op)", {
+        requestedLevel: pending,
+        appliedLevel: state.applied,
+      });
+      return undefined;
+    }
+    const target = request.providerOptions;
+    // buildStreamRequestConfig normalizes providerOptions to a stable object
+    // whenever a rebuild closure is present, so target must exist here.
+    assert(target != null, "providerOptions must be normalized when a rebuild closure is present");
+    for (const key of Object.keys(target)) {
+      delete target[key];
+    }
+    Object.assign(target, rebuilt.providerOptions);
+    state.applied = rebuilt.effectiveLevel;
+    state.onApplied?.(rebuilt.effectiveLevel);
+    log.debug("Mid-turn thinking override applied", {
+      requestedLevel: pending,
+      effectiveLevel: rebuilt.effectiveLevel,
+    });
+    return rebuilt.providerOptions;
+  }
+
   private createStreamResult(
     request: StreamRequestConfig,
     abortController: AbortController,
@@ -1740,10 +1831,25 @@ export class StreamManager extends EventEmitter {
         // undefined when the feature is inactive, keeping the return value
         // byte-identical to the pre-feature behavior.
         const activeTools = computeActiveToolNames(request.toolSearchState);
-        if (rewritten === stepMessages && activeTools === undefined) return undefined;
+        // Mid-turn thinking-level change: consume a pending override before
+        // this step's provider request is built.
+        const thinkingOverride = this.applyPendingThinkingOverride(request);
+        if (
+          rewritten === stepMessages &&
+          activeTools === undefined &&
+          thinkingOverride === undefined
+        ) {
+          return undefined;
+        }
         return {
           ...(rewritten === stepMessages ? {} : { messages: rewritten }),
           ...(activeTools !== undefined ? { activeTools } : {}),
+          // Defense in depth: the in-place request mutation is authoritative
+          // (per-step deep-merge cannot delete keys); returning the rebuilt
+          // options also covers any future SDK options snapshotting.
+          ...(thinkingOverride !== undefined
+            ? { providerOptions: thinkingOverride as ProviderOptions }
+            : {}),
         };
       },
       onChunk: request.onChunk,
@@ -1786,7 +1892,9 @@ export class StreamManager extends EventEmitter {
     onChunk?: StreamTextOnChunk,
     onStepMessages?: (messages: ModelMessage[]) => void,
     modelFallback?: ModelFallbackOptions,
-    toolSearchState?: ToolSearchStreamState
+    toolSearchState?: ToolSearchStreamState,
+    thinkingOverrideState?: ActiveTurnThinkingOverride,
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1809,7 +1917,9 @@ export class StreamManager extends EventEmitter {
       onChunk,
       onStepMessages,
       toolSearchState,
-      (toolCallId) => this.handleToolExecutionStart(workspaceId, messageId, toolCallId)
+      (toolCallId) => this.handleToolExecutionStart(workspaceId, messageId, toolCallId),
+      thinkingOverrideState,
+      rebuildProviderOptionsForThinkingLevel
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -1871,6 +1981,19 @@ export class StreamManager extends EventEmitter {
       cumulativeUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       cumulativeProviderMetadata: undefined,
     };
+
+    // Mid-turn thinking override: route applied levels into this stream's
+    // metadata (partials, stream-end, final assistant message). Wired before
+    // any step can run; the catch-up sync covers a holder that already applied
+    // a level (e.g. re-attachment on retry paths).
+    if (request.thinkingOverrideState) {
+      request.thinkingOverrideState.onApplied = (level) => {
+        streamInfo.thinkingLevel = level;
+      };
+      if (request.thinkingOverrideState.applied) {
+        streamInfo.thinkingLevel = request.thinkingOverrideState.applied;
+      }
+    }
 
     // Atomically register the stream
     this.workspaceStreams.set(workspaceId, streamInfo);
@@ -2436,14 +2559,28 @@ export class StreamManager extends EventEmitter {
     // it would be categorized as a retryable api/unknown error and re-enter the
     // unbounded auto-retry loop this feature exists to prevent. Aborts rethrow so
     // a user interrupt during prepare stays an abort instead of a refusal.
+    // Fold a mid-turn thinking override (pending or already applied) into the
+    // fallback's baseline so the hop doesn't silently revert the user's
+    // mid-turn change. Pending is cleared here — prepare() re-clamps it for
+    // the fallback model and bakes it into the rebuilt provider options.
+    const overrideHolder = streamInfo.request.thinkingOverrideState;
+    const thinkingLevelOverride = overrideHolder?.pending ?? overrideHolder?.applied;
+    if (overrideHolder?.pending != null) {
+      overrideHolder.pending = undefined;
+    }
+    if (overrideHolder != null && thinkingLevelOverride != null) {
+      // Keep the override visible to later hops: prepare() bakes it into this
+      // hop's baseline, but a second hop re-folds from `applied`.
+      overrideHolder.applied = thinkingLevelOverride;
+    }
     let prepared: Result<PreparedModelFallback, string>;
     try {
-      prepared = await fallbackState.options.prepare(
-        nextModelString,
-        continuation?.success === true
+      prepared = await fallbackState.options.prepare(nextModelString, {
+        ...(continuation?.success === true
           ? { continuation: { assistantMessage: continuation.data } }
-          : undefined
-      );
+          : {}),
+        ...(thinkingLevelOverride != null ? { thinkingLevelOverride } : {}),
+      });
     } catch (error) {
       if (streamInfo.abortController.signal.aborted) {
         throw error;
@@ -2485,7 +2622,12 @@ export class StreamManager extends EventEmitter {
       // Same state object: aiService's fallback prepare() rebuilt it in place
       // against the fallback toolset, so prepareStep keeps reading live state.
       streamInfo.request.toolSearchState,
-      (toolCallId) => this.handleToolExecutionStart(workspaceId, streamInfo.messageId, toolCallId)
+      (toolCallId) => this.handleToolExecutionStart(workspaceId, streamInfo.messageId, toolCallId),
+      // Same holder object (the session's setter keeps working across the
+      // hop) with a closure bound to the FALLBACK model. Attached before
+      // createStreamResult below in case the SDK eagerly prepares step 1.
+      streamInfo.request.thinkingOverrideState,
+      prepared.data.rebuildProviderOptionsForThinkingLevel
     );
     // createStreamResult may eagerly prepare the first fallback step and update
     // latestMessages. Clear stale source-step messages before starting it so a
@@ -3935,7 +4077,9 @@ export class StreamManager extends EventEmitter {
     onStepMessages?: (messages: ModelMessage[]) => void,
     providedRuntimeTempDir?: string,
     modelFallback?: ModelFallbackOptions,
-    toolSearchState?: ToolSearchStreamState
+    toolSearchState?: ToolSearchStreamState,
+    thinkingOverrideState?: ActiveTurnThinkingOverride,
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -4019,7 +4163,9 @@ export class StreamManager extends EventEmitter {
           onChunk,
           onStepMessages,
           modelFallback,
-          toolSearchState
+          toolSearchState,
+          thinkingOverrideState,
+          rebuildProviderOptionsForThinkingLevel
         );
 
         // Guard against a narrow race:

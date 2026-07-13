@@ -348,6 +348,25 @@ export function enforceThinkingPolicy(
   return closest;
 }
 /**
+ * Whether a thinking-level transition would swap the underlying model instance
+ * for xAI's grok-4-1-fast (providerModelFactory maps off → non-reasoning and
+ * non-off → reasoning variants at model creation). Such transitions cannot be
+ * applied to an in-flight stream via provider options, so mid-turn overrides
+ * skip them (the persisted setting still applies to the next turn).
+ */
+export function isXaiGrokFastVariantSwap(
+  modelString: string,
+  currentLevel: ThinkingLevel,
+  nextLevel: ThinkingLevel
+): boolean {
+  const [provider, modelId] = modelString.trim().toLowerCase().split(":", 2);
+  if (provider !== "xai" || modelId !== "grok-4-1-fast") {
+    return false;
+  }
+  return (currentLevel === "off") !== (nextLevel === "off");
+}
+
+/**
  * Resolve a parsed thinking input to a concrete ThinkingLevel for a given model.
  *
  * Named levels are returned as-is (the backend's enforceThinkingPolicy will

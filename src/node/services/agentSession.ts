@@ -60,6 +60,7 @@ import {
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import { enforceThinkingPolicy, resolveMinimumThinkingLevel } from "@/common/utils/thinking/policy";
+import type { ActiveTurnThinkingOverride } from "@/node/services/thinkingOverride";
 import {
   createMuxMessage,
   dedupeAgentSkillRefs,
@@ -359,6 +360,14 @@ export class AgentSession {
   private disposed = false;
   private turnPhase: TurnPhase = TurnPhase.IDLE;
   private activePreparedTurnAbortController: AbortController | null = null;
+  /**
+   * Per-turn holder for mid-turn thinking-level overrides. Created when a turn
+   * is durably accepted (before any await that could let the renderer's slider
+   * route race in), threaded by reference into StreamManager, and cleared when
+   * the turn ends (setTurnPhase → IDLE). Null while idle: the slider route then
+   * reports accepted:false and persisted settings cover the next turn.
+   */
+  private activeTurnThinkingOverride: ActiveTurnThinkingOverride | null = null;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
   // Provider-executed tools (for example native web_search/web_fetch) complete inside one
@@ -2806,6 +2815,13 @@ export class AgentSession {
       return Ok(undefined);
     }
 
+    // Turn durably accepted + options finalized: open the mid-turn thinking
+    // override window BEFORE the user-message emit / onAccepted / any further
+    // await, so a slider change during PREPARING (runtime warmup, model
+    // creation) lands in the holder the stream's prepareStep will read.
+    const turnThinkingOverride: ActiveTurnThinkingOverride = {};
+    this.activeTurnThinkingOverride = turnThinkingOverride;
+
     // Emit snapshots only for immediately-sent turns. On on-send compaction paths,
     // snapshots are deferred with the follow-up message to avoid duplicate ephemeral
     // snapshot rows that were never persisted.
@@ -2848,6 +2864,11 @@ export class AgentSession {
     try {
       await internal?.onAccepted?.();
     } catch (error) {
+      // Pre-stream failure: identity-guarded so a replacement turn's holder
+      // (created while this one unwound) is never cleared by mistake.
+      if (this.activeTurnThinkingOverride === turnThinkingOverride) {
+        this.activeTurnThinkingOverride = null;
+      }
       return Err(createUnknownSendMessageError(getErrorMessage(error)));
     }
 
@@ -2887,7 +2908,8 @@ export class AgentSession {
           undefined,
           agentInitiated,
           preparedTurnAbortController.signal,
-          goalKind
+          goalKind,
+          turnThinkingOverride
         );
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
@@ -2963,6 +2985,10 @@ export class AgentSession {
     // accept its options, even if startup fails before the stream fully begins.
     this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
+    // Open the mid-turn thinking override window for the resumed turn (after
+    // setTurnPhase(PREPARING), which clears the holder on the IDLE transition).
+    const turnThinkingOverride: ActiveTurnThinkingOverride = {};
+    this.activeTurnThinkingOverride = turnThinkingOverride;
     try {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned.
@@ -2973,7 +2999,8 @@ export class AgentSession {
         undefined,
         internal?.agentInitiated,
         undefined,
-        internal?.goalKind
+        internal?.goalKind,
+        turnThinkingOverride
       );
       if (!result.success) {
         return result;
@@ -3507,7 +3534,11 @@ export class AgentSession {
     disablePostCompactionAttachments?: boolean,
     agentInitiated?: boolean,
     abortSignal?: AbortSignal,
-    goalKind?: GoalSyntheticMessageKind
+    goalKind?: GoalSyntheticMessageKind,
+    // Session-owned per-turn holder for mid-turn thinking changes. Passed
+    // explicitly (not read from the field) so a preempted turn can never pick
+    // up its replacement's holder. Absent for internal retry paths.
+    activeTurnThinkingOverride?: ActiveTurnThinkingOverride
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -3692,6 +3723,10 @@ export class AgentSession {
       disableWorkspaceAgents: options?.disableWorkspaceAgents,
       hasQueuedMessages: this.hasQueuedMessages.bind(this),
       openaiTruncationModeOverride,
+      // Mid-turn thinking overrides clamp against the same floor as the
+      // send-time level above (single source of truth for the floor).
+      minThinkingLevel,
+      activeTurnThinkingOverride,
     });
 
     if (!streamResult.success) {
@@ -5014,6 +5049,10 @@ export class AgentSession {
     this.emitStreamLifecycleIfChanged();
 
     if (next === TurnPhase.IDLE) {
+      // Turn ended: expire any mid-turn thinking override. Safe unconditionally
+      // because a replacement turn (e.g. an edit) only creates its holder after
+      // the preempted turn has already been transitioned to IDLE.
+      this.activeTurnThinkingOverride = null;
       const waiters = this.idleWaiters;
       this.idleWaiters = [];
       for (const resolve of waiters) {
@@ -5024,6 +5063,23 @@ export class AgentSession {
 
   isBusy(): boolean {
     return this.turnPhase !== TurnPhase.IDLE;
+  }
+
+  /**
+   * Mid-turn thinking change: request that the active turn's next model step
+   * uses `level`. Returns accepted:false when no turn is active — the caller
+   * already persisted the setting, which covers the next turn. Last write wins
+   * across consecutive calls; the pending value expires silently if the turn
+   * ends before another model step occurs.
+   */
+  setActiveTurnThinkingLevel(level: ThinkingLevel): { accepted: boolean } {
+    this.assertNotDisposed("setActiveTurnThinkingLevel");
+    const holder = this.activeTurnThinkingOverride;
+    if (!holder) {
+      return { accepted: false };
+    }
+    holder.pending = level;
+    return { accepted: true };
   }
 
   isPreparingTurn(): boolean {

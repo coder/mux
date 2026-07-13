@@ -226,12 +226,24 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         thinkingLevel: level,
         reasoningMode: getCurrentReasoningMode(),
       });
+      // Mid-turn change: also request the new level for the active turn's next
+      // model step. No streaming gate here — the backend no-ops cheaply when
+      // idle, and gating on store state would break non-workspace mounts.
+      if (props.workspaceId) {
+        api?.workspace
+          .setActiveTurnThinkingLevel({ workspaceId: props.workspaceId, thinkingLevel: level })
+          .catch(() => {
+            // Best-effort: no active stream / transient IPC failure.
+          });
+      }
     },
     [
+      api,
       defaultModel,
       getCurrentReasoningMode,
       metadataSettings.model,
       persistAgentAiSettings,
+      props.workspaceId,
       scopeId,
       setThinkingLevelInternal,
     ]

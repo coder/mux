@@ -1202,6 +1202,17 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  // Mid-turn thinking change: request that the active turn's NEXT model step
+  // uses this level. `accepted: false` (success) = no turn active — persisted
+  // settings already cover the next turn. `accepted: true` = the level applies
+  // to the current turn's next step if one occurs (expires silently otherwise).
+  setActiveTurnThinkingLevel: {
+    input: z.object({
+      workspaceId: z.string(),
+      thinkingLevel: ThinkingLevelSchema,
+    }),
+    output: ResultSchema(z.object({ accepted: z.boolean() }), z.string()),
+  },
   preflightArchive: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(ArchivePreflightResultSchema, z.string()),

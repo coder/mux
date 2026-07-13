@@ -7125,6 +7125,27 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Mid-turn thinking change: forward the requested level to the workspace's
+   * active turn (if any). Deliberately `sessions.get`, not getOrCreateSession —
+   * creating a session to tell it "change the turn you don't have" is pointless;
+   * persisted settings already cover the next turn.
+   */
+  setActiveTurnThinkingLevel(
+    workspaceId: string,
+    level: ThinkingLevel
+  ): Result<{ accepted: boolean }, string> {
+    try {
+      const session = this.sessions.get(workspaceId.trim());
+      if (!session) {
+        return Ok({ accepted: false });
+      }
+      return Ok(session.setActiveTurnThinkingLevel(level));
+    } catch (error) {
+      return Err(`Failed to set active-turn thinking level: ${getErrorMessage(error)}`);
+    }
+  }
+
   async fork(
     sourceWorkspaceId: string,
     newName?: string,
