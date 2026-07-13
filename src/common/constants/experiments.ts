@@ -181,7 +181,7 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.TOOL_SEARCH,
     name: "Tool Search",
     description:
-      "Defer MCP tool definitions out of the model-visible tool list until the model discovers them via the tool_search tool",
+      "Defer MCP tool definitions out of the model-visible tool list until the model discovers them via the tool_catalog_search tool",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

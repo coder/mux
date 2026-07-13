@@ -28,6 +28,7 @@ import {
   injectFileChangeNotifications,
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
+import { normalizeLegacyToolSearchMessages } from "@/common/utils/tools/toolCatalog";
 import { applyCacheControl, type AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
 import { log } from "./log";
 
@@ -183,7 +184,9 @@ export async function prepareMessagesForProvider(
 
   // --- ModelMessage-level transforms ---
 
-  const modelMessages = sanitizeAssistantModelMessages(rawModelMessages, workspaceId);
+  const modelMessages = normalizeLegacyToolSearchMessages(
+    sanitizeAssistantModelMessages(rawModelMessages, workspaceId)
+  );
 
   log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
 

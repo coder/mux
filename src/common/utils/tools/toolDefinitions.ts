@@ -2479,11 +2479,11 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
       .strict(),
   },
   // #endregion NOTIFY_DOCS
-  tool_search: {
+  tool_catalog_search: {
     description:
       "Search the catalog of deferred tools. Some tools (provided by MCP servers) are deferred: " +
       "they exist but are not currently visible in your tool list. " +
-      "Call tool_search with task/capability keywords to discover them; matched tools become available on the next step. " +
+      "Call tool_catalog_search with task/capability keywords to discover them; matched tools become available on the next step. " +
       "Returns matched tool names and descriptions plus the total number of deferred tools (there may be more undiscovered — refine the query to find them).",
     schema: z
       .object({
@@ -2990,7 +2990,7 @@ export function getAvailableTools(
     enableDynamicWorkflows?: boolean;
     /** Whether the agent memory tool is available (memory experiment enabled). */
     enableMemory?: boolean;
-    /** Whether tool_search is available (tool-search experiment + deferred MCP tools present). */
+    /** Whether tool_catalog_search is available (tool-search experiment + deferred MCP tools present). */
     enableToolSearch?: boolean;
     /**
      * Whether the Review pane tools (review_pane_update/review_pane_get) are
@@ -3041,7 +3041,7 @@ export function getAvailableTools(
     "file_edit_insert",
     ...(enableMemory ? ["memory"] : []),
     ...(enableAdvisor ? ["advisor"] : []),
-    ...(enableToolSearch ? ["tool_search"] : []),
+    ...(enableToolSearch ? ["tool_catalog_search"] : []),
     "ask_user_question",
     "propose_plan",
     "bash",

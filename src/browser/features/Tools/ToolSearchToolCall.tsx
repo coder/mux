@@ -18,7 +18,7 @@ import {
 } from "./Shared/toolUtils";
 
 /**
- * Transcript card for the `tool_search` tool (tool-search experiment) — the
+ * Transcript card for the `tool_catalog_search` tool (tool-search experiment), the
  * call the model makes to discover deferred MCP tools. Collapsed it reads as a
  * glanceable "Tool search · <query> · N matches"; expanded it lists the matched
  * tool names with their descriptions.
@@ -76,7 +76,7 @@ export const ToolSearchToolCall: React.FC<ToolSearchToolCallProps> = (props) => 
     <ToolContainer expanded={expanded} className="@container">
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon toolName="tool_search" />
+        <ToolIcon toolName="tool_catalog_search" />
         <span className="text-muted-foreground truncate italic">{props.args.query}</span>
         {view.kind === "matches" && (
           // Hide the count in very narrow containers so the truncating query keeps priority.

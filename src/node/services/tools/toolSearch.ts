@@ -1,5 +1,5 @@
 /**
- * tool_search tool (tool-search experiment, Phase 1).
+ * tool_catalog_search tool (tool-search experiment, Phase 1).
  *
  * Lets the model discover deferred MCP tools by keyword. Matches are added to
  * the per-stream activation set, so StreamManager's prepareStep advertises
@@ -17,8 +17,8 @@ export const createToolSearchTool: ToolFactory = (config) => {
   // gate builds the catalog — read it lazily at execute time.
   const runtime = config.toolSearchRuntime;
   return tool({
-    description: TOOL_DEFINITIONS.tool_search.description,
-    inputSchema: TOOL_DEFINITIONS.tool_search.schema,
+    description: TOOL_DEFINITIONS.tool_catalog_search.description,
+    inputSchema: TOOL_DEFINITIONS.tool_catalog_search.schema,
     execute: ({ query, limit }): ToolSearchToolResult => {
       const state = runtime?.state;
       // Defensive: when the post-policy gate deactivated deferral this tool is

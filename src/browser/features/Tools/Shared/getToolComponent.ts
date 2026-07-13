@@ -160,7 +160,15 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   // Legacy-only transcript renderer for historical status_set calls.
   status_set: { component: StatusSetToolCall, schema: legacyStatusSetSchema },
   notify: { component: NotifyToolCall, schema: TOOL_DEFINITIONS.notify.schema },
-  tool_search: { component: ToolSearchToolCall, schema: TOOL_DEFINITIONS.tool_search.schema },
+  tool_catalog_search: {
+    component: ToolSearchToolCall,
+    schema: TOOL_DEFINITIONS.tool_catalog_search.schema,
+  },
+  // Legacy-only transcript renderer from before AI SDK 7 reserved tool_search.
+  tool_search: {
+    component: ToolSearchToolCall,
+    schema: TOOL_DEFINITIONS.tool_catalog_search.schema,
+  },
   analytics_query: {
     component: AnalyticsQueryToolCall,
     schema: TOOL_DEFINITIONS.analytics_query.schema,

@@ -307,7 +307,7 @@ export interface ToolConfiguration {
     abortSignal: AbortSignal;
   };
   /**
-   * Runtime holder for the tool_search tool (tool-search experiment; present
+   * Runtime holder for the tool_catalog_search tool (tool-search experiment; present
    * only when the experiment is enabled and MCP tools exist for this stream).
    * `state` is assigned by aiService after policy filtering builds the catalog.
    */
@@ -595,7 +595,7 @@ export async function getToolsForModel(
     skills_catalog_search: createSkillsCatalogSearchTool(config),
     skills_catalog_read: createSkillsCatalogReadTool(config),
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
-    ...(config.toolSearchRuntime ? { tool_search: createToolSearchTool(config) } : {}),
+    ...(config.toolSearchRuntime ? { tool_catalog_search: createToolSearchTool(config) } : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     // propose_name and propose_status are intentionally NOT registered here —

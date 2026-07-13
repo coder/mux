@@ -5161,7 +5161,7 @@ describe("StreamManager - tool search activeTools scoping", () => {
         { name: "slack_list_channels", description: "List channels", paramText: "" },
       ],
       deferredToolNames: new Set(["slack_send_message", "slack_list_channels"]),
-      allToolNames: ["bash", "tool_search", "slack_send_message", "slack_list_channels"],
+      allToolNames: ["bash", "tool_catalog_search", "slack_send_message", "slack_list_channels"],
       activatedToolNames: new Set(),
     };
 
@@ -5173,15 +5173,15 @@ describe("StreamManager - tool search activeTools scoping", () => {
     const prepareStep = capturePrepareStep(streamTextSpy);
 
     const firstStep = await prepareStep({ messages });
-    expect(firstStep?.activeTools).toEqual(["bash", "tool_search"]);
+    expect(firstStep?.activeTools).toEqual(["bash", "tool_catalog_search"]);
     // Messages were unchanged, so no messages key should be introduced.
     expect(firstStep && "messages" in firstStep).toBe(false);
 
-    // Simulate tool_search.execute activating a tool mid-stream: the next
+    // Simulate tool_catalog_search.execute activating a tool mid-stream: the next
     // prepareStep call must advertise it without rebuilding the request.
     toolSearchState.activatedToolNames.add("slack_send_message");
     const nextStep = await prepareStep({ messages });
-    expect(nextStep?.activeTools).toEqual(["bash", "tool_search", "slack_send_message"]);
+    expect(nextStep?.activeTools).toEqual(["bash", "tool_catalog_search", "slack_send_message"]);
   });
 
   test("buildStreamRequestConfig forwards the tool search state reference", () => {
@@ -5214,7 +5214,7 @@ describe("StreamManager - tool search activeTools scoping", () => {
       toolSearchState
     );
 
-    // Same reference, not a copy — tool_search.execute mutations must be
+    // Same reference, not a copy. tool_catalog_search.execute mutations must be
     // visible to prepareStep.
     expect(request.toolSearchState).toBe(toolSearchState);
   });

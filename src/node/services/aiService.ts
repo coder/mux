@@ -137,6 +137,7 @@ import {
   prepareToolSearch,
   rebuildToolSearchState,
   seedToolSearchActivationsFromMessages,
+  TOOL_SEARCH_TOOL_NAME,
   type ToolSearchRuntime,
 } from "@/common/utils/tools/toolCatalog";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
@@ -1678,7 +1679,7 @@ export class AIService extends EventEmitter {
       }
 
       // Tool search (tool-search experiment): assembly-time gate. The runtime
-      // holder makes getToolsForModel create the tool_search tool; its `state`
+      // holder makes getToolsForModel create the tool_catalog_search tool; its `state`
       // is assigned only after policy filtering builds the deferred catalog
       // (see prepareToolSearch below). Without MCP tools there is nothing to
       // defer, so the feature stays fully inactive.
@@ -2226,7 +2227,7 @@ export class AIService extends EventEmitter {
       // must consume the policy-filtered record so policy-disabled tools never
       // enter the deferred catalog. This runs before every downstream consumer
       // of `tools` (system-prompt rebuild, sentinel tool names, telemetry,
-      // streaming) so a dropped tool_search cannot leak anywhere.
+      // streaming) so a dropped tool_catalog_search cannot leak anywhere.
       // PTC gate uses the same condition toolAssembly uses to add code_execution:
       // presence-sniffing the record would misfire on an MCP tool named
       // code_execution (see prepareToolSearch).
@@ -2299,7 +2300,7 @@ export class AIService extends EventEmitter {
         systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
 
-      // Re-activate deferred tools discovered by tool_search in earlier turns
+      // Re-activate deferred tools discovered by tool_catalog_search in earlier turns
       // without requiring a new search. Must run before the sentinel list is
       // computed so pre-activated tools are advertised in agent transitions.
       if (toolSearchRuntime?.state) {
@@ -2724,14 +2725,14 @@ export class AIService extends EventEmitter {
                         toolPolicy: effectiveToolPolicy,
                         ptcEnabled,
                       }).tools;
-                    } else if (!(mcpTools && "tool_search" in mcpTools)) {
+                    } else if (!(mcpTools && TOOL_SEARCH_TOOL_NAME in mcpTools)) {
                       // The primary-path gate deactivated deferral (e.g. every
                       // MCP tool was policy-disabled). StreamManager was never
-                      // handed scoping state, so tool_search must not appear in
+                      // handed scoping state, so tool_catalog_search must not appear in
                       // the fallback toolset either. Skipped when an MCP tool
                       // collides with the name: that record entry is a
                       // legitimate MCP tool, not our search tool.
-                      const { tool_search: _removed, ...rest } = nextTools;
+                      const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = nextTools;
                       nextTools = rest;
                     }
                   }

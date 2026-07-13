@@ -6,10 +6,13 @@ import {
   buildToolCatalog,
   computeActiveToolNames,
   extractPreActivatedToolNames,
+  LEGACY_TOOL_SEARCH_TOOL_NAME,
+  normalizeLegacyToolSearchMessages,
   prepareToolSearch,
   rebuildToolSearchState,
   searchToolCatalog,
   seedToolSearchActivationsFromMessages,
+  TOOL_SEARCH_TOOL_NAME,
   type ToolCatalogEntry,
   type ToolSearchStreamState,
 } from "@/common/utils/tools/toolCatalog";
@@ -38,7 +41,7 @@ function baseTools(): Record<string, Tool> {
   return {
     bash: fakeTool("Run a shell command"),
     file_read: fakeTool("Read a file"),
-    tool_search: fakeTool("Search deferred tools"),
+    tool_catalog_search: fakeTool("Search deferred tools"),
     slack_send_message: mcpTool("Send a message to a Slack channel", {
       channel: { description: "Slack channel ID" },
     }),
@@ -77,17 +80,17 @@ describe("buildToolCatalog", () => {
     expect(result.catalog.some((entry) => entry.name === "github_create_issue")).toBe(false);
   });
 
-  test("tool_search itself is never deferred, even if listed as an MCP name", () => {
+  test("tool_catalog_search itself is never deferred, even if listed as an MCP name", () => {
     const result = buildToolCatalog({
       tools: baseTools(),
-      mcpToolNames: [...MCP_NAMES, "tool_search"],
+      mcpToolNames: [...MCP_NAMES, "tool_catalog_search"],
     });
-    expect(result.deferredToolNames.has("tool_search")).toBe(false);
+    expect(result.deferredToolNames.has("tool_catalog_search")).toBe(false);
   });
 
   test("extracts description and param text; degrades gracefully on odd schemas", () => {
     const tools: Record<string, Tool> = {
-      tool_search: fakeTool("Search deferred tools"),
+      tool_catalog_search: fakeTool("Search deferred tools"),
       weird: fakeTool("Weird tool", "not-an-object"),
       slack_send_message: mcpTool("Send a message", { channel: { description: "channel ID" } }),
     };
@@ -113,27 +116,27 @@ describe("prepareToolSearch (post-policy gate)", () => {
     expect(result.state!.deferredToolNames.size).toBe(3);
   });
 
-  test("tool_search policy-disabled (absent): no state, MCP tools untouched", () => {
+  test("tool_catalog_search policy-disabled (absent): no state, MCP tools untouched", () => {
     const tools = baseTools();
-    delete tools.tool_search;
+    delete tools.tool_catalog_search;
     const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
     expect(result.state).toBeUndefined();
     expect(result.tools).toBe(tools);
     expect(Object.keys(result.tools)).toContain("slack_send_message");
   });
 
-  test("all MCP tools policy-disabled: tool_search removed, no state", () => {
+  test("all MCP tools policy-disabled: tool_catalog_search removed, no state", () => {
     const tools = baseTools();
     for (const name of MCP_NAMES) {
       delete tools[name];
     }
     const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
     expect(result.state).toBeUndefined();
-    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    expect(Object.keys(result.tools)).not.toContain("tool_catalog_search");
     expect(Object.keys(result.tools).sort()).toEqual(["bash", "file_read"]);
   });
 
-  test("all MCP tools required: nothing left to defer, tool_search removed", () => {
+  test("all MCP tools required: nothing left to defer, tool_catalog_search removed", () => {
     const policy: ToolPolicy = MCP_NAMES.map((name) => ({
       regex_match: name,
       action: "require" as const,
@@ -144,17 +147,17 @@ describe("prepareToolSearch (post-policy gate)", () => {
       toolPolicy: policy,
     });
     expect(result.state).toBeUndefined();
-    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    expect(Object.keys(result.tools)).not.toContain("tool_catalog_search");
   });
 
-  test("PTC enabled: deactivates, tool_search removed, MCP tools untouched", () => {
+  test("PTC enabled: deactivates, tool_catalog_search removed, MCP tools untouched", () => {
     // Non-exclusive PTC embeds/exposes MCP tools through code_execution's
     // bridge, bypassing activeTools scoping — deferral must deactivate.
     const tools = baseTools();
     tools.code_execution = fakeTool("Run JS against bridged tools");
     const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES, ptcEnabled: true });
     expect(result.state).toBeUndefined();
-    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    expect(Object.keys(result.tools)).not.toContain("tool_catalog_search");
     expect(Object.keys(result.tools)).toContain("code_execution");
     expect(Object.keys(result.tools)).toContain("slack_send_message");
   });
@@ -172,19 +175,19 @@ describe("prepareToolSearch (post-policy gate)", () => {
     expect(result.state!.deferredToolNames.has("code_execution")).toBe(true);
   });
 
-  test("MCP name collision with tool_search: deactivates, record untouched", () => {
-    // Server "tool" + tool "search" normalize to "tool_search" and the MCP
+  test("MCP name collision with tool_catalog_search: deactivates, record untouched", () => {
+    // Server "tool" + tool "search" normalize to "tool_catalog_search" and the MCP
     // spread overwrites the built-in search tool — deferral must deactivate
     // (no working search tool) and the colliding MCP tool must survive.
     const tools = baseTools();
-    tools.tool_search = mcpTool("MCP tool that happens to be named tool_search");
+    tools.tool_catalog_search = mcpTool("MCP tool that happens to be named tool_catalog_search");
     const result = prepareToolSearch({
       tools,
-      mcpToolNames: [...MCP_NAMES, "tool_search"],
+      mcpToolNames: [...MCP_NAMES, "tool_catalog_search"],
     });
     expect(result.state).toBeUndefined();
     expect(result.tools).toBe(tools);
-    expect(Object.keys(result.tools)).toContain("tool_search");
+    expect(Object.keys(result.tools)).toContain("tool_catalog_search");
     expect(Object.keys(result.tools)).toContain("slack_send_message");
   });
 });
@@ -215,15 +218,15 @@ describe("rebuildToolSearchState (model-fallback path)", () => {
       delete nextTools[name];
     }
     const result = rebuildToolSearchState(state, { tools: nextTools, mcpToolNames: MCP_NAMES });
-    expect(Object.keys(result.tools)).not.toContain("tool_search");
+    expect(Object.keys(result.tools)).not.toContain("tool_catalog_search");
     // Same state object deactivates: prepareStep stops returning activeTools.
     expect(computeActiveToolNames(state)).toBeUndefined();
   });
 
-  test("deactivates in place when tool_search is gone from the fallback toolset", () => {
+  test("deactivates in place when tool_catalog_search is gone from the fallback toolset", () => {
     const state = activeState();
     const nextTools = baseTools();
-    delete nextTools.tool_search;
+    delete nextTools.tool_catalog_search;
     const result = rebuildToolSearchState(state, { tools: nextTools, mcpToolNames: MCP_NAMES });
     expect(result.tools).toBe(nextTools);
     expect(computeActiveToolNames(state)).toBeUndefined();
@@ -298,22 +301,32 @@ describe("extractPreActivatedToolNames", () => {
 
   test("reads json-encoded outputs", () => {
     const names = extractPreActivatedToolNames([
-      toolResultMessage("tool_search", { type: "json", value: matchesResult }),
+      toolResultMessage("tool_catalog_search", { type: "json", value: matchesResult }),
     ]);
     expect([...names]).toEqual(["slack_send_message"]);
   });
 
   test("reads text-encoded (stringified) outputs", () => {
     const names = extractPreActivatedToolNames([
-      toolResultMessage("tool_search", { type: "text", value: JSON.stringify(matchesResult) }),
+      toolResultMessage("tool_catalog_search", {
+        type: "text",
+        value: JSON.stringify(matchesResult),
+      }),
     ]);
     expect([...names]).toEqual(["slack_send_message"]);
   });
 
   test("reads raw object outputs and ignores non-JSON text", () => {
     const names = extractPreActivatedToolNames([
-      toolResultMessage("tool_search", matchesResult),
-      toolResultMessage("tool_search", { type: "text", value: "not json" }),
+      toolResultMessage("tool_catalog_search", matchesResult),
+      toolResultMessage("tool_catalog_search", { type: "text", value: "not json" }),
+    ]);
+    expect([...names]).toEqual(["slack_send_message"]);
+  });
+
+  test("reads legacy tool_search outputs from persisted history", () => {
+    const names = extractPreActivatedToolNames([
+      toolResultMessage(LEGACY_TOOL_SEARCH_TOOL_NAME, { type: "json", value: matchesResult }),
     ]);
     expect([...names]).toEqual(["slack_send_message"]);
   });
@@ -340,12 +353,73 @@ describe("extractPreActivatedToolNames", () => {
       return raw as MuxMessage;
     };
     const names = extractPreActivatedToolNames([
-      muxMessage("tool_search", "output-available", matchesResult),
+      muxMessage("tool_catalog_search", "output-available", matchesResult),
+      muxMessage(LEGACY_TOOL_SEARCH_TOOL_NAME, "output-available", {
+        ...matchesResult,
+        matches: [{ name: "github_create_issue", description: "Create" }],
+      }),
       // Pending / other-tool parts must not contribute.
-      muxMessage("tool_search", "input-available"),
+      muxMessage("tool_catalog_search", "input-available"),
       muxMessage("bash", "output-available", matchesResult),
     ]);
-    expect([...names]).toEqual(["slack_send_message"]);
+    expect([...names]).toEqual(["slack_send_message", "github_create_issue"]);
+  });
+});
+
+describe("normalizeLegacyToolSearchMessages", () => {
+  test("rewrites completed Mux search history without relabeling unrelated tools", () => {
+    const muxResult = {
+      query: "slack",
+      matches: [{ name: "slack_send_message", description: "Send" }],
+      totalDeferred: 3,
+    };
+    const messages: ModelMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "mux-search",
+            toolName: LEGACY_TOOL_SEARCH_TOOL_NAME,
+            input: { query: "slack" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "mcp-search",
+            toolName: LEGACY_TOOL_SEARCH_TOOL_NAME,
+            input: { text: "slack" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "mux-search",
+            toolName: LEGACY_TOOL_SEARCH_TOOL_NAME,
+            output: { type: "json", value: muxResult },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "mcp-search",
+            toolName: LEGACY_TOOL_SEARCH_TOOL_NAME,
+            output: { type: "json", value: { hits: [] } },
+          },
+        ],
+      },
+    ];
+
+    const normalized = normalizeLegacyToolSearchMessages(messages);
+    const normalizedJson = JSON.stringify(normalized);
+
+    expect(normalizedJson).toContain(
+      `"toolCallId":"mux-search","toolName":"${TOOL_SEARCH_TOOL_NAME}"`
+    );
+    expect(normalizedJson).toContain(
+      `"toolCallId":"mcp-search","toolName":"${LEGACY_TOOL_SEARCH_TOOL_NAME}"`
+    );
+    expect(JSON.stringify(messages)).not.toContain(TOOL_SEARCH_TOOL_NAME);
   });
 });
 
@@ -358,7 +432,7 @@ describe("seedToolSearchActivationsFromMessages", () => {
         {
           type: "tool-result",
           toolCallId: "call-1",
-          toolName: "tool_search",
+          toolName: "tool_catalog_search",
           output: {
             type: "json",
             value: {
@@ -399,12 +473,12 @@ describe("computeActiveToolNames", () => {
     const firstStep = computeActiveToolNames(state)!;
     expect(firstStep).toContain("bash");
     expect(firstStep).toContain("file_read");
-    expect(firstStep).toContain("tool_search");
+    expect(firstStep).toContain("tool_catalog_search");
     for (const name of MCP_NAMES) {
       expect(firstStep).not.toContain(name);
     }
 
-    // Simulate tool_search.execute activating a match: the next step's
+    // Simulate tool_catalog_search.execute activating a match: the next step's
     // activeTools must advertise it (acceptance criteria 2–3).
     state.activatedToolNames.add("slack_send_message");
     const nextStep = computeActiveToolNames(state)!;

@@ -642,14 +642,16 @@ describe("TOOL_DEFINITIONS", () => {
     expect(subAgentTools).not.toContain("review_pane_get");
   });
 
-  it("only includes tool_search when enableToolSearch is set", () => {
+  it("only includes tool_catalog_search when enableToolSearch is set", () => {
     // Off by default: the tool-search experiment must not leak into normal assembly.
-    expect(getAvailableTools("openai:gpt-4o")).not.toContain("tool_search");
+    expect(getAvailableTools("openai:gpt-4o")).not.toContain("tool_catalog_search");
     expect(getAvailableTools("openai:gpt-4o", { enableToolSearch: false })).not.toContain(
-      "tool_search"
+      "tool_catalog_search"
     );
 
-    expect(getAvailableTools("openai:gpt-4o", { enableToolSearch: true })).toContain("tool_search");
+    expect(getAvailableTools("openai:gpt-4o", { enableToolSearch: true })).toContain(
+      "tool_catalog_search"
+    );
   });
 
   it("requires workflow_run calls to use exactly one launch source", () => {

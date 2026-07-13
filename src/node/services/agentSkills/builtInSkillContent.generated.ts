@@ -5491,7 +5491,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "</details>",
       "",
       "<details>",
-      "<summary>tool_search (2)</summary>",
+      "<summary>tool_catalog_search (2)</summary>",
       "",
       "| Env var                | JSON path | Type   | Description                                                                                               |",
       "| ---------------------- | --------- | ------ | --------------------------------------------------------------------------------------------------------- |",

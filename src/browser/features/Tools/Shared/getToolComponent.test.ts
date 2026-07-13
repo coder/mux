@@ -141,17 +141,23 @@ describe("getToolComponent", () => {
     expect(component).toBe(GenericToolCall);
   });
 
-  test("returns ToolSearchToolCall for tool_search with valid args", () => {
-    expect(getToolComponent("tool_search", { query: "send slack message" })).toBe(
+  test("returns ToolSearchToolCall for tool_catalog_search with valid args", () => {
+    expect(getToolComponent("tool_catalog_search", { query: "send slack message" })).toBe(
       ToolSearchToolCall
     );
-    expect(getToolComponent("tool_search", { query: "send slack message", limit: 5 })).toBe(
+    expect(getToolComponent("tool_catalog_search", { query: "send slack message", limit: 5 })).toBe(
       ToolSearchToolCall
     );
   });
 
-  test("tool_search falls back to GenericToolCall when args don't conform", () => {
-    expect(getToolComponent("tool_search", { query: 42 })).toBe(GenericToolCall);
+  test("renders legacy tool_search transcript calls", () => {
+    expect(getToolComponent("tool_search", { query: "send slack message" })).toBe(
+      ToolSearchToolCall
+    );
+  });
+
+  test("tool_catalog_search falls back to GenericToolCall when args don't conform", () => {
+    expect(getToolComponent("tool_catalog_search", { query: 42 })).toBe(GenericToolCall);
   });
 
   test("Object.prototype member names fall back to GenericToolCall instead of throwing", () => {
