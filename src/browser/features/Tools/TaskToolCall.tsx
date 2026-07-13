@@ -437,6 +437,8 @@ interface TaskToolCallProps {
   workspaceId?: string;
   toolCallId?: string;
   startedAt?: number;
+  /** When the model emitted the call; freshness fallback when startedAt is unknown. */
+  toolCallTimestamp?: number;
 }
 
 interface TaskToolDisplayEntry {
@@ -836,6 +838,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   taskReportLinking,
   toolCallId,
   startedAt,
+  toolCallTimestamp,
 }) => {
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult: TaskToolSuccessResult | null =
@@ -869,7 +872,10 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     requestedCandidateCount: requestedTaskGroupCount,
     requestedGroupKind: taskGroupKind,
     knownTaskIds: [...resultTaskIds, ...liveTaskIds, ...recoveredTaskIdsRef.current],
-    toolStartedAt: startedAt,
+    // Prefer the true execution start; fall back to the model-emission timestamp for
+    // parts without execution-start tracking (history replay). Both are valid lower
+    // bounds on when this call could have created child workspaces.
+    toolStartedAt: startedAt ?? toolCallTimestamp,
     workspaceMetadata,
   });
   if (recoveredWorkspaceEntries.length > 0) {

@@ -79,6 +79,8 @@ interface WorkflowRunToolCallProps {
   workspaceId?: string;
   toolCallId?: string;
   startedAt?: number;
+  /** When the model emitted the call; freshness fallback when startedAt is unknown. */
+  toolCallTimestamp?: number;
   /** Which tool rendered this card; controls the header icon. */
   toolName?: "workflow_run" | "workflow_resume";
   /**
@@ -1159,10 +1161,14 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
   workspaceId,
   toolCallId,
   startedAt,
+  toolCallTimestamp,
   toolName = "workflow_run",
   knownRunId,
   workflowRunHint: explicitWorkflowRunHint,
 }) => {
+  // Freshness bound for run discovery: prefer the true execution start, but fall back to
+  // the model-emission timestamp for parts without execution-start tracking (history replay).
+  const discoveryFreshnessBound = startedAt ?? toolCallTimestamp;
   const apiState = useContext(APIContext);
   const commandRegistry = useOptionalCommandRegistry();
   const registerCommandSource = commandRegistry?.registerSource;
@@ -1395,7 +1401,11 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
     const discover = async () => {
       try {
         const runs = await apiState.api.workflows.listRuns({ workspaceId });
-        const foregroundRun = findForegroundWorkflowRun({ runs, args, startedAt });
+        const foregroundRun = findForegroundWorkflowRun({
+          runs,
+          args,
+          startedAt: discoveryFreshnessBound,
+        });
         if (!ignore && foregroundRun != null) {
           setRefreshedRun((current) => getNewestWorkflowRunSnapshot(current, foregroundRun));
         }
@@ -1412,7 +1422,7 @@ export const WorkflowRunToolCall: React.FC<WorkflowRunToolCallProps> = ({
       ignore = true;
       window.clearInterval(interval);
     };
-  }, [apiState?.api, args, runId, startedAt, status, workspaceId]);
+  }, [apiState?.api, args, runId, discoveryFreshnessBound, status, workspaceId]);
 
   const exactDiscoveryRunId = knownRunId ?? workflowRunHint?.runId;
 
