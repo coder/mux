@@ -165,10 +165,12 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
                   taskService.listActiveDescendantAgentTaskIds(workspaceId);
                 const activeTaskIds =
                   activeDescendantIds.length > 0 ? activeDescendantIds : undefined;
-                if (/not found/i.test(msg)) {
+                // Exact-match the canonical scope errors: aggregated cleanup failures
+                // may mention "descendant" or "not found" and must stay actionable errors.
+                if (msg === "Task not found") {
                   return { status: "not_found" as const, taskId, activeTaskIds };
                 }
-                if (/descendant/i.test(msg) || /scope/i.test(msg)) {
+                if (msg === "Task is not a descendant of this workspace") {
                   return { status: "invalid_scope" as const, taskId, activeTaskIds };
                 }
                 return { status: "error" as const, taskId, error: msg };

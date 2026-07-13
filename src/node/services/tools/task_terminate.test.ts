@@ -60,6 +60,32 @@ describe("task_terminate tool", () => {
     });
   });
 
+  it("reports aggregated cleanup failures as error, not invalid_scope", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-cleanup-error");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const cleanupError =
+      "Timed out stopping task stream (child-task); " +
+      "Skipped removing task workspace (parent-task): a descendant task workspace was not removed";
+
+    const taskService = {
+      terminateDescendantAgentTask: mock(
+        (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+          Promise.resolve(Err(cleanupError))
+      ),
+      listActiveDescendantAgentTaskIds: mock(() => []),
+    } as unknown as TaskService;
+
+    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["parent-task"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "error", taskId: "parent-task", error: cleanupError }],
+    });
+  });
+
   it("returns terminated with terminatedTaskIds on success", async () => {
     using tempDir = new TestTempDir("test-task-terminate-ok");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
