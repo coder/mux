@@ -2016,6 +2016,44 @@ describe("StreamingMessageAggregator", () => {
       .getDisplayedMessages()
       .find((m) => m.type === "tool" && m.toolCallId === "tool-reconnect");
     expect(row?.type === "tool" ? row.executionStartedAt : undefined).toBe(6_000);
+
+    // The merge must also re-anchor timing stats: the tool's duration counts from
+    // execution start (6000), not the pre-disconnect emission seed (1000).
+    endToolCall(aggregator, {
+      toolCallId: "tool-reconnect",
+      toolName: "bash",
+      result: {},
+      timestamp: 9_000,
+    });
+    expect(aggregator.getActiveStreamTimingStats()?.toolExecutionMs).toBe(3_000);
+  });
+
+  test("fresh replayed tool-call-start seeds timing stats from executionStartedAt", () => {
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+    startTestStream(aggregator, { messageId: "msg-1" });
+    // Full replay after reconnect: the client never saw the live start, and the
+    // replayed event already carries the true execution start.
+    aggregator.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-fresh-replay",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      tokens: 0,
+      timestamp: 1_000,
+      executionStartedAt: 6_000,
+      replay: true,
+    });
+    endToolCall(aggregator, {
+      toolCallId: "tool-fresh-replay",
+      toolName: "bash",
+      result: {},
+      timestamp: 9_000,
+    });
+
+    expect(aggregator.getActiveStreamTimingStats()?.toolExecutionMs).toBe(3_000);
   });
 
   test("keeps richer in-memory parts when append replay sends a stale duplicate", () => {

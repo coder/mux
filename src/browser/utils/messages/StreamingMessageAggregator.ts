@@ -2376,6 +2376,10 @@ export class StreamingMessageAggregator {
         existingToolPart.executionStartedAt === undefined
       ) {
         existingToolPart.executionStartedAt = data.executionStartedAt;
+        // Also re-anchor the timing-stats start (seeded from the live tool-call-start's
+        // emission timestamp before disconnect), mirroring handleToolCallExecutionStart —
+        // otherwise tool-call-end still counts queue wait as execution time.
+        this.reanchorPendingToolStart(data.messageId, data.toolCallId, data.executionStartedAt);
         this.markMessageDirty(data.messageId);
         return;
       }
@@ -2383,11 +2387,13 @@ export class StreamingMessageAggregator {
       return;
     }
 
-    // Track tool start time for execution duration calculation
+    // Track tool start time for execution duration calculation.
+    // Replayed starts may already carry the true execution start; prefer it so
+    // toolExecutionMs never counts time spent queued behind serialized siblings.
     const context = this.activeStreams.get(data.messageId);
     if (context) {
       this.updateStreamClock(context, data.timestamp);
-      context.pendingToolStarts.set(data.toolCallId, data.timestamp);
+      context.pendingToolStarts.set(data.toolCallId, data.executionStartedAt ?? data.timestamp);
     }
 
     // Add tool part to maintain temporal order
@@ -2418,23 +2424,34 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Re-anchor the timing-stats start for a tool whose execute() actually began running.
+   * toolExecutionMs sums per-tool durations at tool-call-end; without this, each
+   * serialized sibling's duration would include the time it spent queued behind earlier
+   * siblings (double-counting tool time and deflating derived streaming/tok-s stats).
+   * Provider-executed tools never report an execution start and keep their
+   * tool-call-start anchor.
+   */
+  private reanchorPendingToolStart(
+    messageId: string,
+    toolCallId: string,
+    executionStartedAt: number
+  ): void {
+    const context = this.activeStreams.get(messageId);
+    if (context) {
+      this.updateStreamClock(context, executionStartedAt);
+      if (context.pendingToolStarts.has(toolCallId)) {
+        context.pendingToolStarts.set(toolCallId, executionStartedAt);
+      }
+    }
+  }
+
+  /**
    * Mark when a tool call's execute() actually began running. Parallel tool calls are
    * serialized in the backend, so this arrives once the call reaches the front of the
    * queue — elapsed timers start here instead of at tool-call-start.
    */
   handleToolCallExecutionStart(data: ToolCallExecutionStartEvent): void {
-    // Re-anchor the timing-stats start for this tool. toolExecutionMs sums per-tool
-    // durations at tool-call-end; without this, each serialized sibling's duration
-    // would include the time it spent queued behind earlier siblings (double-counting
-    // tool time and deflating derived streaming/tok-s stats). Provider-executed tools
-    // never emit this event and keep their tool-call-start anchor.
-    const context = this.activeStreams.get(data.messageId);
-    if (context) {
-      this.updateStreamClock(context, data.timestamp);
-      if (context.pendingToolStarts.has(data.toolCallId)) {
-        context.pendingToolStarts.set(data.toolCallId, data.timestamp);
-      }
-    }
+    this.reanchorPendingToolStart(data.messageId, data.toolCallId, data.timestamp);
 
     const message = this.messages.get(data.messageId);
     if (!message) return;
