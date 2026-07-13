@@ -1601,6 +1601,9 @@ export class StreamManager extends EventEmitter {
 
     return [
       stepCountIs(100000),
+      // The SDK evaluates stop conditions only after every sibling tool result in the
+      // model's current step settles. Do not move this to individual tool-call-end events:
+      // that would abort the remaining calls the model emitted in the same batch.
       () => request.hasQueuedMessages?.("tool-end") ?? false,
       hasSuccessfulRequiredToolResult,
     ];

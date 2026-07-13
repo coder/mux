@@ -25,6 +25,9 @@ export interface MockAiRouterReply {
   /** Optional: if present, the mock adapter will emit a usage-delta early in the stream. */
   usage?: LanguageModelV2Usage;
 
+  /** Optional: delay before mock tool calls begin (useful for interaction-driven queue tests). */
+  toolCallDelayMs?: number;
+
   /** Optional: mock tool calls to emit before assistant text streaming. */
   toolCalls?: MockAiToolCall[];
 
@@ -182,6 +185,41 @@ function buildPermissionExecReply(): MockAiRouterReply {
           output: "patch applied\n",
           exitCode: 0,
           wall_duration_ms: 180,
+        },
+      },
+    ],
+  };
+}
+
+function buildParallelToolStepReply(): MockAiRouterReply {
+  return {
+    assistantText: "Finished both sibling tool calls before continuing.",
+    toolCallDelayMs: 10_000,
+    toolCalls: [
+      {
+        toolCallId: "tool-parallel-step-a",
+        toolName: "file_read",
+        args: { path: "parallel-step-a.txt" },
+        result: {
+          success: true,
+          file_size: 24,
+          modifiedTime: "2024-01-01T00:00:00.000Z",
+          lines_read: 1,
+          content: "1\tparallel step A complete",
+          lease: "lease-parallel-step-a",
+        },
+      },
+      {
+        toolCallId: "tool-parallel-step-b",
+        toolName: "file_read",
+        args: { path: "parallel-step-b.txt" },
+        result: {
+          success: true,
+          file_size: 24,
+          modifiedTime: "2024-01-01T00:00:00.000Z",
+          lines_read: 1,
+          content: "1\tparallel step B complete",
+          lease: "lease-parallel-step-b",
         },
       },
     ],
@@ -438,6 +476,10 @@ const defaultHandlers: MockAiRouterHandler[] = [
       hasMockMarker(request.latestUserText, "permission:exec-refactor") ||
       normalizeText(request.latestUserText) === "do it",
     respond: () => buildPermissionExecReply(),
+  },
+  {
+    match: (request) => hasMockMarker(request.latestUserText, "tool:parallel-step"),
+    respond: () => buildParallelToolStepReply(),
   },
   {
     match: (request) =>

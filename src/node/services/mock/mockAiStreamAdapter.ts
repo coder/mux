@@ -103,6 +103,8 @@ export function buildMockStreamEventsFromReply(
     }
   }
 
+  nextDelay += reply.toolCallDelayMs ?? 0;
+
   if (reply.toolCalls && reply.toolCalls.length > 0) {
     for (const toolCall of reply.toolCalls) {
       events.push({

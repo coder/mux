@@ -361,11 +361,6 @@ export class AgentSession {
   private activePreparedTurnAbortController: AbortController | null = null;
   // When true, stream-end skips auto-flushing queued messages so an edit can truncate first.
   private deferQueuedFlushUntilAfterEdit = false;
-  // A tool-end queued message should preempt the current turn after the next real tool result.
-  // We keep this set until the requested stream-abort arrives, so a re-queued replacement
-  // can still dispatch even if the original queued draft was edited while the abort was in flight.
-  private queuedToolEndAbortInFlight = false;
-
   private idleWaiters: Array<() => void> = [];
   private pendingExternalManualFollowUps = 0;
   private readonly messageQueue = new MessageQueue();
@@ -3473,10 +3468,6 @@ export class AgentSession {
     // Explicit user interruption should immediately stop any pending auto-retry loop.
     this.retryManager.cancel();
 
-    if (options?.soft !== true) {
-      this.queuedToolEndAbortInFlight = false;
-    }
-
     // For hard interrupts, delete partial BEFORE stopping to prevent abort handler
     // from committing it. For soft interrupts, defer to stream-abort handler since
     // the stream continues running and would recreate the partial.
@@ -4590,10 +4581,6 @@ export class AgentSession {
       ) {
         this.onPostCompactionStateChange?.();
       }
-
-      if (payload.type === "tool-call-end" && payload.replay !== true) {
-        this.requestQueuedToolEndDispatchAfterCurrentTool();
-      }
     });
     forward("reasoning-delta", (payload) => {
       this.markActiveStreamHadAnyOutput();
@@ -4688,7 +4675,6 @@ export class AgentSession {
         );
 
         this.emitChatEvent(payload);
-        this.queuedToolEndAbortInFlight = false;
         return;
       }
 
@@ -4708,7 +4694,6 @@ export class AgentSession {
       const failedUserMessageId = this.activeStreamUserMessageId;
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       const abortReason = "abortReason" in payload ? payload.abortReason : undefined;
-      const isQueuedToolEndAbort = this.queuedToolEndAbortInFlight && abortReason !== "user";
       if (abortReason === "user") {
         await this.workspaceGoalService?.recordUserStoppedStream(this.workspaceId);
       }
@@ -4737,20 +4722,13 @@ export class AgentSession {
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
-      // A queued tool-end dispatch deliberately soft-stops the stream (abortReason "system")
-      // to preempt the turn, so that abort is intentional rather than a failure: skip auto-retry.
-      if (!isQueuedToolEndAbort) {
-        await this.handleStreamFailureForAutoRetry({
-          type: "aborted",
-          message: abortReason,
-        });
-      }
+      await this.handleStreamFailureForAutoRetry({
+        type: "aborted",
+        message: abortReason,
+      });
       await this.updateStartupAutoRetryAbandonFromAbort(abortReason, failedUserMessageId);
       this.emitChatEvent(payload);
-      const dispatchedQueuedMessage = this.dispatchQueuedToolEndMessageAfterAbort(abortReason);
-      if (!dispatchedQueuedMessage) {
-        this.setTurnPhase(TurnPhase.IDLE);
-      }
+      this.setTurnPhase(TurnPhase.IDLE);
     });
     forward("runtime-status", (payload) => {
       if (payload.type === "runtime-status") {
@@ -4852,8 +4830,7 @@ export class AgentSession {
         // P2: if an edit is waiting, skip the queue flush so the edit truncates first.
         const hadQueuedMessages = this.hasPendingManualFollowUp();
         if (this.deferQueuedFlushUntilAfterEdit) {
-          // Clear the queued message flag so the next turn's tools don't early-return.
-          this.queuedToolEndAbortInFlight = false;
+          // Clear the queued-message signal while the edit flow owns the next dispatch.
           this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
           // Do not dispatch stream-end follow-ups while the edit flow is waiting
           // for IDLE; truncation must run before any synthetic turn resumes.
@@ -5207,48 +5184,6 @@ export class AgentSession {
     return true;
   }
 
-  private requestQueuedToolEndDispatchAfterCurrentTool(): void {
-    if (
-      this.turnPhase !== TurnPhase.STREAMING ||
-      this.queuedToolEndAbortInFlight ||
-      !this.hasQueuedMessages("tool-end")
-    ) {
-      return;
-    }
-
-    this.queuedToolEndAbortInFlight = true;
-    void this.aiService
-      .stopStream(this.workspaceId, { soft: true, abortReason: "system" })
-      .then((result) => {
-        if (!result.success) {
-          this.queuedToolEndAbortInFlight = false;
-          log.warn("Failed to stop stream for queued tool-end message dispatch", {
-            workspaceId: this.workspaceId,
-            error: result.error,
-          });
-        }
-      });
-  }
-
-  private dispatchQueuedToolEndMessageAfterAbort(
-    abortReason: StreamAbortReason | undefined
-  ): boolean {
-    if (!this.queuedToolEndAbortInFlight) {
-      return false;
-    }
-
-    const shouldDispatch =
-      abortReason !== "user" && !this.deferQueuedFlushUntilAfterEdit && this.hasQueuedMessages();
-    this.queuedToolEndAbortInFlight = false;
-
-    if (!shouldDispatch) {
-      return false;
-    }
-
-    this.sendQueuedMessages();
-    return true;
-  }
-
   async waitForPendingStreamErrorRecoveryDecision(): Promise<void> {
     await this.streamErrorRecoveryDecision?.promise;
   }
@@ -5323,7 +5258,7 @@ export class AgentSession {
 
   /**
    * Send queued messages if any exist.
-   * Called when tool execution completes, stream ends, or user clicks send immediately.
+   * Called when the current turn ends or the user chooses to send immediately.
    */
   sendQueuedMessages(): void {
     // sendQueuedMessages can race with teardown (e.g. workspace.remove) because we
@@ -5334,7 +5269,6 @@ export class AgentSession {
     }
 
     // Clear the queued message flag (even if queue is empty, to handle race conditions)
-    this.queuedToolEndAbortInFlight = false;
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, false);
 
     if (!this.messageQueue.isEmpty()) {

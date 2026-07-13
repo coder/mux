@@ -197,6 +197,38 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
+  test("send after step waits for every tool call emitted in the current step", async () => {
+    const app = await createAppHarness({ branchPrefix: "queued-parallel-tool-step" });
+
+    try {
+      await app.chat.send("[mock:tool:parallel-step] Run both sibling tool calls");
+      await waitFor(() => {
+        const state = workspaceStore.getWorkspaceSidebarState(app.workspaceId);
+        if (!state.canInterrupt) {
+          throw new Error("Expected the source turn to be streaming before queueing");
+        }
+      });
+
+      const queuedText = "follow up after the complete tool step";
+      await app.chat.typeWithoutSending(queuedText);
+      const sendButton = await waitForSendModeMenuTrigger(app.view.container);
+      fireEvent.click(sendButton);
+      await waitFor(() => {
+        expect(app.view.container.textContent).toContain("Queued - Sending after step");
+      });
+
+      await app.chat.expectTranscriptContains("parallel-step-a.txt");
+      await app.chat.expectTranscriptContains("parallel-step-b.txt");
+      await app.chat.expectTranscriptContains(
+        "Finished both sibling tool calls before continuing."
+      );
+      await app.chat.expectTranscriptContains(`Mock response: ${queuedText}`);
+      await app.chat.expectStreamComplete();
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
   test("pressing Enter on an empty composer sends the queued message now", async () => {
     const app = await createAppHarness({ branchPrefix: "queued-enter-send-now" });
 
