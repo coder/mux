@@ -358,9 +358,13 @@ describe("StreamManager - tool execution start timing", () => {
     const streamManager = new StreamManager(historyService);
     const workspaceId = "execution-start-workspace";
     const messageId = "execution-start-message";
-    const timestamp = Date.now();
+    // Seed the monotonic stream clock ahead of wall time: a raw Date.now() execution
+    // start would be <= the tool-call timestamp and reconnect replay's
+    // `executionStartedAt > cursor` repair predicate would never fire.
+    const timestamp = Date.now() + 60_000;
     const streamInfo = createStreamInfoForTests({
       messageId,
+      lastPartTimestamp: timestamp,
       parts: [
         {
           type: "dynamic-tool",
@@ -391,6 +395,9 @@ describe("StreamManager - tool execution start timing", () => {
       messageId,
       toolCallId: "tool-call-1",
     });
+    // Cursor-monotonic: strictly after the tool-call part timestamp even when the wall
+    // clock has not advanced past it.
+    expect(events[0].timestamp).toBeGreaterThan(timestamp);
 
     const parts = streamInfo.parts as Array<Record<string, unknown>>;
     expect(parts[0].executionStartedAt).toBe(events[0].timestamp);

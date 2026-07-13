@@ -765,7 +765,12 @@ export class StreamManager extends EventEmitter {
       return;
     }
 
-    const timestamp = Date.now();
+    // Use the stream's monotonic clock, not raw Date.now(): the tool-call part timestamp
+    // was monotonicized by nextPartTimestamp(), so a same-millisecond raw reading could be
+    // <= it. Reconnect replay repairs missed execution starts only when
+    // executionStartedAt > cursor, and the cursor sits at the tool-call timestamp when the
+    // client disconnected right after tool-call-start.
+    const timestamp = nextPartTimestamp(streamInfo);
     if (!this.applyToolExecutionStart(workspaceId, streamInfo, toolCallId, timestamp)) {
       // execute() won the race against the fullStream consumer; the "tool-call" case
       // consumes this entry right after storing the part.
