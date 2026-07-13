@@ -2028,6 +2028,48 @@ describe("StreamingMessageAggregator", () => {
     expect(aggregator.getActiveStreamTimingStats()?.toolExecutionMs).toBe(3_000);
   });
 
+  test("stashes execution starts that arrive before their tool part exists", () => {
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+    startTestStream(aggregator, { messageId: "msg-1" });
+    // Reconnect replay in progress: the live execution-start (not replay-buffered)
+    // arrives before the replayed tool-call-start creates the part.
+    aggregator.handleToolCallExecutionStart({
+      type: "tool-call-execution-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-race",
+      timestamp: 6_000,
+    });
+
+    // Replayed start without executionStartedAt (snapshot predates execute()).
+    aggregator.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-race",
+      toolName: "bash",
+      args: { command: "echo hi" },
+      tokens: 0,
+      timestamp: 1_000,
+      replay: true,
+    });
+
+    const row = aggregator
+      .getDisplayedMessages()
+      .find((m) => m.type === "tool" && m.toolCallId === "tool-race");
+    expect(row?.type === "tool" ? row.executionStartedAt : undefined).toBe(6_000);
+
+    // Timing stats must also anchor at execution start, not the replayed emission time.
+    endToolCall(aggregator, {
+      toolCallId: "tool-race",
+      toolName: "bash",
+      result: {},
+      timestamp: 9_000,
+    });
+    expect(aggregator.getActiveStreamTimingStats()?.toolExecutionMs).toBe(3_000);
+  });
+
   test("fresh replayed tool-call-start seeds timing stats from executionStartedAt", () => {
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 

@@ -615,6 +615,13 @@ export class StreamingMessageAggregator {
   // Shows "interrupting..." in StreamingBarrier until real stream-abort arrives
   private interruptingMessageId: string | null = null;
 
+  // Execution starts that arrived before their tool part exists (messageId → toolCallId →
+  // timestamp). During reconnect replay, live tool-call-execution-start events are not
+  // replay-buffered and can beat the replayed tool-call-start that creates the part;
+  // dropping them would leave the running tool's elapsed timer hidden until the next
+  // reconnect. Consumed in handleToolCallStart, cleared in cleanupStreamState.
+  private stashedToolExecutionStarts = new Map<string, Map<string, number>>();
+
   // Session-level timing stats: model -> stats (totals computed on-the-fly)
   private sessionTimingStats: Record<
     string,
@@ -923,6 +930,9 @@ export class StreamingMessageAggregator {
     if (this.interruptingMessageId === messageId) {
       this.interruptingMessageId = null;
     }
+
+    // Drop unconsumed execution starts (e.g. the tool part never materialized).
+    this.stashedToolExecutionStarts.delete(messageId);
 
     // Capture timing stats before removing the stream context
     const context = this.activeStreams.get(messageId);
@@ -2367,19 +2377,22 @@ export class StreamingMessageAggregator {
         part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
     );
 
+    // A live tool-call-execution-start may have arrived before this (replayed) start
+    // created the part; fold the stashed timestamp in as if the event carried it.
+    const executionStartedAt =
+      data.executionStartedAt ??
+      this.takeStashedToolExecutionStart(data.messageId, data.toolCallId);
+
     if (existingToolPart) {
       // A `since` replay re-sends tool-call-start when a queued tool's execute() began
       // after the reconnect cursor. Merge the enriched execution start into the existing
       // row (otherwise the elapsed timer stays hidden) instead of dropping the event.
-      if (
-        data.executionStartedAt !== undefined &&
-        existingToolPart.executionStartedAt === undefined
-      ) {
-        existingToolPart.executionStartedAt = data.executionStartedAt;
+      if (executionStartedAt !== undefined && existingToolPart.executionStartedAt === undefined) {
+        existingToolPart.executionStartedAt = executionStartedAt;
         // Also re-anchor the timing-stats start (seeded from the live tool-call-start's
         // emission timestamp before disconnect), mirroring handleToolCallExecutionStart —
         // otherwise tool-call-end still counts queue wait as execution time.
-        this.reanchorPendingToolStart(data.messageId, data.toolCallId, data.executionStartedAt);
+        this.reanchorPendingToolStart(data.messageId, data.toolCallId, executionStartedAt);
         this.markMessageDirty(data.messageId);
         return;
       }
@@ -2393,7 +2406,7 @@ export class StreamingMessageAggregator {
     const context = this.activeStreams.get(data.messageId);
     if (context) {
       this.updateStreamClock(context, data.timestamp);
-      context.pendingToolStarts.set(data.toolCallId, data.executionStartedAt ?? data.timestamp);
+      context.pendingToolStarts.set(data.toolCallId, executionStartedAt ?? data.timestamp);
     }
 
     // Add tool part to maintain temporal order
@@ -2405,9 +2418,7 @@ export class StreamingMessageAggregator {
       input: data.args,
       timestamp: data.timestamp,
       // Present on replay when execute() had already begun before reconnect.
-      ...(data.executionStartedAt !== undefined
-        ? { executionStartedAt: data.executionStartedAt }
-        : {}),
+      ...(executionStartedAt !== undefined ? { executionStartedAt } : {}),
     };
     message.parts.push(toolPart);
 
@@ -2454,16 +2465,36 @@ export class StreamingMessageAggregator {
     this.reanchorPendingToolStart(data.messageId, data.toolCallId, data.timestamp);
 
     const message = this.messages.get(data.messageId);
-    if (!message) return;
-
-    const toolPart = message.parts.find(
+    const toolPart = message?.parts.find(
       (part): part is DynamicToolPart =>
         part.type === "dynamic-tool" && part.toolCallId === data.toolCallId
     );
-    if (!toolPart) return;
+    if (!toolPart) {
+      // Live event won the race against the replayed tool-call-start that creates the
+      // part (execution-start events are not replay-buffered). Stash it for
+      // handleToolCallStart to apply.
+      const stash =
+        this.stashedToolExecutionStarts.get(data.messageId) ?? new Map<string, number>();
+      stash.set(data.toolCallId, data.timestamp);
+      this.stashedToolExecutionStarts.set(data.messageId, stash);
+      return;
+    }
 
     toolPart.executionStartedAt = data.timestamp;
     this.markMessageDirty(data.messageId);
+  }
+
+  /** Consume a stashed execution start that arrived before its tool part existed. */
+  private takeStashedToolExecutionStart(messageId: string, toolCallId: string): number | undefined {
+    const stash = this.stashedToolExecutionStarts.get(messageId);
+    const timestamp = stash?.get(toolCallId);
+    if (stash && timestamp !== undefined) {
+      stash.delete(toolCallId);
+      if (stash.size === 0) {
+        this.stashedToolExecutionStarts.delete(messageId);
+      }
+    }
+    return timestamp;
   }
 
   private trackLoadedSkill(skill: LoadedSkill): void {
