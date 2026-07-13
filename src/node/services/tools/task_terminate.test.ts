@@ -253,6 +253,40 @@ describe("task_terminate tool", () => {
     });
   });
 
+  it("does not start termination when the signal is already aborted", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-preaborted");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const controller = new AbortController();
+    controller.abort();
+
+    const terminateDescendantAgentTask = mock(
+      (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+        Promise.resolve(Ok({ terminatedTaskIds: ["child-task"] }))
+    );
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: { terminateDescendantAgentTask } as unknown as TaskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { task_ids: ["child-task"] },
+        { ...mockToolCallOptions, abortSignal: controller.signal }
+      )
+    );
+
+    expect(terminateDescendantAgentTask).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "child-task",
+          error: "Termination interrupted before it started",
+        },
+      ],
+    });
+  });
+
   it("returns a per-task error when a workflow branch throws", async () => {
     using tempDir = new TestTempDir("test-task-terminate-workflow-throws");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });

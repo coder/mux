@@ -91,6 +91,14 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
+          // A pre-aborted call must not start destructive termination work at all.
+          if (abortSignal?.aborted) {
+            return {
+              status: "error" as const,
+              taskId,
+              error: "Termination interrupted before it started",
+            };
+          }
           const terminationPromise = (async () => {
             try {
               if (isWorkflowRunTaskId(taskId)) {
