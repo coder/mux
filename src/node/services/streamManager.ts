@@ -1,4 +1,3 @@
-import assert from "node:assert";
 import { EventEmitter } from "events";
 import * as path from "path";
 import { PlatformPaths } from "@/common/utils/paths";

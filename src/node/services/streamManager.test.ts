@@ -5436,6 +5436,7 @@ describe("StreamManager - mid-turn thinking override", () => {
       undefined,
       undefined,
       undefined,
+      undefined, // onToolExecutionStart
       state,
       rebuild
     );
