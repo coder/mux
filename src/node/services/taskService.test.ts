@@ -4,7 +4,10 @@ import * as path from "path";
 import * as os from "os";
 import { execSync } from "node:child_process";
 
-import { TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS } from "@/constants/terminationTimeouts";
+import {
+  TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS,
+  TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS,
+} from "@/constants/terminationTimeouts";
 import {
   Config,
   type ProjectConfig,
@@ -9270,6 +9273,82 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalledWith(siblingTaskId, true);
     // The stuck child survives, so its ancestor must survive too: a live child
     // must never point at removed parent metadata.
+    expect(remove).not.toHaveBeenCalledWith(parentTaskId, true);
+  });
+
+  test("terminate retry awaits the original in-flight removal instead of trusting a dedup Ok", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const parentTaskId = "task-parent";
+    const childTaskId = "task-child";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent-task", parentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child-task", childTaskId, {
+          parentWorkspaceId: parentTaskId,
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    // First removal of the child hangs; later calls return Ok, simulating
+    // WorkspaceService.remove()'s short-circuit for IDs already being removed.
+    let childRemoveCalls = 0;
+    const remove = mock((workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      if (workspaceId === childTaskId) {
+        childRemoveCalls += 1;
+        if (childRemoveCalls === 1) {
+          return new Promise(() => undefined);
+        }
+      }
+      return Promise.resolve(Ok(undefined));
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const originalSetTimeout = globalThis.setTimeout;
+    const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => void,
+      timeout?: number
+    ) => {
+      if (timeout === TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS) {
+        queueMicrotask(() => {
+          if (typeof handler === "function") {
+            handler();
+          }
+        });
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return originalSetTimeout(handler, timeout);
+    }) as typeof setTimeout);
+
+    const firstAttempt = await taskService.terminateDescendantAgentTask(
+      rootWorkspaceId,
+      parentTaskId
+    );
+    const retryAttempt = await taskService.terminateDescendantAgentTask(
+      rootWorkspaceId,
+      parentTaskId
+    );
+    timeoutSpy.mockRestore();
+
+    expect(firstAttempt.success).toBe(false);
+    expect(retryAttempt.success).toBe(false);
+    if (retryAttempt.success) return;
+    expect(retryAttempt.error).toContain(`Timed out removing task workspace (${childTaskId})`);
+    // The retry must not re-call remove for the child (a fresh call would
+    // return the dedup Ok) and must keep the parent blocked.
+    expect(childRemoveCalls).toBe(1);
     expect(remove).not.toHaveBeenCalledWith(parentTaskId, true);
   });
 

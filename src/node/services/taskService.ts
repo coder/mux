@@ -1140,6 +1140,12 @@ export class TaskService {
   // Cache completed reports so callers can retrieve them without re-reading disk.
   // Bounded by max entries; disk persistence is the source of truth for restart-safety.
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
+
+  // Task workspace removals that outlived their termination timeout. Retries must
+  // await the ORIGINAL removal outcome: WorkspaceService.remove() short-circuits Ok
+  // for IDs already being removed, so re-calling it would count a still-in-flight
+  // (possibly failing) removal as success and let ancestor deletion orphan the child.
+  private readonly pendingTaskWorkspaceRemovals = new Map<string, Promise<Result<void>>>();
   private readonly gitPatchArtifactService: GitPatchArtifactService;
   private readonly handoffInProgress = new Set<string>();
   /**
@@ -3918,17 +3924,29 @@ export class TaskService {
         this.rejectWaiters(id, terminationError);
 
         try {
-          const removePromise = this.workspaceService.remove(id, true);
+          let removePromise = this.pendingTaskWorkspaceRemovals.get(id);
+          if (!removePromise) {
+            removePromise = this.workspaceService.remove(id, true);
+            this.pendingTaskWorkspaceRemovals.set(id, removePromise);
+            const trackedPromise = removePromise;
+            void trackedPromise
+              .catch((error: unknown) => {
+                log.debug("terminateDescendantAgentTask: workspace removal threw", {
+                  taskId: id,
+                  error,
+                });
+                return undefined;
+              })
+              .finally(() => {
+                if (this.pendingTaskWorkspaceRemovals.get(id) === trackedPromise) {
+                  this.pendingTaskWorkspaceRemovals.delete(id);
+                }
+              });
+          }
           const removeOutcome = await raceWithAbortAndTimeout(removePromise, {
             timeoutMs: TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS,
           });
           if (removeOutcome.kind !== "ok") {
-            void removePromise.catch((error: unknown) => {
-              log.debug("terminateDescendantAgentTask: timed-out workspace removal later threw", {
-                taskId: id,
-                error,
-              });
-            });
             terminationErrors.push(`Timed out removing task workspace (${id})`);
             blockAncestorsOf(id);
             continue;
