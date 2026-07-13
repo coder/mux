@@ -9247,12 +9247,10 @@ describe("TaskService", () => {
       timeout?: number
     ) => {
       if (timeout === TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS) {
-        queueMicrotask(() => {
-          if (typeof handler === "function") {
-            handler();
-          }
-        });
-        return 0 as unknown as ReturnType<typeof setTimeout>;
+        // Fire on a 0ms macrotask, not a microtask: already-resolved stop
+        // promises settle through several microtask hops first, so only the
+        // genuinely stuck stream can lose the race to this timer.
+        return originalSetTimeout(handler, 0);
       }
       return originalSetTimeout(handler, timeout);
     }) as typeof setTimeout);
@@ -9322,12 +9320,8 @@ describe("TaskService", () => {
       timeout?: number
     ) => {
       if (timeout === TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS) {
-        queueMicrotask(() => {
-          if (typeof handler === "function") {
-            handler();
-          }
-        });
-        return 0 as unknown as ReturnType<typeof setTimeout>;
+        // 0ms macrotask so pending microtask chains settle first (see above).
+        return originalSetTimeout(handler, 0);
       }
       return originalSetTimeout(handler, timeout);
     }) as typeof setTimeout);
