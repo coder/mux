@@ -9,6 +9,7 @@ import {
   resolveMinimumThinkingLevel,
   resolveEffectiveThinkingLevel,
   getAvailableThinkingLevels,
+  isXaiGrokFastVariantSwap,
 } from "./policy";
 
 describe("getThinkingPolicyForModel", () => {
@@ -920,5 +921,18 @@ describe("enforceThinkingPolicy with a minimum floor", () => {
 
   test("omitting the floor preserves legacy capability-only behavior", () => {
     expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "off")).toBe("off");
+  });
+});
+
+describe("isXaiGrokFastVariantSwap", () => {
+  test("flags only off<->on transitions on xai:grok-4-1-fast", () => {
+    // off <-> non-off swaps the underlying reasoning/non-reasoning variant.
+    expect(isXaiGrokFastVariantSwap("xai:grok-4-1-fast", "off", "high")).toBe(true);
+    expect(isXaiGrokFastVariantSwap("xai:grok-4-1-fast", "high", "off")).toBe(true);
+    // non-off -> non-off stays on the reasoning variant (no swap).
+    expect(isXaiGrokFastVariantSwap("xai:grok-4-1-fast", "low", "high")).toBe(false);
+    // Other models never swap instances on thinking-level changes.
+    expect(isXaiGrokFastVariantSwap("xai:grok-4-1-fast-reasoning", "off", "high")).toBe(false);
+    expect(isXaiGrokFastVariantSwap("anthropic:claude-sonnet-4-5", "off", "high")).toBe(false);
   });
 });

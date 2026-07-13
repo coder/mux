@@ -15,6 +15,10 @@ import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ToolSearchStreamState } from "@/common/utils/tools/toolCatalog";
 import { StreamManager, type ModelFallbackPrepareOptions } from "./streamManager";
+import type {
+  ActiveTurnThinkingOverride,
+  RebuildProviderOptionsForThinkingLevel,
+} from "./thinkingOverride";
 import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
 import * as aiSdk from "ai";
 import {
@@ -5213,5 +5217,330 @@ describe("StreamManager - tool search activeTools scoping", () => {
     // Same reference, not a copy — tool_search.execute mutations must be
     // visible to prepareStep.
     expect(request.toolSearchState).toBe(toolSearchState);
+  });
+});
+
+describe("StreamManager - mid-turn thinking override", () => {
+  interface OverrideRequestForTests {
+    model: unknown;
+    messages: ModelMessage[];
+    system?: string;
+    providerOptions?: Record<string, unknown>;
+    thinkingOverrideState?: ActiveTurnThinkingOverride;
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
+  }
+
+  type BuildStreamRequestConfig = (...args: unknown[]) => OverrideRequestForTests;
+  type CreateStreamResult = (
+    request: OverrideRequestForTests,
+    abortController: AbortController
+  ) => unknown;
+  type CapturedPrepareStep = (options: { messages: ModelMessage[] }) => Promise<
+    | {
+        messages?: ModelMessage[];
+        activeTools?: string[];
+        providerOptions?: Record<string, unknown>;
+      }
+    | undefined
+  >;
+
+  const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+  const messages: ModelMessage[] = [{ role: "user", content: "hello" }];
+
+  function getRequestHelpers(streamManager: StreamManager): {
+    buildRequestConfig: BuildStreamRequestConfig;
+    createStreamResult: CreateStreamResult;
+  } {
+    const buildRequestConfig = Reflect.get(streamManager, "buildStreamRequestConfig") as
+      | ((...args: unknown[]) => OverrideRequestForTests)
+      | undefined;
+    const createStreamResultMethod = Reflect.get(streamManager, "createStreamResult") as
+      | CreateStreamResult
+      | undefined;
+    expect(typeof buildRequestConfig).toBe("function");
+    expect(typeof createStreamResultMethod).toBe("function");
+    if (!buildRequestConfig || !createStreamResultMethod) {
+      throw new Error("Expected StreamManager private helpers to exist");
+    }
+    return {
+      buildRequestConfig: (...args) => buildRequestConfig.apply(streamManager, args),
+      createStreamResult: (request, abortController) =>
+        createStreamResultMethod.call(streamManager, request, abortController),
+    };
+  }
+
+  function setupStreamTextSpy() {
+    return spyOn(aiSdk, "streamText").mockReturnValue({
+      fullStream: (async function* asyncGenerator() {
+        yield* [] as unknown[];
+        await Promise.resolve();
+      })(),
+      usage: Promise.resolve(undefined),
+      providerMetadata: Promise.resolve(undefined),
+      totalUsage: Promise.resolve(undefined),
+      steps: Promise.resolve([]),
+    } as unknown as ReturnType<typeof aiSdk.streamText>);
+  }
+
+  function capturePrepareStep(
+    streamTextSpy: ReturnType<typeof setupStreamTextSpy>
+  ): CapturedPrepareStep {
+    const prepareStep = streamTextSpy.mock.calls[0]?.[0]?.prepareStep as
+      | CapturedPrepareStep
+      | undefined;
+    expect(typeof prepareStep).toBe("function");
+    if (!prepareStep) {
+      throw new Error("Expected prepareStep to be captured");
+    }
+    return prepareStep;
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("applies a pending override in place: same object identity, old keys deleted, sink invoked", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    const appliedLevels: string[] = [];
+    const state: ActiveTurnThinkingOverride = {
+      pending: "high",
+      onApplied: (level) => appliedLevels.push(level),
+    };
+    const originalProviderOptions: Record<string, unknown> = {
+      anthropic: { effort: "low", thinking: { type: "enabled", budgetTokens: 4000 } },
+      staleNamespace: { key: "must-be-deleted" },
+    };
+    const rebuilt = { anthropic: { effort: "high", thinking: { type: "enabled" } } };
+    const rebuild = mock((level: string) =>
+      level === "high" ? { effectiveLevel: "high" as const, providerOptions: rebuilt } : null
+    );
+
+    const request: OverrideRequestForTests = {
+      model,
+      messages,
+      system: "system",
+      providerOptions: originalProviderOptions,
+      thinkingOverrideState: state,
+      rebuildProviderOptionsForThinkingLevel:
+        rebuild as unknown as RebuildProviderOptionsForThinkingLevel,
+    };
+    createStreamResult(request, new AbortController());
+    const prepareStep = capturePrepareStep(streamTextSpy);
+
+    const step = await prepareStep({ messages });
+    // Rebuilt options are returned for the step (defense in depth) …
+    expect(step?.providerOptions).toEqual(rebuilt);
+    // … and the live request object is replaced IN PLACE (same identity),
+    // deleting keys the SDK's deep-merge could never remove.
+    expect(request.providerOptions).toBe(originalProviderOptions);
+    expect(request.providerOptions).toEqual(rebuilt);
+    expect("staleNamespace" in originalProviderOptions).toBe(false);
+    // Consume-once bookkeeping + metadata sink.
+    expect(state.pending).toBeUndefined();
+    expect(state.applied).toBe("high");
+    expect(appliedLevels).toEqual(["high"]);
+    // Without a new pending value the next step is a no-op again.
+    expect(await prepareStep({ messages })).toBeUndefined();
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
+  test("clears pending without touching options when the rebuild reports not-applicable", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    const state: ActiveTurnThinkingOverride = { pending: "off" };
+    const originalProviderOptions: Record<string, unknown> = { xai: { some: "config" } };
+    const rebuild = mock(() => null);
+
+    const request: OverrideRequestForTests = {
+      model,
+      messages,
+      system: "system",
+      providerOptions: originalProviderOptions,
+      thinkingOverrideState: state,
+      rebuildProviderOptionsForThinkingLevel:
+        rebuild as unknown as RebuildProviderOptionsForThinkingLevel,
+    };
+    createStreamResult(request, new AbortController());
+    const prepareStep = capturePrepareStep(streamTextSpy);
+
+    expect(await prepareStep({ messages })).toBeUndefined();
+    expect(request.providerOptions).toEqual({ xai: { some: "config" } });
+    // Consume-once: a skipped application must not retry on every later step.
+    expect(state.pending).toBeUndefined();
+    expect(state.applied).toBeUndefined();
+    expect(await prepareStep({ messages })).toBeUndefined();
+    expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
+  test("stays byte-identical to the feature-off behavior when no override state exists", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    createStreamResult({ model, messages, system: "system" }, new AbortController());
+    const prepareStep = capturePrepareStep(streamTextSpy);
+    expect(await prepareStep({ messages })).toBeUndefined();
+  });
+
+  test("buildStreamRequestConfig normalizes providerOptions to a stable mutable object only when a rebuild closure exists", () => {
+    const streamManager = new StreamManager(historyService);
+    const { buildRequestConfig, createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    const state: ActiveTurnThinkingOverride = {};
+    const rebuild: RebuildProviderOptionsForThinkingLevel = () => null;
+
+    // Without the closure, an absent providerOptions stays absent (no behavior change).
+    const plainRequest = buildRequestConfig(
+      model,
+      KNOWN_MODELS.SONNET.id,
+      messages,
+      "system",
+      undefined, // routeProvider
+      undefined, // tools
+      undefined, // providerOptions
+      undefined, // maxOutputTokens
+      undefined, // callSettingsOverrides
+      undefined, // toolPolicy
+      undefined, // hasQueuedMessages
+      undefined, // headers
+      undefined, // anthropicCacheTtlOverride
+      undefined, // onChunk
+      undefined, // onStepMessages
+      undefined // toolSearchState
+    );
+    expect(plainRequest.providerOptions).toBeUndefined();
+
+    // With the closure, undefined normalizes to a mutable object whose identity
+    // is exactly what streamText() captures — otherwise in-place mutation at
+    // prepareStep time would be unobservable to the SDK's per-step merge.
+    const request = buildRequestConfig(
+      model,
+      KNOWN_MODELS.SONNET.id,
+      messages,
+      "system",
+      undefined,
+      undefined,
+      undefined, // providerOptions intentionally absent
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      state,
+      rebuild
+    );
+    expect(request.providerOptions).toEqual({});
+    expect(request.thinkingOverrideState).toBe(state);
+    expect(request.rebuildProviderOptionsForThinkingLevel).toBe(rebuild);
+
+    createStreamResult(request, new AbortController());
+    const streamTextArgs = streamTextSpy.mock.calls[0]?.[0];
+    expect(streamTextArgs?.providerOptions).toBe(
+      request.providerOptions as NonNullable<typeof streamTextArgs>["providerOptions"]
+    );
+  });
+
+  test("model fallback folds the pending override into prepare() and rebinds holder + closure on the swapped request", async () => {
+    const streamManager = new StreamManager(historyService);
+    Reflect.set(streamManager, "tokenTracker", {
+      setModel: () => Promise.resolve(undefined),
+      countTokens: () => Promise.resolve(0),
+    });
+
+    const workspaceId = "thinking-fallback-workspace";
+    const messageId = "thinking-fallback-message";
+    const historySequence = 1;
+    const fallbackModel = KNOWN_MODELS.GPT.id;
+
+    await appendPartialAssistantForTests(workspaceId, messageId, historySequence);
+    const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
+
+    const capturedNextRequests: OverrideRequestForTests[] = [];
+    const createStreamResult = mock((request: OverrideRequestForTests) => {
+      capturedNextRequests.push(request);
+      return createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "text-delta", text: "fallback answer" };
+          yield { type: "finish", finishReason: "stop" };
+        })(),
+        { inputTokens: 5, outputTokens: 3, totalTokens: 8 }
+      );
+    });
+    expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
+
+    const fallbackLanguageModel = createTestLanguageModel("fallback-model");
+    const fallbackRebuild: RebuildProviderOptionsForThinkingLevel = () => null;
+    const prepare = mock((nextModelString: string, options?: ModelFallbackPrepareOptions) => {
+      expect(options?.thinkingLevelOverride).toBe("high");
+      return Promise.resolve(
+        Ok({
+          model: fallbackLanguageModel,
+          modelString: nextModelString,
+          messages: [],
+          system: "fallback system",
+          tools: undefined,
+          thinkingLevel: "high",
+          rebuildProviderOptionsForThinkingLevel: fallbackRebuild,
+        })
+      );
+    });
+
+    // Pending override that never got a next step on the refusing stream: the
+    // fallback hop must not silently revert it.
+    const holder: ActiveTurnThinkingOverride = { pending: "high" };
+    const startTime = Date.now() - 250;
+    const streamInfo = createStreamInfoForTests({
+      streamResult: createStreamResultForTests(
+        (async function* () {
+          await Promise.resolve();
+          yield { type: "finish", finishReason: "content-filter", rawFinishReason: "refusal" };
+        })(),
+        { inputTokens: 10, outputTokens: 0, totalTokens: 10 }
+      ),
+      messageId,
+      startTime,
+      lastPartTimestamp: startTime,
+      model: KNOWN_MODELS.SONNET.id,
+      metadataModel: KNOWN_MODELS.SONNET.id,
+      historySequence,
+      runtime: LOCAL_TEST_RUNTIME,
+      request: {
+        model: createTestLanguageModel("refused-model"),
+        messages: [],
+        providerOptions: undefined,
+        thinkingOverrideState: holder,
+      },
+      modelFallback: {
+        options: { chain: [fallbackModel], prepare },
+        requestedModel: KNOWN_MODELS.SONNET.id,
+        refusedModels: [],
+        original: { maxOutputTokens: undefined },
+      },
+    });
+
+    await processStreamWithCleanup.call(streamManager, workspaceId, streamInfo, historySequence);
+
+    expect(prepare).toHaveBeenCalledTimes(1);
+    // Pending was folded into the fallback baseline (consumed, kept as applied
+    // for potential second hops).
+    expect(holder.pending).toBeUndefined();
+    expect(holder.applied).toBe("high");
+    // The swapped request carries the SAME holder (the session setter keeps
+    // working) and the fallback-bound rebuild closure.
+    expect(createStreamResult).toHaveBeenCalledTimes(1);
+    const nextRequest = capturedNextRequests[0];
+    expect(nextRequest?.thinkingOverrideState).toBe(holder);
+    expect(nextRequest?.rebuildProviderOptionsForThinkingLevel).toBe(fallbackRebuild);
   });
 });

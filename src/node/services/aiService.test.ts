@@ -57,6 +57,10 @@ import type {
 import { log } from "./log";
 import type { SessionUsageService } from "./sessionUsageService";
 import type { ModelFallbackOptions, StreamManager } from "./streamManager";
+import type {
+  ActiveTurnThinkingOverride,
+  RebuildProviderOptionsForThinkingLevel,
+} from "./thinkingOverride";
 import { ExperimentsService } from "./experimentsService";
 import type { DevToolsService } from "./devToolsService";
 import { TelemetryService } from "@/node/services/telemetryService";
@@ -2954,6 +2958,161 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         model: event.model,
       })
     );
+  });
+
+  describe("mid-turn thinking override rebuild closure", () => {
+    const START_STREAM_THINKING_OVERRIDE_STATE_INDEX = 26;
+    const START_STREAM_THINKING_REBUILD_INDEX = 27;
+
+    function getThinkingOverrideStartStreamArgs(harness: StreamMessageHarness): {
+      holder: unknown;
+      rebuild: RebuildProviderOptionsForThinkingLevel;
+    } {
+      expect(harness.startStreamCalls).toHaveLength(1);
+      const call = harness.startStreamCalls[0];
+      if (!call) {
+        throw new Error("Expected streamManager.startStream call arguments");
+      }
+      const holder = call[START_STREAM_THINKING_OVERRIDE_STATE_INDEX];
+      const rebuild = call[START_STREAM_THINKING_REBUILD_INDEX];
+      expect(typeof rebuild).toBe("function");
+      return { holder, rebuild: rebuild as RebuildProviderOptionsForThinkingLevel };
+    }
+
+    it("threads the session holder by reference and rebuilds options through the same pipeline", async () => {
+      using muxHome = new DisposableTempDir("ai-service-thinking-override");
+      const projectPath = path.join(muxHome.path, "project");
+      await fs.mkdir(projectPath, { recursive: true });
+
+      const workspaceId = "workspace-thinking-override";
+      const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+      const harness = createHarness(muxHome.path, metadata, {
+        useRequestedModelString: true,
+        canonicalProviderName: "anthropic",
+      });
+
+      const sessionHolder: ActiveTurnThinkingOverride = {};
+      const result = await harness.service.streamMessage({
+        messages: [createMuxMessage("latest-user", "user", "hello")],
+        workspaceId,
+        // Budget-token Anthropic model (no adaptive effort): level changes show
+        // up as thinking.budgetTokens differences.
+        modelString: "anthropic:claude-sonnet-4-5",
+        thinkingLevel: "low",
+        minThinkingLevel: "off",
+        activeTurnThinkingOverride: sessionHolder,
+      });
+      expect(result.success).toBe(true);
+
+      const { holder, rebuild } = getThinkingOverrideStartStreamArgs(harness);
+      // Same object: AgentSession's setter writes must be visible to prepareStep.
+      expect(holder).toBe(sessionHolder);
+
+      // No-op: requested level equals the current effective level.
+      expect(rebuild("low")).toBeNull();
+
+      // Real transition: rebuilt provider options reflect the new level.
+      const rebuilt = rebuild("high");
+      expect(rebuilt?.effectiveLevel).toBe("high");
+      const anthropic = rebuilt?.providerOptions.anthropic as
+        | { thinking?: { type: string; budgetTokens?: number } }
+        | undefined;
+      expect(anthropic?.thinking).toEqual({ type: "enabled", budgetTokens: 20000 });
+
+      // The closure diffs against the LIVE level, not the send-time one:
+      // repeating the applied level is now a no-op.
+      expect(rebuild("high")).toBeNull();
+    });
+
+    it("clamps mid-turn requests against the session-provided floor", async () => {
+      using muxHome = new DisposableTempDir("ai-service-thinking-floor");
+      const projectPath = path.join(muxHome.path, "project");
+      await fs.mkdir(projectPath, { recursive: true });
+
+      const workspaceId = "workspace-thinking-floor";
+      const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+      const harness = createHarness(muxHome.path, metadata, {
+        useRequestedModelString: true,
+        canonicalProviderName: "anthropic",
+      });
+
+      const result = await harness.service.streamMessage({
+        messages: [createMuxMessage("latest-user", "user", "hello")],
+        workspaceId,
+        modelString: KNOWN_MODELS.SONNET.id,
+        thinkingLevel: "medium",
+        minThinkingLevel: "medium",
+        activeTurnThinkingOverride: {},
+      });
+      expect(result.success).toBe(true);
+
+      const { rebuild } = getThinkingOverrideStartStreamArgs(harness);
+      // Below-floor requests clamp up to the floor, which equals the current
+      // level here — so they must be treated as no-ops, not as downgrades.
+      expect(rebuild("off")).toBeNull();
+      expect(rebuild("low")).toBeNull();
+      // Above-floor requests still apply.
+      expect(rebuild("high")?.effectiveLevel).toBe("high");
+    });
+
+    it("applies Anthropic native-xhigh transitions as plain provider-option rebuilds", async () => {
+      using muxHome = new DisposableTempDir("ai-service-thinking-xhigh");
+      const projectPath = path.join(muxHome.path, "project");
+      await fs.mkdir(projectPath, { recursive: true });
+
+      const workspaceId = "workspace-thinking-xhigh";
+      const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+      const harness = createHarness(muxHome.path, metadata, {
+        useRequestedModelString: true,
+        canonicalProviderName: "anthropic",
+      });
+
+      const result = await harness.service.streamMessage({
+        messages: [createMuxMessage("latest-user", "user", "hello")],
+        workspaceId,
+        modelString: "anthropic:claude-opus-4-7",
+        thinkingLevel: "high",
+        activeTurnThinkingOverride: {},
+      });
+      expect(result.success).toBe(true);
+
+      const { rebuild } = getThinkingOverrideStartStreamArgs(harness);
+      const rebuilt = rebuild("xhigh");
+      expect(rebuilt?.effectiveLevel).toBe("xhigh");
+      const anthropic = rebuilt?.providerOptions.anthropic as
+        | { effort?: string; thinking?: unknown }
+        | undefined;
+      // Post-wire-hack: the native effort flows directly via provider options.
+      expect(anthropic?.effort).toBe("xhigh");
+      expect(anthropic?.thinking).toEqual({ type: "adaptive", display: "summarized" });
+    });
+
+    it("skips the grok-4-1-fast off<->on transition (model-instance swap)", async () => {
+      using muxHome = new DisposableTempDir("ai-service-thinking-grok");
+      const projectPath = path.join(muxHome.path, "project");
+      await fs.mkdir(projectPath, { recursive: true });
+
+      const workspaceId = "workspace-thinking-grok";
+      const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+      const harness = createHarness(muxHome.path, metadata, {
+        useRequestedModelString: true,
+        canonicalProviderName: "xai" as ProviderName,
+      });
+
+      const result = await harness.service.streamMessage({
+        messages: [createMuxMessage("latest-user", "user", "hello")],
+        workspaceId,
+        modelString: "xai:grok-4-1-fast",
+        thinkingLevel: "off",
+        activeTurnThinkingOverride: {},
+      });
+      expect(result.success).toBe(true);
+
+      const { rebuild } = getThinkingOverrideStartStreamArgs(harness);
+      // off -> high selects a different model instance at creation time; the
+      // in-flight stream cannot express it via provider options.
+      expect(rebuild("high")).toBeNull();
+    });
   });
 });
 

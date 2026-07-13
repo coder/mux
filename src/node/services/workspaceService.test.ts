@@ -218,6 +218,16 @@ function createFrontendWorkspaceMetadata(
   };
 }
 
+describe("WorkspaceService.setActiveTurnThinkingLevel", () => {
+  test("returns accepted:false when the workspace has no session", () => {
+    const workspaceService = createWorkspaceServiceForTest({ config: {} });
+    // No session was ever created for this workspace: nothing is running, so
+    // the mid-turn override is a no-op and persisted settings cover the next turn.
+    const result = workspaceService.setActiveTurnThinkingLevel("unknown-workspace", "high");
+    expect(result).toEqual(Ok({ accepted: false }));
+  });
+});
+
 describe("WorkspaceService bash monitor wakes", () => {
   test("sends a synthetic wake and marks the record delivered when monitor output matches", async () => {
     const { config, cleanup } = await createTestHistoryService();

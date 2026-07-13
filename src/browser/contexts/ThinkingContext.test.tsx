@@ -590,6 +590,81 @@ describe("ThinkingContext", () => {
     }
   });
 
+  test("requests a mid-turn override for the active workspace turn on slider changes", async () => {
+    const workspaceId = "ws-set-thinking-mid-turn";
+    const setActiveTurnThinkingLevel = mock<
+      (args: {
+        workspaceId: string;
+        thinkingLevel: ThinkingLevel;
+      }) => Promise<{ success: true; data: { accepted: boolean } }>
+    >(() => Promise.resolve({ success: true as const, data: { accepted: true } }));
+    currentClientMock = {
+      workspace: {
+        updateAgentAISettings: mock(() =>
+          Promise.resolve({ success: true as const, data: undefined })
+        ),
+        setActiveTurnThinkingLevel,
+      },
+    };
+
+    setWorkspaceMetadata(createWorkspaceMetadata({ id: workspaceId }));
+
+    const view = renderWithWorkspaceMetadata({
+      workspaceId,
+      modelOverride: null,
+      children: (
+        <ThinkingProvider workspaceId={workspaceId}>
+          <ThinkingSetterComponent />
+        </ThinkingProvider>
+      ),
+    });
+
+    const button = await view.findByTestId("set-thinking-medium", undefined, METADATA_WAIT_OPTIONS);
+    act(() => {
+      button.click();
+    });
+
+    await waitFor(() => {
+      expect(setActiveTurnThinkingLevel).toHaveBeenCalledWith({
+        workspaceId,
+        thinkingLevel: "medium",
+      });
+    }, METADATA_WAIT_OPTIONS);
+  });
+
+  test("does not request a mid-turn override in project scope (no workspaceId)", async () => {
+    const projectPath = "/Users/dev/mid-turn-scope";
+    const setActiveTurnThinkingLevel = mock(() =>
+      Promise.resolve({ success: true as const, data: { accepted: false } })
+    );
+    currentClientMock = {
+      workspace: { setActiveTurnThinkingLevel },
+    };
+
+    const view = renderWithAPI(
+      <ThinkingProvider projectPath={projectPath}>
+        <ThinkingSetterComponent />
+      </ThinkingProvider>
+    );
+
+    const button = await view.findByTestId("set-thinking-medium", undefined, METADATA_WAIT_OPTIONS);
+    act(() => {
+      button.click();
+    });
+
+    // Project/global scopes have no active turn to override; the route must
+    // not fire (persisted settings alone drive the next turn).
+    await waitFor(() => {
+      expect(
+        readPersistedState<ThinkingLevel | null>(
+          getThinkingLevelKey(getProjectScopeId(projectPath)),
+          null
+        )
+      ).toBe("medium");
+    }, METADATA_WAIT_OPTIONS);
+    expect(setActiveTurnThinkingLevel).not.toHaveBeenCalled();
+  });
+
   test("cycles thinking level via keybind in project-scoped (creation) flow", async () => {
     const projectPath = "/Users/dev/my-project";
 

@@ -2573,14 +2573,18 @@ export class StreamManager extends EventEmitter {
       // hop's baseline, but a second hop re-folds from `applied`.
       overrideHolder.applied = thinkingLevelOverride;
     }
+    const prepareCallOptions: ModelFallbackPrepareOptions | undefined =
+      continuation?.success === true || thinkingLevelOverride != null
+        ? {
+            ...(continuation?.success === true
+              ? { continuation: { assistantMessage: continuation.data } }
+              : {}),
+            ...(thinkingLevelOverride != null ? { thinkingLevelOverride } : {}),
+          }
+        : undefined;
     let prepared: Result<PreparedModelFallback, string>;
     try {
-      prepared = await fallbackState.options.prepare(nextModelString, {
-        ...(continuation?.success === true
-          ? { continuation: { assistantMessage: continuation.data } }
-          : {}),
-        ...(thinkingLevelOverride != null ? { thinkingLevelOverride } : {}),
-      });
+      prepared = await fallbackState.options.prepare(nextModelString, prepareCallOptions);
     } catch (error) {
       if (streamInfo.abortController.signal.aborted) {
         throw error;
