@@ -1793,7 +1793,8 @@ export class StreamManager extends EventEmitter {
     toolCalls: ToolCallMap,
     toolCallId: string,
     toolName: string,
-    output: unknown
+    output: unknown,
+    providerExecuted?: boolean
   ): Promise<void> {
     // Find and update the existing tool part
     const existingPartIndex = streamInfo.parts.findIndex(
@@ -1852,6 +1853,7 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
+      ...(providerExecuted === true ? { providerExecuted: true } : {}),
       timestamp: completionTimestamp,
     } as ToolCallEndEvent);
   }
@@ -1862,9 +1864,18 @@ export class StreamManager extends EventEmitter {
     toolCalls: ToolCallMap,
     toolCallId: string,
     toolName: string,
-    output: unknown
+    output: unknown,
+    providerExecuted?: boolean
   ): Promise<void> {
-    await this.completeToolCall(workspaceId, streamInfo, toolCalls, toolCallId, toolName, output);
+    await this.completeToolCall(
+      workspaceId,
+      streamInfo,
+      toolCalls,
+      toolCallId,
+      toolName,
+      output,
+      providerExecuted
+    );
     await this.checkSoftCancelStream(workspaceId, streamInfo);
   }
 
@@ -2715,6 +2726,7 @@ export class StreamManager extends EventEmitter {
                   toolCallId: string;
                   toolName: string;
                   output: unknown;
+                  providerExecuted?: boolean;
                 };
 
                 // Strip encrypted content from web search results before storing
@@ -2748,7 +2760,8 @@ export class StreamManager extends EventEmitter {
                   toolCalls,
                   toolResultPart.toolCallId,
                   toolResultPart.toolName,
-                  strippedOutput
+                  strippedOutput,
+                  toolResultPart.providerExecuted
                 );
                 break;
               }
@@ -2760,6 +2773,7 @@ export class StreamManager extends EventEmitter {
                   toolCallId: string;
                   toolName: string;
                   error: unknown;
+                  providerExecuted?: boolean;
                 };
 
                 const logLevel = streamInfo.abortController.signal.aborted ? log.debug : log.error;
@@ -2786,7 +2800,8 @@ export class StreamManager extends EventEmitter {
                   toolCalls,
                   toolErrorPart.toolCallId,
                   toolErrorPart.toolName,
-                  errorOutput
+                  errorOutput,
+                  toolErrorPart.providerExecuted
                 );
                 break;
               }

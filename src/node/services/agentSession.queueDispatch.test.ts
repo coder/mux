@@ -99,6 +99,96 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("soft-stops after a provider-executed tool result and dispatches after abort", async () => {
+    const workspaceId = "queue-dispatch-provider-tool";
+    const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({
+      workspaceId,
+    });
+    const stopStream = spyOn(aiService, "stopStream").mockResolvedValue(Ok(undefined));
+    const sendQueuedMessages = spyOn(session, "sendQueuedMessages").mockImplementation(
+      () => undefined
+    );
+
+    try {
+      aiEmitter.emit("stream-start", streamStartEvent(workspaceId));
+      session.queueMessage("follow up", { model: TEST_MODEL, agentId: "exec" });
+
+      aiEmitter.emit("tool-call-end", {
+        ...toolCallEndEvent(workspaceId),
+        toolName: "web_search",
+        providerExecuted: true,
+      });
+
+      expect(stopStream).toHaveBeenCalledWith(workspaceId, {
+        soft: true,
+        abortReason: "system",
+      });
+
+      aiEmitter.emit("stream-abort", streamAbortEvent(workspaceId, "system"));
+      const didDispatch = await waitForCondition(() => sendQueuedMessages.mock.calls.length > 0);
+      expect(didDispatch).toBe(true);
+      expect(sendQueuedMessages).toHaveBeenCalledTimes(1);
+    } finally {
+      sendQueuedMessages.mockRestore();
+      stopStream.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("waits for every known sibling before stopping after a provider-executed result", async () => {
+    const workspaceId = "queue-dispatch-provider-siblings";
+    const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({
+      workspaceId,
+    });
+    const stopStream = spyOn(aiService, "stopStream").mockResolvedValue(Ok(undefined));
+
+    try {
+      aiEmitter.emit("stream-start", streamStartEvent(workspaceId));
+      session.queueMessage("follow up", { model: TEST_MODEL, agentId: "exec" });
+      aiEmitter.emit("tool-call-start", {
+        type: "tool-call-start",
+        workspaceId,
+        messageId: "assistant-1",
+        toolCallId: "provider-tool-1",
+        toolName: "web_search",
+        args: {},
+        tokens: 0,
+        timestamp: Date.now(),
+      });
+      aiEmitter.emit("tool-call-start", {
+        type: "tool-call-start",
+        workspaceId,
+        messageId: "assistant-1",
+        toolCallId: "provider-tool-2",
+        toolName: "web_search",
+        args: {},
+        tokens: 0,
+        timestamp: Date.now(),
+      });
+
+      aiEmitter.emit("tool-call-end", {
+        ...toolCallEndEvent(workspaceId),
+        toolCallId: "provider-tool-1",
+        toolName: "web_search",
+        providerExecuted: true,
+      });
+      expect(stopStream).not.toHaveBeenCalled();
+
+      aiEmitter.emit("tool-call-end", {
+        ...toolCallEndEvent(workspaceId),
+        toolCallId: "provider-tool-2",
+        toolName: "web_search",
+        providerExecuted: true,
+      });
+      expect(stopStream).toHaveBeenCalledTimes(1);
+    } finally {
+      stopStream.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   // Heartbeat force-queue drain path: a scheduled message queued while the session is IDLE
   // (e.g. a heartbeat deferred behind active descendant tasks) must ride along with the next
   // turn and drain at its stream-end, releasing the dedupe key so the next firing can enqueue.
@@ -255,8 +345,8 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
-  test("does not send the queued message after a user abort", async () => {
-    const workspaceId = "queue-dispatch-user-abort";
+  test("hard user interrupt cancels a pending provider-tool dispatch", async () => {
+    const workspaceId = "queue-dispatch-hard-user-interrupt";
     const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({
       workspaceId,
     });
@@ -268,8 +358,17 @@ describe("AgentSession queued message tool-call dispatch", () => {
     try {
       aiEmitter.emit("stream-start", streamStartEvent(workspaceId));
       session.queueMessage("follow up", { model: TEST_MODEL, agentId: "exec" });
-      aiEmitter.emit("tool-call-end", toolCallEndEvent(workspaceId));
-      aiEmitter.emit("stream-abort", streamAbortEvent(workspaceId, "user"));
+      aiEmitter.emit("tool-call-end", {
+        ...toolCallEndEvent(workspaceId),
+        toolName: "web_search",
+        providerExecuted: true,
+      });
+      expect(stopStream).toHaveBeenCalledTimes(1);
+
+      const interruptResult = await session.interruptStream();
+      expect(interruptResult.success).toBe(true);
+      // The native soft-stop can still win the event race after the hard user interrupt.
+      aiEmitter.emit("stream-abort", streamAbortEvent(workspaceId, "system"));
 
       await new Promise((resolve) => setTimeout(resolve, 25));
       expect(sendQueuedMessages).not.toHaveBeenCalled();

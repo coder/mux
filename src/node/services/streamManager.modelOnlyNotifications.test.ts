@@ -110,10 +110,21 @@ describe("StreamManager - model-only tool notifications", () => {
       countTokens: async () => 0,
     };
 
-    const events: Array<{ toolName?: string; result?: unknown }> = [];
-    streamManager.on("tool-call-end", (data: { toolName: string; result: unknown }) => {
-      events.push({ toolName: data.toolName, result: data.result });
-    });
+    const events: Array<{
+      toolName?: string;
+      result?: unknown;
+      providerExecuted?: boolean;
+    }> = [];
+    streamManager.on(
+      "tool-call-end",
+      (data: { toolName: string; result: unknown; providerExecuted?: boolean }) => {
+        events.push({
+          toolName: data.toolName,
+          result: data.result,
+          providerExecuted: data.providerExecuted,
+        });
+      }
+    );
 
     const mockStreamResult = {
       // eslint-disable-next-line @typescript-eslint/require-await
@@ -122,6 +133,7 @@ describe("StreamManager - model-only tool notifications", () => {
           type: "tool-result",
           toolCallId: "orphan-web-search-1",
           toolName: "web_search",
+          providerExecuted: true,
           output: {
             type: "json",
             value: [
@@ -202,5 +214,6 @@ describe("StreamManager - model-only tool notifications", () => {
 
     const toolEnd = events.find((event) => event.toolName === "web_search");
     expect(toolEnd).toBeDefined();
+    expect(toolEnd?.providerExecuted).toBe(true);
   });
 });

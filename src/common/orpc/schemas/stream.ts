@@ -450,6 +450,10 @@ export const ToolCallEndEventSchema = z.object({
   toolCallId: z.string(),
   toolName: z.string(),
   result: z.unknown(),
+  providerExecuted: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when the provider executed the tool server-side" }),
   timestamp: z.number().meta({ description: "When tool call completed (Date.now())" }),
   parentToolCallId: z.string().optional().meta({ description: "Set for nested PTC calls" }),
 });
