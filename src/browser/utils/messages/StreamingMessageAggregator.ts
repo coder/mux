@@ -2423,6 +2423,19 @@ export class StreamingMessageAggregator {
    * queue — elapsed timers start here instead of at tool-call-start.
    */
   handleToolCallExecutionStart(data: ToolCallExecutionStartEvent): void {
+    // Re-anchor the timing-stats start for this tool. toolExecutionMs sums per-tool
+    // durations at tool-call-end; without this, each serialized sibling's duration
+    // would include the time it spent queued behind earlier siblings (double-counting
+    // tool time and deflating derived streaming/tok-s stats). Provider-executed tools
+    // never emit this event and keep their tool-call-start anchor.
+    const context = this.activeStreams.get(data.messageId);
+    if (context) {
+      this.updateStreamClock(context, data.timestamp);
+      if (context.pendingToolStarts.has(data.toolCallId)) {
+        context.pendingToolStarts.set(data.toolCallId, data.timestamp);
+      }
+    }
+
     const message = this.messages.get(data.messageId);
     if (!message) return;
 

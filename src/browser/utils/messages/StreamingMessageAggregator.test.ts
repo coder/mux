@@ -1935,6 +1935,57 @@ describe("StreamingMessageAggregator", () => {
     expect(executingRow?.type === "tool" ? executingRow.executionStartedAt : undefined).toBe(5_000);
   });
 
+  test("tool execution stats measure from execution start, not queue entry", () => {
+    const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+    startTestStream(aggregator, { messageId: "msg-1" });
+    // Two parallel tool calls emitted back-to-back; they execute sequentially.
+    startToolCall(aggregator, {
+      toolCallId: "tool-a",
+      toolName: "bash",
+      args: {},
+      timestamp: 1_000,
+    });
+    startToolCall(aggregator, {
+      toolCallId: "tool-b",
+      toolName: "bash",
+      args: {},
+      timestamp: 1_001,
+    });
+
+    aggregator.handleToolCallExecutionStart({
+      type: "tool-call-execution-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-a",
+      timestamp: 1_002,
+    });
+    endToolCall(aggregator, {
+      toolCallId: "tool-a",
+      toolName: "bash",
+      result: {},
+      timestamp: 5_000,
+    });
+    aggregator.handleToolCallExecutionStart({
+      type: "tool-call-execution-start",
+      workspaceId: TEST_WORKSPACE_ID,
+      messageId: "msg-1",
+      toolCallId: "tool-b",
+      timestamp: 5_001,
+    });
+    endToolCall(aggregator, {
+      toolCallId: "tool-b",
+      toolName: "bash",
+      result: {},
+      timestamp: 9_000,
+    });
+
+    const stats = aggregator.getActiveStreamTimingStats();
+    // A: 5000-1002, B: 9000-5001. Without execution-start re-anchoring, B would
+    // count from emission (9000-1001) and double-count A's run time.
+    expect(stats?.toolExecutionMs).toBe(3_998 + 3_999);
+  });
+
   test("replayed tool-call-start merges executionStartedAt into an existing tool part", () => {
     const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
