@@ -128,7 +128,7 @@ import {
 } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { WorkflowArgsValidationError } from "@/node/services/workflows/workflowArgs";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
-import { isProjectTrusted } from "@/node/utils/projectTrust";
+import { isProjectTrusted, isWorkspaceProjectTrusted } from "@/node/utils/projectTrust";
 
 import {
   WORKFLOW_RESULT_METADATA_TYPE,
@@ -373,7 +373,13 @@ export async function resolveWorkflowContext(
   const workflowProjectPath = hasRequestedWorkflowProjectPath
     ? requestedWorkflowProjectPath
     : metadata.projectPath;
-  const projectTrusted = isTrustedProjectPath(context, workflowProjectPath);
+  // Workspace-default trust must be metadata-aware: scratch chats are trusted
+  // by design but their projectPath is an app-managed workdir, not a config key.
+  const resolveWorkflowProjectTrusted = () =>
+    hasRequestedWorkflowProjectPath
+      ? isTrustedProjectPath(context, workflowProjectPath)
+      : isWorkspaceProjectTrusted(context.config, metadata);
+  const projectTrusted = resolveWorkflowProjectTrusted();
   const runtime = createRuntimeForWorkspace(metadata);
   const workspaceRootPath = resolveWorkspaceRootPath(metadata, runtime);
   const workflowExecutionProjectPath = hasRequestedWorkflowProjectPath
@@ -411,7 +417,7 @@ export async function resolveWorkflowContext(
             workspaceSessionDir: context.config.getSessionDir(workspaceId),
             trusted: projectTrusted,
           },
-          getProjectTrusted: () => isTrustedProjectPath(context, workflowProjectPath),
+          getProjectTrusted: resolveWorkflowProjectTrusted,
           experiments: {
             dynamicWorkflows: true,
           },
@@ -421,13 +427,13 @@ export async function resolveWorkflowContext(
           scriptPath,
           runtime,
           workspacePath,
-          projectTrusted: isTrustedProjectPath(context, workflowProjectPath),
+          projectTrusted: resolveWorkflowProjectTrusted(),
         }),
       onRunStatusChanged: (event) => context.workspaceService.emitWorkflowRunActivity(event),
       ...(options.onBackgroundRunTerminal != null
         ? { onBackgroundRunTerminal: options.onBackgroundRunTerminal }
         : {}),
-      getCurrentProjectTrusted: () => isTrustedProjectPath(context, workflowProjectPath),
+      getCurrentProjectTrusted: resolveWorkflowProjectTrusted,
       runnerId: `workflow-runner:${workspaceId}`,
     }),
   };

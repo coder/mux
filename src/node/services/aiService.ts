@@ -169,7 +169,7 @@ import {
   WorkflowTaskServiceAdapter,
 } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
-import { isProjectTrusted } from "@/node/utils/projectTrust";
+import { isWorkspaceProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
 
@@ -1451,7 +1451,7 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
       } = agentResult.data;
       const legacyModeForMetadata = getLegacyModeForAgentMetadata(effectiveAgentId, effectiveMode);
-      const projectTrusted = isProjectTrusted(this.config, metadata.projectPath);
+      const projectTrusted = isWorkspaceProjectTrusted(this.config, metadata);
       const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
       const agentAdvisorEnabled = resolveAdvisorEnabledForAgent(
         effectiveAgentId,
@@ -1808,8 +1808,7 @@ export class AIService extends EventEmitter {
         thinkingLevel: thinkingLevel ?? "off",
         costsUsd: sessionCostsUsd,
       });
-      const getWorkflowProjectTrusted = () =>
-        metadata.kind === "scratch" || isProjectTrusted(this.config, metadata.projectPath);
+      const getWorkflowProjectTrusted = () => isWorkspaceProjectTrusted(this.config, metadata);
 
       const workflowService =
         dynamicWorkflowsExperimentEnabled && this.taskService != null
@@ -1955,7 +1954,7 @@ export class AIService extends EventEmitter {
                   await waitForWorkflowContinuationRetry();
                 }
               },
-              getCurrentProjectTrusted: () => isProjectTrusted(this.config, metadata.projectPath),
+              getCurrentProjectTrusted: () => isWorkspaceProjectTrusted(this.config, metadata),
               runnerId: `workflow-runner:${workspaceId}`,
             })
           : undefined;
