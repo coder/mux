@@ -1194,6 +1194,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (!currentWorkspaceId) return;
     if (workspaceMetadata.has(currentWorkspaceId)) return;
 
+    // If metadata is empty, a transient backend failure may have caused
+    // workspace.list to return nothing (it swallows getAllWorkspaceMetadata
+    // errors and resolves []), so don't clear a potentially valid route.
+    if (workspaceMetadata.size === 0) return;
+
     setSelectedWorkspace(null);
   }, [loading, loaded, loadError, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);
 

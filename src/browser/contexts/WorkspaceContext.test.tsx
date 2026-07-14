@@ -1148,6 +1148,38 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
   });
 
+  test("browser direct open keeps the persisted selection when the workspace list is empty", async () => {
+    // workspace.list swallows backend read failures and resolves [], so an
+    // empty list is not proof the workspace is gone; the stale-route cleanup
+    // must not wipe the persisted selection. (The startup fallback may still
+    // navigate to a project page; that pre-existing behavior is not under test.)
+    const persistedSelection = {
+      workspaceId: "ws-maybe-alive",
+      projectPath: "/existing",
+      projectName: "existing",
+      namedWorkspacePath: "/existing-main",
+    };
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([]),
+      },
+      projects: {
+        list: () => Promise.resolve([["/existing", { workspaces: [] }]]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify(persistedSelection),
+      },
+      locationPath: "/workspace/ws-maybe-alive",
+      navigationType: "navigate",
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(localStorage.getItem(SELECTED_WORKSPACE_KEY)).toContain("ws-maybe-alive");
+  });
+
   test("resolves system project route IDs for pending workspace creation", async () => {
     const systemProjectPath = "/system/internal-project";
     const systemProjectId = getProjectRouteId(systemProjectPath);

@@ -77,6 +77,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import type { PinnedDropEdge } from "@/browser/utils/ui/pinnedReorder";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
+import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceActionsOptional } from "@/browser/contexts/WorkspaceContext";
 
@@ -1092,9 +1093,16 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                             )
                         : null
                     }
-                    onForkChat={(anchorEl) => {
-                      void onForkWorkspace(workspaceId, anchorEl);
-                    }}
+                    // Scratch chats have no repo and the backend rejects
+                    // forking them, so hide the action instead of offering a
+                    // menu item that can only fail.
+                    onForkChat={
+                      hasWorkspaceRepository(metadata)
+                        ? (anchorEl) => {
+                            void onForkWorkspace(workspaceId, anchorEl);
+                          }
+                        : null
+                    }
                     onTogglePinned={
                       isPinnable && setWorkspacePinned
                         ? () => {
