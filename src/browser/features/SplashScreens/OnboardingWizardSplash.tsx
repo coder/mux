@@ -1054,6 +1054,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       return;
     }
     setDirection("back");
+    // Changing steps remounts the project form without its inline error, so
+    // clear the stale flag or the "click Next" nudge stays hidden on return.
+    setProjectFormHasError(false);
     setStepIndex((i) => Math.max(0, i - 1));
   };
 
@@ -1062,6 +1065,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       return;
     }
     setDirection("forward");
+    setProjectFormHasError(false);
     setStepIndex((i) => Math.min(totalSteps - 1, i + 1));
   };
 
