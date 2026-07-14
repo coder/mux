@@ -375,7 +375,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     });
 
     const selected = p.selectedWorkspace;
-    if (selected) {
+    // For scratch chats, selected.projectPath is the app-managed workdir (not
+    // a configured project), so the generic action would create a workspace in
+    // an unrelated project; New Scratch Chat above already covers creation.
+    if (selected && p.workspaceMetadata.get(selected.workspaceId)?.kind !== "scratch") {
       list.push(createWorkspaceForSelectedProjectAction(selected));
     }
 
