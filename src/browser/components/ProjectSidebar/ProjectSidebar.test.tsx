@@ -9,7 +9,7 @@ import * as ReactColorfulModule from "react-colorful";
 import { installDom } from "../../../../tests/ui/dom";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
-import { SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
+import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -717,6 +717,76 @@ describe("ProjectSidebar scratch chats", () => {
     expect(view.getByText("Chats")).toBeTruthy();
     expect(view.getByTestId(agentItemTestId(workspace.id))).toBeTruthy();
     expect(view.getByText("Explore an idea")).toBeTruthy();
+  });
+
+  test("Ctrl+N from a selected scratch chat opens a scratch draft, not a workdir project draft", () => {
+    // Scratch rows are bucketed under the scratch config key while the
+    // selection's projectPath is the app-managed workdir, so the keybind
+    // handler must resolve kind via the store instead of the bucket lookup.
+    const scratchPath = "/home/user/.mux/scratch/scratch-kb";
+    const workspace: FrontendWorkspaceMetadata = {
+      kind: "scratch",
+      id: "scratch-kb",
+      name: "scratch-scratch-kb",
+      projectName: "Scratch",
+      projectPath: scratchPath,
+      namedWorkspacePath: scratchPath,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      runtimeConfig: { type: "local" },
+    };
+    const createWorkspaceDraftMock = mock(() => undefined);
+    spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
+      () =>
+        ({
+          selectedWorkspace: {
+            workspaceId: workspace.id,
+            projectPath: scratchPath,
+            projectName: "Scratch",
+            namedWorkspacePath: scratchPath,
+          },
+          setSelectedWorkspace: () => undefined,
+          preflightArchiveWorkspace: () =>
+            Promise.resolve({ success: true, data: { kind: "ready" } }),
+          archiveWorkspace: () => Promise.resolve({ success: true, data: { kind: "archived" } }),
+          removeWorkspace: () => Promise.resolve({ success: true }),
+          updateWorkspaceTitle: () => Promise.resolve({ success: true }),
+          refreshWorkspaceMetadata: () => Promise.resolve(),
+          pendingNewWorkspaceProject: null,
+          pendingNewWorkspaceDraftId: null,
+          workspaceDraftsByProject: {},
+          workspaceDraftPromotionsByProject: {},
+          createWorkspaceDraft: createWorkspaceDraftMock,
+          openWorkspaceDraft: () => undefined,
+          deleteWorkspaceDraft: () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
+    );
+    spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockImplementation(
+      () =>
+        ({
+          getWorkspaceMetadata: (id: string) => (id === workspace.id ? workspace : undefined),
+          getWorkspaceSidebarState: () => ({
+            canInterrupt: false,
+            isStarting: false,
+            awaitingUserQuestion: false,
+            lastAbortReason: null,
+          }),
+          getAggregator: () => undefined,
+          subscribeKey: () => () => undefined,
+        }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
+    );
+
+    render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={new Map([[SCRATCH_PROJECT_CONFIG_KEY, [workspace]]])}
+        workspaceRecency={{ [workspace.id]: Date.now() }}
+      />
+    );
+
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+
+    expect(createWorkspaceDraftMock).toHaveBeenCalledWith(SCRATCH_PROJECT_CONFIG_KEY, undefined);
   });
 });
 

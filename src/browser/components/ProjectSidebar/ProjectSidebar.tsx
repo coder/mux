@@ -1827,6 +1827,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         // otherwise inherit from the parent workspace. This keeps Ctrl+N in
         // lockstep with the visible section and avoids forwarding deleted
         // sub-project paths that workspace.create would reject.
+        // Scratch chats are bucketed under the scratch config key while their
+        // selection projectPath is the app-managed workdir, so the bucket
+        // lookup below misses them; check kind via the store by ID first.
+        if (
+          workspaceStore.getWorkspaceMetadata(selectedWorkspace.workspaceId)?.kind === "scratch"
+        ) {
+          handleAddScratchWorkspace();
+          return;
+        }
         const projectWorkspaces =
           sortedWorkspacesByProject.get(selectedWorkspace.projectPath) ?? [];
         const byId = new Map(projectWorkspaces.map((m) => [m.id, m]));
@@ -1836,14 +1845,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             ([subPath]) => subPath
           )
         );
-        if (meta?.kind === "scratch") {
-          handleAddScratchWorkspace();
-        } else {
-          const subProjectPath = meta
-            ? resolveEffectiveSectionId(meta, byId, validSectionIds)
-            : undefined;
-          handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
-        }
+        const subProjectPath = meta
+          ? resolveEffectiveSectionId(meta, byId, validSectionIds)
+          : undefined;
+        handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
         void handleArchiveWorkspace(selectedWorkspace.workspaceId);
