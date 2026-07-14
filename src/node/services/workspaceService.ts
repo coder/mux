@@ -3374,6 +3374,15 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async createScratch(title?: string): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    // Scratch chats always run on the local runtime; locked-down deployments
+    // that disallow local runtimes must not get a local tool-execution
+    // workspace through the scratch path either.
+    if (this.policyService?.isEnforced()) {
+      if (!this.policyService.isRuntimeAllowed({ type: "local" })) {
+        return Err("Scratch chats require the local runtime, which is not allowed by policy");
+      }
+    }
+
     const workspaceId = this.config.generateStableId();
     const workspaceName = `scratch-${workspaceId}`;
     const workspacePath = this.getScratchWorkdir(workspaceId);

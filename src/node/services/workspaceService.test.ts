@@ -9284,6 +9284,37 @@ describe("WorkspaceService preflightArchive and acknowledged archive", () => {
     await cleanupHistory();
   });
 
+  test("preflightArchive returns ready for scratch workspaces under snapshot behavior", async () => {
+    // Scratch chats run on the plain local runtime, so the worktree snapshot
+    // preflight must short-circuit instead of consulting the snapshot service
+    // (whose non-worktree path would reject and block archiving).
+    const scratchMetadata: WorkspaceMetadata = {
+      kind: "scratch",
+      id: workspaceId,
+      name: "ws-preflight-archive",
+      projectName: "Scratch",
+      projectPath: "/tmp/mux/scratch/ws-preflight-archive",
+      runtimeConfig: { type: "local" },
+    };
+    (workspaceService as unknown as { aiService: AIService }).aiService.getWorkspaceMetadata = mock(
+      () => Promise.resolve(Ok(scratchMetadata))
+    );
+    const getUnsupportedUntrackedPaths = mock(() =>
+      Promise.resolve(Err("Archive snapshots are only supported for worktree runtimes"))
+    );
+    workspaceService.setWorktreeArchiveSnapshotService({
+      preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
+      captureSnapshotForArchive: mock(() => Promise.resolve(Err("unused"))),
+      restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
+      getUnsupportedUntrackedPaths,
+    });
+
+    const result = await workspaceService.preflightArchive(workspaceId);
+
+    expect(result).toEqual(Ok({ kind: "ready" }));
+    expect(getUnsupportedUntrackedPaths).not.toHaveBeenCalled();
+  });
+
   test("preflightArchive returns ready when no untracked files", async () => {
     workspaceService.setWorktreeArchiveSnapshotService({
       preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
@@ -10151,6 +10182,37 @@ describe("WorkspaceService init cancellation", () => {
           .then(() => true)
           .catch(() => false)
       ).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("createScratch rejects when policy disallows the local runtime", async () => {
+    const {
+      config,
+      historyService: scratchHistoryService,
+      cleanup,
+    } = await createTestHistoryService();
+    const policyService = {
+      isEnforced: mock(() => true),
+      isRuntimeAllowed: mock(() => false),
+    } as unknown as WorkspaceServiceArgs[7];
+
+    try {
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService: scratchHistoryService,
+        policyService,
+      });
+
+      const result = await workspaceService.createScratch("Blocked scratch");
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("not allowed by policy");
+      }
+      // No config entry or workdir may be left behind by the rejected create.
+      expect((await config.getAllWorkspaceMetadata()).length).toBe(0);
     } finally {
       await cleanup();
     }
