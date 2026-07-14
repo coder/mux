@@ -13,6 +13,7 @@ interface FixtureOptions {
   projectPath?: string;
   subProjectPath?: string;
   projects?: FrontendWorkspaceMetadata["projects"];
+  kind?: FrontendWorkspaceMetadata["kind"];
 }
 
 const createWorkspace = (id: string, options: FixtureOptions = {}): FrontendWorkspaceMetadata => {
@@ -27,6 +28,7 @@ const createWorkspace = (id: string, options: FixtureOptions = {}): FrontendWork
     pinnedAt: options.pinnedAt,
     subProjectPath: options.subProjectPath,
     projects: options.projects,
+    kind: options.kind,
   };
 };
 
@@ -135,6 +137,26 @@ describe("locatePinnedBlock", () => {
 
     const block = locatePinnedBlock(mA, sorted, new Map());
     expect(block).toEqual({ fullOrder: ["mB", "mA"], blockIds: ["mB", "mA"] });
+  });
+
+  it("treats all pinned scratch rows as one block despite distinct workdir projectPaths", () => {
+    // Each scratch chat's projectPath is its own app-managed workdir, but the
+    // sidebar renders them together in the Chats section, so a reorder between
+    // two pinned scratch chats must resolve to one shared block.
+    const s1 = createWorkspace("s1", {
+      pinnedAt: "2026-01-01T00:00:00.000Z",
+      projectPath: "/home/user/.mux/scratch/s1",
+      kind: "scratch",
+    });
+    const s2 = createWorkspace("s2", {
+      pinnedAt: "2026-01-01T00:00:01.000Z",
+      projectPath: "/home/user/.mux/scratch/s2",
+      kind: "scratch",
+    });
+    const sorted = new Map([["_scratch", [s1, s2]]]);
+
+    const block = locatePinnedBlock(s1, sorted, new Map());
+    expect(block).toEqual({ fullOrder: ["s1", "s2"], blockIds: ["s1", "s2"] });
   });
 });
 

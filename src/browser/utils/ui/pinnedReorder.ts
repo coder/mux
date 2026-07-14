@@ -27,18 +27,19 @@ export interface PinnedBlock {
 }
 
 /**
- * Multi-project rows render as one flat section regardless of which bucket
- * they came from. Rows are re-sorted with the same helper the sidebar uses so
- * the resolved block order always matches the rendered order, even when rows
- * were collected from different primary-project buckets.
+ * Multi-project and scratch rows each render as one flat section regardless of
+ * which bucket they came from. Rows are re-sorted with the same helper the
+ * sidebar uses so the resolved block order always matches the rendered order,
+ * even when rows were collected from different primary-project buckets.
  */
-function collectMultiProjectRows(
-  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>
+function collectFlatSectionRows(
+  sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>,
+  includeRow: (row: FrontendWorkspaceMetadata) => boolean
 ): FrontendWorkspaceMetadata[] {
   const byId = new Map<string, FrontendWorkspaceMetadata>();
   for (const rows of sortedWorkspacesByProject.values()) {
     for (const row of rows) {
-      if (isMultiProject(row)) {
+      if (includeRow(row)) {
         byId.set(row.id, row);
       }
     }
@@ -59,8 +60,23 @@ export function locatePinnedBlock(
 ): PinnedBlock | null {
   if (!isWorkspacePinned(meta)) return null;
 
+  // Scratch chats render as one flat "Chats" section, but each row's
+  // projectPath is its own app-managed workdir, so the per-projectPath
+  // partitioning below would isolate every row into a block of one and
+  // swallow reorders. Treat them like the multi-project section instead.
+  if (meta.kind === "scratch") {
+    const pinnedIds = collectFlatSectionRows(
+      sortedWorkspacesByProject,
+      (row) => row.kind === "scratch"
+    )
+      .filter(isWorkspacePinned)
+      .map((row) => row.id);
+    if (!pinnedIds.includes(meta.id)) return null;
+    return { fullOrder: pinnedIds, blockIds: pinnedIds };
+  }
+
   if (isMultiProject(meta)) {
-    const pinnedIds = collectMultiProjectRows(sortedWorkspacesByProject)
+    const pinnedIds = collectFlatSectionRows(sortedWorkspacesByProject, isMultiProject)
       .filter(isWorkspacePinned)
       .map((row) => row.id);
     if (!pinnedIds.includes(meta.id)) return null;

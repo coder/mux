@@ -741,6 +741,44 @@ describe("useCreationWorkspace", () => {
     expect(typeof onWorkspaceCreated.mock.calls[0]?.[1]?.pendingStreamModel).toBe("string");
   });
 
+  test("scratch creation skips the devcontainer preflight for a devcontainer default runtime", async () => {
+    // Scratch never loads runtime availability, so the devcontainer preflight
+    // would otherwise block forever in the "loading" availability state.
+    draftSettingsState = createDraftSettingsHarness({
+      selectedRuntime: { mode: "devcontainer", configPath: "" },
+    });
+    const scratchMetadata: FrontendWorkspaceMetadata = {
+      ...TEST_METADATA,
+      kind: "scratch",
+      projectName: "Scratch",
+      projectPath: "/tmp/mux/scratch/ws-created",
+      namedWorkspacePath: "/tmp/mux/scratch/ws-created",
+      runtimeConfig: { type: "local" },
+    };
+    const createScratchMock = mock(
+      (_args: WorkspaceCreateScratchArgs): Promise<WorkspaceCreateScratchResult> =>
+        Promise.resolve({ success: true, metadata: scratchMetadata })
+    );
+    const { workspaceApi } = setupWindow({ createScratch: createScratchMock });
+    const onWorkspaceCreated = mock(
+      (metadata: FrontendWorkspaceMetadata, _options?: WorkspaceCreatedOptions) => metadata
+    );
+    const getHook = renderUseCreationWorkspace({
+      kind: "scratch",
+      projectPath: "_scratch",
+      onWorkspaceCreated,
+      message: "Inspect this idea",
+    });
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend("Inspect this idea");
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(workspaceApi.createScratch).toHaveBeenCalledTimes(1);
+  });
+
   test("handleSend creates workspace and sends message on success", async () => {
     const listBranchesMock = mock(
       (): Promise<BranchListResult> =>

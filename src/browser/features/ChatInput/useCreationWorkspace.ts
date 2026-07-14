@@ -395,7 +395,11 @@ export function useCreationWorkspace({
       // Build runtime config early (used later for workspace creation)
       let runtimeSelection = settings.selectedRuntime;
 
-      if (runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
+      // Scratch chats always run on the local runtime and never load runtime
+      // availability, so the devcontainer preflight below would block creation
+      // forever (availability stays "loading") for users whose default runtime
+      // is Dev Container. createScratch() ignores runtimeConfig entirely.
+      if (kind !== "scratch" && runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
         const devcontainerSelection = resolveDevcontainerSelection({
           selectedRuntime: runtimeSelection,
           availabilityState: runtimeAvailabilityState,
