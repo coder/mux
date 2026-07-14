@@ -1198,6 +1198,25 @@ describe("WorkspaceContext", () => {
     expect(ctx().pendingNewWorkspaceProject).toBe(systemProjectPath);
   });
 
+  test("reloaded scratch draft route resolves without a configured _scratch project", async () => {
+    // Before the first scratch chat is ever created, no _scratch bucket exists
+    // in config, and reloads drop the in-memory route state, so the route ID
+    // must resolve statically or the draft page cannot remount.
+    const scratchRouteId = getProjectRouteId(SCRATCH_PROJECT_CONFIG_KEY);
+
+    createMockAPI({
+      locationPath: `/project?project=${encodeURIComponent(scratchRouteId)}`,
+      projects: {
+        list: () => Promise.resolve([["/existing", { workspaces: [] }]]),
+      },
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().pendingNewWorkspaceProject).toBe(SCRATCH_PROJECT_CONFIG_KEY);
+  });
+
   test("browser: launch-project opens project creation on true first launch", async () => {
     createMockAPI({
       workspace: {

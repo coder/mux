@@ -23,6 +23,7 @@ import {
 } from "@/common/constants/storage";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { getFirstTopLevelProjectPath } from "@/common/utils/subProjects";
 import {
   normalizeProjectPathForComparison,
@@ -341,6 +342,16 @@ export function ProjectProvider(props: { children: ReactNode }) {
 
   const resolveProjectPath = useCallback(
     (query: ProjectQuery): string | null => {
+      // The scratch sentinel is not a configured project until the first
+      // scratch chat is created, so a reloaded scratch draft route cannot be
+      // resolved from projects.list; resolve it statically instead.
+      if (
+        query.value === SCRATCH_PROJECT_CONFIG_KEY ||
+        (query.type === "routeId" && query.value === getProjectRouteId(SCRATCH_PROJECT_CONFIG_KEY))
+      ) {
+        return SCRATCH_PROJECT_CONFIG_KEY;
+      }
+
       if (query.type === "path") {
         const platform = globalThis.window?.api?.platform;
         const normalizedTarget = normalizeProjectPathForComparison(query.value, platform);
