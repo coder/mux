@@ -48,6 +48,25 @@ function TestWrapper(props: PropsWithChildren) {
   return <>{props.children}</>;
 }
 
+// The WorkspaceActionsMenuContent test double records every render's props, so
+// gating assertions read the latest call instead of clicking through the menu.
+function getLastMenuContentProps() {
+  const spy = WorkspaceActionsMenuContentModule.WorkspaceActionsMenuContent as unknown as {
+    mock: {
+      calls: Array<
+        [
+          {
+            onForkChat?: ((anchorEl: HTMLElement) => void) | null;
+            onEnterImmersiveReview?: (() => void) | null;
+            onOpenTouchFullscreenReview?: (() => void) | null;
+          },
+        ]
+      >;
+    };
+  };
+  return spy.mock.calls.at(-1)?.[0];
+}
+
 function resolveArchivePreflight(
   result: { kind: "ready" } | { kind: "confirm-lossy-untracked-files"; paths: string[] } = {
     kind: "ready",
@@ -344,6 +363,31 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     expect(
       MultiProjectGitStatusIndicatorModule.MultiProjectGitStatusIndicator
     ).not.toHaveBeenCalled();
+
+    // Repo-dependent More-menu actions must be hidden too: review events are
+    // ignored by RightSidebar for scratch and forking scratch is unsupported.
+    const scratchMenuProps = getLastMenuContentProps();
+    expect(scratchMenuProps?.onForkChat).toBeNull();
+    expect(scratchMenuProps?.onEnterImmersiveReview).toBeNull();
+    expect(scratchMenuProps?.onOpenTouchFullscreenReview).toBeNull();
+  });
+
+  it("offers fork and immersive review in the More menu for repo-backed workspaces", () => {
+    workspaceMetadata.set(workspaceId, {
+      id: workspaceId,
+      name: "feature-branch",
+      projectName: "demo",
+      projectPath: "/projects/demo",
+      namedWorkspacePath: "/projects/demo/workspaces/feature-branch",
+      runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/src" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    render(<WorkspaceMenuBar {...defaultProps} />);
+
+    const menuProps = getLastMenuContentProps();
+    expect(typeof menuProps?.onForkChat).toBe("function");
+    expect(typeof menuProps?.onEnterImmersiveReview).toBe("function");
   });
 
   it("applies the collapsed-left-sidebar inset immediately from props", () => {

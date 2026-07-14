@@ -769,13 +769,22 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
                 workspaceHeartbeatsEnabled ? () => setHeartbeatModalOpen(true) : null
               }
               onOpenTouchFullscreenReview={
-                isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
+                hasRepository && isTouchMobileScreen ? handleOpenTouchFullscreenReview : null
               }
-              onEnterImmersiveReview={isTouchMobileScreen ? null : handleEnterImmersiveReview}
+              onEnterImmersiveReview={
+                hasRepository && !isTouchMobileScreen ? handleEnterImmersiveReview : null
+              }
               onStopRuntime={isRuntimeRunning ? () => void handleStopRuntime() : null}
-              onForkChat={(anchorEl) => {
-                void handleForkChat(anchorEl);
-              }}
+              // Scratch chats have no repo: review events are ignored by
+              // RightSidebar and fork is unsupported on the backend, so hide
+              // both instead of offering dead menu items.
+              onForkChat={
+                hasRepository
+                  ? (anchorEl) => {
+                      void handleForkChat(anchorEl);
+                    }
+                  : null
+              }
               onTogglePinned={
                 workspaceEntry && isWorkspacePinnable(workspaceEntry)
                   ? () => {
