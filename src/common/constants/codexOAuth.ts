@@ -131,9 +131,14 @@ export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>([
  * still use the public OpenAI limits.
  */
 const CODEX_OAUTH_CONTEXT_WINDOW_OVERRIDES: Record<string, number> = {
-  // User-reported routing limit: GPT-5.5's public API window is 1.05M, but the
-  // ChatGPT/Codex OAuth backend rejects prompts near that size and must compact at ~270K.
+  // The public API exposes a 1.05M window for these models, but the ChatGPT/Codex
+  // OAuth routing layer has smaller tier-specific limits. Keep the auth-route caps
+  // separate from model metadata so API-key requests retain the full public window.
   "gpt-5.5": 272_000,
+  "gpt-5.6": 272_000,
+  "gpt-5.6-sol": 272_000,
+  "gpt-5.6-terra": 128_000,
+  "gpt-5.6-luna": 128_000,
 };
 
 function normalizeCodexOauthModelId(modelId: string): string {

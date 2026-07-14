@@ -77,8 +77,6 @@ describe("calculateTokenMeterData", () => {
   });
 
   test("uses the Codex OAuth cap for GPT-5.5 token meter percentages", () => {
-    // Pin to the literal model string: gpt-5.5's 272K Codex OAuth cap remains in
-    // production even though KNOWN_MODELS.GPT now points at gpt-5.6-sol.
     const result = calculateTokenMeterData(SAMPLE_USAGE, "openai:gpt-5.5", false, false, {
       openai: {
         apiKeySet: false,
@@ -92,7 +90,7 @@ describe("calculateTokenMeterData", () => {
     expect(result.totalPercentage).toBeCloseTo((11_000 / 272_000) * 100);
   });
 
-  test("does not cap GPT-5.6 Sol under Codex OAuth (no context-window override published)", () => {
+  test("uses the Codex OAuth cap for GPT-5.6 token meter percentages", () => {
     const result = calculateTokenMeterData(SAMPLE_USAGE, "openai:gpt-5.6-sol", false, false, {
       openai: {
         apiKeySet: false,
@@ -102,9 +100,8 @@ describe("calculateTokenMeterData", () => {
       },
     });
 
-    // GA model page: 1.05M-token context window for every GPT-5.6 tier.
-    expect(result.maxTokens).toBe(1_050_000);
-    expect(result.totalPercentage).toBeCloseTo((11_000 / 1_050_000) * 100);
+    expect(result.maxTokens).toBe(272_000);
+    expect(result.totalPercentage).toBeCloseTo((11_000 / 272_000) * 100);
   });
 
   test("uses Claude Sonnet 4.6's native 1M context even when the beta toggle is off", () => {

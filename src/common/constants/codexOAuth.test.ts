@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+  getCodexOauthContextWindowOverride,
   isCodexOauthAllowedModel,
   isCodexOauthAllowedModelId,
   isCodexOauthRequiredModel,
@@ -21,11 +22,20 @@ describe("codexOAuth model gating", () => {
 
   it("allows the GPT-5.6 family through Codex OAuth without requiring it", () => {
     // Includes the bare alias: it is a servable model id (OpenAI routes it to Sol).
-    for (const model of ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    const contextLimits = {
+      "gpt-5.6": 272_000,
+      "gpt-5.6-sol": 272_000,
+      "gpt-5.6-terra": 128_000,
+      "gpt-5.6-luna": 128_000,
+    } as const;
+
+    for (const [model, contextLimit] of Object.entries(contextLimits)) {
       expect(isCodexOauthAllowedModelId(model)).toBe(true);
       expect(isCodexOauthAllowedModelId(`openai:${model}`)).toBe(true);
       expect(isCodexOauthRequiredModelId(model)).toBe(false);
       expect(isCodexOauthRequiredModelId(`openai:${model}`)).toBe(false);
+      expect(getCodexOauthContextWindowOverride(model)).toBe(contextLimit);
+      expect(getCodexOauthContextWindowOverride(`openai:${model}`)).toBe(contextLimit);
     }
   });
 
