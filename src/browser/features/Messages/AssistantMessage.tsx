@@ -21,6 +21,7 @@ import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
 import { useAPI } from "@/browser/contexts/API";
 import { Button } from "@/browser/components/Button/Button";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
@@ -107,6 +108,14 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     }
   };
 
+  // Scratch chats cannot be forked (the backend rejects it), so hide the
+  // response-level Fork action instead of surfacing a guaranteed error.
+  // kind is immutable per workspace, so an imperative store read is safe here;
+  // missing metadata (stories, tests) keeps the button visible as before.
+  const workspaceStore = useWorkspaceStoreRaw();
+  const isScratchWorkspace =
+    workspaceId != null && workspaceStore.getWorkspaceMetadata(workspaceId)?.kind === "scratch";
+
   const buttons: ButtonConfig[] = isStreaming ? [] : [copyButton];
 
   if (!isStreaming && !isSideAnswer) {
@@ -122,13 +131,15 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       tooltip: "Start a new context from this message and preserve earlier chat history",
       icon: <ListStart />,
     });
-    buttons.push({
-      label: "Fork",
-      onClick: () => void handleForkFromResponse(),
-      disabled: !workspaceId || !api,
-      tooltip: "Fork a new workspace from this response",
-      icon: <GitBranch />,
-    });
+    if (!isScratchWorkspace) {
+      buttons.push({
+        label: "Fork",
+        onClick: () => void handleForkFromResponse(),
+        disabled: !workspaceId || !api,
+        tooltip: "Fork a new workspace from this response",
+        icon: <GitBranch />,
+      });
+    }
     buttons.push({
       label: showRaw ? "Show Markdown" : "Show Text",
       onClick: () => setShowRaw(!showRaw),
