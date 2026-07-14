@@ -13,8 +13,7 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 import { GitInitBanner } from "../GitInitBanner/GitInitBanner";
 import { ConfiguredProvidersBar } from "../ConfiguredProvidersBar/ConfiguredProvidersBar";
 import { ConfigureProvidersPrompt } from "../ConfigureProvidersPrompt/ConfigureProvidersPrompt";
-import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { hasConfiguredProvider, useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { AgentsInitBanner } from "../AgentsInitBanner/AgentsInitBanner";
 import {
   usePersistedState,
@@ -57,12 +56,6 @@ function archivedListsEqual(
   if (prev.length !== next.length) return false;
   const prevIds = new Set(prev.map((w) => w.id));
   return next.every((w) => prevIds.has(w.id));
-}
-
-/** Check if any provider is configured (uses backend-computed isConfigured) */
-function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
-  if (!config) return false;
-  return Object.values(config).some((provider) => provider?.isConfigured);
 }
 
 /**

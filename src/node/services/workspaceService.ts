@@ -10,6 +10,7 @@ import {
   isWorkspacePinned,
   reassignPinnedTimestamps,
 } from "@/common/utils/pin";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
@@ -2338,6 +2339,9 @@ export class WorkspaceService extends EventEmitter {
     const startupStartedAt = Date.now();
 
     try {
+      await this.cleanupOrphanScratchWorkdirs().catch((error: unknown) => {
+        log.debug("Failed to clean orphaned scratch workdirs", { error });
+      });
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       let scheduledCount = 0;
       let skippedTaskCount = 0;
@@ -3325,6 +3329,97 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to set exclusion: ${message}`);
+    }
+  }
+
+  private getScratchRoot(): string {
+    return path.join(this.config.rootDir, "scratch");
+  }
+
+  private getScratchWorkdir(workspaceId: string): string {
+    return path.join(this.getScratchRoot(), workspaceId);
+  }
+
+  private isManagedScratchWorkdir(workspacePath: string): boolean {
+    const scratchRoot = path.resolve(this.getScratchRoot());
+    const resolvedPath = path.resolve(workspacePath);
+    return path.dirname(resolvedPath) === scratchRoot && isPathInsideDir(scratchRoot, resolvedPath);
+  }
+
+  private async cleanupOrphanScratchWorkdirs(): Promise<void> {
+    const scratchRoot = this.getScratchRoot();
+    await ensurePrivateDir(scratchRoot);
+
+    // Never interpret a config read failure as an empty reference set, because that would
+    // turn best-effort orphan cleanup into deletion of valid scratch chats.
+    const config = this.config.loadConfigOrDefault({ throwOnError: true });
+    const referencedScratchPaths = new Set(
+      (config.projects.get(SCRATCH_PROJECT_CONFIG_KEY)?.workspaces ?? [])
+        .filter((workspace) => workspace.kind === "scratch")
+        .map((workspace) => path.resolve(workspace.path))
+    );
+
+    for (const entry of await fsPromises.readdir(scratchRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+
+      const candidatePath = path.resolve(scratchRoot, entry.name);
+      if (referencedScratchPaths.has(candidatePath)) continue;
+
+      try {
+        await fsPromises.rm(candidatePath, { recursive: true, force: true });
+      } catch (error: unknown) {
+        log.debug("Failed to clean orphaned scratch workdir", { candidatePath, error });
+      }
+    }
+  }
+
+  async createScratch(title?: string): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    const workspaceId = this.config.generateStableId();
+    const workspaceName = `scratch-${workspaceId}`;
+    const workspacePath = this.getScratchWorkdir(workspaceId);
+    const createdAt = new Date().toISOString();
+
+    try {
+      await ensurePrivateDir(this.getScratchRoot());
+      await ensurePrivateDir(workspacePath);
+
+      await this.config.editConfig((config) => {
+        const scratchProject = config.projects.get(SCRATCH_PROJECT_CONFIG_KEY) ?? {
+          workspaces: [],
+          projectKind: "system" as const,
+          trusted: true,
+        };
+        scratchProject.projectKind = "system";
+        scratchProject.trusted = true;
+        scratchProject.workspaces.push({
+          kind: "scratch",
+          path: workspacePath,
+          id: workspaceId,
+          name: workspaceName,
+          title,
+          createdAt,
+          runtimeConfig: { type: "local" },
+        });
+        config.projects.set(SCRATCH_PROJECT_CONFIG_KEY, scratchProject);
+        return config;
+      });
+
+      const completeMetadata = (await this.config.getAllWorkspaceMetadata()).find(
+        (metadata) => metadata.id === workspaceId
+      );
+      if (!completeMetadata) {
+        await this.config.removeWorkspace(workspaceId);
+        await fsPromises.rm(workspacePath, { recursive: true, force: true });
+        return Err("Failed to retrieve scratch workspace metadata");
+      }
+
+      const enrichedMetadata = this.enrichFrontendMetadata(completeMetadata);
+      this.getOrCreateSession(workspaceId).emitMetadata(enrichedMetadata);
+      return Ok({ metadata: enrichedMetadata });
+    } catch (error) {
+      await this.config.removeWorkspace(workspaceId).catch(() => undefined);
+      await fsPromises.rm(workspacePath, { recursive: true, force: true }).catch(() => undefined);
+      return Err(`Failed to create scratch workspace: ${getErrorMessage(error)}`);
     }
   }
 
@@ -4330,6 +4425,29 @@ export class WorkspaceService extends EventEmitter {
             log.error(
               `Failed to fully delete multi-project workspace from disk, but force=true. Removing from config. Errors: ${deleteErrors.join("; ")}`
             );
+          }
+        } else if (metadata.kind === "scratch") {
+          if (
+            persistedWorkspacePath == null ||
+            !this.isManagedScratchWorkdir(persistedWorkspacePath)
+          ) {
+            return Err(
+              "Refusing to delete scratch workspace outside the managed scratch directory"
+            );
+          }
+
+          const resolvedScratchPath = path.resolve(persistedWorkspacePath);
+          const hasOtherScratchReference = Array.from(configSnapshot.projects.values()).some(
+            (project) =>
+              project.workspaces.some(
+                (workspace) =>
+                  workspace.id !== workspaceId &&
+                  workspace.kind === "scratch" &&
+                  path.resolve(workspace.path) === resolvedScratchPath
+              )
+          );
+          if (!hasOtherScratchReference) {
+            await fsPromises.rm(persistedWorkspacePath, { recursive: true, force: true });
           }
         } else if (taskSharesParentCheckout) {
           // Shared checkout (isolation: "none"): do not touch the filesystem — the directory
@@ -6564,6 +6682,10 @@ export class WorkspaceService extends EventEmitter {
     const metadata = metadataResult.data;
     assert(metadata, `Workspace ${workspaceId} metadata is required for git status checks`);
 
+    if (metadata.kind === "scratch") {
+      return [];
+    }
+
     const projects = getProjects(metadata);
     assert(projects.length > 0, `Workspace ${workspaceId} must include at least one project`);
 
@@ -7137,6 +7259,9 @@ export class WorkspaceService extends EventEmitter {
         return Err(`Failed to get source workspace metadata: ${sourceMetadataResult.error}`);
       }
       const sourceMetadata = sourceMetadataResult.data;
+      if (sourceMetadata.kind === "scratch") {
+        return Err("Forking scratch chats is not supported yet");
+      }
       const partialSnapshot =
         sourceMessageId == null ? await this.historyService.readPartial(sourceWorkspaceId) : null;
       const foundProjectPath = sourceMetadata.projectPath;

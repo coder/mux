@@ -335,6 +335,9 @@ export const KEYBINDS = {
   /** Create new workspace for current project */
   NEW_WORKSPACE: { key: "n", ctrl: true },
 
+  /** Create a project-less scratch chat */
+  NEW_SCRATCH_CHAT: { key: "n", ctrl: true, shift: true },
+
   /** Edit title of current workspace (inline edit) */
   EDIT_WORKSPACE_TITLE: { key: "F2" },
 

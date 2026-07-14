@@ -1098,6 +1098,15 @@ export const workspace = {
       z.object({ success: z.literal(false), error: z.string() }),
     ]),
   },
+  createScratch: {
+    input: z.object({
+      title: z.string().optional(),
+    }),
+    output: z.discriminatedUnion("success", [
+      z.object({ success: z.literal(true), metadata: FrontendWorkspaceMetadataSchema }),
+      z.object({ success: z.literal(false), error: z.string() }),
+    ]),
+  },
   createMultiProject: {
     input: z.object({
       projects: z

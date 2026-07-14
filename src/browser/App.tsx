@@ -83,6 +83,10 @@ import {
 } from "@/browser/utils/workspaceAiSettingsSync";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal/AuthTokenModal";
 
+import { ScratchPage } from "@/browser/components/ScratchPage/ScratchPage";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { ProjectPage } from "@/browser/components/ProjectPage/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
@@ -159,6 +163,7 @@ function AppInner() {
     pendingNewWorkspaceProject,
     pendingNewWorkspaceSubProjectPath,
     pendingNewWorkspaceDraftId,
+    createWorkspaceDraft,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
   const {
@@ -262,6 +267,29 @@ function AppInner() {
 
   // Get workspace store for command palette
   const workspaceStore = useWorkspaceStoreRaw();
+
+  const handleWorkspaceCreated = (
+    metadata: FrontendWorkspaceMetadata,
+    options?: WorkspaceCreatedOptions
+  ) => {
+    workspaceStore.addWorkspace(metadata);
+    setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+
+    if (options?.autoNavigate !== false) {
+      let createdSelection: WorkspaceSelection | null = null;
+      setSelectedWorkspace((current) => {
+        if (current !== null) return current;
+        createdSelection = toWorkspaceSelection(metadata);
+        return createdSelection;
+      });
+
+      if (createdSelection && options?.markPendingInitialSend !== false) {
+        workspaceStore.markPendingInitialSend(metadata.id, options?.pendingStreamModel ?? null);
+      }
+    }
+
+    telemetry.workspaceCreated(metadata.id, getRuntimeTypeForTelemetry(metadata.runtimeConfig));
+  };
 
   // Track telemetry when workspace selection changes
   const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
@@ -419,14 +447,14 @@ function AppInner() {
         return THINKING_LEVELS.includes(scoped) ? scoped : "off";
       }
 
-      // Migration: fall back to legacy per-model thinking and seed the workspace-scoped key.
+      // Keep this render-time palette lookup pure. ThinkingProvider owns migration to the
+      // workspace-scoped key, while the palette can read legacy values as a fallback.
       const model = getModelForWorkspace(workspaceId);
       const legacy = readPersistedState<ThinkingLevel | undefined>(
         getThinkingLevelByModelKey(model),
         undefined
       );
       if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
-        updatePersistedState(scopedKey, legacy);
         return legacy;
       }
 
@@ -438,7 +466,6 @@ function AppInner() {
           undefined
         );
         if (canonicalLegacy !== undefined && THINKING_LEVELS.includes(canonicalLegacy)) {
-          updatePersistedState(scopedKey, canonicalLegacy);
           return canonicalLegacy;
         }
       }
@@ -617,6 +644,10 @@ function AppInner() {
   );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
+
+  const openNewScratchFromPalette = useCallback(() => {
+    createWorkspaceDraft(SCRATCH_PROJECT_CONFIG_KEY);
+  }, [createWorkspaceDraft]);
 
   const openNewWorkspaceFromPalette = useCallback(
     (projectPath: string) => {
@@ -854,6 +885,7 @@ function AppInner() {
     providersConfig,
     getRouteForModel,
     getMinThinkingOverride,
+    onStartScratchCreation: openNewScratchFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
     onStartMultiProjectWorkspaceCreation: openNewMultiProjectWorkspaceFromPalette,
     multiProjectWorkspacesEnabled,
@@ -932,7 +964,10 @@ function AppInner() {
         return;
       }
 
-      if (matchesKeybind(e, KEYBINDS.NEXT_WORKSPACE)) {
+      if (matchesKeybind(e, KEYBINDS.NEW_SCRATCH_CHAT)) {
+        e.preventDefault();
+        openNewScratchFromPalette();
+      } else if (matchesKeybind(e, KEYBINDS.NEXT_WORKSPACE)) {
         e.preventDefault();
         handleNavigateWorkspace("next");
       } else if (matchesKeybind(e, KEYBINDS.PREV_WORKSPACE)) {
@@ -978,6 +1013,7 @@ function AppInner() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    openNewScratchFromPalette,
     handleNavigateWorkspace,
     setSidebarCollapsed,
     isCommandPaletteOpen,
@@ -1288,67 +1324,27 @@ function AppInner() {
                   onToggleLeftSidebarCollapsed={handleToggleSidebar}
                 />
               )
+            ) : creationProjectPath === SCRATCH_PROJECT_CONFIG_KEY ? (
+              <ScratchPage
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                pendingDraftId={pendingNewWorkspaceDraftId}
+                onWorkspaceCreated={handleWorkspaceCreated}
+              />
             ) : creationProjectPath ? (
-              (() => {
-                const projectPath = creationProjectPath;
-                const projectName =
-                  projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
-                return (
-                  <ProjectPage
-                    projectPath={projectPath}
-                    projectName={projectName}
-                    leftSidebarCollapsed={sidebarCollapsed}
-                    onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                    pendingSubProjectPath={pendingNewWorkspaceSubProjectPath}
-                    pendingDraftId={pendingNewWorkspaceDraftId}
-                    onWorkspaceCreated={(metadata, options) => {
-                      // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                      // the store knows about it before React processes the state updates.
-                      // This prevents race conditions where the UI tries to access the
-                      // workspace before the store has created its aggregator.
-                      workspaceStore.addWorkspace(metadata);
-
-                      // Add to workspace metadata map (triggers React state update)
-                      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
-
-                      if (options?.autoNavigate !== false) {
-                        let createdSelection: WorkspaceSelection | null = null;
-                        setSelectedWorkspace((current) => {
-                          if (current !== null) {
-                            // If the user picked another workspace before create/send resolved,
-                            // keep their explicit selection and skip the optimistic starting barrier.
-                            return current;
-                          }
-
-                          createdSelection = toWorkspaceSelection(metadata);
-                          return createdSelection;
-                        });
-
-                        // WorkspaceContext resolves functional selection updates synchronously
-                        // against its latest ref, so by the time setSelectedWorkspace() returns we
-                        // know whether this creation actually won and can safely mark the
-                        // optimistic starting barrier outside the updater callback.
-                        if (createdSelection && options?.markPendingInitialSend !== false) {
-                          workspaceStore.markPendingInitialSend(
-                            metadata.id,
-                            options?.pendingStreamModel ?? null
-                          );
-                        }
-                      }
-
-                      // Track telemetry
-                      telemetry.workspaceCreated(
-                        metadata.id,
-                        getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                      );
-
-                      // Note: No need to call clearPendingWorkspaceCreation() here.
-                      // Navigating to the workspace URL automatically clears the pending
-                      // state since pendingNewWorkspaceProject is derived from the URL.
-                    }}
-                  />
-                );
-              })()
+              <ProjectPage
+                projectPath={creationProjectPath}
+                projectName={
+                  creationProjectPath.split("/").pop() ??
+                  creationProjectPath.split("\\").pop() ??
+                  "Project"
+                }
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                pendingSubProjectPath={pendingNewWorkspaceSubProjectPath}
+                pendingDraftId={pendingNewWorkspaceDraftId}
+                onWorkspaceCreated={handleWorkspaceCreated}
+              />
             ) : (
               // The dedicated Mux home page was removed. Keep `/` as a minimal shell so
               // WorkspaceContext can redirect it to a concrete project route when possible,

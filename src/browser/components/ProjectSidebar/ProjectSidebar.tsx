@@ -134,6 +134,7 @@ import { getProjectDisplayName, getSubProjectsForParent } from "@/common/utils/s
 import { getErrorMessage } from "@/common/utils/errors";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
+import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
@@ -156,6 +157,7 @@ interface SectionConfig {
 function getPinnedReorderGroup(projectPath: string, sectionId: string | undefined): string {
   return `${projectPath}\u0000${sectionId ?? ""}`;
 }
+const SCRATCH_PINNED_REORDER_GROUP = "\u0000scratch";
 const MULTI_PROJECT_PINNED_REORDER_GROUP = "\u0000multi-project";
 
 // Re-export WorkspaceSelection for backwards compatibility
@@ -1021,6 +1023,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [setExpandedProjectsArray]
   );
 
+  const handleAddScratchWorkspace = useCallback(() => {
+    setExpandedProjectsArray((prev) => {
+      const expanded = Array.isArray(prev) ? prev : [];
+      return expanded.includes(SCRATCH_SIDEBAR_SECTION_ID)
+        ? expanded
+        : [...expanded, SCRATCH_SIDEBAR_SECTION_ID];
+    });
+    handleAddWorkspace(SCRATCH_PROJECT_CONFIG_KEY);
+  }, [handleAddWorkspace, setExpandedProjectsArray]);
+
   const toggleSection = (projectPath: string, sectionId: string) => {
     const key = getSectionExpandedKey(projectPath, sectionId);
     setExpandedSections((prev) => ({
@@ -1687,6 +1699,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
+  const scratchWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
   const multiProjectWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
   const workspaceAttentionById = new Map<string, boolean>();
 
@@ -1698,6 +1711,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         workspaceHasAttention(workspace) ||
           (delegatedActivityByWorkspaceId.get(workspace.id)?.activeCount ?? 0) > 0
       );
+      if (workspace.kind === "scratch") {
+        scratchWorkspacesById.set(workspace.id, workspace);
+        continue;
+      }
       if (isMultiProject(workspace)) {
         if (multiProjectWorkspacesEnabled) {
           multiProjectWorkspacesById.set(workspace.id, workspace);
@@ -1709,6 +1726,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
     singleProjectWorkspacesByProject.set(projectPath, singleProjectWorkspaces);
   }
+
+  const scratchWorkspaces = orderMultiProjectSectionRows(
+    Array.from(scratchWorkspacesById.values())
+  );
+  const scratchDepthByWorkspaceId = computeWorkspaceDepthMap(scratchWorkspaces);
+  const visibleScratchWorkspaces = filterVisibleAgentRows(
+    scratchWorkspaces,
+    expandedCompletedParentIds
+  );
+  const scratchRowMetaByWorkspaceId = computeAgentRowRenderMeta(
+    scratchWorkspaces,
+    scratchDepthByWorkspaceId,
+    expandedCompletedParentIds
+  );
+  const isScratchSectionExpanded = expandedProjectsList.includes(SCRATCH_SIDEBAR_SECTION_ID);
+  const scratchDrafts = (workspaceDraftsByProject[SCRATCH_PROJECT_CONFIG_KEY] ?? [])
+    .slice()
+    .sort((a, b) => b.createdAt - a.createdAt);
 
   // Re-sort across primary-project buckets so pinned rows form one correctly
   // ordered block (cross-primary pinned reorders would otherwise snap back).
@@ -1801,10 +1836,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             ([subPath]) => subPath
           )
         );
-        const subProjectPath = meta
-          ? resolveEffectiveSectionId(meta, byId, validSectionIds)
-          : undefined;
-        handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
+        if (meta?.kind === "scratch") {
+          handleAddScratchWorkspace();
+        } else {
+          const subProjectPath = meta
+            ? resolveEffectiveSectionId(meta, byId, validSectionIds)
+            : undefined;
+          handleAddWorkspace(selectedWorkspace.projectPath, subProjectPath);
+        }
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
         void handleArchiveWorkspace(selectedWorkspace.workspaceId);
@@ -1836,6 +1875,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   }, [
     closeProjectContextMenu,
     selectedWorkspace,
+    handleAddScratchWorkspace,
     handleAddWorkspace,
     handleArchiveWorkspace,
     setWorkspacePinned,
@@ -1893,6 +1933,117 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 onViewportScroll={handleProjectListScroll}
                 viewportClassName="overflow-x-hidden"
               >
+                <div>
+                  <div className={PROJECT_ITEM_BASE_CLASS}>
+                    <button
+                      onClick={() => toggleProject(SCRATCH_SIDEBAR_SECTION_ID)}
+                      aria-label={`${isScratchSectionExpanded ? "Collapse" : "Expand"} scratch chats`}
+                      className={PROJECT_TOGGLE_BUTTON_CLASSES}
+                    >
+                      <ChevronRight
+                        className="h-4 w-4 transition-transform duration-200"
+                        style={{
+                          transform: isScratchSectionExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                        }}
+                      />
+                    </button>
+                    <div className="flex min-w-0 flex-1 items-center pr-1">
+                      <span className="text-foreground truncate text-sm font-medium">Chats</span>
+                      {(scratchWorkspaces.length > 0 || scratchDrafts.length > 0) && (
+                        <span className="text-muted ml-2 text-xs">
+                          ({scratchWorkspaces.length + scratchDrafts.length})
+                        </span>
+                      )}
+                    </div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleAddScratchWorkspace();
+                          }}
+                          aria-label="New scratch chat"
+                          className="text-content-secondary hover:bg-hover hover:border-border-light flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>New scratch chat</TooltipContent>
+                    </Tooltip>
+                  </div>
+                  {isScratchSectionExpanded && (
+                    <div className="pt-1 pb-1">
+                      {scratchDrafts.map((draft, index) => {
+                        const isSelected =
+                          pendingNewWorkspaceProject === SCRATCH_PROJECT_CONFIG_KEY &&
+                          pendingNewWorkspaceDraftId === draft.draftId;
+                        return (
+                          <DraftAgentListItemWrapper
+                            key={draft.draftId}
+                            projectPath={SCRATCH_PROJECT_CONFIG_KEY}
+                            draftId={draft.draftId}
+                            draftNumber={index + 1}
+                            isSelected={isSelected}
+                            onVisibilityChange={(isVisible) => {
+                              handleDraftVisibilityChange(
+                                SCRATCH_PROJECT_CONFIG_KEY,
+                                draft.draftId,
+                                isVisible
+                              );
+                            }}
+                            onOpen={() =>
+                              handleOpenWorkspaceDraft(SCRATCH_PROJECT_CONFIG_KEY, draft.draftId)
+                            }
+                            onDelete={() => {
+                              if (isSelected) {
+                                navigateToProject(SCRATCH_PROJECT_CONFIG_KEY);
+                              }
+                              deleteWorkspaceDraft(SCRATCH_PROJECT_CONFIG_KEY, draft.draftId);
+                            }}
+                          />
+                        );
+                      })}
+                      {visibleScratchWorkspaces.map((metadata) => {
+                        const rowRenderMeta = scratchRowMetaByWorkspaceId.get(metadata.id);
+                        return (
+                          <AgentListItem
+                            key={metadata.id}
+                            metadata={metadata}
+                            projectPath={metadata.projectPath}
+                            projectName={metadata.projectName}
+                            isSelected={selectedWorkspace?.workspaceId === metadata.id}
+                            isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                            isRemoving={
+                              removingWorkspaceIds.has(metadata.id) || metadata.isRemoving === true
+                            }
+                            onSelectWorkspace={handleSelectWorkspace}
+                            onForkWorkspace={handleForkWorkspace}
+                            onArchiveWorkspace={handleArchiveWorkspace}
+                            onCancelCreation={handleCancelWorkspaceCreation}
+                            depth={
+                              rowRenderMeta?.depth ?? scratchDepthByWorkspaceId[metadata.id] ?? 0
+                            }
+                            pinnedReorderGroup={SCRATCH_PINNED_REORDER_GROUP}
+                            onPinnedReorderDrop={handlePinnedReorderDrop}
+                            rowRenderMeta={rowRenderMeta}
+                            delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
+                            completedChildrenExpanded={expandedCompletedParentIds.has(metadata.id)}
+                            onToggleCompletedChildren={toggleCompletedChildrenExpansion}
+                          />
+                        );
+                      })}
+                      {scratchWorkspaces.length === 0 && scratchDrafts.length === 0 && (
+                        <button
+                          onClick={handleAddScratchWorkspace}
+                          className="text-muted hover:bg-hover mx-2 w-[calc(100%-1rem)] rounded px-2 py-2 text-left text-xs"
+                        >
+                          Start a scratch chat
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {multiProjectWorkspaces.length > 0 && (
                   <div>
                     <div className={PROJECT_ITEM_BASE_CLASS}>
@@ -1971,12 +2122,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 {sortedProjectPaths.length === 0 && multiProjectWorkspaces.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>
-                    <button
-                      onClick={() => onAddProject()}
-                      className="bg-accent hover:bg-accent-dark cursor-pointer rounded border-none px-4 py-2 text-[13px] text-white transition-colors duration-200"
-                    >
-                      Add Project
-                    </button>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={handleAddScratchWorkspace}
+                        className="bg-accent hover:bg-accent-dark cursor-pointer rounded border-none px-4 py-2 text-[13px] text-white transition-colors duration-200"
+                      >
+                        Start a scratch chat
+                      </button>
+                      <button
+                        onClick={() => onAddProject()}
+                        className="border-border-light text-secondary hover:bg-hover cursor-pointer rounded border px-4 py-2 text-[13px] transition-colors duration-200"
+                      >
+                        Add Project
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   sortedProjectPaths.map((projectPath) => {

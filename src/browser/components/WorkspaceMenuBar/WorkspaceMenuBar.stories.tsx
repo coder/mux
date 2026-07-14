@@ -6,12 +6,13 @@ import {
 } from "@/browser/stories/meta.js";
 import { createGitStatusExecutor } from "@/browser/stories/helpers/git";
 import {
-  collapseLeftSidebar,
   collapseRightSidebar,
+  collapseLeftSidebar,
   expandProjects,
   selectWorkspace,
 } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 
 export default {
@@ -121,4 +122,61 @@ export const DevcontainerStopped: AppStory = {
 /** Devcontainer with unknown runtime status — no status chip should be visible. */
 export const DevcontainerUnknown: AppStory = {
   render: () => <AppWithMocks setup={() => createDevcontainerClient("unknown")} />,
+};
+
+export const ScratchWorkspace: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    chromatic: {
+      modes: {
+        desktop: { theme: "dark" },
+        mobile: { theme: "light", viewport: "mobile1", hasTouch: true },
+      },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const scratchPath = "/home/user/.mux/scratch/scratch-1";
+        const workspace = {
+          ...createWorkspace({
+            id: "scratch-1",
+            name: "scratch-scratch-1",
+            projectName: "Scratch",
+            projectPath: scratchPath,
+            runtimeConfig: { type: "local" },
+          }),
+          kind: "scratch" as const,
+          namedWorkspacePath: scratchPath,
+        };
+        selectWorkspace(workspace);
+        expandProjects([SCRATCH_SIDEBAR_SECTION_ID]);
+        collapseRightSidebar();
+
+        return createMockORPCClient({
+          projects: new Map([
+            [
+              SCRATCH_PROJECT_CONFIG_KEY,
+              {
+                projectKind: "system",
+                trusted: true,
+                workspaces: [
+                  {
+                    kind: "scratch",
+                    path: scratchPath,
+                    id: workspace.id,
+                    name: workspace.name,
+                    runtimeConfig: { type: "local" },
+                  },
+                ],
+              },
+            ],
+          ]),
+          workspaces: [workspace],
+        });
+      }}
+    />
+  ),
 };

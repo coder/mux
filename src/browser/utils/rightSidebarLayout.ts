@@ -198,6 +198,8 @@ function removeTabFromNode(
 ): RightSidebarLayoutNode | null {
   if (node.type === "tabset") {
     const oldIndex = node.tabs.indexOf(tab);
+    if (oldIndex === -1) return node;
+
     const tabs = node.tabs.filter((t) => t !== tab);
     if (tabs.length === 0) return null;
 
@@ -222,6 +224,7 @@ function removeTabFromNode(
   // If one side goes empty, promote the other side to avoid empty panes.
   if (!left) return right;
   if (!right) return left;
+  if (left === node.children[0] && right === node.children[1]) return node;
 
   return {
     ...node,
@@ -234,6 +237,9 @@ export function removeTabEverywhere(
   tab: TabType
 ): RightSidebarLayoutState {
   const nextRoot = removeTabFromNode(state.root, tab);
+  if (nextRoot === state.root) {
+    return state;
+  }
   if (!nextRoot) {
     return getDefaultRightSidebarLayoutState("costs");
   }

@@ -137,8 +137,8 @@ describe("browser startup launch behavior", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
-  test("dashboard mode ignores a stale /workspace/:id URL", async () => {
-    installWindow("https://mux.example.com/workspace/stale-123");
+  test("dashboard mode preserves a direct /workspace/:id URL", async () => {
+    installWindow("https://mux.example.com/workspace/direct-123");
     window.localStorage.setItem(LAUNCH_BEHAVIOR_KEY, JSON.stringify("dashboard"));
 
     const view = render(
@@ -148,7 +148,7 @@ describe("browser startup launch behavior", () => {
     );
 
     await waitFor(() => {
-      expect(view.getByTestId("pathname").textContent).toBe("/");
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/direct-123");
     });
   });
 
@@ -197,8 +197,8 @@ describe("browser startup launch behavior", () => {
     });
   });
 
-  test("default launch behavior ignores a stale /workspace/:id URL", async () => {
-    installWindow("https://mux.example.com/workspace/stale-123");
+  test("default launch behavior preserves a direct /workspace/:id URL", async () => {
+    installWindow("https://mux.example.com/workspace/direct-default");
 
     const view = render(
       <RouterProvider>
@@ -207,7 +207,7 @@ describe("browser startup launch behavior", () => {
     );
 
     await waitFor(() => {
-      expect(view.getByTestId("pathname").textContent).toBe("/");
+      expect(view.getByTestId("pathname").textContent).toBe("/workspace/direct-default");
     });
   });
 });

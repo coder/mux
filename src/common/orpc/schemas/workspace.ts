@@ -126,6 +126,9 @@ export const WorkflowTaskMetadataSchema = z.object({
 });
 
 export const WorkspaceMetadataSchema = z.object({
+  kind: z.literal("scratch").optional().meta({
+    description: "Marks an app-owned project-less scratch chat workspace.",
+  }),
   id: z.string().meta({
     description:
       "Stable unique identifier (10 hex chars for new workspaces, legacy format for old)",

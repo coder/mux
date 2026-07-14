@@ -44,6 +44,7 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   type LaunchBehavior,
 } from "@/common/constants/storage";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import { useAPI } from "@/browser/contexts/API";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
@@ -562,6 +563,12 @@ function shouldBlockStartupAutoNavigation(options: {
   );
 }
 
+function getWorkspaceProjectRoutePath(
+  metadata: Pick<FrontendWorkspaceMetadata, "kind" | "projectPath">
+): string {
+  return metadata.kind === "scratch" ? SCRATCH_PROJECT_CONFIG_KEY : metadata.projectPath;
+}
+
 function getMostRecentVisibleWorkspaceScope(
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>,
   workspaceRecency: Record<string, number>,
@@ -569,6 +576,9 @@ function getMostRecentVisibleWorkspaceScope(
 ): WorkspaceCreationScope | null {
   const recentWorkspace = [...workspaceMetadata.values()]
     .filter((workspace) => {
+      if (workspace.kind === "scratch") {
+        return true;
+      }
       const projectConfig = getProjectConfig(workspace.projectPath);
       if (!projectConfig) {
         return false;
@@ -595,7 +605,7 @@ function getMostRecentVisibleWorkspaceScope(
 
   return recentWorkspace
     ? {
-        projectPath: recentWorkspace.projectPath,
+        projectPath: getWorkspaceProjectRoutePath(recentWorkspace),
         subProjectPath: recentWorkspace.subProjectPath ?? null,
       }
     : null;
@@ -1177,20 +1187,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   // in metadata (e.g., deleted since last session), clear the stale route and
   // persisted selection so the user isn't stuck in a restore loop.
   useEffect(() => {
-    if (loading) return;
+    if (loading || !loaded || loadError) return;
     if (hasCheckedStaleRouteRef.current) return;
     hasCheckedStaleRouteRef.current = true;
 
     if (!currentWorkspaceId) return;
     if (workspaceMetadata.has(currentWorkspaceId)) return;
 
-    // If metadata is empty, a transient backend failure may have caused
-    // workspace.list to return nothing — don't clear a potentially valid route.
-    if (workspaceMetadata.size === 0) return;
-
-    // Workspace ID from initial route doesn't exist — clear stale state.
     setSelectedWorkspace(null);
-  }, [loading, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);
+  }, [loading, loaded, loadError, currentWorkspaceId, workspaceMetadata, setSelectedWorkspace]);
 
   // Subscribe to metadata updates (for create/rename/delete operations)
   useEffect(() => {
@@ -1226,16 +1231,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             const currentSelection = selectedWorkspaceRef.current;
             if (currentSelection?.workspaceId === event.workspaceId) {
               const nextId = findAdjacentWorkspaceId(event.workspaceId, {
-                preferredProjectPath: meta.projectPath,
-                getProjectPath: (workspaceId) =>
-                  workspaceMetadataRef.current.get(workspaceId)?.projectPath,
+                preferredProjectPath: getWorkspaceProjectRoutePath(meta),
+                getProjectPath: (workspaceId) => {
+                  const workspace = workspaceMetadataRef.current.get(workspaceId);
+                  return workspace ? getWorkspaceProjectRoutePath(workspace) : undefined;
+                },
               });
               const nextMeta = nextId ? workspaceMetadataRef.current.get(nextId) : null;
 
               if (nextMeta) {
                 setSelectedWorkspace(toWorkspaceSelection(nextMeta));
               } else {
-                clearSelectionToProject(meta.projectPath);
+                clearSelectionToProject(getWorkspaceProjectRoutePath(meta));
               }
             }
           }
@@ -1308,11 +1315,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             }
 
             // Try sibling workspace in same project
-            const projectPath = deletedMeta?.projectPath;
+            const projectPath = deletedMeta ? getWorkspaceProjectRoutePath(deletedMeta) : undefined;
             const fallbackMeta =
               (projectPath
                 ? Array.from(workspaceMetadataRef.current.values()).find(
-                    (meta) => meta.projectPath === projectPath && meta.id !== event.workspaceId
+                    (meta) =>
+                      getWorkspaceProjectRoutePath(meta) === projectPath &&
+                      meta.id !== event.workspaceId
                   )
                 : null) ??
               Array.from(workspaceMetadataRef.current.values()).find(
@@ -1396,7 +1405,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       // We check currentWorkspaceId (from URL) rather than selectedWorkspace
       // because it's the source of truth for what's actually selected.
       const wasSelected = currentWorkspaceId === workspaceId;
-      const projectPath = selectedWorkspace?.projectPath;
+      const metadata = workspaceMetadata.get(workspaceId);
+      const projectPath = metadata
+        ? getWorkspaceProjectRoutePath(metadata)
+        : selectedWorkspace?.projectPath;
 
       try {
         const result = await api.workspace.remove({ workspaceId, options });
@@ -1441,6 +1453,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       navigateToProject,
       refreshProjects,
       selectedWorkspace,
+      workspaceMetadata,
       api,
       setWorkspaceMetadata,
     ]

@@ -1,5 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+
+export function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
+  return config != null && Object.values(config).some((provider) => provider?.isConfigured);
+}
 
 /**
  * Hook to get provider config with automatic refresh on config changes.

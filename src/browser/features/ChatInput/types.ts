@@ -29,6 +29,7 @@ export interface WorkspaceCreatedOptions {
 // Workspace variant: full functionality for existing workspaces
 export interface ChatInputWorkspaceVariant {
   variant: "workspace";
+  kind?: "scratch";
   workspaceId: string;
   /** Runtime type for the workspace (for telemetry) - no sensitive details like SSH host */
   runtimeType?: TelemetryRuntimeType;
@@ -71,6 +72,7 @@ export interface ChatInputWorkspaceVariant {
 // Creation variant: simplified for first message / workspace creation
 export interface ChatInputCreationVariant {
   variant: "creation";
+  kind?: "scratch";
   projectPath: string;
   projectName: string;
   /** Sub-project path for parent-owned draft creation. */

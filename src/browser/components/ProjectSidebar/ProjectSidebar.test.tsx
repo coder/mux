@@ -9,6 +9,7 @@ import * as ReactColorfulModule from "react-colorful";
 import { installDom } from "../../../../tests/ui/dom";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
+import { SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -683,6 +684,41 @@ function createWorkspace(
 }
 
 let cleanupDom: (() => void) | null = null;
+
+describe("ProjectSidebar scratch chats", () => {
+  beforeEach(() => {
+    setupProjectSidebarDom();
+    updatePersistedState(EXPANDED_PROJECTS_KEY, [SCRATCH_SIDEBAR_SECTION_ID]);
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    ({ default: ProjectSidebar } = require("./ProjectSidebar?project-sidebar-scratch-test=1") as {
+      default: typeof ProjectSidebarComponent;
+    });
+    /* eslint-enable @typescript-eslint/no-require-imports */
+  });
+
+  afterEach(cleanupProjectSidebarDom);
+
+  test("renders scratch workspaces in the Chats section", () => {
+    const scratchPath = "/home/user/.mux/scratch/scratch-1";
+    const workspace: FrontendWorkspaceMetadata = {
+      kind: "scratch",
+      id: "scratch-1",
+      name: "scratch-scratch-1",
+      title: "Explore an idea",
+      projectName: "Scratch",
+      projectPath: scratchPath,
+      namedWorkspacePath: scratchPath,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      runtimeConfig: { type: "local" },
+    };
+
+    const view = renderProjectSidebarForWorkspace(workspace);
+
+    expect(view.getByText("Chats")).toBeTruthy();
+    expect(view.getByTestId(agentItemTestId(workspace.id))).toBeTruthy();
+    expect(view.getByText("Explore an idea")).toBeTruthy();
+  });
+});
 
 describe("ProjectSidebar multi-project completed-subagent toggles", () => {
   beforeEach(() => {

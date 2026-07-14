@@ -32,6 +32,7 @@ import type {
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import type { WorkspaceCreatedOptions } from "./types";
 import { useCreationWorkspace, type CreationSendResult } from "./useCreationWorkspace";
 
 const readPersistedStateCalls: Array<[string, unknown]> = [];
@@ -250,6 +251,8 @@ type WorkflowStartArgs = Parameters<APIClient["workflows"]["start"]>[0];
 type WorkflowStartResult = Awaited<ReturnType<APIClient["workflows"]["start"]>>;
 type WorkflowGetRunArgs = Parameters<APIClient["workflows"]["getRun"]>[0];
 type WorkflowGetRunResult = Awaited<ReturnType<APIClient["workflows"]["getRun"]>>;
+type WorkspaceCreateScratchArgs = Parameters<APIClient["workspace"]["createScratch"]>[0];
+type WorkspaceCreateScratchResult = Awaited<ReturnType<APIClient["workspace"]["createScratch"]>>;
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
@@ -259,7 +262,7 @@ type MockOrpcProjectsClient = Pick<
 >;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
-  "sendMessage" | "create" | "updateAgentAISettings" | "getGoal" | "setGoal"
+  "sendMessage" | "create" | "createScratch" | "updateAgentAISettings" | "getGoal" | "setGoal"
 >;
 type MockOrpcWorkflowsClient = Pick<APIClient["workflows"], "start" | "getRun">;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
@@ -307,6 +310,9 @@ interface SetupWindowOptions {
   workflowGetRun?: ReturnType<
     typeof mock<(args: WorkflowGetRunArgs) => Promise<WorkflowGetRunResult>>
   >;
+  createScratch?: ReturnType<
+    typeof mock<(args: WorkspaceCreateScratchArgs) => Promise<WorkspaceCreateScratchResult>>
+  >;
   create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
   nameGeneration?: ReturnType<
     typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
@@ -318,6 +324,7 @@ const setupWindow = ({
   listBranches,
   sendMessage,
   create,
+  createScratch,
   updateAgentAISettings,
   getGoal,
   setGoal,
@@ -407,6 +414,15 @@ const setupWindow = ({
       } as WorkspaceCreateResult);
     });
 
+  const createScratchMock =
+    createScratch ??
+    mock<(args: WorkspaceCreateScratchArgs) => Promise<WorkspaceCreateScratchResult>>(() => {
+      return Promise.resolve({
+        success: true,
+        metadata: { ...TEST_METADATA, kind: "scratch" },
+      } as WorkspaceCreateScratchResult);
+    });
+
   const updateAgentAISettingsMock =
     updateAgentAISettings ??
     mock<
@@ -447,6 +463,7 @@ const setupWindow = ({
     workspace: {
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
       create: (input: WorkspaceCreateArgs) => createMock(input),
+      createScratch: (input: WorkspaceCreateScratchArgs) => createScratchMock(input),
       updateAgentAISettings: (input: WorkspaceUpdateAgentAISettingsArgs) =>
         updateAgentAISettingsMock(input),
       getGoal: (input: WorkspaceGetGoalArgs) => getGoalMock(input),
@@ -491,6 +508,7 @@ const setupWindow = ({
     workspace: {
       list: rejectNotImplemented("workspace.list"),
       create: (args: WorkspaceCreateArgs) => createMock(args),
+      createScratch: (args: WorkspaceCreateScratchArgs) => createScratchMock(args),
       updateAgentAISettings: (args: WorkspaceUpdateAgentAISettingsArgs) =>
         updateAgentAISettingsMock(args),
       remove: rejectNotImplemented("workspace.remove"),
@@ -561,6 +579,7 @@ const setupWindow = ({
     workspaceApi: {
       sendMessage: sendMessageMock,
       create: createMock,
+      createScratch: createScratchMock,
       updateAgentAISettings: updateAgentAISettingsMock,
       getGoal: getGoalMock,
       setGoal: setGoalMock,
@@ -668,6 +687,58 @@ describe("useCreationWorkspace", () => {
     await waitFor(() => expect(draftSettingsInvocations.length).toBeGreaterThan(0));
     expect(listBranchesMock.mock.calls.length).toBe(0);
     expect(getHook().branches).toEqual([]);
+  });
+
+  test("scratch creation skips project loading and uses createScratch", async () => {
+    const listBranchesMock = mock(() =>
+      Promise.reject(new Error("scratch creation should not load branches"))
+    );
+    const scratchMetadata: FrontendWorkspaceMetadata = {
+      ...TEST_METADATA,
+      kind: "scratch",
+      projectName: "Scratch",
+      projectPath: "/tmp/mux/scratch/ws-created",
+      namedWorkspacePath: "/tmp/mux/scratch/ws-created",
+      runtimeConfig: { type: "local" },
+    };
+    const createScratchMock = mock(
+      (_args: WorkspaceCreateScratchArgs): Promise<WorkspaceCreateScratchResult> =>
+        Promise.resolve({ success: true, metadata: scratchMetadata })
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.reject(new Error("regular create should not run"))
+    );
+    const { workspaceApi } = setupWindow({
+      listBranches: listBranchesMock,
+      create: createMock,
+      createScratch: createScratchMock,
+    });
+    const onWorkspaceCreated = mock(
+      (metadata: FrontendWorkspaceMetadata, _options?: WorkspaceCreatedOptions) => metadata
+    );
+    const getHook = renderUseCreationWorkspace({
+      kind: "scratch",
+      projectPath: "_scratch",
+      onWorkspaceCreated,
+      message: "Inspect this idea",
+    });
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend("Inspect this idea");
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(listBranchesMock).not.toHaveBeenCalled();
+    expect(workspaceApi.create).not.toHaveBeenCalled();
+    expect(workspaceApi.createScratch).toHaveBeenCalledTimes(1);
+    expect(workspaceApi.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: scratchMetadata.id, message: "Inspect this idea" })
+    );
+    expect(onWorkspaceCreated).toHaveBeenCalledTimes(1);
+    expect(onWorkspaceCreated.mock.calls[0]?.[0]).toEqual(scratchMetadata);
+    expect(typeof onWorkspaceCreated.mock.calls[0]?.[1]?.pendingStreamModel).toBe("string");
   });
 
   test("handleSend creates workspace and sends message on success", async () => {
@@ -1482,6 +1553,7 @@ function createDraftSettingsHarness(
 }
 
 interface HookOptions {
+  kind?: "scratch";
   projectPath: string;
   onWorkspaceCreated: (
     metadata: FrontendWorkspaceMetadata,

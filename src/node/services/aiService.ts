@@ -1808,7 +1808,8 @@ export class AIService extends EventEmitter {
         thinkingLevel: thinkingLevel ?? "off",
         costsUsd: sessionCostsUsd,
       });
-      const getWorkflowProjectTrusted = () => isProjectTrusted(this.config, metadata.projectPath);
+      const getWorkflowProjectTrusted = () =>
+        metadata.kind === "scratch" || isProjectTrusted(this.config, metadata.projectPath);
 
       const workflowService =
         dynamicWorkflowsExperimentEnabled && this.taskService != null

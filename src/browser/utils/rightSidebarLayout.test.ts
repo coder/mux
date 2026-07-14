@@ -7,6 +7,7 @@ import {
   getDefaultRightSidebarLayoutState,
   moveTabToTabset,
   parseRightSidebarLayoutState,
+  removeTabEverywhere,
   reorderTabInTabset,
   selectTabInFocusedTabset,
   splitFocusedTabset,
@@ -21,6 +22,13 @@ test("default layout includes Instructions alongside Stats and Review", () => {
   expect(state.root.tabs).toContain("costs");
   expect(state.root.tabs).toContain("review");
   expect(state.root.tabs).toContain("instructions");
+});
+
+test("removeTabEverywhere preserves identity when the tab is absent", () => {
+  const state = getDefaultRightSidebarLayoutState("costs");
+  const withoutBrowser = removeTabEverywhere(state, "browser");
+
+  expect(withoutBrowser).toBe(state);
 });
 
 test("selectTabInFocusedTabset adds missing tool and makes it active", () => {

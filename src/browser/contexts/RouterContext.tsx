@@ -115,6 +115,7 @@ function shouldRestoreWorkspaceUrlOnStartup(options: {
 
   return (
     options.launchBehavior === "last-workspace" ||
+    options.navigationType === "navigate" ||
     isRouteRestoringNavigationType(options.navigationType)
   );
 }
@@ -192,9 +193,9 @@ function getInitialRoute(): string {
     }
   }
 
-  // In browser mode (not Storybook), read route directly from the current URL. Workspace
-  // routes are special: fresh launches may ignore them, but explicit restore-style navigations
-  // such as hard reload/back-forward should reopen the same chat.
+  // In browser mode (not Storybook), read route directly from the current URL. Standalone
+  // workspace launches remain special, while normal browser deep links and restore-style
+  // navigations such as hard reload/back-forward should reopen the same chat.
   if (window.location.protocol !== "file:" && !isStorybook) {
     const url = routePathname + window.location.search;
     // Only use URL if it's a valid route (starts with /, not just "/" or empty)

@@ -45,6 +45,7 @@
             "group": "Workspaces",
             "pages": [
               "workspaces",
+              "workspaces/scratch-chats",
               "workspaces/fork",
               "workspaces/muxignore",
               {

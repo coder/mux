@@ -184,7 +184,7 @@ function renderDocsTreeNode(
       throw new Error(`Missing docs page info for '${node}'`);
     }
 
-    const suffix = info.description ? ` — ${info.description}` : "";
+    const suffix = info.description ? `: ${info.description}` : "";
     lines.push(`${prefix}- ${info.title} (\`${info.route}\`) → \`${info.referencePath}\`${suffix}`);
     return;
   }

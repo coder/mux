@@ -48,6 +48,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     getReasoningMode: () => "standard",
     onToggleReasoningMode: () => undefined,
     onStartWorkspaceCreation: () => undefined,
+    onStartScratchCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
     multiProjectWorkspacesEnabled: true,
     onArchiveMergedWorkspacesInProject: () => Promise.resolve(),

@@ -35,10 +35,12 @@ import * as WorkspaceActionsMenuContentModule from "../WorkspaceActionsMenuConte
 import * as WorkspaceTerminalIconModule from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 import * as SkillIndicatorModule from "../SkillIndicator/SkillIndicator";
 
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 
 let WorkspaceMenuBar!: typeof WorkspaceMenuBarComponent;
 
+let workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
 let cleanupDom: (() => void) | null = null;
 const workspaceId = "workspace-1";
 
@@ -120,7 +122,7 @@ function installWorkspaceMenuBarTestDoubles() {
   );
   spyOn(WorkspaceContextModule, "useWorkspaceContext").mockImplementation(
     () =>
-      ({ workspaceMetadata: new Map() }) as unknown as ReturnType<
+      ({ workspaceMetadata }) as unknown as ReturnType<
         typeof WorkspaceContextModule.useWorkspaceContext
       >
   );
@@ -275,6 +277,7 @@ const defaultProps: ComponentProps<typeof WorkspaceMenuBarComponent> = {
 
 describe("WorkspaceMenuBar archive confirmations", () => {
   beforeEach(() => {
+    workspaceMetadata = new Map();
     cleanupDom = installDom();
     installWorkspaceMenuBarTestDoubles();
     /* eslint-disable @typescript-eslint/no-require-imports */
@@ -309,6 +312,38 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     mock.restore();
     cleanupDom?.();
     cleanupDom = null;
+  });
+
+  it("hides repository controls for scratch workspaces", () => {
+    const scratchPath = "/home/user/.mux/scratch/workspace-1";
+    workspaceMetadata.set(workspaceId, {
+      kind: "scratch",
+      id: workspaceId,
+      name: "scratch-workspace-1",
+      projectName: "Scratch",
+      projectPath: scratchPath,
+      namedWorkspacePath: scratchPath,
+      runtimeConfig: { type: "local" },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    const view = render(
+      <WorkspaceMenuBar
+        {...defaultProps}
+        projectName="Scratch"
+        projectPath={scratchPath}
+        workspaceName="scratch-workspace-1"
+        namedWorkspacePath={scratchPath}
+        runtimeConfig={{ type: "local" }}
+      />
+    );
+
+    expect(view.getByText("Scratch")).toBeTruthy();
+    expect(BranchSelectorModule.BranchSelector).not.toHaveBeenCalled();
+    expect(GitStatusIndicatorModule.GitStatusIndicator).not.toHaveBeenCalled();
+    expect(
+      MultiProjectGitStatusIndicatorModule.MultiProjectGitStatusIndicator
+    ).not.toHaveBeenCalled();
   });
 
   it("applies the collapsed-left-sidebar inset immediately from props", () => {

@@ -52,6 +52,8 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
+import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
+import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
@@ -78,6 +80,52 @@ const COLLAPSED_LEFT_SIDEBAR_MENU_BAR_STYLE = {
   paddingLeft: `${WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX}px`,
 } as const;
 
+function WorkspaceRepositoryControls(props: {
+  workspaceId: string;
+  workspaceName: string;
+  projectPath: string;
+  isWorking: boolean;
+  showMultiProjectStatus: boolean;
+  devcontainerChip: ReturnType<typeof getDevcontainerStatusChip>;
+}) {
+  const gitStatus = useGitStatus(props.workspaceId);
+
+  return (
+    <div className="flex items-center gap-1">
+      <BranchSelector
+        key={props.workspaceId}
+        workspaceId={props.workspaceId}
+        workspaceName={props.workspaceName}
+      />
+      {props.devcontainerChip && (
+        <span
+          className={cn(
+            "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
+            props.devcontainerChip.className
+          )}
+        >
+          {props.devcontainerChip.label}
+        </span>
+      )}
+      {props.showMultiProjectStatus ? (
+        <MultiProjectGitStatusIndicator
+          workspaceId={props.workspaceId}
+          tooltipPosition="bottom"
+          isWorking={props.isWorking}
+        />
+      ) : (
+        <GitStatusIndicator
+          gitStatus={gitStatus}
+          workspaceId={props.workspaceId}
+          projectPath={props.projectPath}
+          tooltipPosition="bottom"
+          isWorking={props.isWorking}
+        />
+      )}
+    </div>
+  );
+}
+
 export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   workspaceId,
   projectName,
@@ -97,9 +145,9 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
-  const gitStatus = useGitStatus(workspaceId);
   const runtimeStatus = useRuntimeStatus(workspaceId);
   const workspaceEntry = workspaceMetadata.get(workspaceId);
+  const hasRepository = hasWorkspaceRepository(workspaceEntry);
   const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
   // The workspace's metadata.projectName is the parent project (since worktrees
   // are owned by the top-most parent). When the workspace is scoped to a
@@ -108,9 +156,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const { userProjects } = useProjectContext();
   const subProjectPath = workspaceEntry?.subProjectPath;
   const projectLabel =
-    subProjectPath && userProjects.has(subProjectPath)
-      ? formatProjectHierarchyLabel(subProjectPath, userProjects)
-      : projectName;
+    workspaceEntry?.kind === "scratch"
+      ? SCRATCH_PROJECT_NAME
+      : subProjectPath && userProjects.has(subProjectPath)
+        ? formatProjectHierarchyLabel(subProjectPath, userProjects)
+        : projectName;
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
     useWorkspaceSidebarState(workspaceId);
@@ -150,9 +200,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     { listener: true }
   );
 
+  const notificationScope =
+    workspaceEntry?.kind === "scratch" ? SCRATCH_PROJECT_CONFIG_KEY : projectPath;
   // Auto-enable notifications for new workspaces (project-level)
   const [autoEnableNotifications, setAutoEnableNotifications] = usePersistedState<boolean>(
-    getNotifyOnResponseAutoEnableKey(projectPath),
+    getNotifyOnResponseAutoEnableKey(notificationScope),
     false,
     { listener: true }
   );
@@ -523,42 +575,16 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           tooltipSide="bottom"
         />
         <span className="min-w-0 truncate font-mono text-xs">{projectLabel}</span>
-        <div className="flex items-center gap-1">
-          {/* BranchSelector keeps workspace-scoped local UI state (current branch fallback,
-              open popover contents, remote expansion). Key it by workspace identity so
-              switching workspaces resets that state instead of leaking the previous
-              workspace's branch presentation into the next one. */}
-          <BranchSelector
-            key={workspaceId}
+        {hasRepository && (
+          <WorkspaceRepositoryControls
             workspaceId={workspaceId}
             workspaceName={workspaceName}
+            projectPath={projectPath}
+            isWorking={isWorking}
+            showMultiProjectStatus={showMultiProjectStatus}
+            devcontainerChip={devcontainerChip}
           />
-          {devcontainerChip && (
-            <span
-              className={cn(
-                "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
-                devcontainerChip.className
-              )}
-            >
-              {devcontainerChip.label}
-            </span>
-          )}
-          {showMultiProjectStatus ? (
-            <MultiProjectGitStatusIndicator
-              workspaceId={workspaceId}
-              tooltipPosition="bottom"
-              isWorking={isWorking}
-            />
-          ) : (
-            <GitStatusIndicator
-              gitStatus={gitStatus}
-              workspaceId={workspaceId}
-              projectPath={projectPath}
-              tooltipPosition="bottom"
-              isWorking={isWorking}
-            />
-          )}
-        </div>
+        )}
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />

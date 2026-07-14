@@ -3977,6 +3977,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true, metadata: result.data.metadata };
         }),
+      createScratch: t
+        .input(schemas.workspace.createScratch.input)
+        .output(schemas.workspace.createScratch.output)
+        .handler(async ({ context, input }) => {
+          const result = await context.workspaceService.createScratch(input.title);
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+          return { success: true, metadata: result.data.metadata };
+        }),
       createMultiProject: t
         .input(schemas.workspace.createMultiProject.input)
         .output(schemas.workspace.createMultiProject.output)

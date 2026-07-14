@@ -43,6 +43,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import { defaultModel } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -566,6 +567,64 @@ describe("TaskService", () => {
 
   afterEach(async () => {
     await fsPromises.rm(rootDir, { recursive: true, force: true });
+  });
+
+  test("scratch tasks share the managed workdir and stay in the scratch config bucket", async () => {
+    const config = await createTestConfig(rootDir);
+    const parentId = "1111111111";
+    const childId = "2222222222";
+    const scratchPath = path.join(config.rootDir, "scratch", parentId);
+    await fsPromises.mkdir(scratchPath, { recursive: true });
+    await saveTestConfig(
+      config,
+      [
+        [
+          SCRATCH_PROJECT_CONFIG_KEY,
+          {
+            projectKind: "system",
+            trusted: true,
+            workspaces: [
+              {
+                kind: "scratch",
+                path: scratchPath,
+                id: parentId,
+                name: `scratch-${parentId}`,
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: {
+                  model: "anthropic:claude-opus-4-6",
+                  thinkingLevel: "high",
+                },
+              },
+            ],
+          },
+        ],
+      ],
+      { taskSettings: testTaskSettings() }
+    );
+    stubStableIds(config, [childId]);
+
+    const workspaceMocks = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const result = await createAgentTask(taskService, parentId, "Inspect the scratch files");
+
+    expect(result).toEqual(Ok({ taskId: childId, kind: "agent", status: "running" }));
+    const scratchProject = config.loadConfigOrDefault().projects.get(SCRATCH_PROJECT_CONFIG_KEY);
+    const child = scratchProject?.workspaces.find((workspace) => workspace.id === childId);
+    expect(child?.kind).toBe("scratch");
+    expect(child?.path).toBe(scratchPath);
+    expect(child?.taskIsolation).toBe("none");
+    expect(child?.parentWorkspaceId).toBe(parentId);
+    expect(config.loadConfigOrDefault().projects.has(scratchPath)).toBe(false);
+    expect(workspaceMocks.sendMessage).toHaveBeenCalledWith(
+      childId,
+      "Inspect the scratch files",
+      expect.any(Object),
+      { agentInitiated: true }
+    );
   });
 
   async function startWorkspaceTurnForTest(

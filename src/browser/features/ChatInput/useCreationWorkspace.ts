@@ -69,6 +69,7 @@ export type CreationSendResult = { success: true } | { success: false; error?: S
 export type CreationInitialSlashCommand = Extract<ParsedCommand, { type: "goal-set" }>;
 
 interface UseCreationWorkspaceOptions {
+  kind?: "scratch";
   projectPath: string;
   onWorkspaceCreated: (
     metadata: FrontendWorkspaceMetadata,
@@ -236,6 +237,7 @@ export type RuntimeAvailabilityState =
  * - Message sending with workspace creation
  */
 export function useCreationWorkspace({
+  kind,
   projectPath,
   onWorkspaceCreated,
   message,
@@ -316,7 +318,7 @@ export function useCreationWorkspace({
   // Load branches - used on mount and after git init
   // Returns a cleanup function to track mounted state
   const loadBranches = useCallback(async () => {
-    if (!projectPath.length || !api) return;
+    if (kind === "scratch" || !projectPath.length || !api) return;
     setBranchesLoaded(false);
     try {
       const result = await api.projects.listBranches({ projectPath });
@@ -327,10 +329,14 @@ export function useCreationWorkspace({
     } finally {
       setBranchesLoaded(true);
     }
-  }, [projectPath, api]);
+  }, [kind, projectPath, api]);
 
   // Load branches and runtime availability on mount with mounted guard
   useEffect(() => {
+    if (kind === "scratch") {
+      setBranchesLoaded(true);
+      return;
+    }
     if (!projectPath.length || !api) return;
     let mounted = true;
     setBranchesLoaded(false);
@@ -364,7 +370,7 @@ export function useCreationWorkspace({
     return () => {
       mounted = false;
     };
-  }, [projectPath, api]);
+  }, [kind, projectPath, api]);
 
   // Cleanup: resolve trust prompt on unmount so handleSend doesn't wedge
   useEffect(() => {
@@ -509,7 +515,7 @@ export function useCreationWorkspace({
 
         // Gate: untrusted projects must be confirmed before workspace creation.
         // Skip while projects are still loading — the backend gate catches untrusted projects.
-        if (!projectsLoading && !getProjectConfig(projectPath)?.trusted) {
+        if (kind !== "scratch" && !projectsLoading && !getProjectConfig(projectPath)?.trusted) {
           const userConfirmed = await new Promise<boolean>((resolve) => {
             setTrustPrompt({ resolve, projectPath });
           });
@@ -522,15 +528,17 @@ export function useCreationWorkspace({
           // Trust was confirmed and set, continue with creation
         }
 
-        // Create the workspace with the generated name and title
-        const createResult = await api.workspace.create({
-          projectPath,
-          branchName: identity.name,
-          trunkBranch: settings.trunkBranch,
-          title: createTitle,
-          runtimeConfig,
-          subProjectPath: subProjectPath ?? undefined,
-        });
+        const createResult =
+          kind === "scratch"
+            ? await api.workspace.createScratch({ title: createTitle })
+            : await api.workspace.create({
+                projectPath,
+                branchName: identity.name,
+                trunkBranch: settings.trunkBranch,
+                title: createTitle,
+                runtimeConfig,
+                subProjectPath: subProjectPath ?? undefined,
+              });
 
         if (!createResult.success) {
           setToast({
@@ -620,7 +628,7 @@ export function useCreationWorkspace({
             api,
             workspaceId: metadata.id,
             variant: "workspace",
-            projectPath,
+            projectPath: metadata.projectPath,
             rawInput: messageText,
             dynamicWorkflowsEnabled,
             sendMessageOptions,
@@ -705,6 +713,7 @@ export function useCreationWorkspace({
       }
     },
     [
+      kind,
       api,
       isSending,
       projectPath,

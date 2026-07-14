@@ -29,6 +29,7 @@ import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/re
 import type { GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "@/browser/components/PopoverError/PopoverError";
+import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { getErrorMessage } from "@/common/utils/errors";
 
 // Per-tab panel components are no longer imported here directly — the
@@ -681,6 +682,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const workspaceMetadataContext = useWorkspaceMetadata();
   const currentWorkspaceMetadata =
     workspaceMetadataContext.workspaceMetadata.get(workspaceId) ?? null;
+  const canReviewDiffs = hasWorkspaceRepository(currentWorkspaceMetadata);
   const isChildWorkspaceForGoal = currentWorkspaceMetadata?.parentWorkspaceId != null;
   // Safe variant: storybook stories may render before addWorkspace() runs; the
   // optional hook returns null instead of throwing assertGet on the unregistered
@@ -843,8 +845,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Read last-used focused tab for better defaults when initializing a new layout.
   const initialActiveTab = React.useMemo<TabType>(() => {
     const raw = readPersistedState<string>(RIGHT_SIDEBAR_TAB_KEY, "costs");
+    if (!canReviewDiffs && raw === "review") return "costs";
     return isTabType(raw) ? raw : "costs";
-  }, []);
+  }, [canReviewDiffs]);
 
   const defaultLayout = React.useMemo(
     () => getDefaultRightSidebarLayoutState(initialActiveTab),
@@ -890,9 +893,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutDraft(null);
   }, [setLayoutRaw]);
 
-  const layout = React.useMemo(
+  const parsedLayout = React.useMemo(
     () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
     [layoutDraft, layoutRaw, initialActiveTab]
+  );
+  const layout = React.useMemo(
+    () => (canReviewDiffs ? parsedLayout : removeTabEverywhere(parsedLayout, "review")),
+    [canReviewDiffs, parsedLayout]
   );
 
   const hasReviewPanelMounted = React.useMemo(
@@ -1083,10 +1090,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     if (layoutDraft !== null) {
       return;
     }
-    if (layoutRaw !== layout) {
-      setLayoutRaw(layout);
+    if (layoutRaw !== parsedLayout) {
+      setLayoutRaw(parsedLayout);
     }
-  }, [layout, layoutDraft, layoutRaw, setLayoutRaw]);
+  }, [layoutDraft, layoutRaw, parsedLayout, setLayoutRaw]);
 
   const getBaseLayout = React.useCallback(() => {
     return (
@@ -1127,9 +1134,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   );
 
   const selectOrOpenReviewTab = React.useCallback(() => {
+    if (!canReviewDiffs) return;
     setLayout((prev) => selectOrAddTab(prev, "review"));
     _setFocusTrigger((prev) => prev + 1);
-  }, [setLayout]);
+  }, [canReviewDiffs, setLayout]);
 
   React.useEffect(() => {
     const handleOpenGoalTab = (event: Event) => {
@@ -1152,6 +1160,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   React.useEffect(() => {
     const handleOpenTouchReviewImmersive = (event: Event) => {
       const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+      if (!canReviewDiffs) return;
+
       if (detail?.workspaceId !== workspaceId) {
         return;
       }
@@ -1171,11 +1181,13 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         CUSTOM_EVENTS.OPEN_TOUCH_REVIEW_IMMERSIVE,
         handleOpenTouchReviewImmersive
       );
-  }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
+  }, [canReviewDiffs, selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
 
   React.useEffect(() => {
     const handleOpenReviewImmersive = (event: Event) => {
       const detail = (event as CustomEvent<{ workspaceId: string }>).detail;
+      if (!canReviewDiffs) return;
+
       if (detail?.workspaceId !== workspaceId) {
         return;
       }
@@ -1189,7 +1201,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     window.addEventListener(CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE, handleOpenReviewImmersive);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.OPEN_REVIEW_IMMERSIVE, handleOpenReviewImmersive);
-  }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
+  }, [canReviewDiffs, selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive, workspaceId]);
 
   // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
   // Auto-expands sidebar if collapsed
@@ -1211,10 +1223,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         if (matchesKeybind(e, tabKeybinds[i])) {
           e.preventDefault();
 
-          const currentLayout = parseRightSidebarLayoutState(
-            layoutRawRef.current,
-            initialActiveTab
-          );
+          const parsedLayout = parseRightSidebarLayoutState(layoutRawRef.current, initialActiveTab);
+          const currentLayout = canReviewDiffs
+            ? parsedLayout
+            : removeTabEverywhere(parsedLayout, "review");
           const allTabs = collectAllTabsWithTabset(currentLayout.root);
           const target = allTabs[i];
           if (target && isTerminalTab(target.tab)) {
@@ -1228,7 +1240,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             _setFocusTrigger((prev) => prev + 1);
           }
 
-          setLayout((prev) => selectTabByIndex(prev, i));
+          setLayout((prev) =>
+            selectTabByIndex(canReviewDiffs ? prev : removeTabEverywhere(prev, "review"), i)
+          );
           setCollapsed(false);
           return;
         }
@@ -1237,13 +1251,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout, _setFocusTrigger]);
+  }, [
+    canReviewDiffs,
+    initialActiveTab,
+    setAutoFocusTerminalSession,
+    setCollapsed,
+    setLayout,
+    _setFocusTrigger,
+  ]);
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!matchesKeybind(e, KEYBINDS.TOGGLE_REVIEW_IMMERSIVE)) {
         return;
       }
+
+      if (!canReviewDiffs) return;
 
       if (isEditableElement(e.target)) {
         return;
@@ -1263,7 +1286,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive]);
+  }, [canReviewDiffs, selectOrOpenReviewTab, setCollapsed, setIsReviewImmersive]);
 
   const baseId = `right-sidebar-${workspaceId}`;
 

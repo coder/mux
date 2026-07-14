@@ -21,6 +21,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   FOCUS_INPUT_I: "Focus input (i)",
   FOCUS_INPUT_A: "Focus input (a)",
   NEW_WORKSPACE: "New workspace",
+  NEW_SCRATCH_CHAT: "New scratch chat",
   EDIT_WORKSPACE_TITLE: "Edit workspace title",
   GENERATE_WORKSPACE_TITLE: "Generate new title",
   ARCHIVE_WORKSPACE: "Archive workspace",
@@ -133,6 +134,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     label: "Navigation",
     keys: [
       "NEW_WORKSPACE",
+      "NEW_SCRATCH_CHAT",
       "EDIT_WORKSPACE_TITLE",
       "GENERATE_WORKSPACE_TITLE",
       "ARCHIVE_WORKSPACE",

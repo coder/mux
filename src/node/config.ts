@@ -41,6 +41,7 @@ import {
   RUNTIME_ENABLEMENT_IDS,
   type RuntimeEnablementId,
 } from "@/common/types/runtime";
+import { SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
@@ -716,7 +717,7 @@ export class Config {
     return priority.length > 1 ? priority : undefined;
   }
 
-  loadConfigOrDefault(): ProjectsConfig {
+  loadConfigOrDefault(options?: { throwOnError?: boolean }): ProjectsConfig {
     try {
       if (fs.existsSync(this.configFile)) {
         const data = fs.readFileSync(this.configFile, "utf-8");
@@ -1130,6 +1131,9 @@ export class Config {
       }
     } catch (error) {
       log.error("Error loading config:", error);
+      if (options?.throwOnError) {
+        throw error;
+      }
     }
 
     // Return default config
@@ -1768,15 +1772,22 @@ export class Config {
 
         const workspaceProjects = workspace.projects?.length ? workspace.projects : undefined;
         const primaryWorkspaceProject = workspaceProjects?.[0];
-        const resolvedProjectPath = primaryWorkspaceProject?.projectPath ?? projectPath;
-        const resolvedProjectName = workspaceProjects
-          ? workspaceProjects.map((projectRef) => projectRef.projectName).join("+")
-          : projectName;
+        const resolvedProjectPath =
+          workspace.kind === "scratch"
+            ? workspace.path
+            : (primaryWorkspaceProject?.projectPath ?? projectPath);
+        const resolvedProjectName =
+          workspace.kind === "scratch"
+            ? SCRATCH_PROJECT_NAME
+            : workspaceProjects
+              ? workspaceProjects.map((projectRef) => projectRef.projectName).join("+")
+              : projectName;
 
         try {
           // NEW FORMAT: If workspace has metadata in config, use it directly
           if (workspace.id && workspace.name) {
             const metadata: WorkspaceMetadata = {
+              kind: workspace.kind,
               id: workspace.id,
               name: workspace.name,
               title: workspace.title,
@@ -1897,6 +1908,7 @@ export class Config {
             metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
 
             // Preserve any config-only fields that may not exist in legacy metadata.json
+            metadata.kind ??= workspace.kind;
             metadata.aiSettingsByAgent ??=
               workspace.aiSettingsByAgent ??
               (workspace.aiSettings
@@ -1984,6 +1996,7 @@ export class Config {
           if (!metadataFound) {
             const legacyId = this.generateLegacyId(projectPath, workspace.path);
             const metadata: WorkspaceMetadata = {
+              kind: workspace.kind,
               // Prefer already-persisted identity fields: the queued ??= migration below
               // keeps existing config values, so returning a generated legacyId for a
               // partially-migrated entry that already has an id would expose an ID that
@@ -2048,6 +2061,7 @@ export class Config {
           // Fallback to basic metadata if migration fails
           const legacyId = this.generateLegacyId(projectPath, workspace.path);
           const metadata: WorkspaceMetadata = {
+            kind: workspace.kind,
             // Same invariant as the branches above: never return an ID/name that
             // diverges from a value already persisted in config.
             id: workspace.id ?? legacyId,
@@ -2149,6 +2163,7 @@ export class Config {
         metadata.namedWorkspacePath ?? path.join(this.srcDir, projectName, metadata.name);
       const workspaceEntry: Workspace = {
         path: workspacePath,
+        kind: metadata.kind,
         id: metadata.id,
         name: metadata.name,
         title: metadata.title,

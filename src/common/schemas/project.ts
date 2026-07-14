@@ -63,6 +63,9 @@ export const WorkspaceConfigSchema = z.object({
   path: z.string().meta({
     description: "Absolute path to workspace directory - REQUIRED for backward compatibility",
   }),
+  kind: z.literal("scratch").optional().meta({
+    description: "Marks an app-owned project-less scratch chat workspace.",
+  }),
   id: z.string().optional().meta({
     description: "Stable workspace ID (10 hex chars for new workspaces) - optional for legacy",
   }),

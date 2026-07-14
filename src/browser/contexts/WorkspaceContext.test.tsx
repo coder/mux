@@ -17,6 +17,7 @@ import {
   getTerminalTitlesKey,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { RecursivePartial } from "@/browser/testUtils";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
@@ -241,6 +242,63 @@ describe("WorkspaceContext", () => {
     expect(ctx().selectedWorkspace).toBeNull();
     await waitFor(() => expect(ctx().workspaceMetadata.has(workspaceId)).toBe(false));
     expect(localStorage.getItem(SELECTED_WORKSPACE_KEY)).toBeNull();
+  });
+
+  test("navigates to scratch creation when selected scratch workspace is archived", async () => {
+    const workspaceId = "scratch-archive";
+    const scratchWorkdir = "/tmp/mux/scratch/scratch-archive";
+    const scratchMetadata = createProjectWorkspaceMetadata(workspaceId, scratchWorkdir, {
+      kind: "scratch",
+      projectName: "Scratch",
+      namedWorkspacePath: scratchWorkdir,
+    });
+
+    let emitArchive:
+      | ((event: { workspaceId: string; metadata: FrontendWorkspaceMetadata | null }) => void)
+      | null = null;
+
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([scratchMetadata]),
+        onMetadata: () =>
+          Promise.resolve(
+            (async function* () {
+              const event = await new Promise<{
+                workspaceId: string;
+                metadata: FrontendWorkspaceMetadata | null;
+              }>((resolve) => {
+                emitArchive = resolve;
+              });
+              yield event;
+            })() as unknown as Awaited<ReturnType<APIClient["workspace"]["onMetadata"]>>
+          ),
+      },
+      projects: {
+        list: () => Promise.resolve([]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+      },
+      locationPath: `/workspace/${workspaceId}`,
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(workspaceId));
+    await waitFor(() => expect(emitArchive).toBeTruthy());
+
+    act(() => {
+      emitArchive?.({
+        workspaceId,
+        metadata: {
+          ...scratchMetadata,
+          archivedAt: "2025-02-01T00:00:00.000Z",
+        },
+      });
+    });
+
+    await waitFor(() => expect(ctx().pendingNewWorkspaceProject).toBe(SCRATCH_PROJECT_CONFIG_KEY));
+    expect(ctx().selectedWorkspace).toBeNull();
   });
 
   test("archiving does not override a rapid manual workspace switch", async () => {
@@ -644,6 +702,36 @@ describe("WorkspaceContext", () => {
     await waitFor(() => expect(ctx().selectedWorkspace).toBeNull());
   });
 
+  test("removeWorkspace returns selected scratch workspace to scratch creation", async () => {
+    const workspaceId = "scratch-remove";
+    const scratchWorkdir = "/tmp/mux/scratch/scratch-remove";
+
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createProjectWorkspaceMetadata(workspaceId, scratchWorkdir, {
+              kind: "scratch",
+              projectName: "Scratch",
+              namedWorkspacePath: scratchWorkdir,
+            }),
+          ]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("last-workspace"),
+      },
+      locationPath: `/workspace/${workspaceId}`,
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(workspaceId));
+    await ctx().removeWorkspace(workspaceId);
+
+    await waitFor(() => expect(ctx().pendingNewWorkspaceProject).toBe(SCRATCH_PROJECT_CONFIG_KEY));
+    expect(ctx().selectedWorkspace).toBeNull();
+  });
+
   test("removeWorkspace handles failure gracefully", async () => {
     const { workspace: workspaceApi } = createMockAPI();
 
@@ -1007,6 +1095,57 @@ describe("WorkspaceContext", () => {
       expect(ctx().selectedWorkspace?.workspaceId).toBe("ws-open-chat");
     });
     expect(ctx().pendingNewWorkspaceProject).toBeNull();
+  });
+
+  test("browser direct open restores an existing scratch workspace", async () => {
+    const workspaceId = "scratch-direct";
+    const scratchWorkdir = "/tmp/mux/scratch/scratch-direct";
+
+    createMockAPI({
+      workspace: {
+        list: () =>
+          Promise.resolve([
+            createProjectWorkspaceMetadata(workspaceId, scratchWorkdir, {
+              kind: "scratch",
+              projectName: "Scratch",
+              namedWorkspacePath: scratchWorkdir,
+            }),
+          ]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+      locationPath: `/workspace/${workspaceId}`,
+      navigationType: "navigate",
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => expect(ctx().selectedWorkspace?.workspaceId).toBe(workspaceId));
+    expect(ctx().pendingNewWorkspaceProject).toBeNull();
+  });
+
+  test("browser direct open clears an unknown workspace after metadata loads", async () => {
+    createMockAPI({
+      workspace: {
+        list: () => Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing")]),
+      },
+      projects: {
+        list: () => Promise.resolve([["/existing", { workspaces: [] }]]),
+      },
+      localStorage: {
+        [LAUNCH_BEHAVIOR_KEY]: JSON.stringify("dashboard"),
+      },
+      locationPath: "/workspace/ws-missing",
+      navigationType: "navigate",
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    await waitFor(() => expect(ctx().pendingNewWorkspaceProject).toBe("/existing"));
+    expect(ctx().selectedWorkspace).toBeNull();
   });
 
   test("resolves system project route IDs for pending workspace creation", async () => {

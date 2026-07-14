@@ -335,6 +335,10 @@ export class GitPatchArtifactService {
     const cfg = this.config.loadConfigOrDefault();
     const childEntry = findWorkspaceEntry(cfg, childWorkspaceId);
 
+    if (childEntry?.workspace.kind === "scratch") {
+      return;
+    }
+
     // Only exec-like subagents are expected to make commits that should be handed back to the parent.
     // NOTE: Custom agents can inherit from exec (base: exec). Those should also generate patches,
     // but read-only subagents (e.g. explore) should not.

@@ -532,6 +532,11 @@ export async function buildSystemMessage(
     metadata.bestOf
   )}`;
 
+  if (metadata.kind === "scratch") {
+    systemMessage +=
+      "\n\n<scratch-workspace>\nThis is a project-less scratch chat. The workspace directory is app-managed and is not a Git repository unless the user initializes one.\n</scratch-workspace>";
+  }
+
   // Add MCP context if servers are configured
   if (mcpServers && Object.keys(mcpServers).length > 0) {
     systemMessage += buildMCPContext(mcpServers);

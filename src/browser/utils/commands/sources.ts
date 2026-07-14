@@ -58,6 +58,7 @@ import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isGoalPendingPersistence, type GoalSetError, type GoalStatus } from "@/common/types/goal";
 import { GOAL_OBJECTIVE_PLACEHOLDER } from "@/constants/goals";
+import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { getErrorMessage } from "@/common/utils/errors";
 import { parseGoalBudgetCents } from "@/browser/utils/slashCommands/registry";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
@@ -100,6 +101,7 @@ export interface BuildSourcesParams {
    */
   getMinThinkingOverride?: (modelString: string) => ThinkingLevel | null | undefined;
 
+  onStartScratchCreation: () => void;
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
@@ -362,6 +364,15 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
   // Workspaces
   actions.push(() => {
     const list: CommandAction[] = [];
+
+    list.push({
+      id: CommandIds.workspaceNewScratch(),
+      title: "New Scratch Chat",
+      subtitle: "Start a chat without selecting a project",
+      section: section.workspaces,
+      shortcutHint: formatKeybind(KEYBINDS.NEW_SCRATCH_CHAT),
+      run: p.onStartScratchCreation,
+    });
 
     const selected = p.selectedWorkspace;
     if (selected) {
@@ -683,6 +694,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     // Right sidebar layout commands require a selected workspace (layout is per-workspace)
     const wsId = p.selectedWorkspace?.workspaceId;
     if (wsId) {
+      const canReviewDiffs = hasWorkspaceRepository(p.workspaceMetadata.get(wsId));
       list.push(
         // Generic per-tab "Hide/Show <Name>" commands are only for optional tabs.
         // Default-layout tabs (Stats/Review/Instructions) are auto-restored by
@@ -751,7 +763,11 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 // Terminal is appended manually because it lives outside the static registry.
                 getOptions: () => [
                   ...getOrderedBaseTabIds()
-                    .filter((tabId) => getTabConfig(tabId).featureFlag == null)
+                    .filter(
+                      (tabId) =>
+                        getTabConfig(tabId).featureFlag == null &&
+                        (canReviewDiffs || tabId !== "review")
+                    )
                     .map((tabId) => {
                       const config = getTabConfig(tabId);
                       return {
@@ -767,6 +783,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             onSubmit: (vals) => {
               const tool = vals.tool;
               if (!isTabType(tool)) return;
+
+              if (tool === "review" && !canReviewDiffs) return;
 
               // "terminal" is now an alias for "focus an existing terminal session tab".
               // Creating new terminal sessions is handled in the main UI ("+" button).

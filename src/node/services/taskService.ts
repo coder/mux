@@ -63,6 +63,7 @@ import {
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { runtimeModeSupportsSharedTaskWorkspace, type RuntimeConfig } from "@/common/types/runtime";
 import type { ProjectRef, WorkspaceMetadata } from "@/common/types/workspace";
@@ -573,6 +574,8 @@ interface TaskLaunchPlan {
   createdAt: string;
   taskRuntimeConfig: RuntimeConfig;
   parentRuntimeConfig: RuntimeConfig;
+  configProjectPath: string;
+  workspaceKind?: "scratch";
   taskModelString: string;
   canonicalModel: string;
   effectiveThinkingLevel?: ThinkingLevel;
@@ -2313,15 +2316,18 @@ export class TaskService {
         return Err(`Task.createMany: parent workspace not found (${parentMetaResult.error})`);
       }
       const parentMeta = parentMetaResult.data;
-
-      const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+      const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+      const parentIsScratch = parentEntry?.workspace.kind === "scratch";
+      const configProjectPath = parentIsScratch
+        ? SCRATCH_PROJECT_CONFIG_KEY
+        : stripTrailingSlashes(parentMeta.projectPath);
+      const taskProjectConfig = cfg.projects.get(configProjectPath);
       if (!taskProjectConfig?.trusted) {
         return Err(
           "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
         );
       }
 
-      const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
       if (parentEntry?.workspace.taskStatus === "reported") {
         return Err("Task.createMany: cannot spawn new tasks after agent_report");
       }
@@ -2376,9 +2382,10 @@ export class TaskService {
       const taskRuntimeMode = getRuntimeType(taskRuntimeConfig);
       const parentIsMultiProject = (parentMeta.projects?.length ?? 0) > 1;
       const useSharedWorkspace =
-        args.isolation === "none" &&
-        runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
-        !parentIsMultiProject;
+        parentIsScratch ||
+        (args.isolation === "none" &&
+          runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
+          !parentIsMultiProject);
       const sharedWorkspacePath = useSharedWorkspace ? parentWorkspacePath : undefined;
       // Branch actually checked out in the parent's checkout (see create() for rationale).
       const parentIsSharedTask = parentEntry?.workspace.taskIsolation === "none";
@@ -2471,6 +2478,8 @@ export class TaskService {
         createdAt,
         taskRuntimeConfig,
         parentRuntimeConfig,
+        configProjectPath,
+        workspaceKind: parentIsScratch ? "scratch" : undefined,
         taskModelString,
         canonicalModel,
         effectiveThinkingLevel,
@@ -2517,12 +2526,13 @@ export class TaskService {
         if (!trunkBranch) {
           throw new Error("Task.createMany: parent workspace name missing");
         }
-        let projectConfig = config.projects.get(plan.parentMeta.projectPath);
+        let projectConfig = config.projects.get(plan.configProjectPath);
         if (!projectConfig) {
           projectConfig = { workspaces: [] };
-          config.projects.set(plan.parentMeta.projectPath, projectConfig);
+          config.projects.set(plan.configProjectPath, projectConfig);
         }
         projectConfig.workspaces.push({
+          kind: plan.workspaceKind,
           path: workspacePath,
           id: plan.taskId,
           name: plan.workspaceName,
@@ -2722,9 +2732,7 @@ export class TaskService {
           ? { preferredTrunkBranch: plan.preferredTrunkBranch }
           : {}),
         trusted:
-          this.config
-            .loadConfigOrDefault()
-            .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+          this.config.loadConfigOrDefault().projects.get(plan.configProjectPath)?.trusted ?? false,
         multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
           EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
         ),
@@ -2935,9 +2943,8 @@ export class TaskService {
           env: secrets,
           skipInitHook: plan.skipInitHook,
           trusted:
-            this.config
-              .loadConfigOrDefault()
-              .projects.get(stripTrailingSlashes(plan.parentMeta.projectPath))?.trusted ?? false,
+            this.config.loadConfigOrDefault().projects.get(plan.configProjectPath)?.trusted ??
+            false,
         },
         plan.taskId
       );
@@ -3011,6 +3018,10 @@ export class TaskService {
     const parentMeta = parentMetaResult.data;
     const cfg = this.config.loadConfigOrDefault();
     const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    const parentEntry = findWorkspaceEntry(cfg, ownerWorkspaceId);
+    if (parentEntry?.workspace.kind === "scratch") {
+      return Err("Task.createWorkspaceTurn: scratch workspace turns are not supported yet");
+    }
     const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
     if ((parentMeta.projects?.length ?? 0) > 1) {
       // WorkspaceService.create only materializes one project checkout; fail loudly instead of
@@ -3346,18 +3357,22 @@ export class TaskService {
     // Enforce nesting depth.
     const cfg = this.config.loadConfigOrDefault();
     const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
+    const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+    const parentIsScratch = parentEntry?.workspace.kind === "scratch";
+    const configProjectPath = parentIsScratch
+      ? SCRATCH_PROJECT_CONFIG_KEY
+      : stripTrailingSlashes(parentMeta.projectPath);
 
     // Trust gate: block task creation for untrusted projects.
     // The frontend shows a confirmation dialog for primary workspace creation,
     // but task spawning bypasses the UI — enforce trust here as defense-in-depth.
-    const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+    const taskProjectConfig = cfg.projects.get(configProjectPath);
     if (!taskProjectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
       );
     }
 
-    const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
     if (parentEntry?.workspace.taskStatus === "reported") {
       return Err("Task.create: cannot spawn new tasks after agent_report");
     }
@@ -3423,9 +3438,10 @@ export class TaskService {
     const taskRuntimeMode = getRuntimeType(taskRuntimeConfig);
     const parentIsMultiProject = (parentMeta.projects?.length ?? 0) > 1;
     const useSharedWorkspace =
-      args.isolation === "none" &&
-      runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
-      !parentIsMultiProject;
+      parentIsScratch ||
+      (args.isolation === "none" &&
+        runtimeModeSupportsSharedTaskWorkspace(taskRuntimeMode) &&
+        !parentIsMultiProject);
     // The branch actually checked out in the parent's checkout. When the parent is itself an
     // isolation: "none" task, parentMeta.name is a synthetic agent workspace name with no real
     // branch — the shared checkout sits on the parent's own persisted taskTrunkBranch. Persisting
@@ -3558,13 +3574,14 @@ export class TaskService {
       });
 
       await this.config.editConfig((config) => {
-        let projectConfig = config.projects.get(parentMeta.projectPath);
+        let projectConfig = config.projects.get(configProjectPath);
         if (!projectConfig) {
           projectConfig = { workspaces: [] };
-          config.projects.set(parentMeta.projectPath, projectConfig);
+          config.projects.set(configProjectPath, projectConfig);
         }
 
         projectConfig.workspaces.push({
+          kind: parentIsScratch ? "scratch" : undefined,
           path: workspacePath,
           id: taskId,
           name: workspaceName,
@@ -3668,9 +3685,7 @@ export class TaskService {
           ? { preferredTrunkBranch: parentBranchName }
           : {}),
         trusted:
-          this.config
-            .loadConfigOrDefault()
-            .projects.get(stripTrailingSlashes(parentMeta.projectPath))?.trusted ?? false,
+          this.config.loadConfigOrDefault().projects.get(configProjectPath)?.trusted ?? false,
         multiProjectExperimentEnabled: this.workspaceService.isExperimentEnabled(
           EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
         ),
@@ -3722,13 +3737,14 @@ export class TaskService {
 
     // Persist workspace entry before starting work so it's durable across crashes.
     await this.config.editConfig((config) => {
-      let projectConfig = config.projects.get(parentMeta.projectPath);
+      let projectConfig = config.projects.get(configProjectPath);
       if (!projectConfig) {
         projectConfig = { workspaces: [] };
-        config.projects.set(parentMeta.projectPath, projectConfig);
+        config.projects.set(configProjectPath, projectConfig);
       }
 
       projectConfig.workspaces.push({
+        kind: parentIsScratch ? "scratch" : undefined,
         path: workspacePath,
         id: taskId,
         name: workspaceName,
@@ -3782,9 +3798,7 @@ export class TaskService {
           env: secrets,
           skipInitHook,
           trusted:
-            this.config
-              .loadConfigOrDefault()
-              .projects.get(stripTrailingSlashes(parentMeta.projectPath))?.trusted ?? false,
+            this.config.loadConfigOrDefault().projects.get(configProjectPath)?.trusted ?? false,
         },
         taskId
       );
@@ -7437,21 +7451,28 @@ export class TaskService {
           continue;
         }
 
+        const parentRuntimeProjectPath =
+          parentEntry.workspace.kind === "scratch"
+            ? parentEntry.workspace.path
+            : parentEntry.projectPath;
         const parentMetaResult = await this.aiService.getWorkspaceMetadata(parentWorkspaceId);
         const parentMeta = parentMetaResult.success
           ? parentMetaResult.data
           : ({
               id: parentWorkspaceId,
               name: parentWorkspaceName,
-              projectPath: parentEntry.projectPath,
+              kind: parentEntry.workspace.kind,
+              projectPath: parentRuntimeProjectPath,
               projectName:
-                parentEntry.workspace.projects?.find(
-                  (project) =>
-                    stripTrailingSlashes(project.projectPath) ===
-                    stripTrailingSlashes(parentEntry.projectPath)
-                )?.projectName ??
-                parentEntry.projectPath.split("/").filter(Boolean).at(-1) ??
-                parentEntry.projectPath,
+                parentEntry.workspace.kind === "scratch"
+                  ? SCRATCH_PROJECT_NAME
+                  : (parentEntry.workspace.projects?.find(
+                      (project) =>
+                        stripTrailingSlashes(project.projectPath) ===
+                        stripTrailingSlashes(parentEntry.projectPath)
+                    )?.projectName ??
+                    parentEntry.projectPath.split("/").filter(Boolean).at(-1) ??
+                    parentEntry.projectPath),
               runtimeConfig: parentRuntimeConfig,
               projects: parentEntry.workspace.projects,
             } satisfies WorkspaceMetadata);
@@ -7462,12 +7483,12 @@ export class TaskService {
         try {
           const parentRuntime = createRuntimeForWorkspace({
             runtimeConfig: parentRuntimeConfig,
-            projectPath: parentEntry.projectPath,
+            projectPath: parentRuntimeProjectPath,
             name: parentWorkspaceName,
           });
           const parentWorkspacePath =
             coerceNonEmptyString(parentEntry.workspace.path) ??
-            parentRuntime.getWorkspacePath(parentEntry.projectPath, parentWorkspaceName);
+            parentRuntime.getWorkspacePath(parentRuntimeProjectPath, parentWorkspaceName);
           const frontmatter = await resolveAgentFrontmatter(
             parentRuntime,
             parentWorkspacePath,
@@ -7509,6 +7530,8 @@ export class TaskService {
           createdAt,
           taskRuntimeConfig,
           parentRuntimeConfig,
+          configProjectPath: normalizedTaskProjectPath,
+          workspaceKind: task.kind,
           taskModelString: task.taskModelString ?? defaultModel,
           canonicalModel,
           effectiveThinkingLevel: task.taskThinkingLevel,
