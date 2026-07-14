@@ -60,6 +60,32 @@ describe("task_terminate tool", () => {
     });
   });
 
+  it("reports aggregated cleanup failures as error, not invalid_scope", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-cleanup-error");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const cleanupError =
+      "Timed out stopping task stream (child-task); " +
+      "Skipped removing task workspace (parent-task): a descendant task workspace was not removed";
+
+    const taskService = {
+      terminateDescendantAgentTask: mock(
+        (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+          Promise.resolve(Err(cleanupError))
+      ),
+      listActiveDescendantAgentTaskIds: mock(() => []),
+    } as unknown as TaskService;
+
+    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["parent-task"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "error", taskId: "parent-task", error: cleanupError }],
+    });
+  });
+
   it("returns terminated with terminatedTaskIds on success", async () => {
     using tempDir = new TestTempDir("test-task-terminate-ok");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
@@ -83,6 +109,52 @@ describe("task_terminate tool", () => {
           status: "terminated",
           taskId: "parent-task",
           terminatedTaskIds: ["child-task", "parent-task"],
+        },
+      ],
+    });
+  });
+
+  it("returns an interrupted error promptly while completed task IDs still resolve", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-abort");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const controller = new AbortController();
+
+    const taskService = {
+      terminateDescendantAgentTask: mock(
+        (
+          _workspaceId: string,
+          taskId: string
+        ): Promise<Result<{ terminatedTaskIds: string[] }, string>> => {
+          if (taskId === "stuck-task") {
+            return new Promise(() => undefined);
+          }
+          return Promise.resolve(Ok({ terminatedTaskIds: [taskId] }));
+        }
+      ),
+    } as unknown as TaskService;
+    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+
+    const resultPromise = Promise.resolve(
+      tool.execute!(
+        { task_ids: ["stuck-task", "finished-task"] },
+        { ...mockToolCallOptions, abortSignal: controller.signal }
+      )
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    controller.abort();
+
+    expect(await resultPromise).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "stuck-task",
+          error: "Termination interrupted; cleanup continues in the background",
+        },
+        {
+          status: "terminated",
+          taskId: "finished-task",
+          terminatedTaskIds: ["finished-task"],
         },
       ],
     });
@@ -178,6 +250,62 @@ describe("task_terminate tool", () => {
           note: expect.stringContaining("workflow_resume"),
         },
       ],
+    });
+  });
+
+  it("does not start termination when the signal is already aborted", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-preaborted");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const controller = new AbortController();
+    controller.abort();
+
+    const terminateDescendantAgentTask = mock(
+      (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+        Promise.resolve(Ok({ terminatedTaskIds: ["child-task"] }))
+    );
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: { terminateDescendantAgentTask } as unknown as TaskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { task_ids: ["child-task"] },
+        { ...mockToolCallOptions, abortSignal: controller.signal }
+      )
+    );
+
+    expect(terminateDescendantAgentTask).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      results: [
+        {
+          status: "error",
+          taskId: "child-task",
+          error: "Termination interrupted before it started",
+        },
+      ],
+    });
+  });
+
+  it("returns a per-task error when a workflow branch throws", async () => {
+    using tempDir = new TestTempDir("test-task-terminate-workflow-throws");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+
+    const tool = createTaskTerminateTool({
+      ...baseConfig,
+      taskService: {} as unknown as TaskService,
+      workflowService: {
+        getRun: mock(() => Promise.reject(new Error("workflow lookup failed"))),
+        interruptRun: mock(() => Promise.reject(new Error("unused"))),
+      },
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["wfr_run_1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [{ status: "error", taskId: "wfr_run_1", error: "workflow lookup failed" }],
     });
   });
 

@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "@/node/config";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { execFileAsync } from "@/node/utils/disposableExec";
+import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import { createRuntime } from "./runtime/runtimeFactory";
 import { log } from "./services/log";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -47,14 +47,15 @@ export interface CreateWorktreeOptions {
   runtimeConfig?: RuntimeConfig;
 }
 
-export async function listLocalBranches(projectPath: string): Promise<string[]> {
-  using proc = execFileAsync("git", [
-    "-C",
-    projectPath,
-    "for-each-ref",
-    "--format=%(refname:short)",
-    "refs/heads",
-  ]);
+export async function listLocalBranches(
+  projectPath: string,
+  options?: ExecFileAsyncOptions
+): Promise<string[]> {
+  using proc = execFileAsync(
+    "git",
+    ["-C", projectPath, "for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    options
+  );
   const { stdout } = await proc.result;
   return stdout
     .split("\n")
@@ -63,9 +64,16 @@ export async function listLocalBranches(projectPath: string): Promise<string[]> 
     .sort((a, b) => a.localeCompare(b));
 }
 
-export async function getCurrentBranch(projectPath: string): Promise<string | null> {
+export async function getCurrentBranch(
+  projectPath: string,
+  options?: ExecFileAsyncOptions
+): Promise<string | null> {
   try {
-    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD"]);
+    using proc = execFileAsync(
+      "git",
+      ["-C", projectPath, "rev-parse", "--abbrev-ref", "HEAD"],
+      options
+    );
     const { stdout } = await proc.result;
     const branch = stdout.trim();
     if (!branch || branch === "HEAD") {

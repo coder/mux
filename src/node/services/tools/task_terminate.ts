@@ -8,6 +8,9 @@ import {
   TOOL_DEFINITIONS,
 } from "@/common/utils/tools/toolDefinitions";
 
+import { TASK_TERMINATION_TOOL_TIMEOUT_MS } from "@/constants/terminationTimeouts";
+import { log } from "@/node/services/log";
+import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { isWorkspaceTurnTaskId } from "@/node/services/taskHandleStore";
 import { fromBashTaskId, isWorkflowRunTaskId } from "./taskId";
 import {
@@ -80,7 +83,7 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
   return tool({
     description: TOOL_DEFINITIONS.task_terminate.description,
     inputSchema: TOOL_DEFINITIONS.task_terminate.schema,
-    execute: async (args): Promise<unknown> => {
+    execute: async (args, { abortSignal }): Promise<unknown> => {
       const workspaceId = requireWorkspaceId(config, "task_terminate");
       const taskService = requireTaskService(config, "task_terminate");
 
@@ -88,85 +91,127 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
-          if (isWorkflowRunTaskId(taskId)) {
-            return await interruptWorkflowRun(config, workspaceId, taskId);
+          // A pre-aborted call must not start destructive termination work at all.
+          if (abortSignal?.aborted) {
+            return {
+              status: "error" as const,
+              taskId,
+              error: "Termination interrupted before it started",
+            };
           }
-
-          if (isWorkspaceTurnTaskId(taskId)) {
-            const interruptResult = await taskService.interruptWorkspaceTurn(workspaceId, taskId);
-            if (!interruptResult.success) {
-              const msg = interruptResult.error;
-              if (/not found/i.test(msg) || /scope/i.test(msg)) {
-                return { status: "invalid_scope" as const, taskId };
+          const terminationPromise = (async () => {
+            try {
+              if (isWorkflowRunTaskId(taskId)) {
+                return await interruptWorkflowRun(config, workspaceId, taskId);
               }
-              return { status: "error" as const, taskId, error: msg };
-            }
-            return {
-              status: "interrupted" as const,
-              taskId,
-              note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
-            };
-          }
 
-          const maybeProcessId = fromBashTaskId(taskId);
-          if (taskId.startsWith("bash:") && !maybeProcessId) {
-            return { status: "error" as const, taskId, error: "Invalid bash taskId." };
-          }
+              if (isWorkspaceTurnTaskId(taskId)) {
+                const interruptResult = await taskService.interruptWorkspaceTurn(
+                  workspaceId,
+                  taskId
+                );
+                if (!interruptResult.success) {
+                  const msg = interruptResult.error;
+                  if (/not found/i.test(msg) || /scope/i.test(msg)) {
+                    return { status: "invalid_scope" as const, taskId };
+                  }
+                  return { status: "error" as const, taskId, error: msg };
+                }
+                return {
+                  status: "interrupted" as const,
+                  taskId,
+                  note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
+                };
+              }
 
-          if (maybeProcessId) {
-            if (!config.backgroundProcessManager) {
+              const maybeProcessId = fromBashTaskId(taskId);
+              if (taskId.startsWith("bash:") && !maybeProcessId) {
+                return { status: "error" as const, taskId, error: "Invalid bash taskId." };
+              }
+
+              if (maybeProcessId) {
+                if (!config.backgroundProcessManager) {
+                  return {
+                    status: "error" as const,
+                    taskId,
+                    error: "Background process manager not available",
+                  };
+                }
+
+                const proc = await config.backgroundProcessManager.getProcess(maybeProcessId);
+                if (!proc) {
+                  return { status: "not_found" as const, taskId };
+                }
+
+                const inScope =
+                  proc.workspaceId === workspaceId ||
+                  (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
+                if (!inScope) {
+                  return { status: "invalid_scope" as const, taskId };
+                }
+
+                const terminateResult =
+                  await config.backgroundProcessManager.terminate(maybeProcessId);
+                if (!terminateResult.success) {
+                  return { status: "error" as const, taskId, error: terminateResult.error };
+                }
+
+                return {
+                  status: "terminated" as const,
+                  taskId,
+                  terminatedTaskIds: [taskId],
+                };
+              }
+
+              const terminateResult = await taskService.terminateDescendantAgentTask(
+                workspaceId,
+                taskId
+              );
+              if (!terminateResult.success) {
+                const msg = terminateResult.error;
+                const activeDescendantIds =
+                  taskService.listActiveDescendantAgentTaskIds(workspaceId);
+                const activeTaskIds =
+                  activeDescendantIds.length > 0 ? activeDescendantIds : undefined;
+                // Exact-match the canonical scope errors: aggregated cleanup failures
+                // may mention "descendant" or "not found" and must stay actionable errors.
+                if (msg === "Task not found") {
+                  return { status: "not_found" as const, taskId, activeTaskIds };
+                }
+                if (msg === "Task is not a descendant of this workspace") {
+                  return { status: "invalid_scope" as const, taskId, activeTaskIds };
+                }
+                return { status: "error" as const, taskId, error: msg };
+              }
+
               return {
-                status: "error" as const,
+                status: "terminated" as const,
                 taskId,
-                error: "Background process manager not available",
+                terminatedTaskIds: terminateResult.data.terminatedTaskIds,
               };
+            } catch (error: unknown) {
+              return { status: "error" as const, taskId, error: getErrorMessage(error) };
             }
+          })();
 
-            const proc = await config.backgroundProcessManager.getProcess(maybeProcessId);
-            if (!proc) {
-              return { status: "not_found" as const, taskId };
-            }
-
-            const inScope =
-              proc.workspaceId === workspaceId ||
-              (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
-            if (!inScope) {
-              return { status: "invalid_scope" as const, taskId };
-            }
-
-            const terminateResult = await config.backgroundProcessManager.terminate(maybeProcessId);
-            if (!terminateResult.success) {
-              return { status: "error" as const, taskId, error: terminateResult.error };
-            }
-
-            return {
-              status: "terminated" as const,
-              taskId,
-              terminatedTaskIds: [taskId],
-            };
+          const outcome = await raceWithAbortAndTimeout(terminationPromise, {
+            signal: abortSignal,
+            timeoutMs: TASK_TERMINATION_TOOL_TIMEOUT_MS,
+          });
+          if (outcome.kind === "ok") {
+            return outcome.value;
           }
 
-          const terminateResult = await taskService.terminateDescendantAgentTask(
-            workspaceId,
-            taskId
-          );
-          if (!terminateResult.success) {
-            const msg = terminateResult.error;
-            const activeDescendantIds = taskService.listActiveDescendantAgentTaskIds(workspaceId);
-            const activeTaskIds = activeDescendantIds.length > 0 ? activeDescendantIds : undefined;
-            if (/not found/i.test(msg)) {
-              return { status: "not_found" as const, taskId, activeTaskIds };
-            }
-            if (/descendant/i.test(msg) || /scope/i.test(msg)) {
-              return { status: "invalid_scope" as const, taskId, activeTaskIds };
-            }
-            return { status: "error" as const, taskId, error: msg };
-          }
-
+          void terminationPromise.catch((error: unknown) => {
+            log.debug("task_terminate cleanup failed after tool returned", { taskId, error });
+          });
           return {
-            status: "terminated" as const,
+            status: "error" as const,
             taskId,
-            terminatedTaskIds: terminateResult.data.terminatedTaskIds,
+            error:
+              outcome.kind === "aborted"
+                ? "Termination interrupted; cleanup continues in the background"
+                : "Termination timed out; cleanup continues in the background",
           };
         })
       );

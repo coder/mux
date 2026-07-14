@@ -3,6 +3,11 @@ import * as fsPromises from "fs/promises";
 
 import type { z } from "zod";
 
+import {
+  TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS,
+  TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS,
+} from "@/constants/terminationTimeouts";
+import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import type { Config, ProjectsConfig, Workspace as WorkspaceConfigEntry } from "@/node/config";
@@ -1135,6 +1140,12 @@ export class TaskService {
   // Cache completed reports so callers can retrieve them without re-reading disk.
   // Bounded by max entries; disk persistence is the source of truth for restart-safety.
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
+
+  // Task workspace removals that outlived their termination timeout. Retries must
+  // await the ORIGINAL removal outcome: WorkspaceService.remove() short-circuits Ok
+  // for IDs already being removed, so re-calling it would count a still-in-flight
+  // (possibly failing) removal as success and let ancestor deletion orphan the child.
+  private readonly pendingTaskWorkspaceRemovals = new Map<string, Promise<Result<void>>>();
   private readonly gitPatchArtifactService: GitPatchArtifactService;
   private readonly handoffInProgress = new Set<string>();
   /**
@@ -3832,6 +3843,7 @@ export class TaskService {
     assert(taskId.length > 0, "terminateDescendantAgentTask: taskId must be non-empty");
 
     const terminatedTaskIds: string[] = [];
+    const terminationErrors: string[] = [];
 
     {
       await using _lock = await this.mutex.acquire();
@@ -3863,23 +3875,103 @@ export class TaskService {
 
       const terminationError = new Error("Task terminated");
 
+      // When a descendant workspace could not be removed, keep every ancestor of it
+      // so the surviving child never points at removed parent metadata.
+      const ancestorsBlockedByFailedChild = new Set<string>();
+      const blockAncestorsOf = (id: string) => {
+        for (
+          let cur = parentById.get(id);
+          cur != null && !ancestorsBlockedByFailedChild.has(cur);
+          cur = parentById.get(cur)
+        ) {
+          ancestorsBlockedByFailedChild.add(cur);
+        }
+      };
+
       for (const id of toTerminate) {
         // Best-effort: stop any active stream immediately to avoid further token usage.
         try {
-          const stopResult = await this.aiService.stopStream(id, { abandonPartial: true });
-          if (!stopResult.success) {
+          const stopPromise = this.aiService.stopStream(id, { abandonPartial: true });
+          const stopOutcome = await raceWithAbortAndTimeout(stopPromise, {
+            timeoutMs: TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS,
+          });
+          if (stopOutcome.kind !== "ok") {
+            void stopPromise.catch((error: unknown) => {
+              log.debug("terminateDescendantAgentTask: timed-out stopStream later threw", {
+                taskId: id,
+                error,
+              });
+            });
+            terminationErrors.push(`Timed out stopping task stream (${id})`);
+            blockAncestorsOf(id);
+            continue;
+          }
+          if (!stopOutcome.value.success) {
             log.debug("terminateDescendantAgentTask: stopStream failed", { taskId: id });
           }
         } catch (error: unknown) {
           log.debug("terminateDescendantAgentTask: stopStream threw", { taskId: id, error });
         }
 
+        if (ancestorsBlockedByFailedChild.has(id)) {
+          terminationErrors.push(
+            `Skipped removing task workspace (${id}): a descendant task workspace was not removed`
+          );
+          continue;
+        }
+
         this.completedReportsByTaskId.delete(id);
         this.rejectWaiters(id, terminationError);
 
-        const removeResult = await this.workspaceService.remove(id, true);
-        if (!removeResult.success) {
-          return Err(`Failed to remove task workspace (${id}): ${removeResult.error}`);
+        try {
+          let removePromise = this.pendingTaskWorkspaceRemovals.get(id);
+          if (!removePromise) {
+            removePromise = this.workspaceService.remove(id, true);
+            this.pendingTaskWorkspaceRemovals.set(id, removePromise);
+            const trackedPromise = removePromise;
+            void trackedPromise
+              .then(
+                (result) => result.success,
+                (error: unknown) => {
+                  log.debug("terminateDescendantAgentTask: workspace removal threw", {
+                    taskId: id,
+                    error,
+                  });
+                  return false;
+                }
+              )
+              .then(async (removed) => {
+                if (this.pendingTaskWorkspaceRemovals.get(id) === trackedPromise) {
+                  this.pendingTaskWorkspaceRemovals.delete(id);
+                }
+                // A removal that outlived its termination timeout frees the task slot
+                // only when it settles, so kick the scheduler for queued tasks then.
+                if (removed) {
+                  await this.maybeStartQueuedTasks();
+                }
+              });
+          }
+          const removeOutcome = await raceWithAbortAndTimeout(removePromise, {
+            timeoutMs: TASK_TERMINATION_WORKSPACE_REMOVE_TIMEOUT_MS,
+          });
+          if (removeOutcome.kind !== "ok") {
+            terminationErrors.push(`Timed out removing task workspace (${id})`);
+            blockAncestorsOf(id);
+            continue;
+          }
+          if (!removeOutcome.value.success) {
+            terminationErrors.push(
+              `Failed to remove task workspace (${id}): ${removeOutcome.value.error}`
+            );
+            blockAncestorsOf(id);
+            continue;
+          }
+        } catch (error: unknown) {
+          terminationErrors.push(
+            `Failed to remove task workspace (${id}): ${getErrorMessage(error)}`
+          );
+          blockAncestorsOf(id);
+          continue;
         }
 
         terminatedTaskIds.push(id);
@@ -3889,6 +3981,9 @@ export class TaskService {
     // Free slots and start any queued tasks (best-effort).
     await this.maybeStartQueuedTasks();
 
+    if (terminationErrors.length > 0) {
+      return Err(terminationErrors.join("; "));
+    }
     return Ok({ terminatedTaskIds });
   }
 
@@ -6585,9 +6680,14 @@ export class TaskService {
     );
 
     const result: string[] = [];
+    const visited = new Set([workspaceId]);
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
     while (stack.length > 0) {
       const next = stack.pop()!;
+      if (visited.has(next)) {
+        continue;
+      }
+      visited.add(next);
       result.push(next);
       const children = index.childrenByParent.get(next);
       if (children) {
