@@ -187,12 +187,12 @@ describeIntegration("PROJECT_CREATE IPC Handler", () => {
     await fs.rm(tempProjectDir, { recursive: true, force: true });
   });
 
-  // Regression tests for friendly filesystem error mapping: raw Node errno
-  // strings (e.g. "EACCES: permission denied, mkdir '/x'") must not leak
-  // into the project-add UI.
   test.concurrent("should return a friendly error when folder creation is denied", async () => {
-    // Root bypasses permission bits, so this scenario cannot be reproduced as root.
-    if (typeof process.getuid === "function" && process.getuid() === 0) {
+    // This scenario relies on POSIX permission bits and a non-root user.
+    if (
+      process.platform === "win32" ||
+      (typeof process.getuid === "function" && process.getuid() === 0)
+    ) {
       return;
     }
 

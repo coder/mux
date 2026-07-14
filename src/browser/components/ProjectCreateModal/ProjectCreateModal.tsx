@@ -97,7 +97,6 @@ interface ProjectCreateFormProps {
   placeholder?: string;
   /** Hide the footer actions (submit/cancel buttons). */
   hideFooter?: boolean;
-  /** Notifies the parent when an inline error appears/clears (e.g. to hide contradictory helper text). */
   onErrorChange?: (hasError: boolean) => void;
 }
 
@@ -308,7 +307,6 @@ interface ProjectCloneFormProps {
   onIsCreatingChange?: (isCreating: boolean) => void;
   hideFooter?: boolean;
   autoFocus?: boolean;
-  /** Notifies the parent when an inline error appears/clears (e.g. to hide contradictory helper text). */
   onErrorChange?: (hasError: boolean) => void;
 }
 
@@ -395,7 +393,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
         setErrorState(next);
         props.onErrorChange?.(next.length > 0);
       },
-      [props]
+      [props.onErrorChange]
     );
     const [destinationExistsPath, setDestinationExistsPath] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
@@ -815,7 +813,6 @@ interface ProjectAddFormProps {
   autoFocus?: boolean;
   hideFooter?: boolean;
   showCancelButton?: boolean;
-  /** Notifies the parent when the active form shows an inline error (e.g. to hide contradictory helper text). */
   onErrorChange?: (hasError: boolean) => void;
 }
 
@@ -901,7 +898,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
           void ensureDefaultCloneDir();
         }
       },
-      [ensureDefaultCloneDir, props]
+      [ensureDefaultCloneDir, props.onErrorChange]
     );
 
     useImperativeHandle(

@@ -319,13 +319,9 @@ interface FileCompletionsCacheEntry {
   refreshing?: Promise<void>;
 }
 
-/**
- * Translate common filesystem errno failures into friendly, user-facing messages.
- * Without this, raw Node errno strings (e.g. "EACCES: permission denied, mkdir '/x'")
- * leak into the project-add UI. Returns null for codes we don't recognize.
- */
+// Keep raw Node errno details out of project-add errors.
 function friendlyFsError(error: unknown, action: string, targetPath: string): string | null {
-  const code = (error as NodeJS.ErrnoException | null)?.code;
+  const code = (error as NodeJS.ErrnoException).code;
   switch (code) {
     case "EACCES":
     case "EPERM":
