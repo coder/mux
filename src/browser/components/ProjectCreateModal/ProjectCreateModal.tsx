@@ -388,12 +388,13 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
     const [error, setErrorState] = useState("");
 
+    const onErrorChange = props.onErrorChange;
     const setError = useCallback(
       (next: string) => {
         setErrorState(next);
-        props.onErrorChange?.(next.length > 0);
+        onErrorChange?.(next.length > 0);
       },
-      [props.onErrorChange]
+      [onErrorChange]
     );
     const [destinationExistsPath, setDestinationExistsPath] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
@@ -884,6 +885,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
       void ensureDefaultCloneDir();
     }, [ensureDefaultCloneDir, mode, props.isOpen]);
 
+    const onErrorChange = props.onErrorChange;
     const handleModeChange = useCallback(
       (nextMode: string) => {
         if (nextMode !== "pick-folder" && nextMode !== "clone") {
@@ -893,12 +895,12 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
         setMode(nextMode);
         // The newly mounted form starts without an error, so clear any stale flag
         // reported by the form we're switching away from.
-        props.onErrorChange?.(false);
+        onErrorChange?.(false);
         if (nextMode === "clone") {
           void ensureDefaultCloneDir();
         }
       },
-      [ensureDefaultCloneDir, props.onErrorChange]
+      [ensureDefaultCloneDir, onErrorChange]
     );
 
     useImperativeHandle(
