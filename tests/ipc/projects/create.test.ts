@@ -187,6 +187,61 @@ describeIntegration("PROJECT_CREATE IPC Handler", () => {
     await fs.rm(tempProjectDir, { recursive: true, force: true });
   });
 
+  // Regression tests for friendly filesystem error mapping: raw Node errno
+  // strings (e.g. "EACCES: permission denied, mkdir '/x'") must not leak
+  // into the project-add UI.
+  test.concurrent("should return a friendly error when folder creation is denied", async () => {
+    // Root bypasses permission bits, so this scenario cannot be reproduced as root.
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+      return;
+    }
+
+    const env = await createTestEnvironment();
+    const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
+    const readOnlyDir = path.join(tempProjectDir, "readonly");
+    await fs.mkdir(readOnlyDir, { mode: 0o555 });
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result = await client.projects.create({
+        projectPath: path.join(readOnlyDir, "child"),
+      });
+
+      if (result.success) {
+        throw new Error("Expected failure but got success");
+      }
+      expect(result.error).toContain("permission denied");
+      expect(result.error).not.toContain("EACCES");
+    } finally {
+      await fs.chmod(readOnlyDir, 0o755);
+      await cleanupTestEnvironment(env);
+      await fs.rm(tempProjectDir, { recursive: true, force: true });
+    }
+  });
+
+  test.concurrent("should return a friendly error when the path runs through a file", async () => {
+    const env = await createTestEnvironment();
+    const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
+    const occupiedFile = path.join(tempProjectDir, "occupied.txt");
+    await fs.writeFile(occupiedFile, "content");
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result = await client.projects.create({
+        projectPath: path.join(occupiedFile, "child"),
+      });
+
+      if (result.success) {
+        throw new Error("Expected failure but got success");
+      }
+      expect(result.error).toContain("not a folder");
+      expect(result.error).not.toContain("ENOTDIR");
+    } finally {
+      await cleanupTestEnvironment(env);
+      await fs.rm(tempProjectDir, { recursive: true, force: true });
+    }
+  });
+
   test.concurrent("should create non-existent tilde path", async () => {
     const env = await createTestEnvironment();
     const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));

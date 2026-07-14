@@ -97,6 +97,8 @@ interface ProjectCreateFormProps {
   placeholder?: string;
   /** Hide the footer actions (submit/cancel buttons). */
   hideFooter?: boolean;
+  /** Notifies the parent when an inline error appears/clears (e.g. to hide contradictory helper text). */
+  onErrorChange?: (hasError: boolean) => void;
 }
 
 export interface ProjectCreateFormHandle {
@@ -118,13 +120,22 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         ? "C:\\Users\\user\\projects\\my-project"
         : "/home/user/projects/my-project",
       hideFooter = false,
+      onErrorChange,
     },
     ref
   ) {
     const { api } = useAPI();
     const [path, setPath] = useState(initialPath ?? "");
-    const [error, setError] = useState("");
+    const [error, setErrorState] = useState("");
     const [isCreating, setIsCreating] = useState(false);
+
+    const setError = useCallback(
+      (next: string) => {
+        setErrorState(next);
+        onErrorChange?.(next.length > 0);
+      },
+      [onErrorChange]
+    );
 
     useEffect(() => {
       setPath(initialPath ?? "");
@@ -141,7 +152,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     const reset = useCallback(() => {
       setPath("");
       setError("");
-    }, []);
+    }, [setError]);
 
     const handleCancel = useCallback(() => {
       reset();
@@ -211,7 +222,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       } finally {
         setCreating(false);
       }
-    }, [api, isCreating, onClose, onSuccess, path, reset, setCreating]);
+    }, [api, isCreating, onClose, onSuccess, path, reset, setCreating, setError]);
 
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent) => {
@@ -297,6 +308,8 @@ interface ProjectCloneFormProps {
   onIsCreatingChange?: (isCreating: boolean) => void;
   hideFooter?: boolean;
   autoFocus?: boolean;
+  /** Notifies the parent when an inline error appears/clears (e.g. to hide contradictory helper text). */
+  onErrorChange?: (hasError: boolean) => void;
 }
 
 export interface ProjectCloneFormHandle {
@@ -375,7 +388,15 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
     const [repoUrl, setRepoUrl] = useState("");
     const [cloneParentDir, setCloneParentDir] = useState(props.defaultProjectDir);
     const [hasEditedCloneParentDir, setHasEditedCloneParentDir] = useState(false);
-    const [error, setError] = useState("");
+    const [error, setErrorState] = useState("");
+
+    const setError = useCallback(
+      (next: string) => {
+        setErrorState(next);
+        props.onErrorChange?.(next.length > 0);
+      },
+      [props]
+    );
     const [destinationExistsPath, setDestinationExistsPath] = useState<string | null>(null);
     const [isCreating, setIsCreating] = useState(false);
     const [cloneOutput, setCloneOutput] = useState("");
@@ -402,7 +423,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
       rawOutputRef.current = "";
       setDestinationExistsPath(null);
       setIsAddingProject(false);
-    }, [props.defaultProjectDir]);
+    }, [props.defaultProjectDir, setError]);
 
     const abortInFlightClone = useCallback(() => {
       if (!abortControllerRef.current) {
@@ -552,7 +573,7 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
           setCreating(false);
         }
       }
-    }, [api, isCreating, props, repoUrl, reset, setCreating, trimmedCloneParentDir]);
+    }, [api, isCreating, props, repoUrl, reset, setCreating, setError, trimmedCloneParentDir]);
 
     const handleAddExistingProject = useCallback(async () => {
       if (!api || !destinationExistsPath) {
@@ -593,13 +614,13 @@ const ProjectCloneForm = React.forwardRef<ProjectCloneFormHandle, ProjectCloneFo
           setIsAddingProject(false);
         }
       }
-    }, [api, destinationExistsPath, props, reset]);
+    }, [api, destinationExistsPath, props, reset, setError]);
 
     const handleRetry = useCallback(() => {
       setError("");
       setCloneOutput("");
       rawOutputRef.current = "";
-    }, []);
+    }, [setError]);
 
     const handleKeyDown = useCallback(
       (e: React.KeyboardEvent) => {
@@ -794,6 +815,8 @@ interface ProjectAddFormProps {
   autoFocus?: boolean;
   hideFooter?: boolean;
   showCancelButton?: boolean;
+  /** Notifies the parent when the active form shows an inline error (e.g. to hide contradictory helper text). */
+  onErrorChange?: (hasError: boolean) => void;
 }
 
 export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddFormProps>(
@@ -871,11 +894,14 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
         }
 
         setMode(nextMode);
+        // The newly mounted form starts without an error, so clear any stale flag
+        // reported by the form we're switching away from.
+        props.onErrorChange?.(false);
         if (nextMode === "clone") {
           void ensureDefaultCloneDir();
         }
       },
-      [ensureDefaultCloneDir]
+      [ensureDefaultCloneDir, props]
     );
 
     useImperativeHandle(
@@ -930,6 +956,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
               showCancelButton={props.showCancelButton ?? false}
               autoFocus={props.autoFocus}
               onIsCreatingChange={setCreating}
+              onErrorChange={props.onErrorChange}
               hideFooter
             />
           ) : (
@@ -940,6 +967,7 @@ export const ProjectAddForm = React.forwardRef<ProjectAddFormHandle, ProjectAddF
               isOpen={props.isOpen}
               defaultProjectDir={defaultProjectDir}
               onIsCreatingChange={setCreating}
+              onErrorChange={props.onErrorChange}
               hideFooter
               autoFocus={props.autoFocus}
             />

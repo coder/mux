@@ -319,6 +319,26 @@ interface FileCompletionsCacheEntry {
   refreshing?: Promise<void>;
 }
 
+/**
+ * Translate common filesystem errno failures into friendly, user-facing messages.
+ * Without this, raw Node errno strings (e.g. "EACCES: permission denied, mkdir '/x'")
+ * leak into the project-add UI. Returns null for codes we don't recognize.
+ */
+function friendlyFsError(error: unknown, action: string, targetPath: string): string | null {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  switch (code) {
+    case "EACCES":
+    case "EPERM":
+      return `Cannot ${action} "${targetPath}": permission denied`;
+    case "EROFS":
+      return `Cannot ${action} "${targetPath}": the file system is read-only`;
+    case "ENOTDIR":
+      return `Cannot ${action} "${targetPath}": part of the path is not a folder`;
+    default:
+      return null;
+  }
+}
+
 async function resolveRealProjectPath(projectPath: string): Promise<string> {
   return stripTrailingSlashes(await fsPromises.realpath(projectPath));
 }
@@ -435,6 +455,10 @@ export class ProjectService {
       } catch (error) {
         const err = error as NodeJS.ErrnoException;
         if (err.code !== "ENOENT") {
+          const friendly = friendlyFsError(error, "access", normalizedPath);
+          if (friendly) {
+            return Err(friendly);
+          }
           throw error;
         }
       }
@@ -459,7 +483,15 @@ export class ProjectService {
 
       // Create the directory if it doesn't exist (like mkdir -p). Keep the user-facing
       // path stable in config; Windows realpath may expand 8.3 short names and surprise callers.
-      await fsPromises.mkdir(normalizedPath, { recursive: true });
+      try {
+        await fsPromises.mkdir(normalizedPath, { recursive: true });
+      } catch (error) {
+        const friendly = friendlyFsError(error, "create folder", normalizedPath);
+        if (friendly) {
+          return Err(friendly);
+        }
+        throw error;
+      }
       const canonicalPath = await resolveRealProjectPath(normalizedPath);
 
       if (config.projects.has(canonicalPath)) {

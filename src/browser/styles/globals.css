@@ -1140,52 +1140,6 @@ body,
     min-width: 44px;
   }
 
-  /* Show mobile menu button only on touch devices */
-  .mobile-menu-btn {
-    display: inline-flex !important;
-    justify-content: flex-start !important;
-    padding-left: 12px !important;
-  }
-
-  .mobile-sticky-header:has(.mobile-menu-btn) {
-    padding-left: 0 !important;
-  }
-
-  /* Show mobile overlay only on touch devices */
-  .mobile-overlay {
-    display: block !important;
-  }
-
-  /* Mobile sidebar positioning only on touch devices */
-  .mobile-sidebar {
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 18rem !important;
-    z-index: 1000 !important;
-    transition: transform 0.3s !important;
-    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.5) !important;
-
-    /* Account for iOS safe areas (the sidebar is position: fixed) */
-    padding-top: env(safe-area-inset-top, 0px) !important;
-    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
-    padding-left: env(safe-area-inset-left, 0px) !important;
-  }
-
-  .mobile-sidebar-collapsed {
-    transform: translateX(-100%) !important;
-    box-shadow: none !important;
-  }
-
-  /* Mobile layout - stack vertically on touch devices */
-  .mobile-layout {
-    flex-direction: column !important;
-  }
-
-  .mobile-main-content {
-    width: 100% !important;
-  }
-
   /* Keep workspace header visible when keyboard opens - fixed positioning
      because iOS Safari scrolls the visual viewport, not a scroll container.
      Left/right safe-area insets ensure header content avoids notch in landscape.
@@ -1216,8 +1170,54 @@ body,
 
 /* Tailwind utility extensions for dark theme surfaces */
 
-/* Hide right sidebar on small screens so it never stacks below the chat pane. */
+/* Narrow viewports, any pointer type: the expanded sidebar overlays the main
+   pane instead of crushing it (a 288px in-flow sidebar leaves ~90px of content
+   at 375px), and the menu button provides a way to reopen it once hidden. */
 @media (max-width: 768px) {
+  .mobile-menu-btn {
+    display: inline-flex !important;
+    justify-content: flex-start !important;
+    padding-left: 12px !important;
+  }
+
+  .mobile-sticky-header:has(.mobile-menu-btn) {
+    padding-left: 0 !important;
+  }
+
+  .mobile-overlay {
+    display: block !important;
+  }
+
+  .mobile-sidebar {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 18rem !important;
+    z-index: 1000 !important;
+    transition: transform 0.3s !important;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.5) !important;
+
+    /* Account for iOS safe areas (the sidebar is position: fixed) */
+    padding-top: env(safe-area-inset-top, 0px) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    padding-left: env(safe-area-inset-left, 0px) !important;
+  }
+
+  .mobile-sidebar-collapsed {
+    transform: translateX(-100%) !important;
+    box-shadow: none !important;
+  }
+
+  /* Stack vertically so main content gets the full viewport width */
+  .mobile-layout {
+    flex-direction: column !important;
+  }
+
+  .mobile-main-content {
+    width: 100% !important;
+  }
+
+  /* Hide right sidebar on small screens so it never stacks below the chat pane. */
   .mobile-hide-right-sidebar {
     display: none !important;
   }
