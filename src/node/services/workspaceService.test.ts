@@ -10187,6 +10187,71 @@ describe("WorkspaceService init cancellation", () => {
     }
   });
 
+  test("scratch removal refuses to delete a workdir the workspace does not own", async () => {
+    // A stale or hand-edited config entry can point at another chat's dir
+    // under the scratch root; removal must not recursively delete it.
+    const {
+      config,
+      historyService: scratchHistoryService,
+      cleanup,
+    } = await createTestHistoryService();
+    const victimId = "3333333333";
+    const malformedId = "4444444444";
+    const configWithStableId = config as unknown as { generateStableId: () => string };
+    configWithStableId.generateStableId = () => victimId;
+
+    const aiService = {
+      isStreaming: mock(() => false),
+      stopStream: mock(() => Promise.resolve(Ok(undefined))),
+      getWorkspaceMetadata: mock(async (workspaceId: string) => {
+        const metadata = (await config.getAllWorkspaceMetadata()).find(
+          (workspace) => workspace.id === workspaceId
+        );
+        return metadata ? Ok(metadata) : Err("not found");
+      }),
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+
+    try {
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService: scratchHistoryService,
+        aiService,
+      });
+      const created = await workspaceService.createScratch("Victim scratch");
+      expect(created.success).toBe(true);
+      if (!created.success) return;
+      const victimPath = created.data.metadata.namedWorkspacePath;
+
+      // Remove the victim's config entry (keep the dir) so the malformed
+      // entry is the workdir's only reference; then point the malformed
+      // root entry (no task ancestry) at the victim's dir.
+      await config.editConfig((current) => {
+        const scratchProject = current.projects.get(SCRATCH_PROJECT_CONFIG_KEY);
+        if (!scratchProject) throw new Error("Scratch project missing");
+        scratchProject.workspaces = scratchProject.workspaces.filter(
+          (workspace) => workspace.id !== victimId
+        );
+        scratchProject.workspaces.push({
+          kind: "scratch",
+          path: victimPath,
+          id: malformedId,
+          name: `scratch-${malformedId}`,
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+        });
+        return current;
+      });
+
+      expect(await workspaceService.remove(malformedId, true)).toEqual(Ok(undefined));
+      // Config cleanup proceeded, but the victim's dir must survive.
+      expect(await fsPromises.stat(victimPath).then(() => true)).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("createScratch rejects when policy disallows the local runtime", async () => {
     const {
       config,

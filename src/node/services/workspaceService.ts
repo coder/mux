@@ -3346,6 +3346,40 @@ export class WorkspaceService extends EventEmitter {
     return path.dirname(resolvedPath) === scratchRoot && isPathInsideDir(scratchRoot, resolvedPath);
   }
 
+  /**
+   * Scratch workdirs are named after the workspace that created them, and
+   * isolation "none" task children share an ancestor's workdir. Deletion is
+   * only safe when the dir basename matches the removed workspace or one of
+   * its task ancestors; a stale or hand-edited config entry pointing at some
+   * other chat's directory must never recursively delete it.
+   */
+  private scratchWorkdirOwnedByWorkspace(
+    configSnapshot: ProjectsConfig,
+    metadata: WorkspaceMetadata,
+    workdirBasename: string
+  ): boolean {
+    if (workdirBasename === metadata.id) {
+      return true;
+    }
+
+    const parentIdsByWorkspaceId = new Map<string, string | undefined>();
+    for (const project of configSnapshot.projects.values()) {
+      for (const workspace of project.workspaces) {
+        if (workspace.id) {
+          parentIdsByWorkspaceId.set(workspace.id, workspace.parentWorkspaceId);
+        }
+      }
+    }
+    let ancestorId = metadata.parentWorkspaceId;
+    for (let depth = 0; ancestorId != null && depth < 32; depth++) {
+      if (ancestorId === workdirBasename) {
+        return true;
+      }
+      ancestorId = parentIdsByWorkspaceId.get(ancestorId);
+    }
+    return false;
+  }
+
   private async cleanupOrphanScratchWorkdirs(): Promise<void> {
     const scratchRoot = this.getScratchRoot();
     await ensurePrivateDir(scratchRoot);
@@ -4456,7 +4490,22 @@ export class WorkspaceService extends EventEmitter {
               )
           );
           if (!hasOtherScratchReference) {
-            await fsPromises.rm(persistedWorkspacePath, { recursive: true, force: true });
+            if (
+              this.scratchWorkdirOwnedByWorkspace(
+                configSnapshot,
+                metadata,
+                path.basename(resolvedScratchPath)
+              )
+            ) {
+              await fsPromises.rm(persistedWorkspacePath, { recursive: true, force: true });
+            } else {
+              // Skip instead of failing: config cleanup still proceeds, and the
+              // startup orphan sweep reclaims the dir once nothing references it.
+              log.warn(
+                "Skipping scratch workdir deletion: basename matches neither the workspace nor its task ancestors",
+                { workspaceId, workspacePath: persistedWorkspacePath }
+              );
+            }
           }
         } else if (taskSharesParentCheckout) {
           // Shared checkout (isolation: "none"): do not touch the filesystem — the directory
