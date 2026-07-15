@@ -3107,7 +3107,13 @@ export class TaskService {
     const handleId = `${WORKSPACE_TURN_TASK_ID_PREFIX}${this.config.generateStableId()}`;
     const turnId = this.config.generateStableId();
     const createdAt = getIsoNow();
+    // Workspace turns currently always run the exec agent (see the sendMessage
+    // call below). Key every defaults/persisted-settings lookup off this so the
+    // right agent's settings follow automatically if workspace turns ever run
+    // other agents.
+    const workspaceTurnAgentId = "exec";
     let targetWorkspaceId: string;
+    let targetAiSettings: ResolvedWorkspaceAiSettings | undefined;
     let createdWorkspace = false;
     let queuedForExistingWorkspace = false;
 
@@ -3127,6 +3133,15 @@ export class TaskService {
         return Err("Task.createWorkspaceTurn: invalid_scope for existing workspace");
       }
       targetWorkspaceId = existingWorkspaceId;
+      // Follow-up sends continue the target workspace's own last-used settings
+      // (persisted on every send, or manually changed by the user in that
+      // workspace) instead of re-inheriting the owner's live settings on each
+      // message — the owner changing its model/thinking must not drag
+      // already-created children along.
+      const targetEntry = findWorkspaceEntry(cfg, existingWorkspaceId);
+      targetAiSettings = targetEntry
+        ? this.resolveWorkspaceAISettings(targetEntry.workspace, workspaceTurnAgentId)
+        : undefined;
       queuedForExistingWorkspace = this.workspaceService.isBusyForMessage(existingWorkspaceId);
       const targetHasActiveWorkspaceTurn = await this.hasActiveWorkspaceTurnForWorkspace(
         allWorkspaceTurns,
@@ -3161,10 +3176,18 @@ export class TaskService {
       createdWorkspace = true;
     }
 
+    // Per-field precedence: explicit per-launch override → target workspace's
+    // own persisted settings (mode="existing" follow-ups) → configured agent
+    // defaults (so agent-created workspaces match what the user would get
+    // creating one by hand) → owner's live runtime settings → owner's
+    // persisted settings → app default.
+    const workspaceTurnAgentDefault = cfg.agentAiDefaults?.[workspaceTurnAgentId];
     const model =
       coerceNonEmptyString(args.modelString) ??
+      coerceNonEmptyString(targetAiSettings?.model) ??
+      coerceNonEmptyString(workspaceTurnAgentDefault?.modelString) ??
       coerceNonEmptyString(args.parentRuntimeAiSettings?.modelString) ??
-      coerceNonEmptyString(parentMeta.aiSettingsByAgent?.exec?.model) ??
+      coerceNonEmptyString(parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.model) ??
       coerceNonEmptyString(parentMeta.aiSettings?.model) ??
       defaultModel;
     const thinkingLevel =
@@ -3176,8 +3199,10 @@ export class TaskService {
             normalizeToCanonical(model),
             this.aiService.getProvidersConfig()
           )
-        : (args.parentRuntimeAiSettings?.thinkingLevel ??
-          parentMeta.aiSettingsByAgent?.exec?.thinkingLevel ??
+        : (targetAiSettings?.thinkingLevel ??
+          workspaceTurnAgentDefault?.thinkingLevel ??
+          args.parentRuntimeAiSettings?.thinkingLevel ??
+          parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.thinkingLevel ??
           parentMeta.aiSettings?.thinkingLevel);
     // Per-workspace pro mode inherits alongside model/thinking; the send path
     // re-gates per model/route so this is inert for non-GPT-5.6 models.
@@ -3185,14 +3210,20 @@ export class TaskService {
     // bucket fall back to the active-agent bucket (then legacy settings) —
     // mirroring resolveTaskAISettings — or a workspace turn launched from a
     // non-exec parent agent would silently drop back to standard mode.
+    // When the target has its own persisted settings (mode="existing"), those
+    // own the choice outright — absent means standard per
+    // WorkspaceAISettingsSchema — so the owner's pro toggle is not re-injected
+    // into follow-up sends.
     const activeParentAiSettings = this.resolveWorkspaceAISettings(
       parentMeta,
       normalizeAgentId(parentMeta.agentId)
     );
     const reasoningMode = coerceOpenAIReasoningMode(
-      parentMeta.aiSettingsByAgent?.exec?.reasoningMode ??
-        activeParentAiSettings?.reasoningMode ??
-        parentMeta.aiSettings?.reasoningMode
+      targetAiSettings != null
+        ? targetAiSettings.reasoningMode
+        : (parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.reasoningMode ??
+            activeParentAiSettings?.reasoningMode ??
+            parentMeta.aiSettings?.reasoningMode)
     );
 
     const record: WorkspaceTurnTaskHandleRecord = {
@@ -3251,7 +3282,7 @@ export class TaskService {
       prompt,
       {
         model,
-        agentId: "exec",
+        agentId: workspaceTurnAgentId,
         ...(thinkingLevel != null ? { thinkingLevel } : {}),
         ...(reasoningMode != null ? { reasoningMode } : {}),
         muxMetadata: this.buildWorkspaceTurnMuxMetadata(record),

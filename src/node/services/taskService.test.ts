@@ -1324,6 +1324,207 @@ describe("TaskService", () => {
     expect(sendMessageCall[2]).toMatchObject({ reasoningMode: "pro" });
   });
 
+  test("createWorkspaceTurn resolves AI settings: agent defaults on create, target settings on follow-up, explicit override wins", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, [
+      "firsthandle",
+      "firstturn",
+      "secondhandle",
+      "secondturn",
+      "thirdhandle",
+      "thirdturn",
+    ]);
+    // Owner persisted at opus/high (helper default); configured exec agent
+    // defaults differ from both the owner's persisted and live settings.
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir, {
+      agentAiDefaults: { exec: { modelString: "openai:gpt-5.2", thinkingLevel: "xhigh" } },
+    });
+
+    const createWorkspace = mock(
+      async (...args: unknown[]): Promise<Result<{ metadata: WorkspaceMetadata }>> => {
+        const tags = args[7] as Record<string, string> | undefined;
+        await config.editConfig((cfg) => {
+          const project = cfg.projects.get(projectPath);
+          assert(project, "test project must exist");
+          project.workspaces.push({
+            path: path.join(projectPath, "workspace-turn"),
+            id: "childworkspace",
+            name: "workspace-turn",
+            title: "Workspace turn",
+            createdAt: "2026-06-19T00:00:00.000Z",
+            runtimeConfig: { type: "local" },
+            tags,
+          });
+          return cfg;
+        });
+        return Ok({ metadata: createWorkspaceTurnMetadata(projectPath) });
+      }
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const workspaceMocks = createWorkspaceServiceMocks({ create: createWorkspace, sendMessage });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    // Creation: configured agent defaults outrank the owner's live runtime
+    // settings (owner turned down to medium must not produce medium children).
+    const first = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "First prompt",
+      title: "Workspace turn",
+      parentRuntimeAiSettings: {
+        modelString: "anthropic:claude-sonnet-4-5",
+        thinkingLevel: "medium",
+      },
+      workspace: { mode: "new" },
+    });
+    expect(first.success).toBe(true);
+    const firstSend = sendMessage.mock.calls[0];
+    expect(firstSend[2]).toMatchObject({
+      agentId: "exec",
+      model: "openai:gpt-5.2",
+      thinkingLevel: "xhigh",
+    });
+
+    // Simulate the child's own last-used settings (persist-on-send or a manual
+    // flip inside the child workspace).
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      const child = project?.workspaces.find((workspace) => workspace.id === "childworkspace");
+      assert(child, "child workspace must exist");
+      child.aiSettingsByAgent = {
+        exec: { model: "anthropic:claude-opus-4-6", thinkingLevel: "low" },
+      };
+      return cfg;
+    });
+
+    // Follow-up: the target continues its own settings; the owner's bump to
+    // high must not drag the child along, and agent defaults no longer apply.
+    const second = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Second prompt",
+      title: "Follow-up",
+      parentRuntimeAiSettings: {
+        modelString: "anthropic:claude-sonnet-4-5",
+        thinkingLevel: "high",
+      },
+      workspace: { mode: "existing", workspaceId: "childworkspace" },
+    });
+    expect(second.success).toBe(true);
+    const secondSend = sendMessage.mock.calls[1];
+    expect(secondSend[2]).toMatchObject({
+      model: "anthropic:claude-opus-4-6",
+      thinkingLevel: "low",
+    });
+
+    // Explicit per-launch overrides still outrank the target's own settings.
+    const third = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Third prompt",
+      title: "Override",
+      modelString: "openai:gpt-5.3-codex",
+      thinkingLevel: "medium",
+      workspace: { mode: "existing", workspaceId: "childworkspace" },
+    });
+    expect(third.success).toBe(true);
+    const thirdSend = sendMessage.mock.calls[2];
+    expect(thirdSend[2]).toMatchObject({
+      model: "openai:gpt-5.3-codex",
+      thinkingLevel: "medium",
+    });
+  });
+
+  test("createWorkspaceTurn follow-ups do not re-inject the owner's pro mode over the target's own settings", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["firsthandle", "firstturn", "secondhandle", "secondturn"]);
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettingsByAgent: {
+            exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+          },
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const createWorkspace = mock(
+      async (...args: unknown[]): Promise<Result<{ metadata: WorkspaceMetadata }>> => {
+        const tags = args[7] as Record<string, string> | undefined;
+        await config.editConfig((cfg) => {
+          const project = cfg.projects.get(projectPath);
+          assert(project, "test project must exist");
+          project.workspaces.push({
+            path: path.join(projectPath, "workspace-turn"),
+            id: "childworkspace",
+            name: "workspace-turn",
+            title: "Workspace turn",
+            createdAt: "2026-06-19T00:00:00.000Z",
+            runtimeConfig: { type: "local" },
+            tags,
+          });
+          return cfg;
+        });
+        return Ok({ metadata: createWorkspaceTurnMetadata(projectPath) });
+      }
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const workspaceMocks = createWorkspaceServiceMocks({ create: createWorkspace, sendMessage });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    // Creation still inherits the owner's pro mode.
+    const first = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "First prompt",
+      title: "Workspace turn",
+      workspace: { mode: "new" },
+    });
+    expect(first.success).toBe(true);
+    const firstSend = sendMessage.mock.calls[0];
+    expect(firstSend[2]).toMatchObject({ reasoningMode: "pro" });
+
+    // The child was switched back to standard (absent = standard per
+    // WorkspaceAISettingsSchema); follow-ups must respect that.
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      const child = project?.workspaces.find((workspace) => workspace.id === "childworkspace");
+      assert(child, "child workspace must exist");
+      child.aiSettingsByAgent = {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high" },
+      };
+      return cfg;
+    });
+
+    const second = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Second prompt",
+      title: "Follow-up",
+      workspace: { mode: "existing", workspaceId: "childworkspace" },
+    });
+    expect(second.success).toBe(true);
+    const secondSend = sendMessage.mock.calls[1];
+    expect(secondSend[2]).not.toHaveProperty("reasoningMode");
+  });
+
   test("createWorkspaceTurn rejects multi-project owners instead of dropping secondary repos", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["handle", "turn"]);
