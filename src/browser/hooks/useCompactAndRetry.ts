@@ -63,6 +63,7 @@ function buildFollowUpFromSource(
           rawCommand: source.content,
           skillName: source.agentSkill.skillName,
           scope: source.agentSkill.scope,
+          arguments: source.agentSkill.arguments,
         })
       : undefined,
   };

@@ -162,6 +162,7 @@ describe("ACP slash command support", () => {
 
     expect(parsed.descriptor.name).toBe("react-effects");
     expect(parsed.formattedMessage).toBe("Using skill react-effects: reduce useEffect churn");
+    expect(parsed.argumentText).toBe("reduce useEffect churn");
 
     const noArgs = parseAcpSlashCommand("/react-effects", skillsByName);
     expect(noArgs?.kind).toBe("skill");
@@ -170,6 +171,7 @@ describe("ACP slash command support", () => {
     }
 
     expect(noArgs.formattedMessage).toBe("Use skill react-effects");
+    expect(noArgs.argumentText).toBe("");
   });
 
   it("leaves unknown slash commands untouched for normal prompt handling", () => {

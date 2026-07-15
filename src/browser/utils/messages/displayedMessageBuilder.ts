@@ -271,6 +271,7 @@ function buildUserDisplayedMessages(options: {
       ? {
           skillName: muxMeta.skillName,
           scope: muxMeta.scope,
+          arguments: muxMeta.arguments,
           snapshot: agentSkillSnapshot,
         }
       : undefined;

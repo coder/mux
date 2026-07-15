@@ -136,6 +136,7 @@ import {
   mergeLoadedSkillSnapshots,
   stringifyAgentSkillFrontmatter,
 } from "@/node/services/agentSkills/loadedSkillSnapshots";
+import { substituteSkillArguments } from "@/node/services/agentSkills/skillArguments";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 import type { MemorySessionContext } from "@/node/services/memoryService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
@@ -6060,13 +6061,32 @@ export class AgentSession {
 
       const skill = resolved.package;
 
+      // Slash invocations can carry trailing argument text (e.g. "/fix-issue 123 high").
+      // Substitute $ARGUMENTS/$1..$9 placeholders in the snapshot body so the model sees
+      // the resolved instructions; bodies without placeholders stay byte-identical and the
+      // user message keeps showing what was typed. Inline `$skill` refs have no argument
+      // concept, so their bodies are never touched. Missing metadata arguments (legacy
+      // messages) substitute as "".
+      const slashArgumentText =
+        ref.source === "slash" &&
+        muxMetadata?.type === "agent-skill" &&
+        muxMetadata.skillName === ref.skillName
+          ? (muxMetadata.arguments ?? "")
+          : null;
+      const body =
+        slashArgumentText != null
+          ? substituteSkillArguments(skill.body, slashArgumentText).body
+          : skill.body;
+
       // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
-      // generate a new snapshot and keep the UI hover preview in sync.
+      // generate a new snapshot and keep the UI hover preview in sync. The hash also covers
+      // the substituted body, so the same skill invoked with different arguments produces
+      // distinct snapshots (dedupe must not collapse them).
       const frontmatterYaml = stringifyAgentSkillFrontmatter(skill.frontmatter);
       const snapshot = createLoadedSkillSnapshot({
         name: skill.frontmatter.name,
         scope: skill.scope,
-        body: skill.body,
+        body,
         frontmatterYaml,
       });
       const sha256 = snapshot.sha256;

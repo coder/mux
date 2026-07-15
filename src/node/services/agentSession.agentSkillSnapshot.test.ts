@@ -485,6 +485,190 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(getMessageText(messages[3])).toBe("second");
   });
 
+  it("substitutes $ARGUMENTS/$N placeholders in slash-invoked snapshot bodies", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue $1 with priority $2.\nSummary: $ARGUMENTS",
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Using skill fix-issue: 123 high", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/fix-issue 123 high",
+        skillName: "fix-issue",
+        scope: "project",
+        arguments: "123 high",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const [snapshotMessage, userMessage] = messages;
+    expect(getMessageText(snapshotMessage)).toContain(
+      "Fix issue 123 with priority high.\nSummary: 123 high"
+    );
+    // The user message still shows what the user typed; only the snapshot body changes.
+    expect(getMessageText(userMessage)).toBe("Using skill fix-issue: 123 high");
+  });
+
+  it("materializes distinct snapshots for the same skill with different arguments", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue $ARGUMENTS.",
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const baseOptions = {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+    };
+
+    const first = await session.sendMessage("Using skill fix-issue: 123", {
+      ...baseOptions,
+      muxMetadata: {
+        type: "agent-skill" as const,
+        rawCommand: "/fix-issue 123",
+        skillName: "fix-issue",
+        scope: "project" as const,
+        arguments: "123",
+      },
+    });
+    expect(first.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const second = await session.sendMessage("Using skill fix-issue: 456", {
+      ...baseOptions,
+      muxMetadata: {
+        type: "agent-skill" as const,
+        rawCommand: "/fix-issue 456",
+        skillName: "fix-issue",
+        scope: "project" as const,
+        arguments: "456",
+      },
+    });
+    expect(second.success).toBe(true);
+
+    // Different arguments produce different substituted bodies, so the sha256 dedupe
+    // must NOT collapse the second snapshot: snapshot + user, snapshot + user.
+    expect(appendToHistory.mock.calls).toHaveLength(4);
+
+    const firstSnapshot = messages[0];
+    const secondSnapshot = messages[2];
+    expect(getMessageText(firstSnapshot)).toContain("Fix issue 123.");
+    expect(getMessageText(secondSnapshot)).toContain("Fix issue 456.");
+    expect(firstSnapshot.metadata?.agentSkillSnapshot?.sha256).not.toBe(
+      secondSnapshot.metadata?.agentSkillSnapshot?.sha256
+    );
+  });
+
+  it("still dedupes repeated invocations with identical arguments", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue $ARGUMENTS.",
+    });
+    const { session, appendToHistory } = await createSessionHarness({ workspacePath });
+
+    const options = {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill" as const,
+        rawCommand: "/fix-issue 123",
+        skillName: "fix-issue",
+        scope: "project" as const,
+        arguments: "123",
+      },
+    };
+
+    const first = await session.sendMessage("Using skill fix-issue: 123", options);
+    expect(first.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const second = await session.sendMessage("Using skill fix-issue: 123", options);
+    expect(second.success).toBe(true);
+    // Identical substituted body → snapshot deduped; only the user message is appended.
+    expect(appendToHistory.mock.calls).toHaveLength(3);
+  });
+
+  it("leaves placeholders in inline-referenced skill bodies untouched", async () => {
+    const skillBody = "Fix issue $1 with $ARGUMENTS.";
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody,
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Please follow $fix-issue for 123", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "normal",
+        agentSkillRefs: [{ skillName: "fix-issue", scope: "project", source: "inline" }],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    // Inline refs carry no argument concept: the body must stay byte-identical.
+    expect(getMessageText(messages[0])).toContain(skillBody);
+  });
+
+  it("keeps bodies without placeholders byte-identical when arguments are provided", async () => {
+    // Note: $0 and $ARG are not placeholders; $100 would be ($1 + literal "00").
+    const skillBody = "Follow this skill. Cost is $0 and $ARG stays.";
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "no-placeholders",
+      skillBody,
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Using skill no-placeholders: 123 high", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/no-placeholders 123 high",
+        skillName: "no-placeholders",
+        scope: "project",
+        arguments: "123 high",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    // Fallback: no placeholders → body untouched; the arguments stay visible in the
+    // user message only.
+    expect(getMessageText(messages[0])).toContain(skillBody);
+  });
+
+  it("substitutes placeholders with empty strings when a slash invocation has no arguments", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue [$1] with [$ARGUMENTS].",
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Use skill fix-issue", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/fix-issue",
+        skillName: "fix-issue",
+        scope: "project",
+        arguments: "",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    expect(getMessageText(messages[0])).toContain("Fix issue [] with [].");
+  });
+
   it("truncates edits starting from preceding skill/file snapshots", async () => {
     const workspaceId = "ws-test";
 

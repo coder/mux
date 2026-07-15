@@ -26,6 +26,8 @@ export type CreationRuntimeValidationError =
 export interface SkillInvocation {
   descriptor: AgentSkillDescriptor;
   userText: string;
+  /** Trimmed text after the slash command (e.g. "123 high" for "/fix-issue 123 high"). */
+  argumentText: string;
 }
 
 export type SkillResolutionTarget =
@@ -41,13 +43,15 @@ function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashComma
 
 export function buildSkillInvocationMetadata(
   rawCommand: string,
-  descriptor: AgentSkillDescriptor
+  descriptor: AgentSkillDescriptor,
+  argumentText: string
 ): MuxMessageMetadata {
   return buildAgentSkillMetadata({
     rawCommand,
     commandPrefix: `/${descriptor.name}`,
     skillName: descriptor.name,
     scope: descriptor.scope,
+    arguments: argumentText,
   });
 }
 
@@ -113,6 +117,7 @@ async function resolveSkillInvocation(options: {
   return {
     descriptor: skill,
     userText: formatSkillInvocationText(skill.name, afterPrefix.trimStart()),
+    argumentText: afterPrefix.trim(),
   };
 }
 

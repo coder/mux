@@ -69,6 +69,8 @@ export type ParsedAcpSlashCommand =
       rawCommand: string;
       commandPrefix: string;
       formattedMessage: string;
+      /** Trimmed text after the slash command (e.g. "123 high" for "/fix-issue 123 high"). */
+      argumentText: string;
     }
   | { kind: "invalid"; message: string };
 
@@ -306,6 +308,7 @@ function parseSkillCommand(
     rawCommand: trimmedInput,
     commandPrefix,
     formattedMessage: formatSkillInvocationText(commandName, afterPrefix.trimStart()),
+    argumentText: afterPrefix.trim(),
   };
 }
 

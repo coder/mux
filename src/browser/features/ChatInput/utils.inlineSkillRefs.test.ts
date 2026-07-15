@@ -18,6 +18,7 @@ function slashInvocation(skill: AgentSkillDescriptor): SkillInvocation {
   return {
     descriptor: skill,
     userText: `Using skill ${skill.name}: message`,
+    argumentText: "message",
   };
 }
 

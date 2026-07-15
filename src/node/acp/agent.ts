@@ -877,6 +877,7 @@ export class MuxAgent implements Agent {
             commandPrefix: parsedCommand.commandPrefix,
             skillName: parsedCommand.descriptor.name,
             scope: parsedCommand.descriptor.scope,
+            arguments: parsedCommand.argumentText,
           }),
         };
 

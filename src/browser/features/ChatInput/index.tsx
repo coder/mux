@@ -2501,7 +2501,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       if (combinedSkillRefs.length > 0) {
         const baseMetadata = skillInvocation
-          ? buildSkillInvocationMetadata(messageText, skillInvocation.descriptor)
+          ? buildSkillInvocationMetadata(
+              messageText,
+              skillInvocation.descriptor,
+              skillInvocation.argumentText
+            )
           : undefined;
         const muxMetadata = withAgentSkillRefs(baseMetadata, combinedSkillRefs);
         if (!muxMetadata) {
@@ -2594,7 +2598,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const skillMuxMetadata = skillInvocation
         ? buildSkillInvocationMetadata(
             appendStagedAttachmentNotice(messageText, attachments),
-            skillInvocation.descriptor
+            skillInvocation.descriptor,
+            skillInvocation.argumentText
           )
         : undefined;
 
