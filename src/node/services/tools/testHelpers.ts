@@ -38,6 +38,14 @@ interface SkillFixtureOptions {
   advertise?: boolean;
   /** Writes the ecosystem-standard `disable-model-invocation` frontmatter field. */
   disableModelInvocation?: boolean;
+  /** Writes the ecosystem-standard `user-invocable` frontmatter field. */
+  userInvocable?: boolean;
+  /** Writes the ecosystem-standard `argument-hint` frontmatter field. */
+  argumentHint?: string;
+  /** Writes the `when_to_use` frontmatter field (underscore spelling). */
+  whenToUse?: string;
+  /** Writes the `when-to-use` frontmatter field (kebab spelling). */
+  whenToUseKebab?: string;
   body?: string;
   files?: Record<string, string>;
 }
@@ -72,19 +80,24 @@ export async function createWorkspaceSessionDir(
 }
 
 export function skillMarkdown(name: string, options?: SkillFixtureOptions): string {
-  const advertiseLine =
-    options?.advertise === undefined ? "" : `advertise: ${options.advertise ? "true" : "false"}\n`;
-  const disableModelInvocationLine =
+  const optionalLines = [
+    options?.advertise === undefined ? "" : `advertise: ${options.advertise ? "true" : "false"}`,
     options?.disableModelInvocation === undefined
       ? ""
-      : `disable-model-invocation: ${options.disableModelInvocation ? "true" : "false"}\n`;
+      : `disable-model-invocation: ${options.disableModelInvocation ? "true" : "false"}`,
+    options?.userInvocable === undefined
+      ? ""
+      : `user-invocable: ${options.userInvocable ? "true" : "false"}`,
+    options?.argumentHint === undefined ? "" : `argument-hint: "${options.argumentHint}"`,
+    options?.whenToUse === undefined ? "" : `when_to_use: ${options.whenToUse}`,
+    options?.whenToUseKebab === undefined ? "" : `when-to-use: ${options.whenToUseKebab}`,
+  ];
 
   return [
     "---",
     `name: ${name}`,
     `description: ${options?.description ?? `description for ${name}`}`,
-    advertiseLine.trimEnd(),
-    disableModelInvocationLine.trimEnd(),
+    ...optionalLines,
     "---",
     options?.body ?? "Body",
     "",

@@ -28,9 +28,12 @@ function buildSkillReadDescription(config: ToolConfiguration): string {
   const shown = skills.slice(0, MAX_SKILLS);
   const omitted = skills.length - shown.length;
 
-  const skillLines = shown.map(
-    (skill) => `- ${skill.name}: ${skill.description} (scope: ${skill.scope})`
-  );
+  const skillLines = shown.map((skill) => {
+    const line = `- ${skill.name}: ${skill.description} (scope: ${skill.scope})`;
+    // whenToUse (when_to_use/when-to-use frontmatter) is extra model-facing guidance;
+    // keep it on the same index line to stay token-lean.
+    return skill.whenToUse == null ? line : `${line} When to use: ${skill.whenToUse}`;
+  });
   if (omitted > 0) {
     skillLines.push(`(+${omitted} more not shown)`);
   }

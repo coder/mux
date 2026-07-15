@@ -94,6 +94,28 @@ describe("getSlashCommandSuggestions", () => {
     expect(skillSuggestion?.description).toContain("(project)");
   });
 
+  it("hides user-invocable: false skills from slash suggestions", () => {
+    const suggestions = getSlashCommandSuggestions("/", {
+      agentSkills: [
+        {
+          name: "visible-skill",
+          description: "Visible",
+          scope: "project",
+        },
+        {
+          name: "model-only-skill",
+          description: "Hidden from user-facing surfaces",
+          scope: "project",
+          userInvocable: false,
+        },
+      ],
+    });
+
+    const labels = suggestions.map((s) => s.display);
+    expect(labels).toContain("/visible-skill");
+    expect(labels).not.toContain("/model-only-skill");
+  });
+
   it("matches hyphenated skill segments", () => {
     const suggestions = getSlashCommandSuggestions("/r", {
       agentSkills: [

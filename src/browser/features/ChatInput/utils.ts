@@ -5,6 +5,7 @@ import {
   extractInlineSkillReferenceCandidates,
   resolveInlineSkillReferences,
 } from "@/browser/utils/agentSkills/inlineSkillReferences";
+import { resolveSkillUserInvocable } from "@/common/orpc/schemas/agentSkill";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import {
@@ -83,8 +84,10 @@ async function resolveSkillInvocation(options: {
     return null;
   }
 
+  // user-invocable: false skills must be treated as nonexistent for typed /skill-name
+  // invocation (they remain model-invocable via agent_skill_read).
   let skill: AgentSkillDescriptor | undefined = options.agentSkillDescriptors.find(
-    (candidate) => candidate.name === command
+    (candidate) => candidate.name === command && candidate.userInvocable !== false
   );
 
   if (!skill && options.api && options.discovery) {
@@ -100,11 +103,15 @@ async function resolveSkillInvocation(options: {
               disableWorkspaceAgents: options.discovery.disableWorkspaceAgents,
               skillName: command,
             });
-      skill = {
-        name: pkg.frontmatter.name,
-        description: pkg.frontmatter.description,
-        scope: pkg.scope,
-      };
+      // The remote fallback fetches raw frontmatter, so apply the same user-invocability
+      // gate the local descriptor list already carries in normalized form.
+      if (resolveSkillUserInvocable(pkg.frontmatter) !== false) {
+        skill = {
+          name: pkg.frontmatter.name,
+          description: pkg.frontmatter.description,
+          scope: pkg.scope,
+        };
+      }
     } catch {
       // Not a skill (or not available yet) - fall through.
     }

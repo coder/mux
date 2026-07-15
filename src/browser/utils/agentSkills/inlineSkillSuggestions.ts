@@ -46,11 +46,13 @@ export function getInlineSkillInsertionTrailingText(after: string): "" | " " {
  *   scope-priority order.
  * - We do NOT filter out skills whose name collides with a slash command (e.g. `clear`):
  *   `$clear` should reference a skill named `clear` even though `/clear` is a built-in.
+ * - user-invocable: false skills are hidden (inline `$skill` is a user-facing surface).
  */
 export function getInlineSkillSuggestions(
   context: InlineSkillSuggestionContext
 ): SlashSuggestion[] {
   return context.descriptors
+    .filter((descriptor) => descriptor.userInvocable !== false)
     .filter((descriptor) => matchesNameBySegmentPrefix(descriptor.name, context.partial))
     .map((descriptor) => ({
       id: `inline-skill:${descriptor.name}`,

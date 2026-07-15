@@ -62,7 +62,10 @@ function buildTopLevelSuggestions(
   // The skill build callback below hardcodes the trailing space, so we omit
   // `appendSpace` here — leaving it set would be a no-op and falsely suggest
   // the build path consults it.
+  // user-invocable: false skills are hidden from user-facing invocation surfaces
+  // (this covers both the chat slash menu and the command palette skill list).
   const skillDefinitions: SuggestionDefinition[] = (context.agentSkills ?? [])
+    .filter((skill) => skill.userInvocable !== false)
     .filter((skill) => !SLASH_COMMAND_DEFINITION_MAP.has(skill.name))
     .map((skill) => ({
       key: skill.name,

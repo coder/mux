@@ -1,7 +1,11 @@
 import * as path from "node:path";
 
 import type { AgentSkillDescriptor, AgentSkillPackage, SkillName } from "@/common/types/agentSkill";
-import { resolveSkillAdvertise } from "@/common/orpc/schemas";
+import {
+  resolveSkillAdvertise,
+  resolveSkillUserInvocable,
+  resolveSkillWhenToUse,
+} from "@/common/orpc/schemas";
 import { parseSkillMarkdown } from "./parseSkillMarkdown";
 import { BUILTIN_SKILL_FILES } from "./builtInSkillContent.generated";
 
@@ -59,6 +63,9 @@ export function getBuiltInSkillDescriptors(): AgentSkillDescriptor[] {
     description: pkg.frontmatter.description,
     scope: pkg.scope,
     advertise: resolveSkillAdvertise(pkg.frontmatter),
+    userInvocable: resolveSkillUserInvocable(pkg.frontmatter),
+    argumentHint: pkg.frontmatter["argument-hint"],
+    whenToUse: resolveSkillWhenToUse(pkg.frontmatter),
   }));
 }
 

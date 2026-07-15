@@ -1,6 +1,6 @@
 import type { APIClient } from "@/browser/contexts/API";
 import type { SkillResolutionTarget } from "@/browser/features/ChatInput/utils";
-import { SkillNameSchema } from "@/common/orpc/schemas/agentSkill";
+import { SkillNameSchema, resolveSkillUserInvocable } from "@/common/orpc/schemas/agentSkill";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentSkillReference } from "@/common/types/message";
 import { dedupeAgentSkillRefs } from "@/common/types/message";
@@ -176,6 +176,12 @@ async function resolveRemoteSkill(options: {
             skillName: options.skillName,
           });
 
+    // The remote fallback fetches raw frontmatter, so apply the same user-invocability
+    // gate the local descriptor list already carries in normalized form.
+    if (resolveSkillUserInvocable(pkg.frontmatter) === false) {
+      return null;
+    }
+
     return {
       name: pkg.frontmatter.name,
       description: pkg.frontmatter.description,
@@ -202,8 +208,10 @@ export async function resolveInlineSkillReferences(
     }
     seenSkillNames.add(candidate.skillName);
 
+    // user-invocable: false skills must be treated as nonexistent for inline $skill refs
+    // (they remain model-invocable via agent_skill_read).
     let skill = options.agentSkillDescriptors.find(
-      (descriptor) => descriptor.name === candidate.skillName
+      (descriptor) => descriptor.name === candidate.skillName && descriptor.userInvocable !== false
     );
 
     if (!skill && options.api && options.discovery) {

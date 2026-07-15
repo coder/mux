@@ -86,7 +86,11 @@ export function buildAcpAvailableCommands(skills: AgentSkillDescriptor[]): Avail
   const seenNames = new Set(commands.map((command) => command.name));
 
   for (const skill of skills) {
-    if (skill.advertise === false) {
+    // Filter on user-invocability, not `advertise`: `advertise` controls the MODEL-facing
+    // index, and skills with advertise:false / disable-model-invocation:true are exactly
+    // the ones users are meant to invoke manually, so they must stay in the user's
+    // command list. Only `user-invocable: false` hides a skill from users.
+    if (skill.userInvocable === false) {
       continue;
     }
 
@@ -97,7 +101,7 @@ export function buildAcpAvailableCommands(skills: AgentSkillDescriptor[]): Avail
     commands.push({
       name: skill.name,
       description: `${skill.description} (${formatSkillScope(skill.scope)})`,
-      input: { hint: "Describe how to apply this skill" },
+      input: { hint: skill.argumentHint ?? "Describe how to apply this skill" },
     });
     seenNames.add(skill.name);
   }
@@ -110,6 +114,11 @@ export function mapSkillsByName(skills: AgentSkillDescriptor[]): Map<string, Age
 
   const byName = new Map<string, AgentSkillDescriptor>();
   for (const skill of skills) {
+    // This map backs user-typed /skill-name resolution (parseAcpSlashCommand), so
+    // user-invocable: false skills must be treated as nonexistent here.
+    if (skill.userInvocable === false) {
+      continue;
+    }
     byName.set(skill.name, skill);
   }
 

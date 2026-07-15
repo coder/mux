@@ -297,6 +297,59 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("normalizes user-invocable, argument-hint, and when_to_use into descriptors", async () => {
+    using project = new TestTempDir("test-agent-skill-list-normalized-project");
+    using muxHome = new TestTempDir("test-agent-skill-list-normalized-home");
+
+    await withMuxRoot(muxHome.path, async () => {
+      await writeSkill(path.join(project.path, ".mux", "skills"), "model-only", {
+        userInvocable: false,
+        argumentHint: "[issue-number]",
+        whenToUse: "Use when triaging issues",
+      });
+      // Both spellings present: underscore spelling wins.
+      await writeSkill(path.join(project.path, ".mux", "skills"), "both-spellings", {
+        whenToUse: "underscore guidance",
+        whenToUseKebab: "kebab guidance",
+      });
+      await writeSkill(path.join(project.path, ".mux", "skills"), "kebab-only", {
+        whenToUseKebab: "kebab guidance",
+      });
+      await writeSkill(path.join(project.path, ".mux", "skills"), "plain");
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+        })
+      );
+      const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      // user-invocable does not affect model-facing listing.
+      const modelOnly = getSkill(result.skills, "model-only");
+      expect(modelOnly.userInvocable).toBe(false);
+      expect(modelOnly.argumentHint).toBe("[issue-number]");
+      expect(modelOnly.whenToUse).toBe("Use when triaging issues");
+
+      expect(getSkill(result.skills, "both-spellings").whenToUse).toBe("underscore guidance");
+      expect(getSkill(result.skills, "kebab-only").whenToUse).toBe("kebab guidance");
+
+      const plain = getSkill(result.skills, "plain");
+      expect(plain.userInvocable).toBeUndefined();
+      expect(plain.argumentHint).toBeUndefined();
+      expect(plain.whenToUse).toBeUndefined();
+    });
+  });
+
   it("filters hidden skills from local legacy .agents/skills roots unless includeUnadvertised is true", async () => {
     using homeDir = new TestTempDir("test-agent-skill-list-local-hidden-legacy-home");
     using project = new TestTempDir("test-agent-skill-list-local-hidden-legacy-project");

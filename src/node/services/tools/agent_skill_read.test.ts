@@ -386,4 +386,37 @@ describe("agent_skill_read", () => {
       expect(result.skill.body).toContain("Remote body");
     }
   });
+
+  it("appends whenToUse guidance only for skills that carry it in the description index", () => {
+    using tempDir = new TestTempDir("test-agent-skill-read-when-to-use");
+    const baseConfig = createTestToolConfig(tempDir.path);
+
+    const tool = createAgentSkillReadTool({
+      ...baseConfig,
+      availableSkills: [
+        {
+          name: "with-guidance",
+          description: "Skill carrying extra guidance",
+          scope: "global",
+          whenToUse: "only when triaging incoming issues",
+        },
+        {
+          name: "without-guidance",
+          description: "Skill without extra guidance",
+          scope: "global",
+        },
+      ],
+    });
+
+    // The ai SDK types `description` as string | dynamic-function; the factory always
+    // builds a static string.
+    const description = typeof tool.description === "string" ? tool.description : "";
+    const lines = description.split("\n");
+    const withLine = lines.find((line) => line.startsWith("- with-guidance:"));
+    const withoutLine = lines.find((line) => line.startsWith("- without-guidance:"));
+
+    expect(withLine).toContain("only when triaging incoming issues");
+    expect(withoutLine).toBeDefined();
+    expect(withoutLine).not.toContain("When to use:");
+  });
 });
