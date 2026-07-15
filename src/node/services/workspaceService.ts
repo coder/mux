@@ -158,6 +158,7 @@ import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
   buildWorkflowRunCardMessage,
+  isTerminalWorkflowRunToolOutput,
   isWorkflowRunEmittingToolName,
 } from "@/common/utils/workflowRunMessages";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -360,6 +361,15 @@ function isWorkflowInvocationMessage(message: MuxMessage, runId: string): boolea
       (output as Record<string, unknown>).runId === runId
     );
   });
+}
+
+function isTerminalWorkflowToolResultMessage(message: MuxMessage, runId: string): boolean {
+  return message.parts.some(
+    (part) =>
+      part.type === "dynamic-tool" &&
+      part.state === "output-available" &&
+      isTerminalWorkflowRunToolOutput(part.toolName, part.output, runId)
+  );
 }
 
 function isInternalResumeAutoCompactionMessage(message: MuxMessage): boolean {
@@ -7862,7 +7872,8 @@ export class WorkspaceService extends EventEmitter {
           }
           if (
             isWorkflowResultContinuationMessage(message, runId) ||
-            isTerminalWorkflowTaskAwaitResultMessage(message, runId)
+            isTerminalWorkflowTaskAwaitResultMessage(message, runId) ||
+            isTerminalWorkflowToolResultMessage(message, runId)
           ) {
             current = false;
             foundDecision = true;

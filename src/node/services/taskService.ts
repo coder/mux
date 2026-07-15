@@ -99,6 +99,7 @@ import {
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   buildWorkflowResultContextMessage,
+  isTerminalWorkflowRunToolOutput,
   isWorkflowDisplayOnlyMessage,
   isWorkflowRunEmittingToolName,
 } from "@/common/utils/workflowRunMessages";
@@ -997,6 +998,15 @@ function hasTerminalWorkflowTaskAwaitInParts(parts: readonly unknown[], runId: s
   });
 }
 
+function hasTerminalWorkflowToolOutputInParts(parts: readonly unknown[], runId: string): boolean {
+  return parts.some(
+    (part) =>
+      isDynamicToolPart(part) &&
+      part.state === "output-available" &&
+      isTerminalWorkflowRunToolOutput(part.toolName, part.output, runId)
+  );
+}
+
 function sanitizeAgentTypeForName(agentType: string): string {
   const normalized = agentType
     .trim()
@@ -1321,7 +1331,13 @@ export class TaskService {
         if (!isTerminalWorkflowRunStatus(run.status)) {
           continue;
         }
-        if (hasTerminalWorkflowTaskAwaitInParts(currentParts, run.id)) {
+        // A foreground workflow_run/workflow_resume terminal result is already visible to this
+        // turn, so requiring a second task_await would be redundant (and impossible for agents
+        // whose read-only policy only permits task_await as a recovery tool).
+        if (
+          hasTerminalWorkflowTaskAwaitInParts(currentParts, run.id) ||
+          hasTerminalWorkflowToolOutputInParts(currentParts, run.id)
+        ) {
           continue;
         }
         const isCurrent = await this.workspaceService.isWorkflowInvocationCurrent(

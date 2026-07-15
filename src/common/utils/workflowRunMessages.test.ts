@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { WorkflowRunRecord } from "@/common/types/workflow";
-import { buildWorkflowRunToolPart, stripWorkflowRunRecordForModel } from "./workflowRunMessages";
+import {
+  buildWorkflowRunToolPart,
+  isTerminalWorkflowRunToolOutput,
+  stripWorkflowRunRecordForModel,
+} from "./workflowRunMessages";
 
 const run: WorkflowRunRecord = {
   id: "wfr_test",
@@ -23,6 +27,23 @@ const run: WorkflowRunRecord = {
 };
 
 describe("workflowRunMessages", () => {
+  test.each(["workflow_run", "workflow_resume"])("recognizes terminal %s output", (toolName) => {
+    expect(
+      isTerminalWorkflowRunToolOutput(
+        toolName,
+        { status: "completed", runId: run.id, result: { reportMarkdown: "done" } },
+        run.id
+      )
+    ).toBe(true);
+    expect(
+      isTerminalWorkflowRunToolOutput(
+        toolName,
+        { status: "running", runId: run.id, result: null },
+        run.id
+      )
+    ).toBe(false);
+  });
+
   test("strips large run snapshots from model-bound workflow tool outputs", () => {
     const stripped = stripWorkflowRunRecordForModel("workflow_run", {
       status: "completed",

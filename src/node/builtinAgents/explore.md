@@ -17,13 +17,16 @@ subagent:
     - When you have a final answer, call agent_report exactly once.
     - Do not call agent_report until you have completed the assigned task.
 tools:
-  # Remove editing and task tools from exec base (read-only agent; skill tools are kept)
+  # Remove editing and task mutation/discovery tools from exec base. task_await remains
+  # available so the task service can safely recover read-only agents with background work.
   remove:
     - image_.*
     - file_edit_.*
     - task
     - task_apply_git_patch
-    - task_.*
+    - task_list
+    - task_terminate
+    - task_workspace_lifecycle
 ---
 
 You are in Explore mode (read-only).

@@ -2544,6 +2544,65 @@ describe("WorkspaceService workflow invocation events", () => {
     }
   });
 
+  test.each(["workflow_run", "workflow_resume"] as const)(
+    "treats terminal %s output as a consumed workflow result",
+    async (toolName) => {
+      const { config, historyService, cleanup } = await createTestHistoryService();
+      const workspaceId = `workflow-terminal-${toolName}`;
+      const runId = `wfr_terminal_${toolName}`;
+      const projectPath = path.join(config.rootDir, "project");
+      try {
+        await config.addWorkspace(projectPath, {
+          id: workspaceId,
+          name: workspaceId,
+          projectName: "project",
+          projectPath,
+          runtimeConfig: { type: "local" },
+        });
+        const workspaceService = createWorkspaceServiceForTest({
+          config,
+          historyService,
+          aiService: createMockAIService({
+            stopStream: mock(() => Promise.resolve(Ok(undefined))),
+          }),
+          extensionMetadata: new ExtensionMetadataService(
+            path.join(config.rootDir, "extensionMetadata.json")
+          ),
+          initStateManager: {
+            ...mockInitStateManager,
+            off: mock(() => undefined as unknown as InitStateManager),
+          } as unknown as InitStateManager,
+        });
+
+        await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage(`assistant-${toolName}`, "assistant", "", { timestamp: 1_000 }, [
+            {
+              type: "dynamic-tool",
+              toolCallId: `${toolName}-call-1`,
+              toolName,
+              state: "output-available",
+              input:
+                toolName === "workflow_run"
+                  ? { script_path: "./workflows/demo.js", args: {}, run_in_background: false }
+                  : { run_id: runId, mode: "resume", run_in_background: false },
+              output: {
+                status: "completed",
+                runId,
+                result: { reportMarkdown: "done" },
+              },
+            },
+          ])
+        );
+
+        expect(await workspaceService.isWorkflowInvocationCurrent(workspaceId, runId)).toBe(false);
+        workspaceService.disposeSession(workspaceId);
+      } finally {
+        await cleanup();
+      }
+    }
+  );
+
   test("keeps workflow invocations current across mid-stream auto-compaction requests", async () => {
     const { config, historyService, cleanup } = await createTestHistoryService();
     const workspaceId = "workflow-currentness-midstream-compact";

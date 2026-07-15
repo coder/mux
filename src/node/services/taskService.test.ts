@@ -14276,6 +14276,104 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
   });
 
+  test.each(["workflow_run", "workflow_resume"] as const)(
+    "task stream-end accepts terminal %s output before final report",
+    async (toolName) => {
+      const config = await createTestConfig(rootDir);
+
+      const projectPath = path.join(rootDir, "repo");
+      const parentId = `parent-terminal-${toolName}`;
+      const childId = `child-terminal-${toolName}`;
+      const workflowRunId = `wfr_terminal_${toolName}`;
+
+      await saveWorkspaces(
+        config,
+        projectPath,
+        [
+          projectWorkspace(projectPath, "parent", parentId),
+          projectWorkspace(projectPath, "child", childId, {
+            name: "agent_explore_child",
+            parentWorkspaceId: parentId,
+            agentType: "explore",
+            taskStatus: "awaiting_report",
+            taskModelString: "openai:gpt-4o-mini",
+          }),
+        ],
+        testTaskSettings()
+      );
+
+      const runStore = new WorkflowRunStore({ sessionDir: config.getSessionDir(childId) });
+      await runStore.createRun({
+        id: workflowRunId,
+        workspaceId: childId,
+        workflow: {
+          name: "child-workflow",
+          description: "Child workflow",
+          scope: "built-in",
+          executable: true,
+        },
+        source: "export default function workflow() { return { reportMarkdown: 'done' }; }\n",
+        args: {},
+        now: "2026-06-04T00:00:00.000Z",
+      });
+      await runStore.appendStatus(workflowRunId, "running", "2026-06-04T00:00:01.000Z");
+      await runStore.appendStatus(workflowRunId, "completed", "2026-06-04T00:00:02.000Z");
+
+      const { aiService } = createAIServiceMocks(config);
+      const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+        await removeWorkspaceFromTestConfig(config, workspaceId);
+        return Ok(undefined);
+      });
+      const { workspaceService, sendMessage, isWorkflowInvocationCurrent } =
+        createWorkspaceServiceMocks({ remove });
+      const { taskService } = createTaskServiceHarness(config, {
+        aiService,
+        workspaceService,
+      });
+
+      await handleTaskServiceStreamEndForTest(taskService, {
+        type: "stream-end",
+        workspaceId: childId,
+        messageId: `assistant-${toolName}-output`,
+        metadata: { model: "openai:gpt-4o-mini" },
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: `${toolName}-call-1`,
+            toolName,
+            input:
+              toolName === "workflow_run"
+                ? { script_path: "skill://test/workflow.js", run_in_background: false }
+                : { run_id: workflowRunId, run_in_background: false, mode: "resume" },
+            state: "output-available",
+            output: {
+              status: "completed",
+              runId: workflowRunId,
+              result: { reportMarkdown: "Workflow done" },
+            },
+          },
+          {
+            type: "dynamic-tool",
+            toolCallId: "agent-report-call-1",
+            toolName: "agent_report",
+            input: { reportMarkdown: "Final report", title: "Result" },
+            state: "output-available",
+            output: { success: true },
+          },
+        ],
+      });
+
+      expect(isWorkflowInvocationCurrent).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalledWith(
+        childId,
+        expect.stringContaining(workflowRunId),
+        expect.any(Object),
+        expect.any(Object)
+      );
+      expect(remove).toHaveBeenCalledWith(childId, true);
+    }
+  );
+
   test("handleStreamEnd finalizes report when task status is interrupted", async () => {
     const config = await createTestConfig(rootDir);
 

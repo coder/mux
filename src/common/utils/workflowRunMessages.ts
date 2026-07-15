@@ -32,6 +32,22 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
  * model-bound copies (persisted-history requests and internal stream steps alike) while the
  * persisted output keeps rendering the card.
  */
+export function isTerminalWorkflowRunToolOutput(
+  toolName: string,
+  output: unknown,
+  runId: string
+): boolean {
+  assert(runId.length > 0, "isTerminalWorkflowRunToolOutput: runId is required");
+  if (!isWorkflowRunEmittingToolName(toolName) || !isRecordValue(output)) {
+    return false;
+  }
+  const status = output.status;
+  return (
+    output.runId === runId &&
+    (status === "completed" || status === "failed" || status === "interrupted")
+  );
+}
+
 export function stripWorkflowRunRecordForModel(toolName: string, output: unknown): unknown {
   if (!isWorkflowRunEmittingToolName(toolName) || !isRecordValue(output)) {
     return output;

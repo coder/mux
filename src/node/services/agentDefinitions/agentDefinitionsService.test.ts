@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { AgentIdSchema } from "@/common/orpc/schemas";
+import { applyToolPolicyToNames } from "@/common/utils/tools/toolPolicy";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -14,6 +15,7 @@ import {
   resolveAgentBody,
   resolveAgentFrontmatter,
 } from "./agentDefinitionsService";
+import { resolveToolPolicyForAgent } from "./resolveToolPolicy";
 
 async function writeAgent(root: string, id: string, name: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
@@ -477,6 +479,26 @@ Custom planning instructions.
     expect(exploreFrontmatter.tools?.add).toContain(".*");
     expect(exploreFrontmatter.tools?.remove).toContain("file_edit_.*");
     expect(exploreFrontmatter.subagent?.runnable).toBe(true);
+
+    const toolPolicy = resolveToolPolicyForAgent({
+      agents: [{ tools: exploreFrontmatter.tools }],
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+    expect(
+      applyToolPolicyToNames(
+        [
+          "task",
+          "task_apply_git_patch",
+          "task_await",
+          "task_list",
+          "task_terminate",
+          "task_workspace_lifecycle",
+          "workflow_run",
+        ],
+        toolPolicy
+      )
+    ).toEqual(["task_await", "workflow_run"]);
   });
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
     using project = new DisposableTempDir("agent-same-name");
