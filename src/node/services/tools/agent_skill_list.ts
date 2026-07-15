@@ -3,7 +3,11 @@ import os from "node:os";
 import * as path from "path";
 import { tool } from "ai";
 
-import { AgentSkillDescriptorSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import {
+  AgentSkillDescriptorSchema,
+  SkillNameSchema,
+  resolveSkillAdvertise,
+} from "@/common/orpc/schemas";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentSkillListToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -123,7 +127,7 @@ async function readSkillDescriptor(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       scope,
-      advertise: parsed.frontmatter.advertise,
+      advertise: resolveSkillAdvertise(parsed.frontmatter),
     });
 
     if (!descriptorResult.success) {

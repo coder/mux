@@ -102,6 +102,7 @@ export {
   AgentSkillPackageSchema,
   AgentSkillScopeSchema,
   SkillNameSchema,
+  resolveSkillAdvertise,
 } from "./schemas/agentSkill";
 
 // Workflow schemas

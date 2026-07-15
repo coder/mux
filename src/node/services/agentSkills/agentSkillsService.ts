@@ -11,6 +11,7 @@ import {
   AgentSkillDescriptorSchema,
   AgentSkillPackageSchema,
   SkillNameSchema,
+  resolveSkillAdvertise,
 } from "@/common/orpc/schemas";
 import type {
   AgentSkillDescriptor,
@@ -250,7 +251,7 @@ async function readSkillDescriptorFromDir(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       scope,
-      advertise: parsed.frontmatter.advertise,
+      advertise: resolveSkillAdvertise(parsed.frontmatter),
     };
 
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);

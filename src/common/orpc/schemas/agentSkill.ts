@@ -26,7 +26,32 @@ export const AgentSkillFrontmatterSchema = z.object({
   // Unadvertised skills can still be invoked via /skill-name or agent_skill_read({ name: "skill-name" }).
   // Use for internal orchestration skills, sub-agent-only skills, or power-user workflows.
   advertise: z.boolean().optional(),
+
+  // Ecosystem-standard spelling (Claude Code extension, recognized by other agent tools).
+  // `disable-model-invocation: true` behaves like `advertise: false`: the skill is hidden
+  // from model-facing indexes but stays user-invocable via /skill-name.
+  "disable-model-invocation": z.boolean().optional(),
 });
+
+/**
+ * Effective `advertise` value for a skill descriptor, honoring both spellings:
+ * - `advertise: false` (mux-specific)
+ * - `disable-model-invocation: true` (ecosystem-standard, Claude Code compatible)
+ *
+ * When both are present the most restrictive wins, so either opt-out hides the skill.
+ * Descriptor construction must use this instead of reading `frontmatter.advertise` directly.
+ */
+export function resolveSkillAdvertise(
+  frontmatter: Pick<
+    z.infer<typeof AgentSkillFrontmatterSchema>,
+    "advertise" | "disable-model-invocation"
+  >
+): boolean | undefined {
+  if (frontmatter["disable-model-invocation"] === true) {
+    return false;
+  }
+  return frontmatter.advertise;
+}
 
 export const AgentSkillDescriptorSchema = z.object({
   name: SkillNameSchema,

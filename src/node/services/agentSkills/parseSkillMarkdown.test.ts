@@ -68,6 +68,27 @@ Body
     expect(result.frontmatter.advertise).toBe(false);
   });
 
+  test("parses disable-model-invocation field in frontmatter", () => {
+    const content = `---
+name: user-only-skill
+description: A skill only the user should trigger
+disable-model-invocation: true
+---
+Body
+`;
+
+    const directoryName = SkillNameSchema.parse("user-only-skill");
+
+    const result = parseSkillMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf-8"),
+      directoryName,
+    });
+
+    expect(result.frontmatter.name).toBe("user-only-skill");
+    expect(result.frontmatter["disable-model-invocation"]).toBe(true);
+  });
+
   test("throws on missing frontmatter", () => {
     const content = "# No frontmatter\n";
     expect(() =>

@@ -242,6 +242,61 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("treats disable-model-invocation: true like advertise: false (either opt-out hides)", async () => {
+    using project = new TestTempDir("test-agent-skill-list-dmi-project");
+    using muxHome = new TestTempDir("test-agent-skill-list-dmi-home");
+
+    await withMuxRoot(muxHome.path, async () => {
+      await writeSkill(path.join(project.path, ".mux", "skills"), "user-only", {
+        disableModelInvocation: true,
+      });
+      // Precedence: the more restrictive opt-out wins over advertise: true.
+      await writeSkill(path.join(project.path, ".mux", "skills"), "conflicting-flags", {
+        advertise: true,
+        disableModelInvocation: true,
+      });
+      await writeSkill(path.join(project.path, ".mux", "skills"), "model-visible", {
+        disableModelInvocation: false,
+      });
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+        })
+      );
+
+      const defaultResult = (await tool.execute!(
+        {},
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(defaultResult.success).toBe(true);
+      if (!defaultResult.success) {
+        return;
+      }
+      expect(defaultResult.skills.some((skill) => skill.name === "user-only")).toBe(false);
+      expect(defaultResult.skills.some((skill) => skill.name === "conflicting-flags")).toBe(false);
+      expect(defaultResult.skills.some((skill) => skill.name === "model-visible")).toBe(true);
+
+      const unfilteredResult = (await tool.execute!(
+        { includeUnadvertised: true },
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(unfilteredResult.success).toBe(true);
+      if (!unfilteredResult.success) {
+        return;
+      }
+      // Normalized descriptors report advertise: false so downstream consumers
+      // (skill index, ACP slash advertisement) need no knowledge of the alias.
+      expect(getSkill(unfilteredResult.skills, "user-only").advertise).toBe(false);
+      expect(getSkill(unfilteredResult.skills, "conflicting-flags").advertise).toBe(false);
+    });
+  });
+
   it("filters hidden skills from local legacy .agents/skills roots unless includeUnadvertised is true", async () => {
     using homeDir = new TestTempDir("test-agent-skill-list-local-hidden-legacy-home");
     using project = new TestTempDir("test-agent-skill-list-local-hidden-legacy-project");

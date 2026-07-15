@@ -1831,7 +1831,9 @@ export const TOOL_DEFINITIONS = {
         includeUnadvertised: z
           .boolean()
           .nullish()
-          .describe("When true, includes skills with advertise: false"),
+          .describe(
+            "When true, includes skills hidden from the index (advertise: false or disable-model-invocation: true)"
+          ),
       })
       .strict(),
   },

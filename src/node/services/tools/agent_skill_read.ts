@@ -15,7 +15,8 @@ import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillSto
  */
 function buildSkillReadDescription(config: ToolConfiguration): string {
   const baseDescription = TOOL_DEFINITIONS.agent_skill_read.description;
-  // Filter out unadvertised skills from the tool description.
+  // Filter out unadvertised skills (advertise: false or disable-model-invocation: true,
+  // normalized into descriptor.advertise) from the tool description.
   // Unadvertised skills can still be invoked via /skill-name or agent_skill_read.
   const skills = (config.availableSkills ?? []).filter((s) => s.advertise !== false);
 
