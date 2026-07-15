@@ -676,11 +676,38 @@ const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
  */
 const MAX_TASK_RECOVERY_ATTEMPTS = 5;
 
+/**
+ * Stream errors classified non-retryable by RetryManager that nevertheless have
+ * in-session recovery paths for workspace turns (queued continuation after a
+ * soft abort, compaction retry on context overflow). All auto-retryable errors
+ * (e.g. stream_truncated, network, server_error) are additionally treated as
+ * recoverable by isWorkspaceTurnRecoverableStreamError below, because the child
+ * session schedules an in-session auto-retry for them.
+ */
 const WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS: ReadonlySet<StreamErrorType> = new Set([
   "aborted",
   "context_exceeded",
-  "runtime_start_failed",
 ]);
+
+/**
+ * A workspace-turn stream error may resolve without parent intervention when
+ * the child can still make progress on its own. The caller must still confirm
+ * a retry/continuation is actually in flight
+ * (hasRecoverableWorkspaceTurnRetryInFlight) before leaving the handle running;
+ * exhausted or user-disabled auto-retry settles the handle terminally.
+ *
+ * Gating on isNonRetryableStreamError (instead of a narrow allowlist) keeps
+ * this aligned with RetryManager: previously a transient provider drop
+ * (stream_truncated) terminally settled the handle and falsely reported the
+ * turn as failed to the parent, even though the child auto-retried and
+ * continued the same turn seconds later.
+ */
+function isWorkspaceTurnRecoverableStreamError(errorType: StreamErrorType): boolean {
+  return (
+    WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(errorType) ||
+    !isNonRetryableStreamError({ type: errorType })
+  );
+}
 
 /**
  * Provider-terminal stream errors that settle a child task even while it is
@@ -8813,12 +8840,22 @@ export class TaskService {
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
   }
 
-  private async hasRecoverableWorkspaceTurnRetryInFlight(workspaceId: string): Promise<boolean> {
+  private async hasRecoverableWorkspaceTurnRetryInFlight(
+    workspaceId: string,
+    options: { requireAutoRetry: boolean }
+  ): Promise<boolean> {
     await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
-    return (
-      this.aiService.isStreaming(workspaceId) ||
-      this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
-    );
+    if (this.aiService.isStreaming(workspaceId)) {
+      return true;
+    }
+    // Auto-retryable stream errors recover only through an actual scheduled
+    // auto-retry. Unrelated queued manual messages must not keep the handle
+    // running: they would start a different turn, leaving the parent awaiting a
+    // turn that already failed (or settling it from an uncorrelated
+    // stream-end).
+    return options.requireAutoRetry
+      ? this.workspaceService.hasPendingAutoRetry(workspaceId)
+      : this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId);
   }
 
   private async finalizeWorkspaceTurnFromStreamError(event: ErrorEvent): Promise<boolean> {
@@ -8826,10 +8863,17 @@ export class TaskService {
     if (record == null) {
       return false;
     }
+    // Explicit in-session recovery cases (aborted, context_exceeded) may
+    // continue through queued/preparing turns; auto-retryable errors require a
+    // pending auto-retry of the same turn.
+    const explicitRecovery =
+      event.errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType);
     if (
       event.errorType != null &&
-      WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType) &&
-      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId))
+      isWorkspaceTurnRecoverableStreamError(event.errorType) &&
+      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, {
+        requireAutoRetry: !explicitRecovery,
+      }))
     ) {
       return true;
     }
