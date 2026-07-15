@@ -137,6 +137,13 @@ import {
   stringifyAgentSkillFrontmatter,
 } from "@/node/services/agentSkills/loadedSkillSnapshots";
 import { substituteSkillArguments } from "@/node/services/agentSkills/skillArguments";
+import {
+  injectSkillDynamicContext,
+  SKILL_DYNAMIC_COMMAND_TIMEOUT_MS,
+} from "@/node/services/agentSkills/skillDynamicContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 import type { MemorySessionContext } from "@/node/services/memoryService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
@@ -6080,10 +6087,25 @@ export class AgentSession {
         muxMetadata.skillName === ref.skillName
           ? (muxMetadata.arguments ?? "")
           : null;
-      const body =
+      const substitutedBody =
         slashArgumentText != null
           ? substituteSkillArguments(skill.body, slashArgumentText).body
           : skill.body;
+
+      // Dynamic context injection (default-off experiment): replace whole-line
+      // !`command` directives with their output. Ordering matters: it runs after
+      // argument substitution so directives like !`git log $1` see resolved
+      // arguments, and before snapshot creation so the hash covers the final body
+      // (different command outputs naturally produce distinct snapshots). Every
+      // ref in this materialization path is user-initiated (slash "/skill" or
+      // inline "$skill"); the model-side agent_skill_read tool takes a separate
+      // path and always sees the raw body.
+      const body = await this.maybeInjectSkillDynamicContext({
+        skillName: skill.frontmatter.name,
+        body: substitutedBody,
+        runtime,
+        workspacePath,
+      });
 
       // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
       // generate a new snapshot and keep the UI hover preview in sync. The hash also covers
@@ -6127,6 +6149,66 @@ export class AgentSession {
     }
 
     return snapshotMessages;
+  }
+
+  /**
+   * Experiment-gated dynamic context injection for user-invoked skills (see
+   * skillDynamicContext.ts for directive syntax and limits). Returns the body
+   * unchanged when the experiment is off or when anything unexpected fails: a
+   * broken directive must never break the send path (self-healing doctrine).
+   */
+  private async maybeInjectSkillDynamicContext(args: {
+    skillName: string;
+    body: string;
+    runtime: Runtime;
+    workspacePath: string;
+  }): Promise<string> {
+    // The typeof guard mirrors the getWorkspaceMetadata guard in
+    // materializeAgentSkillSnapshots: test mocks may provide a partial AIService.
+    if (
+      typeof this.aiService.isExperimentEnabled !== "function" ||
+      !this.aiService.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)
+    ) {
+      return args.body;
+    }
+
+    try {
+      const result = await injectSkillDynamicContext({
+        body: args.body,
+        // SECURITY AUDIT: this sink executes shell commands sourced from SKILL.md
+        // bodies, which are repo-controlled and therefore attacker-controlled input
+        // (any cloned repo can ship arbitrary skills). It is acceptable only because:
+        // (1) it is gated behind the default-off "skill-dynamic-context" experiment,
+        // so the user has explicitly opted into skills running commands; and
+        // (2) it runs solely on user-initiated skill invocations (slash "/skill" or
+        // inline "$skill" refs) — the model-side agent_skill_read tool never reaches
+        // this path — so each execution traces to a deliberate user action on a skill
+        // they chose, the same trust level as the user running the command themselves.
+        // Commands run non-interactively (no stdin) in the workspace directory with
+        // the runtime's default environment; the bash tool's `.mux/tool_env` sourcing
+        // lives behind hook/trust plumbing that is not reachable here, and directive
+        // commands should not depend on tool-specific env anyway.
+        execute: async (command) => {
+          const execResult = await execBuffered(args.runtime, command, {
+            cwd: args.workspacePath,
+            // Runtime-level timeout (seconds) actually kills the process; the
+            // module-level race in injectSkillDynamicContext bounds our wait.
+            timeout: Math.ceil(SKILL_DYNAMIC_COMMAND_TIMEOUT_MS / 1000),
+          });
+          return {
+            stdout: execResult.stdout,
+            stderr: execResult.stderr,
+            exitCode: execResult.exitCode,
+          };
+        },
+      });
+      return result.body;
+    } catch (error) {
+      log.warn(
+        `Skill dynamic context injection failed for ${args.skillName}: ${getErrorMessage(error)}`
+      );
+      return args.body;
+    }
   }
 
   /**

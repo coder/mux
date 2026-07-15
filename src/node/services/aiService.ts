@@ -16,7 +16,7 @@ import {
   ADVISOR_DEFAULT_MAX_USES_PER_TURN,
   resolveAdvisorEnabledForAgent,
 } from "@/common/constants/advisor";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS, type ExperimentId } from "@/common/constants/experiments";
 
 import type { GoalRecordV1 } from "@/common/types/goal";
 import type { ModelMessage, MuxMessage, MuxMessageMetadata } from "@/common/types/message";
@@ -554,6 +554,16 @@ export class AIService extends EventEmitter {
 
   setMemoryService(memoryService: MemoryService): void {
     this.memoryService = memoryService;
+  }
+
+  /**
+   * Whether a global experiment is enabled. False when no ExperimentsService was
+   * provided (lightweight test setups). Exposed so collaborators constructed with
+   * an AIService reference (e.g. AgentSession) can gate experiment-only behavior
+   * without threading ExperimentsService through every constructor.
+   */
+  isExperimentEnabled(experimentId: ExperimentId): boolean {
+    return this.experimentsService?.isExperimentEnabled(experimentId) === true;
   }
 
   /**

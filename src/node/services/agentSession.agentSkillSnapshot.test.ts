@@ -1,11 +1,14 @@
 import { describe, expect, it, mock, afterEach, spyOn } from "bun:test";
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
+import type { AIService } from "@/node/services/aiService";
 
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 
@@ -47,6 +50,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     workspacePath: string;
     workspaceId?: string;
     runtimeConfig?: FrontendWorkspaceMetadata["runtimeConfig"];
+    aiServiceOverrides?: Partial<AIService>;
   }) {
     const workspaceId = args.workspaceId ?? "ws-test";
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -61,6 +65,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       aiServiceOverrides: {
         getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
+        ...args.aiServiceOverrides,
       },
     });
     historyCleanup = cleanup;
@@ -667,6 +672,124 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(result.success).toBe(true);
     expect(appendToHistory.mock.calls).toHaveLength(2);
     expect(getMessageText(messages[0])).toContain("Fix issue [] with [].");
+  });
+
+  it("leaves dynamic context directives literal and executes nothing when the experiment is off", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      // The directive has an observable side effect so we can prove it never ran.
+      skillBody: "Context:\n!`touch dynamic-context-ran.marker`\nDone.",
+    });
+    const isExperimentEnabled = mock(() => false);
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: { isExperimentEnabled },
+    });
+
+    const result = await session.sendMessage("use dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn",
+        skillName: "dyn",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(isExperimentEnabled).toHaveBeenCalledWith(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT);
+    // Body unchanged: the directive stays literal text...
+    expect(getMessageText(messages[0])).toContain("!`touch dynamic-context-ran.marker`");
+    // ...and no command executed (the side-effect marker must not exist).
+    expect(existsSync(path.join(workspacePath, "dynamic-context-ran.marker"))).toBe(false);
+  });
+
+  it("replaces whole-line directives with command output when the experiment is on", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      skillBody: "Context:\n!`echo dynamic-ok`\n!`exit 7`\nDone.",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("use dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn",
+        skillName: "dyn",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const text = getMessageText(messages[0]);
+    expect(text).toContain("```text (output of: echo dynamic-ok)\ndynamic-ok\n```");
+    expect(text).not.toContain("!`echo dynamic-ok`");
+    // Real runtime exit-code plumbing: non-zero exit still injects, annotated.
+    expect(text).toContain("[exit code 7]");
+  });
+
+  it("composes dynamic context with $ARGUMENTS substitution (arguments first)", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      skillBody: "!`echo $1`",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("use dyn hi", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn hi",
+        skillName: "dyn",
+        scope: "project",
+        arguments: "hi",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    // $1 → "hi" happens before execution, so the command itself sees the argument.
+    expect(getMessageText(messages[0])).toContain("```text (output of: echo hi)\nhi\n```");
+  });
+
+  it("injects dynamic context for inline skill refs (also user-initiated)", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      skillBody: "!`echo inline-ok`",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("Please follow $dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "normal",
+        agentSkillRefs: [{ skillName: "dyn", scope: "project", source: "inline" }],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(getMessageText(messages[0])).toContain(
+      "```text (output of: echo inline-ok)\ninline-ok\n```"
+    );
   });
 
   it("truncates edits starting from preceding skill/file snapshots", async () => {

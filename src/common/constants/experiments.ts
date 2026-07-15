@@ -22,6 +22,7 @@ export const EXPERIMENT_IDS = {
   MEMORY_CONSOLIDATION: "memory-consolidation",
   TOOL_SEARCH: "tool-search",
   CLAUDE_SKILLS_COMPAT: "claude-skills-compat",
+  SKILL_DYNAMIC_CONTEXT: "skill-dynamic-context",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -192,6 +193,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Claude skills compatibility",
     description:
       "Also discover Agent Skills from .claude/skills and ~/.claude/skills (read-only, lowest precedence within each scope)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: {
+    id: EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT,
+    name: "Skill dynamic context injection",
+    description:
+      "When you invoke a skill, whole-line !`command` directives in SKILL.md run in the workspace and are replaced with their output before the model sees the skill. Commands come from skill files, so only enable this if you trust the skills in your projects.",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
