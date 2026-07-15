@@ -3909,6 +3909,63 @@ describe("TaskService", () => {
     });
   });
 
+  // Regression: stream_truncated (a transient provider drop) previously fell
+  // outside the recoverable allowlist and terminally settled the handle even
+  // though the child session had already scheduled an in-session auto-retry,
+  // falsely reporting the turn as failed to the parent.
+  test("workspace-turn auto-retryable stream errors stay running while retry is pending", async () => {
+    let retryDecisionAwaited = false;
+    const hasPendingQueuedOrPreparingTurn = mock(
+      (workspaceId: string) => retryDecisionAwaited && workspaceId === "childworkspace"
+    );
+    const waitForPendingStreamErrorRecoveryDecision = mock((): Promise<void> => {
+      retryDecisionAwaited = true;
+      return Promise.resolve();
+    });
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingQueuedOrPreparingTurn,
+      waitForPendingStreamErrorRecoveryDecision,
+    });
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: "childworkspace",
+      messageId: "msg_truncated",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+      errorType: "stream_truncated",
+    });
+
+    expect(waitForPendingStreamErrorRecoveryDecision).toHaveBeenCalledWith("childworkspace");
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+      workspaceId: "childworkspace",
+    });
+  });
+
+  test("workspace-turn auto-retryable stream errors without a pending retry mark the handle failed", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: "childworkspace",
+      messageId: "msg_truncated_exhausted",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+      errorType: "stream_truncated",
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      workspaceId: "childworkspace",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+    });
+  });
+
   test("workspace-turn exhausted recoverable stream errors mark the handle failed", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
