@@ -161,6 +161,90 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("hides .claude/skills roots when the claude-skills-compat experiment is off", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-claude-off-home");
+    using project = new TestTempDir("test-agent-skill-list-claude-off-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-claude-off-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writeSkill(path.join(project.path, ".claude", "skills"), "claude-project", {
+          description: "from project claude root",
+        });
+        await writeSkill(path.join(homeDir.path, ".claude", "skills"), "claude-global", {
+          description: "from global claude root",
+        });
+
+        // Default tool config: no experiments => compat roots must stay invisible.
+        const tool = createAgentSkillListTool(
+          createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          })
+        );
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(result.skills.find((skill) => skill.name === "claude-project")).toBeUndefined();
+        expect(result.skills.find((skill) => skill.name === "claude-global")).toBeUndefined();
+      });
+    });
+  });
+
+  it("lists .claude/skills roots when the claude-skills-compat experiment is on", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-claude-on-home");
+    using project = new TestTempDir("test-agent-skill-list-claude-on-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-claude-on-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writeSkill(path.join(project.path, ".claude", "skills"), "claude-project", {
+          description: "from project claude root",
+        });
+        await writeSkill(path.join(homeDir.path, ".claude", "skills"), "claude-global", {
+          description: "from global claude root",
+        });
+
+        const tool = createAgentSkillListTool({
+          ...createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          }),
+          experiments: { claudeSkillsCompat: true },
+        });
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(getSkill(result.skills, "claude-project")).toMatchObject({
+          name: "claude-project",
+          description: "from project claude root",
+          scope: "project",
+        });
+        expect(getSkill(result.skills, "claude-global")).toMatchObject({
+          name: "claude-global",
+          description: "from global claude root",
+          scope: "global",
+        });
+      });
+    });
+  });
+
   it("returns only the winning descriptor when project skills shadow global skills", async () => {
     using project = new TestTempDir("test-agent-skill-list-shadow-project");
     using muxHome = new TestTempDir("test-agent-skill-list-shadow-home");
@@ -239,6 +323,114 @@ describe("agent_skill_list", () => {
       expect(result.skills.some((skill) => skill.name === "visible-project")).toBe(true);
       expect(result.skills.some((skill) => skill.name === "hidden-project")).toBe(false);
       expect(result.skills.some((skill) => skill.name === "hidden-global")).toBe(false);
+    });
+  });
+
+  it("treats disable-model-invocation: true like advertise: false (either opt-out hides)", async () => {
+    using project = new TestTempDir("test-agent-skill-list-dmi-project");
+    using muxHome = new TestTempDir("test-agent-skill-list-dmi-home");
+
+    await withMuxRoot(muxHome.path, async () => {
+      await writeSkill(path.join(project.path, ".mux", "skills"), "user-only", {
+        disableModelInvocation: true,
+      });
+      // Precedence: the more restrictive opt-out wins over advertise: true.
+      await writeSkill(path.join(project.path, ".mux", "skills"), "conflicting-flags", {
+        advertise: true,
+        disableModelInvocation: true,
+      });
+      await writeSkill(path.join(project.path, ".mux", "skills"), "model-visible", {
+        disableModelInvocation: false,
+      });
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+        })
+      );
+
+      const defaultResult = (await tool.execute!(
+        {},
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(defaultResult.success).toBe(true);
+      if (!defaultResult.success) {
+        return;
+      }
+      expect(defaultResult.skills.some((skill) => skill.name === "user-only")).toBe(false);
+      expect(defaultResult.skills.some((skill) => skill.name === "conflicting-flags")).toBe(false);
+      expect(defaultResult.skills.some((skill) => skill.name === "model-visible")).toBe(true);
+
+      const unfilteredResult = (await tool.execute!(
+        { includeUnadvertised: true },
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(unfilteredResult.success).toBe(true);
+      if (!unfilteredResult.success) {
+        return;
+      }
+      // Normalized descriptors report advertise: false so downstream consumers
+      // (skill index, ACP slash advertisement) need no knowledge of the alias.
+      expect(getSkill(unfilteredResult.skills, "user-only").advertise).toBe(false);
+      expect(getSkill(unfilteredResult.skills, "conflicting-flags").advertise).toBe(false);
+    });
+  });
+
+  it("normalizes user-invocable, argument-hint, and when_to_use into descriptors", async () => {
+    using project = new TestTempDir("test-agent-skill-list-normalized-project");
+    using muxHome = new TestTempDir("test-agent-skill-list-normalized-home");
+
+    await withMuxRoot(muxHome.path, async () => {
+      await writeSkill(path.join(project.path, ".mux", "skills"), "model-only", {
+        userInvocable: false,
+        argumentHint: "[issue-number]",
+        whenToUse: "Use when triaging issues",
+      });
+      // Both spellings present: underscore spelling wins.
+      await writeSkill(path.join(project.path, ".mux", "skills"), "both-spellings", {
+        whenToUse: "underscore guidance",
+        whenToUseKebab: "kebab guidance",
+      });
+      await writeSkill(path.join(project.path, ".mux", "skills"), "kebab-only", {
+        whenToUseKebab: "kebab guidance",
+      });
+      await writeSkill(path.join(project.path, ".mux", "skills"), "plain");
+
+      const tool = createAgentSkillListTool(
+        createTestToolConfig(project.path, {
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: project.path,
+            projectStorageAuthority: "host-local",
+          },
+        })
+      );
+      const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      // user-invocable does not affect model-facing listing.
+      const modelOnly = getSkill(result.skills, "model-only");
+      expect(modelOnly.userInvocable).toBe(false);
+      expect(modelOnly.argumentHint).toBe("[issue-number]");
+      expect(modelOnly.whenToUse).toBe("Use when triaging issues");
+
+      expect(getSkill(result.skills, "both-spellings").whenToUse).toBe("underscore guidance");
+      expect(getSkill(result.skills, "kebab-only").whenToUse).toBe("kebab guidance");
+
+      const plain = getSkill(result.skills, "plain");
+      expect(plain.userInvocable).toBeUndefined();
+      expect(plain.argumentHint).toBeUndefined();
+      expect(plain.whenToUse).toBeUndefined();
     });
   });
 

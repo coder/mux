@@ -46,6 +46,15 @@ Built-in skills behave like any other skill for precedence purposes: you can ove
   remote host.
 </Info>
 
+### Claude Code compatibility (experiment)
+
+Many repositories already ship skills in Claude Code's directories. Enable the **Claude skills compatibility** experiment (Settings → Experiments) to also discover skills from:
+
+- **Workspace-local**: `.claude/skills/<skill-name>/SKILL.md`
+- **Global**: `~/.claude/skills/<skill-name>/SKILL.md`
+
+Compat roots have the lowest precedence within their scope (`.mux/skills` > `.agents/skills` > `.claude/skills`, and likewise for the global roots), and they are read-only: Mux never writes or deletes skills in `.claude` directories. Skills that package Mux workflow scripts are not discovered from `.claude` roots.
+
 ## Skill layout
 
 A skill is a directory named after the skill:
@@ -75,19 +84,34 @@ Optional fields:
 - `license`
 - `compatibility`
 - `metadata` (string key/value map)
-- `advertise` (boolean) — set to `false` to omit a skill from the system prompt index (see [Unadvertised skills](#unadvertised-skills) below)
+- `disable-model-invocation` (boolean) — set to `true` to omit a skill from the system prompt index (see [Unadvertised skills](#unadvertised-skills) below). This spelling is shared with other agent tools such as Claude Code, so portable skills work unchanged.
+- `advertise` (boolean) — Mux-specific equivalent: `advertise: false` behaves like `disable-model-invocation: true`. If both are set, the opt-out wins.
+- `user-invocable` (boolean) — set to `false` to hide a skill from user-facing invocation surfaces (see [Controlling who invokes a skill](#controlling-who-invokes-a-skill)).
+- `argument-hint` (string) — short hint describing the arguments a skill expects (for example `[issue-number]`), shown next to the skill in invocation UIs (see [Skill arguments](#skill-arguments)).
+- `when_to_use` (string) — extra model-facing guidance appended to the skill’s entry in the skills index. The kebab-case spelling `when-to-use` is also accepted; the underscore spelling wins if both are set.
 
 Mux ignores unknown frontmatter keys (for example `allowed-tools`).
 
-## Unadvertised skills
+## Controlling who invokes a skill
+
+Two frontmatter fields control a skill’s visibility in opposite directions:
+
+| Field                                                 | Hides the skill from                                                                                 | Still works via                                                   |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `disable-model-invocation: true` (`advertise: false`) | The model-facing skills index                                                                        | `/{skill-name}`, `$skill-name`, `agent_skill_read({ name: ... })` |
+| `user-invocable: false`                               | User-facing surfaces: `/` menu and typed `/{skill-name}`, `$` references, command palette, ACP lists | Model auto-invocation via the skills index                        |
+
+Combining them makes a **reference-only** skill: it is neither indexed for the model nor user-invocable, and only loads when something explicitly calls `agent_skill_read({ name: "skill-name" })` — useful for shared fragments referenced by other skills or workflows.
+
+### Unadvertised skills
 
 By default, Mux _advertises_ skills by listing them in the system prompt’s `<agent-skills>` index.
 
-Set `advertise: false` in the frontmatter to exclude a skill from that index. Unadvertised skills:
+Set `disable-model-invocation: true` (or the Mux-specific `advertise: false`) in the frontmatter to exclude a skill from that index. Unadvertised skills:
 
 - **Are not listed** in the system prompt (reducing token overhead)
 - **Can still be invoked** via `/{skill-name}` slash command or `agent_skill_read({ name: "skill-name" })`
-- **Still appear** in Mux’s UI lists (for example `/` slash suggestions)
+- **Still appear** in Mux’s UI lists (for example `/` slash suggestions) and in ACP clients’ command lists
 - **Are useful for**: skills meant only for sub-agents, advanced users, or internal orchestration
 
 ### Example: `deep-review` skill
@@ -186,6 +210,58 @@ Use this rubric to avoid blind spots:
 
 {/* END DEEP_REVIEW_SKILL */}
 
+## Skill arguments
+
+Slash invocations can carry arguments after the skill name, for example `/fix-issue 123 high`. If the skill body contains placeholders, Mux substitutes them before the model sees the skill:
+
+- `$ARGUMENTS` — the full argument text (`123 high`)
+- `$1` … `$9` — whitespace-tokenized positional arguments (`$1` is `123`); absent positions become empty strings
+
+Substitution rules:
+
+- Tokenization is simple whitespace splitting; there are no shell quoting rules.
+- Placeholders are substituted everywhere in the body, including code blocks.
+- Only a single digit is consumed: `$10` means `$1` followed by a literal `0`.
+- If the body contains no placeholders, nothing changes: the arguments simply remain visible in your message (for example “Using skill deploy: 123”).
+- Substitution applies only to slash invocations. Inline `$skill-name` references and model-initiated `agent_skill_read` loads receive the raw body.
+
+Use the `argument-hint` frontmatter field to document the expected arguments in invocation UIs.
+
+## Dynamic context injection (experiment)
+
+Enable the **Skill dynamic context injection** experiment (Settings → Experiments) to let skills pull live command output into their instructions. When you invoke a skill, any line whose entire content is `` !`command` `` runs in the workspace, and the line is replaced with a fenced block containing the command’s output before the model sees the skill:
+
+```md
+---
+name: summarize-changes
+description: Summarize uncommitted changes and flag risks
+---
+
+## Current changes
+
+!`git diff HEAD`
+
+## Instructions
+
+Summarize the changes above and list any risks you notice.
+```
+
+Rules and limits:
+
+- Directives must occupy the whole line; mid-line `` !`...` `` is ignored.
+- Directives run after [argument substitution](#skill-arguments), so `` !`git log $1` `` sees resolved arguments.
+- Commands run sequentially in the workspace directory, with a 10-second timeout and a 16KB output cap per command, and at most 10 directives per skill. A failing command injects its output plus an `[exit code N]` note instead of aborting the invocation.
+- Directives run only when **you** invoke a skill (`/{skill-name}` or a `$skill-name` reference). Skills the model loads via `agent_skill_read` always receive the raw body — the model cannot trigger command execution this way.
+- Enabling the experiment requires flipping the toggle in Settings yourself; remote experiment rollout can never switch it on.
+
+<Warning>
+  Commands come from skill files, which may be committed to the repositories you open. Only enable
+  this experiment if you trust the skills in your projects. Also note that [argument
+  substitution](#skill-arguments) runs before directives without shell quoting: a directive like ``
+  !`git log $1` `` passes your typed argument to the shell verbatim, so treat skill arguments as
+  shell input when a skill combines placeholders with directives.
+</Warning>
+
 ## Current limitations
 
 - Slash command invocation supports only a single skill as the first token (for example `/{skill-name}` or `/{skill-name} ...`).
@@ -205,7 +281,3 @@ Use this rubric to avoid blind spots:
 - [Integrate skills into your agent](https://agentskills.io/integrate-skills) (tool-based vs filesystem-based)
 - [Example skills (GitHub)](https://github.com/anthropics/skills)
 - [skills-ref validation library (GitHub)](https://github.com/agentskills/agentskills/tree/main/skills-ref)
-
-```
-
-```

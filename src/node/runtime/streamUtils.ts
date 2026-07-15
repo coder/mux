@@ -17,6 +17,58 @@ export const shescape = {
 };
 
 /**
+ * Convert a ReadableStream to a string, capping accumulation at `maxBytes` raw bytes.
+ *
+ * Once the cap is reached, remaining chunks are read and DISCARDED rather than
+ * buffered: draining keeps the child process's pipe flowing (no backpressure
+ * stall) and preserves its natural exit code, while memory stays bounded.
+ * Callers that need a duration bound must pair this with an exec timeout.
+ */
+export async function streamToStringCapped(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number
+): Promise<string> {
+  if (!(Number.isFinite(maxBytes) && maxBytes >= 0)) {
+    throw new Error(
+      `streamToStringCapped: maxBytes must be a non-negative number, got ${maxBytes}`
+    );
+  }
+  const reader = stream.getReader();
+  const decoder = new TextDecoder("utf-8");
+  // Array-join instead of += for the same rope-avoidance reason as streamToString.
+  const chunks: string[] = [];
+  let collectedBytes = 0;
+  let truncated = false;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (collectedBytes >= maxBytes) {
+        // Cap reached: drain without accumulating.
+        truncated = truncated || value.byteLength > 0;
+        continue;
+      }
+      const remaining = maxBytes - collectedBytes;
+      const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      truncated = truncated || slice.byteLength < value.byteLength;
+      collectedBytes += slice.byteLength;
+      chunks.push(decoder.decode(slice, { stream: true }));
+    }
+    // Only flush the decoder when the stream ended naturally under the cap.
+    // When truncated, the cap may have split a multi-byte code point; flushing
+    // would emit U+FFFD instead of a clean prefix, so drop the partial bytes.
+    if (!truncated) {
+      const tail = decoder.decode();
+      if (tail) chunks.push(tail);
+    }
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
  * Convert a ReadableStream to a string.
  * Used by SSH and Docker runtimes for capturing command output.
  */

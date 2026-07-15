@@ -11,6 +11,9 @@ import {
   AgentSkillDescriptorSchema,
   AgentSkillPackageSchema,
   SkillNameSchema,
+  resolveSkillAdvertise,
+  resolveSkillUserInvocable,
+  resolveSkillWhenToUse,
 } from "@/common/orpc/schemas";
 import type {
   AgentSkillDescriptor,
@@ -28,17 +31,25 @@ import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkil
 import type { ProjectSkillContainment } from "./skillStorageContext";
 
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
+// Claude Code compatibility roots (claude-skills-compat experiment): discovery-only,
+// lowest precedence within each scope. Write tools never target these roots.
+const CLAUDE_SKILLS_ROOT = "~/.claude/skills";
 
 export interface AgentSkillsRoots {
   projectRoot: string;
   projectUniversalRoot?: string;
+  /** Workspace .claude/skills (claude-skills-compat experiment; read-only). */
+  projectClaudeRoot?: string;
   globalRoot: string;
   universalRoot?: string;
+  /** ~/.claude/skills (claude-skills-compat experiment; read-only). */
+  globalClaudeRoot?: string;
 }
 
 export function getDefaultAgentSkillsRoots(
   runtime: Runtime,
-  workspacePath: string
+  workspacePath: string,
+  options?: { includeClaudeSkills?: boolean }
 ): AgentSkillsRoots {
   if (!workspacePath) {
     throw new Error("getDefaultAgentSkillsRoots: workspacePath is required");
@@ -49,19 +60,31 @@ export function getDefaultAgentSkillsRoots(
     projectUniversalRoot: runtime.normalizePath(".agents/skills", workspacePath),
     globalRoot: `${runtime.getMuxHome()}/skills`,
     universalRoot: UNIVERSAL_SKILLS_ROOT,
+    // Claude roots are added only when the experiment is enabled so the default
+    // (off) behavior stays byte-identical to the pre-experiment scan order.
+    ...(options?.includeClaudeSkills
+      ? {
+          projectClaudeRoot: runtime.normalizePath(".claude/skills", workspacePath),
+          globalClaudeRoot: CLAUDE_SKILLS_ROOT,
+        }
+      : {}),
   };
 }
 
 function getProjectSkillRoots(roots: AgentSkillsRoots): string[] {
-  const orderedRoots = [roots.projectRoot, roots.projectUniversalRoot].filter(
-    (root): root is string => root != null && root.length > 0
-  );
+  // Precedence within project scope: .mux > .agents > .claude.
+  const orderedRoots = [
+    roots.projectRoot,
+    roots.projectUniversalRoot,
+    roots.projectClaudeRoot,
+  ].filter((root): root is string => root != null && root.length > 0);
 
   return Array.from(new Set(orderedRoots));
 }
 
 function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
-  const orderedRoots = [roots.globalRoot, roots.universalRoot].filter(
+  // Precedence within global scope: ~/.mux > ~/.agents > ~/.claude.
+  const orderedRoots = [roots.globalRoot, roots.universalRoot, roots.globalClaudeRoot].filter(
     (root): root is string => root != null && root.length > 0
   );
 
@@ -250,7 +273,10 @@ async function readSkillDescriptorFromDir(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       scope,
-      advertise: parsed.frontmatter.advertise,
+      advertise: resolveSkillAdvertise(parsed.frontmatter),
+      userInvocable: resolveSkillUserInvocable(parsed.frontmatter),
+      argumentHint: parsed.frontmatter["argument-hint"],
+      whenToUse: resolveSkillWhenToUse(parsed.frontmatter),
     };
 
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
@@ -283,13 +309,19 @@ export async function discoverAgentSkills(
     containment?: ProjectSkillContainment;
     projectContainmentRoot?: string | null;
     dedupeByName?: boolean;
+    /** claude-skills-compat experiment: also scan .claude/skills roots (used only when `roots` is absent). */
+    includeClaudeSkills?: boolean;
   }
 ): Promise<AgentSkillDescriptor[]> {
   if (!workspacePath) {
     throw new Error("discoverAgentSkills: workspacePath is required");
   }
 
-  const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
+  const roots =
+    options?.roots ??
+    getDefaultAgentSkillsRoots(runtime, workspacePath, {
+      includeClaudeSkills: options?.includeClaudeSkills,
+    });
 
   const containment = resolveProjectSkillContainment(options);
   const dedupeByName = options?.dedupeByName ?? true;
@@ -394,13 +426,19 @@ export async function discoverAgentSkillsDiagnostics(
     roots?: AgentSkillsRoots;
     containment?: ProjectSkillContainment;
     projectContainmentRoot?: string | null;
+    /** claude-skills-compat experiment: also scan .claude/skills roots (used only when `roots` is absent). */
+    includeClaudeSkills?: boolean;
   }
 ): Promise<DiscoverAgentSkillsDiagnosticsResult> {
   if (!workspacePath) {
     throw new Error("discoverAgentSkillsDiagnostics: workspacePath is required");
   }
 
-  const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
+  const roots =
+    options?.roots ??
+    getDefaultAgentSkillsRoots(runtime, workspacePath, {
+      includeClaudeSkills: options?.includeClaudeSkills,
+    });
 
   const containment = resolveProjectSkillContainment(options);
 
@@ -573,13 +611,19 @@ export async function readAgentSkill(
     roots?: AgentSkillsRoots;
     containment?: ProjectSkillContainment;
     projectContainmentRoot?: string | null;
+    /** claude-skills-compat experiment: also scan .claude/skills roots (used only when `roots` is absent). */
+    includeClaudeSkills?: boolean;
   }
 ): Promise<ResolvedAgentSkill> {
   if (!workspacePath) {
     throw new Error("readAgentSkill: workspacePath is required");
   }
 
-  const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
+  const roots =
+    options?.roots ??
+    getDefaultAgentSkillsRoots(runtime, workspacePath, {
+      includeClaudeSkills: options?.includeClaudeSkills,
+    });
 
   const containment = resolveProjectSkillContainment(options);
 

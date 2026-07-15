@@ -39,6 +39,11 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 import { buildShellExport } from "./shellEnv";
 
+// Cap for the stderr side-buffer kept purely for error reporting on process
+// failure. 16KB comfortably covers SSH/launch diagnostics while bounding memory
+// on stderr-flooding commands.
+const STDERR_ERROR_REPORTING_CAP_BYTES = 16 * 1024;
+
 /**
  * Result from spawning a remote process.
  */
@@ -263,8 +268,18 @@ export abstract class RemoteRuntime implements Runtime {
 
     // Capture stderr for error reporting (e.g., SSH exit code 255 failures).
     // Must be AFTER Readable.toWeb() to avoid putting the stream in flowing mode prematurely.
+    // Bounded: this side-buffer exists only for error diagnostics, and connection/launch
+    // failures surface at the start of stderr. Without a cap, a command that floods stderr
+    // (e.g. `yes >&2`) would grow this string without bound even when the caller reads the
+    // stderr stream through a capped reader (execBuffered maxOutputBytes).
     childProcess.stderr?.on("data", (data: Buffer) => {
-      stderrForErrorReporting += data.toString();
+      if (stderrForErrorReporting.length < STDERR_ERROR_REPORTING_CAP_BYTES) {
+        stderrForErrorReporting += data.toString(
+          "utf-8",
+          0,
+          STDERR_ERROR_REPORTING_CAP_BYTES - stderrForErrorReporting.length
+        );
+      }
     });
 
     // Writable.toWeb(childProcess.stdin) is surprisingly easy to get into an invalid state

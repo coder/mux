@@ -21,6 +21,8 @@ export const EXPERIMENT_IDS = {
   MEMORY_HOT_SET: "memory-hot-set",
   MEMORY_CONSOLIDATION: "memory-consolidation",
   TOOL_SEARCH: "tool-search",
+  CLAUDE_SKILLS_COMPAT: "claude-skills-compat",
+  SKILL_DYNAMIC_CONTEXT: "skill-dynamic-context",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -46,6 +48,14 @@ export interface ExperimentDefinition {
    * Defaults to true. Use false for invisible A/B tests.
    */
   showInSettings?: boolean;
+  /**
+   * When true, only an explicit local override (Settings toggle) can enable the
+   * experiment — remote/cached PostHog assignment is excluded from its
+   * evaluation path entirely. Use for security-sensitive experiments where
+   * "enabled" must mean deliberate local user consent (e.g. features that
+   * execute repo-controlled shell commands). Implies userOverridable.
+   */
+  localOverrideOnly?: boolean;
 }
 
 /**
@@ -185,6 +195,27 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
+  },
+  [EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT]: {
+    id: EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT,
+    name: "Claude skills compatibility",
+    description:
+      "Also discover Agent Skills from .claude/skills and ~/.claude/skills (read-only, lowest precedence within each scope)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: {
+    id: EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT,
+    name: "Skill dynamic context injection",
+    description:
+      "When you invoke a skill, whole-line !`command` directives in SKILL.md run in the workspace and are replaced with their output before the model sees the skill. Commands come from skill files, so only enable this if you trust the skills in your projects.",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+    // Executes repo-controlled shell commands: enabling must be a deliberate
+    // local user action, never a remote rollout bucket.
+    localOverrideOnly: true,
   },
 };
 

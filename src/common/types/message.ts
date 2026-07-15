@@ -282,6 +282,8 @@ export interface BuildAgentSkillMetadataOptions {
   skillName: string;
   scope: AgentSkillScope;
   commandPrefix?: string;
+  /** Trimmed argument text after the slash command (drives placeholder substitution). */
+  arguments?: string;
 }
 
 export function buildAgentSkillMetadata(
@@ -293,6 +295,7 @@ export function buildAgentSkillMetadata(
     commandPrefix: options.commandPrefix,
     skillName: options.skillName,
     scope: options.scope,
+    arguments: options.arguments,
     agentSkillRefs: [{ skillName: options.skillName, scope: options.scope, source: "slash" }],
   };
 }
@@ -370,6 +373,13 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         rawCommand: string;
         skillName: string;
         scope: "project" | "global" | "built-in";
+        /**
+         * Trimmed argument text after the slash command (e.g. "123 high" for
+         * "/fix-issue 123 high"). Used to substitute $ARGUMENTS/$1..$9 placeholders in
+         * the materialized skill snapshot body. Absent on messages persisted before
+         * this field existed; consumers treat that as "".
+         */
+        arguments?: string;
       }
     | {
         type: "plan-display"; // Ephemeral plan display from /plan command
@@ -741,6 +751,8 @@ export type DisplayedMessage =
       agentSkill?: {
         skillName: string;
         scope: AgentSkillScope;
+        /** Trimmed slash-command argument text; preserved so compaction retry can rebuild metadata. */
+        arguments?: string;
         /**
          * Optional snapshot content attached later by message aggregation (e.g. tooltips).
          * Not persisted on the user message itself.

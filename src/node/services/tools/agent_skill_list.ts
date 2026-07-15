@@ -3,7 +3,13 @@ import os from "node:os";
 import * as path from "path";
 import { tool } from "ai";
 
-import { AgentSkillDescriptorSchema, SkillNameSchema } from "@/common/orpc/schemas";
+import {
+  AgentSkillDescriptorSchema,
+  SkillNameSchema,
+  resolveSkillAdvertise,
+  resolveSkillUserInvocable,
+  resolveSkillWhenToUse,
+} from "@/common/orpc/schemas";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentSkillListToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -123,7 +129,10 @@ async function readSkillDescriptor(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       scope,
-      advertise: parsed.frontmatter.advertise,
+      advertise: resolveSkillAdvertise(parsed.frontmatter),
+      userInvocable: resolveSkillUserInvocable(parsed.frontmatter),
+      argumentHint: parsed.frontmatter["argument-hint"],
+      whenToUse: resolveSkillWhenToUse(parsed.frontmatter),
     });
 
     if (!descriptorResult.success) {
@@ -156,17 +165,23 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
         };
       }
 
+      // claude-skills-compat experiment: also list read-only .claude/skills roots.
+      const includeClaudeSkills = config.experiments?.claudeSkillsCompat === true;
+
       try {
         const skillCtx = resolveSkillStorageContext({
           runtime: config.runtime,
           workspacePath: config.cwd,
           muxScope: config.muxScope ?? null,
+          includeClaudeSkills,
         });
 
         if (skillCtx.kind === "project-runtime") {
           // Runtime discovery mirrors the shared default roots contract so project-runtime
           // listings include .mux/skills and .agents/skills plus ~/.mux/skills and ~/.agents/skills.
-          const roots = getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath);
+          const roots = getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath, {
+            includeClaudeSkills,
+          });
 
           const discovered = await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
             roots,
@@ -208,6 +223,15 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
             scope: "global",
           },
         ];
+        if (includeClaudeSkills) {
+          // claude-skills-compat: lowest-precedence global root, contained at the user home
+          // exactly like ~/.agents/skills.
+          roots.push({
+            skillsRoot: path.join(userHome, ".claude", "skills"),
+            containmentRoot: userHome,
+            scope: "global",
+          });
+        }
         if (muxScope.type === "project") {
           roots.unshift(
             {
@@ -220,7 +244,18 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
               skillsRoot: path.join(muxScope.projectRoot, ".agents", "skills"),
               containmentRoot: muxScope.projectRoot,
               scope: "project",
-            }
+            },
+            // claude-skills-compat: lowest-precedence project root, contained at projectRoot
+            // exactly like the other project roots.
+            ...(includeClaudeSkills
+              ? [
+                  {
+                    skillsRoot: path.join(muxScope.projectRoot, ".claude", "skills"),
+                    containmentRoot: muxScope.projectRoot,
+                    scope: "project" as const,
+                  },
+                ]
+              : [])
           );
         }
 

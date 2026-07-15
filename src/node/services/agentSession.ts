@@ -136,6 +136,15 @@ import {
   mergeLoadedSkillSnapshots,
   stringifyAgentSkillFrontmatter,
 } from "@/node/services/agentSkills/loadedSkillSnapshots";
+import { substituteSkillArguments } from "@/node/services/agentSkills/skillArguments";
+import {
+  injectSkillDynamicContext,
+  SKILL_DYNAMIC_COMMAND_TIMEOUT_MS,
+  SKILL_DYNAMIC_OUTPUT_CAP_BYTES,
+} from "@/node/services/agentSkills/skillDynamicContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 import type { MemorySessionContext } from "@/node/services/memoryService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
@@ -2657,21 +2666,15 @@ export class AgentSession {
     // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
     // File changes after this point are surfaced via <system-file-update> diffs instead.
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
-    let skillSnapshotMessages: MuxMessage[] = [];
-    try {
-      skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
-        typedMuxMetadata,
-        options?.disableWorkspaceAgents
-      );
-    } catch (error) {
-      return Err(createUnknownSendMessageError(getErrorMessage(error)));
-    }
 
     // Check compaction threshold BEFORE persisting the user message.
-    // Note: snapshots are materialized above, but persistence is deferred until after
-    // this decision so on-send compaction can run against the pre-turn context.
-    // Persisting snapshots too early can bloat the compaction request context and
-    // make compaction itself fail near the context limit.
+    // Skill snapshots are materialized AFTER this decision (below): when on-send
+    // compaction defers the turn, the follow-up re-enters sendMessage with the same
+    // skill metadata and materializes then. Materializing before the decision would
+    // run twice — executing dynamic context directives (side effects!) once for a
+    // snapshot that is immediately discarded.
+    // Persisting snapshots too early can also bloat the compaction request context
+    // and make compaction itself fail near the context limit.
     // If on-send compaction is needed, we skip persisting the user's message now — it becomes
     // the follow-up content sent after compaction completes. This avoids duplicating the user
     // turn in model context (the compaction would otherwise summarize a transcript that already
@@ -2768,6 +2771,21 @@ export class AgentSession {
     // Persist snapshots only when this turn will be sent immediately.
     // On on-send compaction paths, snapshots are deferred with the follow-up turn.
     const shouldPersistTurnSnapshots = autoCompactionMessage === null;
+
+    // Materialize skill snapshots only for turns that send immediately (see the
+    // compaction-decision comment above: deferred turns re-materialize on follow-up,
+    // and materialization may execute dynamic context directives).
+    let skillSnapshotMessages: MuxMessage[] = [];
+    if (shouldPersistTurnSnapshots) {
+      try {
+        skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
+          typedMuxMetadata,
+          options?.disableWorkspaceAgents
+        );
+      } catch (error) {
+        return Err(createUnknownSendMessageError(getErrorMessage(error)));
+      }
+    }
 
     if (shouldPersistTurnSnapshots && snapshotResult?.snapshotMessage) {
       const snapshotAppendResult = await this.historyService.appendToHistory(
@@ -6050,7 +6068,14 @@ export class AgentSession {
 
       let resolved: Awaited<ReturnType<typeof readAgentSkill>>;
       try {
-        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
+        // claude-skills-compat experiment: resolve slash-invoked skills with the same
+        // roots as discovery. Guard for test mocks that may not implement the gate.
+        const includeClaudeSkills =
+          typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
+          this.aiService.isClaudeSkillsCompatEnabled();
+        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data, {
+          includeClaudeSkills,
+        });
       } catch (error) {
         if (ref.source === "slash") {
           throw error;
@@ -6060,13 +6085,47 @@ export class AgentSession {
 
       const skill = resolved.package;
 
+      // Slash invocations can carry trailing argument text (e.g. "/fix-issue 123 high").
+      // Substitute $ARGUMENTS/$1..$9 placeholders in the snapshot body so the model sees
+      // the resolved instructions; bodies without placeholders stay byte-identical and the
+      // user message keeps showing what was typed. Inline `$skill` refs have no argument
+      // concept, so their bodies are never touched. Missing metadata arguments (legacy
+      // messages) substitute as "".
+      const slashArgumentText =
+        ref.source === "slash" &&
+        muxMetadata?.type === "agent-skill" &&
+        muxMetadata.skillName === ref.skillName
+          ? (muxMetadata.arguments ?? "")
+          : null;
+      const substitutedBody =
+        slashArgumentText != null
+          ? substituteSkillArguments(skill.body, slashArgumentText).body
+          : skill.body;
+
+      // Dynamic context injection (default-off experiment): replace whole-line
+      // !`command` directives with their output. Ordering matters: it runs after
+      // argument substitution so directives like !`git log $1` see resolved
+      // arguments, and before snapshot creation so the hash covers the final body
+      // (different command outputs naturally produce distinct snapshots). Every
+      // ref in this materialization path is user-initiated (slash "/skill" or
+      // inline "$skill"); the model-side agent_skill_read tool takes a separate
+      // path and always sees the raw body.
+      const body = await this.maybeInjectSkillDynamicContext({
+        skillName: skill.frontmatter.name,
+        body: substitutedBody,
+        runtime,
+        workspacePath,
+      });
+
       // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
-      // generate a new snapshot and keep the UI hover preview in sync.
+      // generate a new snapshot and keep the UI hover preview in sync. The hash also covers
+      // the substituted body, so the same skill invoked with different arguments produces
+      // distinct snapshots (dedupe must not collapse them).
       const frontmatterYaml = stringifyAgentSkillFrontmatter(skill.frontmatter);
       const snapshot = createLoadedSkillSnapshot({
         name: skill.frontmatter.name,
         scope: skill.scope,
-        body: skill.body,
+        body,
         frontmatterYaml,
       });
       const sha256 = snapshot.sha256;
@@ -6100,6 +6159,77 @@ export class AgentSession {
     }
 
     return snapshotMessages;
+  }
+
+  /**
+   * Experiment-gated dynamic context injection for user-invoked skills (see
+   * skillDynamicContext.ts for directive syntax and limits). Returns the body
+   * unchanged when the experiment is off or when anything unexpected fails: a
+   * broken directive must never break the send path (self-healing doctrine).
+   */
+  private async maybeInjectSkillDynamicContext(args: {
+    skillName: string;
+    body: string;
+    runtime: Runtime;
+    workspacePath: string;
+  }): Promise<string> {
+    // The typeof guard mirrors the getWorkspaceMetadata guard in
+    // materializeAgentSkillSnapshots: test mocks may provide a partial AIService.
+    // isExperimentLocallyEnabled (not isExperimentEnabled): shell execution must
+    // require a deliberate local Settings toggle; a remote/cached experiment
+    // assignment must never be able to switch it on.
+    if (
+      typeof this.aiService.isExperimentLocallyEnabled !== "function" ||
+      !this.aiService.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)
+    ) {
+      return args.body;
+    }
+
+    try {
+      const result = await injectSkillDynamicContext({
+        body: args.body,
+        // SECURITY AUDIT: this sink executes shell commands sourced from SKILL.md
+        // bodies, which are repo-controlled and therefore attacker-controlled input
+        // (any cloned repo can ship arbitrary skills). It is acceptable only because:
+        // (1) it is gated on an explicit LOCAL override of the default-off
+        // "skill-dynamic-context" experiment (Settings toggle); remote/cached
+        // experiment assignment can never enable it (see isExperimentLocallyEnabled),
+        // so the user has deliberately opted into skills running commands; and
+        // (2) it runs solely on user-initiated skill invocations (slash "/skill" or
+        // inline "$skill" refs) — the model-side agent_skill_read tool never reaches
+        // this path — so each execution traces to a deliberate user action on a skill
+        // they chose, the same trust level as the user running the command themselves.
+        // Commands run non-interactively (no stdin) in the workspace directory with
+        // the runtime's default environment; the bash tool's `.mux/tool_env` sourcing
+        // lives behind hook/trust plumbing that is not reachable here, and directive
+        // commands should not depend on tool-specific env anyway.
+        execute: async (command) => {
+          const execResult = await execBuffered(args.runtime, command, {
+            cwd: args.workspacePath,
+            // Runtime-level timeout (seconds) actually kills the process; the
+            // module-level race in injectSkillDynamicContext bounds our wait.
+            timeout: Math.ceil(SKILL_DYNAMIC_COMMAND_TIMEOUT_MS / 1000),
+            // Bound memory while reading, not just after: without this, a
+            // directive like !`cat big.log` would buffer the entire output
+            // before the module's truncateOutput cap applies. +1 so the
+            // module still sees an over-cap payload and appends its
+            // "[output truncated ...]" marker.
+            maxOutputBytes: SKILL_DYNAMIC_OUTPUT_CAP_BYTES + 1,
+          });
+          return {
+            stdout: execResult.stdout,
+            stderr: execResult.stderr,
+            exitCode: execResult.exitCode,
+          };
+        },
+      });
+      return result.body;
+    } catch (error) {
+      log.warn(
+        `Skill dynamic context injection failed for ${args.skillName}: ${getErrorMessage(error)}`
+      );
+      return args.body;
+    }
   }
 
   /**

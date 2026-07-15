@@ -1845,7 +1845,12 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkills(runtime, discoveryPath);
+          return discoverAgentSkills(runtime, discoveryPath, {
+            // claude-skills-compat experiment: surface read-only .claude skills in the UI listing.
+            includeClaudeSkills: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
+            ),
+          });
         }),
       listDiagnostics: t
         .input(schemas.agentSkills.listDiagnostics.input)
@@ -1856,7 +1861,11 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath, {
+            includeClaudeSkills: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
+            ),
+          });
           return diagnostics;
         }),
       get: t
@@ -1868,7 +1877,11 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          const result = await readAgentSkill(runtime, discoveryPath, input.skillName, {
+            includeClaudeSkills: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
+            ),
+          });
           return result.package;
         }),
     },

@@ -183,10 +183,17 @@ export class ExperimentsService {
 
     const override = this.overrides.get(experimentId);
     if (override !== undefined) {
-      if (this.isRemoteEvaluationEnabled()) {
+      if (this.isRemoteEvaluationEnabled() && !EXPERIMENTS[experimentId].localOverrideOnly) {
         this.maybeRefreshInBackground(experimentId);
       }
       return { value: override, source: "override" };
+    }
+
+    // Local-override-only experiments never consult remote/cached assignment:
+    // without an explicit local toggle they read as disabled, so Settings and
+    // security gates (isExperimentLocallyEnabled) always agree.
+    if (EXPERIMENTS[experimentId].localOverrideOnly) {
+      return { value: null, source: "disabled" };
     }
 
     if (!this.isRemoteEvaluationEnabled()) {
@@ -202,6 +209,17 @@ export class ExperimentsService {
 
     this.maybeRefreshInBackground(experimentId);
     return { value: cached.value, source: cached.source };
+  }
+
+  /**
+   * True only when the user has explicitly enabled the experiment via a local
+   * override (Settings → Experiments toggle). Remote/cached PostHog assignment
+   * can NEVER satisfy this gate. Use for security-sensitive experiments where
+   * "enabled" must mean deliberate local user consent (e.g. skill dynamic
+   * context injection, which executes repo-controlled shell commands).
+   */
+  isExperimentLocallyEnabled(experimentId: ExperimentId): boolean {
+    return this.overrides.get(experimentId) === true;
   }
 
   /**

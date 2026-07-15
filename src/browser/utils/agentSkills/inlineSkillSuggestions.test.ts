@@ -37,6 +37,15 @@ describe("getInlineSkillSuggestions", () => {
     ]);
   });
 
+  test("hides user-invocable: false skills from suggestions", () => {
+    expect(
+      getInlineSkillSuggestions({
+        partial: "",
+        descriptors: [descriptor("tdd"), { ...descriptor("model-only"), userInvocable: false }],
+      }).map((suggestion) => suggestion.display)
+    ).toEqual(["$tdd"]);
+  });
+
   test("returns only descriptors whose names start with the partial", () => {
     expect(
       getInlineSkillSuggestions({

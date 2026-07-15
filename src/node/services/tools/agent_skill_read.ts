@@ -15,7 +15,8 @@ import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillSto
  */
 function buildSkillReadDescription(config: ToolConfiguration): string {
   const baseDescription = TOOL_DEFINITIONS.agent_skill_read.description;
-  // Filter out unadvertised skills from the tool description.
+  // Filter out unadvertised skills (advertise: false or disable-model-invocation: true,
+  // normalized into descriptor.advertise) from the tool description.
   // Unadvertised skills can still be invoked via /skill-name or agent_skill_read.
   const skills = (config.availableSkills ?? []).filter((s) => s.advertise !== false);
 
@@ -27,9 +28,12 @@ function buildSkillReadDescription(config: ToolConfiguration): string {
   const shown = skills.slice(0, MAX_SKILLS);
   const omitted = skills.length - shown.length;
 
-  const skillLines = shown.map(
-    (skill) => `- ${skill.name}: ${skill.description} (scope: ${skill.scope})`
-  );
+  const skillLines = shown.map((skill) => {
+    const line = `- ${skill.name}: ${skill.description} (scope: ${skill.scope})`;
+    // whenToUse (when_to_use/when-to-use frontmatter) is extra model-facing guidance;
+    // keep it on the same index line to stay token-lean.
+    return skill.whenToUse == null ? line : `${line} When to use: ${skill.whenToUse}`;
+  });
   if (omitted > 0) {
     skillLines.push(`(+${omitted} more not shown)`);
   }
@@ -66,10 +70,13 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
       }
 
       try {
+        // claude-skills-compat experiment: allow reading skills discovered from .claude roots.
+        const includeClaudeSkills = config.experiments?.claudeSkillsCompat === true;
         const skillCtx = resolveSkillStorageContext({
           runtime: config.runtime,
           workspacePath,
           muxScope: config.muxScope ?? null,
+          includeClaudeSkills,
         });
         const resolved = await readAgentSkill(
           skillCtx.runtime,
@@ -78,6 +85,7 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
           {
             roots: skillCtx.roots,
             containment: skillCtx.containment,
+            includeClaudeSkills,
           }
         );
         return {

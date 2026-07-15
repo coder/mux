@@ -5,6 +5,7 @@ import {
   extractInlineSkillReferenceCandidates,
   resolveInlineSkillReferences,
 } from "@/browser/utils/agentSkills/inlineSkillReferences";
+import { resolveSkillUserInvocable } from "@/common/orpc/schemas/agentSkill";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import {
@@ -26,6 +27,8 @@ export type CreationRuntimeValidationError =
 export interface SkillInvocation {
   descriptor: AgentSkillDescriptor;
   userText: string;
+  /** Trimmed text after the slash command (e.g. "123 high" for "/fix-issue 123 high"). */
+  argumentText: string;
 }
 
 export type SkillResolutionTarget =
@@ -41,13 +44,15 @@ function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashComma
 
 export function buildSkillInvocationMetadata(
   rawCommand: string,
-  descriptor: AgentSkillDescriptor
+  descriptor: AgentSkillDescriptor,
+  argumentText: string
 ): MuxMessageMetadata {
   return buildAgentSkillMetadata({
     rawCommand,
     commandPrefix: `/${descriptor.name}`,
     skillName: descriptor.name,
     scope: descriptor.scope,
+    arguments: argumentText,
   });
 }
 
@@ -79,8 +84,10 @@ async function resolveSkillInvocation(options: {
     return null;
   }
 
+  // user-invocable: false skills must be treated as nonexistent for typed /skill-name
+  // invocation (they remain model-invocable via agent_skill_read).
   let skill: AgentSkillDescriptor | undefined = options.agentSkillDescriptors.find(
-    (candidate) => candidate.name === command
+    (candidate) => candidate.name === command && candidate.userInvocable !== false
   );
 
   if (!skill && options.api && options.discovery) {
@@ -96,11 +103,15 @@ async function resolveSkillInvocation(options: {
               disableWorkspaceAgents: options.discovery.disableWorkspaceAgents,
               skillName: command,
             });
-      skill = {
-        name: pkg.frontmatter.name,
-        description: pkg.frontmatter.description,
-        scope: pkg.scope,
-      };
+      // The remote fallback fetches raw frontmatter, so apply the same user-invocability
+      // gate the local descriptor list already carries in normalized form.
+      if (resolveSkillUserInvocable(pkg.frontmatter) !== false) {
+        skill = {
+          name: pkg.frontmatter.name,
+          description: pkg.frontmatter.description,
+          scope: pkg.scope,
+        };
+      }
     } catch {
       // Not a skill (or not available yet) - fall through.
     }
@@ -113,6 +124,7 @@ async function resolveSkillInvocation(options: {
   return {
     descriptor: skill,
     userText: formatSkillInvocationText(skill.name, afterPrefix.trimStart()),
+    argumentText: afterPrefix.trim(),
   };
 }
 

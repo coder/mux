@@ -1,11 +1,14 @@
 import { describe, expect, it, mock, afterEach, spyOn } from "bun:test";
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
+import type { AIService } from "@/node/services/aiService";
 
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 
@@ -47,6 +50,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     workspacePath: string;
     workspaceId?: string;
     runtimeConfig?: FrontendWorkspaceMetadata["runtimeConfig"];
+    aiServiceOverrides?: Partial<AIService>;
   }) {
     const workspaceId = args.workspaceId ?? "ws-test";
     const workspaceMeta: FrontendWorkspaceMetadata = {
@@ -61,6 +65,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       workspaceId,
       aiServiceOverrides: {
         getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
+        ...args.aiServiceOverrides,
       },
     });
     historyCleanup = cleanup;
@@ -483,6 +488,341 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(messages[2].metadata?.agentSkillSnapshot?.skillName).toBe("beta-skill");
     expect(getMessageText(messages[2])).toContain("Follow beta.");
     expect(getMessageText(messages[3])).toBe("second");
+  });
+
+  it("substitutes $ARGUMENTS/$N placeholders in slash-invoked snapshot bodies", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue $1 with priority $2.\nSummary: $ARGUMENTS",
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Using skill fix-issue: 123 high", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/fix-issue 123 high",
+        skillName: "fix-issue",
+        scope: "project",
+        arguments: "123 high",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const [snapshotMessage, userMessage] = messages;
+    expect(getMessageText(snapshotMessage)).toContain(
+      "Fix issue 123 with priority high.\nSummary: 123 high"
+    );
+    // The user message still shows what the user typed; only the snapshot body changes.
+    expect(getMessageText(userMessage)).toBe("Using skill fix-issue: 123 high");
+  });
+
+  it("materializes distinct snapshots for the same skill with different arguments", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue $ARGUMENTS.",
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const baseOptions = {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+    };
+
+    const first = await session.sendMessage("Using skill fix-issue: 123", {
+      ...baseOptions,
+      muxMetadata: {
+        type: "agent-skill" as const,
+        rawCommand: "/fix-issue 123",
+        skillName: "fix-issue",
+        scope: "project" as const,
+        arguments: "123",
+      },
+    });
+    expect(first.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const second = await session.sendMessage("Using skill fix-issue: 456", {
+      ...baseOptions,
+      muxMetadata: {
+        type: "agent-skill" as const,
+        rawCommand: "/fix-issue 456",
+        skillName: "fix-issue",
+        scope: "project" as const,
+        arguments: "456",
+      },
+    });
+    expect(second.success).toBe(true);
+
+    // Different arguments produce different substituted bodies, so the sha256 dedupe
+    // must NOT collapse the second snapshot: snapshot + user, snapshot + user.
+    expect(appendToHistory.mock.calls).toHaveLength(4);
+
+    const firstSnapshot = messages[0];
+    const secondSnapshot = messages[2];
+    expect(getMessageText(firstSnapshot)).toContain("Fix issue 123.");
+    expect(getMessageText(secondSnapshot)).toContain("Fix issue 456.");
+    expect(firstSnapshot.metadata?.agentSkillSnapshot?.sha256).not.toBe(
+      secondSnapshot.metadata?.agentSkillSnapshot?.sha256
+    );
+  });
+
+  it("still dedupes repeated invocations with identical arguments", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue $ARGUMENTS.",
+    });
+    const { session, appendToHistory } = await createSessionHarness({ workspacePath });
+
+    const options = {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill" as const,
+        rawCommand: "/fix-issue 123",
+        skillName: "fix-issue",
+        scope: "project" as const,
+        arguments: "123",
+      },
+    };
+
+    const first = await session.sendMessage("Using skill fix-issue: 123", options);
+    expect(first.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const second = await session.sendMessage("Using skill fix-issue: 123", options);
+    expect(second.success).toBe(true);
+    // Identical substituted body → snapshot deduped; only the user message is appended.
+    expect(appendToHistory.mock.calls).toHaveLength(3);
+  });
+
+  it("leaves placeholders in inline-referenced skill bodies untouched", async () => {
+    const skillBody = "Fix issue $1 with $ARGUMENTS.";
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody,
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Please follow $fix-issue for 123", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "normal",
+        agentSkillRefs: [{ skillName: "fix-issue", scope: "project", source: "inline" }],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    // Inline refs carry no argument concept: the body must stay byte-identical.
+    expect(getMessageText(messages[0])).toContain(skillBody);
+  });
+
+  it("keeps bodies without placeholders byte-identical when arguments are provided", async () => {
+    // Note: $0 and $ARG are not placeholders; $100 would be ($1 + literal "00").
+    const skillBody = "Follow this skill. Cost is $0 and $ARG stays.";
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "no-placeholders",
+      skillBody,
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Using skill no-placeholders: 123 high", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/no-placeholders 123 high",
+        skillName: "no-placeholders",
+        scope: "project",
+        arguments: "123 high",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    // Fallback: no placeholders → body untouched; the arguments stay visible in the
+    // user message only.
+    expect(getMessageText(messages[0])).toContain(skillBody);
+  });
+
+  it("substitutes placeholders with empty strings when a slash invocation has no arguments", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "fix-issue",
+      skillBody: "Fix issue [$1] with [$ARGUMENTS].",
+    });
+    const { session, appendToHistory, messages } = await createSessionHarness({ workspacePath });
+
+    const result = await session.sendMessage("Use skill fix-issue", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/fix-issue",
+        skillName: "fix-issue",
+        scope: "project",
+        arguments: "",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    expect(getMessageText(messages[0])).toContain("Fix issue [] with [].");
+  });
+
+  it("leaves dynamic context directives literal and executes nothing when the experiment is off", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      // The directive has an observable side effect so we can prove it never ran.
+      skillBody: "Context:\n!`touch dynamic-context-ran.marker`\nDone.",
+    });
+    const isExperimentLocallyEnabled = mock(() => false);
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: { isExperimentLocallyEnabled },
+    });
+
+    const result = await session.sendMessage("use dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn",
+        skillName: "dyn",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(isExperimentLocallyEnabled).toHaveBeenCalledWith(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT);
+    // Body unchanged: the directive stays literal text...
+    expect(getMessageText(messages[0])).toContain("!`touch dynamic-context-ran.marker`");
+    // ...and no command executed (the side-effect marker must not exist).
+    expect(existsSync(path.join(workspacePath, "dynamic-context-ran.marker"))).toBe(false);
+  });
+
+  it("replaces whole-line directives with command output when the experiment is on", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      skillBody: "Context:\n!`echo dynamic-ok`\n!`exit 7`\nDone.",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("use dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn",
+        skillName: "dyn",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const text = getMessageText(messages[0]);
+    expect(text).toContain("```text (output of: echo dynamic-ok)\ndynamic-ok\n```");
+    expect(text).not.toContain("!`echo dynamic-ok`");
+    // Real runtime exit-code plumbing: non-zero exit still injects, annotated.
+    expect(text).toContain("[exit code 7]");
+  });
+
+  it("bounds directive output while reading and still appends the truncation marker", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      // ~64KB of output, well over the 16KB cap. The capped reader must bound
+      // accumulation during the read (not just post-hoc) and hand the module an
+      // over-cap payload so its truncation marker still fires.
+      skillBody: "!`head -c 65536 /dev/zero | tr '\\\\0' x`",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("use dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn",
+        skillName: "dyn",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const text = getMessageText(messages[0]);
+    expect(text).toContain("[output truncated at 16KB]");
+    // The materialized snapshot must carry at most the cap (+ formatting), not 64KB.
+    expect(text.length).toBeLessThan(32 * 1024);
+  });
+
+  it("composes dynamic context with $ARGUMENTS substitution (arguments first)", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      skillBody: "!`echo $1`",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("use dyn hi", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn hi",
+        skillName: "dyn",
+        scope: "project",
+        arguments: "hi",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    // $1 → "hi" happens before execution, so the command itself sees the argument.
+    expect(getMessageText(messages[0])).toContain("```text (output of: echo hi)\nhi\n```");
+  });
+
+  it("injects dynamic context for inline skill refs (also user-initiated)", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      skillBody: "!`echo inline-ok`",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("Please follow $dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "normal",
+        agentSkillRefs: [{ skillName: "dyn", scope: "project", source: "inline" }],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(getMessageText(messages[0])).toContain(
+      "```text (output of: echo inline-ok)\ninline-ok\n```"
+    );
   });
 
   it("truncates edits starting from preceding skill/file snapshots", async () => {

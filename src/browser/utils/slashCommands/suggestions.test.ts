@@ -94,6 +94,46 @@ describe("getSlashCommandSuggestions", () => {
     expect(skillSuggestion?.description).toContain("(project)");
   });
 
+  it("hides user-invocable: false skills from slash suggestions", () => {
+    const suggestions = getSlashCommandSuggestions("/", {
+      agentSkills: [
+        {
+          name: "visible-skill",
+          description: "Visible",
+          scope: "project",
+        },
+        {
+          name: "model-only-skill",
+          description: "Hidden from user-facing surfaces",
+          scope: "project",
+          userInvocable: false,
+        },
+      ],
+    });
+
+    const labels = suggestions.map((s) => s.display);
+    expect(labels).toContain("/visible-skill");
+    expect(labels).not.toContain("/model-only-skill");
+  });
+
+  it("shows argument-hint next to the skill name without affecting matching or replacement", () => {
+    const suggestions = getSlashCommandSuggestions("/fix", {
+      agentSkills: [
+        {
+          name: "fix-issue",
+          description: "Fix a GitHub issue",
+          scope: "project",
+          argumentHint: "[issue-number]",
+        },
+      ],
+    });
+
+    const skillSuggestion = suggestions.find((s) => s.id === "skill:fix-issue");
+    expect(skillSuggestion?.display).toBe("/fix-issue [issue-number]");
+    // Hint is display-only: inserting the suggestion must not paste the hint.
+    expect(skillSuggestion?.replacement).toBe("/fix-issue ");
+  });
+
   it("matches hyphenated skill segments", () => {
     const suggestions = getSlashCommandSuggestions("/r", {
       agentSkills: [

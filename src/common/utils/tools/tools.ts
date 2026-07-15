@@ -269,6 +269,8 @@ export interface ToolConfiguration {
     memory?: boolean;
     workspaceHeartbeats?: boolean;
     toolSearch?: boolean;
+    /** claude-skills-compat: discover skills from .claude/skills and ~/.claude/skills (read-only). */
+    claudeSkillsCompat?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];

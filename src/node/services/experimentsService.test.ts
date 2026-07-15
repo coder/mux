@@ -69,6 +69,63 @@ describe("ExperimentsService", () => {
     );
   });
 
+  test("isExperimentLocallyEnabled requires a local override; remote/cached assignment never satisfies it", async () => {
+    const cacheFilePath = path.join(tempDir, "feature_flags.json");
+    // Seed a cached remote assignment that turns the experiment ON.
+    await fs.writeFile(
+      cacheFilePath,
+      JSON.stringify(
+        {
+          version: 1,
+          experiments: {
+            [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: {
+              value: true,
+              fetchedAtMs: Date.now(),
+            },
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const telemetryService = {
+      getPostHogClient: mock(() => ({
+        getFeatureFlag: mock(() => Promise.resolve(true)),
+      })),
+      getDistinctId: mock(() => "distinct-id"),
+      setFeatureFlagVariant: mock(() => undefined),
+    } as unknown as TelemetryService;
+
+    const service = new ExperimentsService({
+      telemetryService,
+      muxHome: tempDir,
+      cacheTtlMs: 60 * 60 * 1000,
+    });
+    await service.initialize();
+
+    // localOverrideOnly: the cached remote assignment must be excluded from the
+    // evaluation path entirely, so BOTH gates read disabled — Settings UI and
+    // the execution gate can never disagree.
+    expect(service.getExperimentValue(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toEqual({
+      value: null,
+      source: "disabled",
+    });
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+
+    // An explicit local toggle enables both gates consistently.
+    await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, true);
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
+    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
+
+    // Clearing the override turns both gates off again (no remote fallback).
+    await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, null);
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+  });
+
   test("refreshExperiment updates cache and writes it to disk", async () => {
     const setFeatureFlagVariant = mock(() => undefined);
     const fakePostHog = {

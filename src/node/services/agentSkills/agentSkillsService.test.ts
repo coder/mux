@@ -532,6 +532,127 @@ describe("agentSkillsService", () => {
     expect(sharedProject!.description).toBe("from project mux");
   });
 
+  test("getDefaultAgentSkillsRoots includes .claude roots only when includeClaudeSkills is set", () => {
+    using project = new DisposableTempDir("agent-skills-claude-roots");
+    const runtime = new LocalRuntime(project.path);
+
+    const defaultRoots = getDefaultAgentSkillsRoots(runtime, project.path);
+    expect(defaultRoots.projectClaudeRoot).toBeUndefined();
+    expect(defaultRoots.globalClaudeRoot).toBeUndefined();
+
+    const offRoots = getDefaultAgentSkillsRoots(runtime, project.path, {
+      includeClaudeSkills: false,
+    });
+    expect(offRoots.projectClaudeRoot).toBeUndefined();
+    expect(offRoots.globalClaudeRoot).toBeUndefined();
+
+    const onRoots = getDefaultAgentSkillsRoots(runtime, project.path, {
+      includeClaudeSkills: true,
+    });
+    expect(onRoots.projectClaudeRoot).toBe(path.join(project.path, ".claude", "skills"));
+    expect(onRoots.globalClaudeRoot).toBe("~/.claude/skills");
+  });
+
+  test("experiment off: .claude/skills stays invisible with default-shaped roots", async () => {
+    using project = new DisposableTempDir("agent-skills-claude-off");
+    using global = new DisposableTempDir("agent-skills-claude-off-global");
+
+    await writeSkill(path.join(project.path, ".claude", "skills"), "claude-only", "from claude");
+    await writeSkill(path.join(project.path, ".agents", "skills"), "agents-only", "from agents");
+
+    const runtime = new LocalRuntime(project.path);
+    // Default (experiment-off) roots, with global roots pinned to temp dirs so the
+    // test never scans the developer machine's real ~/.mux or ~/.agents.
+    const roots = {
+      ...getDefaultAgentSkillsRoots(runtime, project.path),
+      globalRoot: global.path,
+      universalRoot: "",
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.find((s) => s.name === "claude-only")).toBeUndefined();
+    // Sanity: sibling .agents root still discovered, so absence above is claude-specific.
+    expect(skills.find((s) => s.name === "agents-only")).toMatchObject({ scope: "project" });
+  });
+
+  test("experiment on: discovers skills from project .claude/skills at lowest project precedence", async () => {
+    using project = new DisposableTempDir("agent-skills-claude-on");
+    using global = new DisposableTempDir("agent-skills-claude-on-global");
+
+    const claudeSkillsRoot = path.join(project.path, ".claude", "skills");
+    await writeSkill(claudeSkillsRoot, "claude-only", "from claude");
+    await writeSkill(claudeSkillsRoot, "shared-mux", "from claude");
+    await writeSkill(claudeSkillsRoot, "shared-agents", "from claude");
+    await writeSkill(path.join(project.path, ".mux", "skills"), "shared-mux", "from project mux");
+    await writeSkill(
+      path.join(project.path, ".agents", "skills"),
+      "shared-agents",
+      "from project universal"
+    );
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      ...getDefaultAgentSkillsRoots(runtime, project.path, { includeClaudeSkills: true }),
+      globalRoot: global.path,
+      universalRoot: "",
+      globalClaudeRoot: "",
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.find((s) => s.name === "claude-only")).toMatchObject({
+      scope: "project",
+      description: "from claude",
+    });
+    // Precedence: .mux > .agents > .claude within the project scope.
+    expect(skills.find((s) => s.name === "shared-mux")).toMatchObject({
+      scope: "project",
+      description: "from project mux",
+    });
+    expect(skills.find((s) => s.name === "shared-agents")).toMatchObject({
+      scope: "project",
+      description: "from project universal",
+    });
+
+    // Read path resolves the .claude skill with the same roots as discovery.
+    const claudeOnlyName = SkillNameSchema.parse("claude-only");
+    const resolved = await readAgentSkill(runtime, project.path, claudeOnlyName, { roots });
+    expect(resolved.package.scope).toBe("project");
+    expect(resolved.package.frontmatter.description).toBe("from claude");
+  });
+
+  test("experiment on: scans ~/.claude/skills after mux global and universal roots", async () => {
+    using project = new DisposableTempDir("agent-skills-claude-global");
+    using global = new DisposableTempDir("agent-skills-claude-global-mux");
+    using universal = new DisposableTempDir("agent-skills-claude-global-universal");
+    using claude = new DisposableTempDir("agent-skills-claude-global-claude");
+
+    await writeSkill(universal.path, "shared-global", "from universal");
+    await writeSkill(claude.path, "shared-global", "from claude");
+    await writeSkill(claude.path, "claude-global-only", "from claude global");
+
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+      universalRoot: universal.path,
+      globalClaudeRoot: claude.path,
+    };
+    const runtime = new LocalRuntime(project.path);
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    // Precedence: ~/.agents beats ~/.claude for colliding names.
+    expect(skills.find((s) => s.name === "shared-global")).toMatchObject({
+      scope: "global",
+      description: "from universal",
+    });
+    expect(skills.find((s) => s.name === "claude-global-only")).toMatchObject({
+      scope: "global",
+      description: "from claude global",
+    });
+  });
+
   test("discoverAgentSkillsDiagnostics includes project .agents/skills", async () => {
     using project = new DisposableTempDir("agent-skills-project");
     using global = new DisposableTempDir("agent-skills-global");

@@ -23,19 +23,28 @@ export interface SkillStorageContext {
 }
 
 function buildProjectLocalRoots(
-  muxScope: Extract<MuxToolScope, { type: "project" }>
+  muxScope: Extract<MuxToolScope, { type: "project" }>,
+  options?: { includeClaudeSkills?: boolean }
 ): AgentSkillsRoots {
   return {
     projectRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
     projectUniversalRoot: path.join(muxScope.projectRoot, ".agents", "skills"),
     globalRoot: path.join(muxScope.muxHome, "skills"),
     universalRoot: "~/.agents/skills",
+    // claude-skills-compat experiment: read-only roots at lowest precedence within each scope.
+    ...(options?.includeClaudeSkills
+      ? {
+          projectClaudeRoot: path.join(muxScope.projectRoot, ".claude", "skills"),
+          globalClaudeRoot: "~/.claude/skills",
+        }
+      : {}),
   };
 }
 
 function buildGlobalLocalRoots(input: {
   runtime: Runtime;
   muxScope?: MuxToolScope | null;
+  includeClaudeSkills?: boolean;
 }): AgentSkillsRoots {
   const muxHome = input.muxScope?.muxHome ?? input.runtime.getMuxHome();
 
@@ -43,6 +52,8 @@ function buildGlobalLocalRoots(input: {
     projectRoot: "",
     globalRoot: path.join(muxHome, "skills"),
     universalRoot: "~/.agents/skills",
+    // claude-skills-compat experiment: read-only root at lowest global precedence.
+    ...(input.includeClaudeSkills ? { globalClaudeRoot: "~/.claude/skills" } : {}),
   };
 }
 
@@ -67,6 +78,8 @@ export function resolveSkillStorageContext(input: {
   runtime: Runtime;
   workspacePath: string;
   muxScope?: MuxToolScope | null;
+  /** claude-skills-compat experiment: include read-only .claude/skills roots in discovery. */
+  includeClaudeSkills?: boolean;
 }): SkillStorageContext {
   if (input.muxScope?.type !== "project") {
     return {
@@ -78,6 +91,7 @@ export function resolveSkillStorageContext(input: {
       roots: buildGlobalLocalRoots({
         runtime: input.runtime,
         muxScope: input.muxScope,
+        includeClaudeSkills: input.includeClaudeSkills,
       }),
       containment: { kind: "none" },
     };
@@ -102,7 +116,9 @@ export function resolveSkillStorageContext(input: {
       muxScope: input.muxScope,
     }),
     workspacePath: input.workspacePath,
-    roots: buildProjectLocalRoots(input.muxScope),
+    roots: buildProjectLocalRoots(input.muxScope, {
+      includeClaudeSkills: input.includeClaudeSkills,
+    }),
     containment: {
       kind: "local",
       root: input.muxScope.projectRoot,

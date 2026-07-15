@@ -18,6 +18,7 @@ function slashInvocation(skill: AgentSkillDescriptor): SkillInvocation {
   return {
     descriptor: skill,
     userText: `Using skill ${skill.name}: message`,
+    argumentText: "message",
   };
 }
 
@@ -35,6 +36,30 @@ describe("parseCommandWithSkillInvocation", () => {
       type: "goal-set",
       objective: "--bogus\nBody",
     });
+  });
+
+  test("treats user-invocable: false skills as nonexistent for typed /skill-name", async () => {
+    const modelOnly = { ...descriptor("model-only"), userInvocable: false };
+
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/model-only do something",
+      agentSkillDescriptors: [modelOnly],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.skillInvocation).toBeNull();
+  });
+
+  test("resolves user-invocable skills for typed /skill-name", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/tdd do something",
+      agentSkillDescriptors: [descriptor("tdd")],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.skillInvocation?.descriptor.name).toBe("tdd");
   });
 });
 
@@ -78,6 +103,21 @@ describe("resolveInlineSkillRefsForSend", () => {
       { skillName: "deep-review", scope: "project", source: "inline" },
       { skillName: "tdd", scope: "global", source: "inline" },
     ]);
+  });
+
+  test("drops inline refs to user-invocable: false skills", async () => {
+    expect(
+      await resolveInlineSkillRefsForSend({
+        messageText: "Use $model-only and $tdd",
+        slashInvocation: null,
+        agentSkillDescriptors: [
+          { ...descriptor("model-only"), userInvocable: false },
+          descriptor("tdd"),
+        ],
+        api: null,
+        discovery: null,
+      })
+    ).toEqual([{ skillName: "tdd", scope: "global", source: "inline" }]);
   });
 
   test("collapses duplicate inline refs", async () => {

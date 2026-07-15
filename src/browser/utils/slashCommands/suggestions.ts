@@ -62,18 +62,30 @@ function buildTopLevelSuggestions(
   // The skill build callback below hardcodes the trailing space, so we omit
   // `appendSpace` here — leaving it set would be a no-op and falsely suggest
   // the build path consults it.
-  const skillDefinitions: SuggestionDefinition[] = (context.agentSkills ?? [])
+  // user-invocable: false skills are hidden from user-facing invocation surfaces
+  // (this covers both the chat slash menu and the command palette skill list).
+  const skillDefinitions: Array<SuggestionDefinition & { argumentHint?: string }> = (
+    context.agentSkills ?? []
+  )
+    .filter((skill) => skill.userInvocable !== false)
     .filter((skill) => !SLASH_COMMAND_DEFINITION_MAP.has(skill.name))
     .map((skill) => ({
       key: skill.name,
       description: `${skill.description} (${formatScopeLabel(skill.scope)})`,
+      argumentHint: skill.argumentHint,
     }));
 
   const skillSuggestions = filterAndMapSuggestions(skillDefinitions, partial, (definition) => {
     const replacement = `/${definition.key} `;
     return {
       id: `skill:${definition.key}`,
-      display: `/${definition.key}`,
+      // Skills with an argument-hint show it next to the name (e.g.
+      // "/fix-issue [issue-number]") so users learn the expected arguments in
+      // the invocation UI itself; matching/replacement still use only the name.
+      display:
+        definition.argumentHint === undefined
+          ? `/${definition.key}`
+          : `/${definition.key} ${definition.argumentHint}`,
       description: definition.description,
       kind: "skill",
       replacement,
