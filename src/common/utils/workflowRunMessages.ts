@@ -41,6 +41,9 @@ export function isTerminalWorkflowRunToolOutput(
   if (!isWorkflowRunEmittingToolName(toolName) || !isRecordValue(output)) {
     return false;
   }
+  if (output.type === "json" && "value" in output) {
+    return isTerminalWorkflowRunToolOutput(toolName, output.value, runId);
+  }
   const status = output.status;
   return (
     output.runId === runId &&

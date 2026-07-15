@@ -44,6 +44,23 @@ describe("workflowRunMessages", () => {
     ).toBe(false);
   });
 
+  test("recognizes terminal workflow output in the SDK JSON wrapper", () => {
+    expect(
+      isTerminalWorkflowRunToolOutput(
+        "workflow_resume",
+        {
+          type: "json",
+          value: {
+            status: "completed",
+            runId: run.id,
+            result: { reportMarkdown: "done" },
+          },
+        },
+        run.id
+      )
+    ).toBe(true);
+  });
+
   test("strips large run snapshots from model-bound workflow tool outputs", () => {
     const stripped = stripWorkflowRunRecordForModel("workflow_run", {
       status: "completed",
