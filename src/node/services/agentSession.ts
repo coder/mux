@@ -140,6 +140,7 @@ import { substituteSkillArguments } from "@/node/services/agentSkills/skillArgum
 import {
   injectSkillDynamicContext,
   SKILL_DYNAMIC_COMMAND_TIMEOUT_MS,
+  SKILL_DYNAMIC_OUTPUT_CAP_BYTES,
 } from "@/node/services/agentSkills/skillDynamicContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -6194,6 +6195,12 @@ export class AgentSession {
             // Runtime-level timeout (seconds) actually kills the process; the
             // module-level race in injectSkillDynamicContext bounds our wait.
             timeout: Math.ceil(SKILL_DYNAMIC_COMMAND_TIMEOUT_MS / 1000),
+            // Bound memory while reading, not just after: without this, a
+            // directive like !`cat big.log` would buffer the entire output
+            // before the module's truncateOutput cap applies. +1 so the
+            // module still sees an over-cap payload and appends its
+            // "[output truncated ...]" marker.
+            maxOutputBytes: SKILL_DYNAMIC_OUTPUT_CAP_BYTES + 1,
           });
           return {
             stdout: execResult.stdout,

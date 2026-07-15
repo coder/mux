@@ -116,6 +116,24 @@ describe("getSlashCommandSuggestions", () => {
     expect(labels).not.toContain("/model-only-skill");
   });
 
+  it("shows argument-hint next to the skill name without affecting matching or replacement", () => {
+    const suggestions = getSlashCommandSuggestions("/fix", {
+      agentSkills: [
+        {
+          name: "fix-issue",
+          description: "Fix a GitHub issue",
+          scope: "project",
+          argumentHint: "[issue-number]",
+        },
+      ],
+    });
+
+    const skillSuggestion = suggestions.find((s) => s.id === "skill:fix-issue");
+    expect(skillSuggestion?.display).toBe("/fix-issue [issue-number]");
+    // Hint is display-only: inserting the suggestion must not paste the hint.
+    expect(skillSuggestion?.replacement).toBe("/fix-issue ");
+  });
+
   it("matches hyphenated skill segments", () => {
     const suggestions = getSlashCommandSuggestions("/r", {
       agentSkills: [

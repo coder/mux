@@ -736,6 +736,39 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(text).toContain("[exit code 7]");
   });
 
+  it("bounds directive output while reading and still appends the truncation marker", async () => {
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName: "dyn",
+      // ~64KB of output, well over the 16KB cap. The capped reader must bound
+      // accumulation during the read (not just post-hoc) and hand the module an
+      // over-cap payload so its truncation marker still fires.
+      skillBody: "!`head -c 65536 /dev/zero | tr '\\\\0' x`",
+    });
+    const { session, messages } = await createSessionHarness({
+      workspacePath,
+      aiServiceOverrides: {
+        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+      },
+    });
+
+    const result = await session.sendMessage("use dyn", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/dyn",
+        skillName: "dyn",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const text = getMessageText(messages[0]);
+    expect(text).toContain("[output truncated at 16KB]");
+    // The materialized snapshot must carry at most the cap (+ formatting), not 64KB.
+    expect(text.length).toBeLessThan(32 * 1024);
+  });
+
   it("composes dynamic context with $ARGUMENTS substitution (arguments first)", async () => {
     const { workspacePath } = await createTestWorkspaceWithSkill({
       skillName: "dyn",

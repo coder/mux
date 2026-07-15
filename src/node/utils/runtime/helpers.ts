@@ -1,5 +1,5 @@
 import type { Runtime, ExecOptions } from "@/node/runtime/Runtime";
-import { streamToString } from "@/node/runtime/streamUtils";
+import { streamToString, streamToStringCapped } from "@/node/runtime/streamUtils";
 import { PlatformPaths } from "@/node/utils/paths.main";
 import { getLegacyPlanFilePath, getPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/common/utils/shell";
@@ -37,7 +37,15 @@ export interface ExecResult {
 export async function execBuffered(
   runtime: Runtime,
   command: string,
-  options: ExecOptions & { stdin?: string }
+  options: ExecOptions & {
+    stdin?: string;
+    /**
+     * When set, stdout and stderr are each capped at this many raw bytes while
+     * reading (excess is drained and discarded), bounding memory on commands
+     * with unbounded output. Pair with `timeout` to also bound duration.
+     */
+    maxOutputBytes?: number;
+  }
 ): Promise<ExecResult> {
   const stream = await runtime.exec(command, options);
 
@@ -57,9 +65,13 @@ export async function execBuffered(
   }
 
   // Read stdout and stderr concurrently
+  const readStream =
+    options.maxOutputBytes !== undefined
+      ? (s: ReadableStream<Uint8Array>) => streamToStringCapped(s, options.maxOutputBytes!)
+      : streamToString;
   const [stdout, stderr, exitCode, duration] = await Promise.all([
-    streamToString(stream.stdout),
-    streamToString(stream.stderr),
+    readStream(stream.stdout),
+    readStream(stream.stderr),
     stream.exitCode,
     stream.duration,
   ]);
