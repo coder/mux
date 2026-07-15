@@ -2666,21 +2666,15 @@ export class AgentSession {
     // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
     // File changes after this point are surfaced via <system-file-update> diffs instead.
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
-    let skillSnapshotMessages: MuxMessage[] = [];
-    try {
-      skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
-        typedMuxMetadata,
-        options?.disableWorkspaceAgents
-      );
-    } catch (error) {
-      return Err(createUnknownSendMessageError(getErrorMessage(error)));
-    }
 
     // Check compaction threshold BEFORE persisting the user message.
-    // Note: snapshots are materialized above, but persistence is deferred until after
-    // this decision so on-send compaction can run against the pre-turn context.
-    // Persisting snapshots too early can bloat the compaction request context and
-    // make compaction itself fail near the context limit.
+    // Skill snapshots are materialized AFTER this decision (below): when on-send
+    // compaction defers the turn, the follow-up re-enters sendMessage with the same
+    // skill metadata and materializes then. Materializing before the decision would
+    // run twice — executing dynamic context directives (side effects!) once for a
+    // snapshot that is immediately discarded.
+    // Persisting snapshots too early can also bloat the compaction request context
+    // and make compaction itself fail near the context limit.
     // If on-send compaction is needed, we skip persisting the user's message now — it becomes
     // the follow-up content sent after compaction completes. This avoids duplicating the user
     // turn in model context (the compaction would otherwise summarize a transcript that already
@@ -2777,6 +2771,21 @@ export class AgentSession {
     // Persist snapshots only when this turn will be sent immediately.
     // On on-send compaction paths, snapshots are deferred with the follow-up turn.
     const shouldPersistTurnSnapshots = autoCompactionMessage === null;
+
+    // Materialize skill snapshots only for turns that send immediately (see the
+    // compaction-decision comment above: deferred turns re-materialize on follow-up,
+    // and materialization may execute dynamic context directives).
+    let skillSnapshotMessages: MuxMessage[] = [];
+    if (shouldPersistTurnSnapshots) {
+      try {
+        skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
+          typedMuxMetadata,
+          options?.disableWorkspaceAgents
+        );
+      } catch (error) {
+        return Err(createUnknownSendMessageError(getErrorMessage(error)));
+      }
+    }
 
     if (shouldPersistTurnSnapshots && snapshotResult?.snapshotMessage) {
       const snapshotAppendResult = await this.historyService.appendToHistory(
@@ -6166,9 +6175,12 @@ export class AgentSession {
   }): Promise<string> {
     // The typeof guard mirrors the getWorkspaceMetadata guard in
     // materializeAgentSkillSnapshots: test mocks may provide a partial AIService.
+    // isExperimentLocallyEnabled (not isExperimentEnabled): shell execution must
+    // require a deliberate local Settings toggle; a remote/cached experiment
+    // assignment must never be able to switch it on.
     if (
-      typeof this.aiService.isExperimentEnabled !== "function" ||
-      !this.aiService.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)
+      typeof this.aiService.isExperimentLocallyEnabled !== "function" ||
+      !this.aiService.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)
     ) {
       return args.body;
     }
@@ -6179,8 +6191,10 @@ export class AgentSession {
         // SECURITY AUDIT: this sink executes shell commands sourced from SKILL.md
         // bodies, which are repo-controlled and therefore attacker-controlled input
         // (any cloned repo can ship arbitrary skills). It is acceptable only because:
-        // (1) it is gated behind the default-off "skill-dynamic-context" experiment,
-        // so the user has explicitly opted into skills running commands; and
+        // (1) it is gated on an explicit LOCAL override of the default-off
+        // "skill-dynamic-context" experiment (Settings toggle); remote/cached
+        // experiment assignment can never enable it (see isExperimentLocallyEnabled),
+        // so the user has deliberately opted into skills running commands; and
         // (2) it runs solely on user-initiated skill invocations (slash "/skill" or
         // inline "$skill" refs) — the model-side agent_skill_read tool never reaches
         // this path — so each execution traces to a deliberate user action on a skill

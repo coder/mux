@@ -38,6 +38,7 @@ export async function streamToStringCapped(
   // Array-join instead of += for the same rope-avoidance reason as streamToString.
   const chunks: string[] = [];
   let collectedBytes = 0;
+  let truncated = false;
 
   try {
     while (true) {
@@ -45,15 +46,22 @@ export async function streamToStringCapped(
       if (done) break;
       if (collectedBytes >= maxBytes) {
         // Cap reached: drain without accumulating.
+        truncated = truncated || value.byteLength > 0;
         continue;
       }
       const remaining = maxBytes - collectedBytes;
       const slice = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      truncated = truncated || slice.byteLength < value.byteLength;
       collectedBytes += slice.byteLength;
       chunks.push(decoder.decode(slice, { stream: true }));
     }
-    const tail = decoder.decode();
-    if (tail) chunks.push(tail);
+    // Only flush the decoder when the stream ended naturally under the cap.
+    // When truncated, the cap may have split a multi-byte code point; flushing
+    // would emit U+FFFD instead of a clean prefix, so drop the partial bytes.
+    if (!truncated) {
+      const tail = decoder.decode();
+      if (tail) chunks.push(tail);
+    }
     return chunks.join("");
   } finally {
     reader.releaseLock();

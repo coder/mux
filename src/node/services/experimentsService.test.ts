@@ -69,6 +69,56 @@ describe("ExperimentsService", () => {
     );
   });
 
+  test("isExperimentLocallyEnabled requires a local override; remote/cached assignment never satisfies it", async () => {
+    const cacheFilePath = path.join(tempDir, "feature_flags.json");
+    // Seed a cached remote assignment that turns the experiment ON.
+    await fs.writeFile(
+      cacheFilePath,
+      JSON.stringify(
+        {
+          version: 1,
+          experiments: {
+            [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: {
+              value: true,
+              fetchedAtMs: Date.now(),
+            },
+          },
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const telemetryService = {
+      getPostHogClient: mock(() => ({
+        getFeatureFlag: mock(() => Promise.resolve(true)),
+      })),
+      getDistinctId: mock(() => "distinct-id"),
+      setFeatureFlagVariant: mock(() => undefined),
+    } as unknown as TelemetryService;
+
+    const service = new ExperimentsService({
+      telemetryService,
+      muxHome: tempDir,
+      cacheTtlMs: 60 * 60 * 1000,
+    });
+    await service.initialize();
+
+    // Remote/cached assignment enables the regular gate...
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
+    // ...but must never satisfy the security-sensitive local-consent gate.
+    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+
+    await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, true);
+    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
+
+    // Clearing the override falls back to remote assignment for the regular
+    // gate, while the local gate turns off again.
+    await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, null);
+    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+  });
+
   test("refreshExperiment updates cache and writes it to disk", async () => {
     const setFeatureFlagVariant = mock(() => undefined);
     const fakePostHog = {

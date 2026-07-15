@@ -131,6 +131,56 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("does not materialize skill snapshots (or run their directives) on deferred on-send compaction turns", async () => {
+    const workspaceId = "ws-auto-compaction-skill-snapshot-deferral";
+
+    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const { session } = await createSessionHarness({
+      workspaceId,
+      streamMessage: streamMessage as unknown as AIService["streamMessage"],
+    });
+
+    const internals = session as unknown as {
+      materializeAgentSkillSnapshots: (...args: unknown[]) => Promise<MuxMessage[]>;
+      compactionMonitor: CompactionMonitor;
+    };
+
+    // Materialization can execute skill dynamic-context directives (side effects),
+    // so a turn that defers to on-send compaction must not materialize at all —
+    // the post-compaction follow-up re-enters sendMessage and materializes then.
+    const materializeSkillSnapshots = mock(() => Promise.resolve([]));
+    internals.materializeAgentSkillSnapshots = materializeSkillSnapshots;
+
+    internals.compactionMonitor = {
+      checkBeforeSend: mock(() => ({
+        shouldShowWarning: true,
+        shouldForceCompact: true,
+        usagePercentage: 99,
+        thresholdPercentage: 85,
+      })),
+      checkMidStream: mock(() => false),
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.85),
+    } as unknown as CompactionMonitor;
+
+    const result = await session.sendMessage("use my-skill", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/my-skill",
+        skillName: "my-skill",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(materializeSkillSnapshots).not.toHaveBeenCalled();
+
+    session.dispose();
+  });
+
   test("preserves goal kind on auto-compaction follow-up requests", async () => {
     const { session } = await createSessionHarness({
       workspaceId: "ws-auto-compaction-goal-kind",

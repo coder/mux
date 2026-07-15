@@ -205,6 +205,17 @@ export class ExperimentsService {
   }
 
   /**
+   * True only when the user has explicitly enabled the experiment via a local
+   * override (Settings → Experiments toggle). Remote/cached PostHog assignment
+   * can NEVER satisfy this gate. Use for security-sensitive experiments where
+   * "enabled" must mean deliberate local user consent (e.g. skill dynamic
+   * context injection, which executes repo-controlled shell commands).
+   */
+  isExperimentLocallyEnabled(experimentId: ExperimentId): boolean {
+    return this.overrides.get(experimentId) === true;
+  }
+
+  /**
    * Convert an experiment assignment to a boolean gate.
    *
    * NOTE: This intentionally does not block on network calls.

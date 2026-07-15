@@ -36,6 +36,11 @@ export async function discoverWorkflowScripts(
   const skillNames: SkillName[] = [];
   const seen = new Set<string>();
   const addSkill = (descriptor: AgentSkillDescriptor) => {
+    // The Workflows tab launcher is a user-facing invocation surface, so honor
+    // user-invocable: false the same way slash/palette/ACP surfaces do.
+    if (descriptor.userInvocable === false) {
+      return;
+    }
     if (!seen.has(descriptor.name)) {
       seen.add(descriptor.name);
       skillNames.push(descriptor.name);

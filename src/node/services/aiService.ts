@@ -567,6 +567,16 @@ export class AIService extends EventEmitter {
   }
 
   /**
+   * Whether the user explicitly enabled an experiment via local override.
+   * Unlike isExperimentEnabled, remote assignment can never satisfy this gate —
+   * required for security-sensitive experiments (see
+   * ExperimentsService.isExperimentLocallyEnabled).
+   */
+  isExperimentLocallyEnabled(experimentId: ExperimentId): boolean {
+    return this.experimentsService?.isExperimentLocallyEnabled(experimentId) === true;
+  }
+
+  /**
    * Build the session-segment memory context: the index snapshot advertised
    * in the memory tool description, plus the hot-memories block (pinned +
    * frequently used memory files; memory-hot-set sub-experiment). Returns

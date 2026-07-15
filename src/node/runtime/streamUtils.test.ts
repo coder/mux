@@ -36,6 +36,13 @@ describe("streamToStringCapped", () => {
     expect(capped).toBe(full);
   });
 
+  it("drops a code point split by the cap instead of emitting U+FFFD", async () => {
+    // "é" is 2 bytes in UTF-8; cap of 7 splits it after "hello " (6 bytes) + 1 byte.
+    const result = await streamToStringCapped(chunkedStream(["hello é world"]), 7);
+    expect(result).toBe("hello ");
+    expect(result).not.toContain("\uFFFD");
+  });
+
   it("rejects negative caps", async () => {
     let error: unknown = null;
     try {

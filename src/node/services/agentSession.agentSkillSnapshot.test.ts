@@ -680,10 +680,10 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
       // The directive has an observable side effect so we can prove it never ran.
       skillBody: "Context:\n!`touch dynamic-context-ran.marker`\nDone.",
     });
-    const isExperimentEnabled = mock(() => false);
+    const isExperimentLocallyEnabled = mock(() => false);
     const { session, messages } = await createSessionHarness({
       workspacePath,
-      aiServiceOverrides: { isExperimentEnabled },
+      aiServiceOverrides: { isExperimentLocallyEnabled },
     });
 
     const result = await session.sendMessage("use dyn", {
@@ -698,7 +698,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(isExperimentEnabled).toHaveBeenCalledWith(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT);
+    expect(isExperimentLocallyEnabled).toHaveBeenCalledWith(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT);
     // Body unchanged: the directive stays literal text...
     expect(getMessageText(messages[0])).toContain("!`touch dynamic-context-ran.marker`");
     // ...and no command executed (the side-effect marker must not exist).
@@ -713,7 +713,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const { session, messages } = await createSessionHarness({
       workspacePath,
       aiServiceOverrides: {
-        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
       },
     });
 
@@ -747,7 +747,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const { session, messages } = await createSessionHarness({
       workspacePath,
       aiServiceOverrides: {
-        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
       },
     });
 
@@ -777,7 +777,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const { session, messages } = await createSessionHarness({
       workspacePath,
       aiServiceOverrides: {
-        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
       },
     });
 
@@ -806,7 +806,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const { session, messages } = await createSessionHarness({
       workspacePath,
       aiServiceOverrides: {
-        isExperimentEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
+        isExperimentLocallyEnabled: mock((id) => id === EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT),
       },
     });
 
