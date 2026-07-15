@@ -88,6 +88,52 @@ describe("resolveSkillStorageContext", () => {
     });
   });
 
+  it("adds read-only .claude roots when includeClaudeSkills is set", () => {
+    using tempDir = new TestTempDir("skill-storage-context-claude-roots");
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const projectRoot = path.join(tempDir.path, "project");
+    const muxScope: MuxToolScope = {
+      type: "project",
+      muxHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    };
+
+    const projectContext = resolveSkillStorageContext({
+      runtime,
+      workspacePath: "/remote/workspace",
+      muxScope,
+      includeClaudeSkills: true,
+    });
+
+    expect(projectContext.roots).toEqual({
+      projectRoot: path.join(projectRoot, ".mux", "skills"),
+      projectUniversalRoot: path.join(projectRoot, ".agents", "skills"),
+      projectClaudeRoot: path.join(projectRoot, ".claude", "skills"),
+      globalRoot: path.join(tempDir.path, "skills"),
+      universalRoot: "~/.agents/skills",
+      globalClaudeRoot: "~/.claude/skills",
+    });
+
+    const globalContext = resolveSkillStorageContext({
+      runtime,
+      workspacePath: tempDir.path,
+      muxScope: {
+        type: "global",
+        muxHome: tempDir.path,
+      },
+      includeClaudeSkills: true,
+    });
+
+    expect(globalContext.roots).toEqual({
+      projectRoot: "",
+      globalRoot: path.join(tempDir.path, "skills"),
+      universalRoot: "~/.agents/skills",
+      globalClaudeRoot: "~/.claude/skills",
+    });
+  });
+
   it("swaps devcontainer project-local contexts to a host-local runtime", async () => {
     using tempDir = new TestTempDir("skill-storage-context-project-local-devcontainer");
 

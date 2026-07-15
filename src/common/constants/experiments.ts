@@ -21,6 +21,7 @@ export const EXPERIMENT_IDS = {
   MEMORY_HOT_SET: "memory-hot-set",
   MEMORY_CONSOLIDATION: "memory-consolidation",
   TOOL_SEARCH: "tool-search",
+  CLAUDE_SKILLS_COMPAT: "claude-skills-compat",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -182,6 +183,15 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Tool Search",
     description:
       "Defer MCP tool definitions out of the model-visible tool list until the model discovers them via the tool_catalog_search tool",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT]: {
+    id: EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT,
+    name: "Claude skills compatibility",
+    description:
+      "Also discover Agent Skills from .claude/skills and ~/.claude/skills (read-only, lowest precedence within each scope)",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

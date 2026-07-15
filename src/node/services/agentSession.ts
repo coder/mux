@@ -6051,7 +6051,14 @@ export class AgentSession {
 
       let resolved: Awaited<ReturnType<typeof readAgentSkill>>;
       try {
-        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
+        // claude-skills-compat experiment: resolve slash-invoked skills with the same
+        // roots as discovery. Guard for test mocks that may not implement the gate.
+        const includeClaudeSkills =
+          typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
+          this.aiService.isClaudeSkillsCompatEnabled();
+        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data, {
+          includeClaudeSkills,
+        });
       } catch (error) {
         if (ref.source === "slash") {
           throw error;

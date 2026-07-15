@@ -1017,6 +1017,18 @@ export class AIService extends EventEmitter {
     return Ok(undefined);
   }
 
+  /**
+   * Host-evaluated gate for the claude-skills-compat experiment: when enabled, skill
+   * discovery/read paths also scan .claude/skills and ~/.claude/skills (read-only,
+   * lowest precedence). Public so AgentSession's skill snapshot materialization can
+   * resolve slash-invoked .claude skills with the same roots as discovery.
+   */
+  isClaudeSkillsCompatEnabled(): boolean {
+    return (
+      this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT) === true
+    );
+  }
+
   /** Stream a message conversation to the AI model. */
   async streamMessage(opts: StreamMessageOptions): Promise<Result<void, SendMessageError>> {
     const {
@@ -1424,6 +1436,9 @@ export class AIService extends EventEmitter {
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.TOOL_SEARCH) === true;
       const memoryHotSetExperimentEnabled =
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY_HOT_SET) === true;
+      // claude-skills-compat is host-evaluated (like memory-hot-set): sub-agents share the
+      // host ExperimentsService, so it is not inherited through SendMessageOptions.experiments.
+      const claudeSkillsCompatExperimentEnabled = this.isClaudeSkillsCompatEnabled();
       // Once final tool policy keeps the memory tool, upgrade the index-only
       // memory context (resolved pre-policy with includeHotMemories: false) to
       // the token-budgeted hot block for the model that will actually stream.
@@ -1623,6 +1638,7 @@ export class AIService extends EventEmitter {
           advisorToolAvailable: toolset.advisorToolAvailable,
           memoryToolAvailable: toolset.memoryToolAvailable,
           hotMemoriesBlock: contextForModel?.hotMemoriesBlock ?? undefined,
+          claudeSkillsCompatEnabled: claudeSkillsCompatExperimentEnabled,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
@@ -2175,6 +2191,7 @@ export class AIService extends EventEmitter {
           memory: memoryExperimentEnabled,
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
           toolSearch: toolSearchExperimentEnabled,
+          claudeSkillsCompat: claudeSkillsCompatExperimentEnabled,
         },
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,

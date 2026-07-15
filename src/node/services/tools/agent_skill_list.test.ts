@@ -161,6 +161,90 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("hides .claude/skills roots when the claude-skills-compat experiment is off", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-claude-off-home");
+    using project = new TestTempDir("test-agent-skill-list-claude-off-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-claude-off-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writeSkill(path.join(project.path, ".claude", "skills"), "claude-project", {
+          description: "from project claude root",
+        });
+        await writeSkill(path.join(homeDir.path, ".claude", "skills"), "claude-global", {
+          description: "from global claude root",
+        });
+
+        // Default tool config: no experiments => compat roots must stay invisible.
+        const tool = createAgentSkillListTool(
+          createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          })
+        );
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(result.skills.find((skill) => skill.name === "claude-project")).toBeUndefined();
+        expect(result.skills.find((skill) => skill.name === "claude-global")).toBeUndefined();
+      });
+    });
+  });
+
+  it("lists .claude/skills roots when the claude-skills-compat experiment is on", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-claude-on-home");
+    using project = new TestTempDir("test-agent-skill-list-claude-on-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-claude-on-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writeSkill(path.join(project.path, ".claude", "skills"), "claude-project", {
+          description: "from project claude root",
+        });
+        await writeSkill(path.join(homeDir.path, ".claude", "skills"), "claude-global", {
+          description: "from global claude root",
+        });
+
+        const tool = createAgentSkillListTool({
+          ...createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          }),
+          experiments: { claudeSkillsCompat: true },
+        });
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(getSkill(result.skills, "claude-project")).toMatchObject({
+          name: "claude-project",
+          description: "from project claude root",
+          scope: "project",
+        });
+        expect(getSkill(result.skills, "claude-global")).toMatchObject({
+          name: "claude-global",
+          description: "from global claude root",
+          scope: "global",
+        });
+      });
+    });
+  });
+
   it("returns only the winning descriptor when project skills shadow global skills", async () => {
     using project = new TestTempDir("test-agent-skill-list-shadow-project");
     using muxHome = new TestTempDir("test-agent-skill-list-shadow-home");
