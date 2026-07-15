@@ -102,6 +102,7 @@ export {
   AgentSkillPackageSchema,
   AgentSkillScopeSchema,
   SkillNameSchema,
+  buildSkillDescriptor,
   resolveSkillAdvertise,
   resolveSkillUserInvocable,
   resolveSkillWhenToUse,
