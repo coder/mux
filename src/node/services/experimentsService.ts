@@ -183,10 +183,17 @@ export class ExperimentsService {
 
     const override = this.overrides.get(experimentId);
     if (override !== undefined) {
-      if (this.isRemoteEvaluationEnabled()) {
+      if (this.isRemoteEvaluationEnabled() && !EXPERIMENTS[experimentId].localOverrideOnly) {
         this.maybeRefreshInBackground(experimentId);
       }
       return { value: override, source: "override" };
+    }
+
+    // Local-override-only experiments never consult remote/cached assignment:
+    // without an explicit local toggle they read as disabled, so Settings and
+    // security gates (isExperimentLocallyEnabled) always agree.
+    if (EXPERIMENTS[experimentId].localOverrideOnly) {
+      return { value: null, source: "disabled" };
     }
 
     if (!this.isRemoteEvaluationEnabled()) {

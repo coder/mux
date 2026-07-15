@@ -105,17 +105,24 @@ describe("ExperimentsService", () => {
     });
     await service.initialize();
 
-    // Remote/cached assignment enables the regular gate...
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
-    // ...but must never satisfy the security-sensitive local-consent gate.
+    // localOverrideOnly: the cached remote assignment must be excluded from the
+    // evaluation path entirely, so BOTH gates read disabled — Settings UI and
+    // the execution gate can never disagree.
+    expect(service.getExperimentValue(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toEqual({
+      value: null,
+      source: "disabled",
+    });
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
     expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
 
+    // An explicit local toggle enables both gates consistently.
     await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, true);
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
     expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
 
-    // Clearing the override falls back to remote assignment for the regular
-    // gate, while the local gate turns off again.
+    // Clearing the override turns both gates off again (no remote fallback).
     await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, null);
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
     expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
   });
 
