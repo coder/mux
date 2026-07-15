@@ -11,9 +11,7 @@ import {
   AgentSkillDescriptorSchema,
   AgentSkillPackageSchema,
   SkillNameSchema,
-  resolveSkillAdvertise,
-  resolveSkillUserInvocable,
-  resolveSkillWhenToUse,
+  buildSkillDescriptor,
 } from "@/common/orpc/schemas";
 import type {
   AgentSkillDescriptor,
@@ -269,15 +267,7 @@ async function readSkillDescriptorFromDir(
       directoryName,
     });
 
-    const descriptor: AgentSkillDescriptor = {
-      name: parsed.frontmatter.name,
-      description: parsed.frontmatter.description,
-      scope,
-      advertise: resolveSkillAdvertise(parsed.frontmatter),
-      userInvocable: resolveSkillUserInvocable(parsed.frontmatter),
-      argumentHint: parsed.frontmatter["argument-hint"],
-      whenToUse: resolveSkillWhenToUse(parsed.frontmatter),
-    };
+    const descriptor = buildSkillDescriptor(parsed.frontmatter, scope);
 
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
     if (!validated.success) {
