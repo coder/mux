@@ -290,6 +290,33 @@ describe("UserPreferencesProvider bridge helpers", () => {
     });
   });
 
+  test("keeps scratch AI defaults while pruning removed projects", () => {
+    const projects = new Map([["/repo/a", { workspaces: [] }]]);
+
+    expect(
+      prunePreferenceScopes({
+        preferences: {
+          ai: {
+            projectDefaults: {
+              _scratch: { agentId: "plan", model: "anthropic:claude-x", thinkingLevel: "high" },
+              "/repo/removed": { agentId: "plan" },
+            },
+          },
+        },
+        // The scratch system project is never part of the valid project paths.
+        projectPaths: new Set(["/repo/a"]),
+        workspaceIds: new Set(),
+        userProjects: projects,
+      })
+    ).toEqual({
+      ai: {
+        projectDefaults: {
+          _scratch: { agentId: "plan", model: "anthropic:claude-x", thinkingLevel: "high" },
+        },
+      },
+    });
+  });
+
   test("retries initial hydration failures until backend config loads", async () => {
     const controller = new AbortController();
     const errors: string[] = [];

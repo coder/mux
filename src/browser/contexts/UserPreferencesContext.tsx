@@ -20,6 +20,7 @@ import {
   readStoredUserPreferenceValue,
   removeStoredUserPreference,
 } from "@/common/preferences/userPreferencesStorage";
+import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { normalizeOrder } from "@/common/utils/projectOrdering";
 import { stableStringify } from "@/common/utils/stableStringify";
 
@@ -128,6 +129,12 @@ export function prunePreferenceScopes(params: {
       return;
     }
     for (const projectPath of Object.keys(record)) {
+      // The scratch composer persists AI prefs under the scratch system project
+      // scope, which userProjects excludes and which may not exist in config yet.
+      // Keep it valid here or pruning deletes those prefs and the picker reverts.
+      if (projectPath === SCRATCH_PROJECT_CONFIG_KEY) {
+        continue;
+      }
       if (!params.projectPaths.has(projectPath)) {
         delete record[projectPath];
       }
