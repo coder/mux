@@ -382,6 +382,7 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages: ReturnType<typeof mock>;
     isBusyForMessage: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+    hasPendingAutoRetry: ReturnType<typeof mock>;
     waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
     waitForIdle: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
@@ -409,6 +410,7 @@ function createWorkspaceServiceMocks(
   waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
   waitForIdle: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+  hasPendingAutoRetry: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   archive: ReturnType<typeof mock>;
   deleteWorktree: ReturnType<typeof mock>;
@@ -435,6 +437,7 @@ function createWorkspaceServiceMocks(
   const isBusyForMessage = overrides?.isBusyForMessage ?? mock(() => false);
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
+  const hasPendingAutoRetry = overrides?.hasPendingAutoRetry ?? mock(() => false);
   const waitForIdleAndNoQueuedMessages =
     overrides?.waitForIdleAndNoQueuedMessages ?? mock((): Promise<void> => Promise.resolve());
   const waitForIdle = overrides?.waitForIdle ?? mock((): Promise<void> => Promise.resolve());
@@ -477,6 +480,7 @@ function createWorkspaceServiceMocks(
       hasQueuedWorkspaceTurn,
       hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
+      hasPendingAutoRetry,
       waitForIdleAndNoQueuedMessages,
       waitForIdle,
       waitForPendingStreamErrorRecoveryDecision,
@@ -500,6 +504,7 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages,
     isBusyForMessage,
     hasPendingQueuedOrPreparingTurn,
+    hasPendingAutoRetry,
     waitForIdleAndNoQueuedMessages,
     waitForIdle,
     waitForPendingStreamErrorRecoveryDecision,
@@ -640,6 +645,7 @@ describe("TaskService", () => {
       isStreaming?: ReturnType<typeof mock>;
       hasQueuedMessages?: ReturnType<typeof mock>;
       hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
+      hasPendingAutoRetry?: ReturnType<typeof mock>;
       waitForPendingStreamErrorRecoveryDecision?: ReturnType<typeof mock>;
     } = {}
   ) {
@@ -676,6 +682,9 @@ describe("TaskService", () => {
         : {}),
       ...(options.hasPendingQueuedOrPreparingTurn != null
         ? { hasPendingQueuedOrPreparingTurn: options.hasPendingQueuedOrPreparingTurn }
+        : {}),
+      ...(options.hasPendingAutoRetry != null
+        ? { hasPendingAutoRetry: options.hasPendingAutoRetry }
         : {}),
       ...(options.waitForPendingStreamErrorRecoveryDecision != null
         ? {
@@ -3915,7 +3924,7 @@ describe("TaskService", () => {
   // falsely reporting the turn as failed to the parent.
   test("workspace-turn auto-retryable stream errors stay running while retry is pending", async () => {
     let retryDecisionAwaited = false;
-    const hasPendingQueuedOrPreparingTurn = mock(
+    const hasPendingAutoRetry = mock(
       (workspaceId: string) => retryDecisionAwaited && workspaceId === "childworkspace"
     );
     const waitForPendingStreamErrorRecoveryDecision = mock((): Promise<void> => {
@@ -3923,7 +3932,7 @@ describe("TaskService", () => {
       return Promise.resolve();
     });
     const { parentId, taskService } = await startWorkspaceTurnForTest({
-      hasPendingQueuedOrPreparingTurn,
+      hasPendingAutoRetry,
       waitForPendingStreamErrorRecoveryDecision,
     });
     const internal = taskService as unknown as {
@@ -3955,6 +3964,35 @@ describe("TaskService", () => {
       type: "error",
       workspaceId: "childworkspace",
       messageId: "msg_truncated_exhausted",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+      errorType: "stream_truncated",
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      workspaceId: "childworkspace",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+    });
+  });
+
+  // Codex review: unrelated queued manual messages must not keep the handle
+  // running for auto-retryable errors — they start a different turn, so the
+  // failed turn would never resume. Only an actual pending auto-retry counts.
+  test("workspace-turn auto-retryable stream errors with only queued messages mark the handle failed", async () => {
+    const hasPendingQueuedOrPreparingTurn = mock(() => true);
+    const hasPendingAutoRetry = mock(() => false);
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingQueuedOrPreparingTurn,
+      hasPendingAutoRetry,
+    });
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: "childworkspace",
+      messageId: "msg_truncated_queued_only",
       error: "Anthropic stream closed unexpectedly before the response completed.",
       errorType: "stream_truncated",
     });

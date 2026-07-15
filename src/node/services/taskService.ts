@@ -8840,12 +8840,22 @@ export class TaskService {
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
   }
 
-  private async hasRecoverableWorkspaceTurnRetryInFlight(workspaceId: string): Promise<boolean> {
+  private async hasRecoverableWorkspaceTurnRetryInFlight(
+    workspaceId: string,
+    options: { requireAutoRetry: boolean }
+  ): Promise<boolean> {
     await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
-    return (
-      this.aiService.isStreaming(workspaceId) ||
-      this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
-    );
+    if (this.aiService.isStreaming(workspaceId)) {
+      return true;
+    }
+    // Auto-retryable stream errors recover only through an actual scheduled
+    // auto-retry. Unrelated queued manual messages must not keep the handle
+    // running: they would start a different turn, leaving the parent awaiting a
+    // turn that already failed (or settling it from an uncorrelated
+    // stream-end).
+    return options.requireAutoRetry
+      ? this.workspaceService.hasPendingAutoRetry(workspaceId)
+      : this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId);
   }
 
   private async finalizeWorkspaceTurnFromStreamError(event: ErrorEvent): Promise<boolean> {
@@ -8853,10 +8863,17 @@ export class TaskService {
     if (record == null) {
       return false;
     }
+    // Explicit in-session recovery cases (aborted, context_exceeded) may
+    // continue through queued/preparing turns; auto-retryable errors require a
+    // pending auto-retry of the same turn.
+    const explicitRecovery =
+      event.errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType);
     if (
       event.errorType != null &&
       isWorkspaceTurnRecoverableStreamError(event.errorType) &&
-      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId))
+      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, {
+        requireAutoRetry: !explicitRecovery,
+      }))
     ) {
       return true;
     }

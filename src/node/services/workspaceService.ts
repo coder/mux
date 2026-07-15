@@ -8914,6 +8914,18 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Narrow check for an actual scheduled/starting auto-retry, excluding queued
+   * manual messages and preparing turns. Callers that must distinguish "the
+   * same turn will resume on its own" from "some other queued work exists"
+   * (e.g. workspace-turn stream-error settlement) need this instead of
+   * hasPendingQueuedOrPreparingTurn.
+   */
+  hasPendingAutoRetry(workspaceId: string): boolean {
+    const session = this.sessions.get(workspaceId.trim());
+    return session?.hasPendingAutoRetry() ?? false;
+  }
+
+  /**
    * Best-effort delete of plan files (new + legacy paths) for a workspace.
    *
    * Why best-effort: plan files may not exist yet, or deletion may fail due to permissions.
