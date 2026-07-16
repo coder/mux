@@ -86,6 +86,10 @@ export interface MonitorMatchPayload {
 }
 
 /** Emitted when a spawn arms a monitor; drives the persisted armed-monitor registry. */
+export type MonitorWakeDeliveryState =
+  | { status: "blocked"; readSettled: Promise<void> }
+  | { status: "settled"; shownThroughOffset: number };
+
 export interface MonitorArmedPayload {
   processId: string;
   taskId: string;
@@ -1016,32 +1020,40 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   /**
-   * The shown-frontier (shownThroughOffset) after any read that blocks same-process monitor delivery
-   * settles. Used by drainBashMonitorWakes to decide, at delivery time, whether a monitor match has
-   * already been shown by a concurrent read, while also preventing a wake from interrupting an
-   * active filtered task_await. Returns undefined for an unknown process so the drain fails open
-   * (delivers the wake) rather than silently dropping it.
+   * Snapshot whether same-process monitor delivery is currently blocked by an output read. Returning
+   * the blocking promise lets the workspace defer only this process's wake while continuing to
+   * deliver unrelated monitor matches from the same workspace.
    *
-   * `originNotAfterMs` binds the answer to the process instance that produced the wake. Process
-   * IDs are derived from display_name and reclaimed across restarts, so a pending wake for a dead
-   * instance could otherwise be superseded by a newer process's frontier. Callers pass the wake
-   * record's createdAt: the originating instance necessarily started before its first match created
-   * the record, so an instance whose startTime is after createdAt reused the ID and we return
-   * undefined (fail open) rather than let it suppress the prior instance's undelivered output.
+   * `originNotAfterMs` binds the answer to the process instance that produced the wake. Process IDs
+   * are reclaimed across restarts, so a newer instance must not suppress an older instance's wake.
+   */
+  async getMonitorWakeDeliveryState(
+    processId: string,
+    originNotAfterMs?: number
+  ): Promise<MonitorWakeDeliveryState | undefined> {
+    const proc = await this.getProcess(processId);
+    if (!proc) return undefined;
+    if (originNotAfterMs != null && proc.startTime > originNotAfterMs) return undefined;
+    if (proc.monitorWakeBlockingReadSettled) {
+      return { status: "blocked", readSettled: proc.monitorWakeBlockingReadSettled };
+    }
+    return { status: "settled", shownThroughOffset: proc.shownThroughOffset };
+  }
+
+  /**
+   * The shown-frontier after all same-process blocking reads settle. Kept as a convenience for
+   * callers that need the final value rather than a non-blocking delivery decision.
    */
   async getSettledShownThroughOffset(
     processId: string,
     originNotAfterMs?: number
   ): Promise<number | undefined> {
-    const proc = await this.getProcess(processId);
-    if (!proc) return undefined;
-    if (originNotAfterMs != null && proc.startTime > originNotAfterMs) return undefined;
-    // Wait until a same-process task_await or frontier-advancing read settles before deciding whether
-    // to deliver. No tracked read means the frontier is already settled.
-    if (proc.monitorWakeBlockingReadSettled) {
-      await proc.monitorWakeBlockingReadSettled;
+    while (true) {
+      const state = await this.getMonitorWakeDeliveryState(processId, originNotAfterMs);
+      if (state == null) return undefined;
+      if (state.status === "settled") return state.shownThroughOffset;
+      await state.readSettled;
     }
-    return proc.shownThroughOffset;
   }
 
   /**

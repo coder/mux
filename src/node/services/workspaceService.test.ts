@@ -2031,6 +2031,89 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("delivers unrelated monitor wakes while one process is blocked by task_await", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    let blockedReadReleased = false;
+    let resolveBlockedRead: () => void = () => undefined;
+    const releaseBlockedRead = () => {
+      blockedReadReleased = true;
+      resolveBlockedRead();
+    };
+    try {
+      const workspaceId = "bash-monitor-blocked-process-owner";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const seedWakeStore = new BashMonitorWakeStore(config);
+      await seedWakeStore.enqueueOrMergePending({
+        processId: "proc-blocked",
+        taskId: "bash:proc-blocked",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["BLOCKED done"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+      await seedWakeStore.enqueueOrMergePending({
+        processId: "proc-ready",
+        taskId: "bash:proc-ready",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["READY done"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      const blockedReadSettled = new Promise<void>((resolve) => {
+        resolveBlockedRead = resolve;
+      });
+      const getMonitorWakeDeliveryState = mock((processId: string) =>
+        Promise.resolve(
+          processId === "proc-blocked" && !blockedReadReleased
+            ? ({ status: "blocked", readSettled: blockedReadSettled } as const)
+            : ({ status: "settled", shownThroughOffset: 0 } as const)
+        )
+      );
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getMonitorWakeDeliveryState,
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][1]).toContain("READY done");
+      expect(sendSpy.mock.calls[0][1]).not.toContain("BLOCKED done");
+
+      releaseBlockedRead();
+      await waitForCondition(() => sendSpy.mock.calls.length === 2);
+      expect(sendSpy.mock.calls[1][1]).toContain("BLOCKED done");
+    } finally {
+      releaseBlockedRead();
+      await cleanup();
+    }
+  });
+
   test("delivers a stale-instance wake even after a reused process ID was read past the match", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {

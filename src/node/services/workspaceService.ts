@@ -1650,6 +1650,7 @@ export class WorkspaceService extends EventEmitter {
   private readonly constructedAtMs = Date.now();
   private readonly pendingBashMonitorWakeDrainsByOwner = new Map<string, Promise<void>>();
   private readonly pendingBashMonitorWakeIdleWaitsByOwner = new Map<string, Promise<void>>();
+  private readonly pendingBashMonitorWakeReadWaits = new Set<Promise<void>>();
   private readonly cancelingBashMonitorWakeKeys = new Set<string>();
   private readonly pendingBashMonitorWakeDrains = new Set<Promise<void>>();
   private readonly bashMonitorMatchListener = (
@@ -1929,6 +1930,32 @@ export class WorkspaceService extends EventEmitter {
     this.pendingBashMonitorWakeDrains.add(promise);
   }
 
+  private scheduleBashMonitorWakeDrainAfterRead(
+    ownerWorkspaceId: string,
+    readSettled: Promise<void>
+  ): void {
+    if (this.pendingBashMonitorWakeReadWaits.has(readSettled)) {
+      return;
+    }
+    this.pendingBashMonitorWakeReadWaits.add(readSettled);
+
+    const promise = readSettled
+      .catch((error: unknown) => {
+        log.debug("Bash monitor blocking read failed; retrying drain anyway", {
+          ownerWorkspaceId,
+          error,
+        });
+      })
+      .then(() => {
+        this.scheduleBashMonitorWakeDrain(ownerWorkspaceId);
+      })
+      .finally(() => {
+        this.pendingBashMonitorWakeDrains.delete(promise);
+        this.pendingBashMonitorWakeReadWaits.delete(readSettled);
+      });
+    this.pendingBashMonitorWakeDrains.add(promise);
+  }
+
   private scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId: string): void {
     if (this.pendingBashMonitorWakeIdleWaitsByOwner.has(ownerWorkspaceId)) {
       return;
@@ -2049,28 +2076,36 @@ export class WorkspaceService extends EventEmitter {
         this.bashMonitorWakeStore.markSupersededSnapshot(ownerWorkspaceId, record)
       );
 
-    // Delivery gate: the authoritative "don't re-report shown output" check. emitMonitorMatch's
-    // shownThroughOffset comparison is only a point-in-time fast path -- it can lose a race with a
-    // concurrent task_await that advances the shown-frontier just after the wake is emitted (a
-    // process printing its final line then exiting triggers an immediate exit flush that bypasses
-    // the cooldown). Here, at the moment each wake would become a transcript message, re-check its
-    // matched offset against the settled shown-frontier and drop any match already shown. Records
-    // without matchedThroughOffset (legacy on-disk) and managers without the query (partial test
-    // stubs) fail open -- the wake delivers, matching the pre-gate behavior. The record's createdAt
-    // pins the check to the instance that produced the match: process IDs are display-name-derived
-    // and reclaimed across restarts, so a fresh process that reused the ID started after createdAt,
-    // getSettledShownThroughOffset returns undefined, and the dead instance's wake still delivers.
+    // Delivery gate: re-check each match against the shown frontier immediately before sending it.
+    // If task_await is already reading that same process, defer only that record until the read
+    // settles; unrelated process wakes in this owner batch remain deliverable. Partial manager stubs
+    // without the non-blocking query retain the previous settled-frontier behavior.
+    const canQueryDeliveryState =
+      typeof this.backgroundProcessManager.getMonitorWakeDeliveryState === "function";
     const canQueryShownFrontier =
       typeof this.backgroundProcessManager.getSettledShownThroughOffset === "function";
     const deliverable: BashMonitorWakeRecord[] = [];
     const supersededByShown: BashMonitorWakeRecord[] = [];
     for (const record of pending) {
-      if (canQueryShownFrontier && record.kind === "match" && record.matchedThroughOffset != null) {
-        const shown = await this.backgroundProcessManager.getSettledShownThroughOffset(
-          record.processId,
-          Date.parse(record.createdAt)
-        );
-        if (shown != null && shown >= record.matchedThroughOffset) {
+      let shownThroughOffset: number | undefined;
+      if (record.kind === "match" && record.matchedThroughOffset != null) {
+        if (canQueryDeliveryState) {
+          const state = await this.backgroundProcessManager.getMonitorWakeDeliveryState(
+            record.processId,
+            Date.parse(record.createdAt)
+          );
+          if (state?.status === "blocked") {
+            this.scheduleBashMonitorWakeDrainAfterRead(ownerWorkspaceId, state.readSettled);
+            continue;
+          }
+          shownThroughOffset = state?.shownThroughOffset;
+        } else if (canQueryShownFrontier) {
+          shownThroughOffset = await this.backgroundProcessManager.getSettledShownThroughOffset(
+            record.processId,
+            Date.parse(record.createdAt)
+          );
+        }
+        if (shownThroughOffset != null && shownThroughOffset >= record.matchedThroughOffset) {
           supersededByShown.push(record);
           continue;
         }
