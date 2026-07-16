@@ -145,6 +145,7 @@ import {
   getRestoredDraftPayloadSignature,
   getRestoredMuxMetadataForCurrentDraft,
   mergeNewAttachedReviewsIntoDraft,
+  releaseDraftReviewMergeTracking,
   type PendingUserMessage,
   type RestoredDraftPayload,
 } from "@/browser/utils/chatEditing";
@@ -579,7 +580,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const removeDraftReview = (reviewId: string) =>
     withDraftReview(reviewId, (prev, reviewIndex) => {
-      draftReviewCheckIdsByDraftIdRef.current.delete(reviewId);
+      releaseDraftReviewMergeTracking({
+        draftReviewId: reviewId,
+        checkIdsByDraftId: draftReviewCheckIdsByDraftIdRef.current,
+        mergedAttachedReviewIds: draftReviewMergedAttachedIdsRef.current,
+      });
       return prev.filter((_, index) => index !== reviewIndex);
     });
 

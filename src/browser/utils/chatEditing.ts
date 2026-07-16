@@ -180,6 +180,19 @@ export function mergeNewAttachedReviewsIntoDraft(params: {
   };
 }
 
+export function releaseDraftReviewMergeTracking(params: {
+  draftReviewId: string;
+  checkIdsByDraftId: Map<string, Set<string>>;
+  mergedAttachedReviewIds: Set<string> | null;
+}): void {
+  const attachedReviewIds = params.checkIdsByDraftId.get(params.draftReviewId);
+  params.checkIdsByDraftId.delete(params.draftReviewId);
+
+  for (const attachedReviewId of attachedReviewIds ?? []) {
+    params.mergedAttachedReviewIds?.delete(attachedReviewId);
+  }
+}
+
 const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
 

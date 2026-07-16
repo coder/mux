@@ -16,6 +16,7 @@ import {
   getRestoredMuxMetadataForCurrentDraft,
   mergeNewAttachedReviewsIntoDraft,
   normalizeQueuedMessage,
+  releaseDraftReviewMergeTracking,
 } from "./chatEditing";
 
 function userMessage(overrides: Partial<DisplayedUserMessage> = {}): DisplayedUserMessage {
@@ -249,6 +250,42 @@ describe("canEditDisplayedUserMessage", () => {
       "new-parent-review",
       "second-duplicate-parent-review",
     ]);
+  });
+
+  test("allows a removed merged review to be attached again", () => {
+    const laterReview = {
+      filePath: "src/later.ts",
+      lineRange: "+8",
+      selectedCode: "const later = true;",
+      userNote: "Add this too",
+    };
+    const checkIdsByDraftId = new Map([["draft-later", new Set(["later-parent-review"])]]);
+    const mergedAttachedReviewIds = new Set(["existing-parent-review", "later-parent-review"]);
+
+    releaseDraftReviewMergeTracking({
+      draftReviewId: "draft-later",
+      checkIdsByDraftId,
+      mergedAttachedReviewIds,
+    });
+
+    expect(checkIdsByDraftId.has("draft-later")).toBe(false);
+    expect([...mergedAttachedReviewIds]).toEqual(["existing-parent-review"]);
+
+    const result = mergeNewAttachedReviewsIntoDraft({
+      draftReviews: [REVIEW_NOTE],
+      attachedReviews: [
+        {
+          id: "later-parent-review",
+          data: laterReview,
+          status: "attached",
+          createdAt: 2,
+        },
+      ],
+      mergedAttachedReviewIds,
+    });
+
+    expect(result.reviews).toEqual([REVIEW_NOTE, laterReview]);
+    expect(result.mergedReviewIds).toEqual(["later-parent-review"]);
   });
 
   test("restores staged ZIPs from compaction follow-up content", () => {
