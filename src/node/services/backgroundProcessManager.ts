@@ -152,14 +152,12 @@ export interface BackgroundProcess {
    */
   shownThroughOffset: number;
   /**
-   * Resolves when the current in-flight *unfiltered* getOutput read settles (i.e. after it has
-   * advanced shownThroughOffset and returned). undefined when no unfiltered read is in flight.
-   * getSettledShownThroughOffset awaits this so the drain gate reads a settled frontier instead of
-   * racing a concurrent task_await. Filtered reads are deliberately not tracked here: they never
-   * advance shownThroughOffset and a filtered long-poll can hold the lock for the full timeout, so
-   * waiting on them would stall wake delivery for nothing.
+   * Resolves when the current read that must block same-process monitor delivery settles. This
+   * includes unfiltered reads, which may advance shownThroughOffset, and filtered task_await reads,
+   * which a monitor wake must not interrupt. Filtered reads from other callers remain untracked so
+   * they cannot delay wake delivery for output they will never mark as shown.
    */
-  unfilteredReadSettled?: Promise<void>;
+  monitorWakeBlockingReadSettled?: Promise<void>;
   /** Mutex to serialize getOutput() calls (prevents race condition when
    * parallel tool calls read from same offset before position is updated) */
   outputLock: AsyncMutex;
@@ -988,25 +986,29 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   /**
-   * Register an in-flight unfiltered read on the process and return a disposable that resolves +
-   * clears it when the read settles. Filtered reads get an inert disposable: they never advance the
-   * shown frontier, so wake delivery must not wait on them. See BackgroundProcess.unfilteredReadSettled.
+   * Register a read that same-process monitor delivery must wait for. Unfiltered reads participate
+   * because they can advance the shown frontier. Filtered task_await reads also participate so the
+   * wake cannot interrupt the await that is already watching this process; after the await settles,
+   * the unchanged frontier still allows filtered-out matched output to wake the agent.
    */
-  private trackUnfilteredRead(proc: BackgroundProcess, filter: string | undefined): Disposable {
-    if (filter) {
-      // Filtered read: nothing to track, so the disposable is a no-op.
+  private trackMonitorWakeBlockingRead(
+    proc: BackgroundProcess,
+    filter: string | undefined,
+    noteToolName: string | undefined
+  ): Disposable {
+    if (filter && noteToolName !== "task_await") {
       return { [Symbol.dispose]: () => undefined };
     }
     let resolve!: () => void;
     const settled = new Promise<void>((r) => {
       resolve = r;
     });
-    proc.unfilteredReadSettled = settled;
+    proc.monitorWakeBlockingReadSettled = settled;
     return {
       [Symbol.dispose]: () => {
         // A later read only starts after this one releases outputLock, so the field is still ours.
-        if (proc.unfilteredReadSettled === settled) {
-          proc.unfilteredReadSettled = undefined;
+        if (proc.monitorWakeBlockingReadSettled === settled) {
+          proc.monitorWakeBlockingReadSettled = undefined;
         }
         resolve();
       },
@@ -1014,10 +1016,11 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
   }
 
   /**
-   * The shown-frontier (shownThroughOffset) after any in-flight unfiltered read settles. Used by
-   * drainBashMonitorWakes to decide, at delivery time, whether a monitor match has already been
-   * shown to the agent by a concurrent task_await. Returns undefined for an unknown process so the
-   * drain fails open (delivers the wake) rather than silently dropping it.
+   * The shown-frontier (shownThroughOffset) after any read that blocks same-process monitor delivery
+   * settles. Used by drainBashMonitorWakes to decide, at delivery time, whether a monitor match has
+   * already been shown by a concurrent read, while also preventing a wake from interrupting an
+   * active filtered task_await. Returns undefined for an unknown process so the drain fails open
+   * (delivers the wake) rather than silently dropping it.
    *
    * `originNotAfterMs` binds the answer to the process instance that produced the wake. Process
    * IDs are derived from display_name and reclaimed across restarts, so a pending wake for a dead
@@ -1033,11 +1036,10 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const proc = await this.getProcess(processId);
     if (!proc) return undefined;
     if (originNotAfterMs != null && proc.startTime > originNotAfterMs) return undefined;
-    // Await the current unfiltered read (if any). The matched output already exists on disk, so an
-    // unfiltered long-poll picks it up on its first iteration and returns promptly -- this does not
-    // hang on an idle process (no read in flight => field is undefined).
-    if (proc.unfilteredReadSettled) {
-      await proc.unfilteredReadSettled;
+    // Wait until a same-process task_await or frontier-advancing read settles before deciding whether
+    // to deliver. No tracked read means the frontier is already settled.
+    if (proc.monitorWakeBlockingReadSettled) {
+      await proc.monitorWakeBlockingReadSettled;
     }
     return proc.shownThroughOffset;
   }
@@ -1092,11 +1094,10 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // the same offset before either updates the read position.
     await using _lock = await proc.outputLock.acquire();
 
-    // Register this read so the wake drain (getSettledShownThroughOffset) can await it before
-    // reading the shown-frontier, closing the race where a monitor exit-flush emits a wake for the
-    // same final line a concurrent task_await is still delivering. Filtered reads return an inert
-    // tracker: they never advance shownThroughOffset, so wake delivery must not block on them.
-    using _readTracker = this.trackUnfilteredRead(proc, filter);
+    // Register reads that same-process monitor delivery must not race. This includes filtered
+    // task_await calls even though they do not advance shownThroughOffset: the wake waits for the
+    // await to settle, then remains deliverable if its matched output was filtered out.
+    using _readTracker = this.trackMonitorWakeBlockingRead(proc, filter, noteToolName);
 
     // Track call count for polling detection
     proc.getOutputCallCount++;

@@ -847,10 +847,10 @@ describe("BackgroundProcessManager", () => {
       let proc = await manager.getProcess(result.processId);
       for (let attempt = 0; attempt < 200; attempt++) {
         proc = await manager.getProcess(result.processId);
-        if (proc?.unfilteredReadSettled) break;
+        if (proc?.monitorWakeBlockingReadSettled) break;
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      expect(proc?.unfilteredReadSettled).toBeDefined();
+      expect(proc?.monitorWakeBlockingReadSettled).toBeDefined();
       expect(proc?.shownThroughOffset ?? -1).toBe(0);
 
       const settled = await manager.getSettledShownThroughOffset(result.processId);
@@ -858,6 +858,48 @@ describe("BackgroundProcessManager", () => {
       expect(read.success).toBe(true);
       // "line\n" is 5 bytes; the settled frontier reflects the completed read, not the stale 0.
       expect(settled).toBe(5);
+    });
+
+    it("waits for an in-flight filtered task_await before reporting the frontier", async () => {
+      // A monitor wake should not interrupt task_await on the same bash process. Even though a
+      // filtered await cannot advance shownThroughOffset, the delivery gate must wait for that await
+      // to settle; afterward it can deliver any matched lines that the filter did not show.
+      const result = await manager.spawn(runtime, testWorkspaceId, "sleep 3", {
+        cwd: process.cwd(),
+        displayName: "settled-filtered-task-await",
+      });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      const controller = new AbortController();
+      const filteredRead = manager.getOutput(
+        result.processId,
+        "NOMATCH",
+        false,
+        10,
+        controller.signal,
+        testWorkspaceId,
+        "task_await"
+      );
+
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 200; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if ((proc?.getOutputCallCount ?? 0) > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(proc?.getOutputCallCount).toBe(1);
+
+      const settledPromise = manager.getSettledShownThroughOffset(result.processId);
+      const settledBeforeAwait = await Promise.race([
+        settledPromise.then(() => true),
+        new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+      ]);
+      expect(settledBeforeAwait).toBe(false);
+
+      controller.abort();
+      expect(await filteredRead).toMatchObject({ success: true, status: "interrupted" });
+      expect(await settledPromise).toBe(0);
     });
 
     it("does not block on an in-flight filtered read", async () => {
