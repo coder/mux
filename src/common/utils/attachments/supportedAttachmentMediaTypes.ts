@@ -64,18 +64,18 @@ export function getSupportedChatAttachmentMediaType(args: {
   filename?: string | null;
 }): string | null {
   const trimmedMediaType = args.mediaType?.trim();
-  const rawMediaType =
-    trimmedMediaType != null && trimmedMediaType.length > 0
-      ? trimmedMediaType
-      : args.filename != null
-        ? (getAttachmentMediaTypeFromExtension(args.filename) ?? "")
-        : "";
-  if (rawMediaType.length === 0) {
-    return null;
+  if (trimmedMediaType != null && trimmedMediaType.length > 0) {
+    const normalized = normalizeAttachmentMediaType(trimmedMediaType);
+    if (isSupportedChatAttachmentMediaType(normalized)) {
+      return normalized;
+    }
   }
 
-  const normalized = normalizeAttachmentMediaType(rawMediaType);
-  return isSupportedChatAttachmentMediaType(normalized) ? normalized : null;
+  const extensionMediaType =
+    args.filename != null ? getAttachmentMediaTypeFromExtension(args.filename) : null;
+  return extensionMediaType != null && isSupportedChatAttachmentMediaType(extensionMediaType)
+    ? extensionMediaType
+    : null;
 }
 
 export function isSupportedStagedAttachmentMediaType(mediaType: string): boolean {

@@ -22,10 +22,22 @@ describe("supportedAttachmentMediaTypes", () => {
     expect(getSupportedChatAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(
       "application/json"
     );
+    expect(
+      getSupportedChatAttachmentMediaType({ mediaType: "text/plain", filename: "package.json" })
+    ).toBe("application/json");
+    expect(
+      getSupportedChatAttachmentMediaType({
+        mediaType: "application/octet-stream",
+        filename: "package.json",
+      })
+    ).toBe("application/json");
   });
 
   test("keeps .json extension fallback scoped to chat attachments", () => {
     expect(getSupportedAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(null);
+    expect(
+      getSupportedAttachmentMediaType({ mediaType: "text/plain", filename: "package.json" })
+    ).toBe(null);
     expect(getSupportedChatAttachmentMediaType({ mediaType: "", filename: "package.json" })).toBe(
       "application/json"
     );
@@ -34,6 +46,9 @@ describe("supportedAttachmentMediaTypes", () => {
   test("keeps arbitrary text files unsupported", () => {
     expect(
       getSupportedAttachmentMediaType({ mediaType: "text/plain", filename: "notes.txt" })
+    ).toBeNull();
+    expect(
+      getSupportedChatAttachmentMediaType({ mediaType: "text/plain", filename: "notes.txt" })
     ).toBeNull();
   });
 

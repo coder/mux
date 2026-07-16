@@ -169,11 +169,12 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+  const normalizedDataUrl = dataUrl.replace(/^data:[^;,]*/i, `data:${mediaType}`);
 
   const isRasterImage = mediaType.startsWith("image/") && mediaType !== SVG_MEDIA_TYPE;
   if (isRasterImage) {
     // Auto-resize large images before sending so providers don't reject oversized inputs.
-    const resizeResult = await resizeImageIfNeeded(dataUrl, mediaType);
+    const resizeResult = await resizeImageIfNeeded(normalizedDataUrl, mediaType);
 
     return {
       kind: "provider",
@@ -197,7 +198,7 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
   return {
     kind: "provider",
     id: generateAttachmentId(),
-    url: dataUrl,
+    url: normalizedDataUrl,
     mediaType,
     filename: file.name.trim() ? file.name : undefined,
   };

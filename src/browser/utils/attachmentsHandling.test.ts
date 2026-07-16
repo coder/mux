@@ -122,6 +122,19 @@ describe("attachmentsHandling", () => {
       expect(attachment.url).toContain("data:application/json");
       expect(attachment.url).toContain(";base64,");
     });
+
+    test("handles JSON files reported with a generic MIME type", async () => {
+      const blob = new Blob(['{"ok":true}'], { type: "text/plain" });
+      const file = new File([blob], "config.json", { type: "text/plain" });
+
+      const attachment = await fileToChatAttachment(file);
+
+      expect(attachment.kind).toBe("provider");
+      if (attachment.kind !== "provider") throw new Error("Expected provider attachment");
+      expect(attachment.mediaType).toBe("application/json");
+      expect(attachment.filename).toBe("config.json");
+      expect(attachment.url).toContain("data:application/json");
+    });
   });
 
   describe("extractAttachmentsFromClipboard", () => {
