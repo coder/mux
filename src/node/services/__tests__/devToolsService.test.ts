@@ -402,6 +402,30 @@ describe("DevToolsService", () => {
       expect(await service.getRunWithSteps("ws-1", "run-1")).toBeNull();
       expect(await fs.readFile(getDevtoolsLogPath(sessionsDir, "ws-1"), "utf-8")).toBe("");
     });
+
+    it("removeWorkspaceData deletes the log file and in-memory state", async () => {
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: true }));
+      await service.createRun("ws-1", makeRun("run-1"));
+      await service.createStep("ws-1", makeStep({ id: "step-1", runId: "run-1" }));
+
+      await service.removeWorkspaceData("ws-1");
+
+      expect(await pathExists(getDevtoolsLogPath(sessionsDir, "ws-1"))).toBe(false);
+      expect(await service.getRuns("ws-1")).toEqual([]);
+      expect(await service.getRunWithSteps("ws-1", "run-1")).toBeNull();
+    });
+
+    it("removeWorkspaceData deletes stale log files even when logging is disabled", async () => {
+      // Simulate a file written while logging was enabled, then the user disabling it.
+      const logPath = getDevtoolsLogPath(sessionsDir, "ws-1");
+      await fs.mkdir(path.dirname(logPath), { recursive: true });
+      await fs.writeFile(logPath, `${JSON.stringify({ type: "run", run: makeRun("run-1") })}\n`);
+
+      const service = new DevToolsService(createTestConfig({ sessionsDir, enabled: false }));
+      await service.removeWorkspaceData("ws-1");
+
+      expect(await pathExists(logPath)).toBe(false);
+    });
   });
 
   describe("persistence", () => {

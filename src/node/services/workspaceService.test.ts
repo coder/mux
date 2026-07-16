@@ -3959,6 +3959,121 @@ describe("WorkspaceService initialize", () => {
     }
   });
 
+  test("removes stale orphaned session directories but keeps referenced and recent ones", async () => {
+    const { config: realConfig, historyService, cleanup } = await createTestHistoryService();
+    await realConfig.editConfig((cfg) => {
+      cfg.projects.set("/tmp/proj", {
+        workspaces: [
+          { path: "/tmp/proj/known-ws", id: "known-ws", name: "known-ws" },
+          // Legacy entry without a stable ID: its session dir is keyed by "<project>-<workspace>".
+          { path: "/tmp/proj/legacy-branch" },
+        ],
+      });
+      return cfg;
+    });
+
+    const sessionDirFor = (id: string) => path.join(realConfig.sessionsDir, id);
+    const knownDir = sessionDirFor("known-ws");
+    const legacyDir = sessionDirFor("proj-legacy-branch");
+    const staleOrphanDir = sessionDirFor("stale-orphan-ws");
+    const freshOrphanDir = sessionDirFor("fresh-orphan-ws");
+    for (const dir of [knownDir, legacyDir, staleOrphanDir, freshOrphanDir]) {
+      await fsPromises.mkdir(dir, { recursive: true });
+    }
+    // Backdate everything except the fresh orphan past the grace window, proving
+    // retention comes from config references rather than directory age.
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    for (const dir of [knownDir, legacyDir, staleOrphanDir]) {
+      await fsPromises.utimes(dir, staleTime, staleTime);
+    }
+
+    const aiService = {
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const service = createWorkspaceServiceForTest({
+      config: realConfig,
+      historyService,
+      aiService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
+    const startupAccess = service as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+    };
+    spyOn(startupAccess, "startStartupRecovery").mockImplementation(() => undefined);
+
+    const exists = (dir: string) =>
+      fsPromises.stat(dir).then(
+        () => true,
+        () => false
+      );
+
+    try {
+      await service.initialize();
+      expect(await exists(knownDir)).toBe(true);
+      expect(await exists(legacyDir)).toBe(true);
+      expect(await exists(freshOrphanDir)).toBe(true);
+      expect(await exists(staleOrphanDir)).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("preserves orphaned session directories when config cannot be loaded", async () => {
+    const { config: realConfig, historyService, cleanup } = await createTestHistoryService();
+    const orphanDir = path.join(realConfig.sessionsDir, "stale-orphan-ws");
+    await fsPromises.mkdir(orphanDir, { recursive: true });
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await fsPromises.utimes(orphanDir, staleTime, staleTime);
+    await fsPromises.writeFile(path.join(realConfig.rootDir, "config.json"), "{invalid-json");
+
+    const aiService = {
+      on: mock(() => undefined),
+      off: mock(() => undefined),
+    } as unknown as AIService;
+    const service = createWorkspaceServiceForTest({
+      config: realConfig,
+      historyService,
+      aiService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
+
+    try {
+      await service.initialize();
+      expect(await fsPromises.stat(orphanDir).then(() => true)).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("removes DevTools logs for archived workspaces at startup", async () => {
+    const liveWorkspace = createFrontendWorkspaceMetadata({
+      id: "live-ws",
+      name: "Live Workspace",
+    });
+    const archivedWorkspace = createFrontendWorkspaceMetadata({
+      id: "archived-ws",
+      name: "Archived Workspace",
+      archivedAt: "2026-03-20T00:00:00.000Z",
+    });
+    config.getAllWorkspaceMetadata = mock(() =>
+      Promise.resolve([liveWorkspace, archivedWorkspace])
+    ) as unknown as Config["getAllWorkspaceMetadata"];
+
+    const removeWorkspaceData = mock(() => Promise.resolve());
+    workspaceService.setDevToolsService({ removeWorkspaceData });
+
+    const startupAccess = workspaceService as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+    };
+    spyOn(startupAccess, "startStartupRecovery").mockImplementation(() => undefined);
+
+    await workspaceService.initialize();
+
+    expect(removeWorkspaceData).toHaveBeenCalledTimes(1);
+    expect(removeWorkspaceData).toHaveBeenCalledWith("archived-ws");
+  });
+
   test("disposes transient startup-recovery sessions that go idle", async () => {
     const dispose = mock(() => undefined);
     const fakeSession = {
@@ -8831,6 +8946,34 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     expect(entry?.archivedAt).toBeTruthy();
     expect(entry?.archivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+  test("archive() removes DevTools data only after archivedAt is persisted", async () => {
+    const removeWorkspaceData = mock((id: string) => {
+      // devtools cleanup must run only once the archived state is durable
+      expect(id).toBe(workspaceId);
+      const entry = configState.projects.get(projectPath)?.workspaces[0];
+      expect(entry?.archivedAt).toBeTruthy();
+      return Promise.resolve();
+    });
+    workspaceService.setDevToolsService({ removeWorkspaceData });
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(removeWorkspaceData).toHaveBeenCalledTimes(1);
+  });
+
+  test("archive() stays successful when DevTools cleanup fails", async () => {
+    workspaceService.setDevToolsService({
+      removeWorkspaceData: mock(() => Promise.reject(new Error("disk error"))),
+    });
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(true);
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(entry?.archivedAt).toBeTruthy();
+  });
+
   test("archive() invokes descendant cleanup only after archive persistence succeeds", async () => {
     const callOrder: string[] = [];
     editConfigSpy.mockImplementation((fn: (config: ProjectsConfig) => ProjectsConfig) => {

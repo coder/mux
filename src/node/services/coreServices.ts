@@ -164,6 +164,10 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   );
   aiService.setWorkflowResultContinuationSender(workspaceService);
   workspaceService.setMemoryConsolidationService(memoryConsolidationService);
+  if (opts.devToolsService) {
+    // DevTools debug-log cleanup when workspaces are archived/removed.
+    workspaceService.setDevToolsService(opts.devToolsService);
+  }
   workspaceService.setMCPServerManager(mcpServerManager);
   workspaceService.setWorkspaceGoalService(workspaceGoalService);
   workspaceGoalService.setOnActivityChange((workspaceId, snapshot) => {
