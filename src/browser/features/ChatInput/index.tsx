@@ -144,6 +144,7 @@ import {
   getReviewNoteSignature,
   getRestoredDraftPayloadSignature,
   getRestoredMuxMetadataForCurrentDraft,
+  hasRestoredDraftReplacementPayload,
   mergeNewAttachedReviewsIntoDraft,
   releaseDraftReviewMergeTracking,
   type PendingUserMessage,
@@ -1951,8 +1952,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const hasFileParts = restoredPending.fileParts.length > 0;
       const hasStagedAttachments = restoredPending.stagedAttachments.length > 0;
       const hasReviews = restoredPending.reviews.length > 0;
-      const hasDraftReplacementPayload =
-        fileParts !== undefined || reviews !== undefined || muxMetadata !== undefined;
+      const hasDraftReplacementPayload = hasRestoredDraftReplacementPayload({
+        fileParts,
+        reviews,
+        muxMetadata,
+        stagedAttachments: restoredPending.stagedAttachments,
+      });
 
       if (mode === "replace") {
         if (editingMessageForUi) {

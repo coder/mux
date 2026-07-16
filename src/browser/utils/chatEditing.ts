@@ -77,6 +77,20 @@ export function buildPendingFromRestoredInput(params: {
   };
 }
 
+export function hasRestoredDraftReplacementPayload(params: {
+  fileParts?: FilePart[];
+  reviews?: ReviewNoteDataForDisplay[];
+  muxMetadata?: MuxMessageMetadata;
+  stagedAttachments: readonly StagedChatAttachment[];
+}): boolean {
+  return (
+    params.fileParts !== undefined ||
+    params.reviews !== undefined ||
+    params.muxMetadata !== undefined ||
+    params.stagedAttachments.length > 0
+  );
+}
+
 export interface RestoredDraftPayload {
   text: string;
   attachments: ChatAttachment[];

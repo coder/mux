@@ -14,6 +14,7 @@ import {
   canEditDisplayedUserMessage,
   getRestoredDraftPayloadSignature,
   getRestoredMuxMetadataForCurrentDraft,
+  hasRestoredDraftReplacementPayload,
   mergeNewAttachedReviewsIntoDraft,
   normalizeQueuedMessage,
   releaseDraftReviewMergeTracking,
@@ -140,6 +141,26 @@ describe("canEditDisplayedUserMessage", () => {
       ],
       reviews: [review],
     });
+  });
+
+  test("treats parsed staged ZIPs as a full draft replacement payload", () => {
+    const pending = buildPendingFromRestoredInput({
+      content: appendStagedAttachmentNotice("Restore failed retry.", [STAGED_ATTACHMENT]),
+      fileParts: [],
+      reviews: [],
+      idPrefix: "restored-retry",
+    });
+
+    expect(
+      hasRestoredDraftReplacementPayload({
+        stagedAttachments: pending.stagedAttachments,
+      })
+    ).toBe(true);
+    expect(
+      hasRestoredDraftReplacementPayload({
+        stagedAttachments: [],
+      })
+    ).toBe(false);
   });
 
   test("keeps restored mux metadata only while the restored draft payload is unchanged", () => {
