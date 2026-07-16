@@ -293,6 +293,14 @@ import { getErrorMessage } from "@/common/utils/errors";
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 /**
+ * Minimum age before an unreferenced session directory is treated as an orphan and
+ * deleted at startup. Protects session data written by a workspace whose config entry
+ * has not been observed yet (e.g., creation racing the sweep); true orphans are stale
+ * for far longer and get reaped on a later startup.
+ */
+const ORPHAN_SESSION_DIR_GRACE_MS = 24 * 60 * 60 * 1000;
+
+/**
  * Base name used when /new auto-generates a branch name. Numbered suffixes
  * (`workspace-1`, `workspace-2`, ...) come from {@link generateForkBranchName}
  * so the existing fork-style numbering helpers stay the single source of truth.
@@ -2248,6 +2256,8 @@ export class WorkspaceService extends EventEmitter {
   private worktreeArchiveSnapshotService?: WorktreeArchiveSnapshotLifecycleService;
   private taskService?: TaskService;
   private workspaceGoalService?: WorkspaceGoalService;
+  /** Narrow DevTools cleanup surface; wired by coreServices when a DevToolsService exists. */
+  private devToolsService?: { removeWorkspaceData(workspaceId: string): Promise<void> };
 
   /**
    * Set the MCP server manager for tool access.
@@ -2307,6 +2317,11 @@ export class WorkspaceService extends EventEmitter {
    */
   setTaskService(taskService: TaskService): void {
     this.taskService = taskService;
+  }
+
+  /** DevTools debug-log cleanup on archive/remove; wired by coreServices. */
+  setDevToolsService(service: { removeWorkspaceData(workspaceId: string): Promise<void> }): void {
+    this.devToolsService = service;
   }
 
   private getWorktreeArchiveBehavior(): "keep" | "delete" | "snapshot" {
@@ -2390,6 +2405,12 @@ export class WorkspaceService extends EventEmitter {
         log.debug("Failed to clean orphaned scratch workdirs", { error });
       });
       const allMetadata = await this.config.getAllWorkspaceMetadata();
+      await this.cleanupOrphanSessionDirs(allMetadata).catch((error: unknown) => {
+        log.debug("Failed to clean orphaned session directories", { error });
+      });
+      await this.cleanupArchivedDevToolsLogs(allMetadata).catch((error: unknown) => {
+        log.debug("Failed to clean archived workspace DevTools logs", { error });
+      });
       let scheduledCount = 0;
       let skippedTaskCount = 0;
       let skippedArchivedCount = 0;
@@ -3450,6 +3471,90 @@ export class WorkspaceService extends EventEmitter {
         await fsPromises.rm(candidatePath, { recursive: true, force: true });
       } catch (error: unknown) {
         log.debug("Failed to clean orphaned scratch workdir", { candidatePath, error });
+      }
+    }
+  }
+
+  /**
+   * Startup sweep over the sessions directory: delete session directories whose
+   * workspace no longer exists in config at all (orphans left behind by crashed
+   * or partially-failed removals), so they stop hogging disk forever.
+   */
+  private async cleanupOrphanSessionDirs(allMetadata: FrontendWorkspaceMetadata[]): Promise<void> {
+    // Never interpret a config read failure as an empty reference set, because that
+    // would turn best-effort orphan cleanup into deletion of every workspace's session data.
+    const config = this.config.loadConfigOrDefault({ throwOnError: true });
+
+    const knownIds = new Set<string>(allMetadata.map((metadata) => metadata.id));
+    for (const [projectPath, projectConfig] of config.projects) {
+      for (const workspace of projectConfig.workspaces) {
+        if (workspace.id) {
+          knownIds.add(workspace.id);
+        }
+        // Pre-stable-ID sessions are keyed by the legacy "<project>-<workspace>" ID;
+        // keep them even if the config entry has since been migrated.
+        knownIds.add(this.config.generateLegacyId(projectPath, workspace.path));
+      }
+    }
+
+    const entries = await fsPromises
+      .readdir(this.config.sessionsDir, { withFileTypes: true })
+      .catch((error: unknown) => {
+        if (isErrnoWithCode(error, "ENOENT")) {
+          return null;
+        }
+        throw error;
+      });
+    if (entries == null) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (knownIds.has(entry.name)) continue;
+
+      const candidatePath = path.join(this.config.sessionsDir, entry.name);
+      try {
+        // Grace window: never reap a directory with recent activity, so a workspace
+        // being created concurrently with this sweep cannot lose its session data.
+        const stat = await fsPromises.stat(candidatePath);
+        if (nowMs - stat.mtimeMs < ORPHAN_SESSION_DIR_GRACE_MS) continue;
+
+        // Re-check fresh config immediately before deleting (findWorkspace also
+        // resolves legacy IDs), closing the race with workspaces created after
+        // the snapshot above.
+        if (this.config.findWorkspace(entry.name)) continue;
+
+        await fsPromises.rm(candidatePath, { recursive: true, force: true });
+        log.info("Removed orphaned session directory", { workspaceId: entry.name });
+      } catch (error: unknown) {
+        log.debug("Failed to clean orphaned session directory", { candidatePath, error });
+      }
+    }
+  }
+
+  /**
+   * Startup sweep deleting devtools.jsonl for archived workspaces. Archive-time cleanup
+   * handles new archives; this retroactively heals workspaces archived before that
+   * cleanup existed (debug logs routinely dwarf all other session data).
+   */
+  private async cleanupArchivedDevToolsLogs(
+    allMetadata: FrontendWorkspaceMetadata[]
+  ): Promise<void> {
+    if (!this.devToolsService) {
+      return;
+    }
+
+    for (const metadata of allMetadata) {
+      if (!isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) continue;
+      try {
+        await this.devToolsService.removeWorkspaceData(metadata.id);
+      } catch (error: unknown) {
+        log.debug("Failed to remove DevTools log for archived workspace", {
+          workspaceId: metadata.id,
+          error,
+        });
       }
     }
   }
@@ -4707,6 +4812,17 @@ export class WorkspaceService extends EventEmitter {
         await fsPromises.rm(sessionDir, { recursive: true, force: true });
       } catch (error) {
         log.error(`Failed to remove session directory for ${workspaceId}:`, error);
+      }
+
+      // The on-disk devtools.jsonl died with the session directory above; also drop any
+      // in-memory DevTools state so stale runs cannot outlive the workspace.
+      try {
+        await this.devToolsService?.removeWorkspaceData(workspaceId);
+      } catch (error) {
+        log.debug("Failed to drop DevTools state after workspace removal", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
       }
 
       // Stop MCP servers for this workspace
@@ -6473,6 +6589,19 @@ export class WorkspaceService extends EventEmitter {
             error: getErrorMessage(error),
           });
         }
+      }
+
+      // DevTools debug logs can be huge and are only useful for live workspaces; drop them
+      // once the archived state is durable (worst case after unarchive is an empty DevTools
+      // panel). Best-effort: archive stays successful even if this fails — the startup sweep
+      // in initialize() retries for archived workspaces.
+      try {
+        await this.devToolsService?.removeWorkspaceData(workspaceId);
+      } catch (error) {
+        log.debug("Failed to remove DevTools log after archive", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
       }
 
       // Emit updated metadata

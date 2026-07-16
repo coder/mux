@@ -369,6 +369,41 @@ export class DevToolsService extends EventEmitter {
     this.emitWorkspaceEvent(workspaceId, { type: "cleared" });
   }
 
+  /**
+   * Remove all DevTools state for a workspace: in-memory data and the on-disk
+   * devtools.jsonl. Called when a workspace is archived or removed — debug logs
+   * grow large and are only useful for live workspaces (worst case after
+   * unarchive is an empty DevTools panel).
+   *
+   * Runs regardless of `enabled`: files written while logging was on must be
+   * cleaned up even if the user has since disabled debug logging.
+   */
+  async removeWorkspaceData(workspaceId: string): Promise<void> {
+    assert(
+      workspaceId.trim().length > 0,
+      "DevToolsService.removeWorkspaceData requires a workspaceId"
+    );
+
+    // Wait for any in-flight load to finish so it cannot repopulate state
+    // after the removal below.
+    const pendingLoad = this.loadingPromises.get(workspaceId);
+    if (pendingLoad) {
+      await pendingLoad;
+    }
+
+    // Deleting the entry (rather than clearing it in place) makes stale queued
+    // appends no-ops via the existence guard in appendToFile.
+    this.workspaces.delete(workspaceId);
+    this.pendingRunMetadata.delete(workspaceId);
+
+    // Enqueue the deletion so it serializes behind any pending appends.
+    await this.enqueueWrite(workspaceId, async () => {
+      await fs.rm(this.getSessionFilePath(workspaceId), { force: true });
+    });
+
+    this.emitWorkspaceEvent(workspaceId, { type: "cleared" });
+  }
+
   private emitWorkspaceEvent(workspaceId: string, event: DevToolsEvent): void {
     this.emit(`update:${workspaceId}`, event);
   }
