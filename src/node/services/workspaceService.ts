@@ -2101,10 +2101,13 @@ export class WorkspaceService extends EventEmitter {
     for (const record of pending) {
       let shownThroughOffset: number | undefined;
       if (record.kind === "match" && record.matchedThroughOffset != null) {
+        // Pins the shown-frontier check to the instance that produced this match: process IDs are
+        // reclaimed across restarts, so a newer instance must not suppress this record's wake.
+        const originNotAfterMs = Date.parse(record.createdAt);
         if (canQueryDeliveryState) {
           const state = await this.backgroundProcessManager.getMonitorWakeDeliveryState(
             record.processId,
-            Date.parse(record.createdAt)
+            originNotAfterMs
           );
           if (state?.status === "blocked") {
             this.scheduleBashMonitorWakeDrainAfterRead(ownerWorkspaceId, state.readSettled);
@@ -2114,7 +2117,7 @@ export class WorkspaceService extends EventEmitter {
         } else if (canQueryShownFrontier) {
           shownThroughOffset = await this.backgroundProcessManager.getSettledShownThroughOffset(
             record.processId,
-            Date.parse(record.createdAt)
+            originNotAfterMs
           );
         }
         if (shownThroughOffset != null && shownThroughOffset >= record.matchedThroughOffset) {
