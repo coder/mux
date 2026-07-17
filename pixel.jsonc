@@ -1,7 +1,6 @@
 {
 	"platformAccessUrl": "https://pixel.coder.com",
-	// Replace this placeholder before configuring PIXEL_KEY in CI.
-	"projectId": "00000000-0000-0000-0000-000000000000",
+	"projectId": "019ed215-54ab-75d7-8c0e-048a28972836",
 	"storybook": {
 		"buildCommand": "bun x storybook build",
 		"outputDirectory": "storybook-static/"
