@@ -7,7 +7,6 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
-import { isPixel } from "@coder/pixel-storybook";
 import { Lightbulb } from "lucide-react";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
@@ -171,7 +170,9 @@ function isPixelSnapshotEnvironment(): boolean {
     return false;
   }
 
-  return isPixel();
+  // Inline the check instead of importing isPixel() from @coder/pixel-storybook:
+  // that package is a devDependency and must not enter the production bundle.
+  return typeof (window as Window & { __PIXEL__?: object }).__PIXEL__ === "object";
 }
 
 interface ChatPaneProps {
