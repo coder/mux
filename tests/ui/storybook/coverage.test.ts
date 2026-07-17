@@ -33,12 +33,10 @@ const MIGRATED_APP_STORIES = [
 ] as const;
 
 const hasExplicitPixelPolicy = (content: string): boolean => {
-  // Must use one of the shared policy constants (not bare inline config)
   return content.includes("PIXEL_DUAL_THEME") || content.includes("PIXEL_DISABLED");
 };
 
 const hasSmokeStoryWithDualThemeCoverage = (content: string): boolean => {
-  // Must appear in a matrix assignment context, not just as an import
   return (
     /matrix:\s*PIXEL_DUAL_THEME/.test(content) ||
     /matrix:\s*\{[^}]*themes:\s*\["dark",\s*"light"\]/.test(content)

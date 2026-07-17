@@ -1,10 +1,6 @@
 {
-	// Coder Pixel visual regression testing (replaces Chromatic).
-	// The CLI builds Storybook, captures screenshots across the matrix below,
-	// and uploads them to the Pixel platform for baseline comparison + review.
 	"platformAccessUrl": "https://pixel.coder.com",
-	// TODO: replace with the real project ID once the mux project is created
-	// on the Pixel platform. CI skips the snapshot step until PIXEL_KEY is set.
+	// Replace this placeholder before configuring PIXEL_KEY in CI.
 	"projectId": "00000000-0000-0000-0000-000000000000",
 	"storybook": {
 		"buildCommand": "bun x storybook build",

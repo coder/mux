@@ -802,7 +802,6 @@ export const DiffPaddingAlignment: Story = {
     });
 
     // Visual verification: the padding strip should align with the diff gutter
-    // This is primarily a visual regression test for Pixel
   },
 };
 

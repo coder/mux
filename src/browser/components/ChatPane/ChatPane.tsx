@@ -7,6 +7,7 @@ import React, {
   useDeferredValue,
   useMemo,
 } from "react";
+import { isPixel } from "@coder/pixel-storybook";
 import { Lightbulb } from "lucide-react";
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
@@ -170,8 +171,7 @@ function isPixelSnapshotEnvironment(): boolean {
     return false;
   }
 
-  // Pixel injects window.__PIXEL__ into every snapshot capture context.
-  return typeof (window as Window & { __PIXEL__?: object }).__PIXEL__ === "object";
+  return isPixel();
 }
 
 interface ChatPaneProps {

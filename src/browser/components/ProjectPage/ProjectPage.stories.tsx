@@ -98,7 +98,6 @@ export const CreateWorkspace: AppStory = {
 export const CreateWorkspaceMultipleProjects: AppStory = {
   parameters: {
     pixel: {
-      // Cover both themes and both form factors (laptop + phone widths).
       matrix: { themes: ["dark", "light"], viewports: ["laptop", "phone"] },
     },
   },
@@ -134,7 +133,6 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
 export const CreateWorkspaceWithSections: AppStory = {
   parameters: {
     pixel: {
-      // Cover both themes and both form factors (laptop + phone widths).
       matrix: { themes: ["dark", "light"], viewports: ["laptop", "phone"] },
     },
   },

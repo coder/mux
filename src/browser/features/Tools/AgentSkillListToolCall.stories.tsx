@@ -9,9 +9,7 @@ const meta = {
   component: AgentSkillListToolCall,
   parameters: {
     ...lightweightMeta.parameters,
-    // The repo-wide Pixel snapshot budget (tests/ui/storybook/budget.test.ts) is
-    // already at its ceiling, so these states stay out of paid visual snapshots. They
-    // still render under local Storybook and the CI Storybook test-runner smoke pass.
+    // Excluded because the repo-wide Pixel snapshot budget is at its ceiling.
     pixel: PIXEL_DISABLED,
   },
   decorators: [

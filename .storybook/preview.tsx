@@ -130,7 +130,6 @@ const preview: Preview = {
   decorators: [
     // Theme provider
     (Story, context) => {
-      // Default to dark if mode not set (headless snapshot browsers default to light)
       const mode = (context.globals.theme as ThemeMode | undefined) ?? "dark";
 
       // Apply theme synchronously before React renders - critical for visual snapshots
@@ -208,13 +207,6 @@ const preview: Preview = {
         },
       },
     },
-    // Pixel snapshots each story once by default: pixel.jsonc declares a single
-    // chrome/laptop variant with no themes, so stories render with the default
-    // `theme: "dark"` global. Dual-theme or viewport coverage is opt-in per
-    // meta/story via parameters.pixel.matrix (e.g. PIXEL_DUAL_THEME in
-    // src/browser/stories/meta.tsx). Story-level matrix axes REPLACE the
-    // top-level axes rather than stacking, so opting one story in never
-    // multiplies other stories' snapshot counts.
   },
 };
 

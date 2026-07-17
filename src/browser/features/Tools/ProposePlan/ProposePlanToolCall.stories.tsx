@@ -1,3 +1,4 @@
+import { isPixel } from "@coder/pixel-storybook";
 import { waitFor, within } from "@storybook/test";
 
 import type { AppStory } from "@/browser/stories/meta.js";
@@ -14,13 +15,6 @@ export default meta;
 // desktop viewport instead of the default 1200px laptop width.
 const PLAN_TOC_MIN_WIDTH = 1600;
 const PLAN_TOC_PIXEL_MATRIX = { viewports: ["desktop"] } as const;
-
-function isPixelRuntime(): boolean {
-  return (
-    typeof window === "object" &&
-    typeof (window as Window & { __PIXEL__?: object }).__PIXEL__ === "object"
-  );
-}
 
 /**
  * Story showing a propose_plan tool call with Plan UI.
@@ -281,7 +275,7 @@ Blue/green cutover with automatic rollback on auth-error spikes.
     viewport: { value: "wide", isRotated: false },
   },
   play: async ({ canvasElement }) => {
-    const shouldAssertFullToc = isPixelRuntime() || window.innerWidth >= PLAN_TOC_MIN_WIDTH;
+    const shouldAssertFullToc = isPixel() || window.innerWidth >= PLAN_TOC_MIN_WIDTH;
     if (!shouldAssertFullToc) {
       return;
     }
@@ -289,8 +283,7 @@ Blue/green cutover with automatic rollback on auth-error spikes.
     const canvas = within(canvasElement);
     const toc = await canvas.findByTestId("plan-toc-nav");
     await waitFor(() => {
-      // User rationale: this story exists to snapshot the full sticky TOC. Fail
-      // loudly if a viewport regression captures only the compact hint.
+      // Fail if the pinned viewport no longer reveals the full sticky ToC.
       if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
         throw new Error("Expected the full plan TOC to be visible in the wide Storybook story");
       }

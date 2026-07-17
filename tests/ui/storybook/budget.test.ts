@@ -7,9 +7,7 @@ const COLOCATED_STORY_DIRS = ["src/browser/components", "src/browser/features"];
 const MAX_SNAPSHOT_ENABLED_FILES = 79;
 // Exact current retained snapshot baseline. Keep this no-headroom guardrail tight:
 // future growth should exclude, consolidate, or intentionally rebalance snapshots
-// rather than silently increasing Pixel load. (Rebaselined from 293 during the
-// Chromatic migration: Pixel matrices are cross-products, so paired
-// dark-desktop/light-mobile modes became full theme x viewport grids.)
+// rather than silently increasing Pixel load.
 const MAX_ESTIMATED_SNAPSHOTS = 305;
 const STORY_EXPORT_PATTERN = /^export const \w+/gm;
 const DUAL_THEME_PATTERN = /matrix:\s*PIXEL_DUAL_THEME/g;
@@ -55,13 +53,12 @@ function countArrayEntries(arrayLiteral: string): number {
   return source.split(",").filter((entry) => entry.trim().length > 0).length;
 }
 
-// Pixel expands a story matrix as themes x viewports (browsers stay single).
-// An axis that is absent contributes 1 variant.
+// Pixel expands every configured matrix axis as a cross-product.
 function estimateMatrixVariants(matrixLiteral: string): number {
   const inner = matrixLiteral.slice(1, -1);
 
   let variants = 1;
-  for (const axis of ["themes", "viewports"]) {
+  for (const axis of ["browsers", "viewports", "themes", "colorSchemes"]) {
     const axisMatch = new RegExp(`${axis}:\\s*\\[([^\\]]*)\\]`).exec(inner);
     if (axisMatch?.[1] != null) {
       variants *= Math.max(1, countArrayEntries(axisMatch[1]));

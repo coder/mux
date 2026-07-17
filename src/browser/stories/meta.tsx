@@ -22,10 +22,6 @@ import {
 // META CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PIXEL SNAPSHOT POLICIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
 /**
  * Stories snapshot once by default (dark theme, laptop viewport from
  * pixel.jsonc). Use PIXEL_DUAL_THEME on one "Smoke" story per retained file
@@ -33,7 +29,6 @@ import {
  */
 export const PIXEL_DUAL_THEME = { themes: ["dark", "light"] } as const;
 
-/** Disable snapshots entirely for docs-only or non-visual stories. */
 export const PIXEL_DISABLED = { exclude: true } as const;
 
 export const appMeta: Meta<typeof AppLoader> = {

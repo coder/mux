@@ -576,7 +576,7 @@ function renderSubAgentGallery() {
   // Own ws-idle's last-read state. IdleSeen/IdleNotSeen write the same persisted
   // key, so without pinning it here the idle rows inherit whichever sibling story
   // rendered last and flip between "idle" (primary title) and "seen" (tertiary
-  // title) — a non-deterministic snapshot diff. Pin to unread (matching the
+  // title), causing a non-deterministic snapshot diff. Pin to unread (matching the
   // workspace's "idle" semantics) so the gallery is stable regardless of order.
   const idleCreatedAtMs = Date.parse(idle.createdAt ?? new Date(NOW).toISOString());
   updatePersistedState(getWorkspaceLastReadKey(idle.id), idleCreatedAtMs - 60_000);
