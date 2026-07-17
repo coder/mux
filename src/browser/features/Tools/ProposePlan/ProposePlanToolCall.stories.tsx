@@ -282,12 +282,18 @@ Blue/green cutover with automatic rollback on auth-error spikes.
 
     const canvas = within(canvasElement);
     const toc = await canvas.findByTestId("plan-toc-nav");
-    await waitFor(() => {
-      // Fail if the pinned viewport no longer reveals the full sticky ToC.
-      if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
-        throw new Error("Expected the full plan TOC to be visible in the wide Storybook story");
-      }
-    });
+    // Explicit timeout: preview.tsx's configure({ asyncUtilTimeout }) targets the
+    // storybook/test module, not this @storybook/test import, so waitFor would
+    // otherwise give up after 1s while the container query settles on loaded CI runners.
+    await waitFor(
+      () => {
+        // Fail if the pinned viewport no longer reveals the full sticky ToC.
+        if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
+          throw new Error("Expected the full plan TOC to be visible in the wide Storybook story");
+        }
+      },
+      { timeout: 10_000 }
+    );
   },
   parameters: {
     viewport: { defaultViewport: "wide" },

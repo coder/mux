@@ -13,7 +13,7 @@ jobs:
     name: Visual Regression Testing
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-8' || 'ubuntu-latest' }}
     # Skip for forked PRs since they don't have access to secrets
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
+    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
     env:
       PIXEL_KEY: ${{ secrets.PIXEL_KEY }}
     steps:
