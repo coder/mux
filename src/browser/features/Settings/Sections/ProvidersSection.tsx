@@ -243,6 +243,7 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
   google: "https://aistudio.google.com/app/apikey",
   xai: "https://console.x.ai/team/default/api-keys",
   deepseek: "https://platform.deepseek.com/api_keys",
+  moonshotai: "https://platform.moonshot.ai/console/api-keys",
   openrouter: "https://openrouter.ai/settings/keys",
   // bedrock: AWS credential chain, no simple key URL
   // ollama: local service, no key needed

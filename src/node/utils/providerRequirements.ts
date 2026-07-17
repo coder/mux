@@ -65,6 +65,9 @@ export const PROVIDER_ENV_VARS: Partial<
   deepseek: {
     apiKey: ["DEEPSEEK_API_KEY"],
   },
+  moonshotai: {
+    apiKey: ["MOONSHOT_API_KEY"],
+  },
   "github-copilot": {
     apiKey: ["GITHUB_COPILOT_TOKEN"],
   },

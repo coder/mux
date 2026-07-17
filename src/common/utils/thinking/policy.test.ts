@@ -618,10 +618,11 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns a fixed max policy for Kimi K3 behind OpenRouter", () => {
+  test("returns a fixed max policy for Kimi K3 (direct and via OpenRouter)", () => {
+    expect(getThinkingPolicyForModel("moonshotai:kimi-k3")).toEqual(["max"]);
     expect(getThinkingPolicyForModel("openrouter:moonshotai/kimi-k3")).toEqual(["max"]);
     // Variant ids must not inherit the fixed K3 policy.
-    expect(getThinkingPolicyForModel("openrouter:moonshotai/kimi-k3-turbo")).toEqual([
+    expect(getThinkingPolicyForModel("moonshotai:kimi-k3-turbo")).toEqual([
       "off",
       "low",
       "medium",

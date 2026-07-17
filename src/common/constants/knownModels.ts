@@ -4,7 +4,7 @@
 
 import { formatModelDisplayName } from "../utils/ai/modelDisplay";
 
-type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "deepseek" | "openrouter";
+type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "deepseek" | "moonshotai";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -213,11 +213,11 @@ const MODEL_DEFINITIONS = {
     tokenizerOverride: "deepseek/deepseek-v3.1",
   },
   // Kimi K3 - Moonshot AI's flagship open-weight multimodal reasoning model (released
-  // July 16, 2026; 1M context, text+image input; $3/M in, $15/M out via OpenRouter).
+  // July 16, 2026; 1M context, text+image input; $3/M in, $15/M out).
   // Bare `kimi` alias tracks Moonshot's flagship per the shortest-alias convention.
   KIMI_K3: {
-    provider: "openrouter",
-    providerModelId: "moonshotai/kimi-k3",
+    provider: "moonshotai",
+    providerModelId: "kimi-k3",
     aliases: ["kimi", "k3", "kimi-k3"],
     // K3's tokenizer isn't published in ai-tokenizer yet; reuse Kimi K2 (the newest
     // Moonshot tokenizer available) for approximate counting.

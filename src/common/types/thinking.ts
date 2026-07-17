@@ -305,9 +305,9 @@ export function openaiSupportsProMode(modelString: string): boolean {
 }
 
 /**
- * Kimi K3 (Moonshot AI via OpenRouter) always reasons and supports only the max
- * reasoning effort; the thinking policy and the OpenRouter provider-options
- * branch both key off this predicate.
+ * Kimi K3 (Moonshot AI) always reasons and supports only the max reasoning
+ * effort; the thinking policy and the Moonshot/OpenRouter provider-options
+ * branches key off this predicate.
  */
 export function isKimiK3Model(modelString: string): boolean {
   return stripModelProviderPrefixes(modelString) === "kimi-k3";

@@ -64,6 +64,15 @@ type OpenAICompatibleGatewayProviderOptions = Pick<
 >;
 
 /**
+ * Moonshot AI provider options (@ai-sdk/moonshotai). Kimi K3 accepts only the
+ * literal "max" reasoning effort, matching the SDK's typed options schema.
+ */
+interface MoonshotAIProviderOptions {
+  [key: string]: JSONValue | undefined;
+  reasoningEffort?: "max";
+}
+
+/**
  * Provider-specific options structure for AI SDK
  */
 type ProviderOptions =
@@ -71,6 +80,7 @@ type ProviderOptions =
   | { openai: OpenAIResponsesProviderOptions }
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
+  | { moonshotai: MoonshotAIProviderOptions }
   | { xai: XaiProviderOptions }
   | { "github-copilot": OpenAICompatibleGatewayProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
@@ -473,6 +483,20 @@ export function buildProviderOptions(
     } satisfies { google: GoogleGenerativeAIProviderOptions };
     log.debug("buildProviderOptions: Google options", options);
     return options;
+  }
+
+  // Build Moonshot-specific options
+  if (formatProvider === "moonshotai") {
+    // Kimi K3 always reasons and supports only the max reasoning effort. Send it
+    // explicitly rather than relying on the API default.
+    if (isKimiK3Model(capabilityModel)) {
+      const options = {
+        moonshotai: { reasoningEffort: "max" },
+      } satisfies { moonshotai: MoonshotAIProviderOptions };
+      log.debug("buildProviderOptions: Returning Moonshot options", options);
+      return options;
+    }
+    return {};
   }
 
   // Build OpenRouter-specific options

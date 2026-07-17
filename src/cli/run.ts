@@ -540,7 +540,7 @@ async function main(): Promise<number> {
       config.saveProvidersConfig(providersFromEnv);
     } else {
       throw new Error(
-        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
+        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY / MOONSHOT_API_KEY."
       );
     }
   }

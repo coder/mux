@@ -171,8 +171,8 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
     return ["low", "high"];
   }
 
-  // Kimi K3 always reasons and OpenRouter currently exposes only the max (default)
-  // reasoning effort, so the policy is a fixed single level.
+  // Kimi K3 always reasons and supports only the max reasoning effort, so the
+  // policy is a fixed single level.
   if (isKimiK3Model(withoutProviderNamespace)) {
     return ["max"];
   }

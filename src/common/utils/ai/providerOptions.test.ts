@@ -1585,11 +1585,34 @@ describe("buildProviderOptions - Google", () => {
   });
 });
 
+describe("buildProviderOptions - Moonshot", () => {
+  test("sends the explicit max reasoning effort for direct Kimi K3", () => {
+    expect(buildProviderOptions("moonshotai:kimi-k3", "max")).toEqual({
+      moonshotai: { reasoningEffort: "max" },
+    });
+  });
+
+  test("emits no provider options for other Moonshot models", () => {
+    expect(buildProviderOptions("moonshotai:kimi-k2.5", "medium")).toEqual({});
+  });
+});
+
 describe("buildProviderOptions - OpenRouter", () => {
-  test("sends the explicit max effort for Kimi K3", () => {
+  test("sends the explicit max effort for OpenRouter-routed Kimi K3", () => {
     // `enabled: true` alone falls back to OpenRouter's default (medium) effort,
     // which K3 does not support, so the effort must be sent explicitly.
-    expect(buildProviderOptions("openrouter:moonshotai/kimi-k3", "max")).toEqual({
+    const result = buildProviderOptions(
+      "moonshotai:kimi-k3",
+      "max",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "openrouter"
+    );
+    expect(result).toEqual({
       openrouter: {
         reasoning: {
           enabled: true,

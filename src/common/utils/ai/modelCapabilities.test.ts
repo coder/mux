@@ -33,11 +33,13 @@ describe("getModelCapabilities", () => {
     expect(caps).not.toBeNull();
   });
 
-  it("reports image support for Kimi K3 via the OpenRouter gateway id", () => {
-    const caps = getModelCapabilities("openrouter:moonshotai/kimi-k3");
-    expect(caps).not.toBeNull();
-    expect(caps?.supportsVision).toBe(true);
-    expect(caps?.supportsPdfInput).toBe(false);
+  it("reports image support for Kimi K3 via direct and gateway ids", () => {
+    for (const model of ["moonshotai:kimi-k3", "openrouter:moonshotai/kimi-k3"]) {
+      const caps = getModelCapabilities(model);
+      expect(caps).not.toBeNull();
+      expect(caps?.supportsVision).toBe(true);
+      expect(caps?.supportsPdfInput).toBe(false);
+    }
   });
 
   it("infers PDF support for OpenAI vision models when models-extra omits the flag", () => {

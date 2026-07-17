@@ -20,6 +20,7 @@ export type ProviderName =
   | "google"
   | "xai"
   | "deepseek"
+  | "moonshotai"
   | "openrouter"
   | "github-copilot"
   | "bedrock"
@@ -128,13 +129,20 @@ export const PROVIDER_DEFINITIONS = {
     requiresApiKey: true,
     kind: "direct",
   },
+  moonshotai: {
+    displayName: "Moonshot AI",
+    import: () => import("@ai-sdk/moonshotai"),
+    factoryName: "createMoonshotAI",
+    requiresApiKey: true,
+    kind: "direct",
+  },
   openrouter: {
     displayName: "OpenRouter",
     import: () => import("@openrouter/ai-sdk-provider"),
     factoryName: "createOpenRouter",
     requiresApiKey: true,
     kind: "gateway",
-    routes: ["anthropic", "openai", "google", "xai", "deepseek"],
+    routes: ["anthropic", "openai", "google", "xai", "deepseek", "moonshotai"],
     passthrough: false,
     toGatewayModelId: toSlashSeparatedGatewayModelId,
     fromGatewayModelId: fromSlashSeparatedGatewayModelId,
