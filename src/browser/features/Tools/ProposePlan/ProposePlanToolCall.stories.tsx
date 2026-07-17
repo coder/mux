@@ -289,7 +289,18 @@ Blue/green cutover with automatic rollback on auth-error spikes.
       () => {
         // Fail if the pinned viewport no longer reveals the full sticky ToC.
         if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
-          throw new Error("Expected the full plan TOC to be visible in the wide Storybook story");
+          // The reveal is a pure CSS container query, so include the widths that
+          // drive it: a failure here is a sizing regression, not a timing race.
+          const transcript = document.querySelector('[style*="container"], .plan-toc-aware')
+            ? [...document.querySelectorAll<HTMLElement>("*")].find((el) =>
+                getComputedStyle(el).containerName.includes("transcript")
+              )
+            : undefined;
+          throw new Error(
+            "Expected the full plan TOC to be visible in the wide Storybook story " +
+              `(innerWidth=${window.innerWidth}, innerHeight=${window.innerHeight}, ` +
+              `transcriptContainerWidth=${transcript?.offsetWidth ?? "not-found"})`
+          );
         }
       },
       { timeout: 10_000 }
