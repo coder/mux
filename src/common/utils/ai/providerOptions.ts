@@ -52,7 +52,9 @@ interface OpenRouterReasoningOptions {
   reasoning?: {
     enabled?: boolean;
     exclude?: boolean;
-    effort?: "low" | "medium" | "high";
+    // "max" is not in OpenRouter's generic low/medium/high set; it is the only
+    // effort Kimi K3 accepts (model metadata supported_efforts: ["max"]).
+    effort?: "low" | "medium" | "high" | "max";
   };
 }
 
@@ -475,11 +477,12 @@ export function buildProviderOptions(
 
   // Build OpenRouter-specific options
   if (formatProvider === "openrouter") {
-    // Kimi K3 always reasons and OpenRouter currently accepts only its default (max)
-    // reasoning effort, so enable reasoning without an effort override instead of
-    // sending a low/medium/high value the model does not support.
-    const kimiK3 = isKimiK3Model(capabilityModel);
-    const reasoningEffort = kimiK3 ? undefined : OPENROUTER_REASONING_EFFORT[effectiveThinking];
+    // Kimi K3 always reasons and supports only the max reasoning effort. Send it
+    // explicitly: `enabled: true` alone falls back to OpenRouter's default (medium)
+    // effort, which the model does not support.
+    const reasoningEffort = isKimiK3Model(capabilityModel)
+      ? "max"
+      : OPENROUTER_REASONING_EFFORT[effectiveThinking];
 
     log.debug("buildProviderOptions: OpenRouter config", {
       reasoningEffort,
@@ -487,12 +490,12 @@ export function buildProviderOptions(
     });
 
     // Only add reasoning config if thinking is enabled
-    if (kimiK3 || reasoningEffort) {
+    if (reasoningEffort) {
       const options = {
         openrouter: {
           reasoning: {
             enabled: true,
-            ...(reasoningEffort ? { effort: reasoningEffort } : {}),
+            effort: reasoningEffort,
             // Don't exclude reasoning content - we want to display it in the UI
             exclude: false,
           },

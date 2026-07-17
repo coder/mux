@@ -1586,12 +1586,14 @@ describe("buildProviderOptions - Google", () => {
 });
 
 describe("buildProviderOptions - OpenRouter", () => {
-  test("enables reasoning without an effort override for Kimi K3", () => {
-    // K3 accepts only its default (max) reasoning effort, so no effort value is sent.
+  test("sends the explicit max effort for Kimi K3", () => {
+    // `enabled: true` alone falls back to OpenRouter's default (medium) effort,
+    // which K3 does not support, so the effort must be sent explicitly.
     expect(buildProviderOptions("openrouter:moonshotai/kimi-k3", "max")).toEqual({
       openrouter: {
         reasoning: {
           enabled: true,
+          effort: "max",
           exclude: false,
         },
       },
