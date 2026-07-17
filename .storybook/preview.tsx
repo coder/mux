@@ -13,7 +13,7 @@ import { NOW } from "../src/browser/stories/storyTime";
 import { updatePersistedState } from "../src/browser/hooks/usePersistedState";
 import { configure } from "storybook/test";
 
-// Signal Storybook runtime to modules that need to stabilize for Chromatic
+// Signal Storybook runtime to modules that need to stabilize for visual snapshots
 // (e.g. the ChatInput placeholder tip carousel pins to its lead tip so
 // tip-list reorders don't cascade into baseline diffs across every story).
 // Set as early as possible so it precedes any story-module import that might
@@ -39,7 +39,7 @@ function ensureStorybookFontsReady(): Promise<void> {
 
     const fonts = document.fonts;
 
-    // Trigger load of layout-affecting fonts so Chromatic doesn't snapshot mid font-swap.
+    // Trigger load of layout-affecting fonts so snapshots aren't captured mid font-swap.
     await Promise.allSettled([
       fonts.load("400 14px 'Geist'"),
       fonts.load("600 14px 'Geist'"),
@@ -130,10 +130,9 @@ const preview: Preview = {
   decorators: [
     // Theme provider
     (Story, context) => {
-      // Default to dark if mode not set (e.g., Chromatic headless browser defaults to light)
       const mode = (context.globals.theme as ThemeMode | undefined) ?? "dark";
 
-      // Apply theme synchronously before React renders - critical for Chromatic snapshots
+      // Apply theme synchronously before React renders - critical for visual snapshots
       if (typeof document !== "undefined") {
         document.documentElement.dataset.theme = mode;
         document.documentElement.style.colorScheme = mode;
@@ -208,21 +207,6 @@ const preview: Preview = {
         },
       },
     },
-    // Chromatic modes STACK across project → component → story levels (they are
-    // NOT overridden by more specific levels). A project-level `modes` map here
-    // would therefore be added to EVERY story's snapshot set on top of whatever
-    // each meta/story declares, multiplying the whole budget. Concretely, a
-    // global { dark, light } stacked onto appMeta's `dark-desktop` produced 3
-    // snapshots per App story (dark + light + dark-desktop) instead of the 1 the
-    // meta intended — silently inflating the Chromatic snapshot budget.
-    //
-    // We intentionally declare NO project-level modes. Stories then snapshot in:
-    //   - the modes their meta/story explicitly declare (e.g. CHROMATIC_SINGLE_MODE,
-    //     CHROMATIC_SMOKE_MODES), or
-    //   - a single default snapshot (the default `theme: "dark"` global) when none
-    //     are declared.
-    // Dual-theme coverage is opt-in per file/story via CHROMATIC_SMOKE_MODES, which
-    // matches the documented policy in src/browser/stories/meta.tsx.
   },
 };
 

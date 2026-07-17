@@ -1,7 +1,7 @@
 import { waitFor, within } from "@storybook/test";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { DevToolsStep } from "@/common/types/devtools";
-import { CHROMATIC_DISABLED, StoryUiShell } from "@/browser/stories/meta";
+import { PIXEL_DISABLED, StoryUiShell } from "@/browser/stories/meta";
 import { DevToolsStepCard } from "./DevToolsStepCard";
 
 const MIN_RIGHT_SIDEBAR_WIDTH = 300;
@@ -21,7 +21,7 @@ const meta = {
   component: DevToolsStepCard,
   parameters: {
     layout: "fullscreen",
-    chromatic: CHROMATIC_DISABLED,
+    pixel: PIXEL_DISABLED,
   },
   decorators: [
     (Story) => (

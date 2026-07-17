@@ -1,9 +1,4 @@
-import {
-  CHROMATIC_SMOKE_MODES,
-  appMeta,
-  AppWithMocks,
-  type AppStory,
-} from "@/browser/stories/meta.js";
+import { PIXEL_DUAL_THEME, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { createGitStatusExecutor } from "@/browser/stories/helpers/git";
 import {
   collapseRightSidebar,
@@ -106,7 +101,7 @@ function createDevcontainerClient(runtimeStatus: "running" | "stopped" | "unknow
  */
 export const DevcontainerRunning: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => <AppWithMocks setup={() => createDevcontainerClient("running")} />,
 };
@@ -129,11 +124,8 @@ export const ScratchWorkspace: AppStory = {
     viewport: { value: "mobile1", isRotated: false },
   },
   parameters: {
-    chromatic: {
-      modes: {
-        desktop: { theme: "dark" },
-        mobile: { theme: "light", viewport: "mobile1", hasTouch: true },
-      },
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["laptop", "phone"] },
     },
   },
   render: () => (

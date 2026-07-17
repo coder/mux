@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { AgentSkillListToolCall } from "@/browser/features/Tools/AgentSkillListToolCall";
-import { CHROMATIC_DISABLED, lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
+import { PIXEL_DISABLED, lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 const meta = {
@@ -9,10 +9,8 @@ const meta = {
   component: AgentSkillListToolCall,
   parameters: {
     ...lightweightMeta.parameters,
-    // The repo-wide Chromatic snapshot budget (tests/ui/storybook/budget.test.ts) is
-    // already at its ceiling, so these states stay out of paid visual snapshots. They
-    // still render under local Storybook and the CI Storybook test-runner smoke pass.
-    chromatic: CHROMATIC_DISABLED,
+    // Excluded because the repo-wide Pixel snapshot budget is at its ceiling.
+    pixel: PIXEL_DISABLED,
   },
   decorators: [
     (Story) => (
@@ -152,7 +150,7 @@ export const ErrorResult: Story = {
 
 /**
  * Narrow (~375px) viewport. Pinned to a fixed-width container because the Storybook
- * test-runner renders at desktop width and ignores viewport / Chromatic modes, so the
+ * test-runner renders at desktop width and ignores viewport / Pixel matrix variants, so the
  * mobile case must be forced with a wrapper. The play fails if the long browser-skill
  * description or scope rows overflow horizontally instead of wrapping/clamping.
  */

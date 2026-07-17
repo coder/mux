@@ -2,7 +2,7 @@
  * Phone viewport stories - catch responsive/layout regressions.
  *
  * These are full-app stories rendered inside fixed iPhone-sized containers, and
- * Chromatic is configured to snapshot both light and dark themes.
+ * Pixel snapshots both light and dark themes at the phone viewport.
  */
 
 import { within, waitFor } from "@storybook/test";
@@ -12,7 +12,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import { STABLE_TIMESTAMP, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { setupSimpleChatStory } from "./helpers/chatSetup";
@@ -31,8 +31,9 @@ const IPHONE_16E = {
 } as const;
 
 // NOTE: Mux's mobile UI tweaks are gated on `@media (max-width: 768px) and (pointer: coarse)`.
-// Chromatic can emulate touch via `hasTouch: true` in modes, which ensures the
-// right sidebar is hidden and the mobile header/sidebar affordances are visible.
+// Pixel does not emulate touch, so `pointer: coarse` never matches during snapshot
+// capture and touch-only affordances (hidden right sidebar, mobile header) are a
+// known coverage gap; these stories still validate the narrow-width layout.
 
 const IPHONE_17_PRO_MAX = {
   // Source: https://ios-resolution.info/ (logical resolution)
@@ -52,7 +53,10 @@ function IPhone17ProMaxDecorator(Story: ComponentType) {
   return (
     <div
       style={{
-        width: IPHONE_17_PRO_MAX.width,
+        // Pixel's phone viewport is 390px, narrower than this 440px device
+        // frame. Clamp to the viewport so the capture never clips the right
+        // edge; local Storybook and the test-runner still see the full 440px.
+        width: `min(100vw, ${IPHONE_17_PRO_MAX.width}px)`,
         height: IPHONE_17_PRO_MAX.height,
         overflow: "hidden",
       }}
@@ -125,21 +129,8 @@ export const IPhone16e: AppStory = {
   decorators: [IPhone16eDecorator],
   parameters: {
     ...appMeta.parameters,
-    chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
-      cropToViewport: true,
-      modes: {
-        "dark-mobile": {
-          ...CHROMATIC_SMOKE_MODES["dark-desktop"],
-          viewport: IPHONE_16E,
-          hasTouch: true,
-        },
-        "light-mobile": {
-          ...CHROMATIC_SMOKE_MODES["light-desktop"],
-          viewport: IPHONE_16E,
-          hasTouch: true,
-        },
-      },
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
     },
   },
   play: async ({ canvasElement }) => {
@@ -163,13 +154,8 @@ export const IPhone17ProMax: AppStory = {
   decorators: [IPhone17ProMaxDecorator],
   parameters: {
     ...appMeta.parameters,
-    chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
-      cropToViewport: true,
-      modes: {
-        dark: { theme: "dark", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
-        light: { theme: "light", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
-      },
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
     },
   },
   play: async ({ canvasElement }) => {
@@ -197,13 +183,8 @@ export const IPhone17ProMaxTouchReviewImmersive: AppStory = {
   decorators: [IPhone17ProMaxDecorator],
   parameters: {
     ...appMeta.parameters,
-    chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
-      cropToViewport: true,
-      modes: {
-        dark: { theme: "dark", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
-        light: { theme: "light", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
-      },
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
     },
   },
   play: async ({ canvasElement }) => {
@@ -299,13 +280,8 @@ export const IPhone16eSidebarWithSections: AppStory = {
   decorators: [IPhone16eDecorator],
   parameters: {
     ...appMeta.parameters,
-    chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
-      cropToViewport: true,
-      modes: {
-        dark: { theme: "dark", viewport: IPHONE_16E, hasTouch: true },
-        light: { theme: "light", viewport: IPHONE_16E, hasTouch: true },
-      },
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
     },
   },
   play: async ({ canvasElement }) => {
@@ -319,9 +295,8 @@ export const IPhone16eSidebarWithSections: AppStory = {
         );
         if (!sectionHeader) throw new Error("Sub-project header not found");
         // Verify the section header action buttons are in the DOM.
-        // The actual visibility assertion (opacity via CSS media query) is
-        // validated by the Chromatic snapshot in touch mode — the Storybook
-        // test runner doesn't emulate pointer:coarse media queries.
+        // Neither the Storybook test runner nor Pixel emulates pointer:coarse,
+        // so the opacity-via-media-query visibility is not asserted here.
         within(sectionHeader as HTMLElement).getByLabelText("New chat in sub-project");
       },
       { timeout: 10_000 }

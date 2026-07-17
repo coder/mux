@@ -1,7 +1,7 @@
 import { userEvent, waitFor } from "@storybook/test";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks, CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks, PIXEL_DUAL_THEME } from "@/browser/stories/meta.js";
 import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
 import { collapseLeftSidebar } from "@/browser/stories/helpers/uiState";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
@@ -117,7 +117,7 @@ export const NormalNoisyTranscript: AppStory = {
 };
 
 export const HyperCollapsedBundles: AppStory = {
-  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
+  parameters: { pixel: { matrix: PIXEL_DUAL_THEME } },
   render: () => <AppWithMocks setup={() => setupTranscriptDensityStory("hyper")} />,
 };
 
@@ -162,7 +162,7 @@ export const HyperTailProposePlanExpanded: AppStory = {
 };
 
 export const HyperExpandedBundle: AppStory = {
-  // Chromatic executes this play function for the visual snapshot, while the
+  // Pixel executes this play function for the visual snapshot, while the
   // app-level UI test covers expansion behavior without Storybook's manager-page timing.
   tags: ["!test"],
   render: () => <AppWithMocks setup={() => setupTranscriptDensityStory("hyper")} />,

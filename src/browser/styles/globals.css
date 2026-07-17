@@ -2539,9 +2539,9 @@ input[type="checkbox"] {
   }
 }
 
-/* Storybook/Chromatic determinism: the active sub-agent connector animates an
+/* Storybook snapshot determinism: the active sub-agent connector animates an
    infinite stroke-dashoffset (SVG elbow) and translateY (trunk dashes).
-   Chromatic cannot pin those to a stable frame, so "SubAgent States/Gallery"
+   Visual snapshots cannot pin those to a stable frame, so "SubAgent States/Gallery"
    otherwise snapshots the dashes at a random phase. The story tags its row
    container with this class to freeze both animations; the class is never used
    in the shipped app, so this rule is inert outside Storybook. */

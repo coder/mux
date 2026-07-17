@@ -42,7 +42,7 @@ export function resetStorybookPersistedStateForStory(): void {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);
     localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
 
-    // Chromatic reuses one browser origin across stories, so experiment
+    // Storybook reuses one browser origin across stories, so experiment
     // localStorage overrides from one story must not decide another story's
     // switch positions. Each story can opt back in through setupSettingsStory().
     for (const experiment of getExperimentList()) {

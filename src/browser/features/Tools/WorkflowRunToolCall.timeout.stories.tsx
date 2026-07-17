@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { WorkflowRunToolCall } from "@/browser/features/Tools/WorkflowRunToolCall";
-import { CHROMATIC_DISABLED, lightweightMeta } from "@/browser/stories/meta.js";
+import { PIXEL_DISABLED, lightweightMeta } from "@/browser/stories/meta.js";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 
 const meta = {
@@ -9,7 +9,7 @@ const meta = {
   title: "App/Chat/Tools/WorkflowRun/Timeouts",
   component: WorkflowRunToolCall,
   parameters: {
-    chromatic: CHROMATIC_DISABLED,
+    pixel: PIXEL_DISABLED,
   },
 } satisfies Meta<typeof WorkflowRunToolCall>;
 

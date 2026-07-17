@@ -680,7 +680,7 @@ export function buildSortedWorkspacesByProject(
   }
 
   // Sort each project's workspaces by recency (sort mutates in place)
-  // IMPORTANT: Include deterministic tie-breakers so Storybook/Chromatic snapshots can't
+  // IMPORTANT: Include deterministic tie-breakers so Storybook visual snapshots can't
   // flip ordering when multiple workspaces have equal recency.
   for (const metadataList of result.values()) {
     metadataList.sort((a, b) => {

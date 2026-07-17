@@ -290,7 +290,7 @@ interface AgentStatusSeed {
  * Seeds exactly once per workspace (addWorkspace is idempotent and the stream
  * events are replayed only when the aggregator is freshly created), and runs
  * during render before the child subscribes so the bar paints populated on the
- * first frame (flash-free for Chromatic).
+ * first frame (flash-free for snapshots).
  */
 function seedAgentStatus(
   workspaceStore: ReturnType<typeof useWorkspaceStoreRaw>,
@@ -465,12 +465,9 @@ const meta: Meta<typeof ImmersiveReviewView> = {
   ],
   parameters: {
     layout: "fullscreen",
-    chromatic: {
-      delay: 500,
-      modes: {
-        dark: { theme: "dark", viewport: 1600 },
-        light: { theme: "light", viewport: 1600 },
-      },
+    pixel: {
+      // Wide variant: these stories need >=1600px, so use the 1900px desktop viewport.
+      matrix: { themes: ["dark", "light"], viewports: ["desktop"] },
     },
   },
 };

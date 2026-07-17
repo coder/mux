@@ -1,3 +1,4 @@
+import { isPixel } from "@coder/pixel-storybook";
 import { waitFor, within } from "@storybook/test";
 
 import type { AppStory } from "@/browser/stories/meta.js";
@@ -10,19 +11,10 @@ import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 const meta = { ...appMeta, title: "App/Chat/Tools/ProposePlan" };
 export default meta;
 
-const PLAN_TOC_CHROMATIC_VIEWPORT = { width: 1600, height: 900 } as const;
-const PLAN_TOC_CHROMATIC_MODES = {
-  "dark-wide": { theme: "dark", viewport: PLAN_TOC_CHROMATIC_VIEWPORT },
-} as const;
-
-function isChromaticRuntime(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const chromaticRuntimeFlag = (window as Window & { chromatic?: boolean }).chromatic;
-  return /Chromatic/i.test(window.navigator.userAgent) || chromaticRuntimeFlag === true;
-}
+// The full sticky ToC needs at least 1600px, so the story pins Pixel's 1900px
+// desktop viewport instead of the default 1200px laptop width.
+const PLAN_TOC_MIN_WIDTH = 1600;
+const PLAN_TOC_PIXEL_MATRIX = { viewports: ["desktop"] } as const;
 
 /**
  * Story showing a propose_plan tool call with Plan UI.
@@ -283,27 +275,41 @@ Blue/green cutover with automatic rollback on auth-error spikes.
     viewport: { value: "wide", isRotated: false },
   },
   play: async ({ canvasElement }) => {
-    const shouldAssertFullToc =
-      isChromaticRuntime() || window.innerWidth >= PLAN_TOC_CHROMATIC_VIEWPORT.width;
+    const shouldAssertFullToc = isPixel() || window.innerWidth >= PLAN_TOC_MIN_WIDTH;
     if (!shouldAssertFullToc) {
       return;
     }
 
     const canvas = within(canvasElement);
     const toc = await canvas.findByTestId("plan-toc-nav");
-    await waitFor(() => {
-      // User rationale: this story exists to snapshot the full sticky TOC. Make
-      // Chromatic fail loudly if a viewport/mode regression captures only the compact hint.
-      if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
-        throw new Error("Expected the full plan TOC to be visible in the wide Storybook story");
-      }
-    });
+    // Explicit timeout: preview.tsx's configure({ asyncUtilTimeout }) targets the
+    // storybook/test module, not this @storybook/test import, so waitFor would
+    // otherwise give up after 1s while the container query settles on loaded CI runners.
+    await waitFor(
+      () => {
+        // Fail if the pinned viewport no longer reveals the full sticky ToC.
+        if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
+          // The reveal is a pure CSS container query, so include the widths that
+          // drive it: a failure here is a sizing regression, not a timing race.
+          const transcript = document.querySelector('[style*="container"], .plan-toc-aware')
+            ? [...document.querySelectorAll<HTMLElement>("*")].find((el) =>
+                getComputedStyle(el).containerName.includes("transcript")
+              )
+            : undefined;
+          throw new Error(
+            "Expected the full plan TOC to be visible in the wide Storybook story " +
+              `(innerWidth=${window.innerWidth}, innerHeight=${window.innerHeight}, ` +
+              `transcriptContainerWidth=${transcript?.offsetWidth ?? "not-found"})`
+          );
+        }
+      },
+      { timeout: 10_000 }
+    );
   },
   parameters: {
     viewport: { defaultViewport: "wide" },
-    chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
-      modes: PLAN_TOC_CHROMATIC_MODES,
+    pixel: {
+      matrix: PLAN_TOC_PIXEL_MATRIX,
     },
     docs: {
       description: {

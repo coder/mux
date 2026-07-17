@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 const STORY_DIR = "src/browser/stories";
 const PLAN_TOC_STORY_PATH =
   "src/browser/features/Tools/ProposePlan/ProposePlanToolCall.stories.tsx";
-const PLAN_TOC_MIN_CHROMATIC_WIDTH = 1600;
+const PLAN_TOC_MIN_WIDTH = 1600;
 
 /** App-level integration allowlist — files that must exist with smoke coverage. */
 const REQUIRED_APP_STORIES = [
@@ -32,40 +32,22 @@ const MIGRATED_APP_STORIES = [
   "App.projectCreate.stories.tsx",
 ] as const;
 
-const hasExplicitChromaticModePolicy = (content: string): boolean => {
-  // Must use one of the shared mode constants (not bare inline modes)
-  return (
-    content.includes("CHROMATIC_SMOKE_MODES") ||
-    content.includes("CHROMATIC_SINGLE_MODE") ||
-    content.includes("CHROMATIC_DISABLED")
-  );
+const hasExplicitPixelPolicy = (content: string): boolean => {
+  return content.includes("PIXEL_DUAL_THEME") || content.includes("PIXEL_DISABLED");
 };
 
 const hasSmokeStoryWithDualThemeCoverage = (content: string): boolean => {
-  // Must appear in a modes assignment context, not just as an import
   return (
-    /modes:\s*CHROMATIC_SMOKE_MODES/.test(content) ||
-    /modes:\s*\{[^}]*CHROMATIC_SMOKE_MODES/.test(content)
+    /matrix:\s*PIXEL_DUAL_THEME/.test(content) ||
+    /matrix:\s*\{[^}]*themes:\s*\["dark",\s*"light"\]/.test(content)
   );
 };
 
-function getPlanTocChromaticWidth(content: string): number | null {
-  const viewportMatch = content.match(
-    /PLAN_TOC_CHROMATIC_VIEWPORT\s*=\s*\{\s*width:\s*(\d+),\s*height:\s*\d+\s*\}/
+function getPlanTocViewports(content: string): string | null {
+  const matrixMatch = content.match(
+    /PLAN_TOC_PIXEL_MATRIX\s*=\s*\{\s*viewports:\s*\[([^\]]*)\]\s*\}/
   );
-  if (!viewportMatch?.[1]) {
-    return null;
-  }
-
-  return Number(viewportMatch[1]);
-}
-
-function hasPlanTocWideChromaticMode(content: string): boolean {
-  return (
-    /PLAN_TOC_CHROMATIC_MODES\s*=\s*\{[\s\S]*viewport:\s*PLAN_TOC_CHROMATIC_VIEWPORT/.test(
-      content
-    ) && /modes:\s*PLAN_TOC_CHROMATIC_MODES/.test(content)
-  );
+  return matrixMatch?.[1] ?? null;
 }
 
 describe("Storybook coverage contract", () => {
@@ -75,11 +57,6 @@ describe("Storybook coverage contract", () => {
 
       test(`${filename} exists`, () => {
         expect(existsSync(filepath)).toBe(true);
-      });
-
-      test(`${filename} has explicit chromatic mode policy`, () => {
-        const content = readFileSync(filepath, "utf-8");
-        expect(hasExplicitChromaticModePolicy(content)).toBe(true);
       });
 
       test(`${filename} has at least one smoke story with dual-theme coverage`, () => {
@@ -95,9 +72,9 @@ describe("Storybook coverage contract", () => {
         expect(existsSync(filepath)).toBe(true);
       });
 
-      test(`${filepath} has explicit chromatic mode policy`, () => {
+      test(`${filepath} has explicit pixel snapshot policy`, () => {
         const content = readFileSync(filepath, "utf-8");
-        expect(hasExplicitChromaticModePolicy(content)).toBe(true);
+        expect(hasExplicitPixelPolicy(content)).toBe(true);
       });
 
       test(`${filepath} has at least one smoke story with dual-theme coverage`, () => {
@@ -108,15 +85,17 @@ describe("Storybook coverage contract", () => {
   });
 
   describe("Story-specific visual contracts", () => {
-    test("plan ToC story pins a wide Chromatic viewport", () => {
+    test("plan ToC story pins a wide Pixel viewport", () => {
       const content = readFileSync(PLAN_TOC_STORY_PATH, "utf-8");
 
-      // This story validates gutter-only UI: the full ToC is hidden at Chromatic's
-      // default 1200px width, so it must carry an explicit wide mode.
-      expect(hasPlanTocWideChromaticMode(content)).toBe(true);
-      expect(getPlanTocChromaticWidth(content)).toBeGreaterThanOrEqual(
-        PLAN_TOC_MIN_CHROMATIC_WIDTH
-      );
+      // This story validates gutter-only UI: the full ToC is hidden at Pixel's
+      // default 1200px laptop width, so it must pin the 1900px desktop variant.
+      expect(getPlanTocViewports(content)).toContain("desktop");
+      expect(/matrix:\s*PLAN_TOC_PIXEL_MATRIX/.test(content)).toBe(true);
+
+      // The play() width guard must stay in sync with the pinned viewport.
+      const widthMatch = content.match(/PLAN_TOC_MIN_WIDTH\s*=\s*(\d+)/);
+      expect(Number(widthMatch?.[1])).toBeGreaterThanOrEqual(PLAN_TOC_MIN_WIDTH);
     });
   });
 

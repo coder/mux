@@ -159,7 +159,7 @@ function PerfRenderMarker(props: { id: string; children: React.ReactNode }): Rea
   return <>{props.children}</>;
 }
 
-function isChromaticStorybookEnvironment(): boolean {
+function isPixelSnapshotEnvironment(): boolean {
   if (typeof window === "undefined") {
     return false;
   }
@@ -170,8 +170,9 @@ function isChromaticStorybookEnvironment(): boolean {
     return false;
   }
 
-  const chromaticRuntimeFlag = (window as Window & { chromatic?: boolean }).chromatic;
-  return /Chromatic/i.test(window.navigator.userAgent) || chromaticRuntimeFlag === true;
+  // Inline the check instead of importing isPixel() from @coder/pixel-storybook:
+  // that package is a devDependency and must not enter the production bundle.
+  return typeof (window as Window & { __PIXEL__?: object }).__PIXEL__ === "object";
 }
 
 interface ChatPaneProps {
@@ -423,7 +424,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   } = workspaceState;
   const shouldShowPinnedTodoList = workspaceState.todos.length > 0;
   const shouldShowReviewsBanner = reviews.reviews.length > 0;
-  const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
+  const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isPixelSnapshotEnvironment();
   const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
 
   const {

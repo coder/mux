@@ -153,6 +153,7 @@
     "@babel/preset-env": "^7.28.5",
     "@babel/preset-react": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
+    "@coder/pixel-storybook": "0.2.1",
     "@electron/rebuild": "^4.0.4",
     "@eslint/js": "^9.36.0",
     "@playwright/test": "^1.56.0",

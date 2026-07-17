@@ -194,9 +194,6 @@ const meta: Meta<typeof WorkspaceMCPModal> = {
   component: WorkspaceMCPModal,
   parameters: {
     layout: "fullscreen",
-    chromatic: {
-      delay: 500,
-    },
   },
 };
 

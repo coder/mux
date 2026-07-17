@@ -13,7 +13,7 @@
  */
 
 import { expect, userEvent, within } from "@storybook/test";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { PIXEL_DUAL_THEME, appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { NOW, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { collapseRightSidebar, expandProjects, selectWorkspace } from "./helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
@@ -128,7 +128,7 @@ async function openPalette(canvasElement: HTMLElement, waitForText: string) {
  */
 export const WithTitles: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => <AppWithMocks setup={() => setupStory(createRichWorkspaces())} />,
   play: async ({ canvasElement }) => {

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { HeartbeatToolCall } from "@/browser/features/Tools/HeartbeatToolCall";
-import { CHROMATIC_DISABLED, lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
+import { PIXEL_DISABLED, lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
 import { HEARTBEAT_DEFAULT_MESSAGE_BODY } from "@/constants/heartbeat";
 
 const meta = {
@@ -9,11 +9,8 @@ const meta = {
   component: HeartbeatToolCall,
   parameters: {
     ...lightweightMeta.parameters,
-    // The repo-wide Chromatic snapshot budget (tests/ui/storybook/budget.test.ts) is
-    // already at its ceiling, so these states stay out of paid visual snapshots. They
-    // still render under local Storybook and the CI Storybook test-runner smoke pass.
-    // Flip to CHROMATIC_SINGLE_MODE once the budget is raised to add regression coverage.
-    chromatic: CHROMATIC_DISABLED,
+    // Excluded because the repo-wide Pixel snapshot budget is at its ceiling.
+    pixel: PIXEL_DISABLED,
   },
   decorators: [
     (Story) => (
@@ -66,7 +63,7 @@ export const ScheduledEnabled: Story = {
 /**
  * set · multiline custom message with a long unbroken token. Pinned to a fixed ~360px
  * container (the Storybook test-runner renders at desktop width and ignores viewport /
- * Chromatic modes, so the narrow case must be forced with a wrapper) and a play that
+ * Pixel matrix variants, so the narrow case must be forced with a wrapper) and a play that
  * fails if the prompt body's long URL/path overflows instead of wrapping.
  */
 export const CustomMessageWrapping: Story = {

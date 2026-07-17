@@ -68,12 +68,9 @@ const meta: Meta = {
         { name: "light", value: "#f5f6f8" },
       ],
     },
-    chromatic: {
-      delay: 500,
-      modes: {
-        dark: { theme: "dark", viewport: 1600 },
-        light: { theme: "light", viewport: 1600 },
-      },
+    pixel: {
+      // Wide variant: these stories need >=1600px, so use the 1900px desktop viewport.
+      matrix: { themes: ["dark", "light"], viewports: ["desktop"] },
     },
   },
 };
@@ -805,7 +802,6 @@ export const DiffPaddingAlignment: Story = {
     });
 
     // Visual verification: the padding strip should align with the diff gutter
-    // This is primarily a visual regression test for Chromatic
   },
 };
 
