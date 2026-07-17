@@ -53,7 +53,10 @@ function IPhone17ProMaxDecorator(Story: ComponentType) {
   return (
     <div
       style={{
-        width: IPHONE_17_PRO_MAX.width,
+        // Pixel's phone viewport is 390px, narrower than this 440px device
+        // frame. Clamp to the viewport so the capture never clips the right
+        // edge; local Storybook and the test-runner still see the full 440px.
+        width: `min(100vw, ${IPHONE_17_PRO_MAX.width}px)`,
         height: IPHONE_17_PRO_MAX.height,
         overflow: "hidden",
       }}
