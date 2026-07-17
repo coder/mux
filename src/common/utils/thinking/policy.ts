@@ -19,6 +19,7 @@ import {
   THINKING_LEVEL_OFF,
   anthropicRejectsDisabledThinking,
   anthropicSupportsNativeXhigh,
+  isKimiK3Model,
   openaiSupportsNativeMaxEffort,
   stripModelProviderPrefixes,
   type ThinkingLevel,
@@ -168,6 +169,12 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
   // Gemini 3 Pro only supports "low" and "high" reasoning levels
   if (withoutProviderNamespace.includes("gemini-3")) {
     return ["low", "high"];
+  }
+
+  // Kimi K3 always reasons and OpenRouter currently exposes only the max (default)
+  // reasoning effort, so the policy is a fixed single level.
+  if (isKimiK3Model(withoutProviderNamespace)) {
+    return ["max"];
   }
 
   // No explicit reasoning rule matched.

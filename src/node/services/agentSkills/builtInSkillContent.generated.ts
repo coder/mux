@@ -3187,6 +3187,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "| Grok Code Fast 1       | xai:grok-code-fast-1          | `grok-code`                                                  |         |",
       "| DeepSeek V4 Pro        | deepseek:deepseek-v4-pro      | `deepseek`, `deepseek-pro`, `deepseek-v4`, `deepseek-v4-pro` |         |",
       "| DeepSeek V4 Flash      | deepseek:deepseek-v4-flash    | `deepseek-flash`, `deepseek-v4-flash`                        |         |",
+      "| Kimi K3                | openrouter:moonshotai/kimi-k3 | `kimi`, `k3`, `kimi-k3`                                      |         |",
       "",
       "{/* END KNOWN_MODELS_TABLE */}",
       "",

@@ -14,9 +14,12 @@ describe("Known Models Integration", () => {
     for (const [key, model] of Object.entries(KNOWN_MODELS)) {
       const modelId = model.providerModelId;
 
-      // xAI models are prefixed with "xai/" in models.json.
-      const lookupKey = model.provider === "xai" ? `xai/${modelId}` : modelId;
-      if (!(lookupKey in modelsJson) && !(modelId in modelsExtra)) {
+      // xAI and OpenRouter models are provider-prefixed in token metadata.
+      const lookupKey =
+        model.provider === "xai" || model.provider === "openrouter"
+          ? `${model.provider}/${modelId}`
+          : modelId;
+      if (!(lookupKey in modelsJson) && !(lookupKey in modelsExtra) && !(modelId in modelsExtra)) {
         missingModels.push(`${key}: ${model.provider}:${modelId}`);
       }
     }
@@ -41,6 +44,11 @@ describe("Known Models Integration", () => {
     // The bare gpt-5.5 alias retired with the entry; openai:gpt-5.5 still
     // resolves as a custom model string via models-extra stats.
     expect(MODEL_ABBREVIATIONS["gpt-5.5"]).toBeUndefined();
+  });
+
+  test("kimi aliases resolve to the OpenRouter-scoped Kimi K3 model", () => {
+    expect(MODEL_ABBREVIATIONS.kimi).toBe("openrouter:moonshotai/kimi-k3");
+    expect(MODEL_ABBREVIATIONS.k3).toBe("openrouter:moonshotai/kimi-k3");
   });
 
   test("known model ids and aliases stay unique across the curated registry", () => {

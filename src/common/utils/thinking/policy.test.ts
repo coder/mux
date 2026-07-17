@@ -618,6 +618,17 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns a fixed max policy for Kimi K3 behind OpenRouter", () => {
+    expect(getThinkingPolicyForModel("openrouter:moonshotai/kimi-k3")).toEqual(["max"]);
+    // Variant ids must not inherit the fixed K3 policy.
+    expect(getThinkingPolicyForModel("openrouter:moonshotai/kimi-k3-turbo")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+    ]);
+  });
+
   test("returns off/low/medium/high for non-preview Gemini 3 Flash IDs", () => {
     for (const model of ["google:gemini-3-flash", "google:gemini-3-flash-001"]) {
       expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);

@@ -1585,6 +1585,34 @@ describe("buildProviderOptions - Google", () => {
   });
 });
 
+describe("buildProviderOptions - OpenRouter", () => {
+  test("enables reasoning without an effort override for Kimi K3", () => {
+    // K3 accepts only its default (max) reasoning effort, so no effort value is sent.
+    expect(buildProviderOptions("openrouter:moonshotai/kimi-k3", "max")).toEqual({
+      openrouter: {
+        reasoning: {
+          enabled: true,
+          exclude: false,
+        },
+      },
+    });
+  });
+
+  test("maps thinking levels to effort for other OpenRouter reasoning models", () => {
+    expect(buildProviderOptions("openrouter:z-ai/glm-4.6", "medium")).toEqual({
+      openrouter: {
+        reasoning: {
+          enabled: true,
+          effort: "medium",
+          exclude: false,
+        },
+      },
+    });
+
+    expect(buildProviderOptions("openrouter:z-ai/glm-4.6", "off")).toEqual({});
+  });
+});
+
 describe("buildRequestHeaders", () => {
   for (const { name, model, options, expected } of [
     {

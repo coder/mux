@@ -22,6 +22,7 @@ import {
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   getOpenAIReasoningEffort,
+  isKimiK3Model,
   openaiSupportsProMode,
   OPENROUTER_REASONING_EFFORT,
 } from "@/common/types/thinking";
@@ -474,7 +475,11 @@ export function buildProviderOptions(
 
   // Build OpenRouter-specific options
   if (formatProvider === "openrouter") {
-    const reasoningEffort = OPENROUTER_REASONING_EFFORT[effectiveThinking];
+    // Kimi K3 always reasons and OpenRouter currently accepts only its default (max)
+    // reasoning effort, so enable reasoning without an effort override instead of
+    // sending a low/medium/high value the model does not support.
+    const kimiK3 = isKimiK3Model(capabilityModel);
+    const reasoningEffort = kimiK3 ? undefined : OPENROUTER_REASONING_EFFORT[effectiveThinking];
 
     log.debug("buildProviderOptions: OpenRouter config", {
       reasoningEffort,
@@ -482,12 +487,12 @@ export function buildProviderOptions(
     });
 
     // Only add reasoning config if thinking is enabled
-    if (reasoningEffort) {
+    if (kimiK3 || reasoningEffort) {
       const options = {
         openrouter: {
           reasoning: {
             enabled: true,
-            effort: reasoningEffort,
+            ...(reasoningEffort ? { effort: reasoningEffort } : {}),
             // Don't exclude reasoning content - we want to display it in the UI
             exclude: false,
           },

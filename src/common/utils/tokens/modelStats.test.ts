@@ -145,6 +145,15 @@ describe("getModelStats", () => {
     expect(flash.cache_read_input_token_cost).toBe(0.000000014);
   });
 
+  test("resolves Kimi K3 pricing and limits via the OpenRouter gateway id", () => {
+    const stats = expectStats("openrouter:moonshotai/kimi-k3");
+    expect(stats.max_input_tokens).toBe(1_048_576);
+    expect(stats.max_output_tokens).toBe(131_072);
+    expect(stats.input_cost_per_token).toBe(0.000003);
+    expect(stats.output_cost_per_token).toBe(0.000015);
+    expect(stats.cache_read_input_token_cost).toBe(0.0000003);
+  });
+
   test("resolves the default image generation model pricing", () => {
     const stats = expectStats(DEFAULT_IMAGE_MODEL);
 
