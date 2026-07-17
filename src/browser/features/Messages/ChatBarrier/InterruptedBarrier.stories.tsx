@@ -1,6 +1,6 @@
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { PIXEL_DUAL_THEME, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { setupCustomChatStory } from "@/browser/stories/helpers/chatSetup";
 import { collapseLeftSidebar } from "@/browser/stories/helpers/uiState";
 import { createUserMessage } from "@/browser/stories/mocks/messages";
@@ -16,7 +16,7 @@ export default meta;
 // Integration: story uses full app chat streaming to trigger context-exceeded error in InterruptedBarrier.
 export const ContextExceededSuggestion: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => (
     <AppWithMocks

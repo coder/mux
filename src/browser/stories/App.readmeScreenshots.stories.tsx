@@ -6,7 +6,7 @@
  * images from a named Storybook story.
  */
 
-import { appMeta, AppWithMocks, CHROMATIC_DISABLED, type AppStory } from "./meta.js";
+import { appMeta, AppWithMocks, PIXEL_DISABLED, type AppStory } from "./meta.js";
 import { createOnChatAdapter } from "./helpers/chatSetup";
 import { createGitStatusExecutor } from "./helpers/git";
 import {
@@ -59,14 +59,8 @@ export default {
   ],
   parameters: {
     ...appMeta.parameters,
-    chromatic: {
-      disableSnapshot: true === CHROMATIC_DISABLED.disableSnapshot,
-      ...(appMeta.parameters?.chromatic ?? {}),
-      modes: {
-        // README screenshots are taken in dark mode.
-        dark: { theme: "dark", viewport: 1900 },
-      },
-    },
+    // README screenshots are captured by the dedicated Playwright script, not Pixel.
+    pixel: PIXEL_DISABLED,
   },
 };
 
@@ -642,7 +636,7 @@ export const AgentStatusSidebar: AppStory = {
             createStaticChatHandler([
               createUserMessage(
                 "msg-1",
-                "Chromatic flagged Docs/README Screenshots differences. Can you regenerate the images and verify the sidebar + git divergence stories?",
+                "Pixel flagged Docs/README Screenshots differences. Can you regenerate the images and verify the sidebar + git divergence stories?",
                 {
                   historySequence: 1,
                   timestamp: STABLE_TIMESTAMP - 120_000,
@@ -654,9 +648,7 @@ export const AgentStatusSidebar: AppStory = {
                 toolCalls: [
                   createTodoWriteTool(
                     "call-1",
-                    buildStoryTodos(
-                      "Regenerating README screenshots and validating Chromatic diffs"
-                    )
+                    buildStoryTodos("Regenerating README screenshots and validating Pixel diffs")
                   ),
                 ],
               }),
@@ -924,7 +916,7 @@ export const PlanMermaidWithCosts: AppStory = {
 ## Goals
 
 - Make each README screenshot reproducible via a named Storybook story
-- Keep fixtures deterministic so Chromatic snapshots are stable
+- Keep fixtures deterministic so Pixel snapshots are stable
 
 ## Implementation
 
@@ -936,7 +928,7 @@ export const PlanMermaidWithCosts: AppStory = {
 graph TD
   A[Create story module] --> B[Seed fixtures]
   B --> C[Add terminal screenState]
-  C --> D[Verify in Chromatic]
+  C --> D[Verify in Pixel]
 \`\`\`
 
 ## Done when

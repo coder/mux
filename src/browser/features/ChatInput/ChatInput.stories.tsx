@@ -46,7 +46,7 @@ export const EditingMessage: AppStory = {
       setup={() => {
         const workspaceId = "ws-editing";
 
-        // Ensure a deterministic starting state (Chromatic/Storybook can preserve localStorage
+        // Ensure a deterministic starting state (Storybook can preserve localStorage
         // across story runs in the same session).
         setWorkspaceInput(workspaceId, "");
 

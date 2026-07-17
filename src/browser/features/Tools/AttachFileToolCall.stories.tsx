@@ -52,7 +52,7 @@ function GallerySection(props: { label: string; children: ReactNode }) {
 
 // Gallery composite: folds the non-interactive "completed" attachment variants
 // (image, video, audio, markdown, generic file) into a single snapshot to keep
-// the Chromatic budget low while preserving every distinct visual state.
+// the snapshot budget low while preserving every distinct visual state.
 export const Gallery: Story = {
   render: () => (
     <ToolStoryShell>

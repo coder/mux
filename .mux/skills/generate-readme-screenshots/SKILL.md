@@ -2,9 +2,9 @@
 name: generate-readme-screenshots
 description: >-
   Regenerate high-resolution README screenshots from Storybook stories.
-  Use this skill when Chromatic detects visual diffs in any story under
+  Use this skill when visual diffs are detected in any story under
   "Docs/README Screenshots", or when story data/layout changes require
-  updated documentation assets. Triggers on: Chromatic visual regressions
+  updated documentation assets. Triggers on: visual regressions
   in readme screenshot stories, changes to App.readmeScreenshots.stories.tsx,
   changes to mockFactory.ts that affect screenshot stories, or explicit
   user request to update README images.
@@ -17,7 +17,7 @@ description: >-
 The README screenshots in `docs/img/*.webp` are **not manually captured** — they are
 deterministically generated from Storybook stories defined in
 `src/browser/stories/App.readmeScreenshots.stories.tsx`. When any of these stories
-change visually (detected by Chromatic or local inspection), the corresponding WebP
+change visually (detected in review or local inspection), the corresponding WebP
 assets must be regenerated and committed.
 
 ## Quick Reference
@@ -174,7 +174,7 @@ git commit -m "regenerate README screenshots at 3800px"
 
 ## When to Run This
 
-1. **Chromatic flags visual changes** in any `Docs/README Screenshots` story
+1. **Visual changes are flagged** in any `Docs/README Screenshots` story
 2. **Story data changes** in `App.readmeScreenshots.stories.tsx` or `mockFactory.ts`
 3. **UI component changes** that affect the visual appearance of screenshot stories
 4. **Explicit user request** to refresh README images

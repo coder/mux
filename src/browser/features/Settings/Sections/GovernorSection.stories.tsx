@@ -59,7 +59,7 @@ export const NotEnrolled: Story = {
 };
 
 // Gallery of enrolled-policy variants. Folded into one composite snapshot (was
-// five separate stories) to compress the Chromatic budget while preserving each
+// five separate stories) to compress the snapshot budget while preserving each
 // unique visual state in a labeled section. None of these variants have a `play`
 // function, so merging them loses no interaction coverage.
 const ENROLLED_POLICY_VARIANTS: ReadonlyArray<{ label: string; options: GovernorStoryOptions }> = [

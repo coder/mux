@@ -38,7 +38,6 @@ const ShimmerComponent = ({
   return (
     <Component
       className={cn("shimmer-text", className)}
-      data-chromatic="ignore"
       style={
         {
           "--shimmer-duration": `${duration}s`,

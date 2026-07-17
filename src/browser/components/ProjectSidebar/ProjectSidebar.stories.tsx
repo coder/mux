@@ -1,6 +1,6 @@
 import { fireEvent, userEvent, waitFor } from "@storybook/test";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { PIXEL_DUAL_THEME, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { expandProjects } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
@@ -17,7 +17,7 @@ export default meta;
 // Integration: story renders full app to test project removal confirmation flow via sidebar context menu.
 export const ProjectRemovalDisabled: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => (
     <AppWithMocks
@@ -83,7 +83,7 @@ export const ProjectRemovalDisabled: AppStory = {
 // and expanded members render label-only rows ("frontend", "backend").
 export const NestedTaskGroupConnectors: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => (
     <AppWithMocks
@@ -157,7 +157,7 @@ export const NestedTaskGroupConnectors: AppStory = {
 // expanded members drop the repeated title and render as "Candidate A/B/C".
 export const BestOfGroup: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => (
     <AppWithMocks
@@ -210,7 +210,7 @@ export const BestOfGroup: AppStory = {
 // default to expanded, and a variants group coexists under the same workspace.
 export const WorkflowRunGroups: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => (
     <AppWithMocks
@@ -303,7 +303,7 @@ export const WorkflowRunGroups: AppStory = {
 // newest unpinned chat stays below the block.
 export const PinnedChatsCustomOrder: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   render: () => (
     <AppWithMocks

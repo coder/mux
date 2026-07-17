@@ -44,7 +44,7 @@ Remove confirmed dead code from the repository while preserving entrypoints, Sto
   - `src/browser/utils/runtimeUi.ts: Partial` — TypeScript utility type syntax, not an export.
   - `satisfies`, `Record`, `Readonly` entries in schema/config files — TypeScript syntax artifacts.
 - Intentional entrypoints:
-  - Storybook story exports (`*.stories.tsx`) are discovered by Storybook/Chromatic.
+  - Storybook story exports (`*.stories.tsx`) are discovered by Storybook/Pixel.
   - Shared schema barrels (`src/common/orpc/schemas.ts`, `src/common/config/schemas/index.ts`) are API/schema surfaces and contain many type-only false positives.
 
 ## Completion Criteria

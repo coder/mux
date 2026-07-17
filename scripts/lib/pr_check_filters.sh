@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # Shared PR check filters for scripts that gate merge readiness.
 
-chromatic_check_jq_defs() {
+visual_check_jq_defs() {
   cat <<'JQ'
 def check_text($field): (.[$field] // "" | tostring | ascii_downcase);
-def is_chromatic_related_check:
-  (check_text("workflow") == "chromatic")
+def is_visual_review_check:
+  (check_text("workflow") == "pixel")
   or (check_text("name") == "visual regression testing")
-  or (check_text("name") == "ui review")
-  or (check_text("name") == "ui tests")
-  or (check_text("link") | contains("chromatic.com"))
-  or (check_text("description") | contains("chromatic"));
+  or (check_text("name") | startswith("pixel /"))
+  or (check_text("link") | contains("pixel.coder.com"));
 def is_unready_check:
   (.bucket == "fail")
   or (.bucket == "cancel")

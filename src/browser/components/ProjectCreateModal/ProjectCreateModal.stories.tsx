@@ -11,7 +11,7 @@ import { expandProjects, selectWorkspace } from "@/browser/stories/helpers/uiSta
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { PIXEL_DUAL_THEME, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 const meta = {
@@ -55,7 +55,7 @@ async function openNewProjectModal(canvasElement: HTMLElement): Promise<void> {
 /** Default "Local folder" tab of the Add Project modal. */
 export const LocalFolder: AppStory = {
   parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   // Integration: stories navigate via sidebar → "Add project" button to open the modal portal.
   render: () => <AppWithMocks setup={setupProjectCreateStory} />,

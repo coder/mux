@@ -30,7 +30,7 @@ function GallerySection(props: { label: string; children: ReactNode }) {
 }
 
 // Gallery composite: folds completed-expanded, executing, failed, and single-query
-// collapsed variants into a single snapshot to keep the Chromatic budget low
+// collapsed variants into a single snapshot to keep the snapshot budget low
 // (same pattern as AttachFileToolCall's Gallery).
 export const Gallery: Story = {
   render: () => (

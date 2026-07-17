@@ -30,12 +30,12 @@ import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 const TIP_ROTATION_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 
 /**
- * Tip index pinned for Storybook/Chromatic snapshots.
+ * Tip index pinned for Storybook visual snapshots.
  *
  * Without pinning, every story that renders ChatInput would resolve a tip via
  * `floor(NOW / 20min) mod PLACEHOLDER_TIPS.length` — so any reorder of or
  * insertion into PLACEHOLDER_TIPS shifts the displayed tip and cascades into
- * a fresh Chromatic baseline diff on every ChatInput story (currently 100+).
+ * a fresh visual baseline diff on every ChatInput story (currently 100+).
  *
  * Pinning to index 0 means tip-list edits only affect snapshots when the lead
  * tip's text itself changes, which is the rare, intentional case. /orchestrate

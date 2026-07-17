@@ -47,16 +47,16 @@ if [[ "$INPUT" =~ ^[0-9]{1,5}$ ]]; then
   PR_NUMBER="$INPUT"
   echo "🔍 Finding latest failed run for PR #$PR_NUMBER..." >&2
 
-  # Get the latest failed non-Chromatic run for this PR. Chromatic UI statuses are
+  # Get the latest failed non-visual-review run for this PR. Pixel review statuses are
   # intentionally ignored for merge readiness, so they should not drive log extraction.
-  JQ_DEFS=$(chromatic_check_jq_defs)
-  RUN_ID=$(gh pr checks "$PR_NUMBER" --json name,link,state,bucket,workflow,description --jq "$JQ_DEFS .[] | select((is_chromatic_related_check | not) and is_failed_check) | .link" | sed -nE 's|.*/runs/([0-9]+).*|\1|p' | head -1 || echo "")
+  JQ_DEFS=$(visual_check_jq_defs)
+  RUN_ID=$(gh pr checks "$PR_NUMBER" --json name,link,state,bucket,workflow,description --jq "$JQ_DEFS .[] | select((is_visual_review_check | not) and is_failed_check) | .link" | sed -nE 's|.*/runs/([0-9]+).*|\1|p' | head -1 || echo "")
 
   if [[ -z "$RUN_ID" ]]; then
-    echo "❌ No failed non-Chromatic runs found for PR #$PR_NUMBER" >&2
+    echo "❌ No failed non-visual-review runs found for PR #$PR_NUMBER" >&2
     echo "" >&2
-    echo "Current non-Chromatic check status:" >&2
-    gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow,link,description --jq "$JQ_DEFS .[] | select(is_chromatic_related_check | not) | check_line" 2>&1 || true
+    echo "Current non-visual-review check status:" >&2
+    gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow,link,description --jq "$JQ_DEFS .[] | select(is_visual_review_check | not) | check_line" 2>&1 || true
     exit 1
   fi
 

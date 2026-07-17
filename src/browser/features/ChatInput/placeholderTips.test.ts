@@ -18,7 +18,7 @@ describe("PLACEHOLDER_TIPS", () => {
     // tip carousel is one of the few discovery surfaces users will see it on.
     // Placing it at the lead slot has two consequences this assertion locks in:
     //   1) It's the tip a user sees on degenerate-timer fallback.
-    //   2) It's the tip every Chromatic story renders via the Storybook pin.
+    //   2) It's the tip every visual snapshot renders via the Storybook pin.
     // Demoting it from index 0 would silently regress both surfaces, so we
     // assert the position rather than just the presence.
     expect(PLACEHOLDER_TIPS[0]).toMatch(/\/orchestrate\b/);
@@ -68,7 +68,7 @@ describe("getPlaceholderTip", () => {
   });
 
   test("pins the default-arg call to the lead tip when running under Storybook", () => {
-    // Storybook/Chromatic renders 100+ stories that include ChatInput. Without
+    // Storybook visual snapshots render 100+ stories that include ChatInput. Without
     // pinning, every reorder or insertion into PLACEHOLDER_TIPS shifts the
     // tip the wall-clock bucket lands on and forces a baseline re-accept on
     // every one of those stories. The fix is a runtime flag set by
