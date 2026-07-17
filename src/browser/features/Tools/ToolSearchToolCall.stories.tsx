@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ToolSearchToolCall } from "@/browser/features/Tools/ToolSearchToolCall";
-import { CHROMATIC_DISABLED, lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
+import { lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
 
 const meta = {
   ...lightweightMeta,
@@ -8,10 +8,6 @@ const meta = {
   component: ToolSearchToolCall,
   parameters: {
     ...lightweightMeta.parameters,
-    // The repo-wide Chromatic snapshot budget (tests/ui/storybook/budget.test.ts) is
-    // already at its ceiling, so these states stay out of paid visual snapshots. They
-    // still render under local Storybook and the CI Storybook test-runner smoke pass.
-    chromatic: CHROMATIC_DISABLED,
   },
   decorators: [
     (Story) => (

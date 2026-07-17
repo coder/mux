@@ -2,7 +2,6 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { APIProvider } from "@/browser/contexts/API";
-import { CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import type {
   GoalBoardEntry,
@@ -255,11 +254,6 @@ export const CompleteWithBoard: Story = {
       completionSummary: "The lifecycle controls shipped with persistence and tests.",
       startedAtMs: NOW,
     },
-  },
-  // Dual-theme smoke coverage: the row-action button restyle should not
-  // regress in either light or dark mode.
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
   },
   decorators: [
     (Story) => (

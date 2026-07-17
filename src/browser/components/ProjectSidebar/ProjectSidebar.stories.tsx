@@ -1,6 +1,6 @@
 import { fireEvent, userEvent, waitFor } from "@storybook/test";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { expandProjects } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
@@ -16,9 +16,6 @@ export default meta;
 
 // Integration: story renders full app to test project removal confirmation flow via sidebar context menu.
 export const ProjectRemovalDisabled: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -82,9 +79,6 @@ export const ProjectRemovalDisabled: AppStory = {
 // keep continuous connector rails through the group header (no gap above/below),
 // and expanded members render label-only rows ("frontend", "backend").
 export const NestedTaskGroupConnectors: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -156,9 +150,6 @@ export const NestedTaskGroupConnectors: AppStory = {
 // Best-of group rendering contract: collapsed header reads "Best of 3 · <title>";
 // expanded members drop the repeated title and render as "Candidate A/B/C".
 export const BestOfGroup: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -209,9 +200,6 @@ export const BestOfGroup: AppStory = {
 // groups (one with a stamped name, one falling back to the run id), active runs
 // default to expanded, and a variants group coexists under the same workspace.
 export const WorkflowRunGroups: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -302,9 +290,6 @@ export const WorkflowRunGroups: AppStory = {
 // the pinned block deliberately renders as charlie, alpha, bravo while the
 // newest unpinned chat stays below the block.
 export const PinnedChatsCustomOrder: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {

@@ -62,13 +62,6 @@ const meta: Meta<typeof PlanFileDialog> = {
   component: PlanFileDialog,
   parameters: {
     layout: "fullscreen",
-    chromatic: {
-      delay: 500,
-      modes: {
-        dark: { theme: "dark", viewport: 1600 },
-        light: { theme: "light", viewport: 1600 },
-      },
-    },
   },
   decorators: [
     (Story) => (

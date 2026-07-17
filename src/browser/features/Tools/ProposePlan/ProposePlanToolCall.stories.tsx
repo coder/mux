@@ -10,19 +10,7 @@ import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 const meta = { ...appMeta, title: "App/Chat/Tools/ProposePlan" };
 export default meta;
 
-const PLAN_TOC_CHROMATIC_VIEWPORT = { width: 1600, height: 900 } as const;
-const PLAN_TOC_CHROMATIC_MODES = {
-  "dark-wide": { theme: "dark", viewport: PLAN_TOC_CHROMATIC_VIEWPORT },
-} as const;
-
-function isChromaticRuntime(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const chromaticRuntimeFlag = (window as Window & { chromatic?: boolean }).chromatic;
-  return /Chromatic/i.test(window.navigator.userAgent) || chromaticRuntimeFlag === true;
-}
+const PLAN_TOC_WIDE_MIN_WIDTH = 1600;
 
 /**
  * Story showing a propose_plan tool call with Plan UI.
@@ -283,8 +271,7 @@ Blue/green cutover with automatic rollback on auth-error spikes.
     viewport: { value: "wide", isRotated: false },
   },
   play: async ({ canvasElement }) => {
-    const shouldAssertFullToc =
-      isChromaticRuntime() || window.innerWidth >= PLAN_TOC_CHROMATIC_VIEWPORT.width;
+    const shouldAssertFullToc = window.innerWidth >= PLAN_TOC_WIDE_MIN_WIDTH;
     if (!shouldAssertFullToc) {
       return;
     }
@@ -292,8 +279,8 @@ Blue/green cutover with automatic rollback on auth-error spikes.
     const canvas = within(canvasElement);
     const toc = await canvas.findByTestId("plan-toc-nav");
     await waitFor(() => {
-      // User rationale: this story exists to snapshot the full sticky TOC. Make
-      // Chromatic fail loudly if a viewport/mode regression captures only the compact hint.
+      // User rationale: this story exists to snapshot the full sticky TOC. Fail
+      // loudly if a viewport regression captures only the compact hint.
       if (window.getComputedStyle(toc).display === "none" || toc.getClientRects().length === 0) {
         throw new Error("Expected the full plan TOC to be visible in the wide Storybook story");
       }
@@ -301,10 +288,6 @@ Blue/green cutover with automatic rollback on auth-error spikes.
   },
   parameters: {
     viewport: { defaultViewport: "wide" },
-    chromatic: {
-      ...(appMeta.parameters?.chromatic ?? {}),
-      modes: PLAN_TOC_CHROMATIC_MODES,
-    },
     docs: {
       description: {
         story:

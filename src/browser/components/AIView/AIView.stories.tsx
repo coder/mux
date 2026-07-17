@@ -1,5 +1,5 @@
 import type { AppStory } from "@/browser/stories/meta.js";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { collapseLeftSidebar, selectWorkspace } from "@/browser/stories/helpers/uiState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import {
@@ -17,9 +17,6 @@ export default meta;
 
 // Integration: story renders full app with incompatible workspace to test AIView error state.
 export const IncompatibleWorkspace: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {

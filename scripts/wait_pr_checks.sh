@@ -174,15 +174,11 @@ CHECK_PR_CHECKS_ONCE() {
     return 1
   fi
 
-  # Get check status. Chromatic posts persistent UI Review/UI Tests statuses
-  # outside the PR workflow; they are useful visual-signal, but not a merge-readiness gate.
+  # Get check status.
   local checks_json
   local jq_defs
   local filtered_checks
-  local ignored_checks
   local filtered_count
-  local ignored_unready_count
-  local ignored_unready_checks
 
   checks_json=$(gh pr checks "$PR_NUMBER" --json name,state,bucket,workflow,link,description 2>&1) || true
   if ! echo "$checks_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
@@ -191,13 +187,10 @@ CHECK_PR_CHECKS_ONCE() {
     return 1
   fi
 
-  jq_defs=$(chromatic_check_jq_defs)
-  filtered_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check | not) ]")
-  ignored_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] | select(is_chromatic_related_check) ]")
+  jq_defs=$(pr_check_jq_defs)
+  filtered_checks=$(echo "$checks_json" | jq "$jq_defs [ .[] ]")
   filtered_count=$(echo "$filtered_checks" | jq 'length')
-  checks=$(echo "$filtered_checks" | jq -r "$jq_defs if length == 0 then \"(no non-Chromatic checks reported)\" else .[] | check_line end")
-  ignored_unready_count=$(echo "$ignored_checks" | jq "$jq_defs [ .[] | select(is_unready_check) ] | length")
-  ignored_unready_checks=$(echo "$ignored_checks" | jq -r "$jq_defs [ .[] | select(is_unready_check) ] | .[]? | check_line")
+  checks=$(echo "$filtered_checks" | jq -r "$jq_defs if length == 0 then \"(no checks reported)\" else .[] | check_line end")
 
   local has_fail=0
   local has_pending=0
@@ -222,21 +215,16 @@ CHECK_PR_CHECKS_ONCE() {
   fi
 
   # Sometimes the only early status is a skipped informational check; wait for
-  # at least one pass/fail/pending non-Chromatic signal before deciding.
+  # at least one pass/fail/pending signal before deciding.
   if [ "$has_fail" -eq 0 ] && [ "$has_pending" -eq 0 ] && [ "$has_pass" -eq 0 ]; then
     return 10
   fi
 
   # Check for failures
   if [ "$has_fail" -eq 1 ]; then
-    echo "❌ Some non-Chromatic checks failed:"
+    echo "❌ Some checks failed:"
     echo ""
     echo "$checks"
-    if [ "$ignored_unready_count" -gt 0 ]; then
-      echo ""
-      echo "ℹ️ Ignoring Chromatic-related unready checks:"
-      echo "$ignored_unready_checks"
-    fi
     echo ""
     echo "💡 To extract detailed logs from the failed run:"
     echo "   ./scripts/extract_pr_logs.sh $PR_NUMBER"
@@ -265,24 +253,10 @@ CHECK_PR_CHECKS_ONCE() {
       return 1
     fi
 
-    # If a Chromatic status is required in branch protection, GitHub reports
-    # the aggregate merge state as BLOCKED. At this point non-Chromatic checks,
-    # review-thread checks, and GitHub's reviewDecision gate have passed, so an
-    # ignored unready status is the only remaining blocker this script can see.
-    local merge_state_blocked_by_ignored_chromatic=0
-    if { [ "$merge_state" = "UNSTABLE" ] || [ "$merge_state" = "BLOCKED" ]; } && [ "$ignored_unready_count" -gt 0 ]; then
-      merge_state_blocked_by_ignored_chromatic=1
-    fi
-
-    if [ "$merge_state" = "CLEAN" ] || [ "$merge_state_blocked_by_ignored_chromatic" -eq 1 ]; then
-      echo "✅ All non-Chromatic checks passed!"
+    if [ "$merge_state" = "CLEAN" ]; then
+      echo "✅ All checks passed!"
       echo ""
       echo "$checks"
-      if [ "$ignored_unready_count" -gt 0 ]; then
-        echo ""
-        echo "ℹ️ Ignoring Chromatic-related unready checks:"
-        echo "$ignored_unready_checks"
-      fi
       echo ""
       echo "✅ PR checks and mergeability gates passed."
       return 0

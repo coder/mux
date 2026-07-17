@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useRef } from "react";
 import { LeftSidebar } from "./LeftSidebar";
-import { CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta.js";
 import { createOnChatAdapter, type ChatHandler } from "@/browser/stories/helpers/chatSetup";
 import { setWorkspaceDrafts } from "@/browser/stories/helpers/drafts";
 import { clearWorkspaceSelection, expandProjects } from "@/browser/stories/helpers/uiState";
@@ -44,7 +43,6 @@ const meta: Meta<typeof LeftSidebar> = {
   component: LeftSidebar,
   parameters: {
     layout: "fullscreen",
-    chromatic: { delay: 500 },
   },
   decorators: [
     (Story: () => JSX.Element) => {
@@ -268,9 +266,6 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
 
 /** Single project with multiple workspaces including SSH */
 export const SingleProject: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <LeftSidebarStoryShell
       setup={() => {
@@ -434,14 +429,6 @@ export const ResizeHandleActive: AppStory = {
 
 /** Mobile open state should show overlay backdrop */
 export const MobileOpenOverlay: AppStory = {
-  parameters: {
-    chromatic: {
-      modes: {
-        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
-        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
-      },
-    },
-  },
   render: () => (
     <LeftSidebarStoryShell
       leftSidebarProps={{ collapsed: false }}

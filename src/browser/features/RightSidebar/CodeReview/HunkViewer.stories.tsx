@@ -10,14 +10,13 @@ import {
   type WorkspaceContext as WorkspaceContextValue,
 } from "@/browser/contexts/WorkspaceContext";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta";
 import type { DiffHunk } from "@/common/types/review";
 import { extractAllHunks, parseDiff } from "@/common/utils/git/diffParser";
 
 import { HunkViewer } from "./HunkViewer";
 
 // Small TypeScript diff so the Sparkles + assisted comment row sits next to a
-// realistic block of highlighted code in Chromatic snapshots. Reuses the same
+// realistic block of highlighted code in Storybook snapshots. Reuses the same
 // parsing pipeline as production so the story renders the exact hunk shape the
 // app uses, including `id` / `header` / new-line ranges.
 const ASSISTED_DIFF = `diff --git a/src/utils/formatPrice.ts b/src/utils/formatPrice.ts
@@ -170,7 +169,6 @@ const meta: Meta<typeof HunkViewer> = {
     // Dual light/dark coverage so the assisted accent (blue) is verified in both
     // themes — the whole point of these stories is to lock in the accent color
     // across themes so it cannot drift back toward the warning/amber family.
-    chromatic: { delay: 300, modes: CHROMATIC_SMOKE_MODES },
   },
 };
 
@@ -212,7 +210,7 @@ export const WithAssistedComment: Story = {
 /**
  * Assisted hunk with the transient "NEW" pill. Locks in the additional
  * `--color-review-accent` surface used by the `isAssistedNew` badge so a
- * regression in either the banner or the pill is caught by Chromatic.
+ * regression in either the banner or the pill is caught by Storybook snapshots.
  */
 export const WithAssistedCommentNewBadge: Story = {
   render: () => (

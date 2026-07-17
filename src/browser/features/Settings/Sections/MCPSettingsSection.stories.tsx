@@ -148,9 +148,6 @@ const meta: Meta<typeof MCPSettingsSection> = {
   component: MCPSettingsSection,
   parameters: {
     layout: "fullscreen",
-    chromatic: {
-      delay: 500,
-    },
   },
 };
 

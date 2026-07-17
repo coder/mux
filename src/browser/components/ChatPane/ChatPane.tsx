@@ -159,21 +159,6 @@ function PerfRenderMarker(props: { id: string; children: React.ReactNode }): Rea
   return <>{props.children}</>;
 }
 
-function isChromaticStorybookEnvironment(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  // Keep production behavior unchanged while suppressing story-only snapshot churn.
-  const isStorybookPreview = window.location.pathname.endsWith("iframe.html");
-  if (!isStorybookPreview) {
-    return false;
-  }
-
-  const chromaticRuntimeFlag = (window as Window & { chromatic?: boolean }).chromatic;
-  return /Chromatic/i.test(window.navigator.userAgent) || chromaticRuntimeFlag === true;
-}
-
 interface ChatPaneProps {
   workspaceId: string;
   projectPath: string;
@@ -423,7 +408,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   } = workspaceState;
   const shouldShowPinnedTodoList = workspaceState.todos.length > 0;
   const shouldShowReviewsBanner = reviews.reviews.length > 0;
-  const shouldRenderLoadOlderMessagesButton = hasOlderHistory && !isChromaticStorybookEnvironment();
+  const shouldRenderLoadOlderMessagesButton = hasOlderHistory;
   const loadOlderMessagesShortcutLabel = formatKeybind(KEYBINDS.LOAD_OLDER_MESSAGES);
 
   const {

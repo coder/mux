@@ -22,30 +22,6 @@ import {
 // META CONFIG
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// CHROMATIC POLICIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * App-level stories default to single dark mode to minimize Chromatic snapshots.
- * Use CHROMATIC_SMOKE_MODES for explicit dual-theme smoke coverage.
- */
-export const CHROMATIC_SINGLE_MODE = {
-  "dark-desktop": { theme: "dark" },
-} as const;
-
-/**
- * Dual-theme smoke mode — use on one "Smoke" story per retained file
- * to verify both themes render correctly.
- */
-export const CHROMATIC_SMOKE_MODES = {
-  "dark-desktop": { theme: "dark" },
-  "light-desktop": { theme: "light" },
-} as const;
-
-/** Disable snapshots entirely for docs-only or non-visual stories. */
-export const CHROMATIC_DISABLED = { disableSnapshot: true } as const;
-
 export const appMeta: Meta<typeof AppLoader> = {
   title: "App",
   component: AppLoader,
@@ -58,7 +34,6 @@ export const appMeta: Meta<typeof AppLoader> = {
         { name: "light", value: "#f5f6f8" },
       ],
     },
-    chromatic: { delay: 500, modes: CHROMATIC_SINGLE_MODE },
   },
 };
 
@@ -75,7 +50,6 @@ export const StoryUiShell: FC<{ children: ReactNode }> = (props) => {
 export const lightweightMeta: Meta = {
   parameters: {
     layout: "fullscreen",
-    chromatic: { delay: 200 },
   },
   decorators: [
     (Story) => (
@@ -97,7 +71,7 @@ interface AppWithMocksProps {
 /** Wrapper that runs setup once and passes the client to AppLoader */
 
 function resetStorybookPersistedStateForStory(): void {
-  // Storybook/Chromatic can preserve localStorage across story captures.
+  // Storybook can preserve localStorage across story captures.
   // Reset persisted state so each story starts from a known route + theme.
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);

@@ -124,7 +124,6 @@ const meta = {
   },
   parameters: {
     layout: "fullscreen",
-    chromatic: { delay: 500 },
   },
 } satisfies Meta<typeof WorkspaceHeartbeatModal>;
 
@@ -136,13 +135,6 @@ export const LongMessageDesktop: Story = {
   globals: {
     viewport: { value: "desktop", isRotated: false },
   },
-  parameters: {
-    chromatic: {
-      modes: {
-        "dark-desktop": { theme: "dark", viewport: { width: 1280, height: 800 } },
-      },
-    },
-  },
   render: () => renderOpenModal(),
   play: async ({ canvasElement }) => {
     await assertHeartbeatModalLoaded(canvasElement);
@@ -152,13 +144,6 @@ export const LongMessageDesktop: Story = {
 export const LongMessageMobile: Story = {
   globals: {
     viewport: { value: "mobile1", isRotated: false },
-  },
-  parameters: {
-    chromatic: {
-      modes: {
-        "dark-mobile": { theme: "dark", viewport: { width: 375, height: 667 } },
-      },
-    },
   },
   render: () => renderOpenModal(),
   play: async ({ canvasElement }) => {
@@ -170,13 +155,6 @@ export const DisabledLongMessageDesktop: Story = {
   globals: {
     viewport: { value: "desktop", isRotated: false },
   },
-  parameters: {
-    chromatic: {
-      modes: {
-        "dark-desktop-disabled": { theme: "dark", viewport: { width: 1280, height: 800 } },
-      },
-    },
-  },
   render: () => renderOpenModal(disabledLongMessageSettings),
   play: async ({ canvasElement }) => {
     await assertHeartbeatModalLoaded(canvasElement);
@@ -186,13 +164,6 @@ export const DisabledLongMessageDesktop: Story = {
 export const FixedScheduleDesktop: Story = {
   globals: {
     viewport: { value: "desktop", isRotated: false },
-  },
-  parameters: {
-    chromatic: {
-      modes: {
-        "dark-desktop-fixed-schedule": { theme: "dark", viewport: { width: 1280, height: 800 } },
-      },
-    },
   },
   render: () => renderOpenModal(fixedScheduleSettings),
   play: async ({ canvasElement }) => {
@@ -218,13 +189,6 @@ export const FixedScheduleDesktop: Story = {
 export const DisabledLongMessageMobile: Story = {
   globals: {
     viewport: { value: "mobile1", isRotated: false },
-  },
-  parameters: {
-    chromatic: {
-      modes: {
-        "dark-mobile-disabled": { theme: "dark", viewport: { width: 375, height: 667 } },
-      },
-    },
   },
   render: () => renderOpenModal(disabledLongMessageSettings),
   play: async ({ canvasElement }) => {

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { WorkspaceLifecycleToolCall } from "@/browser/features/Tools/WorkspaceLifecycleToolCall";
-import { CHROMATIC_DISABLED, lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
+import { lightweightMeta, StoryUiShell } from "@/browser/stories/meta.js";
 
 const meta = {
   ...lightweightMeta,
@@ -8,11 +8,6 @@ const meta = {
   component: WorkspaceLifecycleToolCall,
   parameters: {
     ...lightweightMeta.parameters,
-    // The repo-wide Chromatic snapshot budget (tests/ui/storybook/budget.test.ts) is already
-    // at its ceiling, so these states stay out of paid visual snapshots. They still render
-    // under local Storybook and the CI Storybook test-runner smoke pass. Flip to
-    // CHROMATIC_SINGLE_MODE once the budget is raised to add regression coverage.
-    chromatic: CHROMATIC_DISABLED,
   },
   decorators: [
     (Story) => (
@@ -137,7 +132,7 @@ export const PartialNotFound: Story = {
 /**
  * Blocked · requires_confirmation (untracked files would be lost) + an active turn. Pinned
  * to a fixed ~375px container (the Storybook test-runner renders at desktop width and
- * ignores viewport / Chromatic modes, so the narrow case must be forced with a wrapper) and
+ * ignores viewport modes, so the narrow case must be forced with a wrapper) and
  * a play that fails if a long workspace id / file path overflows instead of truncating.
  */
 export const BlockedNeedsAction: Story = {

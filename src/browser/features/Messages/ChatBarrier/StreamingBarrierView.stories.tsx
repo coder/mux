@@ -97,7 +97,7 @@ export const WaitingOnBackgroundBashMonitor: Story = {
  * Same waiting state in a phone-width pane: the low-priority hint hides via the
  * barrier's own container query so the row cannot overflow horizontally. The
  * fixed-width wrapper drives the container query directly, so this contract
- * holds in the Storybook test-runner and Chromatic without viewport modes.
+ * holds in the Storybook test-runner without viewport modes.
  */
 export const WaitingOnBackgroundBashMonitorNarrow: Story = {
   args: {

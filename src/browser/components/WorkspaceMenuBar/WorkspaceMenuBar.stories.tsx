@@ -1,9 +1,4 @@
-import {
-  CHROMATIC_SMOKE_MODES,
-  appMeta,
-  AppWithMocks,
-  type AppStory,
-} from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { createGitStatusExecutor } from "@/browser/stories/helpers/git";
 import {
   collapseRightSidebar,
@@ -105,9 +100,6 @@ function createDevcontainerClient(runtimeStatus: "running" | "stopped" | "unknow
  * The top bar shows a "Container running" indicator next to the branch selector.
  */
 export const DevcontainerRunning: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => <AppWithMocks setup={() => createDevcontainerClient("running")} />,
 };
 
@@ -127,14 +119,6 @@ export const DevcontainerUnknown: AppStory = {
 export const ScratchWorkspace: AppStory = {
   globals: {
     viewport: { value: "mobile1", isRotated: false },
-  },
-  parameters: {
-    chromatic: {
-      modes: {
-        desktop: { theme: "dark" },
-        mobile: { theme: "light", viewport: "mobile1", hasTouch: true },
-      },
-    },
   },
   render: () => (
     <AppWithMocks

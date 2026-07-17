@@ -1,6 +1,6 @@
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks, CHROMATIC_SMOKE_MODES } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import {
   setupCustomChatStory,
   setupSimpleChatStory,
@@ -99,14 +99,13 @@ const LARGE_DIFF = [
 /**
  * Core conversation composite (smoke story).
  *
- * Folds several non-interactive permutations into one chat to keep the
- * Chromatic snapshot budget low while preserving coverage:
+ * Folds several non-interactive permutations into one chat to keep
+ * Storybook snapshots low while preserving coverage:
  * - truncated/hidden history indicator (merged from HiddenHistory)
  * - user/assistant text + web search / file read / file edit tool calls
  * - reasoning/thinking blocks (merged from WithReasoning)
  */
 export const Conversation: AppStory = {
-  parameters: { chromatic: { modes: CHROMATIC_SMOKE_MODES } },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -207,7 +206,6 @@ export const Conversation: AppStory = {
 };
 
 export const WorkflowTriggeredCommand: AppStory = {
-  parameters: { chromatic: { disableSnapshot: true } },
   render: () => (
     <AppWithMocks
       setup={() => {

@@ -2,7 +2,7 @@ import { userEvent, waitFor } from "@storybook/test";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { AppStory } from "@/browser/stories/meta.js";
-import { CHROMATIC_SMOKE_MODES, appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
 import { createOnChatAdapter } from "@/browser/stories/helpers/chatSetup";
 import {
   collapseLeftSidebar,
@@ -84,9 +84,6 @@ const createDebugLlmRequestSnapshot = (workspaceId: string): DebugLlmRequestSnap
 
 // Integration: story renders full app with debug snapshot + chat error to trigger the Debug LLM Request modal.
 export const DebugLlmRequestModal: AppStory = {
-  parameters: {
-    chromatic: { modes: CHROMATIC_SMOKE_MODES },
-  },
   render: () => (
     <AppWithMocks
       setup={() => {
