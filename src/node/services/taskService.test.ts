@@ -4124,6 +4124,56 @@ describe("TaskService", () => {
     });
   });
 
+  test("active-only listWorkspaceTurnTasks revives and includes a stale retrying handle", async () => {
+    const hasPendingAutoRetry = mock((workspaceId: string) => workspaceId === "childworkspace");
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({
+      hasPendingAutoRetry,
+    });
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      error: "Stream error: provider overloaded",
+    });
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+    };
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+
+    // task_list defaults to active statuses; the status filter applies AFTER
+    // normalization, so the stale-but-retrying handle is revived and reported as
+    // running instead of silently disappearing from the active view.
+    const listed = await taskService.listWorkspaceTurnTasks(parentId, {
+      statuses: ["queued", "starting", "running"],
+    });
+    expect(listed.map((record) => record.handleId)).toContain("wst_handle");
+    expect(listed.find((record) => record.handleId === "wst_handle")?.status).toBe("running");
+  });
+
   test("a newer unrelated child prompt does not revive a settled workspace turn", async () => {
     const isStreaming = mock((workspaceId: string) => workspaceId === "childworkspace");
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({
