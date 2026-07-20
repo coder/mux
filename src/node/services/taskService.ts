@@ -6310,9 +6310,16 @@ export class TaskService {
     if (!historyResult.success) {
       return record;
     }
-    const allowDeferredMessages =
-      (record.deferredMessageIds?.length ?? 0) === 0 ||
-      !(await this.hasActiveWorkspaceTurnDeferredBlockers(record));
+    // Lazily computed: whether the child still has active descendant/workflow/nested-turn
+    // work. A settled record cannot accumulate deferredMessageIds (the deferral path skips
+    // inactive handles), so the repair itself must be gated on these blockers too —
+    // otherwise a retried turn could be reported completed while its background work is
+    // still running, which active handles avoid via deferred stream-ends.
+    let blockersActive: boolean | null = null;
+    const deferredBlockersActive = async (): Promise<boolean> => {
+      blockersActive ??= await this.hasActiveWorkspaceTurnDeferredBlockers(record);
+      return blockersActive;
+    };
     // Auto-retry replays the newest accepted user message, so live child activity belongs
     // to this turn only while its prompt is still that newest message. Any newer user
     // message disables the revive — but only the revive: a correlated final assistant
@@ -6320,7 +6327,10 @@ export class TaskService {
     // durable-history repair scan must continue past it.
     let reviveAllowed = retryLive;
     for (const message of historyResult.data.toReversed()) {
-      if (this.isDeferredWorkspaceTurnMessage(record, message.id) && !allowDeferredMessages) {
+      if (
+        this.isDeferredWorkspaceTurnMessage(record, message.id) &&
+        (await deferredBlockersActive())
+      ) {
         continue;
       }
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
@@ -6332,6 +6342,9 @@ export class TaskService {
           !options.repairFromHistory ||
           (recovered.status === record.status && recovered.messageId === record.messageId)
         ) {
+          return record;
+        }
+        if (await deferredBlockersActive()) {
           return record;
         }
         return await this.persistRepairedSettledWorkspaceTurn(record, recovered);
@@ -7422,23 +7435,41 @@ export class TaskService {
   private async listActiveWorkspaceTurnTaskIdsForOwner(
     ownerWorkspaceId: string
   ): Promise<string[]> {
-    const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId, {
-      statuses: ["queued", "starting", "running"],
-    });
+    const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId);
     const taskIds: string[] = [];
     for (const record of records) {
       if (
-        record.status !== "queued" &&
-        record.status !== "starting" &&
-        record.status !== "running"
+        record.status === "queued" ||
+        record.status === "starting" ||
+        record.status === "running"
       ) {
+        if (!(await this.isLiveWorkspaceTurn(record))) {
+          await this.settleStaleWorkspaceTurn(record);
+          continue;
+        }
+        taskIds.push(record.handleId);
         continue;
       }
-      if (!(await this.isLiveWorkspaceTurn(record))) {
-        await this.settleStaleWorkspaceTurn(record);
-        continue;
+      // A stale settled handle whose child is actively retrying the same turn is live
+      // delegated work: revive it here too, so the parent's turn-end blocker scan cannot
+      // finish while the child is still running. Cheap for historical handles — reconcile
+      // short-circuits on in-memory runtime checks before touching history.
+      if (
+        (record.status === "interrupted" || record.status === "error") &&
+        isSelfHealEligibleSettledWorkspaceTurn(record)
+      ) {
+        const latest = await this.reconcileSettledWorkspaceTurn(record, {
+          repairFromHistory: false,
+        });
+        if (
+          latest != null &&
+          (latest.status === "queued" ||
+            latest.status === "starting" ||
+            latest.status === "running")
+        ) {
+          taskIds.push(latest.handleId);
+        }
       }
-      taskIds.push(record.handleId);
     }
     return taskIds;
   }
