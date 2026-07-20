@@ -209,7 +209,9 @@ export function AnalyticsDashboard(props: AnalyticsDashboardProps) {
               onClick={props.onToggleLeftSidebarCollapsed}
               title="Open sidebar"
               aria-label="Open sidebar"
-              className="text-muted hover:text-foreground hidden h-6 w-6 md:inline-flex"
+              // The left sidebar is fully off-canvas on narrow viewports, so this route must
+              // expose the shared mobile menu control instead of hiding its only opener.
+              className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 md:inline-flex"
             >
               <Menu className="h-4 w-4" />
             </Button>

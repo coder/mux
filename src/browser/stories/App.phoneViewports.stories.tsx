@@ -5,7 +5,7 @@
  * Pixel snapshots both light and dark themes at the phone viewport.
  */
 
-import { within, waitFor } from "@storybook/test";
+import { userEvent, within, waitFor } from "@storybook/test";
 import type { ComponentType } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -135,6 +135,48 @@ export const IPhone16e: AppStory = {
   },
   play: async ({ canvasElement }) => {
     await stabilizePhoneViewportStory(canvasElement);
+  },
+};
+
+export const IPhone16eAnalyticsSidebarControl: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-iphone-analytics",
+          workspaceName: "analytics-mobile",
+          projectName: "mux",
+          messages: [...MESSAGES],
+        });
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+        return client;
+      }}
+    />
+  ),
+  decorators: [IPhone16eDecorator],
+  parameters: {
+    ...appMeta.parameters,
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await stabilizePhoneViewportStory(canvasElement);
+
+    await userEvent.click(await canvas.findByTestId("analytics-button"));
+    await canvas.findByTestId("analytics-header");
+    await userEvent.click(canvas.getByRole("button", { name: "Collapse sidebar" }));
+
+    const openSidebarButton = await canvas.findByRole("button", { name: "Open sidebar" });
+    if (!openSidebarButton.classList.contains("mobile-menu-btn")) {
+      throw new Error("Analytics sidebar opener is not enabled for the phone viewport");
+    }
+
+    blurActiveElement();
   },
 };
 
