@@ -14651,7 +14651,7 @@ describe("TaskService", () => {
         type: "stream-end",
         workspaceId: childId,
         messageId: `assistant-${toolName}-output`,
-        metadata: { model: "openai:gpt-4o-mini" },
+        metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
         parts: [
           {
             type: "dynamic-tool",
@@ -14672,10 +14672,11 @@ describe("TaskService", () => {
             type: "dynamic-tool",
             toolCallId: "agent-report-call-1",
             toolName: "agent_report",
-            input: { reportMarkdown: "Final report", title: "Result" },
+            input: { reportMarkdown: "Progress report", title: "Progress" },
             state: "output-available",
             output: { success: true },
           },
+          { type: "text", text: "Final report" },
         ],
       });
 
