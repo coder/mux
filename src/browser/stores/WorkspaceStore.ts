@@ -208,6 +208,8 @@ type DerivedState = Record<string, number>;
 export interface WorkspaceUsageState {
   /** Pre-computed session total (sum of all models) */
   sessionTotal?: ChatUsageDisplay;
+  /** Session usage per canonical model string (source of sessionTotal) */
+  sessionByModel?: Record<string, ChatUsageDisplay>;
   /** Last completed request (persisted) */
   lastRequest?: {
     model: string;
@@ -2442,6 +2444,13 @@ export class WorkspaceStore {
           ? sumUsageHistory(Object.values(sessionData.byModel))
           : undefined;
 
+      // Shallow copy: byModel is mutated in place on stream-end, so a fresh
+      // record keeps memoized consumers from reading stale snapshots.
+      const sessionByModel =
+        sessionData && Object.keys(sessionData.byModel).length > 0
+          ? { ...sessionData.byModel }
+          : undefined;
+
       // Last request from persisted data
       const lastRequest = sessionData?.lastRequest;
 
@@ -2533,7 +2542,15 @@ export class WorkspaceStore {
             )
           : undefined;
 
-      return { sessionTotal, lastRequest, lastContextUsage, totalTokens, liveUsage, liveCostUsage };
+      return {
+        sessionTotal,
+        sessionByModel,
+        lastRequest,
+        lastContextUsage,
+        totalTokens,
+        liveUsage,
+        liveCostUsage,
+      };
     });
   }
 

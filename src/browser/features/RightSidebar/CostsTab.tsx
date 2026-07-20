@@ -3,8 +3,10 @@ import { useWorkspaceUsage, useWorkspaceConsumers } from "@/browser/stores/Works
 import {
   sumUsageHistory,
   formatCostWithDollar,
+  getTotalCost,
   type ChatUsageDisplay,
 } from "@/common/utils/tokens/usageAggregator";
+import { normalizeToCanonical, formatModelStringForDisplay } from "@/common/utils/ai/models";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
@@ -82,6 +84,34 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     if (usage.liveCostUsage) parts.push(usage.liveCostUsage);
     return parts.length > 0 ? sumUsageHistory(parts) : undefined;
   }, [usage.sessionTotal, usage.liveCostUsage]);
+
+  // Per-model session costs. Live streaming usage is not yet folded into the
+  // persisted byModel record, so merge it into the active model's bucket to
+  // keep rows consistent with the session total above.
+  const sessionModelRows = (() => {
+    const merged = new Map<string, ChatUsageDisplay>(Object.entries(usage.sessionByModel ?? {}));
+    const liveModel = usage.liveCostUsage?.model;
+    if (usage.liveCostUsage && liveModel) {
+      const key = normalizeToCanonical(liveModel);
+      const existing = merged.get(key);
+      merged.set(
+        key,
+        existing ? sumUsageHistory([existing, usage.liveCostUsage])! : usage.liveCostUsage
+      );
+    }
+    return Array.from(merged.entries())
+      .map(([model, entry]) => ({
+        model,
+        tokens:
+          entry.input.tokens +
+          entry.cached.tokens +
+          entry.cacheCreate.tokens +
+          entry.output.tokens +
+          entry.reasoning.tokens,
+        cost: getTotalCost(entry),
+      }))
+      .sort((a, b) => (b.cost ?? 0) - (a.cost ?? 0) || b.tokens - a.tokens);
+  })();
 
   const hasUsageData =
     usage &&
@@ -385,6 +415,41 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                       })}
                     </tbody>
                   </table>
+                  {viewMode === "session" && sessionModelRows.length > 0 && (
+                    <table
+                      data-testid="cost-by-model"
+                      className="mt-4 w-full border-collapse text-[11px]"
+                    >
+                      <thead>
+                        <tr className="border-border-light border-b">
+                          <th className="text-muted py-1 pr-2 text-left font-medium [&:last-child]:pr-0 [&:last-child]:text-right">
+                            Model
+                          </th>
+                          <th className="text-muted py-1 pr-2 text-left font-medium [&:last-child]:pr-0 [&:last-child]:text-right">
+                            Tokens
+                          </th>
+                          <th className="text-muted py-1 pr-2 text-left font-medium [&:last-child]:pr-0 [&:last-child]:text-right">
+                            Cost
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sessionModelRows.map((row) => (
+                          <tr key={row.model}>
+                            <td className="text-foreground max-w-0 truncate py-1 pr-2 [&:last-child]:pr-0 [&:last-child]:text-right">
+                              {formatModelStringForDisplay(row.model)}
+                            </td>
+                            <td className="text-foreground py-1 pr-2 tabular-nums [&:last-child]:pr-0 [&:last-child]:text-right">
+                              {formatTokens(row.tokens)}
+                            </td>
+                            <td className="text-foreground py-1 pr-2 tabular-nums [&:last-child]:pr-0 [&:last-child]:text-right">
+                              {formatCostWithDollar(row.cost)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </>
               );
             })()}
