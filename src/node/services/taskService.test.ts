@@ -4366,6 +4366,62 @@ describe("TaskService", () => {
     expect(listed.find((record) => record.handleId === "wst_handle")?.status).toBe("running");
   });
 
+  test("queued manual input does not revive a settled workspace turn", async () => {
+    // Ordinary queued input is not yet in history, so the newest-correlated-prompt guard
+    // cannot see it; the liveness gate must not treat it as a same-turn continuation.
+    const hasQueuedMessages = mock((workspaceId: string) => workspaceId === "childworkspace");
+    const hasPendingQueuedOrPreparingTurn = mock(
+      (workspaceId: string) => workspaceId === "childworkspace"
+    );
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({
+      hasQueuedMessages,
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      error: "Stream error: provider overloaded",
+    });
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+      listActiveWorkspaceTurnTaskIdsForOwner: (ownerWorkspaceId: string) => Promise<string[]>;
+    };
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+
+    expect(await internal.listActiveWorkspaceTurnTaskIdsForOwner(parentId)).not.toContain(
+      "wst_handle"
+    );
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      error: "Stream error: provider overloaded",
+    });
+  });
+
   test("a newer unrelated child prompt does not revive a settled workspace turn", async () => {
     const isStreaming = mock((workspaceId: string) => workspaceId === "childworkspace");
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({

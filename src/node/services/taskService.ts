@@ -6296,23 +6296,24 @@ export class TaskService {
     );
     // Lazily computed and cached: whether the child still has active descendant/workflow/
     // nested-turn work. A settled record cannot accumulate deferredMessageIds (the deferral
-    // path skips inactive handles), so both the liveness gate and the repair must consult
-    // these blockers — otherwise a retried turn could be reported completed (or dropped
-    // from active scans) while its background work is still running.
+    // path skips inactive handles), so the repair/deferred decisions below must consult
+    // these blockers — otherwise a retried turn could be reported completed while its
+    // background work is still running.
     let blockersActive: boolean | null = null;
     const deferredBlockersActive = async (): Promise<boolean> => {
       blockersActive ??= await this.hasActiveWorkspaceTurnDeferredBlockers(record);
       return blockersActive;
     };
-    // Evidence the turn is still live, ordered cheap-first so list paths rarely pay a
-    // history read for historical terminal handles: an active stream or pending auto-retry
-    // of the same turn; a queued/preparing continuation (e.g. the synthetic background-await
-    // resume between retry streams); or still-running child background work.
+    // Evidence the turn is still live. All checks are in-memory so historical terminal
+    // handles stay cheap on list/blocker-scan paths (no history reads). Queued/preparing
+    // turns are deliberately excluded: ordinary queued manual input is not yet in history,
+    // so it would defeat the newest-correlated-prompt guard below and revive unrelated
+    // work. The synthetic background-await continuation between retry streams is instead
+    // covered by the descendant hint — it is only queued while such blockers are active.
     const turnLive =
       this.aiService.isStreaming(record.workspaceId) ||
       this.workspaceService.hasPendingAutoRetry(record.workspaceId) ||
-      this.workspaceService.hasPendingQueuedOrPreparingTurn(record.workspaceId) ||
-      (await deferredBlockersActive());
+      this.hasActiveDescendantAgentTasks(this.config.loadConfigOrDefault(), record.workspaceId);
     if (!turnLive && !options.repairFromHistory) {
       return record;
     }
