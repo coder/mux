@@ -5249,7 +5249,7 @@ export class TaskService {
     const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
       params.record.handleId,
       async (): Promise<
-        | { kind: "notify"; outcome: TerminalAttentionOutcome; title?: string }
+        | { kind: "notify"; outcome: TerminalAttentionOutcome; title?: string; resettled: boolean }
         | { kind: "drain_pending" }
         | null
       > => {
@@ -5345,6 +5345,7 @@ export class TaskService {
         return {
           kind: "notify",
           outcome: workspaceTurnTerminalOutcome(nextRecord.status),
+          resettled: resettleStaleTerminal,
           ...(nextRecord.title != null ? { title: nextRecord.title } : {}),
         };
       }
@@ -5361,6 +5362,14 @@ export class TaskService {
     // Enqueue the terminal wake-up outside the lock. The persisted notification is the restart-safe
     // record of intent; only after it is accepted do we set terminalAttentionNotifiedAt on the
     // handle so a duplicate settlement / stale recovery cannot double-wake.
+    if (pendingNotify.resettled) {
+      // The stale settlement's wake-up may already be delivered/consumed; enqueueIfAbsent
+      // treats that tombstone as "already notified" and would swallow the corrected outcome.
+      await this.terminalAttentionStore.delete(
+        params.record.ownerWorkspaceId,
+        TerminalAttentionStore.notificationId("workspace_turn", params.record.handleId)
+      );
+    }
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: params.record.ownerWorkspaceId,
       sourceKind: "workspace_turn",
@@ -6379,7 +6388,13 @@ export class TaskService {
       };
       delete next.error;
       // The revived turn's next terminal transition is a new outcome; re-arm its wake-up.
+      // The notification tombstone must go too: enqueueIfAbsent would otherwise treat the
+      // stale settlement's delivered wake-up as "already notified" and swallow the new one.
       delete next.terminalAttentionNotifiedAt;
+      await this.terminalAttentionStore.delete(
+        record.ownerWorkspaceId,
+        TerminalAttentionStore.notificationId("workspace_turn", record.handleId)
+      );
       await this.taskHandleStore.upsertWorkspaceTurn(next);
       // Re-register so stream-end/abort/error settlement paths own the handle again.
       this.activeWorkspaceTurnHandleByWorkspaceId.set(record.workspaceId, {

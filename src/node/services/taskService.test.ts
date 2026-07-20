@@ -3773,6 +3773,65 @@ describe("TaskService", () => {
     expect(snapshot?.terminalAttentionNotifiedAt).toBeUndefined();
   });
 
+  test("resettled workspace turn re-arms a consumed notify_on_terminal wake-up", async () => {
+    const { config, parentId, taskService } = await startWorkspaceTurnForTest();
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      error: "Stream error: provider overloaded",
+      attentionPolicy: "notify_on_terminal",
+      terminalAttentionNotifiedAt: "2026-06-19T00:00:02.000Z",
+    });
+    // The stale error's wake-up was already delivered; without the tombstone reset,
+    // enqueueIfAbsent would swallow the corrected outcome's notification.
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_handle",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "error",
+    });
+    await terminalAttentionStore.markDelivered(parentId, "workspace_turn:wst_handle");
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_retry_final",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata,
+      },
+      parts: [{ type: "text", text: "Recovered after retry" }],
+    });
+
+    const notification = await terminalAttentionStore.get(parentId, "workspace_turn:wst_handle");
+    expect(notification).toMatchObject({ terminalOutcome: "completed" });
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "completed",
+      reportMarkdown: "Recovered after retry",
+    });
+  });
+
   test("duplicate correlated stream-end replay keeps a settled error handle unchanged", async () => {
     const { config, parentId, taskService } = await startWorkspaceTurnForTest();
     await new TaskHandleStore(config).upsertWorkspaceTurn({
@@ -3944,6 +4003,17 @@ describe("TaskService", () => {
       error: "Workspace turn interrupted after restart",
       terminalAttentionNotifiedAt: "2026-06-19T00:00:02.000Z",
     });
+    // Delivered tombstone from the stale settlement; revive must clear it so the revived
+    // turn's eventual real settlement can enqueue a fresh wake-up.
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_handle",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "interrupted",
+    });
+    await terminalAttentionStore.markDelivered(parentId, "workspace_turn:wst_handle");
     const internal = taskService as unknown as {
       activeWorkspaceTurnHandleByWorkspaceId: Map<
         string,
@@ -3956,6 +4026,7 @@ describe("TaskService", () => {
     expect(snapshot).toMatchObject({ status: "running", workspaceId: "childworkspace" });
     expect(snapshot?.error).toBeUndefined();
     expect(snapshot?.terminalAttentionNotifiedAt).toBeUndefined();
+    expect(await terminalAttentionStore.get(parentId, "workspace_turn:wst_handle")).toBeNull();
     expect(internal.activeWorkspaceTurnHandleByWorkspaceId.get("childworkspace")).toEqual({
       handleId: "wst_handle",
       ownerWorkspaceId: parentId,
