@@ -64,20 +64,28 @@ describe("TaskGroupListItem", () => {
     expect(groupRow.textContent).toContain("1 queued");
   });
 
-  test("ignores keyboard events from nested menu controls", () => {
+  test("handles menu shortcuts without toggling the group or reaching window handlers", () => {
+    const onWindowKeydown = mock(() => undefined);
+    const onArchiveAll = mock(() => Promise.resolve());
     const onToggle = mock(() => undefined);
-    const view = renderTaskGroup({
-      kind: "variants",
-      onArchiveAll: () => Promise.resolve(),
-      onToggle,
-    });
+    window.addEventListener("keydown", onWindowKeydown);
+    const view = renderTaskGroup({ kind: "variants", onArchiveAll, onToggle });
     fireEvent.contextMenu(view.getByTestId("task-group-best-of-demo"));
+    const menuItem = view.getByRole("button", { name: /Archive all variants/ });
 
-    fireEvent.keyDown(view.getByRole("button", { name: /Archive all variants/ }), {
-      key: "Enter",
-    });
-
+    fireEvent.keyDown(menuItem, { key: "Enter" });
     expect(onToggle).not.toHaveBeenCalled();
+    onWindowKeydown.mockClear();
+
+    fireEvent.keyDown(menuItem, {
+      key: "Backspace",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    window.removeEventListener("keydown", onWindowKeydown);
+
+    expect(onArchiveAll).toHaveBeenCalledTimes(1);
+    expect(onWindowKeydown).not.toHaveBeenCalled();
   });
 
   test("handles the archive shortcut without triggering native window handlers", () => {

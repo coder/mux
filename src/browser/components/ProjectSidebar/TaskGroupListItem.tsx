@@ -99,22 +99,22 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       }}
       onContextMenu={props.onArchiveAll ? contextMenu.onContextMenu : undefined}
       onKeyDown={(event) => {
-        // Portaled menu events still bubble through the React tree. Only the row
-        // itself owns expansion and archive shortcuts.
-        if (event.target !== event.currentTarget) {
-          return;
-        }
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          props.onToggle();
-          return;
-        }
+        // Portaled menu events still bubble through the React tree. Handle the
+        // shared archive shortcut first, then limit row-only keys to the row.
         if (props.onArchiveAll && matchesKeybind(event, KEYBINDS.ARCHIVE_WORKSPACE)) {
           event.preventDefault();
           stopKeyboardPropagation(event);
           props.onArchiveAll(event.currentTarget).catch(() => {
             // The sidebar owner surfaces archive failures through its shared error UI.
           });
+          return;
+        }
+        if (event.target !== event.currentTarget) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          props.onToggle();
         }
       }}
     >
