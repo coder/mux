@@ -64,6 +64,22 @@ describe("TaskGroupListItem", () => {
     expect(groupRow.textContent).toContain("1 queued");
   });
 
+  test("ignores keyboard events from nested menu controls", () => {
+    const onToggle = mock(() => undefined);
+    const view = renderTaskGroup({
+      kind: "variants",
+      onArchiveAll: () => Promise.resolve(),
+      onToggle,
+    });
+    fireEvent.contextMenu(view.getByTestId("task-group-best-of-demo"));
+
+    fireEvent.keyDown(view.getByRole("button", { name: /Archive all variants/ }), {
+      key: "Enter",
+    });
+
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
   test("handles the archive shortcut without triggering native window handlers", () => {
     const onWindowKeydown = mock(() => undefined);
     const onArchiveAll = mock(() => Promise.resolve());

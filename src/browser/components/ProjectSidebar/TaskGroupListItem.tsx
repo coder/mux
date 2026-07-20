@@ -99,6 +99,11 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       }}
       onContextMenu={props.onArchiveAll ? contextMenu.onContextMenu : undefined}
       onKeyDown={(event) => {
+        // Portaled menu events still bubble through the React tree. Only the row
+        // itself owns expansion and archive shortcuts.
+        if (event.target !== event.currentTarget) {
+          return;
+        }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           props.onToggle();
