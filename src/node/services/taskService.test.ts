@@ -4087,6 +4087,48 @@ describe("TaskService", () => {
     });
   });
 
+  test("revive does not clobber a newer same-status settlement written after the stale read", async () => {
+    const { config, parentId, taskService } = await startWorkspaceTurnForTest();
+    const taskHandleStore = new TaskHandleStore(config);
+    // The record currently on disk: a FRESH error settled by the live retry itself.
+    const freshError = {
+      kind: "workspace_turn" as const,
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error" as const,
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:05:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      error: "Stream error: retry also failed",
+    };
+    await taskHandleStore.upsertWorkspaceTurn(freshError);
+    const internal = taskService as unknown as {
+      reviveRetryingWorkspaceTurn: (record: typeof freshError) => Promise<typeof freshError | null>;
+    };
+
+    // Reconcile observed an OLDER error record (same status, earlier updatedAt) before the
+    // retry failed; the revive must notice the newer settlement and leave it untouched.
+    const revived = await internal.reviveRetryingWorkspaceTurn({
+      ...freshError,
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      error: "Stream error: provider overloaded",
+    });
+
+    expect(revived).toMatchObject({
+      status: "error",
+      updatedAt: "2026-06-19T00:05:00.000Z",
+      error: "Stream error: retry also failed",
+    });
+    expect(await taskHandleStore.getWorkspaceTurn(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      updatedAt: "2026-06-19T00:05:00.000Z",
+      error: "Stream error: retry also failed",
+    });
+  });
+
   test("history repair scans past newer unrelated prompts to a correlated final message", async () => {
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
     const muxMetadata = {

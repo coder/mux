@@ -6345,8 +6345,14 @@ export class TaskService {
         record.ownerWorkspaceId,
         record.handleId
       );
-      // A concurrent settlement/repair wins; only replace the stale status we reconciled.
-      if (current == null || current.status !== record.status) {
+      // A concurrent settlement/repair wins; only replace the exact record we reconciled.
+      // Comparing updatedAt (not just status) matters: a concurrent settlement can produce
+      // a NEWER record with the same status that must not be clobbered by our stale read.
+      if (
+        current == null ||
+        current.status !== record.status ||
+        current.updatedAt !== record.updatedAt
+      ) {
         return current;
       }
       log.debug("Workspace turn repaired from self-healed child history", {
@@ -6379,8 +6385,15 @@ export class TaskService {
         record.ownerWorkspaceId,
         record.handleId
       );
-      // A concurrent transition wins; only revive the stale status we reconciled against.
-      if (current == null || current.status !== record.status) {
+      // A concurrent transition wins; only revive the exact record we reconciled against.
+      // Comparing updatedAt (not just status) matters: the live retry itself can fail and
+      // settle a NEWER record with the same status (e.g. error → error) between our read
+      // and this lock — reviving that fresh terminal failure would strand task_await.
+      if (
+        current == null ||
+        current.status !== record.status ||
+        current.updatedAt !== record.updatedAt
+      ) {
         return current;
       }
       // Another turn already owns the child workspace; the activity is not this turn's retry.
