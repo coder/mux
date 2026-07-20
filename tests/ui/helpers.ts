@@ -12,43 +12,6 @@ import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "@/browser/stores/GitStatusStore";
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TYPES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export type EventCollector = { getEvents(): unknown[] };
-
-type ToolCallEndEvent = { type: "tool-call-end"; toolName: string };
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EVENT HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function isToolCallEndEvent(event: unknown): event is ToolCallEndEvent {
-  if (typeof event !== "object" || event === null) return false;
-  const record = event as { type?: unknown; toolName?: unknown };
-  return record.type === "tool-call-end" && typeof record.toolName === "string";
-}
-
-/**
- * Wait for a tool-call-end event with the specified tool name.
- */
-export async function waitForToolCallEnd(
-  collector: EventCollector,
-  toolName: string,
-  timeoutMs: number = 10_000
-): Promise<void> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const match = collector
-      .getEvents()
-      .find((event) => isToolCallEndEvent(event) && event.toolName === toolName);
-    if (match) return;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error(`Timed out waiting for tool-call-end: ${toolName}`);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // REFRESH BUTTON HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -63,6 +63,38 @@ describe("Analytics header titlebar contract", () => {
     }
   }, 60_000);
 
+  test("narrow browser mode can reopen the off-canvas left sidebar", async () => {
+    const app = await createAppHarness({ branchPrefix: "analytics-sidebar-mobile" });
+
+    try {
+      const header = await openAnalyticsAndGetHeader(app.view.container);
+      const collapseSidebarButton = app.view.container.querySelector(
+        'button[aria-label="Collapse sidebar"]'
+      ) as HTMLButtonElement | null;
+      expect(collapseSidebarButton).not.toBeNull();
+      fireEvent.click(collapseSidebarButton!);
+
+      const openSidebarButton = await waitFor(() => {
+        const button = header.querySelector(
+          'button[aria-label="Open sidebar"]'
+        ) as HTMLButtonElement | null;
+        if (!button) {
+          throw new Error("Analytics sidebar opener not found");
+        }
+        return button;
+      });
+      expect(openSidebarButton.classList.contains("mobile-menu-btn")).toBe(true);
+
+      fireEvent.click(openSidebarButton);
+
+      await waitFor(() => {
+        expect(document.documentElement.dataset.leftSidebarCollapsed).toBe("false");
+      });
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
   test("desktop linux mode: header has h-9, titlebar-drag, and titlebar-safe-right", async () => {
     const app = await createAppHarness({
       branchPrefix: "analytics-hdr-linux",
