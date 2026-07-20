@@ -6289,6 +6289,12 @@ export class TaskService {
     const allowDeferredMessages =
       (record.deferredMessageIds?.length ?? 0) === 0 ||
       !(await this.hasActiveWorkspaceTurnDeferredBlockers(record));
+    // Auto-retry replays the newest accepted user message, so live child activity belongs
+    // to this turn only while its prompt is still that newest message. Any newer user
+    // message disables the revive — but only the revive: a correlated final assistant
+    // message older than that unrelated prompt still proves the turn completed, so the
+    // durable-history repair scan must continue past it.
+    let reviveAllowed = retryLive;
     for (const message of historyResult.data.toReversed()) {
       if (this.isDeferredWorkspaceTurnMessage(record, message.id) && !allowDeferredMessages) {
         continue;
@@ -6309,19 +6315,23 @@ export class TaskService {
       if (message.role !== "user") {
         continue;
       }
-      // Auto-retry replays the newest accepted user message, so live child activity belongs
-      // to this turn only while its prompt is still that newest message. Any newer user
-      // message means the activity is a different turn.
       const metadata = this.getWorkspaceTurnMetadataFromValue(message.metadata?.muxMetadata);
       const correlatedPrompt =
         metadata != null &&
         metadata.taskHandleId === record.handleId &&
         metadata.ownerWorkspaceId === record.ownerWorkspaceId &&
         metadata.turnId === record.turnId;
-      if (correlatedPrompt && retryLive) {
-        return await this.reviveRetryingWorkspaceTurn(record);
+      if (correlatedPrompt) {
+        if (reviveAllowed) {
+          return await this.reviveRetryingWorkspaceTurn(record);
+        }
+        // A correlated final must be newer than the prompt; nothing older can repair.
+        return record;
       }
-      return record;
+      reviveAllowed = false;
+      if (!options.repairFromHistory) {
+        return record;
+      }
     }
     return record;
   }

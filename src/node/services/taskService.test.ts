@@ -4087,6 +4087,60 @@ describe("TaskService", () => {
     });
   });
 
+  test("history repair scans past newer unrelated prompts to a correlated final message", async () => {
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    // The turn self-healed and finished, THEN the child received an unrelated manual
+    // prompt before the parent ever called task_await.
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_selfhealed_final", "assistant", "Self-healed final text", {
+            model: "anthropic:claude-opus-4-6",
+            agentId: "exec",
+            finishReason: "stop",
+            muxMetadata,
+          })
+        )
+      ).success
+    ).toBe(true);
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_manual_later", "user", "Manual follow-up", {})
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      error: "Stream error: provider overloaded",
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({
+      status: "completed",
+      messageId: "msg_selfhealed_final",
+      reportMarkdown: "Self-healed final text",
+    });
+    expect(snapshot?.error).toBeUndefined();
+  });
+
   test("workspace-turn stale recovery uses deferred history after archived descendants stop blocking", async () => {
     const { config, parentId, projectPath, taskService, historyService } =
       await startWorkspaceTurnForTest();
