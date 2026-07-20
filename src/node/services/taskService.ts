@@ -689,6 +689,25 @@ const WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS: ReadonlySet<StreamErrorType> = n
   "context_exceeded",
 ]);
 
+/** Marker persisted by settleStaleWorkspaceTurn when restart recovery interrupts a handle. */
+const WORKSPACE_TURN_STALE_RESTART_ERROR = "Workspace turn interrupted after restart";
+
+/**
+ * Settled workspace-turn records eligible for self-heal correction (resettle from a
+ * correlated stream-end, or read-time repair/revive): transient stream-error settlements
+ * (status "error") and stale restart-recovery interrupts. Explicit interrupts — user Esc,
+ * task_terminate, cancel reasons — must stay terminal even if a late correlated stream-end
+ * or same-turn retry evidence arrives, so canceled work never resurfaces as completed.
+ */
+function isSelfHealEligibleSettledWorkspaceTurn(
+  record: Pick<WorkspaceTurnTaskHandleRecord, "status" | "error">
+): boolean {
+  if (record.status === "error") {
+    return true;
+  }
+  return record.status === "interrupted" && record.error === WORKSPACE_TURN_STALE_RESTART_ERROR;
+}
+
 /**
  * A workspace-turn stream error may resolve without parent intervention when
  * the child can still make progress on its own. The caller must still confirm
@@ -5265,13 +5284,15 @@ export class TaskService {
           "settleWorkspaceTurn requires current record to match workspaceId"
         );
 
-        // A completed record is immutable; a stale interrupted/error record may be corrected
-        // once by an explicitly allowed resettle, but only when the new settlement actually
-        // changes the outcome (duplicate stream-end replays must stay idempotent).
+        // A completed record is immutable; a self-heal-eligible settled record (transient
+        // error / stale restart interrupt — never an explicit user interrupt) may be
+        // corrected once by an explicitly allowed resettle, but only when the new settlement
+        // actually changes the outcome (duplicate stream-end replays must stay idempotent).
         const resettleStaleTerminal =
           params.allowTerminalResettle === true &&
           this.isTerminalWorkspaceTurnStatus(current.status) &&
           current.status !== "completed" &&
+          isSelfHealEligibleSettledWorkspaceTurn(current) &&
           (params.next.status !== current.status || params.next.messageId !== current.messageId);
         if (this.isTerminalWorkspaceTurnStatus(current.status) && !resettleStaleTerminal) {
           const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
@@ -6217,7 +6238,7 @@ export class TaskService {
     // task_await agree on the self-healed terminal status.
     if (
       record.status === "interrupted" &&
-      record.error === "Workspace turn interrupted after restart" &&
+      record.error === WORKSPACE_TURN_STALE_RESTART_ERROR &&
       (record.deferredMessageIds?.length ?? 0) > 0
     ) {
       const recovered = await this.recoverTerminalWorkspaceTurnFromHistory(record);
@@ -6246,7 +6267,10 @@ export class TaskService {
       return await this.taskHandleStore.getWorkspaceTurn(record.ownerWorkspaceId, record.handleId);
     }
 
-    if (record.status === "interrupted" || record.status === "error") {
+    if (
+      (record.status === "interrupted" || record.status === "error") &&
+      isSelfHealEligibleSettledWorkspaceTurn(record)
+    ) {
       return await this.reconcileSettledWorkspaceTurn(record, {
         repairFromHistory: options.repairSettledTurnsFromHistory === true,
       });
@@ -7347,14 +7371,14 @@ export class TaskService {
       ...record,
       status: "interrupted",
       updatedAt: getIsoNow(),
-      error: "Workspace turn interrupted after restart",
+      error: WORKSPACE_TURN_STALE_RESTART_ERROR,
     };
     await this.settleWorkspaceTurn({
       record,
       next,
       waiterSettlement: {
         status: "error",
-        error: new Error("Workspace turn interrupted after restart"),
+        error: new Error(WORKSPACE_TURN_STALE_RESTART_ERROR),
       },
     });
   }
