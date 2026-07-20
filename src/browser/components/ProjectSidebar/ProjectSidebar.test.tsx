@@ -1335,6 +1335,18 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(archiveWorkspaceActionMock).toHaveBeenNthCalledWith(1, "child-1", undefined);
     expect(archiveWorkspaceActionMock).toHaveBeenNthCalledWith(2, "child-2", undefined);
 
+    archiveWorkspaceActionMock.mockClear();
+    archiveWorkspaceActionMock.mockImplementationOnce(() =>
+      Promise.resolve({ success: false as const, error: "archive failed" })
+    );
+    fireEvent.contextMenu(groupRow, { clientX: 120, clientY: 80 });
+    fireEvent.click(view.getByRole("button", { name: /Archive all variants/ }));
+
+    await waitFor(() => {
+      expect(archiveWorkspaceActionMock).toHaveBeenCalledTimes(1);
+    });
+    expect(archiveWorkspaceActionMock).toHaveBeenCalledWith("child-1", undefined);
+
     if (groupRow.getAttribute("aria-expanded") !== "true") {
       fireEvent.click(groupRow);
     }

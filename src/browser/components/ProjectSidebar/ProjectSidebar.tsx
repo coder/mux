@@ -1156,7 +1156,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             // interruption warning again when the archive attempt has not yet been confirmed.
             isStreaming: acknowledgedUntrackedPaths == null ? isStreaming : false,
           });
-          return;
+          return false;
         }
         if (!result.success) {
           if (acknowledgedUntrackedPaths != null) {
@@ -1187,7 +1187,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
                   })(),
                 });
-                return;
+                return false;
               }
             }
           }
@@ -1198,7 +1198,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           // left-sidebar row that may be far from their current focus. Use the shared toast fallback
           // position so archive errors match other top-right UI error surfaces.
           workspaceArchiveError.showError(workspaceId, error);
+          return false;
         }
+        return true;
       } finally {
         // Clear archiving state
         setArchivingWorkspaceIds((prev) => {
@@ -1343,7 +1345,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       }
 
       for (const member of preparedMembers) {
-        await performArchiveWorkspace(member.workspaceId, buttonElement);
+        const archived = await performArchiveWorkspace(member.workspaceId, buttonElement);
+        if (!archived) {
+          return;
+        }
       }
     },
     [hasActiveStream, performArchiveWorkspace, preflightArchiveWorkspace, workspaceArchiveError]
@@ -1358,11 +1363,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     setArchiveConfirmation(null);
     if (confirmation.kind === "variant-group") {
       for (const member of confirmation.members) {
-        await performArchiveWorkspace(
+        const archived = await performArchiveWorkspace(
           member.workspaceId,
           confirmation.buttonElement,
           member.untrackedPaths
         );
+        if (!archived) {
+          return;
+        }
       }
       return;
     }

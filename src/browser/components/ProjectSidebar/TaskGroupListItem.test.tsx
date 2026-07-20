@@ -1,7 +1,7 @@
 import "../../../../tests/ui/dom";
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import { TaskGroupListItem } from "./TaskGroupListItem";
 
@@ -62,6 +62,23 @@ describe("TaskGroupListItem", () => {
       "text-content-success"
     );
     expect(groupRow.textContent).toContain("1 queued");
+  });
+
+  test("handles the archive shortcut without triggering native window handlers", () => {
+    const onWindowKeydown = mock(() => undefined);
+    const onArchiveAll = mock(() => Promise.resolve());
+    window.addEventListener("keydown", onWindowKeydown);
+    const view = renderTaskGroup({ kind: "variants", onArchiveAll });
+
+    fireEvent.keyDown(view.getByTestId("task-group-best-of-demo"), {
+      key: "Backspace",
+      ctrlKey: true,
+      shiftKey: true,
+    });
+    window.removeEventListener("keydown", onWindowKeydown);
+
+    expect(onArchiveAll).toHaveBeenCalledTimes(1);
+    expect(onWindowKeydown).not.toHaveBeenCalled();
   });
 
   test("aggregates member state into the shared status-dot language", () => {

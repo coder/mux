@@ -8,6 +8,7 @@ import {
 } from "@/browser/components/PositionedMenu/PositionedMenu";
 import { getSidebarItemPaddingLeft } from "@/browser/components/sidebarItemLayout";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import {
@@ -105,6 +106,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
         }
         if (props.onArchiveAll && matchesKeybind(event, KEYBINDS.ARCHIVE_WORKSPACE)) {
           event.preventDefault();
+          stopKeyboardPropagation(event);
           props.onArchiveAll(event.currentTarget).catch(() => {
             // The sidebar owner surfaces archive failures through its shared error UI.
           });
