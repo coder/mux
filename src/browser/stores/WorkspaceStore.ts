@@ -70,7 +70,7 @@ import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compa
 import { isSideQuestionAnswerMessage as isSideQuestionAnswerMuxMessage } from "@/common/utils/messages/sideQuestion";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
+import { sumUsageHistory, getTotalTokens } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import type { z } from "zod";
@@ -2455,13 +2455,7 @@ export class WorkspaceStore {
       const lastRequest = sessionData?.lastRequest;
 
       // Calculate total tokens from session total
-      const totalTokens = sessionTotal
-        ? sessionTotal.input.tokens +
-          sessionTotal.cached.tokens +
-          sessionTotal.cacheCreate.tokens +
-          sessionTotal.output.tokens +
-          sessionTotal.reasoning.tokens
-        : 0;
+      const totalTokens = getTotalTokens(sessionTotal);
 
       const messages = aggregator.getAllMessages();
       if (messages.length === 0) {
