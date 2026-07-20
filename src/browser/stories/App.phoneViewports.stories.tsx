@@ -10,6 +10,7 @@ import type { ComponentType } from "react";
 
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
@@ -151,7 +152,7 @@ export const IPhone16eAnalyticsSidebarControl: AppStory = {
           projectName: "mux",
           messages: [...MESSAGES],
         });
-        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+        updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, false);
         return client;
       }}
     />
