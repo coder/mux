@@ -1,7 +1,14 @@
 import { ChevronRight, Layers3, Workflow } from "lucide-react";
 
 import { StatusDot, type VisualState } from "@/browser/components/AgentListItem/StatusDot";
+import { ArchiveIcon } from "@/browser/components/icons/ArchiveIcon/ArchiveIcon";
+import {
+  PositionedMenu,
+  PositionedMenuItem,
+} from "@/browser/components/PositionedMenu/PositionedMenu";
 import { getSidebarItemPaddingLeft } from "@/browser/components/sidebarItemLayout";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import {
   formatSidebarTaskGroupHeader,
@@ -24,6 +31,8 @@ interface TaskGroupListItemProps {
   isExpanded: boolean;
   isSelected: boolean;
   onToggle: () => void;
+  /** Variant groups archive as one unit so users do not have to expand and remove each chat. */
+  onArchiveAll?: (buttonElement: HTMLElement) => Promise<void>;
 }
 
 /**
@@ -43,6 +52,7 @@ function getAggregateVisualState(props: TaskGroupListItemProps): VisualState {
 }
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
+  const contextMenu = useContextMenuPosition();
   const hasRunningWork = props.runningCount > 0;
   const aggregateState = getAggregateVisualState(props);
   const statusDescriptionId = `task-group-status-${props.groupId}`;
@@ -86,10 +96,18 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       onClick={() => {
         props.onToggle();
       }}
+      onContextMenu={props.onArchiveAll ? contextMenu.onContextMenu : undefined}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
           props.onToggle();
+          return;
+        }
+        if (props.onArchiveAll && matchesKeybind(event, KEYBINDS.ARCHIVE_WORKSPACE)) {
+          event.preventDefault();
+          props.onArchiveAll(event.currentTarget).catch(() => {
+            // The sidebar owner surfaces archive failures through its shared error UI.
+          });
         }
       }}
     >
@@ -153,6 +171,26 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
           )}
         </div>
       </div>
+      {props.onArchiveAll && (
+        <PositionedMenu
+          open={contextMenu.isOpen}
+          onOpenChange={contextMenu.onOpenChange}
+          position={contextMenu.position}
+        >
+          <PositionedMenuItem
+            icon={<ArchiveIcon className="h-4 w-4 shrink-0" />}
+            label="Archive all variants"
+            shortcut={formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)}
+            variant="destructive"
+            onClick={(event) => {
+              contextMenu.close();
+              props.onArchiveAll?.(event.currentTarget).catch(() => {
+                // The sidebar owner surfaces archive failures through its shared error UI.
+              });
+            }}
+          />
+        </PositionedMenu>
+      )}
     </div>
   );
 }
