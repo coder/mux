@@ -6294,13 +6294,26 @@ export class TaskService {
       record.status === "interrupted" || record.status === "error",
       "reconcileSettledWorkspaceTurn requires a settled interrupted/error record"
     );
-    // Cheap in-memory evidence of a same-turn retry, checked first so list paths do not
-    // pay a history read for every historical terminal handle. Queued/preparing turns are
-    // intentionally excluded: unrelated queued input must not revive a settled handle.
-    const retryLive =
+    // Lazily computed and cached: whether the child still has active descendant/workflow/
+    // nested-turn work. A settled record cannot accumulate deferredMessageIds (the deferral
+    // path skips inactive handles), so both the liveness gate and the repair must consult
+    // these blockers — otherwise a retried turn could be reported completed (or dropped
+    // from active scans) while its background work is still running.
+    let blockersActive: boolean | null = null;
+    const deferredBlockersActive = async (): Promise<boolean> => {
+      blockersActive ??= await this.hasActiveWorkspaceTurnDeferredBlockers(record);
+      return blockersActive;
+    };
+    // Evidence the turn is still live, ordered cheap-first so list paths rarely pay a
+    // history read for historical terminal handles: an active stream or pending auto-retry
+    // of the same turn; a queued/preparing continuation (e.g. the synthetic background-await
+    // resume between retry streams); or still-running child background work.
+    const turnLive =
       this.aiService.isStreaming(record.workspaceId) ||
-      this.workspaceService.hasPendingAutoRetry(record.workspaceId);
-    if (!retryLive && !options.repairFromHistory) {
+      this.workspaceService.hasPendingAutoRetry(record.workspaceId) ||
+      this.workspaceService.hasPendingQueuedOrPreparingTurn(record.workspaceId) ||
+      (await deferredBlockersActive());
+    if (!turnLive && !options.repairFromHistory) {
       return record;
     }
 
@@ -6310,22 +6323,12 @@ export class TaskService {
     if (!historyResult.success) {
       return record;
     }
-    // Lazily computed: whether the child still has active descendant/workflow/nested-turn
-    // work. A settled record cannot accumulate deferredMessageIds (the deferral path skips
-    // inactive handles), so the repair itself must be gated on these blockers too —
-    // otherwise a retried turn could be reported completed while its background work is
-    // still running, which active handles avoid via deferred stream-ends.
-    let blockersActive: boolean | null = null;
-    const deferredBlockersActive = async (): Promise<boolean> => {
-      blockersActive ??= await this.hasActiveWorkspaceTurnDeferredBlockers(record);
-      return blockersActive;
-    };
     // Auto-retry replays the newest accepted user message, so live child activity belongs
     // to this turn only while its prompt is still that newest message. Any newer user
     // message disables the revive — but only the revive: a correlated final assistant
     // message older than that unrelated prompt still proves the turn completed, so the
     // durable-history repair scan must continue past it.
-    let reviveAllowed = retryLive;
+    let reviveAllowed = turnLive;
     for (const message of historyResult.data.toReversed()) {
       if (
         this.isDeferredWorkspaceTurnMessage(record, message.id) &&
@@ -6336,7 +6339,14 @@ export class TaskService {
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
       if (event != null) {
         // The turn produced a correlated final assistant message after settlement, so the
-        // child self-healed and finished. Persist the true outcome when repair is allowed.
+        // child self-healed. While its background work is still running, revive the handle
+        // with the final recorded as deferred: the parent stays blocked, and the standard
+        // deferred-recovery machinery settles the true outcome once blockers finish.
+        if (reviveAllowed && (await deferredBlockersActive())) {
+          return await this.reviveRetryingWorkspaceTurn(record, {
+            deferredMessageIds: [event.messageId],
+          });
+        }
         const recovered = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
         if (
           !options.repairFromHistory ||
@@ -6415,7 +6425,8 @@ export class TaskService {
   }
 
   private async reviveRetryingWorkspaceTurn(
-    record: WorkspaceTurnTaskHandleRecord
+    record: WorkspaceTurnTaskHandleRecord,
+    options: { deferredMessageIds?: string[] } = {}
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
     return await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
       const current = await this.taskHandleStore.getWorkspaceTurn(
@@ -6445,6 +6456,11 @@ export class TaskService {
         ...current,
         status: "running",
         updatedAt: getIsoNow(),
+        // An already-observed correlated final (blocked on child background work) rides
+        // along as deferred so standard deferred recovery settles it once blockers finish.
+        ...(options.deferredMessageIds != null
+          ? { deferredMessageIds: options.deferredMessageIds }
+          : {}),
       };
       delete next.error;
       // The revived turn's next terminal transition is a new outcome; re-arm its wake-up.

@@ -4128,8 +4128,10 @@ describe("TaskService", () => {
     const { config, parentId, projectPath, taskService, historyService } =
       await startWorkspaceTurnForTest();
     // The retried turn emitted its correlated final while a descendant task was still
-    // running; repairing to completed before it finishes would hand the parent an
-    // incomplete result that active handles avoid via deferred stream-ends.
+    // running; reporting completed before it finishes would hand the parent an
+    // incomplete result that active handles avoid via deferred stream-ends. Instead the
+    // handle is revived with the final recorded as deferred, then settles once the
+    // blocker is gone.
     await config.editConfig((cfg) => {
       const project = Array.from(cfg.projects.values())[0];
       assert(project, "test project must exist");
@@ -4177,10 +4179,13 @@ describe("TaskService", () => {
       error: "Stream error: provider overloaded",
     });
 
-    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
-      status: "error",
-      error: "Stream error: provider overloaded",
+    const blocked = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(blocked).toMatchObject({
+      status: "running",
+      deferredMessageIds: ["msg_blocked_final"],
     });
+    expect(blocked?.error).toBeUndefined();
+    expect(blocked?.reportMarkdown).toBeUndefined();
 
     await config.editConfig((cfg) => {
       const descendant = Array.from(cfg.projects.values())
@@ -4195,6 +4200,69 @@ describe("TaskService", () => {
       status: "completed",
       messageId: "msg_blocked_final",
       reportMarkdown: "Blocked final text",
+    });
+  });
+
+  test("turn-end blocker scan keeps a stale handle live between retry streams via child blockers", async () => {
+    const { config, parentId, projectPath, taskService, historyService } =
+      await startWorkspaceTurnForTest();
+    // Codex handoff gap: the retried child's stream ended, no auto-retry is pending, but
+    // its descendant work is still running. The blocker scan must still treat the turn as
+    // live so the parent cannot end its turn during that window.
+    await config.editConfig((cfg) => {
+      const project = Array.from(cfg.projects.values())[0];
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(projectPath, "descendant-task"),
+        id: "descendant-task",
+        name: "descendant-task",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+      });
+      return cfg;
+    });
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_prompt", "user", "Summarize", { muxMetadata })
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      error: "Stream error: provider overloaded",
+    });
+    const internal = taskService as unknown as {
+      activeWorkspaceTurnHandleByWorkspaceId: Map<
+        string,
+        { handleId: string; ownerWorkspaceId: string }
+      >;
+      listActiveWorkspaceTurnTaskIdsForOwner: (ownerWorkspaceId: string) => Promise<string[]>;
+    };
+    internal.activeWorkspaceTurnHandleByWorkspaceId.clear();
+
+    expect(await internal.listActiveWorkspaceTurnTaskIdsForOwner(parentId)).toContain("wst_handle");
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+      workspaceId: "childworkspace",
     });
   });
 
