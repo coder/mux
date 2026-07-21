@@ -1180,10 +1180,13 @@ export function transformModelMessages(
 
   // Pass 4: Provider-specific reasoning handling
   let reasoningHandled: ModelMessage[];
-  if (provider === "openai") {
+  if (provider === "openai" || provider === "moonshotai") {
     // OpenAI: Keep reasoning parts in explicit history so later turns can
     // preserve reasoning context without chaining previous_response_id.
     // Only filter out reasoning-only messages (messages with no text/tool-call content)
+    // Moonshot: Kimi K3 always reasons, so an interrupted turn can leave a
+    // reasoning-only assistant entry that would serialize as an empty message
+    // and be rejected on replay; filter those out the same way.
     reasoningHandled = filterReasoningOnlyMessages(taskAwaitCoalesced);
   } else if (provider === "anthropic") {
     // Anthropic: When extended thinking is enabled, preserve reasoning-only messages and ensure

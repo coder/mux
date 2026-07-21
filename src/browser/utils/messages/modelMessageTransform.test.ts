@@ -34,6 +34,27 @@ describe("modelMessageTransform", () => {
       expect(result).toEqual(messages);
     });
 
+    it("filters reasoning-only assistant messages for Moonshot like OpenAI", () => {
+      const reasoningOnly: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "thinking about it..." }],
+      };
+      const messages: ModelMessage[] = [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+        reasoningOnly,
+        { role: "user", content: [{ type: "text", text: "Continue" }] },
+      ];
+
+      for (const provider of ["moonshotai", "openai"]) {
+        const result = transformModelMessages(messages, provider);
+        expect(result.some((m) => m.role === "assistant")).toBe(false);
+      }
+
+      // Unknown providers keep the reasoning-only message (no reasoning handling).
+      const unknownResult = transformModelMessages(messages, "some-unknown-provider");
+      expect(unknownResult.some((m) => m.role === "assistant")).toBe(true);
+    });
+
     it("should split mixed text and tool-call content into ordered segments", () => {
       const assistantMsg: AssistantModelMessage = {
         role: "assistant",
