@@ -20,7 +20,7 @@ interface ContextUsageSectionProps {
  * Context usage meter with auto-compaction threshold slider.
  * Rendered above the Stats sub-tabs so it stays visible on every sub-tab.
  */
-const ContextUsageSectionComponent: React.FC<ContextUsageSectionProps> = ({ workspaceId }) => {
+export const ContextUsageSection: React.FC<ContextUsageSectionProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
     AGENT_AI_DEFAULTS_KEY,
@@ -94,5 +94,3 @@ const ContextUsageSectionComponent: React.FC<ContextUsageSectionProps> = ({ work
     </div>
   );
 };
-
-export const ContextUsageSection = React.memo(ContextUsageSectionComponent);

@@ -11,7 +11,7 @@ interface ContextTabProps {
   workspaceId: string;
 }
 
-const ContextTabComponent: React.FC<ContextTabProps> = ({ workspaceId }) => {
+export const ContextTab: React.FC<ContextTabProps> = ({ workspaceId }) => {
   const consumers = useWorkspaceConsumers(workspaceId);
 
   const postCompactionState = usePostCompactionState(workspaceId);
@@ -79,5 +79,3 @@ const ContextTabComponent: React.FC<ContextTabProps> = ({ workspaceId }) => {
     </div>
   );
 };
-
-export const ContextTab = React.memo(ContextTabComponent);
