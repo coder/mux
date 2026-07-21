@@ -1682,6 +1682,9 @@ export class ProviderModelFactory {
         // (e.g. { inputTokens: 123, outputTokens: 456 }), causing
         // asLanguageModelUsage to produce undefined → 0 for all token counts.
         // These wrappers detect flat usage and convert to v3 nested format.
+        // Google forwards candidatesTokenCount as flat outputTokens, which excludes
+        // thoughts; other providers report output inclusive of reasoning.
+        const usageOptions = { outputExcludesReasoning: modelId.startsWith("google/") };
         const originalDoStream = model.doStream.bind(model);
         model.doStream = async (options) => {
           const result = await originalDoStream(options);
@@ -1690,7 +1693,7 @@ export class ProviderModelFactory {
             // Type assertion safe: the transform only modifies the shape of usage/finishReason
             // fields within existing chunks, it doesn't change the stream part types.
             stream: result.stream.pipeThrough(
-              normalizeGatewayStreamUsage()
+              normalizeGatewayStreamUsage(usageOptions)
             ) as typeof result.stream,
           };
         };
@@ -1698,7 +1701,7 @@ export class ProviderModelFactory {
         const originalDoGenerate = model.doGenerate.bind(model);
         model.doGenerate = async (options) => {
           const result = await originalDoGenerate(options);
-          return normalizeGatewayGenerateResult(result);
+          return normalizeGatewayGenerateResult(result, usageOptions);
         };
 
         const configuredOpenAIStore = muxProviderOptions?.openai?.store;

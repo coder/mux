@@ -88,6 +88,28 @@ describe("flatUsageToV3", () => {
     expect(result.outputTokens.reasoning).toBe(100);
   });
 
+  it("treats output as text-only when outputExcludesReasoning is set (Google semantics)", () => {
+    const result = flatUsageToV3(
+      { inputTokens: 9431, outputTokens: 2, reasoningTokens: 308 },
+      { outputExcludesReasoning: true }
+    );
+
+    expect(result.outputTokens.total).toBe(310); // 2 + 308
+    expect(result.outputTokens.text).toBe(2);
+    expect(result.outputTokens.reasoning).toBe(308);
+  });
+
+  it("keeps output total unchanged with outputExcludesReasoning when reasoning is absent", () => {
+    const result = flatUsageToV3(
+      { inputTokens: 100, outputTokens: 50 },
+      { outputExcludesReasoning: true }
+    );
+
+    expect(result.outputTokens.total).toBe(50);
+    expect(result.outputTokens.text).toBe(50);
+    expect(result.outputTokens.reasoning).toBeUndefined();
+  });
+
   it("handles missing fields gracefully", () => {
     const result = flatUsageToV3({});
 

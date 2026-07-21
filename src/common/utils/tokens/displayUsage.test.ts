@@ -155,6 +155,39 @@ describe("createDisplayUsage", () => {
       expect(result!.cached.tokens).toBe(71600);
       // Total is approximately correct (off by 500 non-cached, acceptable for old data)
     });
+
+    test("uses outputTokens directly when smaller than reasoningTokens (reasoning-exclusive rows)", () => {
+      // Historical Gemini-via-gateway rows persisted outputTokens exclusive of
+      // reasoning (candidatesTokenCount), so output < reasoning. The display must
+      // show the text tokens, not clamp to 0.
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 9416,
+        outputTokens: 1,
+        totalTokens: 9417,
+        reasoningTokens: 37,
+      };
+
+      const result = createDisplayUsage(usage, "google:gemini-3.6-flash");
+
+      expect(result).toBeDefined();
+      expect(result!.output.tokens).toBe(1);
+      expect(result!.reasoning.tokens).toBe(37);
+    });
+
+    test("still subtracts reasoning from inclusive outputTokens", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1000,
+        outputTokens: 500,
+        totalTokens: 1500,
+        reasoningTokens: 200,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.2");
+
+      expect(result).toBeDefined();
+      expect(result!.output.tokens).toBe(300);
+      expect(result!.reasoning.tokens).toBe(200);
+    });
   });
 
   test("returns undefined for undefined usage", () => {

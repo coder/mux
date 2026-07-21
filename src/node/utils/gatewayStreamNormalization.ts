@@ -33,16 +33,38 @@ export function isV3Usage(usage: unknown): usage is V3Usage {
   return typeof u.inputTokens === "object" && u.inputTokens != null;
 }
 
+/** Options for converting flat gateway usage to v3 nested format. */
+export interface FlatUsageOptions {
+  /**
+   * The gateway forwards each upstream provider's flat usage semantics as-is.
+   * OpenAI-style flat usage reports outputTokens INCLUSIVE of reasoning, but
+   * Google forwards candidatesTokenCount, which EXCLUDES thoughts. Set this for
+   * google/* gateway models so text/total are derived correctly.
+   */
+  outputExcludesReasoning?: boolean;
+}
+
 /**
  * Convert flat (v2-style) usage to v3 nested format.
  */
-export function flatUsageToV3(usage: Record<string, unknown>): V3Usage {
+export function flatUsageToV3(usage: Record<string, unknown>, options?: FlatUsageOptions): V3Usage {
   const inputTokens = typeof usage.inputTokens === "number" ? usage.inputTokens : undefined;
   const outputTokens = typeof usage.outputTokens === "number" ? usage.outputTokens : undefined;
   const cachedInputTokens =
     typeof usage.cachedInputTokens === "number" ? usage.cachedInputTokens : undefined;
   const reasoningTokens =
     typeof usage.reasoningTokens === "number" ? usage.reasoningTokens : undefined;
+
+  const outputExcludesReasoning = options?.outputExcludesReasoning === true;
+  const outputTotal =
+    outputExcludesReasoning && outputTokens != null
+      ? outputTokens + (reasoningTokens ?? 0)
+      : outputTokens;
+  const outputText = outputExcludesReasoning
+    ? outputTokens
+    : outputTokens != null && reasoningTokens != null
+      ? outputTokens - reasoningTokens
+      : undefined;
 
   return {
     inputTokens: {
@@ -55,11 +77,8 @@ export function flatUsageToV3(usage: Record<string, unknown>): V3Usage {
       cacheWrite: undefined,
     },
     outputTokens: {
-      total: outputTokens,
-      text:
-        outputTokens != null && reasoningTokens != null
-          ? outputTokens - reasoningTokens
-          : undefined,
+      total: outputTotal,
+      text: outputText,
       reasoning: reasoningTokens,
     },
     raw: usage,
@@ -84,11 +103,14 @@ export function normalizeFinishReason(fr: unknown): { unified: string; raw: unkn
  * Normalize a doGenerate result from the gateway.
  * Converts flat usage and plain-string finishReason to v3 nested format.
  */
-export function normalizeGatewayGenerateResult<T extends Record<string, unknown>>(result: T): T {
+export function normalizeGatewayGenerateResult<T extends Record<string, unknown>>(
+  result: T,
+  options?: FlatUsageOptions
+): T {
   const normalized: Record<string, unknown> = { ...result };
 
   if (result.usage != null && !isV3Usage(result.usage)) {
-    normalized.usage = flatUsageToV3(result.usage as Record<string, unknown>);
+    normalized.usage = flatUsageToV3(result.usage as Record<string, unknown>, options);
   }
 
   if (result.finishReason != null) {
@@ -104,7 +126,7 @@ export function normalizeGatewayGenerateResult<T extends Record<string, unknown>
  *
  * Only transforms "finish" events; all other chunks pass through unchanged.
  */
-export function normalizeGatewayStreamUsage(): TransformStream {
+export function normalizeGatewayStreamUsage(options?: FlatUsageOptions): TransformStream {
   return new TransformStream({
     transform(chunk: unknown, controller: TransformStreamDefaultController) {
       if (typeof chunk !== "object" || chunk == null) {
@@ -121,7 +143,7 @@ export function normalizeGatewayStreamUsage(): TransformStream {
       // Normalize usage: convert flat → v3 nested if needed
       let usage = c.usage;
       if (usage != null && !isV3Usage(usage)) {
-        usage = flatUsageToV3(usage as Record<string, unknown>);
+        usage = flatUsageToV3(usage as Record<string, unknown>, options);
       }
 
       // Normalize finishReason: convert string → { unified, raw } if needed

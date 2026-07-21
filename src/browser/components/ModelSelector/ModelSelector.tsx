@@ -33,6 +33,8 @@ import {
   normalizeToCanonical,
 } from "@/common/utils/ai/models";
 import { Button } from "../Button/Button";
+import { modelMatchesQuery } from "./modelFilter";
+
 interface ModelSelectorProps {
   value: string;
   onChange: (value: string) => void;
@@ -138,7 +140,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const filteredModels =
       inputValue.trim() === ""
         ? baseModels
-        : baseModels.filter((model) => model.toLowerCase().includes(inputValue.toLowerCase()));
+        : baseModels.filter((model) => modelMatchesQuery(model, inputValue.toLowerCase()));
 
     // Track which models are hidden (for rendering)
     const hiddenSet = new Set(hiddenModels);

@@ -138,8 +138,13 @@ export function createDisplayUsage(
     (providerMetadata?.openai as { reasoningTokens?: number } | undefined)?.reasoningTokens ??
     0;
 
-  // Calculate output tokens excluding reasoning
-  const outputWithoutReasoning = Math.max(0, (usage.outputTokens ?? 0) - reasoningTokens);
+  // Calculate output tokens excluding reasoning. Inclusive semantics guarantees
+  // outputTokens >= reasoningTokens, so a smaller outputTokens means the row was
+  // persisted with reasoning-exclusive output (historical Gemini-via-gateway data);
+  // use it directly instead of clamping to 0.
+  const rawOutputTokens = usage.outputTokens ?? 0;
+  const outputWithoutReasoning =
+    rawOutputTokens >= reasoningTokens ? rawOutputTokens - reasoningTokens : rawOutputTokens;
 
   // Get model stats for cost calculation
   const modelStats = getModelStats(metadataModelOverride ?? model);
