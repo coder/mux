@@ -955,15 +955,26 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const workspaceForkError = usePopoverError();
   const workspaceStopRuntimeError = usePopoverError();
   const workspaceRemoveError = usePopoverError();
-  const [archiveConfirmation, setArchiveConfirmation] = useState<{
-    workspaceId: string;
-    displayTitle: string;
-    buttonElement?: HTMLElement;
-    /** When set, the confirmation warns about permanent deletion of untracked files. */
-    untrackedPaths?: string[];
-    /** Whether the workspace has an active stream that will be interrupted. */
-    isStreaming?: boolean;
-  } | null>(null);
+  const [archiveConfirmation, setArchiveConfirmation] = useState<
+    | {
+        kind: "workspace";
+        workspaceId: string;
+        displayTitle: string;
+        buttonElement?: HTMLElement;
+        /** When set, the confirmation warns about permanent deletion of untracked files. */
+        untrackedPaths?: string[];
+        /** Whether the workspace has an active stream that will be interrupted. */
+        isStreaming?: boolean;
+      }
+    | {
+        kind: "variant-group";
+        title: string;
+        buttonElement: HTMLElement;
+        members: Array<{ workspaceId: string; untrackedPaths?: string[] }>;
+        isStreaming: boolean;
+      }
+    | null
+  >(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     projectPath: string;
     projectName: string;
@@ -1136,6 +1147,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           const awaitingUserQuestion = aggregator?.hasAwaitingUserQuestion() ?? false;
           const isStreaming = (hasActiveStreams || isStarting) && !awaitingUserQuestion;
           setArchiveConfirmation({
+            kind: "workspace",
             workspaceId,
             displayTitle,
             buttonElement,
@@ -1144,7 +1156,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             // interruption warning again when the archive attempt has not yet been confirmed.
             isStreaming: acknowledgedUntrackedPaths == null ? isStreaming : false,
           });
-          return;
+          return false;
         }
         if (!result.success) {
           if (acknowledgedUntrackedPaths != null) {
@@ -1160,6 +1172,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
                 const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
                 setArchiveConfirmation({
+                  kind: "workspace",
                   workspaceId,
                   displayTitle,
                   buttonElement,
@@ -1174,7 +1187,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
                   })(),
                 });
-                return;
+                return false;
               }
             }
           }
@@ -1185,7 +1198,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           // left-sidebar row that may be far from their current focus. Use the shared toast fallback
           // position so archive errors match other top-right UI error surfaces.
           workspaceArchiveError.showError(workspaceId, error);
+          return false;
         }
+        return true;
       } finally {
         // Clear archiving state
         setArchivingWorkspaceIds((prev) => {
@@ -1267,6 +1282,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       if (isStreaming || untrackedPaths) {
         // Show a single combined confirmation dialog for streaming + untracked-file warnings.
         setArchiveConfirmation({
+          kind: "workspace",
           workspaceId,
           displayTitle,
           buttonElement,
@@ -1287,6 +1303,57 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     ]
   );
 
+  const handleArchiveVariantGroup = useCallback(
+    async (title: string, members: FrontendWorkspaceMetadata[], buttonElement: HTMLElement) => {
+      const preparedMembers: Array<{ workspaceId: string; untrackedPaths?: string[] }> = [];
+      let isStreaming = false;
+
+      // Preflight the whole group before changing anything. A partial archive would
+      // leave a variants row in a surprising half-deleted state.
+      for (const member of members) {
+        const preflight = await preflightArchiveWorkspace(member.id);
+        if (!preflight.success) {
+          workspaceArchiveError.showError(
+            member.id,
+            preflight.error ?? "Failed to check archive readiness"
+          );
+          return;
+        }
+
+        preparedMembers.push({
+          workspaceId: member.id,
+          untrackedPaths:
+            preflight.data?.kind === "confirm-lossy-untracked-files"
+              ? preflight.data.paths
+              : undefined,
+        });
+        isStreaming ||= hasActiveStream(member.id);
+      }
+
+      const hasUntrackedPaths = preparedMembers.some(
+        (member) => member.untrackedPaths != null && member.untrackedPaths.length > 0
+      );
+      if (isStreaming || hasUntrackedPaths) {
+        setArchiveConfirmation({
+          kind: "variant-group",
+          title,
+          buttonElement,
+          members: preparedMembers,
+          isStreaming,
+        });
+        return;
+      }
+
+      for (const member of preparedMembers) {
+        const archived = await performArchiveWorkspace(member.workspaceId, buttonElement);
+        if (!archived) {
+          return;
+        }
+      }
+    },
+    [hasActiveStream, performArchiveWorkspace, preflightArchiveWorkspace, workspaceArchiveError]
+  );
+
   const handleArchiveWorkspaceConfirm = useCallback(async () => {
     if (!archiveConfirmation) {
       return;
@@ -1294,6 +1361,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
     const confirmation = archiveConfirmation;
     setArchiveConfirmation(null);
+    if (confirmation.kind === "variant-group") {
+      for (const member of confirmation.members) {
+        const archived = await performArchiveWorkspace(
+          member.workspaceId,
+          confirmation.buttonElement,
+          member.untrackedPaths
+        );
+        if (!archived) {
+          return;
+        }
+      }
+      return;
+    }
+
     await performArchiveWorkspace(
       confirmation.workspaceId,
       confirmation.buttonElement,
@@ -1889,6 +1970,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     userProjects,
     workspaceStore,
   ]);
+
+  const archiveConfirmationIsVariantGroup = archiveConfirmation?.kind === "variant-group";
+  const variantGroupUntrackedPaths = archiveConfirmationIsVariantGroup
+    ? archiveConfirmation.members.flatMap((member) => member.untrackedPaths ?? [])
+    : [];
+  const archiveConfirmationUntrackedPaths = archiveConfirmationIsVariantGroup
+    ? variantGroupUntrackedPaths.length > 0
+      ? variantGroupUntrackedPaths
+      : undefined
+    : archiveConfirmation?.untrackedPaths;
+  const archiveConfirmationIsStreaming = archiveConfirmation?.isStreaming ?? false;
 
   return (
     <TitleEditProvider onUpdateTitle={onUpdateTitle}>
@@ -2588,6 +2680,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       onToggle={() => {
                                         toggleTaskGroupExpansion(group.storageKey, isExpanded);
                                       }}
+                                      onArchiveAll={
+                                        group.kind === "variants"
+                                          ? (buttonElement) =>
+                                              handleArchiveVariantGroup(
+                                                group.title,
+                                                group.allMembers,
+                                                buttonElement
+                                              )
+                                          : undefined
+                                      }
                                     />
                                   );
 
@@ -3240,22 +3342,32 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           <ConfirmationModal
             isOpen={archiveConfirmation !== null}
             title={
-              archiveConfirmation?.untrackedPaths
-                ? "Archive workspace with untracked files?"
-                : archiveConfirmation
-                  ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
-                  : "Archive chat?"
+              archiveConfirmationIsVariantGroup
+                ? `Archive all variants for "${archiveConfirmation.title}"?`
+                : archiveConfirmationUntrackedPaths
+                  ? "Archive workspace with untracked files?"
+                  : archiveConfirmation
+                    ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
+                    : "Archive chat?"
             }
-            description={buildArchiveConfirmDescription(
-              archiveConfirmation?.isStreaming ?? false,
-              archiveConfirmation?.untrackedPaths
-            )}
+            description={
+              archiveConfirmationIsVariantGroup
+                ? `${archiveConfirmation.members.length} variant chats will be archived together.`
+                : buildArchiveConfirmDescription(
+                    archiveConfirmationIsStreaming,
+                    archiveConfirmationUntrackedPaths
+                  )
+            }
             warning={buildArchiveConfirmWarning(
-              archiveConfirmation?.isStreaming ?? false,
-              archiveConfirmation?.untrackedPaths
+              archiveConfirmationIsStreaming,
+              archiveConfirmationUntrackedPaths
             )}
             confirmLabel={
-              archiveConfirmation?.untrackedPaths ? "Archive and delete files" : "Archive"
+              archiveConfirmationUntrackedPaths
+                ? "Archive and delete files"
+                : archiveConfirmationIsVariantGroup
+                  ? "Archive all"
+                  : "Archive"
             }
             confirmVariant="destructive"
             onConfirm={handleArchiveWorkspaceConfirm}
