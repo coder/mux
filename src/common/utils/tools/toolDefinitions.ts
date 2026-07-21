@@ -395,7 +395,7 @@ function refineTaskToolAgentArgs(
         path: args.n != null ? ["n"] : ["variants"],
       });
     }
-    if (args.sticky != null) {
+    if (args.sticky === true) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Workspace tasks do not accept sticky; full workspaces already persist by default",
