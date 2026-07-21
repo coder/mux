@@ -54,6 +54,12 @@ function getAggregateVisualState(props: TaskGroupListItemProps): VisualState {
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
   const contextMenu = useContextMenuPosition();
+  // Variant-group archive is fire-and-forget from the row.
+  const archiveAll = (buttonElement: HTMLElement) => {
+    props.onArchiveAll?.(buttonElement).catch(() => {
+      // The sidebar owner surfaces archive failures through its shared error UI.
+    });
+  };
   const hasRunningWork = props.runningCount > 0;
   const aggregateState = getAggregateVisualState(props);
   const statusDescriptionId = `task-group-status-${props.groupId}`;
@@ -104,9 +110,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
         if (props.onArchiveAll && matchesKeybind(event, KEYBINDS.ARCHIVE_WORKSPACE)) {
           event.preventDefault();
           stopKeyboardPropagation(event);
-          props.onArchiveAll(event.currentTarget).catch(() => {
-            // The sidebar owner surfaces archive failures through its shared error UI.
-          });
+          archiveAll(event.currentTarget);
           return;
         }
         if (event.target !== event.currentTarget) {
@@ -191,9 +195,7 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
             variant="destructive"
             onClick={(event) => {
               contextMenu.close();
-              props.onArchiveAll?.(event.currentTarget).catch(() => {
-                // The sidebar owner surfaces archive failures through its shared error UI.
-              });
+              archiveAll(event.currentTarget);
             }}
           />
         </PositionedMenu>
