@@ -444,6 +444,28 @@ export const modelsExtra: Record<string, ModelData> = {
     knowledge_cutoff: "2025-01",
   },
 
+  // Gemini 3.6 Flash - GA on July 21, 2026. Stable `gemini-3.6-flash` model ID with
+  // 1M context, 65K max output, $1.50/M input, $7.50/M output. Source: Google AI
+  // Gemini API model and latest-model docs as of 2026-07-21. The $0.15/M cached
+  // input rate carries over from 3.5 Flash, cross-checked against Artificial
+  // Analysis' blended rate for 3.6 Flash.
+  "gemini-3.6-flash": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65536,
+    input_cost_per_token: 0.0000015, // $1.50 per million input tokens
+    output_cost_per_token: 0.0000075, // $7.50 per million output tokens, including thinking tokens
+    cache_read_input_token_cost: 0.00000015, // $0.15 per million cached input tokens
+    litellm_provider: "vertex_ai-language-models",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_audio_input: true,
+    supports_video_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // Gemini 3.1 Pro Preview - Released February 19, 2026
   // Tiered pricing: ≤200K tokens $2/M input, $12/M output; >200K tokens $4/M input, $18/M output
   // 1M input context, ~64K max output tokens

@@ -1456,6 +1456,27 @@ describe("buildProviderOptions - Google", () => {
     });
   });
 
+  test("maps Gemini 3.6 Flash off to minimal thinking without thoughts", () => {
+    expect(buildProviderOptions("google:gemini-3.6-flash", "off")).toEqual({
+      google: {
+        thinkingConfig: {
+          thinkingLevel: "minimal",
+        },
+      },
+    });
+  });
+
+  test("maps Gemini 3.6 Flash medium to thinkingLevel medium with thoughts", () => {
+    expect(buildProviderOptions("google:gemini-3.6-flash", "medium")).toEqual({
+      google: {
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingLevel: "medium",
+        },
+      },
+    });
+  });
+
   test("maps Gemini 3.5 Flash medium to thinkingLevel medium with thoughts", () => {
     expect(buildProviderOptions("mux-gateway:google/gemini-3.5-flash", "medium")).toEqual({
       google: {

@@ -80,12 +80,12 @@ describe("getModelStats", () => {
     expect(stats.tiered_pricing_threshold_tokens).toBeUndefined();
   });
 
-  test("resolves Gemini 3.5 Flash with published standard pricing and limits", () => {
+  test("resolves Gemini 3.6 Flash with published standard pricing and limits", () => {
     const stats = expectStats(KNOWN_MODELS.GEMINI_FLASH.id);
     expect(stats.max_input_tokens).toBe(1048576);
     expect(stats.max_output_tokens).toBe(65536);
     expect(stats.input_cost_per_token).toBe(0.0000015);
-    expect(stats.output_cost_per_token).toBe(0.000009);
+    expect(stats.output_cost_per_token).toBe(0.0000075);
     expect(stats.cache_read_input_token_cost).toBe(0.00000015);
   });
 
