@@ -7976,6 +7976,38 @@ describe("WorkspaceService remove preserved descendants", () => {
     await cleanupHistory();
   });
 
+  test("remove() blocks orphaning sticky descendants even when force is true", async () => {
+    configState.taskSettings = {
+      ...DEFAULT_TASK_SETTINGS,
+      preserveSubagentsUntilArchive: false,
+    };
+    const hasStickyDescendants = mock(() => true);
+    workspaceService.setTaskService({
+      hasStickyDescendants,
+    } as unknown as TaskService);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    try {
+      const result = await workspaceService.remove(workspaceId, true);
+
+      expect(result).toEqual(
+        Err(
+          "This workspace has sticky sub-agent workspaces. Remove those sub-agents explicitly before removing their parent."
+        )
+      );
+      expect(hasStickyDescendants).toHaveBeenCalledWith(workspaceId);
+      expect(stopStreamMock).not.toHaveBeenCalled();
+      expect(getWorkspaceMetadataMock).not.toHaveBeenCalled();
+      expect(createRuntimeSpy).not.toHaveBeenCalled();
+      expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  });
+
   test("remove() blocks direct removal of unarchived workspace with preserved completed descendants", async () => {
     const hasCompletedDescendants = mock(() => true);
     workspaceService.setTaskService({
@@ -8796,6 +8828,27 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
   afterEach(async () => {
     await cleanupHistory();
+  });
+
+  test("archive checks block orphaning unarchived sticky descendants", async () => {
+    const hasUnarchivedStickyDescendants = mock(() => true);
+    workspaceService.setTaskService({
+      hasUnarchivedStickyDescendants,
+    } as unknown as TaskService);
+
+    const preflightResult = await workspaceService.preflightArchive(workspaceId);
+    const archiveResult = await workspaceService.archive(workspaceId);
+
+    const expectedError =
+      "This workspace has unarchived sticky sub-agent workspaces. Archive or remove those sub-agents explicitly before archiving their parent.";
+    expect(preflightResult).toEqual(Err(expectedError));
+    expect(archiveResult).toEqual(Err(expectedError));
+    expect(hasUnarchivedStickyDescendants).toHaveBeenCalledTimes(2);
+    expect(hasUnarchivedStickyDescendants).toHaveBeenCalledWith(workspaceId);
+    expect(editConfigSpy).not.toHaveBeenCalled();
+    expect((mockAIService.getWorkspaceMetadata as ReturnType<typeof mock>).mock.calls).toHaveLength(
+      0
+    );
   });
 
   test("returns Err and does not persist archivedAt when beforeArchive hook fails", async () => {

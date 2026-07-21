@@ -546,6 +546,10 @@ interface WorkspaceAgentStatus {
 type WorkspaceRuntimeStatus = "running" | "stopped" | "unknown" | "unsupported";
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
+const STICKY_DESCENDANT_ARCHIVE_ERROR =
+  "This workspace has unarchived sticky sub-agent workspaces. Archive or remove those sub-agents explicitly before archiving their parent.";
+const STICKY_DESCENDANT_REMOVE_ERROR =
+  "This workspace has sticky sub-agent workspaces. Remove those sub-agents explicitly before removing their parent.";
 const MULTI_PROJECT_WORKSPACES_DISABLED_ERROR = "Multi-project workspaces experiment is disabled";
 
 function normalizeRepoRootProjectPath(projectPath: string | null | undefined): string {
@@ -4335,6 +4339,10 @@ export class WorkspaceService extends EventEmitter {
 
     // Try to remove from runtime (filesystem)
     try {
+      if (this.taskService?.hasStickyDescendants?.(workspaceId) === true) {
+        return Err(STICKY_DESCENDANT_REMOVE_ERROR);
+      }
+
       if (!force) {
         const config = this.config.loadConfigOrDefault();
         const taskSettings = normalizeTaskSettings(config.taskSettings);
@@ -6374,6 +6382,9 @@ export class WorkspaceService extends EventEmitter {
       if (!workspace) {
         return Err("Workspace not found");
       }
+      if (this.taskService?.hasUnarchivedStickyDescendants?.(workspaceId) === true) {
+        return Err(STICKY_DESCENDANT_ARCHIVE_ERROR);
+      }
 
       const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
       const snapshotBehaviorEnabled =
@@ -6427,6 +6438,9 @@ export class WorkspaceService extends EventEmitter {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
         return Err("Workspace not found");
+      }
+      if (this.taskService?.hasUnarchivedStickyDescendants?.(workspaceId) === true) {
+        return Err(STICKY_DESCENDANT_ARCHIVE_ERROR);
       }
       const initState = this.initStateManager.getInitState(workspaceId);
       if (initState?.status === "running") {

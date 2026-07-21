@@ -133,6 +133,17 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("treats sticky=false as omitted for workspace tasks", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      kind: "workspace",
+      prompt: "Summarize this repository",
+      title: "Repository summary",
+      sticky: false,
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it("rejects workspace task fanout until workspace handles support it", () => {
     expect(
       TaskToolArgsSchema.safeParse({

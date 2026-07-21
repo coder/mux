@@ -234,6 +234,12 @@ export interface TaskCreateArgs {
    * "fork" (isolated copy) when omitted. Ignored (treated as "fork") on unsupported runtimes.
    */
   isolation?: TaskIsolation;
+  /**
+   * Keep the child workspace after it reports. This is an explicit per-task retention request;
+   * automatic cleanup and workflow sweeps must leave sticky tasks intact until the user chooses a
+   * lifecycle action.
+   */
+  sticky?: boolean;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   /**
    * Model-refusal policy persisted on the child workspace. "fail" opts the task
@@ -611,6 +617,7 @@ interface TaskLaunchPlan {
   bestOf?: TaskCreateArgs["bestOf"];
   experiments?: TaskCreateArgs["experiments"];
   onRefusal?: TaskCreateArgs["onRefusal"];
+  sticky?: TaskCreateArgs["sticky"];
   attentionPolicy?: TaskCreateArgs["attentionPolicy"];
 }
 
@@ -642,6 +649,7 @@ export interface DescendantAgentTaskInfo {
   createdAt?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  sticky?: boolean;
   depth: number;
 }
 
@@ -2582,6 +2590,7 @@ export class TaskService {
         bestOf: normalizedBestOf,
         experiments: args.experiments,
         onRefusal: args.onRefusal,
+        sticky: args.sticky === true ? true : undefined,
         attentionPolicy: args.attentionPolicy,
         status,
         ...(sharedWorkspacePath != null ? { sharedWorkspacePath } : {}),
@@ -2655,6 +2664,7 @@ export class TaskService {
           taskOnRefusal: plan.onRefusal,
           taskExperiments: plan.experiments,
           taskIsolation: plan.sharedWorkspacePath != null ? "none" : undefined,
+          taskSticky: plan.sticky === true ? true : undefined,
           taskAttentionPolicy: plan.attentionPolicy,
           projects: plan.parentMeta.projects,
         });
@@ -3730,6 +3740,7 @@ export class TaskService {
           taskOnRefusal: args.onRefusal,
           taskExperiments: args.experiments,
           taskIsolation: useSharedWorkspace ? "none" : undefined,
+          taskSticky: args.sticky === true ? true : undefined,
           taskAttentionPolicy: args.attentionPolicy,
           projects: parentMeta.projects,
         });
@@ -3894,6 +3905,7 @@ export class TaskService {
         taskOnRefusal: args.onRefusal,
         taskExperiments: args.experiments,
         taskIsolation: useSharedWorkspace ? "none" : undefined,
+        taskSticky: args.sticky === true ? true : undefined,
         taskAttentionPolicy: args.attentionPolicy,
         projects: inheritedProjects,
       });
@@ -4158,6 +4170,7 @@ export class TaskService {
           ([taskId, workspace]) =>
             this.isWorkflowRunDescendant(index, taskId, workflowRunId) &&
             workspace.taskStatus === "interrupted" &&
+            workspace.taskSticky !== true &&
             !hasCompletedAgentReport(workspace) &&
             !isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)
         )
@@ -4197,6 +4210,9 @@ export class TaskService {
         if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
           continue;
         }
+        // A sticky task may be structurally blocked by archived children, but it must remain visible
+        // until the user explicitly chooses a lifecycle action.
+        if (entry.workspace.taskSticky === true) continue;
         // Defensive: never hide a workspace with an active stream.
         if (this.aiService.isStreaming(taskId)) continue;
         const freshIndex = this.buildAgentTaskIndex(freshConfig);
@@ -4290,6 +4306,7 @@ export class TaskService {
     const inactiveRunIds = new Set<string>();
     for (const [taskId, workspace] of index.byId) {
       if (isWorkspaceArchived(workspace.archivedAt, workspace.unarchivedAt)) continue;
+      if (workspace.taskSticky === true) continue;
       // Seed from two unarchived shapes so a crash mid-sweep still self-heals:
       // - interrupted-without-report children (normal leftover garbage), and
       // - reported tasks, covering a crash after phase 1 archived the interrupted
@@ -6259,6 +6276,30 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
+  hasStickyDescendants(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasStickyDescendants: workspaceId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some(
+      (descendantId) => index.byId.get(descendantId)?.taskSticky === true
+    );
+  }
+
+  hasUnarchivedStickyDescendants(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasUnarchivedStickyDescendants: workspaceId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some((descendantId) => {
+      const descendant = index.byId.get(descendantId);
+      return (
+        descendant?.taskSticky === true &&
+        !isWorkspaceArchived(descendant.archivedAt, descendant.unarchivedAt)
+      );
+    });
+  }
+
   hasPreservedCompletedDescendants(workspaceId: string): boolean {
     assert(
       workspaceId.length > 0,
@@ -7078,6 +7119,7 @@ export class TaskService {
           createdAt: entry.createdAt,
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
+          sticky: entry.taskSticky === true ? true : undefined,
           depth: next.depth,
         });
       }
@@ -11347,6 +11389,12 @@ export class TaskService {
 
     if (!hasCompletedAgentReport(entry.workspace)) {
       return { ok: false, reason: "task_not_reported" };
+    }
+
+    // Sticky tasks are an explicit user retention request. They can still be archived, removed, or
+    // terminated manually, but no automatic cleanup path should make that lifecycle decision.
+    if (entry.workspace.taskSticky === true) {
+      return { ok: false, reason: "sticky" };
     }
 
     if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {

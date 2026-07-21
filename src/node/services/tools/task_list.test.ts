@@ -143,6 +143,7 @@ describe("task_list tool", () => {
         createdAt: "2025-01-01T00:00:00.000Z",
         modelString: "anthropic:claude-haiku-4-5",
         thinkingLevel: "low",
+        sticky: true,
         depth: 1,
       },
     ]);
@@ -164,6 +165,7 @@ describe("task_list tool", () => {
           createdAt: "2025-01-01T00:00:00.000Z",
           modelString: "anthropic:claude-haiku-4-5",
           thinkingLevel: "low",
+          sticky: true,
           depth: 1,
         },
       ],
