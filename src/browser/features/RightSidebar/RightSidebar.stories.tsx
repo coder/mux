@@ -1253,11 +1253,11 @@ export const ReviewTabWithUntrackedFiles: Story = {
 };
 
 /**
- * Costs tab showing compaction model context warning.
- * When the compaction model (gpt-4o, 128k) has a smaller context window
- * than the auto-compact threshold (80% of 200k = 160k), a warning appears.
+ * Stats tab showing compaction model context warning in the always-visible
+ * context usage section. When the compaction model (gpt-4o, 128k) has a smaller
+ * context window than the auto-compact threshold (80% of 200k = 160k), a warning appears.
  */
-export const CostsTabCompactionModelWarning: Story = {
+export const CompactionModelWarning: Story = {
   render: () => (
     <RightSidebarStoryShell
       setup={() => {

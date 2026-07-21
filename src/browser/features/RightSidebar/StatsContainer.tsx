@@ -1,17 +1,23 @@
 /**
  * StatsContainer — unified "Stats" top-level tab with sub-tabs.
  *
+ * The context usage meter renders above the sub-tab strip so it stays visible
+ * on every sub-tab.
+ *
  * Sub-tabs:
  * - "Cost" — renders CostsTab
+ * - "Context" — renders ContextTab (artifacts + tokenizer breakdowns)
  * - "Timing" — renders TimingPanel from StatsTab
  * - "Models" — renders ModelBreakdownPanel from StatsTab
  */
 
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { CostsTab } from "./CostsTab";
+import { ContextTab } from "./ContextTab";
+import { ContextUsageSection } from "./ContextUsageSection";
 import { TimingPanel, ModelBreakdownPanel } from "./StatsTab";
 
-type StatsSubTab = "cost" | "timing" | "models";
+type StatsSubTab = "cost" | "context" | "timing" | "models";
 
 interface StatsOption {
   value: StatsSubTab;
@@ -20,6 +26,7 @@ interface StatsOption {
 
 const OPTIONS: StatsOption[] = [
   { value: "cost", label: "Cost" },
+  { value: "context", label: "Context" },
   { value: "timing", label: "Timing" },
   { value: "models", label: "Models" },
 ];
@@ -35,6 +42,7 @@ export function StatsContainer(props: StatsContainerProps) {
 
   return (
     <div>
+      <ContextUsageSection workspaceId={props.workspaceId} />
       <div className="mb-3">
         <div className="flex gap-1">
           {OPTIONS.map((option) => {
@@ -57,6 +65,7 @@ export function StatsContainer(props: StatsContainerProps) {
         </div>
       </div>
       {effectiveTab === "cost" && <CostsTab workspaceId={props.workspaceId} />}
+      {effectiveTab === "context" && <ContextTab workspaceId={props.workspaceId} />}
       {effectiveTab === "timing" && <TimingPanel workspaceId={props.workspaceId} />}
       {effectiveTab === "models" && <ModelBreakdownPanel workspaceId={props.workspaceId} />}
     </div>
