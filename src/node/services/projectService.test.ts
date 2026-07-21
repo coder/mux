@@ -1939,6 +1939,49 @@ exit 1
       });
     }
 
+    it("with force=true removes nested sub-agents before their parents", async () => {
+      const projectPath = "/fake/project";
+      const rootWorkspaceId = "root-workspace";
+      const stickyTaskId = "sticky-task";
+      const nestedTaskId = "nested-task";
+      const workspaces = [
+        { id: rootWorkspaceId, path: path.join(tempDir, "root-workspace") },
+        {
+          id: stickyTaskId,
+          path: path.join(tempDir, "sticky-task"),
+          parentWorkspaceId: rootWorkspaceId,
+          taskSticky: true,
+        },
+        {
+          id: nestedTaskId,
+          path: path.join(tempDir, "nested-task"),
+          parentWorkspaceId: stickyTaskId,
+        },
+      ];
+      await Promise.all(
+        workspaces.map((workspace) => fs.mkdir(workspace.path, { recursive: true }))
+      );
+
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces });
+      await config.editConfig(() => cfg);
+
+      const removedWorkspaceIds: string[] = [];
+      service.setWorkspaceService({
+        remove: async (workspaceId) => {
+          removedWorkspaceIds.push(workspaceId);
+          await config.removeWorkspace(workspaceId);
+          return Ok(undefined);
+        },
+      });
+
+      const result = await service.remove(projectPath, true);
+
+      expect(result.success).toBe(true);
+      expect(removedWorkspaceIds).toEqual([nestedTaskId, stickyTaskId, rootWorkspaceId]);
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+    });
+
     it("with force=true resolves metadata IDs for workspaces missing config IDs", async () => {
       const archivedWorkspaceDir = path.join(tempDir, "legacy-archived-workspace");
       await fs.mkdir(archivedWorkspaceDir, { recursive: true });

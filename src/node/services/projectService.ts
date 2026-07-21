@@ -40,6 +40,40 @@ import { deriveProjectHierarchy, isPathDescendant } from "@/common/utils/subProj
 import { getProjectWorkspaceCounts } from "@/common/utils/projectRemoval";
 import type { z } from "zod";
 
+function orderWorkspacesForCascadeRemoval(
+  workspaces: ProjectConfig["workspaces"]
+): ProjectConfig["workspaces"] {
+  const parentById = new Map<string, string>();
+  for (const workspace of workspaces) {
+    if (workspace.id && workspace.parentWorkspaceId) {
+      parentById.set(workspace.id, workspace.parentWorkspaceId);
+    }
+  }
+
+  const getDepth = (workspaceId: string | undefined): number => {
+    if (!workspaceId) return 0;
+
+    let depth = 0;
+    let currentId: string | undefined = workspaceId;
+    const visited = new Set<string>();
+    while (currentId && !visited.has(currentId)) {
+      visited.add(currentId);
+      const parentId = parentById.get(currentId);
+      if (!parentId) break;
+      depth += 1;
+      currentId = parentId;
+    }
+    return depth;
+  };
+
+  // Parent workspaces are normally persisted before their sub-agents. Remove deepest descendants
+  // first so per-workspace lifecycle guards cannot reject the intentional whole-project cascade.
+  return workspaces
+    .map((workspace, index) => ({ workspace, index, depth: getDepth(workspace.id) }))
+    .sort((left, right) => right.depth - left.depth || left.index - right.index)
+    .map(({ workspace }) => workspace);
+}
+
 /**
  * List directory contents for the DirectoryPickerModal.
  * Returns a FileTreeNode where:
@@ -1142,7 +1176,7 @@ export class ProjectService {
           }
         }
 
-        for (const workspace of projectConfig.workspaces) {
+        for (const workspace of orderWorkspacesForCascadeRemoval(projectConfig.workspaces)) {
           // Legacy workspace entries can be missing `id`. Resolve through metadata so
           // WorkspaceService.remove() receives the canonical workspace ID (it cannot remove by path).
           const workspaceId = workspace.id ?? workspaceIdsByPath.get(workspace.path);
