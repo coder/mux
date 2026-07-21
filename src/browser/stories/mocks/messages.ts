@@ -122,6 +122,49 @@ export function createBashMonitorWakeMessage(
   };
 }
 
+/** Create the synthetic protocol envelope used to wake a parent with sub-agent findings. */
+export function createSubagentReportMessage(
+  id: string,
+  opts: {
+    historySequence: number;
+    timestamp?: number;
+    taskId: string;
+    agentType: string;
+    title: string;
+    reportMarkdown: string;
+    status?: "in_progress" | "completed";
+    structuredOutput?: unknown;
+  }
+): ChatMuxMessage {
+  const lines = [
+    "<mux_subagent_report>",
+    `<task_id>${opts.taskId}</task_id>`,
+    `<agent_type>${opts.agentType}</agent_type>`,
+    ...(opts.status ? [`<status>${opts.status}</status>`] : []),
+    `<title>${opts.title}</title>`,
+    "<report_markdown>",
+    opts.reportMarkdown,
+    "</report_markdown>",
+  ];
+
+  if (opts.structuredOutput !== undefined) {
+    lines.push(
+      "<structured_output_json>",
+      "```json",
+      JSON.stringify(opts.structuredOutput, null, 2),
+      "```",
+      "</structured_output_json>"
+    );
+  }
+  lines.push("</mux_subagent_report>");
+
+  return createUserMessage(id, lines.join("\n"), {
+    historySequence: opts.historySequence,
+    timestamp: opts.timestamp,
+    synthetic: true,
+  });
+}
+
 /** Create a compaction request user message (triggers shimmer effect on streaming response) */
 export function createCompactionRequestMessage(
   id: string,

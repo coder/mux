@@ -222,6 +222,128 @@ Live goal accounting at limit:
   });
 });
 
+describe("MessageRenderer subagent report rows", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+    globalThis.localStorage = undefined as unknown as Storage;
+  });
+
+  function createReportMessage(content: string, synthetic = true): DisplayedMessage {
+    return {
+      type: "user",
+      id: "subagent-report",
+      historyId: "subagent-report",
+      content,
+      historySequence: 25,
+      isSynthetic: synthetic,
+    };
+  }
+
+  test("presents incremental synthetic reports without exposing the protocol envelope", () => {
+    const message = createReportMessage(`<mux_subagent_report>
+<task_id>task-123</task_id>
+<agent_type>explore</agent_type>
+<status>in_progress</status>
+<title>Rendering path traced</title>
+<report_markdown>
+Found the **message renderer** and its responsive story coverage.
+</report_markdown>
+</mux_subagent_report>`);
+
+    const { getByText, queryByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} />
+      </TooltipProvider>
+    );
+
+    expect(getByText("subagent update")).toBeDefined();
+    expect(getByText("Rendering path traced")).toBeDefined();
+    expect(getByText("In progress")).toBeDefined();
+    expect(getByText(/message renderer/)).toBeDefined();
+    expect(queryByText("auto")).toBeNull();
+    expect(queryByText(/mux_subagent_report/)).toBeNull();
+  });
+
+  test("treats legacy reports as completed and reveals structured output on demand", () => {
+    const message = createReportMessage(`<mux_subagent_report>
+<task_id>task-legacy</task_id>
+<agent_type>review</agent_type>
+<title>Review complete</title>
+<report_markdown>
+The responsive presentation is ready.
+</report_markdown>
+<structured_output_json>
+\`\`\`json
+{"mobileVerified":true,"risk":"low"}
+\`\`\`
+</structured_output_json>
+</mux_subagent_report>`);
+
+    const { getByRole, getByText, queryByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} />
+      </TooltipProvider>
+    );
+
+    expect(getByText("subagent report")).toBeDefined();
+    expect(getByText("Completed")).toBeDefined();
+    const toggle = getByRole("button", { name: "Structured output" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(queryByText(/mobileVerified/)).toBeNull();
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(getByText(/"mobileVerified": true/)).toBeDefined();
+  });
+
+  test("keeps malformed and user-authored lookalikes on the ordinary message path", () => {
+    const malformed = createReportMessage(`<mux_subagent_report>
+<task_id>task-malformed</task_id>
+<agent_type>explore</agent_type>
+<status>in_progress</status>
+</mux_subagent_report>`);
+    const userAuthored = createReportMessage(
+      `<mux_subagent_report>
+<task_id>task-user</task_id>
+<agent_type>explore</agent_type>
+<status>in_progress</status>
+<title>User text</title>
+<report_markdown>
+This was typed by a user.
+</report_markdown>
+</mux_subagent_report>`,
+      false
+    );
+
+    const malformedView = render(
+      <TooltipProvider>
+        <MessageRenderer message={malformed} />
+      </TooltipProvider>
+    );
+    expect(malformedView.getByText("auto")).toBeDefined();
+    expect(malformedView.queryByText("subagent update")).toBeNull();
+    malformedView.unmount();
+
+    const userView = render(
+      <TooltipProvider>
+        <MessageRenderer message={userAuthored} />
+      </TooltipProvider>
+    );
+    expect(userView.queryByText("subagent update")).toBeNull();
+    expect(userView.queryByText("subagent report")).toBeNull();
+  });
+});
+
 describe("MessageRenderer bash monitor wake rows", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
