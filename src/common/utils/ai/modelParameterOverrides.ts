@@ -4,12 +4,28 @@ import {
   type ResolvedCallSettingsOverrides,
 } from "@/common/config/schemas/modelParameters";
 import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
+import { stripModelProviderPrefixes } from "@/common/types/thinking";
 import { getModelName } from "@/common/utils/ai/models";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 
 export interface ResolvedModelParameterOverrides {
   standard: ResolvedCallSettingsOverrides;
   providerExtras?: Record<string, unknown>;
+}
+
+const SAMPLING_CALL_SETTINGS = ["temperature", "topP", "topK"] as const;
+
+/**
+ * Gemini 3.6 Flash and Gemini 3.5 Flash-Lite deprecate the sampling parameters
+ * temperature/top_p/top_k; Google's migration guides require stripping them from
+ * generation configs, so forwarding user overrides would break existing setups
+ * (e.g. a wildcard temperature) when the gemini-flash alias repoints.
+ */
+export function modelRejectsSamplingParameters(modelString: string): boolean {
+  const bareModelId = stripModelProviderPrefixes(modelString);
+  return (
+    bareModelId.startsWith("gemini-3.6-flash") || bareModelId.startsWith("gemini-3.5-flash-lite")
+  );
 }
 
 /**
@@ -79,6 +95,12 @@ export function resolveModelParameterOverrides(
     }
 
     providerExtras[key] = value;
+  }
+
+  if (modelRejectsSamplingParameters(effectiveModelString ?? canonicalModelString)) {
+    for (const key of SAMPLING_CALL_SETTINGS) {
+      delete standard[key];
+    }
   }
 
   return {
