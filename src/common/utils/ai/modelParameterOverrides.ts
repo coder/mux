@@ -6,6 +6,7 @@ import {
 import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
 import { stripModelProviderPrefixes } from "@/common/types/thinking";
 import { getModelName } from "@/common/utils/ai/models";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 
 export interface ResolvedModelParameterOverrides {
@@ -97,7 +98,13 @@ export function resolveModelParameterOverrides(
     providerExtras[key] = value;
   }
 
-  if (modelRejectsSamplingParameters(effectiveModelString ?? canonicalModelString)) {
+  // Resolve mappedToModel aliases so custom entries pointing at a
+  // sampling-rejecting model (e.g. team-flash -> gemini-3.6-flash) are stripped too.
+  const capabilityModelString = resolveModelForMetadata(
+    effectiveModelString ?? canonicalModelString,
+    providersConfig
+  );
+  if (modelRejectsSamplingParameters(capabilityModelString)) {
     for (const key of SAMPLING_CALL_SETTINGS) {
       delete standard[key];
     }

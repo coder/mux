@@ -481,6 +481,28 @@ describe("resolveModelParameterOverrides", () => {
     expect(result).toEqual({ standard: {} });
   });
 
+  it("strips sampling parameters for custom entries mapped to a sampling-rejecting model", () => {
+    const providersConfig = asProvidersConfig({
+      google: {
+        models: [{ id: "team-flash", mappedToModel: "google:gemini-3.6-flash" }],
+        modelParameters: {
+          "*": {
+            temperature: 0.7,
+            max_output_tokens: 4096,
+          },
+        },
+      },
+    });
+
+    const result = resolveModelParameterOverrides(providersConfig, "google", "google:team-flash");
+
+    expect(result).toEqual({
+      standard: {
+        maxOutputTokens: 4096,
+      },
+    });
+  });
+
   it("keeps sampling parameters for Gemini models that still support them", () => {
     const providersConfig = withGoogleModelParameters({
       "*": {
