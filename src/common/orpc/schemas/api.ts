@@ -1806,6 +1806,7 @@ export const tasks = {
         title: z.string().min(1),
         modelString: z.string().optional(),
         thinkingLevel: z.string().optional(),
+        sticky: z.boolean().optional(),
       })
       .superRefine((value, ctx) => {
         const hasAgentId = typeof value.agentId === "string" && value.agentId.trim().length > 0;

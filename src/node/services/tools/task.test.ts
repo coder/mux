@@ -115,6 +115,25 @@ describe("task tool", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("rejects sticky retention for full workspace tasks", () => {
+    using tempDir = new TestTempDir("test-task-tool-workspace-sticky-schema");
+    const tool = createTaskTool({
+      ...createTestToolConfig(tempDir.path),
+      muxEnv: { MUX_RUNTIME: "worktree" },
+    });
+
+    const parsed = (
+      tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } }
+    ).safeParse({
+      kind: "workspace",
+      prompt: "keep working",
+      title: "Persistent workspace",
+      sticky: true,
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("starts a background workspace turn without requiring a sub-agent id", async () => {
     using tempDir = new TestTempDir("test-task-tool-workspace-turn");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
@@ -280,6 +299,34 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]?.[0]?.isolation).toBeUndefined();
+  });
+
+  it("forwards explicit sticky retention to taskService.create", async () => {
+    using tempDir = new TestTempDir("test-task-tool-sticky-passthrough");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock((_: { sticky?: unknown }) =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+    const tool = createTaskTool({ ...baseConfig, taskService });
+
+    await Promise.resolve(
+      tool.execute!(
+        {
+          agentId: "exec",
+          prompt: "own the separate PR",
+          title: "PR owner",
+          run_in_background: true,
+          sticky: true,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[0]?.sticky).toBe(true);
   });
 
   it("should return immediately when run_in_background is true", async () => {

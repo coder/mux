@@ -641,6 +641,37 @@ describe("TaskService", () => {
     );
   });
 
+  test("create persists sticky retention only when requested", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["stickytask", "normaltask"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    await config.editConfig((cfg) => {
+      cfg.taskSettings = { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 };
+      cfg.projects.get(projectPath)?.workspaces.push({
+        path: projectPath,
+        id: "activeblock",
+        name: "agent_explore_activeblock",
+        parentWorkspaceId: parentId,
+        agentId: "explore",
+        agentType: "explore",
+        taskStatus: "running",
+        runtimeConfig: { type: "local" },
+      });
+      return cfg;
+    });
+    const { taskService } = createTaskServiceHarness(config);
+
+    const stickyResult = await createAgentTask(taskService, parentId, "Own the separate PR", {
+      sticky: true,
+    });
+    const normalResult = await createAgentTask(taskService, parentId, "Do transient work");
+
+    expect(stickyResult).toMatchObject({ success: true, data: { status: "queued" } });
+    expect(normalResult).toMatchObject({ success: true, data: { status: "queued" } });
+    expect(findWorkspaceInConfig(config, "stickytask")?.taskSticky).toBe(true);
+    expect(findWorkspaceInConfig(config, "normaltask")?.taskSticky).toBeUndefined();
+  });
+
   async function startWorkspaceTurnForTest(
     options: {
       stableIds?: string[];
@@ -5512,7 +5543,7 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("createMany persists taskOnRefusal for both admitted and queued tasks", async () => {
+  test("createMany persists task policies for both admitted and queued tasks", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb"], "cccccccccc");
 
@@ -5533,9 +5564,10 @@ describe("TaskService", () => {
         agentId: "explore",
         prompt,
         title: `Task ${index + 1}`,
-        // Verifier-style opt-out: a refusal must fail honestly, not silently
-        // continue on a configured fallback model.
+        // Both policies must survive queueing so cleanup and refusal handling keep the caller's
+        // explicit intent after restart.
         onRefusal: "fail" as const,
+        sticky: true,
       }))
     );
 
@@ -5543,12 +5575,13 @@ describe("TaskService", () => {
     if (!result.success) return;
     expect(result.data.map((task) => task.status)).toEqual(["starting", "queued"]);
 
-    // Both the immediately-admitted and the queued task must persist the
-    // opt-out so the send path (and post-restart resumes) can honor it.
+    // Both the immediately-admitted and the queued task must persist the policies so later send,
+    // cleanup, and post-restart resume paths keep honoring them.
     const tasks = Array.from(config.loadConfigOrDefault().projects.values())
       .flatMap((project) => project.workspaces)
       .filter((workspace) => workspace.parentWorkspaceId === parentId);
     expect(tasks.map((task) => task.taskOnRefusal)).toEqual(["fail", "fail"]);
+    expect(tasks.map((task) => task.taskSticky)).toEqual([true, true]);
   });
 
   test("resolveWorkspaceModelFallbackChain honors taskOnRefusal opt-out", async () => {
@@ -11474,6 +11507,9 @@ describe("TaskService", () => {
     const reportedParentId = "reported-parent-blocked";
     const interruptedChildId = "interrupted-child-no-report";
     const completedChildId = "completed-leaf-child";
+    const stickyInterruptedId = "sticky-interrupted-child";
+    const stickyCompletedId = "sticky-completed-parent";
+    const stickyParentChildId = "sticky-parent-interrupted-child";
     const userInterruptedId = "user-spawned-interrupted";
     const workflowRunId = "wfr_ended_garbage_sweep";
 
@@ -11516,6 +11552,37 @@ describe("TaskService", () => {
           taskModelString: defaultModel,
           workflowTask: { runId: workflowRunId, stepId: "completed" },
         }),
+        // Sticky workflow descendants are explicit user-retained workspaces. Run-end cleanup must
+        // neither archive interrupted ones nor remove completed ones.
+        projectWorkspace(projectPath, "sticky-interrupted", stickyInterruptedId, {
+          name: "agent_exec_sticky_interrupted",
+          parentWorkspaceId: rootId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "interrupted",
+          taskModelString: defaultModel,
+          taskSticky: true,
+          workflowTask: { runId: workflowRunId, stepId: "sticky-interrupted" },
+        }),
+        projectWorkspace(projectPath, "sticky-completed", stickyCompletedId, {
+          name: "agent_exec_sticky_completed",
+          parentWorkspaceId: rootId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "reported",
+          reportedAt: "2026-05-29T00:00:04.000Z",
+          taskModelString: defaultModel,
+          taskSticky: true,
+          workflowTask: { runId: workflowRunId, stepId: "sticky-completed" },
+        }),
+        projectWorkspace(projectPath, "sticky-parent-child", stickyParentChildId, {
+          name: "agent_explore_sticky_parent_child",
+          parentWorkspaceId: stickyCompletedId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskModelString: defaultModel,
+        }),
         // User-spawned interrupted task (no workflowTask in ancestry): intentionally
         // stays visible for manual inspection.
         projectWorkspace(projectPath, "user-interrupted", userInterruptedId, {
@@ -11555,6 +11622,16 @@ describe("TaskService", () => {
 
     // Completed-report leaf: removed via the existing cleanup walk, never archived.
     expect(findWorkspaceInConfig(config, completedChildId)).toBeUndefined();
+
+    // Sticky workflow descendants remain active and untouched despite the run ending.
+    const stickyInterrupted = findWorkspaceInConfig(config, stickyInterruptedId);
+    expect(stickyInterrupted?.archivedAt).toBeUndefined();
+    expect(stickyInterrupted?.taskStatus).toBe("interrupted");
+    const stickyCompleted = findWorkspaceInConfig(config, stickyCompletedId);
+    expect(stickyCompleted?.archivedAt).toBeUndefined();
+    expect(stickyCompleted?.taskStatus).toBe("reported");
+
+    expect(findWorkspaceInConfig(config, stickyParentChildId)?.archivedAt).toBeString();
 
     // Reported ancestor blocked only by its archived interrupted child: archived too,
     // so the garbage cluster leaves the active sidebar without deleting anything.
@@ -19943,6 +20020,7 @@ describe("TaskService", () => {
       agentType: string;
       taskStatus?: "reported" | "interrupted";
       reportedAt?: string;
+      taskSticky?: boolean;
       workflowTask?: WorkspaceConfigEntry["workflowTask"];
     }
 
@@ -20016,6 +20094,7 @@ describe("TaskService", () => {
           agentType: task.agentType,
           taskStatus: task.taskStatus ?? "reported",
           reportedAt: task.reportedAt,
+          taskSticky: task.taskSticky,
           ...(task.workflowTask !== undefined ? { workflowTask: task.workflowTask } : {}),
         });
         parentWorkspaceId = task.id;
@@ -20063,6 +20142,99 @@ describe("TaskService", () => {
 
       expect(remove).not.toHaveBeenCalled();
       expect(findWorkspaceInConfig(config, childTaskId)).toBeTruthy();
+    });
+
+    test("detects only unarchived sticky descendants across nested task trees", async () => {
+      const stickyTaskId = "sticky-333";
+      const { config, taskService, rootWorkspaceId } = await setupReportedTaskChain({
+        preserveSubagentsUntilArchive: false,
+        taskChain: [
+          {
+            id: "parent-222",
+            directoryName: "parent-task",
+            name: "agent_exec_parent",
+            agentType: "exec",
+            taskStatus: "reported",
+          },
+          {
+            id: stickyTaskId,
+            directoryName: "sticky-task",
+            name: "agent_exec_sticky",
+            agentType: "exec",
+            taskStatus: "reported",
+            taskSticky: true,
+          },
+        ],
+      });
+
+      expect(taskService.hasStickyDescendants(rootWorkspaceId)).toBe(true);
+      expect(taskService.hasUnarchivedStickyDescendants(rootWorkspaceId)).toBe(true);
+      // The sticky marker protects ancestors, not the sticky workspace's own explicit lifecycle action.
+      expect(taskService.hasStickyDescendants(stickyTaskId)).toBe(false);
+      expect(taskService.hasUnarchivedStickyDescendants(stickyTaskId)).toBe(false);
+
+      await archiveWorkspaceInTestConfig(config, stickyTaskId);
+
+      expect(taskService.hasStickyDescendants(rootWorkspaceId)).toBe(true);
+      expect(taskService.hasUnarchivedStickyDescendants(rootWorkspaceId)).toBe(false);
+    });
+
+    test("sticky completed tasks are never auto-cleaned", async () => {
+      const childTaskId = "child-333";
+      const { config, remove, internal } = await setupReportedTaskChain({
+        preserveSubagentsUntilArchive: false,
+        taskChain: [
+          {
+            id: childTaskId,
+            directoryName: "child-task",
+            name: "agent_exec_child",
+            agentType: "exec",
+            taskStatus: "reported",
+            taskSticky: true,
+          },
+        ],
+      });
+
+      expect(await internal.canCleanupReportedTask(childTaskId)).toEqual({
+        ok: false,
+        reason: "sticky",
+      });
+
+      await internal.cleanupReportedLeafTask(childTaskId);
+
+      expect(remove).not.toHaveBeenCalled();
+      expect(findWorkspaceInConfig(config, childTaskId)?.taskSticky).toBe(true);
+    });
+
+    test("cleanup prunes transient descendants but stops at a sticky ancestor", async () => {
+      const parentTaskId = "parent-222";
+      const childTaskId = "child-333";
+      const { config, remove, internal } = await setupReportedTaskChain({
+        preserveSubagentsUntilArchive: false,
+        taskChain: [
+          {
+            id: parentTaskId,
+            directoryName: "parent-task",
+            name: "agent_exec_parent",
+            agentType: "exec",
+            taskStatus: "reported",
+            taskSticky: true,
+          },
+          {
+            id: childTaskId,
+            directoryName: "child-task",
+            name: "agent_explore_child",
+            agentType: "explore",
+            taskStatus: "reported",
+          },
+        ],
+      });
+
+      await internal.cleanupReportedLeafTask(childTaskId);
+
+      expect(remove.mock.calls).toEqual([[childTaskId, true]]);
+      expect(findWorkspaceInConfig(config, childTaskId)).toBeUndefined();
+      expect(findWorkspaceInConfig(config, parentTaskId)?.taskSticky).toBe(true);
     });
 
     test("workflow-owned completed descendants bypass preserve-until-archive cleanup", async () => {

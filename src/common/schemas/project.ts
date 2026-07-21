@@ -197,6 +197,14 @@ export const WorkspaceConfigSchema = z.object({
         "checkout (no fork): its `path` points at the parent's checkout, init is skipped, and removal " +
         'must not delete that shared directory. Absent/"fork" is the isolated default.',
     }),
+  taskSticky: z
+    .boolean()
+    .optional()
+    .meta({
+      description:
+        "When true, automatic agent-task cleanup leaves this workspace intact after it reports. " +
+        "Explicit user lifecycle actions may still archive or remove it.",
+    }),
   taskAttentionPolicy: BackgroundWorkAttentionPolicySchema.optional().meta({
     description:
       "How the owner workspace's stream-end treats this child task while it is active. " +

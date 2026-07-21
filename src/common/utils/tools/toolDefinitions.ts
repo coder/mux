@@ -323,6 +323,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
     `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
     "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
+    "\n\nSticky sub-agents persist after they report instead of being cleaned up automatically. Set sticky=true only when the user explicitly asks for a sticky or persistent sub-agent, such as one responsible for a separate PR; otherwise omit it. " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
@@ -370,6 +371,7 @@ function refineTaskToolAgentArgs(
     prompt: string;
     n?: number | null;
     variants?: string[] | null;
+    sticky?: boolean | null;
     workspace?: { mode?: "new" | "fork" | "existing" | null; workspaceId?: string | null } | null;
   },
   ctx: z.RefinementCtx
@@ -391,6 +393,13 @@ function refineTaskToolAgentArgs(
         code: z.ZodIssueCode.custom,
         message: "Workspace tasks do not support n or variants yet",
         path: args.n != null ? ["n"] : ["variants"],
+      });
+    }
+    if (args.sticky != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Workspace tasks do not accept sticky; full workspaces already persist by default",
+        path: ["sticky"],
       });
     }
     if ((args.workspace?.mode ?? "new") === "fork") {
@@ -470,6 +479,12 @@ const taskToolBaseShape = {
   prompt: z.string().min(1),
   title: z.string().min(1),
   run_in_background: z.boolean().default(false),
+  sticky: z
+    .boolean()
+    .nullish()
+    .describe(
+      'Keep this sub-agent workspace after it reports instead of cleaning it up automatically. Set true only when the user explicitly asks for a sticky or persistent sub-agent (for example, to own a separate PR); otherwise omit it. Only valid for kind="subagent".'
+    ),
   n: TaskToolBestOfCountSchema.nullish().describe(
     "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
   ),
@@ -1179,6 +1194,7 @@ export const TaskListToolTaskSchema = z
     workspaceId: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    sticky: z.boolean().optional(),
     workflowProgress: WorkflowProgressSummarySchema.optional(),
     depth: z.number().int().min(0),
   })
