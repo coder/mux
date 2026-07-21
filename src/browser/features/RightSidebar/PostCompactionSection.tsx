@@ -72,7 +72,7 @@ export const PostCompactionSection: React.FC<PostCompactionSectionProps> = (prop
   }
 
   return (
-    <div className="border-border-light mt-4 border-t pt-4">
+    <div className="mt-2">
       <button
         onClick={() => setCollapsed((prev) => !prev)}
         className="flex w-full items-center justify-between text-left"
