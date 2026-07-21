@@ -6260,28 +6260,39 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
-  hasStickyDescendants(workspaceId: string): boolean {
-    assert(workspaceId.length > 0, "hasStickyDescendants: workspaceId must be non-empty");
-
+  /**
+   * Shared boilerplate for the sticky-descendant queries: build the agent-task index and return
+   * whether any descendant agent-task workspace of `workspaceId` satisfies `predicate`. Threading a
+   * predicate keeps `.some()` short-circuiting so the scan stops at the first match.
+   */
+  private someDescendantAgentTaskWorkspace(
+    workspaceId: string,
+    predicate: (descendant: AgentTaskWorkspaceEntry) => boolean
+  ): boolean {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
-    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some(
-      (descendantId) => index.byId.get(descendantId)?.taskSticky === true
+    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some((descendantId) => {
+      const descendant = index.byId.get(descendantId);
+      return descendant != null && predicate(descendant);
+    });
+  }
+
+  hasStickyDescendants(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasStickyDescendants: workspaceId must be non-empty");
+    return this.someDescendantAgentTaskWorkspace(
+      workspaceId,
+      (descendant) => descendant.taskSticky === true
     );
   }
 
   hasUnarchivedStickyDescendants(workspaceId: string): boolean {
     assert(workspaceId.length > 0, "hasUnarchivedStickyDescendants: workspaceId must be non-empty");
-
-    const cfg = this.config.loadConfigOrDefault();
-    const index = this.buildAgentTaskIndex(cfg);
-    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some((descendantId) => {
-      const descendant = index.byId.get(descendantId);
-      return (
-        descendant?.taskSticky === true &&
+    return this.someDescendantAgentTaskWorkspace(
+      workspaceId,
+      (descendant) =>
+        descendant.taskSticky === true &&
         !isWorkspaceArchived(descendant.archivedAt, descendant.unarchivedAt)
-      );
-    });
+    );
   }
 
   hasPreservedCompletedDescendants(workspaceId: string): boolean {
