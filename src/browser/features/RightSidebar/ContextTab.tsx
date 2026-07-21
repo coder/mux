@@ -61,7 +61,7 @@ const ContextTabComponent: React.FC<ContextTabProps> = ({ workspaceId }) => {
         </div>
       )}
 
-      {consumers.consumers.length > 0 && (
+      {(consumers.consumers.length > 0 || consumers.isCalculating) && (
         <div className="mt-4 mb-4">
           <h3 className="text-subtle m-0 mb-2 text-xs font-semibold tracking-wide uppercase">
             Consumer Breakdown
