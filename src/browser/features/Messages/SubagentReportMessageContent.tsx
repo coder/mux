@@ -13,18 +13,29 @@ export interface SubagentReportEnvelope {
   structuredOutputJson?: string;
 }
 
-function extractLine(envelope: string, tag: string): string | null {
-  const match = new RegExp(`^<${tag}>([^\\n]*)<\\/${tag}>$`, "m").exec(envelope);
-  const value = match?.[1]?.trim();
-  if (!value) return null;
-  return value;
-}
+const STRUCTURED_OUTPUT_START = "\n<structured_output_json>\n";
+const STRUCTURED_OUTPUT_END = "\n</structured_output_json>";
+const REPORT_END = "\n</report_markdown>";
 
-function extractBlock(envelope: string, tag: string): string | null {
-  const match = new RegExp(`(?:^|\\n)<${tag}>\\n([\\s\\S]*?)\\n<\\/${tag}>(?:\\n|$)`).exec(
-    envelope
-  );
-  return match?.[1]?.trim() ?? null;
+function splitStructuredOutput(envelope: string): {
+  reportEnvelope: string;
+  structuredOutput: string | null;
+} {
+  if (!envelope.endsWith(STRUCTURED_OUTPUT_END)) {
+    return { reportEnvelope: envelope, structuredOutput: null };
+  }
+
+  const start = envelope.lastIndexOf(STRUCTURED_OUTPUT_START);
+  if (start === -1) {
+    return { reportEnvelope: envelope, structuredOutput: null };
+  }
+
+  return {
+    reportEnvelope: envelope.slice(0, start),
+    structuredOutput: envelope
+      .slice(start + STRUCTURED_OUTPUT_START.length, -STRUCTURED_OUTPUT_END.length)
+      .trim(),
+  };
 }
 
 function normalizeStructuredOutput(block: string): string {
@@ -47,17 +58,27 @@ export function parseSubagentReportEnvelope(content: string): SubagentReportEnve
   const root = /^<mux_subagent_report>\n([\s\S]*?)\n<\/mux_subagent_report>$/.exec(content);
   if (!root) return null;
 
-  const envelope = root[1];
-  const taskId = extractLine(envelope, "task_id");
-  const agentType = extractLine(envelope, "agent_type");
-  const title = extractLine(envelope, "title");
-  const reportMarkdown = extractBlock(envelope, "report_markdown");
-  const rawStatus = extractLine(envelope, "status");
+  const { reportEnvelope, structuredOutput } = splitStructuredOutput(root[1]);
+  if (!reportEnvelope.endsWith(REPORT_END)) return null;
+
+  // Parse from the fixed metadata prefix, then anchor the report close at the end. Report markdown
+  // is intentionally unescaped by TaskService, so it may itself contain protocol-looking examples
+  // such as a line containing </report_markdown>; only the final delimiter terminates the field.
+  const fields =
+    /^<task_id>([^\n]*)<\/task_id>\n<agent_type>([^\n]*)<\/agent_type>\n(?:<status>([^\n]*)<\/status>\n)?<title>([\s\S]*?)<\/title>\n<report_markdown>\n([\s\S]*)$/.exec(
+      reportEnvelope.slice(0, -REPORT_END.length)
+    );
+  if (!fields) return null;
+
+  const taskId = fields[1]?.trim();
+  const agentType = fields[2]?.trim();
+  const rawStatus = fields[3]?.trim() || null;
+  const title = fields[4]?.replace(/\s+/g, " ").trim();
+  const reportMarkdown = fields[5]?.trim();
 
   if (!taskId || !agentType || !title || !reportMarkdown) return null;
   if (rawStatus !== null && rawStatus !== "in_progress" && rawStatus !== "completed") return null;
 
-  const structuredOutput = extractBlock(envelope, "structured_output_json");
   return {
     taskId,
     agentType,

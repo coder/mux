@@ -4,6 +4,7 @@ import { GlobalWindow } from "happy-dom";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import type { DisplayedMessage } from "@/common/types/message";
 import { MessageRenderer } from "./MessageRenderer";
+import { parseSubagentReportEnvelope } from "./SubagentReportMessageContent";
 
 describe("MessageRenderer goal continuation rows", () => {
   beforeEach(() => {
@@ -270,6 +271,52 @@ Found the **message renderer** and its responsive story coverage.
     expect(getByText("In progress")).toBeDefined();
     expect(getByText(/message renderer/)).toBeDefined();
     expect(queryByText("auto")).toBeNull();
+    expect(queryByText(/mux_subagent_report/)).toBeNull();
+  });
+
+  test("preserves protocol-looking delimiters inside report markdown", () => {
+    const report = parseSubagentReportEnvelope(`<mux_subagent_report>
+<task_id>task-protocol-example</task_id>
+<agent_type>explore</agent_type>
+<status>in_progress</status>
+<title>Protocol example checked</title>
+<report_markdown>
+Before the example.
+
+\`\`\`xml
+</report_markdown>
+\`\`\`
+
+After the example remains visible.
+</report_markdown>
+</mux_subagent_report>`);
+
+    expect(report).not.toBeNull();
+    expect(report?.reportMarkdown).toContain("Before the example.");
+    expect(report?.reportMarkdown).toContain("</report_markdown>");
+    expect(report?.reportMarkdown).toContain("After the example remains visible.");
+  });
+
+  test("normalizes multiline report titles instead of exposing the envelope", () => {
+    const message = createReportMessage(`<mux_subagent_report>
+<task_id>task-multiline-title</task_id>
+<agent_type>explore</agent_type>
+<status>completed</status>
+<title>Presentation trace
+completed cleanly</title>
+<report_markdown>
+All rendering paths were verified.
+</report_markdown>
+</mux_subagent_report>`);
+
+    const { getByText, queryByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={message} />
+      </TooltipProvider>
+    );
+
+    expect(getByText("Presentation trace completed cleanly")).toBeDefined();
+    expect(getByText("All rendering paths were verified.")).toBeDefined();
     expect(queryByText(/mux_subagent_report/)).toBeNull();
   });
 
