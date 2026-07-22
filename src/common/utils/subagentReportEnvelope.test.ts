@@ -47,6 +47,25 @@ Legacy markdown
     });
   });
 
+  test("preserves legacy report bodies that quote the old title separator", () => {
+    const legacy = `<mux_subagent_report>
+<task_id>legacy-protocol-doc</task_id>
+<agent_type>explore</agent_type>
+<status>completed</status>
+<title>Protocol notes</title>
+<report_markdown>
+Before the quoted separator.
+</title>
+<report_markdown>
+After the quoted separator.
+</report_markdown>
+</mux_subagent_report>`;
+
+    expect(parseSubagentReportEnvelope(legacy)?.reportMarkdown).toBe(
+      "Before the quoted separator.\n</title>\n<report_markdown>\nAfter the quoted separator."
+    );
+  });
+
   test("rejects malformed envelopes", () => {
     expect(parseSubagentReportEnvelope("not a report")).toBeNull();
     expect(

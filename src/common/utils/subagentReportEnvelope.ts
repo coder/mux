@@ -95,7 +95,9 @@ function parseLegacyEnvelope(inner: string): SubagentReportEnvelope | null {
   if (!reportEnvelope.endsWith(REPORT_END)) return null;
 
   const body = reportEnvelope.slice(0, -REPORT_END.length);
-  const reportStart = body.lastIndexOf(TITLE_REPORT_SEPARATOR);
+  // Legacy framing cannot distinguish delimiter text in both title and Markdown. Favor the first
+  // separator so historical report bodies that document the protocol remain intact.
+  const reportStart = body.indexOf(TITLE_REPORT_SEPARATOR);
   if (reportStart === -1) return null;
 
   const fields =
