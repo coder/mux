@@ -198,16 +198,13 @@ export function extractAttachmentsFromDrop(dataTransfer: DataTransfer): File[] {
   return Array.from(dataTransfer.files);
 }
 
-/**
- * Processes multiple attachment files and converts them to chat attachments.
- */
 export async function processAttachmentFiles(
   files: File[],
   options: ProcessAttachmentOptions = {}
 ): Promise<ChatAttachment[]> {
   return await Promise.all(
     files.map((file) => {
-      // Provider-native formats must win because every file is eligible for workspace staging.
+      // Prefer provider-native formats before the optional workspace staging fallback.
       if (getSupportedMediaType(file) != null) {
         return fileToChatAttachment(file);
       }
