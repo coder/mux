@@ -112,7 +112,7 @@
         "@babel/preset-env": "^7.28.5",
         "@babel/preset-react": "^7.28.5",
         "@babel/preset-typescript": "^7.28.5",
-        "@coder/pixel-storybook": "0.2.2",
+        "@coder/pixel-storybook": "0.2.1",
         "@electron/rebuild": "^4.0.4",
         "@eslint/js": "^9.36.0",
         "@playwright/test": "^1.56.0",
@@ -564,7 +564,7 @@
 
     "@chevrotain/utils": ["@chevrotain/utils@11.0.3", "", {}, "sha512-YslZMgtJUyuMbZ+aKvfF3x1f5liK4mWNxghFRv7jqRR9C3R3fAOGTTKvxXDa2Y1s9zSbcpuO0cAxDYsc9SrXoQ=="],
 
-    "@coder/pixel-storybook": ["@coder/pixel-storybook@0.2.2", "", { "dependencies": { "get-port-please": "3.1.2", "jsonc-parser": "^3.3.1", "serve-handler": "6.1.7", "zod": "3.23.8" }, "peerDependencies": { "playwright-core": ">=1.47.2", "storybook": ">=8.0.0" }, "bin": { "pixel-storybook": "build/bin.js" } }, "sha512-f1dJ7FiNCdoT9VRVH6IWFnCG3VMnavtvTx/r6sZ4hzhj/rJEZv4P69J2x4XdYaMAwi+O5xbp2UQf0dNf2U9lLA=="],
+    "@coder/pixel-storybook": ["@coder/pixel-storybook@0.2.1", "", { "dependencies": { "get-port-please": "3.1.2", "jsonc-parser": "^3.3.1", "serve-handler": "6.1.7", "zod": "3.23.8" }, "peerDependencies": { "playwright-core": ">=1.47.2", "storybook": ">=8.0.0" }, "bin": { "pixel-storybook": "build/bin.js" } }, "sha512-o4EIY5JcLr+U/URGwfTQ1s0rs2jp4CfdOG94kHABLVD6wFEwUDyl52LX8utx6ArOkxuixbe3NMUTdxWU33fqLw=="],
 
     "@csstools/color-helpers": ["@csstools/color-helpers@5.1.0", "", {}, "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA=="],
 

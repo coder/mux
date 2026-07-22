@@ -1,21 +1,13 @@
-/** Full-app visual coverage for sub-agent progress and terminal report presentation. */
-
 import type { ComponentType } from "react";
 
-import { appMeta, AppWithMocks, PIXEL_DUAL_THEME, type AppStory } from "./meta.js";
-import { setupSimpleChatStory } from "./helpers/chatSetup";
-import { collapseLeftSidebar, collapseRightSidebar } from "./helpers/uiState";
+import { setupSimpleChatStory } from "./chatSetup";
+import { collapseLeftSidebar, collapseRightSidebar } from "./uiState";
 import {
   createAssistantMessage,
   createSubagentReportMessage,
   createUserMessage,
-} from "./mocks/messages";
-import { STABLE_TIMESTAMP } from "./mocks/workspaces";
-
-export default {
-  ...appMeta,
-  title: "App/SubagentReports",
-};
+} from "../mocks/messages";
+import { STABLE_TIMESTAMP } from "../mocks/workspaces";
 
 const REPORT_MESSAGES = [
   createUserMessage("report-user", "Review the message rendering path and flag any UX gaps.", {
@@ -71,7 +63,7 @@ const REPORT_MESSAGES = [
   ),
 ] as const;
 
-function setupReportStory() {
+export function setupSubagentReportStory() {
   collapseLeftSidebar();
   collapseRightSidebar();
   return setupSimpleChatStory({
@@ -82,44 +74,10 @@ function setupReportStory() {
   });
 }
 
-function PhoneDecorator(Story: ComponentType) {
+export function PhoneSubagentReportDecorator(Story: ComponentType) {
   return (
     <div style={{ width: 390, height: 844, overflow: "hidden" }}>
       <Story />
     </div>
   );
 }
-
-/** Incremental, completed legacy, and structured sub-agent report states. */
-export const Desktop: AppStory = {
-  // Pixel owns this visual-only desktop matrix. The full App cold-start can exceed the
-  // Storybook test-runner's 30-second smoke timeout before any assertions begin.
-  tags: ["!test"],
-  render: () => <AppWithMocks setup={setupReportStory} />,
-  parameters: {
-    ...appMeta.parameters,
-    pixel: { matrix: PIXEL_DUAL_THEME },
-  },
-  // Pixel captures the complete desktop composition. Keep interaction assertions on the pinned
-  // phone story below because the Storybook test-runner's cold desktop app load can exhaust its
-  // per-story timeout before a desktop play function begins, while production behavior is covered
-  // by MessageRenderer.test.tsx.
-};
-
-/** Phone-width contract for long titles, markdown paths, and structured-output controls. */
-export const Phone: AppStory = {
-  // The fixed-width decorator + pinned Pixel phone viewport are the static breakpoint contract.
-  // Production rendering behavior is covered by MessageRenderer.test.tsx.
-  tags: ["!test"],
-  globals: {
-    viewport: { value: "mobile1", isRotated: false },
-  },
-  render: () => <AppWithMocks setup={setupReportStory} />,
-  decorators: [PhoneDecorator],
-  parameters: {
-    ...appMeta.parameters,
-    pixel: {
-      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
-    },
-  },
-};
