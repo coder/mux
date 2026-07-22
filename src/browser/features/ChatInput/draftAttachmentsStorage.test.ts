@@ -39,7 +39,7 @@ describe("draftAttachmentsStorage", () => {
     ]);
   });
 
-  test("parsePersistedChatAttachments returns staged zip metadata without base64", () => {
+  test("parsePersistedChatAttachments returns staged file metadata without base64", () => {
     expect(
       parsePersistedChatAttachments([
         {

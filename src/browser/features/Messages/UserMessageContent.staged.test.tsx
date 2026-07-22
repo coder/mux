@@ -10,11 +10,11 @@ import { UserMessageContent } from "./UserMessageContent";
 
 const STAGED_ATTACHMENT: StagedChatAttachment = {
   kind: "staged",
-  id: "zip-1",
-  filename: "archive.zip",
-  mediaType: "application/zip",
+  id: "md-1",
+  filename: "notes.md",
+  mediaType: "text/markdown",
   sizeBytes: 12_345,
-  stagedPath: ".mux/user-attachments/id/archive.zip",
+  stagedPath: ".mux/user-attachments/id/notes.md",
 };
 
 describe("UserMessageContent staged attachment rendering", () => {
@@ -32,7 +32,7 @@ describe("UserMessageContent staged attachment rendering", () => {
 
   test("hides the model-only staged attachment notice and renders a download chip", () => {
     const downloads: unknown[] = [];
-    const content = appendStagedAttachmentNotice("Inspect this archive.", [STAGED_ATTACHMENT]);
+    const content = appendStagedAttachmentNotice("Inspect these notes.", [STAGED_ATTACHMENT]);
 
     const view = render(
       <UserMessageContent
@@ -44,20 +44,20 @@ describe("UserMessageContent staged attachment rendering", () => {
 
     expect(view.queryByText(/<attached-files>/)).toBeNull();
     expect(view.queryByText(/workspace filesystem/)).toBeNull();
-    expect(view.getByText("Inspect this archive.")).toBeTruthy();
+    expect(view.getByText("Inspect these notes.")).toBeTruthy();
 
-    const chip = view.getByRole("button", { name: /download archive\.zip/i });
-    expect(chip.textContent).toContain("archive.zip");
+    const chip = view.getByRole("button", { name: /download notes\.md/i });
+    expect(chip.textContent).toContain("notes.md");
     expect(chip.textContent).toContain("12.1 KB");
 
     fireEvent.click(chip);
     expect(downloads).toEqual([
       {
-        filename: "archive.zip",
-        mediaType: "application/zip",
+        filename: "notes.md",
+        mediaType: "text/markdown",
         sizeLabel: "12.1 KB",
         sizeBytes: 12_390,
-        stagedPath: ".mux/user-attachments/id/archive.zip",
+        stagedPath: ".mux/user-attachments/id/notes.md",
       },
     ]);
   });

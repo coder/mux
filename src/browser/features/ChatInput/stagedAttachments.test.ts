@@ -7,24 +7,48 @@ import {
 } from "./stagedAttachments";
 
 describe("stagedAttachments", () => {
-  test("builds a staged-file notice with filename, type, size, and path", () => {
+  test("round-trips markdown and CSV staged attachments through the notice", () => {
     const notice = buildStagedAttachmentNotice([
       {
         kind: "staged",
-        id: "zip-1",
-        filename: "archive.zip",
-        mediaType: "application/zip",
-        sizeBytes: 12_345,
-        stagedPath: ".mux/user-attachments/id/archive.zip",
+        id: "md-1",
+        filename: "notes.md",
+        mediaType: "text/markdown",
+        sizeBytes: 12,
+        stagedPath: ".mux/user-attachments/id/notes.md",
+      },
+      {
+        kind: "staged",
+        id: "csv-1",
+        filename: "data.csv",
+        mediaType: "text/csv",
+        sizeBytes: 34,
+        stagedPath: ".mux/user-attachments/id/data.csv",
       },
     ]);
 
-    expect(notice).toContain("<attached-files>");
-    expect(notice).toContain("`archive.zip` (`application/zip`, 12.1 KB)");
-    expect(notice).toContain("`.mux/user-attachments/id/archive.zip`");
+    expect(parseStagedAttachmentNotice(notice)).toEqual({
+      text: "",
+      attachments: [
+        {
+          filename: "notes.md",
+          mediaType: "text/markdown",
+          sizeLabel: "12 B",
+          sizeBytes: 12,
+          stagedPath: ".mux/user-attachments/id/notes.md",
+        },
+        {
+          filename: "data.csv",
+          mediaType: "text/csv",
+          sizeLabel: "34 B",
+          sizeBytes: 34,
+          stagedPath: ".mux/user-attachments/id/data.csv",
+        },
+      ],
+    });
   });
 
-  test("allows zip-only sends by returning the notice as message text", () => {
+  test("allows file-only sends by returning the notice as message text", () => {
     const message = appendStagedAttachmentNotice("", [
       {
         kind: "staged",

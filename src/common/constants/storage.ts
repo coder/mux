@@ -814,7 +814,7 @@ function stripStagedDraftAttachments(value: string): string {
       return value;
     }
     // Forked worktrees do not share staged draft files. Keep provider attachments, but drop
-    // workspace-local staged ZIP chips so the fork cannot point at missing source-worktree paths.
+    // workspace-local staged file chips so the fork cannot point at missing source-worktree paths.
     return JSON.stringify(parsed.filter((attachment) => !isStagedPersistedAttachment(attachment)));
   } catch {
     return value;
