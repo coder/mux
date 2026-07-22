@@ -3166,6 +3166,12 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           return context.projectService.getDefaultProjectDir();
         }),
+      githubRepoInfo: t
+        .input(schemas.projects.githubRepoInfo.input)
+        .output(schemas.projects.githubRepoInfo.output)
+        .handler(({ context }) => {
+          return context.projectService.githubRepoInfo();
+        }),
       setDefaultProjectDir: t
         .input(schemas.projects.setDefaultProjectDir.input)
         .output(schemas.projects.setDefaultProjectDir.output)

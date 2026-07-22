@@ -26,6 +26,7 @@ import {
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import type { GitHubRepoInfo } from "@/common/orpc/schemas/githubRepoInfo";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useDrag, useDrop } from "react-dnd";
@@ -64,6 +65,7 @@ import {
   ChevronDown,
   HeartPulse,
   Pin,
+  Folder,
 } from "lucide-react";
 import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 import { WorkspaceStatusIndicator } from "../WorkspaceStatusIndicator/WorkspaceStatusIndicator";
@@ -111,6 +113,8 @@ interface AgentListItemBaseProps {
 /** Props for regular (persisted) workspace items */
 export interface AgentListItemProps extends AgentListItemBaseProps {
   variant?: "workspace";
+  presentation?: "default" | "flat-card";
+  githubRepoInfo?: GitHubRepoInfo | null;
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
   subAgentConnectorLayout?: SubAgentConnectorLayout;
@@ -208,6 +212,47 @@ function getVisualState(opts: {
 function HeartbeatFallbackIcon() {
   return (
     <HeartPulse aria-hidden="true" className="text-muted h-4 w-4" data-testid="heartbeat-icon" />
+  );
+}
+
+const failedAvatarUntilByUrl = new Map<string, number>();
+const AVATAR_NEGATIVE_CACHE_MS = 30_000;
+
+function ProjectAvatar(props: { info: GitHubRepoInfo | null | undefined; label: string }) {
+  const url = props.info?.avatarUrl;
+  const [failedAvatar, setFailedAvatar] = useState<{ url: string; retryAt: number } | null>(() =>
+    url ? { url, retryAt: failedAvatarUntilByUrl.get(url) ?? 0 } : null
+  );
+  const failed =
+    failedAvatar != null && failedAvatar.url === url && failedAvatar.retryAt > Date.now();
+
+  if (!url || failed) {
+    return (
+      <div
+        className="bg-surface-secondary text-muted flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+        aria-label={`${props.label} repository`}
+        data-testid="project-avatar-fallback"
+      >
+        <Folder className="h-4 w-4" aria-hidden="true" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={url}
+      alt=""
+      loading="lazy"
+      width={28}
+      height={28}
+      className="h-7 w-7 shrink-0 rounded-full object-cover"
+      onLoad={() => failedAvatarUntilByUrl.delete(url)}
+      onError={() => {
+        const retryAt = Date.now() + AVATAR_NEGATIVE_CACHE_MS;
+        failedAvatarUntilByUrl.set(url, retryAt);
+        setFailedAvatar({ url, retryAt });
+      }}
+    />
   );
 }
 
@@ -482,6 +527,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath } = metadata;
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
+  const isFlatCard = props.presentation === "flat-card";
+  const repositoryLabel = props.githubRepoInfo?.repo ?? projectName;
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
   const isDisabled = isRemoving || isArchiving === true;
@@ -755,7 +802,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         ? "text-content-tertiary"
         : "text-content-primary";
 
-  const paddingLeft = getSidebarItemPaddingLeft(depth);
+  const paddingLeft = isFlatCard ? 8 : getSidebarItemPaddingLeft(depth);
 
   const workspaceSelection: WorkspaceSelection = {
     projectPath,
@@ -861,7 +908,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           !isArchiving && "pl-1 hover:bg-surface-secondary [&:hover_button]:opacity-100",
           isArchiving && "pointer-events-none opacity-70",
           isDisabled ? "cursor-default" : "cursor-pointer",
-          isSelected && !isDisabled && "bg-surface-secondary"
+          isSelected && !isDisabled && "bg-surface-secondary",
+          isFlatCard &&
+            "border-border-light mx-2 mb-1.5 rounded-md border bg-surface-primary pr-2 shadow-sm"
         )}
         style={{ paddingLeft }}
         onClick={(event) => {
@@ -1175,8 +1224,15 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
           )
         )}
 
+        {isFlatCard && <ProjectAvatar info={props.githubRepoInfo} label={repositoryLabel} />}
+
         {/* Keep title row anchored so status dot/title align across single+double-line states. */}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          {isFlatCard && (
+            <div className="text-muted min-w-0 truncate text-left text-[11px] leading-4">
+              {repositoryLabel}
+            </div>
+          )}
           <div
             className={cn(
               // Keep the title column shrinkable on narrow/mobile viewports so the

@@ -8,7 +8,7 @@ interface WorkspaceGroupConfig {
   id: string;
 }
 
-function flattenWorkspaceTree(
+export function flattenWorkspaceTree(
   workspaces: FrontendWorkspaceMetadata[]
 ): FrontendWorkspaceMetadata[] {
   if (workspaces.length === 0) return [];

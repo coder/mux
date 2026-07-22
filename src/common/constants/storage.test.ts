@@ -4,6 +4,7 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
   getInputAttachmentsKey,
+  normalizeSidebarDisplayStyle,
   normalizeTranscriptDensity,
 } from "@/common/constants/storage";
 
@@ -62,6 +63,12 @@ describe("storage workspace-scoped keys", () => {
 
   test("getInputAttachmentsKey formats key", () => {
     expect(getInputAttachmentsKey("ws-123")).toBe("inputAttachments:ws-123");
+  });
+
+  test("normalizeSidebarDisplayStyle falls back for corrupt values", () => {
+    expect(normalizeSidebarDisplayStyle("flat")).toBe("flat");
+    expect(normalizeSidebarDisplayStyle("cards")).toBe("projects");
+    expect(normalizeSidebarDisplayStyle(null)).toBe("projects");
   });
 
   test("normalizeTranscriptDensity falls back for corrupt values", () => {

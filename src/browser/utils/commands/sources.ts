@@ -21,8 +21,14 @@ import {
 import assert from "@/common/utils/assert";
 import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  DEFAULT_SIDEBAR_DISPLAY_STYLE,
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  SIDEBAR_DISPLAY_STYLE_KEY,
+  SIDEBAR_DISPLAY_STYLES,
+  normalizeSidebarDisplayStyle,
+} from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -895,6 +901,21 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           run: () => p.onSetTheme(opt.value),
         });
       }
+    }
+
+    const sidebarDisplayStyle = normalizeSidebarDisplayStyle(
+      readPersistedState(SIDEBAR_DISPLAY_STYLE_KEY, DEFAULT_SIDEBAR_DISPLAY_STYLE)
+    );
+    for (const displayStyle of SIDEBAR_DISPLAY_STYLES) {
+      if (displayStyle === sidebarDisplayStyle) {
+        continue;
+      }
+      list.push({
+        id: CommandIds.sidebarDisplayStyleSet(displayStyle),
+        title: displayStyle === "flat" ? "Use Flat Sidebar Cards" : "Use Project Sidebar Sections",
+        section: section.appearance,
+        run: () => updatePersistedState(SIDEBAR_DISPLAY_STYLE_KEY, displayStyle),
+      });
     }
 
     return list;

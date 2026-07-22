@@ -80,6 +80,7 @@ export const CommandIds = {
   // Appearance commands
   themeToggle: () => "appearance:theme:toggle" as const,
   themeSet: (theme: string) => `appearance:theme:set:${theme}` as const,
+  sidebarDisplayStyleSet: (style: string) => `appearance:sidebar:set:${style}` as const,
 
   // Analytics commands
   analyticsRebuildDatabase: () => "analytics:rebuild-database" as const,
