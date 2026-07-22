@@ -54,6 +54,15 @@ function GallerySection(props: { label: string; children: ReactNode }) {
 // (image, video, audio, markdown, generic file) into a single snapshot to keep
 // the snapshot budget low while preserving every distinct visual state.
 export const Gallery: Story = {
+  tags: ["pixel-stability"],
+  parameters: {
+    pixel: {
+      // Chromium's native media controls contain an internal loading spinner whose frame is not
+      // controlled by page CSS. Mask only those controls; the surrounding attachment UI remains
+      // under visual regression coverage.
+      mask: [{ selector: "video, audio" }],
+    },
+  },
   render: () => (
     <ToolStoryShell>
       <div className="flex flex-col gap-6">

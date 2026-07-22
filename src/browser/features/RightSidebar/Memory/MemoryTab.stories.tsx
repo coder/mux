@@ -4,6 +4,7 @@ import { userEvent, within } from "@storybook/test";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { APIProvider } from "@/browser/contexts/API";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { blurActiveElement } from "@/browser/stories/storyPlayHelpers.js";
 import type {
   MemoryConsolidationRecordPayload,
   MemoryFileInfo,
@@ -126,6 +127,14 @@ function renderTab(width: string) {
 }
 
 export const List: Story = {
+  tags: ["pixel-stability"],
+  parameters: {
+    pixel: {
+      // This duplicates the same tree permutations covered by Settings/MemorySection.WithFiles,
+      // while Chromium rasterizes its nested rounded borders/chevrons nondeterministically.
+      exclude: true,
+    },
+  },
   render: () => renderTab("360px"),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -137,11 +146,16 @@ export const List: Story = {
 };
 
 export const Editor: Story = {
+  tags: ["pixel-stability"],
   render: () => renderTab("360px"),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const row = await canvas.findByText("preferences.md");
     await userEvent.click(row);
     await canvas.findByLabelText("Memory file content");
+    // The click target disappears when the editor opens, so explicitly move the virtual pointer
+    // off whatever control replaced it and hide the focused textarea caret before Pixel captures.
+    await userEvent.hover(canvasElement);
+    blurActiveElement();
   },
 };
