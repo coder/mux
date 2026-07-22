@@ -362,6 +362,26 @@ describe("attach_file tool", () => {
     });
   });
 
+  it("shows JSON files to the user without sending them as model attachments", async () => {
+    using workspaceDir = new TestTempDir("attach-file-workspace");
+    const tool = createTestAttachFileTool(workspaceDir.path);
+    const jsonPath = path.join(workspaceDir.path, "package.json");
+    const json = '{"name":"demo"}\n';
+    await fs.writeFile(jsonPath, json);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!({ path: "package.json" }, mockToolCallOptions)) as AttachFileToolResult
+    );
+
+    expect(result.value[1]).toEqual({
+      type: "display_file",
+      data: Buffer.from(json).toString("base64"),
+      mediaType: "text/plain",
+      filename: "package.json",
+      providerOptions: { mux: { displayOnly: true, size: Buffer.byteLength(json) } },
+    });
+  });
+
   it("shows unmapped source files to the user as display-only text/plain", async () => {
     using workspaceDir = new TestTempDir("attach-file-workspace");
     const tool = createTestAttachFileTool(workspaceDir.path);

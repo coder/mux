@@ -2,7 +2,7 @@ import type { FilePart } from "@/common/orpc/types";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import { MAX_STAGED_ATTACHMENT_SIZE_BYTES } from "@/common/constants/stagedAttachments";
 import {
-  getSupportedAttachmentMediaType,
+  getSupportedChatAttachmentMediaType,
   getSupportedStagedAttachmentMediaType,
 } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
@@ -27,7 +27,7 @@ export interface ProcessAttachmentOptions {
 }
 
 function getSupportedMediaType(file: File): string | null {
-  return getSupportedAttachmentMediaType({
+  return getSupportedChatAttachmentMediaType({
     mediaType: file.type !== "" ? file.type : null,
     filename: file.name,
   });
@@ -169,11 +169,12 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
+  const normalizedDataUrl = dataUrl.replace(/^data:[^;,]*/i, `data:${mediaType}`);
 
   const isRasterImage = mediaType.startsWith("image/") && mediaType !== SVG_MEDIA_TYPE;
   if (isRasterImage) {
     // Auto-resize large images before sending so providers don't reject oversized inputs.
-    const resizeResult = await resizeImageIfNeeded(dataUrl, mediaType);
+    const resizeResult = await resizeImageIfNeeded(normalizedDataUrl, mediaType);
 
     return {
       kind: "provider",
@@ -197,7 +198,7 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
   return {
     kind: "provider",
     id: generateAttachmentId(),
-    url: dataUrl,
+    url: normalizedDataUrl,
     mediaType,
     filename: file.name.trim() ? file.name : undefined,
   };

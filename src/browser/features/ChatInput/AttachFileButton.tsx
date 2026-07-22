@@ -1,6 +1,6 @@
 /**
  * Attach file button - floats inside the chat input textarea next to the voice input button.
- * Opens a native file picker for images, SVGs, PDFs, and workspace-staged ZIPs.
+ * Opens a native file picker for images, SVGs, PDFs, JSON files, and workspace-staged ZIPs.
  */
 
 import React, { useRef } from "react";
@@ -9,7 +9,8 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/To
 import { cn } from "@/common/lib/utils";
 
 /** Accept filter for the file picker: provider attachments plus workspace-staged ZIPs. */
-const FILE_ACCEPT = "image/*,.svg,.pdf,.zip,application/zip,application/x-zip-compressed";
+const FILE_ACCEPT =
+  "image/*,.svg,.pdf,.json,.zip,application/json,application/zip,application/x-zip-compressed";
 
 interface AttachFileButtonProps {
   onFiles: (files: File[]) => void;
@@ -53,7 +54,7 @@ export const AttachFileButton: React.FC<AttachFileButtonProps> = (props) => {
           </button>
         </TooltipTrigger>
         <TooltipContent>
-          <strong>Attach file</strong> — images, SVGs, PDFs, ZIPs
+          <strong>Attach file</strong> — images, SVGs, PDFs, JSON, ZIPs
         </TooltipContent>
       </Tooltip>
       {/* Hidden file input — kept outside Tooltip to avoid stray DOM children */}
