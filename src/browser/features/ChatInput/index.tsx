@@ -2035,7 +2035,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   throw new Error("Not connected to server");
                 }
                 if (workspaceId == null) {
-                  throw new Error("ZIP attachments can be added after opening a workspace.");
+                  throw new Error("Files can be staged after opening a workspace.");
                 }
                 const result = await api.workspace.stageAttachment({
                   workspaceId,
@@ -2055,6 +2055,35 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       });
     },
     [api, variant, workspaceId]
+  );
+
+  const attachFiles = useCallback(
+    (files: File[]) => {
+      const results = files.map((file) =>
+        processAttachmentFilesForComposer([file]).then(
+          (attachments) => ({ ok: true as const, attachments }),
+          (error: unknown) => ({ ok: false as const, error })
+        )
+      );
+      void Promise.all(results).then((outcomes) => {
+        const successes = outcomes.flatMap((outcome) => (outcome.ok ? outcome.attachments : []));
+        if (successes.length > 0) {
+          setAttachments((prev) => [...prev, ...successes]);
+          showResizeToast(successes);
+        }
+        for (const outcome of outcomes) {
+          if (!outcome.ok) {
+            const message =
+              outcome.error instanceof Error
+                ? outcome.error.message
+                : "Failed to process attachment";
+            console.error("Failed to process attached file:", outcome.error);
+            pushToast({ type: "error", message });
+          }
+        }
+      });
+    },
+    [processAttachmentFilesForComposer, pushToast, setAttachments, showResizeToast]
   );
 
   // Handle paste events to extract attachments
@@ -2078,26 +2107,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       e.preventDefault(); // Prevent default paste behavior for attachments
 
-      processAttachmentFilesForComposer(attachmentFiles)
-        .then((nextAttachments) => {
-          setAttachments((prev) => [...prev, ...nextAttachments]);
-          showResizeToast(nextAttachments);
-        })
-        .catch((error) => {
-          console.error("Failed to process pasted attachment:", error);
-          pushToast({
-            type: "error",
-            message: error instanceof Error ? error.message : "Failed to process attachment",
-          });
-        });
+      attachFiles(attachmentFiles);
     },
-    [
-      editingMessageForUi,
-      processAttachmentFilesForComposer,
-      pushToast,
-      setAttachments,
-      showResizeToast,
-    ]
+    [attachFiles, editingMessageForUi, pushToast]
   );
 
   // Handle removing an attachment
@@ -2108,10 +2120,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setAttachments]
   );
 
-  // Handle files selected via the attach file picker.
-  // Process each file individually so unsupported files (e.g. user switched the
-  // native picker to "All files") don't reject the entire batch — valid files
-  // still get attached and only failures are toasted.
   const handleAttachFiles = (files: File[]) => {
     if (editingMessageForUi) {
       pushToast({
@@ -2120,27 +2128,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       });
       return;
     }
-    const results = files.map((file) =>
-      processAttachmentFilesForComposer([file]).then(
-        (attachments) => ({ ok: true as const, attachments }),
-        (error: unknown) => ({ ok: false as const, error })
-      )
-    );
-    void Promise.all(results).then((outcomes) => {
-      const successes = outcomes.flatMap((o) => (o.ok ? o.attachments : []));
-      if (successes.length > 0) {
-        setAttachments((prev) => [...prev, ...successes]);
-        showResizeToast(successes);
-      }
-      for (const outcome of outcomes) {
-        if (!outcome.ok) {
-          const msg =
-            outcome.error instanceof Error ? outcome.error.message : "Failed to process attachment";
-          console.error("Failed to process attached file:", outcome.error);
-          pushToast({ type: "error", message: msg });
-        }
-      }
-    });
+    attachFiles(files);
   };
 
   // Shared slash command execution for creation + workspace inputs.
@@ -2188,8 +2176,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setToast({
         id: Date.now().toString(),
         type: "error",
-        message:
-          "This command cannot include staged ZIP attachments. Remove the ZIP or send a normal message.",
+        message: "This command cannot include staged files. Remove them or send a normal message.",
       });
       return true;
     }
@@ -2310,26 +2297,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      processAttachmentFilesForComposer(attachmentFiles)
-        .then((nextAttachments) => {
-          setAttachments((prev) => [...prev, ...nextAttachments]);
-          showResizeToast(nextAttachments);
-        })
-        .catch((error) => {
-          console.error("Failed to process dropped attachment:", error);
-          pushToast({
-            type: "error",
-            message: error instanceof Error ? error.message : "Failed to process attachment",
-          });
-        });
+      attachFiles(attachmentFiles);
     },
-    [
-      editingMessageForUi,
-      processAttachmentFilesForComposer,
-      pushToast,
-      setAttachments,
-      showResizeToast,
-    ]
+    [attachFiles, editingMessageForUi, pushToast]
   );
 
   // Handle suggestion selection

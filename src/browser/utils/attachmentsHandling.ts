@@ -1,10 +1,7 @@
 import type { FilePart } from "@/common/orpc/types";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import { MAX_STAGED_ATTACHMENT_SIZE_BYTES } from "@/common/constants/stagedAttachments";
-import {
-  getSupportedAttachmentMediaType,
-  getSupportedStagedAttachmentMediaType,
-} from "@/common/utils/attachments/supportedAttachmentMediaTypes";
+import { getSupportedAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
 import { resizeImageIfNeeded } from "@/browser/utils/imageResize";
 
@@ -44,7 +41,7 @@ export function chatAttachmentsToFileParts(
 
   return attachments.flatMap((attachment, index) => {
     if (attachment.kind === "staged") {
-      // Staged ZIPs live in the workspace filesystem and must never be sent as provider file parts.
+      // Staged files live in the workspace filesystem and must never be sent as provider file parts.
       return [];
     }
 
@@ -78,21 +75,6 @@ export function chatAttachmentsToFileParts(
   });
 }
 
-function getSupportedStagedMediaType(file: File): string | null {
-  return getSupportedStagedAttachmentMediaType({
-    mediaType: file.type !== "" ? file.type : null,
-    filename: file.name,
-  });
-}
-
-// True when a file is accepted as either a provider attachment or a staged (ZIP) attachment.
-// Shared by the clipboard/drop extractors so both stay in sync on what counts as attachable.
-// Both getters return a non-empty media-type string or null, so `!= null` matches the prior
-// truthiness checks the extractors inlined.
-function isSupportedAttachmentFile(file: File): boolean {
-  return getSupportedMediaType(file) != null || getSupportedStagedMediaType(file) != null;
-}
-
 function fileBytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   const chunkSize = 0x8000;
@@ -106,13 +88,9 @@ async function fileToStagedChatAttachment(
   file: File,
   stageAttachment: (file: File, dataBase64: string) => Promise<StageAttachmentResult>
 ): Promise<ChatAttachment> {
-  const mediaType = getSupportedStagedMediaType(file);
-  if (mediaType == null) {
-    throw new Error(`Unsupported attachment type: ${file.type || file.name}`);
-  }
   if (file.size > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
     throw new Error(
-      `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`
+      `Attachments larger than ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes cannot be staged.`
     );
   }
 
@@ -204,36 +182,20 @@ export async function fileToChatAttachment(file: File): Promise<ChatAttachment> 
 }
 
 /**
- * Extract supported attachment files from clipboard items.
+ * Extract attachment files from clipboard items.
  */
 export function extractAttachmentsFromClipboard(items: DataTransferItemList): File[] {
-  const files: File[] = [];
-
-  for (const item of Array.from(items)) {
-    const file = item?.getAsFile();
-    if (!file) continue;
-
-    if (isSupportedAttachmentFile(file)) {
-      files.push(file);
-    }
-  }
-
-  return files;
+  return Array.from(items).flatMap((item) => {
+    const file = item.kind === "file" ? item.getAsFile() : null;
+    return file == null ? [] : [file];
+  });
 }
 
 /**
- * Extract supported attachment files from drag and drop DataTransfer.
+ * Extract attachment files from drag and drop DataTransfer.
  */
 export function extractAttachmentsFromDrop(dataTransfer: DataTransfer): File[] {
-  const files: File[] = [];
-
-  for (const file of Array.from(dataTransfer.files)) {
-    if (isSupportedAttachmentFile(file)) {
-      files.push(file);
-    }
-  }
-
-  return files;
+  return Array.from(dataTransfer.files);
 }
 
 /**
@@ -245,13 +207,14 @@ export async function processAttachmentFiles(
 ): Promise<ChatAttachment[]> {
   return await Promise.all(
     files.map((file) => {
-      if (getSupportedStagedMediaType(file) != null) {
-        if (!options.stageAttachment) {
-          throw new Error("ZIP attachments can be added after opening a workspace.");
-        }
-        return fileToStagedChatAttachment(file, options.stageAttachment);
+      // Provider-native formats must win because every file is eligible for workspace staging.
+      if (getSupportedMediaType(file) != null) {
+        return fileToChatAttachment(file);
       }
-      return fileToChatAttachment(file);
+      if (!options.stageAttachment) {
+        throw new Error("Files can be staged after opening a workspace.");
+      }
+      return fileToStagedChatAttachment(file, options.stageAttachment);
     })
   );
 }
