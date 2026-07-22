@@ -10,7 +10,6 @@ import { PolicyProvider } from "@/browser/contexts/PolicyContext";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { blurActiveElement } from "@/browser/stories/storyPlayHelpers.js";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 import type { MCPServerInfo } from "@/common/types/mcp";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
@@ -171,14 +170,6 @@ export const ProjectSettingsEmpty: Story = {
 };
 
 export const ProjectSettingsAddRemoteServerHeaders: Story = {
-  tags: ["pixel-stability"],
-  parameters: {
-    pixel: {
-      // Keep the interaction contract in Storybook tests, but exclude the screenshot: Chromium
-      // alternates the rounded form border's corner antialiasing by one shade between captures.
-      exclude: true,
-    },
-  },
   render: () => (
     <MCPSettingsSectionStoryShell
       setup={() =>
@@ -241,9 +232,6 @@ export const ProjectSettingsAddRemoteServerHeaders: Story = {
     await expect(body.findByDisplayValue("MCP_TOKEN")).resolves.toBeInTheDocument();
     await expect(body.findByDisplayValue("X-Env")).resolves.toBeInTheDocument();
     await expect(body.findByDisplayValue("prod")).resolves.toBeInTheDocument();
-    // Do not snapshot a focused input's platform-rendered caret/border antialiasing.
-    await userEvent.hover(canvasElement);
-    blurActiveElement();
   },
 };
 

@@ -54,7 +54,6 @@ function GallerySection(props: { label: string; children: ReactNode }) {
 // (image, video, audio, markdown, generic file) into a single snapshot to keep
 // the snapshot budget low while preserving every distinct visual state.
 export const Gallery: Story = {
-  tags: ["pixel-stability"],
   parameters: {
     pixel: {
       // Chromium's native media controls contain an internal loading spinner whose frame is not

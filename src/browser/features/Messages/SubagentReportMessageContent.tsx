@@ -15,6 +15,7 @@ export interface SubagentReportEnvelope {
 
 const STRUCTURED_OUTPUT_START = "\n<structured_output_json>\n";
 const STRUCTURED_OUTPUT_END = "\n</structured_output_json>";
+const TITLE_REPORT_SEPARATOR = "</title>\n<report_markdown>\n";
 const REPORT_END = "\n</report_markdown>";
 
 function splitStructuredOutput(envelope: string): {
@@ -61,12 +62,16 @@ export function parseSubagentReportEnvelope(content: string): SubagentReportEnve
   const { reportEnvelope, structuredOutput } = splitStructuredOutput(root[1]);
   if (!reportEnvelope.endsWith(REPORT_END)) return null;
 
-  // Parse from the fixed metadata prefix, then anchor the report close at the end. Report markdown
-  // is intentionally unescaped by TaskService, so it may itself contain protocol-looking examples
-  // such as a line containing </report_markdown>; only the final delimiter terminates the field.
+  // Parse delimiters from the end because TaskService stores arbitrary title and report strings
+  // without escaping. Embedded examples such as </title> or </report_markdown> are content unless
+  // they are the final protocol separator for their field.
+  const body = reportEnvelope.slice(0, -REPORT_END.length);
+  const reportStart = body.lastIndexOf(TITLE_REPORT_SEPARATOR);
+  if (reportStart === -1) return null;
+
   const fields =
-    /^<task_id>([^\n]*)<\/task_id>\n<agent_type>([^\n]*)<\/agent_type>\n(?:<status>([^\n]*)<\/status>\n)?<title>([\s\S]*?)<\/title>\n<report_markdown>\n([\s\S]*)$/.exec(
-      reportEnvelope.slice(0, -REPORT_END.length)
+    /^<task_id>([^\n]*)<\/task_id>\n<agent_type>([^\n]*)<\/agent_type>\n(?:<status>([^\n]*)<\/status>\n)?<title>([\s\S]*)$/.exec(
+      body.slice(0, reportStart)
     );
   if (!fields) return null;
 
@@ -74,7 +79,7 @@ export function parseSubagentReportEnvelope(content: string): SubagentReportEnve
   const agentType = fields[2]?.trim();
   const rawStatus = fields[3]?.trim() || null;
   const title = fields[4]?.replace(/\s+/g, " ").trim();
-  const reportMarkdown = fields[5];
+  const reportMarkdown = body.slice(reportStart + TITLE_REPORT_SEPARATOR.length);
 
   // TaskService stores reportMarkdown verbatim between separator newlines. Preserve leading
   // indentation and trailing spaces because Markdown uses both for code blocks and hard breaks.

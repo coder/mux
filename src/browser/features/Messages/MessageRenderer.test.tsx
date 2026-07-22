@@ -297,6 +297,25 @@ After the example remains visible.
     expect(report?.reportMarkdown).toContain("After the example remains visible.");
   });
 
+  test("preserves title delimiter examples inside report titles", () => {
+    const report = parseSubagentReportEnvelope(`<mux_subagent_report>
+<task_id>task-title-delimiter</task_id>
+<agent_type>explore</agent_type>
+<status>completed</status>
+<title>Checked the literal </title> delimiter
+without exposing the envelope</title>
+<report_markdown>
+The title parser uses the final protocol separator.
+</report_markdown>
+</mux_subagent_report>`);
+
+    expect(report).not.toBeNull();
+    expect(report?.title).toBe(
+      "Checked the literal </title> delimiter without exposing the envelope"
+    );
+    expect(report?.reportMarkdown).toBe("The title parser uses the final protocol separator.");
+  });
+
   test("preserves leading indentation and trailing spaces in report markdown", () => {
     const report = parseSubagentReportEnvelope(`<mux_subagent_report>
 <task_id>task-whitespace</task_id>
