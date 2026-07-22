@@ -297,6 +297,22 @@ After the example remains visible.
     expect(report?.reportMarkdown).toContain("After the example remains visible.");
   });
 
+  test("preserves leading indentation and trailing spaces in report markdown", () => {
+    const report = parseSubagentReportEnvelope(`<mux_subagent_report>
+<task_id>task-whitespace</task_id>
+<agent_type>explore</agent_type>
+<status>completed</status>
+<title>Whitespace checked</title>
+<report_markdown>
+    const answer = 42;
+Line with a hard break.  
+</report_markdown>
+</mux_subagent_report>`);
+
+    expect(report).not.toBeNull();
+    expect(report?.reportMarkdown).toBe("    const answer = 42;\nLine with a hard break.  ");
+  });
+
   test("normalizes multiline report titles instead of exposing the envelope", () => {
     const message = createReportMessage(`<mux_subagent_report>
 <task_id>task-multiline-title</task_id>

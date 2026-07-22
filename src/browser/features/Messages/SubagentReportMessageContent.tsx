@@ -74,9 +74,13 @@ export function parseSubagentReportEnvelope(content: string): SubagentReportEnve
   const agentType = fields[2]?.trim();
   const rawStatus = fields[3]?.trim() || null;
   const title = fields[4]?.replace(/\s+/g, " ").trim();
-  const reportMarkdown = fields[5]?.trim();
+  const reportMarkdown = fields[5];
 
-  if (!taskId || !agentType || !title || !reportMarkdown) return null;
+  // TaskService stores reportMarkdown verbatim between separator newlines. Preserve leading
+  // indentation and trailing spaces because Markdown uses both for code blocks and hard breaks.
+  if (!taskId || !agentType || !title || reportMarkdown == null || reportMarkdown.length === 0) {
+    return null;
+  }
   if (rawStatus !== null && rawStatus !== "in_progress" && rawStatus !== "completed") return null;
 
   return {
