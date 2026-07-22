@@ -170,6 +170,13 @@ export const ProjectSettingsEmpty: Story = {
 };
 
 export const ProjectSettingsAddRemoteServerHeaders: Story = {
+  parameters: {
+    pixel: {
+      // Chromium alternates the rounded form border's corner antialiasing by one shade. The full
+      // interaction sequence remains covered by Storybook tests.
+      exclude: true,
+    },
+  },
   render: () => (
     <MCPSettingsSectionStoryShell
       setup={() =>

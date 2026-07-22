@@ -7,6 +7,7 @@ import type {
   MuxFilePart,
   MuxToolPart,
 } from "@/common/types/message";
+import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   GOAL_BUDGET_LIMIT_KIND,
@@ -120,6 +121,38 @@ export function createBashMonitorWakeMessage(
       },
     },
   };
+}
+
+/** Create the synthetic protocol envelope used to wake a parent with sub-agent findings. */
+export function createSubagentReportMessage(
+  id: string,
+  opts: {
+    historySequence: number;
+    timestamp?: number;
+    taskId: string;
+    agentType: string;
+    title: string;
+    reportMarkdown: string;
+    status?: "in_progress" | "completed";
+    structuredOutput?: unknown;
+  }
+): ChatMuxMessage {
+  return createUserMessage(
+    id,
+    formatSubagentReportEnvelope({
+      taskId: opts.taskId,
+      agentType: opts.agentType,
+      status: opts.status ?? "completed",
+      title: opts.title,
+      reportMarkdown: opts.reportMarkdown,
+      ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
+    }),
+    {
+      historySequence: opts.historySequence,
+      timestamp: opts.timestamp,
+      synthetic: true,
+    }
+  );
 }
 
 /** Create a compaction request user message (triggers shimmer effect on streaming response) */

@@ -12,6 +12,11 @@ import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
 import { BashMonitorWakeMessageContent } from "./BashMonitorWakeMessageContent";
+import {
+  formatSubagentStructuredOutput,
+  parseSubagentReportEnvelope,
+  SubagentReportMessageContent,
+} from "./SubagentReportMessageContent";
 import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
@@ -24,6 +29,7 @@ import {
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import {
+  Bot,
   ChevronLeft,
   ChevronRight,
   Clipboard,
@@ -93,6 +99,18 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const bashMonitorWake = message.bashMonitorWake;
   const content = message.content;
   const visibleContent = stripStagedAttachmentNotice(content);
+  // Only backend-authored synthetic messages may opt into protocol-aware presentation. A user who
+  // types a lookalike envelope should continue to see an ordinary escaped user message.
+  const subagentReport = isSynthetic ? parseSubagentReportEnvelope(content) : null;
+  const structuredOutputJson = subagentReport
+    ? formatSubagentStructuredOutput(subagentReport)
+    : undefined;
+  const copyContent = subagentReport
+    ? [
+        subagentReport.reportMarkdown,
+        ...(structuredOutputJson ? [`Structured output:\n${structuredOutputJson}`] : []),
+      ].join("\n\n")
+    : visibleContent;
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
   const isMobileTouch =
     typeof window !== "undefined" &&
@@ -204,7 +222,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       : []),
     {
       label: copied ? "Copied" : "Copy",
-      onClick: () => void copyToClipboard(visibleContent),
+      onClick: () => void copyToClipboard(copyContent),
       icon: copied ? <ClipboardCheck /> : <Clipboard />,
     },
   ];
@@ -231,6 +249,19 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         monitor wake
       </span>
     );
+  } else if (subagentReport) {
+    const isInProgress = subagentReport.status === "in_progress";
+    label = (
+      <span
+        className={cn(
+          "flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase",
+          isInProgress ? "bg-backgrounded/10 text-backgrounded" : "bg-success/10 text-success"
+        )}
+      >
+        <Bot aria-hidden="true" className="h-3 w-3" />
+        {isInProgress ? "subagent update" : "subagent report"}
+      </span>
+    );
   } else if (isSynthetic) {
     label = (
       <span className="bg-muted/20 text-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
@@ -246,7 +277,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const isSideQuestion = message.isSideQuestion === true;
   const syntheticClassName = cn(
     className,
-    isSynthetic && "opacity-70",
+    isSynthetic && !subagentReport && "opacity-70",
+    subagentReport && "ml-0 w-full",
     (isGoalContinuation || isBudgetLimitWrapup) && "italic"
   );
 
@@ -264,6 +296,8 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     renderedContent = (
       <BashMonitorWakeMessageContent content={content} records={bashMonitorWake.records} />
     );
+  } else if (subagentReport) {
+    renderedContent = <SubagentReportMessageContent report={subagentReport} />;
   } else {
     renderedContent = (
       <UserMessageContent
