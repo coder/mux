@@ -305,7 +305,7 @@ After the example remains visible.
 <title>Whitespace checked</title>
 <report_markdown>
     const answer = 42;
-Line with a hard break.  
+Line with a hard break.${"  "}
 </report_markdown>
 </mux_subagent_report>`);
 
