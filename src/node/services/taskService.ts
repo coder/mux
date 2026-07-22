@@ -301,6 +301,8 @@ function formatSubagentReportUserMessage(params: {
     status: params.status,
     title: params.title,
     reportMarkdown: params.reportMarkdown,
+    // Omit structuredOutput entirely when absent so callers can forward the value directly
+    // without re-implementing the undefined guard at each call site.
     ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
   });
 }
@@ -5601,9 +5603,7 @@ export class TaskService {
         title,
         reportMarkdown: report.reportMarkdown,
         status: "in_progress",
-        ...(report.structuredOutput !== undefined
-          ? { structuredOutput: report.structuredOutput }
-          : {}),
+        structuredOutput: report.structuredOutput,
       });
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         parentWorkspaceId,
@@ -11213,9 +11213,7 @@ export class TaskService {
       title: titlePrefix,
       reportMarkdown: report.reportMarkdown,
       status: "completed",
-      ...(report.structuredOutput !== undefined
-        ? { structuredOutput: report.structuredOutput }
-        : {}),
+      structuredOutput: report.structuredOutput,
     });
 
     const messageId = createTaskReportMessageId();
