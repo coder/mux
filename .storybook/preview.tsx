@@ -1,4 +1,5 @@
 import type { Preview } from "@storybook/react-vite";
+import { isPixel } from "@coder/pixel-storybook";
 import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";
 import {
@@ -26,6 +27,15 @@ import { configure } from "storybook/test";
 // Prevents flakes on CPU-constrained CI runners where React re-renders
 // after userEvent.click can exceed the 1 s default.
 configure({ asyncUtilTimeout: 5000 });
+
+const PIXEL_STABILITY_CSS = `
+  *, *::before, *::after {
+    animation: none !important;
+    caret-color: transparent !important;
+    scroll-behavior: auto !important;
+    transition: none !important;
+  }
+`;
 
 const STORYBOOK_FONTS_READY_TIMEOUT_MS = 2500;
 
@@ -159,9 +169,13 @@ const preview: Preview = {
       clearWorkspaceDrafts();
 
       return (
-        <ThemeProvider forcedTheme={mode}>
-          <Story />
-        </ThemeProvider>
+        <>
+          {/* Pixel captures semantic states, never arbitrary animation frames or blinking carets. */}
+          {isPixel() && <style data-pixel-stability>{PIXEL_STABILITY_CSS}</style>}
+          <ThemeProvider forcedTheme={mode}>
+            <Story />
+          </ThemeProvider>
+        </>
       );
     },
   ],
