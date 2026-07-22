@@ -2,103 +2,15 @@ import { useState, type ReactElement } from "react";
 import { Bot, Braces, ChevronRight, CircleCheck, Radio } from "lucide-react";
 
 import { cn } from "@/common/lib/utils";
+import type { SubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
-export interface SubagentReportEnvelope {
-  taskId: string;
-  agentType: string;
-  status: "in_progress" | "completed";
-  title: string;
-  reportMarkdown: string;
-  structuredOutputJson?: string;
-}
+export { parseSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 
-const STRUCTURED_OUTPUT_START = "\n<structured_output_json>\n";
-const STRUCTURED_OUTPUT_END = "\n</structured_output_json>";
-const TITLE_REPORT_SEPARATOR = "</title>\n<report_markdown>\n";
-const REPORT_END = "\n</report_markdown>";
-
-function splitStructuredOutput(envelope: string): {
-  reportEnvelope: string;
-  structuredOutput: string | null;
-} {
-  if (!envelope.endsWith(STRUCTURED_OUTPUT_END)) {
-    return { reportEnvelope: envelope, structuredOutput: null };
-  }
-
-  const start = envelope.lastIndexOf(STRUCTURED_OUTPUT_START);
-  if (start === -1) {
-    return { reportEnvelope: envelope, structuredOutput: null };
-  }
-
-  return {
-    reportEnvelope: envelope.slice(0, start),
-    structuredOutput: envelope
-      .slice(start + STRUCTURED_OUTPUT_START.length, -STRUCTURED_OUTPUT_END.length)
-      .trim(),
-  };
-}
-
-function normalizeStructuredOutput(block: string): string {
-  const fenced = /^```json\s*\n([\s\S]*?)\n```$/.exec(block.trim());
-  const json = fenced?.[1]?.trim() ?? block.trim();
-
-  try {
-    return JSON.stringify(JSON.parse(json), null, 2);
-  } catch {
-    // Preserve malformed or forward-compatible payloads instead of hiding report data.
-    return json;
-  }
-}
-
-/**
- * Parse only the exact synthetic protocol envelope emitted by TaskService. Returning null keeps
- * malformed or user-authored lookalikes on the normal escaped user-message rendering path.
- */
-export function parseSubagentReportEnvelope(content: string): SubagentReportEnvelope | null {
-  const root = /^<mux_subagent_report>\n([\s\S]*?)\n<\/mux_subagent_report>$/.exec(content);
-  if (!root) return null;
-
-  const { reportEnvelope, structuredOutput } = splitStructuredOutput(root[1]);
-  if (!reportEnvelope.endsWith(REPORT_END)) return null;
-
-  // Parse delimiters from the end because TaskService stores arbitrary title and report strings
-  // without escaping. Embedded examples such as </title> or </report_markdown> are content unless
-  // they are the final protocol separator for their field.
-  const body = reportEnvelope.slice(0, -REPORT_END.length);
-  const reportStart = body.lastIndexOf(TITLE_REPORT_SEPARATOR);
-  if (reportStart === -1) return null;
-
-  const fields =
-    /^<task_id>([^\n]*)<\/task_id>\n<agent_type>([^\n]*)<\/agent_type>\n(?:<status>([^\n]*)<\/status>\n)?<title>([\s\S]*)$/.exec(
-      body.slice(0, reportStart)
-    );
-  if (!fields) return null;
-
-  const taskId = fields[1]?.trim();
-  const agentType = fields[2]?.trim();
-  const rawStatus = fields[3]?.trim() || null;
-  const title = fields[4]?.replace(/\s+/g, " ").trim();
-  const reportMarkdown = body.slice(reportStart + TITLE_REPORT_SEPARATOR.length);
-
-  // TaskService stores reportMarkdown verbatim between separator newlines. Preserve leading
-  // indentation and trailing spaces because Markdown uses both for code blocks and hard breaks.
-  if (!taskId || !agentType || !title || reportMarkdown == null || reportMarkdown.length === 0) {
-    return null;
-  }
-  if (rawStatus !== null && rawStatus !== "in_progress" && rawStatus !== "completed") return null;
-
-  return {
-    taskId,
-    agentType,
-    // Reports persisted before incremental updates existed had no explicit status.
-    status: rawStatus ?? "completed",
-    title,
-    reportMarkdown,
-    ...(structuredOutput
-      ? { structuredOutputJson: normalizeStructuredOutput(structuredOutput) }
-      : {}),
-  };
+export function formatSubagentStructuredOutput(report: SubagentReportEnvelope): string | undefined {
+  if (report.structuredOutput === undefined) return undefined;
+  if (typeof report.structuredOutput === "string") return report.structuredOutput;
+  return JSON.stringify(report.structuredOutput, null, 2);
 }
 
 interface SubagentReportMessageContentProps {
@@ -113,6 +25,7 @@ export function SubagentReportMessageContent(
   props: SubagentReportMessageContentProps
 ): ReactElement {
   const [structuredOutputExpanded, setStructuredOutputExpanded] = useState(false);
+  const structuredOutputJson = formatSubagentStructuredOutput(props.report);
   const isInProgress = props.report.status === "in_progress";
   const StatusIcon = isInProgress ? Radio : CircleCheck;
   const statusLabel = isInProgress ? "In progress" : "Completed";
@@ -146,7 +59,7 @@ export function SubagentReportMessageContent(
         className="mt-2 text-sm leading-relaxed text-[var(--color-user-text)]"
       />
 
-      {props.report.structuredOutputJson && (
+      {structuredOutputJson && (
         <div className="mt-2 border-t border-[var(--color-user-border)] pt-2">
           <button
             type="button"
@@ -166,7 +79,7 @@ export function SubagentReportMessageContent(
           </button>
           {structuredOutputExpanded && (
             <pre className="bg-code-bg mt-2 max-h-[40vh] max-w-full overflow-auto rounded-sm p-2 font-mono text-xs leading-relaxed whitespace-pre text-[var(--color-user-text)]">
-              {props.report.structuredOutputJson}
+              {structuredOutputJson}
             </pre>
           )}
         </div>

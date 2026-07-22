@@ -13,6 +13,7 @@ import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
 import { BashMonitorWakeMessageContent } from "./BashMonitorWakeMessageContent";
 import {
+  formatSubagentStructuredOutput,
   parseSubagentReportEnvelope,
   SubagentReportMessageContent,
 } from "./SubagentReportMessageContent";
@@ -101,12 +102,13 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   // Only backend-authored synthetic messages may opt into protocol-aware presentation. A user who
   // types a lookalike envelope should continue to see an ordinary escaped user message.
   const subagentReport = isSynthetic ? parseSubagentReportEnvelope(content) : null;
+  const structuredOutputJson = subagentReport
+    ? formatSubagentStructuredOutput(subagentReport)
+    : undefined;
   const copyContent = subagentReport
     ? [
         subagentReport.reportMarkdown,
-        ...(subagentReport.structuredOutputJson
-          ? [`Structured output:\n${subagentReport.structuredOutputJson}`]
-          : []),
+        ...(structuredOutputJson ? [`Structured output:\n${structuredOutputJson}`] : []),
       ].join("\n\n")
     : visibleContent;
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });

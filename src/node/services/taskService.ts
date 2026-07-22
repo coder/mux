@@ -16,6 +16,10 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
+import {
+  formatSubagentReportEnvelope,
+  parseSubagentReportEnvelope,
+} from "@/common/utils/subagentReportEnvelope";
 import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
 import { log } from "@/node/services/log";
 import {
@@ -278,28 +282,6 @@ export interface TaskCreateArgs {
   };
 }
 
-function stringifyStructuredOutputForSubagentReport(structuredOutput: unknown): string {
-  const json = JSON.stringify(structuredOutput, null, 2);
-  assert(
-    json !== undefined,
-    "stringifyStructuredOutputForSubagentReport requires JSON-serializable structured output"
-  );
-  return json;
-}
-
-function parseSubagentReportEnvelope(text: string): { taskId: string; status?: string } | null {
-  const envelope = /^<mux_subagent_report>\n([\s\S]*?)\n<\/mux_subagent_report>$/.exec(text);
-  if (envelope == null) {
-    return null;
-  }
-  const taskId = /^<task_id>([^<]+)<\/task_id>$/m.exec(envelope[1])?.[1]?.trim();
-  if (!taskId) {
-    return null;
-  }
-  const status = /^<status>([^<]+)<\/status>$/m.exec(envelope[1])?.[1]?.trim();
-  return { taskId, ...(status ? { status } : {}) };
-}
-
 function formatSubagentReportUserMessage(params: {
   childWorkspaceId: string;
   agentType: string;
@@ -313,29 +295,14 @@ function formatSubagentReportUserMessage(params: {
   assert(params.title.length > 0, "subagent report message requires title");
   assert(params.reportMarkdown.length > 0, "subagent report message requires markdown");
 
-  const lines = [
-    "<mux_subagent_report>",
-    `<task_id>${params.childWorkspaceId}</task_id>`,
-    `<agent_type>${params.agentType}</agent_type>`,
-    `<status>${params.status}</status>`,
-    `<title>${params.title}</title>`,
-    "<report_markdown>",
-    params.reportMarkdown,
-    "</report_markdown>",
-  ];
-
-  if (params.structuredOutput !== undefined) {
-    lines.push(
-      "<structured_output_json>",
-      "```json",
-      stringifyStructuredOutputForSubagentReport(params.structuredOutput),
-      "```",
-      "</structured_output_json>"
-    );
-  }
-
-  lines.push("</mux_subagent_report>");
-  return lines.join("\n");
+  return formatSubagentReportEnvelope({
+    taskId: params.childWorkspaceId,
+    agentType: params.agentType,
+    status: params.status,
+    title: params.title,
+    reportMarkdown: params.reportMarkdown,
+    ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
+  });
 }
 
 // Failure twin of formatSubagentReportUserMessage: terminal child failures are

@@ -49,6 +49,7 @@ import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
+import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { defaultModel } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -9839,7 +9840,7 @@ describe("TaskService", () => {
     const parentHistory = await collectFullHistory(historyService, parentWorkspaceId);
     const serializedParentHistory = JSON.stringify(parentHistory);
     expect(serializedParentHistory).toContain("<mux_subagent_report>");
-    expect(serializedParentHistory).toContain("<structured_output_json>");
+    expect(serializedParentHistory).toContain("structuredOutput");
     expect(serializedParentHistory).toContain("claims");
   });
 
@@ -14452,9 +14453,7 @@ describe("TaskService", () => {
     const serializedParentHistory = JSON.stringify(parentHistoryAfterInterrupt);
     expect(serializedParentHistory).toContain("<mux_subagent_report>");
     expect(serializedParentHistory).toContain("Report from child one");
-    expect(
-      serializedParentHistory.match(/<task_id>child-best-of-deferred-fallback-1<\/task_id>/g)
-    ).toHaveLength(1);
+    expect(serializedParentHistory.match(/child-best-of-deferred-fallback-1/g)).toHaveLength(1);
   });
 
   test("agent_report uses legacy exec agentType for git format-patch eligibility", async () => {
@@ -15859,7 +15858,7 @@ describe("TaskService", () => {
         queueDedupeKey: "agent-report:child-progress:progress-1",
       })
     );
-    expect(sendMessage.mock.calls[0]?.[1]).toContain("<status>in_progress</status>");
+    expect(sendMessage.mock.calls[0]?.[1]).toContain('"status": "in_progress"');
     expect(sendMessage.mock.calls[1]?.[1]).toContain("Found a second issue.");
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
     expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
@@ -17768,12 +17767,10 @@ describe("TaskService", () => {
     const serializedParentHistory = JSON.stringify(parentHistory);
     expect(serializedParentHistory).toContain("<mux_subagent_report>");
     expect(serializedParentHistory).toContain("Report from child one");
-    expect(serializedParentHistory).toContain("<structured_output_json>");
+    expect(serializedParentHistory).toContain("structuredOutput");
     expect(serializedParentHistory).toContain("score");
     expect(
-      serializedParentHistory.match(
-        /<task_id>child-best-of-concurrent-deferred-fallback-1<\/task_id>/g
-      )
+      serializedParentHistory.match(/child-best-of-concurrent-deferred-fallback-1/g)
     ).toHaveLength(1);
   });
 
@@ -17821,7 +17818,13 @@ describe("TaskService", () => {
           createMuxMessage(
             "progress-report",
             "user",
-            `<mux_subagent_report>\n<task_id>${childOneId}</task_id>\n<agent_type>explore</agent_type>\n<status>in_progress</status>\n<title>Finding</title>\n<report_markdown>\nEarly finding\n</report_markdown>\n</mux_subagent_report>`,
+            formatSubagentReportEnvelope({
+              taskId: childOneId,
+              agentType: "explore",
+              status: "in_progress",
+              title: "Finding",
+              reportMarkdown: "Early finding",
+            }),
             { timestamp: Date.now(), synthetic: true }
           )
         )
@@ -17900,7 +17903,13 @@ describe("TaskService", () => {
           createMuxMessage(
             "completed-report",
             "user",
-            `<mux_subagent_report>\n<task_id>${childOneId}</task_id>\n<agent_type>explore</agent_type>\n<status>completed</status>\n<title>Result</title>\n<report_markdown>\n${quoted}\n</report_markdown>\n</mux_subagent_report>`,
+            formatSubagentReportEnvelope({
+              taskId: childOneId,
+              agentType: "explore",
+              status: "completed",
+              title: "Result",
+              reportMarkdown: quoted,
+            }),
             { timestamp: Date.now(), synthetic: true }
           )
         )
@@ -18052,9 +18061,7 @@ describe("TaskService", () => {
     expect(serializedParentHistory).toContain("<mux_subagent_report>");
     expect(serializedParentHistory).toContain("Report from child one");
     expect(
-      serializedParentHistory.match(
-        /<task_id>child-best-of-concurrent-direct-fallback-1<\/task_id>/g
-      )
+      serializedParentHistory.match(/child-best-of-concurrent-direct-fallback-1/g)
     ).toHaveLength(1);
   });
 

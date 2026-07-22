@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import type { DisplayedMessage } from "@/common/types/message";
+import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { MessageRenderer } from "./MessageRenderer";
 import { parseSubagentReportEnvelope } from "./SubagentReportMessageContent";
 
@@ -274,62 +275,17 @@ Found the **message renderer** and its responsive story coverage.
     expect(queryByText(/mux_subagent_report/)).toBeNull();
   });
 
-  test("preserves protocol-looking delimiters inside report markdown", () => {
-    const report = parseSubagentReportEnvelope(`<mux_subagent_report>
-<task_id>task-protocol-example</task_id>
-<agent_type>explore</agent_type>
-<status>in_progress</status>
-<title>Protocol example checked</title>
-<report_markdown>
-Before the example.
+  test("preserves arbitrary protocol examples and semantic whitespace", () => {
+    const expected = {
+      taskId: "task-json-framing",
+      agentType: "explore",
+      status: "completed" as const,
+      title: "Checked </title>\n<report_markdown> without exposing the envelope",
+      reportMarkdown:
+        "    const answer = 42;\nQuoted delimiter:\n</title>\n<report_markdown>\nHard break.  ",
+    };
 
-\`\`\`xml
-</report_markdown>
-\`\`\`
-
-After the example remains visible.
-</report_markdown>
-</mux_subagent_report>`);
-
-    expect(report).not.toBeNull();
-    expect(report?.reportMarkdown).toContain("Before the example.");
-    expect(report?.reportMarkdown).toContain("</report_markdown>");
-    expect(report?.reportMarkdown).toContain("After the example remains visible.");
-  });
-
-  test("preserves title delimiter examples inside report titles", () => {
-    const report = parseSubagentReportEnvelope(`<mux_subagent_report>
-<task_id>task-title-delimiter</task_id>
-<agent_type>explore</agent_type>
-<status>completed</status>
-<title>Checked the literal </title> delimiter
-without exposing the envelope</title>
-<report_markdown>
-The title parser uses the final protocol separator.
-</report_markdown>
-</mux_subagent_report>`);
-
-    expect(report).not.toBeNull();
-    expect(report?.title).toBe(
-      "Checked the literal </title> delimiter without exposing the envelope"
-    );
-    expect(report?.reportMarkdown).toBe("The title parser uses the final protocol separator.");
-  });
-
-  test("preserves leading indentation and trailing spaces in report markdown", () => {
-    const report = parseSubagentReportEnvelope(`<mux_subagent_report>
-<task_id>task-whitespace</task_id>
-<agent_type>explore</agent_type>
-<status>completed</status>
-<title>Whitespace checked</title>
-<report_markdown>
-    const answer = 42;
-Line with a hard break.${"  "}
-</report_markdown>
-</mux_subagent_report>`);
-
-    expect(report).not.toBeNull();
-    expect(report?.reportMarkdown).toBe("    const answer = 42;\nLine with a hard break.  ");
+    expect(parseSubagentReportEnvelope(formatSubagentReportEnvelope(expected))).toEqual(expected);
   });
 
   test("normalizes multiline report titles instead of exposing the envelope", () => {

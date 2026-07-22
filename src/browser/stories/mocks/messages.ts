@@ -7,6 +7,7 @@ import type {
   MuxFilePart,
   MuxToolPart,
 } from "@/common/types/message";
+import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   GOAL_BUDGET_LIMIT_KIND,
@@ -136,33 +137,22 @@ export function createSubagentReportMessage(
     structuredOutput?: unknown;
   }
 ): ChatMuxMessage {
-  const lines = [
-    "<mux_subagent_report>",
-    `<task_id>${opts.taskId}</task_id>`,
-    `<agent_type>${opts.agentType}</agent_type>`,
-    ...(opts.status ? [`<status>${opts.status}</status>`] : []),
-    `<title>${opts.title}</title>`,
-    "<report_markdown>",
-    opts.reportMarkdown,
-    "</report_markdown>",
-  ];
-
-  if (opts.structuredOutput !== undefined) {
-    lines.push(
-      "<structured_output_json>",
-      "```json",
-      JSON.stringify(opts.structuredOutput, null, 2),
-      "```",
-      "</structured_output_json>"
-    );
-  }
-  lines.push("</mux_subagent_report>");
-
-  return createUserMessage(id, lines.join("\n"), {
-    historySequence: opts.historySequence,
-    timestamp: opts.timestamp,
-    synthetic: true,
-  });
+  return createUserMessage(
+    id,
+    formatSubagentReportEnvelope({
+      taskId: opts.taskId,
+      agentType: opts.agentType,
+      status: opts.status ?? "completed",
+      title: opts.title,
+      reportMarkdown: opts.reportMarkdown,
+      ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
+    }),
+    {
+      historySequence: opts.historySequence,
+      timestamp: opts.timestamp,
+      synthetic: true,
+    }
+  );
 }
 
 /** Create a compaction request user message (triggers shimmer effect on streaming response) */
