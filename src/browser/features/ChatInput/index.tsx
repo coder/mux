@@ -3365,6 +3365,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   <AttachFileButton
                     onFiles={handleAttachFiles}
                     disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
+                    canStageFiles={variant === "workspace"}
                   />
                   <VoiceInputButton
                     state={voiceInput.state}
