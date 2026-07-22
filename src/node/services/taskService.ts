@@ -297,6 +297,8 @@ function formatSubagentReportUserMessage(params: {
     ...(params.executionId != null ? { executionId: params.executionId } : {}),
     ...(params.model != null ? { model: params.model } : {}),
     ...(params.thinkingLevel != null ? { thinkingLevel: params.thinkingLevel } : {}),
+    // Omit structuredOutput entirely when absent so callers can forward the value directly
+    // without re-implementing the undefined guard at each call site.
     ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
   });
 }
@@ -7272,9 +7274,7 @@ export class TaskService {
         ...(childEntry.workspace.taskThinkingLevel != null
           ? { thinkingLevel: childEntry.workspace.taskThinkingLevel }
           : {}),
-        ...(report.structuredOutput !== undefined
-          ? { structuredOutput: report.structuredOutput }
-          : {}),
+        structuredOutput: report.structuredOutput,
       });
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         parentWorkspaceId,
@@ -13227,9 +13227,7 @@ export class TaskService {
       status: "completed",
       ...(childModelString != null ? { model: childModelString } : {}),
       ...(childThinkingLevel != null ? { thinkingLevel: childThinkingLevel } : {}),
-      ...(report.structuredOutput !== undefined
-        ? { structuredOutput: report.structuredOutput }
-        : {}),
+      structuredOutput: report.structuredOutput,
     });
 
     const workspaceTurnMuxMetadata =
