@@ -23,6 +23,7 @@ import { BrowserTab } from "@/browser/features/RightSidebar/BrowserTab";
 import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import { MemoryTab } from "@/browser/features/RightSidebar/Memory/MemoryTab";
+import { PromptHistoryTab } from "@/browser/features/RightSidebar/PromptHistoryTab";
 import { WorkflowsTab } from "@/browser/features/RightSidebar/Workflows/WorkflowsTab";
 import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -35,6 +36,7 @@ import {
   InstructionsTabLabel,
   MemoryTabLabel,
   OutputTabLabel,
+  PromptHistoryTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
   WorkflowsTabLabel,
@@ -158,6 +160,14 @@ const TAB_RENDERERS = {
           onClear={ctx.goal.onClear}
           onCreate={ctx.goal.onCreate}
         />
+      </ErrorBoundary>
+    ),
+  },
+  history: {
+    Label: PromptHistoryTabLabel,
+    renderPanel: (ctx) => (
+      <ErrorBoundary workspaceInfo="History tab">
+        <PromptHistoryTab workspaceId={ctx.workspaceId} />
       </ErrorBoundary>
     ),
   },

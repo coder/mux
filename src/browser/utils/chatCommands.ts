@@ -1643,6 +1643,7 @@ export interface CommandHandlerContext {
   fileParts?: FilePart[];
   /** Reviews attached to the message (from code review panel) */
   reviews?: ReviewNoteData[];
+  followUpMuxMetadata?: MuxMessageMetadata;
   editMessageId?: string;
   setInput: (value: string) => void;
   setAttachments: (attachments: ChatAttachment[]) => void;
@@ -1789,6 +1790,7 @@ export async function handleCompactCommand(
           text: appendStagedAttachmentNotice(parsed.continueMessage ?? "", stagedAttachments),
           fileParts: context.fileParts,
           reviews: context.reviews,
+          muxMetadata: context.followUpMuxMetadata,
         }
       : undefined;
 

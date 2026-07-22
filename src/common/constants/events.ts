@@ -6,7 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ReviewNoteDataForDisplay } from "@/common/types/message";
+import type { MuxMessageMetadata, ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -21,6 +21,12 @@ export const CUSTOM_EVENTS = {
    * Detail: { text: string, mode?: "replace" | "append", fileParts?: FilePart[], reviews?: ReviewNoteDataForDisplay[] }
    */
   UPDATE_CHAT_INPUT: "mux:updateChatInput",
+
+  /**
+   * Event to scroll the active transcript to a persisted message.
+   * Detail: { workspaceId: string, historyId: string }
+   */
+  NAVIGATE_TO_TRANSCRIPT_MESSAGE: "mux:navigateToTranscriptMessage",
 
   /**
    * Event to clear the active chat composer after an out-of-band command succeeds.
@@ -148,10 +154,16 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.UPDATE_CHAT_INPUT]: {
     text: string;
     mode?: "replace" | "append";
+    /** In replace mode, presence means replace the whole draft, even when empty. */
     fileParts?: FilePart[];
     reviews?: ReviewNoteDataForDisplay[];
     /** When set, only the matching workspace composer may apply this update. */
     workspaceId?: string;
+    muxMetadata?: MuxMessageMetadata;
+  };
+  [CUSTOM_EVENTS.NAVIGATE_TO_TRANSCRIPT_MESSAGE]: {
+    workspaceId: string;
+    historyId: string;
   };
   [CUSTOM_EVENTS.CLEAR_CHAT_COMPOSER]: {
     workspaceId: string;

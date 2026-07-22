@@ -89,6 +89,7 @@ import { useTranscriptDensity } from "@/browser/hooks/useTranscriptDensity";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "../ReviewsBanner/ReviewsBanner";
 import type { ReviewNoteData } from "@/common/types/review";
+import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import {
   useBackgroundBashActions,
@@ -733,6 +734,24 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     },
     [contentRef, disableAutoScroll]
   );
+
+  useEffect(() => {
+    const handler = (
+      event: CustomEvent<CustomEventPayloads[typeof CUSTOM_EVENTS.NAVIGATE_TO_TRANSCRIPT_MESSAGE]>
+    ) => {
+      if (event.detail.workspaceId !== workspaceId) {
+        return;
+      }
+      handleNavigateToMessage(event.detail.historyId);
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.NAVIGATE_TO_TRANSCRIPT_MESSAGE, handler as EventListener);
+    return () =>
+      window.removeEventListener(
+        CUSTOM_EVENTS.NAVIGATE_TO_TRANSCRIPT_MESSAGE,
+        handler as EventListener
+      );
+  }, [handleNavigateToMessage, workspaceId]);
 
   // Precompute per-user navigation objects so MessageRenderer rows receive stable prop
   // references across non-message updates (usage bumps, stats updates, etc.).
