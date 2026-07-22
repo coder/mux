@@ -23,6 +23,7 @@ export const Preview: AppStory = {
   parameters: {
     ...appMeta.parameters,
     pixel: {
+      exclude: true,
       matrix: { themes: ["dark", "light"], viewports: ["phone"] },
     },
   },
