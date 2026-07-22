@@ -16,7 +16,7 @@ export const Preview: AppStory = {
   render: () => <AppWithMocks setup={setupSubagentReportStory} />,
   parameters: {
     ...appMeta.parameters,
-    pixel: { exclude: true, matrix: PIXEL_DUAL_THEME },
+    pixel: { matrix: PIXEL_DUAL_THEME },
   },
   // Pixel captures the complete desktop composition. Production behavior is covered by
   // MessageRenderer.test.tsx because the full App can exceed the Storybook smoke-test budget.

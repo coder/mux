@@ -7,12 +7,6 @@ on:
   pull_request:
     branches: ["**"]
   workflow_dispatch:
-    inputs:
-      auto_review:
-        description: Auto-approve snapshots to establish a branch baseline
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   pixel:
@@ -46,7 +40,7 @@ jobs:
           # head SHA so the Pixel commit status lands on the PR.
           PIXEL_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           # Auto-approve main builds so they become baselines without review.
-          PIXEL_AUTO_REVIEW: ${{ (github.event_name == 'push' || inputs.auto_review == true) && 'true' || 'false' }}
+          PIXEL_AUTO_REVIEW: ${{ github.event_name == 'push' && 'true' || 'false' }}
 
       - name: Notice when Pixel is not configured
         if: env.PIXEL_KEY == ''
