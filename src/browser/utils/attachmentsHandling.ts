@@ -28,8 +28,8 @@ export interface StageAttachmentResult {
 export interface ProcessAttachmentOptions {
   stageAttachment?: (file: File, dataBase64: string) => Promise<StageAttachmentResult>;
   /**
-   * Hold non-provider files in memory as pending-file attachments. Used by creation
-   * composers, which have no workspace to stage into until the first send.
+   * Creation composers have no workspace to stage into until the first send;
+   * hold non-provider files in memory as pending-file attachments instead.
    */
   holdNonProviderFiles?: boolean;
 }

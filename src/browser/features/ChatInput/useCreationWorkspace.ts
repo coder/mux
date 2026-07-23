@@ -53,6 +53,7 @@ import {
   replacePendingFilesWithStaged,
   stagePendingFiles,
 } from "@/browser/features/ChatInput/pendingFileAttachments";
+import { filePartsToChatAttachments } from "@/browser/features/ChatInput/utils";
 import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   estimatePersistedChatAttachmentsChars,
@@ -243,16 +244,16 @@ export type RuntimeAvailabilityState =
   | { status: "failed" }
   | { status: "loaded"; data: RuntimeAvailabilityMap };
 
-// Move a failed creation send's draft into the new workspace's composer so the
-// user can retry from there without creating a duplicate workspace.
+// Persist a failed creation send's draft under the new workspace's keys so the
+// retry happens there instead of creating a duplicate workspace.
 function transferDraftToWorkspace(
   workspaceId: string,
   text: string,
   attachments: ChatAttachment[]
 ): void {
   updatePersistedState(getInputKey(workspaceId), text);
-  // Oversized pending payloads would blow the localStorage quota; drop them (they
-  // were memory-only in the creation composer too) and keep the rest.
+  // Pending files carry base64 bytes; drop them when the draft exceeds the
+  // persistence cap (they were memory-only before the transfer too).
   const persistable =
     estimatePersistedChatAttachmentsChars(attachments) > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS
       ? attachments.filter((attachment) => attachment.kind !== "pending-file")
@@ -425,8 +426,8 @@ export function useCreationWorkspace({
       pendingFiles?: PendingFileChatAttachment[]
     ): Promise<CreationSendResult> => {
       const pendingFilesToStage = pendingFiles ?? [];
-      // File-only sends are valid: the attached-files notice (or provider file
-      // parts) becomes the message content, matching workspace composer behavior.
+      // File-only sends are valid; the attached-files notice or provider file
+      // parts carry the content.
       const hasSendableAttachments = pendingFilesToStage.length > 0 || (fileParts?.length ?? 0) > 0;
       if ((!messageText.trim() && !hasSendableAttachments) || isSending || !api) {
         return { success: false };
@@ -637,9 +638,8 @@ export function useCreationWorkspace({
           updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
         };
 
-        // Stage pending files now that the worktree exists on disk. This must
-        // finish before the first send so the attached-files notice can
-        // reference real staged paths.
+        // Stage pending files now that the worktree exists on disk, before the
+        // first send so the attached-files notice can reference real staged paths.
         const stagingOutcome =
           pendingFilesToStage.length > 0
             ? await stagePendingFiles(api, metadata.id, pendingFilesToStage)
@@ -649,22 +649,11 @@ export function useCreationWorkspace({
         if (stagingFailed) {
           // Fail closed: a partial notice would misrepresent the workspace
           // contents. Transfer the draft (staged results kept, failed files
-          // still pending) into the new workspace's composer before navigation
-          // so the user can retry from there.
-          const providerDraftAttachments: ChatAttachment[] = (fileParts ?? []).map(
-            (part, index) => ({
-              kind: "provider",
-              id: `${Date.now()}-transferred-${index}`,
-              url: part.url,
-              mediaType: part.mediaType,
-              filename: part.filename,
-            })
-          );
+          // still pending) so the user can retry from the workspace composer.
           transferDraftToWorkspace(metadata.id, messageText, [
-            ...providerDraftAttachments,
+            ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
             ...replacePendingFilesWithStaged(pendingFilesToStage, stagingOutcome.staged),
           ]);
-          // Surface the failure as a toast after navigation, like initial-send errors.
           updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), {
             type: "unknown",
             raw: formatPendingFileStagingError(stagingOutcome.failures),

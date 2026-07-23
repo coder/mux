@@ -19,26 +19,12 @@ function pendingFile(id: string, filename: string): PendingFileChatAttachment {
   };
 }
 
-interface StageAttachmentInput {
-  workspaceId: string;
-  filename: string;
-  mediaType?: string | null;
-  sizeBytes: number;
-  dataBase64: string;
-}
+type StagePendingFilesApi = Parameters<typeof stagePendingFiles>[0];
+type StageAttachmentFn = StagePendingFilesApi["workspace"]["stageAttachment"];
+type StageAttachmentInput = Parameters<StageAttachmentFn>[0];
 
-function apiWithStageAttachment(
-  impl: (input: StageAttachmentInput) => Promise<
-    | {
-        success: true;
-        data: { filename: string; mediaType: string; sizeBytes: number; stagedPath: string };
-      }
-    | { success: false; error: string }
-  >
-) {
-  return { workspace: { stageAttachment: impl } } as unknown as Parameters<
-    typeof stagePendingFiles
-  >[0];
+function apiWithStageAttachment(impl: StageAttachmentFn): StagePendingFilesApi {
+  return { workspace: { stageAttachment: impl } };
 }
 
 describe("stagePendingFiles", () => {

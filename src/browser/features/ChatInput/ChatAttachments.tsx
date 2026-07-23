@@ -28,9 +28,8 @@ export interface StagedChatAttachment {
 }
 
 /**
- * A non-provider file held in memory by a creation composer. No workspace exists
- * yet, so the bytes stay in the attachment until the workspace is created and the
- * file can be staged into its filesystem.
+ * Non-provider file held in memory (bytes included) by a creation composer
+ * until a workspace exists to stage it into.
  */
 export interface PendingFileChatAttachment {
   kind: "pending-file";

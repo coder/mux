@@ -928,8 +928,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             return parsedCreationCommand.objective;
           }
           if (input.trim().length === 0 && attachments.length > 0) {
-            // File-only sends have no text to derive a workspace name from; use
-            // the attachment filenames instead.
             const filenames = attachments
               .map((attachment) => attachment.filename)
               .filter((filename): filename is string => typeof filename === "string");
@@ -2065,8 +2063,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 return result.data;
               }
             : undefined,
-        // Creation composers have no workspace yet; hold non-provider files in
-        // memory and stage them right after the workspace is created.
         holdNonProviderFiles: variant === "creation",
       }).finally(() => {
         setProcessingAttachmentCount((count) => Math.max(0, count - 1));
@@ -2607,8 +2603,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
       setSendingCount((c) => c + 1);
 
-      // Stage pending files (drafts transferred from a failed creation send) so
-      // the attached-files notice references real workspace paths.
+      // Pending files only reach workspace composers via transferred creation
+      // drafts; stage them before the notice is built.
       let sendAttachments = attachments;
       const pendingFilesForSend = getPendingFileAttachments(attachments);
       if (pendingFilesForSend.length > 0) {
@@ -2687,8 +2683,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
         }
       }
-      // Save current draft state for restoration on error (with pending chips
-      // already swapped for their staged results).
+      // Save current draft state for restoration on error
       const preSendDraft = { ...getDraft(), attachments: sendAttachments };
       const preSendReviews = draftReviews;
       const editMessageForSend = editingMessageForUi;

@@ -1,10 +1,7 @@
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 
-/**
- * Attachment drafts above this JSON size are not persisted to localStorage
- * (quota is typically 5-10 MB per origin); they stay memory-only.
- */
+/** Attachment drafts above this JSON size stay memory-only (localStorage quota). */
 export const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

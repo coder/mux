@@ -24,9 +24,8 @@ export function getPendingFileAttachments(
 }
 
 /**
- * Stage in-memory pending files into a workspace via the staging IPC.
- * Never throws: per-file errors are collected into `failures` so callers can
- * fail closed while keeping the successfully staged results.
+ * Per-file errors are collected into `failures` so callers can fail closed
+ * while keeping the successfully staged results.
  */
 export async function stagePendingFiles(
   api: { workspace: Pick<APIClient["workspace"], "stageAttachment"> },
@@ -66,7 +65,6 @@ export async function stagePendingFiles(
   return { staged, failures };
 }
 
-/** Swap pending-file attachments for their staged results by id, preserving order. */
 export function replacePendingFilesWithStaged(
   attachments: ChatAttachment[],
   staged: StagedChatAttachment[]

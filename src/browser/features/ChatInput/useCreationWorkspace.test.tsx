@@ -1054,7 +1054,6 @@ describe("useCreationWorkspace", () => {
     expect(result).toEqual({ success: false });
     expect(workspaceApi.sendMessage.mock.calls.length).toBe(0);
 
-    // Draft transferred to the new workspace: text, staged + still-pending files.
     expect(updatePersistedStateCalls).toContainEqual([
       getInputKey(TEST_WORKSPACE_ID),
       "review my files",
@@ -1079,11 +1078,9 @@ describe("useCreationWorkspace", () => {
     expect(errorWrite?.[1]).toMatchObject({ type: "unknown" });
     expect((errorWrite?.[1] as { raw: string }).raw).toContain("bad.bin: disk full");
 
-    // The workspace still exists and is navigated to, but no initial send is pending.
     expect(onWorkspaceCreated.mock.calls.length).toBe(1);
     expect(onWorkspaceCreated.mock.calls[0][1]).toMatchObject({ markPendingInitialSend: false });
 
-    // The creation-scope draft is cleared after the transfer.
     const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
     expect(updatePersistedStateCalls).toContainEqual([getInputKey(pendingScopeId), ""]);
   });

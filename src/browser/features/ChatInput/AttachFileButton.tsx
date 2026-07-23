@@ -1,9 +1,3 @@
-/**
- * Attach file button that opens a native picker.
- * Images and PDFs attach natively; any other file type is saved into the
- * workspace (immediately, or on first send for creation composers).
- */
-
 import React, { useRef } from "react";
 import { Paperclip } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
