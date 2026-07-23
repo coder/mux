@@ -220,6 +220,70 @@ function createFrontendWorkspaceMetadata(
   };
 }
 
+describe("WorkspaceService.stageAttachment", () => {
+  test("waits for workspace init before writing into the workspace", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "stage-attachment-init";
+    // Local runtime resolves the execution path to the project dir itself.
+    const projectPath = path.join(config.rootDir, "project");
+    const workspacePath = projectPath;
+    try {
+      await fsPromises.mkdir(workspacePath, { recursive: true });
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: "stage-attachment-init",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        namedWorkspacePath: workspacePath,
+      });
+
+      let releaseInit: () => void = () => undefined;
+      const initGate = new Promise<void>((resolve) => {
+        releaseInit = resolve;
+      });
+      let barrierReached: () => void = () => undefined;
+      const barrierReachedGate = new Promise<void>((resolve) => {
+        barrierReached = resolve;
+      });
+      const waitForInit = mock(() => {
+        barrierReached();
+        return initGate;
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        initStateManager: {
+          ...mockInitStateManager,
+          waitForInit,
+        } as unknown as InitStateManager,
+      });
+
+      const stagePromise = workspaceService.stageAttachment({
+        workspaceId,
+        filename: "notes.md",
+        mediaType: "text/markdown",
+        sizeBytes: 8,
+        dataBase64: Buffer.from("markdown").toString("base64"),
+      });
+
+      // Staging must block on the init barrier before any workspace write.
+      await barrierReachedGate;
+      expect(waitForInit).toHaveBeenCalledWith(workspaceId);
+      const entriesBeforeInit = await fsPromises.readdir(workspacePath);
+      expect(entriesBeforeInit).toEqual([]);
+
+      releaseInit();
+      const result = await stagePromise;
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error(result.error);
+      await fsPromises.access(path.join(workspacePath, result.data.stagedPath));
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe("WorkspaceService.setActiveTurnThinkingLevel", () => {
   test("returns accepted:false when the workspace has no session", () => {
     const workspaceService = createWorkspaceServiceForTest({ config: {} });

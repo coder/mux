@@ -27,7 +27,23 @@ export interface StagedChatAttachment {
   stagedPath: string;
 }
 
-export type ChatAttachment = ProviderChatAttachment | StagedChatAttachment;
+/**
+ * Non-provider file held in memory (bytes included) by a creation composer
+ * until a workspace exists to stage it into.
+ */
+export interface PendingFileChatAttachment {
+  kind: "pending-file";
+  id: string;
+  mediaType: string;
+  filename: string;
+  sizeBytes: number;
+  dataBase64: string;
+}
+
+export type ChatAttachment =
+  | ProviderChatAttachment
+  | StagedChatAttachment
+  | PendingFileChatAttachment;
 
 interface ChatAttachmentsProps {
   attachments: ChatAttachment[];
@@ -83,7 +99,7 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
         const label =
           attachment.filename ?? (baseMediaType === "application/pdf" ? "PDF" : baseMediaType);
         const detail =
-          attachment.kind === "staged"
+          attachment.kind === "staged" || attachment.kind === "pending-file"
             ? `workspace file • ${formatBytes(attachment.sizeBytes)}`
             : null;
 

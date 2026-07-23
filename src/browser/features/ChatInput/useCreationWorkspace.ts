@@ -30,6 +30,7 @@ import {
   getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
   getDraftScopeId,
+  getPendingDraftSkillDiscoveryKey,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
   GLOBAL_SCOPE_ID,
@@ -44,6 +45,26 @@ import { ConfirmationModal } from "@/browser/components/ConfirmationModal/Confir
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
+import type {
+  ChatAttachment,
+  PendingFileChatAttachment,
+} from "@/browser/features/ChatInput/ChatAttachments";
+import {
+  formatPendingFileStagingError,
+  replacePendingFilesWithStaged,
+  stagePendingFiles,
+} from "@/browser/features/ChatInput/pendingFileAttachments";
+import { filePartsToChatAttachments } from "@/browser/features/ChatInput/utils";
+import {
+  lockInitialStaging,
+  unlockInitialStaging,
+} from "@/browser/features/ChatInput/initialStagingLock";
+import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
+import {
+  estimatePersistedChatAttachmentsChars,
+  MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS,
+} from "@/browser/features/ChatInput/draftAttachmentsStorage";
+import type { MuxMessageMetadata } from "@/common/types/message";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { processSlashCommand, type SlashCommandContext } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -206,7 +227,8 @@ interface UseCreationWorkspaceReturn {
     message: string,
     fileParts?: FilePart[],
     optionsOverride?: Partial<SendMessageOptions>,
-    initialSlashCommand?: CreationInitialSlashCommand
+    initialSlashCommand?: CreationInitialSlashCommand,
+    pendingFiles?: PendingFileChatAttachment[]
   ) => Promise<CreationSendResult>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
@@ -227,6 +249,40 @@ export type RuntimeAvailabilityState =
   | { status: "loading" }
   | { status: "failed" }
   | { status: "loaded"; data: RuntimeAvailabilityMap };
+
+// Persist a failed creation send's draft under the new workspace's keys so the
+// retry happens there instead of creating a duplicate workspace.
+function transferDraftToWorkspace(
+  workspaceId: string,
+  text: string,
+  attachments: ChatAttachment[],
+  forceProjectSkillDiscovery: boolean
+): void {
+  if (forceProjectSkillDiscovery) {
+    // The original send resolved its slash skill against the project path;
+    // carry that choice so the retry cannot resolve a different skill from
+    // the new worktree.
+    updatePersistedState(getPendingDraftSkillDiscoveryKey(workspaceId), true);
+  }
+  updatePersistedState(getInputKey(workspaceId), text);
+  // Base64-bearing attachments can exceed the persistence cap. Drop the
+  // largest ones first so small retryable chips (e.g. a pending file whose
+  // staging failed) survive the transfer.
+  let persistable = attachments;
+  while (
+    persistable.length > 0 &&
+    estimatePersistedChatAttachmentsChars(persistable) > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS
+  ) {
+    const largest = persistable.reduce((a, b) =>
+      JSON.stringify(b).length > JSON.stringify(a).length ? b : a
+    );
+    persistable = persistable.filter((attachment) => attachment !== largest);
+  }
+  updatePersistedState(
+    getInputAttachmentsKey(workspaceId),
+    persistable.length > 0 ? persistable : undefined
+  );
+}
 
 /**
  * Hook for managing workspace creation state and logic
@@ -386,9 +442,14 @@ export function useCreationWorkspace({
       messageText: string,
       fileParts?: FilePart[],
       optionsOverride?: Partial<SendMessageOptions>,
-      initialSlashCommand?: CreationInitialSlashCommand
+      initialSlashCommand?: CreationInitialSlashCommand,
+      pendingFiles?: PendingFileChatAttachment[]
     ): Promise<CreationSendResult> => {
-      if (!messageText.trim() || isSending || !api) {
+      const pendingFilesToStage = pendingFiles ?? [];
+      // File-only sends are valid; the attached-files notice or provider file
+      // parts carry the content.
+      const hasSendableAttachments = pendingFilesToStage.length > 0 || (fileParts?.length ?? 0) > 0;
+      if ((!messageText.trim() && !hasSendableAttachments) || isSending || !api) {
         return { success: false };
       }
 
@@ -611,6 +672,14 @@ export function useCreationWorkspace({
             return latestRoute.pendingDraftId === draftId;
           })();
 
+        // Navigate before staging: stageAttachment waits for runtime init, which
+        // can take minutes on deferred runtimes (Coder/SSH/devcontainer). The
+        // optimistic pending-send state is cleared below if staging fails.
+        // Lock the mounted composer for that window so a user send cannot
+        // leapfrog the initial message; the finally below unlocks on all paths.
+        if (pendingFilesToStage.length > 0) {
+          lockInitialStaging(metadata.id);
+        }
         onWorkspaceCreated(metadata, {
           autoNavigate: shouldAutoNavigate,
           pendingStreamModel: shouldAutoNavigate ? baseModel : null,
@@ -625,6 +694,50 @@ export function useCreationWorkspace({
         // Persistently clear the draft as soon as the workspace exists so a refresh
         // during the initial send can't resurrect the draft entry in the sidebar.
         clearPendingDraft();
+
+        // Stage pending files now that the worktree exists on disk, before the
+        // first send so the attached-files notice can reference real staged paths.
+        const stagingOutcome =
+          pendingFilesToStage.length > 0
+            ? await stagePendingFiles(api, metadata.id, pendingFilesToStage)
+            : { staged: [], failures: [] };
+        const stagingFailed = stagingOutcome.failures.length > 0;
+
+        // SendMessageOptions.muxMetadata is a black box (z.any); the creation
+        // caller only ever passes MuxMessageMetadata built in ChatInput.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        const overrideMuxMetadata: MuxMessageMetadata | undefined = optionsOverride?.muxMetadata;
+        const overrideRawCommand =
+          overrideMuxMetadata &&
+          "rawCommand" in overrideMuxMetadata &&
+          typeof overrideMuxMetadata.rawCommand === "string"
+            ? overrideMuxMetadata.rawCommand
+            : null;
+
+        if (stagingFailed) {
+          workspaceStore.clearPendingInitialSendState(metadata.id);
+          // Fail closed: a partial notice would misrepresent the workspace
+          // contents. Transfer the draft (staged results kept, failed files
+          // still pending) so the user can retry from the workspace composer.
+          // For slash-skill sends messageText is the rewritten skill text;
+          // restore the original typed command from rawCommand so the retry
+          // re-invokes the skill.
+          transferDraftToWorkspace(
+            metadata.id,
+            overrideRawCommand ?? messageText,
+            [
+              ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
+              ...replacePendingFilesWithStaged(pendingFilesToStage, stagingOutcome.staged),
+            ],
+            optionsOverride?.disableWorkspaceAgents === true
+          );
+          updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), {
+            type: "unknown",
+            raw: formatPendingFileStagingError(stagingOutcome.failures),
+          } satisfies SendMessageError);
+          setIsSending(false);
+          return { success: false };
+        }
 
         if (initialSlashCommand) {
           await initialAiSettingsPersisted;
@@ -677,22 +790,56 @@ export function useCreationWorkspace({
           .filter((part) => typeof part === "string" && part.trim().length > 0)
           .join("\n\n");
 
-        const sendResult = await api.workspace.sendMessage({
-          workspaceId: metadata.id,
-          message: messageText,
-          options: {
-            ...sendMessageOptions,
-            ...optionsOverride,
-            additionalSystemInstructions: additionalSystemInstructions.length
-              ? additionalSystemInstructions
-              : undefined,
-            fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
-          },
-        });
+        // Skill metadata was built before staging, so its rawCommand (preferred
+        // over message text for transcript display) lacks the notice; patch it
+        // so the displayed message keeps the staged attachment chips.
+        const muxMetadataWithNotice =
+          stagingOutcome.staged.length > 0 && overrideMuxMetadata && overrideRawCommand !== null
+            ? {
+                ...overrideMuxMetadata,
+                rawCommand: appendStagedAttachmentNotice(overrideRawCommand, stagingOutcome.staged),
+              }
+            : overrideMuxMetadata;
+
+        // A transport-level rejection (e.g. oRPC disconnect) must flow through
+        // the same failure branch as success:false: the outer catch would skip
+        // the staged-draft transfer and the creation draft is already cleared.
+        const sendResult = await api.workspace
+          .sendMessage({
+            workspaceId: metadata.id,
+            message: appendStagedAttachmentNotice(messageText, stagingOutcome.staged),
+            options: {
+              ...sendMessageOptions,
+              ...optionsOverride,
+              ...(muxMetadataWithNotice ? { muxMetadata: muxMetadataWithNotice } : {}),
+              additionalSystemInstructions: additionalSystemInstructions.length
+                ? additionalSystemInstructions
+                : undefined,
+              fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
+            },
+          })
+          .catch((sendErr: unknown): { success: false; error: SendMessageError } => ({
+            success: false,
+            error: { type: "unknown", raw: getErrorMessage(sendErr) },
+          }));
 
         if (!sendResult.success) {
           if (createdWorkspaceId) {
             workspaceStore.clearPendingInitialSendState(createdWorkspaceId);
+          }
+          if (stagingOutcome.staged.length > 0) {
+            // The creation draft was already cleared; without a transferred
+            // draft the staged files would sit in the workspace with no
+            // chips/notice to retry the send with.
+            transferDraftToWorkspace(
+              metadata.id,
+              overrideRawCommand ?? messageText,
+              [
+                ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
+                ...stagingOutcome.staged,
+              ],
+              optionsOverride?.disableWorkspaceAgents === true
+            );
           }
           if (sendResult.error) {
             // Persist the failure so the workspace view can surface a toast after navigation.
@@ -714,6 +861,10 @@ export function useCreationWorkspace({
         });
         setIsSending(false);
         return { success: false };
+      } finally {
+        if (createdWorkspaceId) {
+          unlockInitialStaging(createdWorkspaceId);
+        }
       }
     },
     [

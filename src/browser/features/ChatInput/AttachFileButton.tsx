@@ -1,21 +1,11 @@
-/**
- * Attach file button that opens a native picker.
- * Images and PDFs attach natively. When staging is available (open workspace),
- * any other file type is accepted and saved into the workspace.
- */
-
 import React, { useRef } from "react";
 import { Paperclip } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
-/** Picker filter for composers without workspace staging (creation/scratch). */
-const PROVIDER_FILE_ACCEPT = "image/*,.svg,.pdf";
-
 interface AttachFileButtonProps {
   onFiles: (files: File[]) => void;
   disabled?: boolean;
-  canStageFiles: boolean;
 }
 
 export const AttachFileButton: React.FC<AttachFileButtonProps> = (props) => {
@@ -55,23 +45,14 @@ export const AttachFileButton: React.FC<AttachFileButtonProps> = (props) => {
           </button>
         </TooltipTrigger>
         <TooltipContent>
-          {props.canStageFiles ? (
-            <>
-              <strong>Attach any file</strong>. Images and PDFs attach directly. Other files are
-              saved to the workspace.
-            </>
-          ) : (
-            <>
-              <strong>Attach file</strong>: images, SVGs, PDFs
-            </>
-          )}
+          <strong>Attach any file</strong>. Images and PDFs attach directly. Other files are saved
+          to the workspace.
         </TooltipContent>
       </Tooltip>
       {/* Kept outside Tooltip to avoid stray DOM children. */}
       <input
         ref={inputRef}
         type="file"
-        accept={props.canStageFiles ? undefined : PROVIDER_FILE_ACCEPT}
         multiple
         className="hidden"
         onChange={handleChange}

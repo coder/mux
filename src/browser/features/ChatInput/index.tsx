@@ -6,7 +6,12 @@ import React, {
   useId,
   useMemo,
   useLayoutEffect,
+  useSyncExternalStore,
 } from "react";
+import {
+  isInitialStagingLocked,
+  subscribeInitialStagingLock,
+} from "@/browser/features/ChatInput/initialStagingLock";
 import {
   CommandSuggestions,
   COMMAND_SUGGESTION_KEYS,
@@ -24,6 +29,7 @@ import {
   readPersistedState,
   usePersistedState,
   updatePersistedState,
+  subscribePersistedStateWrites,
 } from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -63,6 +69,7 @@ import {
   getProjectScopeId,
   getPendingScopeId,
   getDraftScopeId,
+  getPendingDraftSkillDiscoveryKey,
   getPendingWorkspaceSendErrorKey,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
@@ -189,8 +196,15 @@ import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import {
   estimatePersistedChatAttachmentsChars,
+  MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS,
   readPersistedChatAttachments,
 } from "./draftAttachmentsStorage";
+import {
+  formatPendingFileStagingError,
+  getPendingFileAttachments,
+  replacePendingFilesWithStaged,
+  stagePendingFiles,
+} from "./pendingFileAttachments";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
 import {
@@ -239,7 +253,6 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
 }
-const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
 // Shared so the three "blocked while editing a message" attachment guards surface identical copy
 // and can't drift if one is reworded.
@@ -302,8 +315,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const workspaceGoal = workspaceSidebarState?.goal ?? null;
 
+  // Lock the composer while a creation-flow staging + initial send is still in
+  // flight for this workspace (deferred runtimes can hold it for minutes), so a
+  // user send cannot leapfrog the initial message and a failure transfer cannot
+  // overwrite a freshly typed draft.
+  const initialStagingLocked = useSyncExternalStore(subscribeInitialStagingLock, () =>
+    variant === "workspace" ? isInitialStagingLocked(props.workspaceId) : false
+  );
+
   // Extract workspace-specific props with defaults
-  const disabled = props.disabled ?? false;
+  const disabled = (props.disabled ?? false) || initialStagingLocked;
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const [pendingBoundaryEditConfirmation, setPendingBoundaryEditConfirmation] =
     useState<SendOverrides | null>(null);
@@ -426,6 +447,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     },
     [setToast]
   );
+  // A draft transferred from a failed creation send may have resolved its
+  // slash skill against the project path; honor that choice on the retry.
+  // listener: true keeps this in sync when the transfer lands after mount and
+  // when a successful send clears the key, so the skill descriptor list below
+  // reloads under the matching discovery target.
+  const [transferredDraftProjectDiscovery] = usePersistedState<boolean>(
+    variant === "workspace" && workspaceId
+      ? getPendingDraftSkillDiscoveryKey(workspaceId)
+      : "__unused__",
+    false,
+    { listener: true }
+  );
+
   // Subscribe to pending send errors from creation flow. Uses listener: true so
   // late failures (e.g., slow devcontainer startup) still surface a toast.
   const pendingErrorKey =
@@ -453,36 +487,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [processingAttachmentCount, setProcessingAttachmentCount] = useState(0);
   // Reviews restored from edits/queued drafts override attached review state while active.
   const [draftReviews, setDraftReviews] = useState<ReviewNoteDataForDisplay[] | null>(null);
+  // Distinguishes this component's own persisted writes from external ones
+  // (e.g. a creation-flow draft transfer landing after this composer mounted).
+  const selfAttachmentWriteRef = useRef(false);
   const persistAttachments = useCallback(
     (nextAttachments: ChatAttachment[]) => {
-      if (nextAttachments.length === 0) {
-        attachmentDraftTooLargeToastKeyRef.current = null;
-        updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
-        return;
-      }
-
-      const estimatedChars = estimatePersistedChatAttachmentsChars(nextAttachments);
-      if (estimatedChars > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS) {
-        // Clear persisted value to avoid restoring stale attachments on restart.
-        updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
-
-        if (attachmentDraftTooLargeToastKeyRef.current !== storageKeys.attachmentsKey) {
-          attachmentDraftTooLargeToastKeyRef.current = storageKeys.attachmentsKey;
-          pushToast({
-            type: "error",
-            message:
-              "This draft attachment is too large to save. It will be lost when you switch workspaces or restart.",
-            duration: 5000,
-          });
+      selfAttachmentWriteRef.current = true;
+      try {
+        if (nextAttachments.length === 0) {
+          attachmentDraftTooLargeToastKeyRef.current = null;
+          updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
+          return;
         }
-        return;
-      }
 
-      attachmentDraftTooLargeToastKeyRef.current = null;
-      updatePersistedState<ChatAttachment[] | undefined>(
-        storageKeys.attachmentsKey,
-        nextAttachments
-      );
+        const estimatedChars = estimatePersistedChatAttachmentsChars(nextAttachments);
+        if (estimatedChars > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS) {
+          // Clear persisted value to avoid restoring stale attachments on restart.
+          updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
+
+          if (attachmentDraftTooLargeToastKeyRef.current !== storageKeys.attachmentsKey) {
+            attachmentDraftTooLargeToastKeyRef.current = storageKeys.attachmentsKey;
+            pushToast({
+              type: "error",
+              message:
+                "This draft attachment is too large to save. It will be lost when you switch workspaces or restart.",
+              duration: 5000,
+            });
+          }
+          return;
+        }
+
+        attachmentDraftTooLargeToastKeyRef.current = null;
+        updatePersistedState<ChatAttachment[] | undefined>(
+          storageKeys.attachmentsKey,
+          nextAttachments
+        );
+      } finally {
+        selfAttachmentWriteRef.current = false;
+      }
     },
     [storageKeys.attachmentsKey, pushToast]
   );
@@ -491,6 +533,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     attachmentDraftTooLargeToastKeyRef.current = null;
     setAttachmentsState(readPersistedChatAttachments(storageKeys.attachmentsKey));
+  }, [storageKeys.attachmentsKey]);
+
+  // Attachments live in local state (a too-large draft stays in memory after
+  // its persisted copy is cleared), so external writes to the draft key, such
+  // as a creation-flow transfer that lands after this composer mounted, must
+  // be synced in explicitly. Self-writes are skipped to keep that in-memory
+  // exception intact.
+  useEffect(() => {
+    return subscribePersistedStateWrites((event) => {
+      if (event.key !== storageKeys.attachmentsKey || selfAttachmentWriteRef.current) {
+        return;
+      }
+      setAttachmentsState(readPersistedChatAttachments(storageKeys.attachmentsKey));
+    });
   }, [storageKeys.attachmentsKey]);
   const setAttachments = useCallback(
     (value: ChatAttachment[] | ((prev: ChatAttachment[]) => ChatAttachment[])) => {
@@ -918,9 +974,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "creation"
       ? (() => {
           const parsedCreationCommand = parseCommand(input.trim());
-          return parsedCreationCommand?.type === "goal-set"
-            ? parsedCreationCommand.objective
-            : input;
+          if (parsedCreationCommand?.type === "goal-set") {
+            return parsedCreationCommand.objective;
+          }
+          if (input.trim().length === 0 && attachments.length > 0) {
+            const filenames = attachments
+              .map((attachment) => attachment.filename)
+              .filter((filename): filename is string => typeof filename === "string");
+            return filenames.length > 0 ? `Attached files: ${filenames.join(", ")}` : "";
+          }
+          return input;
         })()
       : "";
   const creationState = useCreationWorkspace(
@@ -1659,7 +1722,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         variant === "workspace" && workspaceId
           ? {
               workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+              disableWorkspaceAgents:
+                sendMessageOptions.disableWorkspaceAgents === true ||
+                transferredDraftProjectDiscovery,
             }
           : variant === "creation" && atMentionProjectPath
             ? { projectPath: atMentionProjectPath }
@@ -1694,7 +1759,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       isMounted = false;
     };
-  }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
+  }, [
+    api,
+    variant,
+    workspaceId,
+    atMentionProjectPath,
+    sendMessageOptions.disableWorkspaceAgents,
+    transferredDraftProjectDiscovery,
+  ]);
 
   // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {
@@ -2050,6 +2122,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 return result.data;
               }
             : undefined,
+        holdNonProviderFiles: variant === "creation",
       }).finally(() => {
         setProcessingAttachmentCount((count) => Math.max(0, count - 1));
       });
@@ -2172,7 +2245,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return true;
     }
 
-    if (getStagedAttachments(attachments).length > 0 && parsed.type !== "compact") {
+    // Pending files block every command (even /compact) because command sends
+    // never stage them, so they'd be silently dropped.
+    if (
+      getPendingFileAttachments(attachments).length > 0 ||
+      (getStagedAttachments(attachments).length > 0 && parsed.type !== "compact")
+    ) {
       setToast({
         id: Date.now().toString(),
         type: "error",
@@ -2429,7 +2507,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ? {
               kind: "workspace",
               workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+              disableWorkspaceAgents:
+                sendMessageOptions.disableWorkspaceAgents === true ||
+                transferredDraftProjectDiscovery,
             }
           : null;
     const { parsed, skillInvocation } = await parseCommandWithSkillInvocation({
@@ -2448,8 +2528,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      const initialSlashCommand = parsed?.type === "goal-set" ? parsed : undefined;
-      if (!initialSlashCommand && parsed?.type !== "workflow-run") {
+      // The initial /goal path sets a goal without sending a user message, so
+      // attachments would be silently dropped. With attachments present, skip
+      // command processing and send the raw text as a normal message instead.
+      const goalCommandBypassedForAttachments =
+        parsed?.type === "goal-set" && attachments.length > 0;
+      const initialSlashCommand =
+        parsed?.type === "goal-set" && !goalCommandBypassedForAttachments ? parsed : undefined;
+      if (
+        !initialSlashCommand &&
+        !goalCommandBypassedForAttachments &&
+        parsed?.type !== "workflow-run"
+      ) {
         const commandHandled = await executeParsedCommand(parsed, input);
         if (commandHandled) {
           return;
@@ -2504,11 +2594,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Creation variant: simple message send + workspace creation
       const creationFileParts = chatAttachmentsToFileParts(attachments);
+      const creationPendingFiles = getPendingFileAttachments(attachments);
       const creationResult = await creationState.handleSend(
         creationMessageTextForSend,
         creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride,
-        initialSlashCommand
+        initialSlashCommand,
+        creationPendingFiles.length > 0 ? creationPendingFiles : undefined
       );
 
       if (creationResult.success) {
@@ -2545,12 +2637,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
-      const commandHandled = modelOneShot
-        ? false
-        : await executeParsedCommand(parsed, input, {
-            goalInterventionPolicy: overrides?.goalInterventionPolicy,
-            queueDispatchMode: overrides?.queueDispatchMode,
-          });
+      // Mirror the creation-composer /goal bypass: with attachments present,
+      // send the raw text as a normal message instead of processing the
+      // command, which would drop the files. Transferred staging-failure
+      // drafts (raw /goal text + staged/pending chips) retry through here.
+      const goalCommandBypassedForAttachments =
+        parsed?.type === "goal-set" && attachments.length > 0;
+      const commandHandled =
+        modelOneShot || goalCommandBypassedForAttachments
+          ? false
+          : await executeParsedCommand(parsed, input, {
+              goalInterventionPolicy: overrides?.goalInterventionPolicy,
+              queueDispatchMode: overrides?.queueDispatchMode,
+            });
       if (commandHandled) {
         return;
       }
@@ -2565,19 +2664,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend = modelOneShot?.message ?? skillInvocation?.userText ?? messageText;
-      const skillMuxMetadata = skillInvocation
-        ? buildSkillInvocationMetadata(
-            appendStagedAttachmentNotice(messageText, attachments),
-            skillInvocation.descriptor,
-            skillInvocation.argumentText
-          )
-        : undefined;
 
       if (!api) {
         pushToast({ type: "error", message: "Not connected to server" });
         return;
       }
       setSendingCount((c) => c + 1);
+
+      // Pending files only reach workspace composers via transferred creation
+      // drafts; stage them before the notice is built.
+      let sendAttachments = attachments;
+      const pendingFilesForSend = getPendingFileAttachments(attachments);
+      if (pendingFilesForSend.length > 0) {
+        const stagingOutcome = await stagePendingFiles(api, props.workspaceId, pendingFilesForSend);
+        if (stagingOutcome.staged.length > 0) {
+          sendAttachments = replacePendingFilesWithStaged(attachments, stagingOutcome.staged);
+          // Swap staged chips into the composer so a later failure or retry
+          // can't re-stage duplicate copies.
+          setAttachments(sendAttachments);
+        }
+        if (stagingOutcome.failures.length > 0) {
+          setToast(
+            createErrorToast({
+              type: "unknown",
+              raw: formatPendingFileStagingError(stagingOutcome.failures),
+            })
+          );
+          setSendingCount((c) => c - 1);
+          return;
+        }
+      }
+
+      const skillMuxMetadata = skillInvocation
+        ? buildSkillInvocationMetadata(
+            appendStagedAttachmentNotice(messageText, sendAttachments),
+            skillInvocation.descriptor,
+            skillInvocation.argumentText
+          )
+        : undefined;
 
       const policyModel = modelOverride ?? baseModel;
 
@@ -2628,13 +2752,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       }
       // Save current draft state for restoration on error
-      const preSendDraft = getDraft();
+      const preSendDraft = { ...getDraft(), attachments: sendAttachments };
       const preSendReviews = draftReviews;
       const editMessageForSend = editingMessageForUi;
 
       try {
         // Prepare file parts if any
-        const fileParts = chatAttachmentsToFileParts(attachments, { validate: true });
+        const fileParts = chatAttachmentsToFileParts(sendAttachments, { validate: true });
         const sendFileParts = editMessageForSend
           ? fileParts
           : fileParts.length > 0
@@ -2670,9 +2794,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 parsed.continueMessage ||
                 sendFileParts?.length ||
                 reviewsData?.length ||
-                getStagedAttachments(attachments).length
+                getStagedAttachments(sendAttachments).length
                   ? {
-                      text: appendStagedAttachmentNotice(parsed.continueMessage ?? "", attachments),
+                      text: appendStagedAttachmentNotice(
+                        parsed.continueMessage ?? "",
+                        sendAttachments
+                      ),
                       fileParts: sendFileParts,
                       reviews: reviewsData,
                     }
@@ -2688,7 +2815,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
 
         const userMessageText = appendStagedNoticeToUserMessage
-          ? appendStagedAttachmentNotice(actualMessageText, attachments)
+          ? appendStagedAttachmentNotice(actualMessageText, sendAttachments)
           : actualMessageText;
         const { finalText: finalMessageText, metadata: reviewMetadata } = prepareUserMessageForSend(
           { text: userMessageText, reviews: reviewsData },
@@ -2712,7 +2839,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               .trimEnd()
           : undefined;
         const oneshotRawCommand = oneshotCommandPrefix
-          ? appendStagedAttachmentNotice(messageText.trim(), attachments)
+          ? appendStagedAttachmentNotice(messageText.trim(), sendAttachments)
           : undefined;
         muxMetadata = muxMetadata
           ? {
@@ -2761,6 +2888,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
+          // Match the original creation send: project-scoped skill refs must
+          // resolve from the project path, not the new worktree.
+          ...(transferredDraftProjectDiscovery && hasProjectScopedSkillRef(combinedSkillRefs)
+            ? { disableWorkspaceAgents: true }
+            : {}),
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
@@ -2821,6 +2953,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // just interacted with the workspace (their own message bumps recencyTimestamp,
           // but since they initiated it, they've "read" the workspace).
           updatePersistedState(getWorkspaceLastReadKey(props.workspaceId), Date.now());
+
+          if (transferredDraftProjectDiscovery) {
+            // The transferred creation draft has been sent; later sends use
+            // normal workspace skill discovery again.
+            updatePersistedState(getPendingDraftSkillDiscoveryKey(props.workspaceId), undefined);
+          }
 
           // Mark attached reviews as completed (checked)
           if (sentReviewIds.length > 0) {
@@ -3030,6 +3168,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return `Edit your message... (${cancelHint}, ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send)`;
     }
     if (disabled) {
+      if (initialStagingLocked) {
+        return "Staging attached files...";
+      }
       const disabledReason = props.disabledReason;
       if (typeof disabledReason === "string" && disabledReason.trim().length > 0) {
         return disabledReason;
@@ -3365,7 +3506,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   <AttachFileButton
                     onFiles={handleAttachFiles}
                     disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
-                    canStageFiles={variant === "workspace"}
                   />
                   <VoiceInputButton
                     state={voiceInput.state}

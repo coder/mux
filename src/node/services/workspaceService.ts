@@ -8090,6 +8090,11 @@ export class WorkspaceService extends EventEmitter {
       return Err("Workspace not found");
     }
 
+    // Deferred runtimes (Coder/SSH/devcontainer) return from create before
+    // provisioning finishes; wait like executeBash so staging right after
+    // creation does not write into a not-yet-ready workspace.
+    await this.initStateManager.waitForInit(input.workspaceId);
+
     const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
     return stageWorkspaceAttachment({
       runtime,
