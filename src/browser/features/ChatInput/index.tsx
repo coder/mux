@@ -447,6 +447,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     },
     [setToast]
   );
+  // A draft transferred from a failed creation send may have resolved its
+  // slash skill against the project path; honor that choice on the retry.
+  // listener: true keeps this in sync when the transfer lands after mount and
+  // when a successful send clears the key, so the skill descriptor list below
+  // reloads under the matching discovery target.
+  const [transferredDraftProjectDiscovery] = usePersistedState<boolean>(
+    variant === "workspace" && workspaceId
+      ? getPendingDraftSkillDiscoveryKey(workspaceId)
+      : "__unused__",
+    false,
+    { listener: true }
+  );
+
   // Subscribe to pending send errors from creation flow. Uses listener: true so
   // late failures (e.g., slow devcontainer startup) still surface a toast.
   const pendingErrorKey =
@@ -1709,7 +1722,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         variant === "workspace" && workspaceId
           ? {
               workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+              disableWorkspaceAgents:
+                sendMessageOptions.disableWorkspaceAgents === true ||
+                transferredDraftProjectDiscovery,
             }
           : variant === "creation" && atMentionProjectPath
             ? { projectPath: atMentionProjectPath }
@@ -1744,7 +1759,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       isMounted = false;
     };
-  }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
+  }, [
+    api,
+    variant,
+    workspaceId,
+    atMentionProjectPath,
+    sendMessageOptions.disableWorkspaceAgents,
+    transferredDraftProjectDiscovery,
+  ]);
 
   // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {
@@ -2476,12 +2498,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     closeSendModeMenu();
 
     const messageText = input.trim();
-    // A draft transferred from a failed creation send may have resolved its
-    // slash skill against the project path; honor that choice on the retry.
-    const transferredDraftProjectDiscovery =
-      variant === "workspace" && workspaceId
-        ? readPersistedState<boolean>(getPendingDraftSkillDiscoveryKey(workspaceId), false)
-        : false;
     const skillDiscovery: SkillResolutionTarget | null =
       variant === "creation"
         ? atMentionProjectPath
