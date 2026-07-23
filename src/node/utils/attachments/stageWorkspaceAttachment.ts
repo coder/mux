@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import {
   MAX_STAGED_ATTACHMENT_SIZE_BYTES,
   STAGED_ATTACHMENT_DIR,
-  ZIP_MEDIA_TYPE,
 } from "@/common/constants/stagedAttachments";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
@@ -43,15 +42,12 @@ export async function stageWorkspaceAttachment(input: {
       mediaType: input.mediaType,
       filename: input.filename,
     });
-    if (mediaType == null) {
-      return Err("Only .zip attachments can be staged.");
-    }
     if (!Number.isInteger(input.sizeBytes) || input.sizeBytes < 0) {
       return Err("Attachment size is invalid.");
     }
     if (input.sizeBytes > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
       return Err(
-        `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`
+        `Attachments larger than ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes cannot be staged.`
       );
     }
 
@@ -61,11 +57,11 @@ export async function stageWorkspaceAttachment(input: {
     }
     if (bytes.byteLength > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
       return Err(
-        `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`
+        `Attachments larger than ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes cannot be staged.`
       );
     }
 
-    const filename = sanitizeZipFilename(input.filename);
+    const filename = sanitizeStagedFilename(input.filename);
     const excludeResult = await ensureGitInfoExclude({
       runtime: input.runtime,
       workspacePath: input.workspacePath,
@@ -80,7 +76,7 @@ export async function stageWorkspaceAttachment(input: {
     await input.runtime.ensureDir(`${input.workspacePath}/${stagedDir}`);
     await writeBytes(input.runtime, `${input.workspacePath}/${stagedPath}`, bytes);
 
-    return Ok({ filename, mediaType: ZIP_MEDIA_TYPE, sizeBytes: bytes.byteLength, stagedPath });
+    return Ok({ filename, mediaType, sizeBytes: bytes.byteLength, stagedPath });
   } catch (error) {
     return Err(getErrorMessage(error));
   }
@@ -103,13 +99,14 @@ export async function readStagedWorkspaceAttachment(input: {
     );
     if (bytes.byteLength > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
       return Err(
-        `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`
+        `Attachments larger than ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes cannot be staged.`
       );
     }
 
+    const filename = stagedPath.split("/").pop() ?? "attachment";
     return Ok({
-      filename: stagedPath.split("/").pop() ?? "attachment.zip",
-      mediaType: ZIP_MEDIA_TYPE,
+      filename,
+      mediaType: getSupportedStagedAttachmentMediaType({ filename }),
       sizeBytes: bytes.byteLength,
       dataBase64: bytes.toString("base64"),
     });
@@ -165,7 +162,7 @@ export async function copyStagedWorkspaceAttachments(input: {
       }
       if (bytes.byteLength > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
         return Err(
-          `ZIP attachments must be ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes or less.`
+          `Attachments larger than ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes cannot be staged.`
         );
       }
       await input.targetRuntime.ensureDir(
@@ -182,7 +179,7 @@ export async function copyStagedWorkspaceAttachments(input: {
 
 export function extractStagedAttachmentPathsFromText(text: string): string[] {
   const paths = new Set<string>();
-  const pattern = /`(?<path>\.mux\/user-attachments\/[^`]+?\.zip)`/giu;
+  const pattern = /`(?<path>\.mux\/user-attachments\/[^`]+)`/gu;
   for (const match of text.matchAll(pattern)) {
     const stagedPath = match.groups?.path ? normalizeReadableStagedPath(match.groups.path) : null;
     if (stagedPath != null) {
@@ -192,7 +189,7 @@ export function extractStagedAttachmentPathsFromText(text: string): string[] {
   return [...paths];
 }
 
-export function sanitizeZipFilename(filename: string): string {
+export function sanitizeStagedFilename(filename: string): string {
   const rawBase = filename.split(/[\\/]/u).pop()?.trim() ?? "";
   const withoutControls = Array.from(rawBase)
     .filter((char) => {
@@ -201,27 +198,34 @@ export function sanitizeZipFilename(filename: string): string {
     })
     .join("");
   const safeChars = withoutControls.replace(/[^A-Za-z0-9._ -]/gu, "-").replace(/^\.+/u, "");
-  const withExtension = safeChars.toLowerCase().endsWith(".zip") ? safeChars : `${safeChars}.zip`;
-  const fallback =
-    withExtension === ".zip" || withExtension.trim().length === 0
-      ? "attachment.zip"
-      : withExtension;
+  const fallback = safeChars.trim().length === 0 ? "attachment" : safeChars;
   if (fallback.length <= 120) {
     return fallback;
   }
-  const stem = fallback.slice(0, 116).replace(/\.+$/u, "") || "attachment";
-  return `${stem}.zip`;
+
+  const extensionIndex = fallback.lastIndexOf(".");
+  const extension = extensionIndex > 0 ? fallback.slice(extensionIndex) : "";
+  if (extension.length === 0 || extension.length >= 120) {
+    return fallback.slice(0, 120).replace(/\.+$/u, "") || "attachment";
+  }
+  const stem = fallback
+    .slice(0, extensionIndex)
+    .slice(0, 120 - extension.length)
+    .replace(/\.+$/u, "");
+  return `${stem || "attachment"}${extension}`.slice(0, 120);
 }
 
 function normalizeReadableStagedPath(stagedPath: string): string | null {
-  const normalized = stagedPath.replace(/\\/gu, "/").replace(/^\/+/, "");
+  const normalized = stagedPath.replace(/\\/gu, "/");
+  const segments = normalized.split("/");
   if (
     normalized.length === 0 ||
+    normalized.startsWith("/") ||
     normalized.includes("\0") ||
     normalized.includes("//") ||
-    normalized.split("/").includes("..") ||
+    segments.includes("..") ||
     !normalized.startsWith(`${STAGED_ATTACHMENT_DIR}/`) ||
-    !normalized.toLowerCase().endsWith(".zip")
+    (segments.at(-1)?.length ?? 0) === 0
   ) {
     return null;
   }
@@ -245,7 +249,7 @@ async function listStagedAttachmentPaths(
 ): Promise<Result<string[], string>> {
   const result = await execBuffered(
     runtime,
-    `if [ ! -d ${shellQuote(STAGED_ATTACHMENT_DIR)} ]; then exit 0; fi; find ${shellQuote(STAGED_ATTACHMENT_DIR)} -type f -iname '*.zip' -print`,
+    `if [ ! -d ${shellQuote(STAGED_ATTACHMENT_DIR)} ]; then exit 0; fi; find ${shellQuote(STAGED_ATTACHMENT_DIR)} -type f -print`,
     { cwd: workspacePath, timeout: 30 }
   );
   if (result.exitCode !== 0) {

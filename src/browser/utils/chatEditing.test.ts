@@ -65,7 +65,7 @@ describe("canEditDisplayedUserMessage", () => {
     expect(canEditDisplayedUserMessage(userMessage({ isSideQuestion: true }))).toBe(false);
   });
 
-  test("restores staged ZIPs as attachments when editing sent messages", () => {
+  test("restores staged files as attachments when editing sent messages", () => {
     const content = appendStagedAttachmentNotice("Inspect this archive.", [STAGED_ATTACHMENT]);
 
     const pending = buildPendingFromDisplayed(userMessage({ content, historyId: "history-1" }));
@@ -80,7 +80,7 @@ describe("canEditDisplayedUserMessage", () => {
     ]);
   });
 
-  test("restores staged ZIPs as attachments when normalizing queued messages", () => {
+  test("restores staged files as attachments when normalizing queued messages", () => {
     const queued: QueuedMessage = {
       id: "queued-1",
       content: appendStagedAttachmentNotice("Queued archive.", [STAGED_ATTACHMENT]),
@@ -97,7 +97,7 @@ describe("canEditDisplayedUserMessage", () => {
     ]);
   });
 
-  test("restores staged ZIPs from restore-to-input payloads with attachments", () => {
+  test("restores staged files from restore-to-input payloads with attachments", () => {
     const filePart = {
       url: "data:text/plain;base64,ZGF0YQ==",
       mediaType: "text/plain",
@@ -130,7 +130,7 @@ describe("canEditDisplayedUserMessage", () => {
     });
   });
 
-  test("restores staged ZIPs from compaction follow-up content", () => {
+  test("restores staged files from compaction follow-up content", () => {
     const followUp: CompactionFollowUpRequest = {
       text: appendStagedAttachmentNotice("Continue after compaction.", [STAGED_ATTACHMENT]),
       model: "claude-sonnet-4-5",

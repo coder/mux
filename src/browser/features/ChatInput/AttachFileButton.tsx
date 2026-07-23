@@ -1,6 +1,7 @@
 /**
- * Attach file button - floats inside the chat input textarea next to the voice input button.
- * Opens a native file picker for images, SVGs, PDFs, and workspace-staged ZIPs.
+ * Attach file button that opens a native picker.
+ * Images and PDFs attach natively. When staging is available (open workspace),
+ * any other file type is accepted and saved into the workspace.
  */
 
 import React, { useRef } from "react";
@@ -8,12 +9,13 @@ import { Paperclip } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
 import { cn } from "@/common/lib/utils";
 
-/** Accept filter for the file picker: provider attachments plus workspace-staged ZIPs. */
-const FILE_ACCEPT = "image/*,.svg,.pdf,.zip,application/zip,application/x-zip-compressed";
+/** Picker filter for composers without workspace staging (creation/scratch). */
+const PROVIDER_FILE_ACCEPT = "image/*,.svg,.pdf";
 
 interface AttachFileButtonProps {
   onFiles: (files: File[]) => void;
   disabled?: boolean;
+  canStageFiles: boolean;
 }
 
 export const AttachFileButton: React.FC<AttachFileButtonProps> = (props) => {
@@ -53,14 +55,23 @@ export const AttachFileButton: React.FC<AttachFileButtonProps> = (props) => {
           </button>
         </TooltipTrigger>
         <TooltipContent>
-          <strong>Attach file</strong> — images, SVGs, PDFs, ZIPs
+          {props.canStageFiles ? (
+            <>
+              <strong>Attach any file</strong>. Images and PDFs attach directly. Other files are
+              saved to the workspace.
+            </>
+          ) : (
+            <>
+              <strong>Attach file</strong>: images, SVGs, PDFs
+            </>
+          )}
         </TooltipContent>
       </Tooltip>
-      {/* Hidden file input — kept outside Tooltip to avoid stray DOM children */}
+      {/* Kept outside Tooltip to avoid stray DOM children. */}
       <input
         ref={inputRef}
         type="file"
-        accept={FILE_ACCEPT}
+        accept={props.canStageFiles ? undefined : PROVIDER_FILE_ACCEPT}
         multiple
         className="hidden"
         onChange={handleChange}

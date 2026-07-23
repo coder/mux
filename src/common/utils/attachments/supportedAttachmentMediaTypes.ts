@@ -16,6 +16,22 @@ const EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
   pdf: PDF_MEDIA_TYPE,
 };
 
+const STAGED_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
+  md: MARKDOWN_MEDIA_TYPE,
+  txt: "text/plain",
+  csv: "text/csv",
+  json: "application/json",
+  log: "text/plain",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  xml: "application/xml",
+  zip: ZIP_MEDIA_TYPE,
+};
+
+const DEFAULT_STAGED_MEDIA_TYPE = "application/octet-stream";
+const MAX_STAGED_MEDIA_TYPE_LENGTH = 100;
+const MEDIA_TYPE_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
+
 export function normalizeAttachmentMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
 }
@@ -49,25 +65,39 @@ export function getSupportedAttachmentMediaType(args: {
   return isSupportedAttachmentMediaType(normalized) ? normalized : null;
 }
 
+function sanitizeStagedAttachmentMediaType(mediaType: string): string | null {
+  const normalized = normalizeAttachmentMediaType(mediaType);
+  if (
+    normalized.length === 0 ||
+    normalized.length > MAX_STAGED_MEDIA_TYPE_LENGTH ||
+    !MEDIA_TYPE_PATTERN.test(normalized)
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
 export function isSupportedStagedAttachmentMediaType(mediaType: string): boolean {
   const normalized = normalizeAttachmentMediaType(mediaType);
-  return ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number]);
+  return (
+    ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number]) ||
+    sanitizeStagedAttachmentMediaType(normalized) != null
+  );
 }
 
 export function getSupportedStagedAttachmentMediaType(args: {
   mediaType?: string | null;
   filename?: string | null;
-}): string | null {
+}): string {
   const trimmedMediaType = args.mediaType?.trim();
-  const mediaType =
-    trimmedMediaType != null && trimmedMediaType.length > 0 ? trimmedMediaType : null;
-  if (mediaType != null && isSupportedStagedAttachmentMediaType(mediaType)) {
-    return ZIP_MEDIA_TYPE;
+  if (trimmedMediaType != null && trimmedMediaType.length > 0) {
+    const normalized = normalizeAttachmentMediaType(trimmedMediaType);
+    if (ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number])) {
+      return ZIP_MEDIA_TYPE;
+    }
+    return sanitizeStagedAttachmentMediaType(normalized) ?? DEFAULT_STAGED_MEDIA_TYPE;
   }
 
-  if (args.filename?.toLowerCase().endsWith(".zip") === true) {
-    return ZIP_MEDIA_TYPE;
-  }
-
-  return null;
+  const ext = args.filename?.toLowerCase().split(".").pop() ?? "";
+  return STAGED_EXTENSION_TO_MEDIA_TYPE[ext] ?? DEFAULT_STAGED_MEDIA_TYPE;
 }
