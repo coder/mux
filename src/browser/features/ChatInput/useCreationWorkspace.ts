@@ -59,6 +59,7 @@ import {
   estimatePersistedChatAttachmentsChars,
   MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS,
 } from "@/browser/features/ChatInput/draftAttachmentsStorage";
+import type { MuxMessageMetadata } from "@/common/types/message";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { processSlashCommand, type SlashCommandContext } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -745,12 +746,34 @@ export function useCreationWorkspace({
           .filter((part) => typeof part === "string" && part.trim().length > 0)
           .join("\n\n");
 
+        // Skill metadata was built before staging, so its rawCommand (preferred
+        // over message text for transcript display) lacks the notice; patch it
+        // so the displayed message keeps the staged attachment chips.
+        // SendMessageOptions.muxMetadata is a black box (z.any); the creation
+        // caller only ever passes MuxMessageMetadata built in ChatInput.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        const overrideMuxMetadata: MuxMessageMetadata | undefined = optionsOverride?.muxMetadata;
+        const muxMetadataWithNotice =
+          stagingOutcome.staged.length > 0 &&
+          overrideMuxMetadata &&
+          "rawCommand" in overrideMuxMetadata &&
+          typeof overrideMuxMetadata.rawCommand === "string"
+            ? {
+                ...overrideMuxMetadata,
+                rawCommand: appendStagedAttachmentNotice(
+                  overrideMuxMetadata.rawCommand,
+                  stagingOutcome.staged
+                ),
+              }
+            : overrideMuxMetadata;
+
         const sendResult = await api.workspace.sendMessage({
           workspaceId: metadata.id,
           message: appendStagedAttachmentNotice(messageText, stagingOutcome.staged),
           options: {
             ...sendMessageOptions,
             ...optionsOverride,
+            ...(muxMetadataWithNotice ? { muxMetadata: muxMetadataWithNotice } : {}),
             additionalSystemInstructions: additionalSystemInstructions.length
               ? additionalSystemInstructions
               : undefined,

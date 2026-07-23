@@ -242,7 +242,14 @@ describe("WorkspaceService.stageAttachment", () => {
       const initGate = new Promise<void>((resolve) => {
         releaseInit = resolve;
       });
-      const waitForInit = mock(() => initGate);
+      let barrierReached: () => void = () => undefined;
+      const barrierReachedGate = new Promise<void>((resolve) => {
+        barrierReached = resolve;
+      });
+      const waitForInit = mock(() => {
+        barrierReached();
+        return initGate;
+      });
       const workspaceService = createWorkspaceServiceForTest({
         config,
         historyService,
@@ -261,7 +268,7 @@ describe("WorkspaceService.stageAttachment", () => {
       });
 
       // Staging must block on the init barrier before any workspace write.
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await barrierReachedGate;
       expect(waitForInit).toHaveBeenCalledWith(workspaceId);
       const entriesBeforeInit = await fsPromises.readdir(workspacePath);
       expect(entriesBeforeInit).toEqual([]);
