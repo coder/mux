@@ -698,4 +698,35 @@ describe("ThinkingContext", () => {
       expect(view.getByTestId("thinking-project").textContent).toBe("low");
     });
   });
+
+  test("disabled global listeners do not cycle thinking via keybind", async () => {
+    const projectPath = "/Users/dev/my-project";
+
+    updatePersistedState(getModelKey(getProjectScopeId(projectPath)), "openai:gpt-4.1");
+
+    const ProjectChild: React.FC = () => {
+      const [thinkingLevel] = useThinkingLevel();
+      return <div data-testid="thinking-project">{thinkingLevel}</div>;
+    };
+
+    const view = renderWithAPI(
+      <ThinkingProvider projectPath={projectPath} enableGlobalListeners={false}>
+        <ProjectChild />
+      </ThinkingProvider>
+    );
+
+    await waitFor(() => {
+      expect(view.getByTestId("thinking-project").textContent).toBe("off");
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new window.KeyboardEvent("keydown", { key: "T", ctrlKey: true, shiftKey: true })
+      );
+    });
+
+    await Promise.resolve();
+
+    expect(view.getByTestId("thinking-project").textContent).toBe("off");
+  });
 });
