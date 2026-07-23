@@ -265,12 +265,19 @@ function transferDraftToWorkspace(
     updatePersistedState(getPendingDraftSkillDiscoveryKey(workspaceId), true);
   }
   updatePersistedState(getInputKey(workspaceId), text);
-  // Pending files carry base64 bytes; drop them when the draft exceeds the
-  // persistence cap (they were memory-only before the transfer too).
-  const persistable =
-    estimatePersistedChatAttachmentsChars(attachments) > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS
-      ? attachments.filter((attachment) => attachment.kind !== "pending-file")
-      : attachments;
+  // Base64-bearing attachments can exceed the persistence cap. Drop the
+  // largest ones first so small retryable chips (e.g. a pending file whose
+  // staging failed) survive the transfer.
+  let persistable = attachments;
+  while (
+    persistable.length > 0 &&
+    estimatePersistedChatAttachmentsChars(persistable) > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS
+  ) {
+    const largest = persistable.reduce((a, b) =>
+      JSON.stringify(b).length > JSON.stringify(a).length ? b : a
+    );
+    persistable = persistable.filter((attachment) => attachment !== largest);
+  }
   updatePersistedState(
     getInputAttachmentsKey(workspaceId),
     persistable.length > 0 ? persistable : undefined

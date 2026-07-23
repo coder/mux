@@ -1242,6 +1242,58 @@ describe("useCreationWorkspace", () => {
     expect(errorWrite?.[1]).toMatchObject({ type: "unknown", raw: "orpc disconnected" });
   });
 
+  test("handleSend keeps small retryable files when trimming an over-cap transfer", async () => {
+    const stageAttachmentMock = mock(
+      (_args: WorkspaceStageAttachmentArgs): Promise<WorkspaceStageAttachmentResult> =>
+        Promise.resolve({ success: false, error: "disk full" } as WorkspaceStageAttachmentResult)
+    );
+    setupWindow({ stageAttachment: stageAttachmentMock });
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated: mock((metadata: FrontendWorkspaceMetadata) => metadata),
+      message: "send my files",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    const failedPendingFile: PendingFileChatAttachment = {
+      kind: "pending-file",
+      id: "p1",
+      filename: "small.bin",
+      mediaType: "application/octet-stream",
+      sizeBytes: 3,
+      dataBase64: "Ymlu",
+    };
+    // A provider attachment whose data URL alone exceeds the persistence cap.
+    const oversizedFilePart = {
+      type: "file" as const,
+      url: `data:application/pdf;base64,${"a".repeat(4_000_001)}`,
+      mediaType: "application/pdf",
+      filename: "big.pdf",
+    };
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend(
+        "send my files",
+        [oversizedFilePart],
+        undefined,
+        undefined,
+        [failedPendingFile]
+      );
+    });
+
+    expect(result).toEqual({ success: false });
+
+    // The trim drops only the oversized attachment; the small failed pending
+    // file survives so the user can retry staging it.
+    const attachmentsWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getInputAttachmentsKey(TEST_WORKSPACE_ID)
+    );
+    expect(attachmentsWrite?.[1]).toEqual([failedPendingFile]);
+  });
+
   test("handleSend creates workspace and applies initial goal command without sending chat text", async () => {
     const setGoalMock = mock(
       (_args: WorkspaceSetGoalArgs): Promise<WorkspaceSetGoalResult> =>
