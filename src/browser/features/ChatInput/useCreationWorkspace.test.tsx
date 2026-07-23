@@ -32,6 +32,7 @@ import type {
 } from "@/common/types/workspace";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { GlobalWindow } from "happy-dom";
 import type { PendingFileChatAttachment } from "./ChatAttachments";
 import type { WorkspaceCreatedOptions } from "./types";
@@ -948,7 +949,10 @@ describe("useCreationWorkspace", () => {
 
     const getHook = renderUseCreationWorkspace({
       projectPath: TEST_PROJECT_PATH,
-      onWorkspaceCreated: mock((metadata: FrontendWorkspaceMetadata) => metadata),
+      onWorkspaceCreated: mock((metadata: FrontendWorkspaceMetadata) => {
+        callOrder.push("navigate");
+        return metadata;
+      }),
       message: "check these files",
     });
 
@@ -985,7 +989,9 @@ describe("useCreationWorkspace", () => {
     });
 
     expect(result).toEqual({ success: true });
-    expect(callOrder).toEqual(["create", "stage:notes.md", "stage:data.bin", "send"]);
+    // Navigation must not wait on staging: stageAttachment blocks on runtime
+    // init, which can take minutes on deferred runtimes.
+    expect(callOrder).toEqual(["create", "navigate", "stage:notes.md", "stage:data.bin", "send"]);
     expect(workspaceApi.stageAttachment.mock.calls[0]?.[0]?.workspaceId).toBe(TEST_WORKSPACE_ID);
 
     const sendRequest = workspaceApi.sendMessage.mock.calls[0]?.[0];
@@ -1017,6 +1023,7 @@ describe("useCreationWorkspace", () => {
     const onWorkspaceCreated = mock(
       (metadata: FrontendWorkspaceMetadata, _options?: WorkspaceCreatedOptions) => metadata
     );
+    const clearPendingInitialSendSpy = spyOn(workspaceStore, "clearPendingInitialSendState");
     const { workspaceApi } = setupWindow({ stageAttachment: stageAttachmentMock });
 
     const getHook = renderUseCreationWorkspace({
@@ -1099,8 +1106,12 @@ describe("useCreationWorkspace", () => {
     expect(errorWrite?.[1]).toMatchObject({ type: "unknown" });
     expect((errorWrite?.[1] as { raw: string }).raw).toContain("bad.bin: disk full");
 
+    // Navigation happens optimistically before staging; the pending-send
+    // barrier is cleared once staging fails.
     expect(onWorkspaceCreated.mock.calls.length).toBe(1);
-    expect(onWorkspaceCreated.mock.calls[0][1]).toMatchObject({ markPendingInitialSend: false });
+    expect(onWorkspaceCreated.mock.calls[0][1]).toMatchObject({ markPendingInitialSend: true });
+    expect(clearPendingInitialSendSpy.mock.calls).toContainEqual([TEST_WORKSPACE_ID]);
+    clearPendingInitialSendSpy.mockRestore();
 
     const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
     expect(updatePersistedStateCalls).toContainEqual([getInputKey(pendingScopeId), ""]);

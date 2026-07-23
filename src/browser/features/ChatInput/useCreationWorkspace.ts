@@ -647,6 +647,38 @@ export function useCreationWorkspace({
           updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
         };
 
+        // Sync preferences before switching (keeps workspace settings consistent).
+        syncCreationPreferences(projectPath, metadata.id);
+
+        // Switch to the workspace immediately after creation unless the user navigated away
+        // from the draft that initiated the creation (avoid yanking focus to the new workspace).
+        const shouldAutoNavigate =
+          !isDraftScope ||
+          (() => {
+            if (!isMountedRef.current) return false;
+            const latestRoute = latestRouteRef.current;
+            if (latestRoute.currentWorkspaceId) return false;
+            return latestRoute.pendingDraftId === draftId;
+          })();
+
+        // Navigate before staging: stageAttachment waits for runtime init, which
+        // can take minutes on deferred runtimes (Coder/SSH/devcontainer). The
+        // optimistic pending-send state is cleared below if staging fails.
+        onWorkspaceCreated(metadata, {
+          autoNavigate: shouldAutoNavigate,
+          pendingStreamModel: shouldAutoNavigate ? baseModel : null,
+          markPendingInitialSend: initialSlashCommand == null,
+        });
+
+        if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
+          // UI-only: show the created workspace in-place where the draft was rendered.
+          promoteWorkspaceDraft(projectPath, draftId, metadata);
+        }
+
+        // Persistently clear the draft as soon as the workspace exists so a refresh
+        // during the initial send can't resurrect the draft entry in the sidebar.
+        clearPendingDraft();
+
         // Stage pending files now that the worktree exists on disk, before the
         // first send so the attached-files notice can reference real staged paths.
         const stagingOutcome =
@@ -667,6 +699,7 @@ export function useCreationWorkspace({
             : null;
 
         if (stagingFailed) {
+          workspaceStore.clearPendingInitialSendState(metadata.id);
           // Fail closed: a partial notice would misrepresent the workspace
           // contents. Transfer the draft (staged results kept, failed files
           // still pending) so the user can retry from the workspace composer.
@@ -686,38 +719,6 @@ export function useCreationWorkspace({
             type: "unknown",
             raw: formatPendingFileStagingError(stagingOutcome.failures),
           } satisfies SendMessageError);
-        }
-
-        // Sync preferences before switching (keeps workspace settings consistent).
-        syncCreationPreferences(projectPath, metadata.id);
-
-        // Switch to the workspace immediately after creation unless the user navigated away
-        // from the draft that initiated the creation (avoid yanking focus to the new workspace).
-        const shouldAutoNavigate =
-          !isDraftScope ||
-          (() => {
-            if (!isMountedRef.current) return false;
-            const latestRoute = latestRouteRef.current;
-            if (latestRoute.currentWorkspaceId) return false;
-            return latestRoute.pendingDraftId === draftId;
-          })();
-
-        onWorkspaceCreated(metadata, {
-          autoNavigate: shouldAutoNavigate,
-          pendingStreamModel: shouldAutoNavigate && !stagingFailed ? baseModel : null,
-          markPendingInitialSend: initialSlashCommand == null && !stagingFailed,
-        });
-
-        if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
-          // UI-only: show the created workspace in-place where the draft was rendered.
-          promoteWorkspaceDraft(projectPath, draftId, metadata);
-        }
-
-        // Persistently clear the draft as soon as the workspace exists so a refresh
-        // during the initial send can't resurrect the draft entry in the sidebar.
-        clearPendingDraft();
-
-        if (stagingFailed) {
           setIsSending(false);
           return { success: false };
         }
