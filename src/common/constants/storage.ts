@@ -227,6 +227,15 @@ export function getPinnedTodoExpandedKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for the attached reviews panel expansion state.
+ * Lets a long list of reviews attached to the pending message be collapsed
+ * without detaching them. Format: "attachedReviewsExpanded:{workspaceId}"
+ */
+export function getAttachedReviewsExpandedKey(workspaceId: string): string {
+  return `attachedReviewsExpanded:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for per-workspace transcript auto-expand preferences.
  *
  * Stores the user's last expand/collapse intent, shaped like
