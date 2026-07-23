@@ -33,6 +33,7 @@ import type {
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
+import { isInitialStagingLocked } from "@/browser/features/ChatInput/initialStagingLock";
 import { GlobalWindow } from "happy-dom";
 import type { PendingFileChatAttachment } from "./ChatAttachments";
 import type { WorkspaceCreatedOptions } from "./types";
@@ -921,9 +922,11 @@ describe("useCreationWorkspace", () => {
       callOrder.push("create");
       return Promise.resolve({ success: true, metadata: TEST_METADATA } as WorkspaceCreateResult);
     });
+    const lockObservedDuringStaging: boolean[] = [];
     const stageAttachmentMock = mock(
       (args: WorkspaceStageAttachmentArgs): Promise<WorkspaceStageAttachmentResult> => {
         callOrder.push(`stage:${args.filename}`);
+        lockObservedDuringStaging.push(isInitialStagingLocked(TEST_WORKSPACE_ID));
         return Promise.resolve({
           success: true,
           data: {
@@ -992,6 +995,9 @@ describe("useCreationWorkspace", () => {
     // Navigation must not wait on staging: stageAttachment blocks on runtime
     // init, which can take minutes on deferred runtimes.
     expect(callOrder).toEqual(["create", "navigate", "stage:notes.md", "stage:data.bin", "send"]);
+    // The composer lock is held during staging and released once the send is done.
+    expect(lockObservedDuringStaging).toEqual([true, true]);
+    expect(isInitialStagingLocked(TEST_WORKSPACE_ID)).toBe(false);
     expect(workspaceApi.stageAttachment.mock.calls[0]?.[0]?.workspaceId).toBe(TEST_WORKSPACE_ID);
 
     const sendRequest = workspaceApi.sendMessage.mock.calls[0]?.[0];

@@ -8,6 +8,10 @@ jest.mock("lottie-react", () => ({
 import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  lockInitialStaging,
+  unlockInitialStaging,
+} from "@/browser/features/ChatInput/initialStagingLock";
 import { getInputAttachmentsKey } from "@/common/constants/storage";
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
@@ -120,6 +124,42 @@ describe("Goal slash command", () => {
         expect(app.view.container.textContent).toContain("late-transfer.md");
       });
     } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("disables the composer while the initial staging lock is held", async () => {
+    const app = await createAppHarness({
+      branchPrefix: "staging-lock",
+    });
+
+    try {
+      const getTextarea = () =>
+        app.view.container.querySelector(
+          'textarea[aria-label="Message Claude"]'
+        ) as HTMLTextAreaElement | null;
+
+      await waitFor(() => {
+        const textarea = getTextarea();
+        expect(textarea).not.toBeNull();
+        expect(textarea!.disabled).toBe(false);
+      });
+
+      act(() => {
+        lockInitialStaging(app.workspaceId);
+      });
+      await waitFor(() => {
+        expect(getTextarea()!.disabled).toBe(true);
+      });
+
+      act(() => {
+        unlockInitialStaging(app.workspaceId);
+      });
+      await waitFor(() => {
+        expect(getTextarea()!.disabled).toBe(false);
+      });
+    } finally {
+      unlockInitialStaging(app.workspaceId);
       await app.dispose();
     }
   }, 60_000);

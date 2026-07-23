@@ -6,7 +6,12 @@ import React, {
   useId,
   useMemo,
   useLayoutEffect,
+  useSyncExternalStore,
 } from "react";
+import {
+  isInitialStagingLocked,
+  subscribeInitialStagingLock,
+} from "@/browser/features/ChatInput/initialStagingLock";
 import {
   CommandSuggestions,
   COMMAND_SUGGESTION_KEYS,
@@ -310,8 +315,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const workspaceSidebarState = useOptionalWorkspaceSidebarState(workspaceId);
   const workspaceGoal = workspaceSidebarState?.goal ?? null;
 
+  // Lock the composer while a creation-flow staging + initial send is still in
+  // flight for this workspace (deferred runtimes can hold it for minutes), so a
+  // user send cannot leapfrog the initial message and a failure transfer cannot
+  // overwrite a freshly typed draft.
+  const initialStagingLocked = useSyncExternalStore(subscribeInitialStagingLock, () =>
+    variant === "workspace" ? isInitialStagingLocked(props.workspaceId) : false
+  );
+
   // Extract workspace-specific props with defaults
-  const disabled = props.disabled ?? false;
+  const disabled = (props.disabled ?? false) || initialStagingLocked;
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
   const [pendingBoundaryEditConfirmation, setPendingBoundaryEditConfirmation] =
     useState<SendOverrides | null>(null);
@@ -3139,6 +3152,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return `Edit your message... (${cancelHint}, ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to send)`;
     }
     if (disabled) {
+      if (initialStagingLocked) {
+        return "Staging attached files...";
+      }
       const disabledReason = props.disabledReason;
       if (typeof disabledReason === "string" && disabledReason.trim().length > 0) {
         return disabledReason;

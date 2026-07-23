@@ -55,6 +55,10 @@ import {
   stagePendingFiles,
 } from "@/browser/features/ChatInput/pendingFileAttachments";
 import { filePartsToChatAttachments } from "@/browser/features/ChatInput/utils";
+import {
+  lockInitialStaging,
+  unlockInitialStaging,
+} from "@/browser/features/ChatInput/initialStagingLock";
 import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   estimatePersistedChatAttachmentsChars,
@@ -664,6 +668,11 @@ export function useCreationWorkspace({
         // Navigate before staging: stageAttachment waits for runtime init, which
         // can take minutes on deferred runtimes (Coder/SSH/devcontainer). The
         // optimistic pending-send state is cleared below if staging fails.
+        // Lock the mounted composer for that window so a user send cannot
+        // leapfrog the initial message; the finally below unlocks on all paths.
+        if (pendingFilesToStage.length > 0) {
+          lockInitialStaging(metadata.id);
+        }
         onWorkspaceCreated(metadata, {
           autoNavigate: shouldAutoNavigate,
           pendingStreamModel: shouldAutoNavigate ? baseModel : null,
@@ -845,6 +854,10 @@ export function useCreationWorkspace({
         });
         setIsSending(false);
         return { success: false };
+      } finally {
+        if (createdWorkspaceId) {
+          unlockInitialStaging(createdWorkspaceId);
+        }
       }
     },
     [
