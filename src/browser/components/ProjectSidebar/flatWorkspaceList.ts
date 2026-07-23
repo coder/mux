@@ -6,6 +6,7 @@ import { getProjectDisplayName } from "@/common/utils/subProjects";
 import {
   compareWorkspacesByRecency,
   flattenWorkspaceTree,
+  resolveEffectiveSectionId,
 } from "@/browser/utils/ui/workspaceFiltering";
 
 export interface FlatWorkspaceRow {
@@ -23,9 +24,28 @@ interface BuildFlatWorkspaceListParams {
   multiProjectWorkspacesEnabled: boolean;
 }
 
+const EMPTY_SECTION_IDS: ReadonlySet<string> = new Set();
+
+function buildSectionIdsByParent(
+  userProjects: Map<string, ProjectConfig>
+): Map<string, Set<string>> {
+  const byParent = new Map<string, Set<string>>();
+  for (const [projectPath, config] of userProjects) {
+    if (!config.parentProjectPath) {
+      continue;
+    }
+    const sectionIds = byParent.get(config.parentProjectPath) ?? new Set();
+    sectionIds.add(projectPath);
+    byParent.set(config.parentProjectPath, sectionIds);
+  }
+  return byParent;
+}
+
 function resolveProject(
   workspace: FrontendWorkspaceMetadata,
-  userProjects: Map<string, ProjectConfig>
+  userProjects: Map<string, ProjectConfig>,
+  byId: ReadonlyMap<string, FrontendWorkspaceMetadata>,
+  sectionIdsByParent: ReadonlyMap<string, ReadonlySet<string>>
 ): { projectPath: string | null; projectName: string } {
   if (workspace.kind === "scratch") {
     return { projectPath: null, projectName: "Scratch" };
@@ -38,7 +58,11 @@ function resolveProject(
     };
   }
 
-  const projectPath = workspace.subProjectPath ?? workspace.projectPath;
+  // Match the section renderer: honor subProjectPath only when it is a
+  // configured sub-project and inherit it from the parent chain otherwise.
+  const sectionIds = sectionIdsByParent.get(workspace.projectPath) ?? EMPTY_SECTION_IDS;
+  const projectPath =
+    resolveEffectiveSectionId(workspace, byId, sectionIds) ?? workspace.projectPath;
   return {
     projectPath,
     projectName: getProjectDisplayName(projectPath, userProjects.get(projectPath)),
@@ -65,8 +89,9 @@ export function buildFlatWorkspaceList(params: BuildFlatWorkspaceListParams): Fl
     compareWorkspacesByRecency(left, right, params.workspaceRecency)
   );
 
+  const sectionIdsByParent = buildSectionIdsByParent(params.userProjects);
   return ordered.map((metadata) => {
-    const project = resolveProject(metadata, params.userProjects);
+    const project = resolveProject(metadata, params.userProjects, byId, sectionIdsByParent);
     return {
       metadata,
       ...project,

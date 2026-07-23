@@ -23,6 +23,7 @@ function workspace(
 const projects = new Map<string, ProjectConfig>([
   ["/repo/a", { workspaces: [], displayName: "Alpha" }],
   ["/repo/b", { workspaces: [], displayName: "Beta" }],
+  ["/repo/a/sub", { workspaces: [], displayName: "Sub", parentProjectPath: "/repo/a" }],
 ]);
 
 describe("buildFlatWorkspaceList", () => {
@@ -104,6 +105,33 @@ describe("buildFlatWorkspaceList", () => {
     });
 
     expect(rows.map((row) => row.metadata.id)).toEqual(["root"]);
+  });
+
+  test("inherits the configured sub-project from the parent chain and ignores stale sections", () => {
+    const subInfo = {
+      owner: "coder",
+      repo: "sub",
+      avatarUrl: "https://github.com/coder.png?size=64",
+    };
+    const parent = workspace("parent", "/repo/a", { subProjectPath: "/repo/a/sub" });
+    const child = workspace("child", "/repo/a", { parentWorkspaceId: "parent" });
+    const stale = workspace("stale", "/repo/a", { subProjectPath: "/repo/a/deleted" });
+
+    const rows = buildFlatWorkspaceList({
+      sortedWorkspacesByProject: new Map([["/repo/a", [parent, child, stale]]]),
+      workspaceRecency: { parent: 300, stale: 100 },
+      userProjects: projects,
+      githubRepoInfoByProject: { "/repo/a/sub": subInfo },
+      multiProjectWorkspacesEnabled: true,
+    });
+
+    expect(
+      rows.map((row) => [row.metadata.id, row.projectPath, row.projectName, row.githubRepoInfo])
+    ).toEqual([
+      ["parent", "/repo/a/sub", "Sub", subInfo],
+      ["child", "/repo/a/sub", "Sub", subInfo],
+      ["stale", "/repo/a", "Alpha", null],
+    ]);
   });
 
   test("attaches GitHub identity by the resolved project path", () => {
