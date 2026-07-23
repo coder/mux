@@ -1168,6 +1168,63 @@ describe("useCreationWorkspace", () => {
     expect(errorWrite?.[1]).toMatchObject({ type: "unknown", raw: "provider exploded" });
   });
 
+  test("handleSend transfers the staged draft when the first send rejects after staging", async () => {
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.reject(new Error("orpc disconnected"))
+    );
+    const { workspaceApi } = setupWindow({ sendMessage: sendMessageMock });
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated: mock((metadata: FrontendWorkspaceMetadata) => metadata),
+      message: "send my files",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    const pendingFile: PendingFileChatAttachment = {
+      kind: "pending-file",
+      id: "p1",
+      filename: "notes.md",
+      mediaType: "text/markdown",
+      sizeBytes: 8,
+      dataBase64: "bWFya2Rvd24=",
+    };
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend("send my files", undefined, undefined, undefined, [
+        pendingFile,
+      ]);
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
+
+    expect(updatePersistedStateCalls).toContainEqual([
+      getInputKey(TEST_WORKSPACE_ID),
+      "send my files",
+    ]);
+    const attachmentsWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getInputAttachmentsKey(TEST_WORKSPACE_ID)
+    );
+    expect(attachmentsWrite?.[1]).toEqual([
+      {
+        kind: "staged",
+        id: "p1",
+        filename: "notes.md",
+        mediaType: "text/markdown",
+        sizeBytes: 8,
+        stagedPath: ".mux/user-attachments/uuid/notes.md",
+      },
+    ]);
+    const errorWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getPendingWorkspaceSendErrorKey(TEST_WORKSPACE_ID)
+    );
+    expect(errorWrite?.[1]).toMatchObject({ type: "unknown", raw: "orpc disconnected" });
+  });
+
   test("handleSend creates workspace and applies initial goal command without sending chat text", async () => {
     const setGoalMock = mock(
       (_args: WorkspaceSetGoalArgs): Promise<WorkspaceSetGoalResult> =>

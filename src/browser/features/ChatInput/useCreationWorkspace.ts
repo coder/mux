@@ -784,19 +784,27 @@ export function useCreationWorkspace({
               }
             : overrideMuxMetadata;
 
-        const sendResult = await api.workspace.sendMessage({
-          workspaceId: metadata.id,
-          message: appendStagedAttachmentNotice(messageText, stagingOutcome.staged),
-          options: {
-            ...sendMessageOptions,
-            ...optionsOverride,
-            ...(muxMetadataWithNotice ? { muxMetadata: muxMetadataWithNotice } : {}),
-            additionalSystemInstructions: additionalSystemInstructions.length
-              ? additionalSystemInstructions
-              : undefined,
-            fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
-          },
-        });
+        // A transport-level rejection (e.g. oRPC disconnect) must flow through
+        // the same failure branch as success:false: the outer catch would skip
+        // the staged-draft transfer and the creation draft is already cleared.
+        const sendResult = await api.workspace
+          .sendMessage({
+            workspaceId: metadata.id,
+            message: appendStagedAttachmentNotice(messageText, stagingOutcome.staged),
+            options: {
+              ...sendMessageOptions,
+              ...optionsOverride,
+              ...(muxMetadataWithNotice ? { muxMetadata: muxMetadataWithNotice } : {}),
+              additionalSystemInstructions: additionalSystemInstructions.length
+                ? additionalSystemInstructions
+                : undefined,
+              fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
+            },
+          })
+          .catch((sendErr: unknown): { success: false; error: SendMessageError } => ({
+            success: false,
+            error: { type: "unknown", raw: getErrorMessage(sendErr) },
+          }));
 
         if (!sendResult.success) {
           if (createdWorkspaceId) {
