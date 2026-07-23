@@ -2097,6 +2097,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     );
   };
 
+  // Same group keys as the section renderer, so flat-mode drags reorder
+  // within the same pinned block that project mode (and the backend order)
+  // uses. row.projectPath differs from metadata.projectPath only when it is
+  // the resolved sub-project section.
+  const getFlatPinnedReorderGroup = (row: FlatWorkspaceRow): string => {
+    if (row.metadata.kind === "scratch") {
+      return SCRATCH_PINNED_REORDER_GROUP;
+    }
+    if (isMultiProject(row.metadata)) {
+      return MULTI_PROJECT_PINNED_REORDER_GROUP;
+    }
+    const sectionId =
+      row.projectPath !== null && row.projectPath !== row.metadata.projectPath
+        ? row.projectPath
+        : undefined;
+    return getPinnedReorderGroup(row.metadata.projectPath, sectionId);
+  };
+
   const renderFlatWorkspace = (
     row: FlatWorkspaceRow,
     keyOverride?: string,
@@ -2121,6 +2139,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         onArchiveWorkspace={handleArchiveWorkspace}
         onCancelCreation={handleCancelWorkspaceCreation}
         depth={rowRenderMeta?.depth ?? flatDepthByWorkspaceId[metadata.id] ?? 0}
+        pinnedReorderGroup={getFlatPinnedReorderGroup(row)}
+        onPinnedReorderDrop={handlePinnedReorderDrop}
         rowRenderMeta={rowRenderMeta}
         taskGroupHeaderTitle={taskGroupHeaderTitle}
         delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
