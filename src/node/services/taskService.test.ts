@@ -397,6 +397,8 @@ function createWorkspaceServiceMocks(
     updateAgentStatus: ReturnType<typeof mock>;
     isExperimentEnabled: ReturnType<typeof mock>;
     emitChatEvent: ReturnType<typeof mock>;
+    setPendingBackgroundWake: ReturnType<typeof mock>;
+    refreshPendingBackgroundWake: ReturnType<typeof mock>;
     isWorkflowInvocationCurrent: ReturnType<typeof mock>;
     create: ReturnType<typeof mock>;
   }>
@@ -424,6 +426,8 @@ function createWorkspaceServiceMocks(
   updateAgentStatus: ReturnType<typeof mock>;
   isExperimentEnabled: ReturnType<typeof mock>;
   emitChatEvent: ReturnType<typeof mock>;
+  setPendingBackgroundWake: ReturnType<typeof mock>;
+  refreshPendingBackgroundWake: ReturnType<typeof mock>;
   isWorkflowInvocationCurrent: ReturnType<typeof mock>;
   create: ReturnType<typeof mock>;
 } {
@@ -466,6 +470,10 @@ function createWorkspaceServiceMocks(
   const isWorkflowInvocationCurrent =
     overrides?.isWorkflowInvocationCurrent ?? mock(() => Promise.resolve(true));
 
+  const setPendingBackgroundWake = overrides?.setPendingBackgroundWake ?? mock(() => undefined);
+  const refreshPendingBackgroundWake =
+    overrides?.refreshPendingBackgroundWake ?? mock((): Promise<void> => Promise.resolve());
+
   const create =
     overrides?.create ??
     mock(
@@ -498,6 +506,8 @@ function createWorkspaceServiceMocks(
       updateAgentStatus,
       isExperimentEnabled,
       emitChatEvent,
+      setPendingBackgroundWake,
+      refreshPendingBackgroundWake,
       isWorkflowInvocationCurrent,
     } as unknown as WorkspaceService,
     create,
@@ -523,6 +533,8 @@ function createWorkspaceServiceMocks(
     updateAgentStatus,
     isExperimentEnabled,
     emitChatEvent,
+    setPendingBackgroundWake,
+    refreshPendingBackgroundWake,
     isWorkflowInvocationCurrent,
   };
 }
@@ -2543,7 +2555,9 @@ describe("TaskService", () => {
     const sendMessage = mock(
       (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
     );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { workspaceService, refreshPendingBackgroundWake } = createWorkspaceServiceMocks({
+      sendMessage,
+    });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
     const internal = taskService as unknown as {
       drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
@@ -2551,6 +2565,7 @@ describe("TaskService", () => {
 
     await internal.drainTerminalAttention(parentId);
 
+    expect(refreshPendingBackgroundWake).toHaveBeenCalledWith(parentId);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     const prompt = String(sendMessage.mock.calls[0]?.[1]);
     expect(prompt).toContain("Background sub-agent task(s) have completed");
@@ -3188,10 +3203,13 @@ describe("TaskService", () => {
     const sendMessage = mock(
       (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
     );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { workspaceService, setPendingBackgroundWake } = createWorkspaceServiceMocks({
+      sendMessage,
+    });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     await taskService.initialize();
+    expect(setPendingBackgroundWake).toHaveBeenCalledWith(parentId);
     await flushTerminalAttentionDrains(taskService);
 
     expect(sendMessage).toHaveBeenCalledTimes(1);

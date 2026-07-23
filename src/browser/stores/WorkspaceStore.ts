@@ -123,6 +123,7 @@ export interface WorkspaceState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  pendingBackgroundWake?: boolean;
   activeWorkflowRunCount: number;
   activeBashMonitorCount: number;
   lastAbortReason: StreamAbortReasonSnapshot | null;
@@ -183,6 +184,7 @@ export interface WorkspaceSidebarState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  pendingBackgroundWake?: boolean;
   activeWorkflowRunCount: number;
   activeBashMonitorCount: number;
   terminalActiveCount: number;
@@ -1995,6 +1997,7 @@ export class WorkspaceStore {
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const agentStatus =
         displayStatus ?? liveTodoStatus ?? fallbackAgentStatus ?? persistedTodoStatus;
+      const pendingBackgroundWake = activity?.pendingBackgroundWake ?? false;
       const activeWorkflowRunCount = activity?.activeWorkflowRunCount ?? 0;
       const activeBashMonitorCount = activity?.activeBashMonitorCount ?? 0;
       const goal = activity?.goal ?? null;
@@ -2021,6 +2024,7 @@ export class WorkspaceStore {
         skillLoadErrors: aggregator.getSkillLoadErrors(),
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus,
+        pendingBackgroundWake,
         activeWorkflowRunCount,
         activeBashMonitorCount,
         pendingStreamStartTime,
@@ -2133,6 +2137,7 @@ export class WorkspaceStore {
       cached.loadedSkills === fullState.loadedSkills &&
       cached.skillLoadErrors === fullState.skillLoadErrors &&
       cached.agentStatus === fullState.agentStatus &&
+      cached.pendingBackgroundWake === fullState.pendingBackgroundWake &&
       cached.activeWorkflowRunCount === fullState.activeWorkflowRunCount &&
       cached.activeBashMonitorCount === fullState.activeBashMonitorCount &&
       cached.terminalActiveCount === terminalActiveCount &&
@@ -2157,6 +2162,7 @@ export class WorkspaceStore {
       loadedSkills: fullState.loadedSkills,
       skillLoadErrors: fullState.skillLoadErrors,
       agentStatus: fullState.agentStatus,
+      pendingBackgroundWake: fullState.pendingBackgroundWake,
       activeWorkflowRunCount: fullState.activeWorkflowRunCount,
       activeBashMonitorCount: fullState.activeBashMonitorCount,
       terminalActiveCount,
@@ -2835,6 +2841,7 @@ export class WorkspaceStore {
       previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
+      (previous?.pendingBackgroundWake ?? false) !== (snapshot?.pendingBackgroundWake ?? false) ||
       (previous?.activeWorkflowRunCount ?? 0) !== (snapshot?.activeWorkflowRunCount ?? 0) ||
       (previous?.activeBashMonitorCount ?? 0) !== (snapshot?.activeBashMonitorCount ?? 0) ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||

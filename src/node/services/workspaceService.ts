@@ -1644,6 +1644,23 @@ function mergeActiveCount(
   return merged;
 }
 
+function mergePendingBackgroundWake(
+  snapshot: WorkspaceActivitySnapshot | null,
+  pending: boolean
+): WorkspaceActivitySnapshot | null {
+  if (snapshot == null && !pending) {
+    return null;
+  }
+
+  const merged: WorkspaceActivitySnapshot = { ...(snapshot ?? createDefaultActivitySnapshot()) };
+  if (pending) {
+    merged.pendingBackgroundWake = true;
+  } else {
+    delete merged.pendingBackgroundWake;
+  }
+  return merged;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class WorkspaceService extends EventEmitter {
   private readonly sessions = new Map<string, AgentSession>();
@@ -1762,6 +1779,13 @@ export class WorkspaceService extends EventEmitter {
         });
       });
   };
+
+  // Durable background notifications can outlive the monitor/task that produced them and remain
+  // pending through pre-stream startup. Cache that handoff state so inactive workspace activity
+  // snapshots keep the concurrent-agent warning mounted until streaming begins or the wake clears.
+  private readonly pendingBackgroundWakes = new Set<string>();
+  private readonly pendingBackgroundWakeSeenWorkspaces = new Set<string>();
+  private readonly pendingBackgroundWakeRefreshVersions = new Map<string, number>();
 
   // Lazily bootstrapped workflow activity cache so sidebar refreshes don't rescan run history.
   private readonly activeWorkflowRunIdBootstrapsByWorkspace = new Map<
@@ -1907,6 +1931,7 @@ export class WorkspaceService extends EventEmitter {
     try {
       const ownerWorkspaceIds = await this.bashMonitorWakeStore.listPendingOwnerWorkspaceIds();
       for (const ownerWorkspaceId of ownerWorkspaceIds) {
+        this.setPendingBackgroundWake(ownerWorkspaceId);
         this.scheduleBashMonitorWakeDrain(ownerWorkspaceId);
       }
     } catch (error) {
@@ -1915,10 +1940,14 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async handleBashMonitorMatch(payload: MonitorMatchPayload): Promise<void> {
+    // Mark the handoff before persistence: one-shot monitors can retire synchronously after the
+    // match, and their count must overlap the pending wake instead of briefly exposing idle.
+    this.setPendingBackgroundWake(payload.workspaceId);
     try {
       await this.bashMonitorWakeStore.enqueueOrMergePending(payload);
       this.scheduleBashMonitorWakeDrain(payload.workspaceId);
     } catch (error) {
+      await this.refreshPendingBackgroundWake(payload.workspaceId);
       log.error("Failed to enqueue bash monitor wake", { workspaceId: payload.workspaceId, error });
     }
   }
@@ -2034,6 +2063,7 @@ export class WorkspaceService extends EventEmitter {
       for (const record of pending) {
         await this.bashMonitorWakeStore.markSuperseded(ownerWorkspaceId, record.id);
       }
+      await this.refreshPendingBackgroundWake(ownerWorkspaceId);
       return;
     }
 
@@ -2127,6 +2157,9 @@ export class WorkspaceService extends EventEmitter {
     if (supersededByShown.length > 0) {
       await markSupersededSnapshots(supersededByShown);
     }
+    if (supersededByShown.length > 0) {
+      await this.refreshPendingBackgroundWake(ownerWorkspaceId);
+    }
     if (deliverable.length === 0) return;
 
     const prompt = buildBashMonitorWakePrompt(deliverable);
@@ -2215,6 +2248,7 @@ export class WorkspaceService extends EventEmitter {
             for (const key of cancelingKeys) {
               this.cancelingBashMonitorWakeKeys.delete(key);
             }
+            await this.refreshPendingBackgroundWake(ownerWorkspaceId);
           }
         },
       }
@@ -2520,7 +2554,7 @@ export class WorkspaceService extends EventEmitter {
           model: data.model,
           thinkingLevel: data.thinkingLevel,
           generation,
-        });
+        }).then(() => this.refreshPendingBackgroundWake(data.workspaceId));
       }
     });
 
@@ -2726,6 +2760,68 @@ export class WorkspaceService extends EventEmitter {
     );
   }
 
+  private emitCurrentWorkspaceActivity(workspaceId: string): void {
+    if (typeof this.extensionMetadata.getSnapshot !== "function") {
+      // Some focused tests provide a partial metadata service. The pending overlay is the
+      // behavior under test, so emit a sparse activity snapshot instead of crashing the wake path.
+      this.emitWorkspaceActivity(workspaceId, null);
+      return;
+    }
+    void this.extensionMetadata
+      .getSnapshot(workspaceId)
+      .then((snapshot) => this.emitWorkspaceActivity(workspaceId, snapshot))
+      .catch((error: unknown) => {
+        log.debug("Failed to refresh pending background wake activity", { workspaceId, error });
+      });
+  }
+
+  public setPendingBackgroundWake(workspaceId: string): void {
+    const nextVersion = (this.pendingBackgroundWakeRefreshVersions.get(workspaceId) ?? 0) + 1;
+    this.pendingBackgroundWakeRefreshVersions.set(workspaceId, nextVersion);
+    this.pendingBackgroundWakeSeenWorkspaces.add(workspaceId);
+    if (this.pendingBackgroundWakes.has(workspaceId)) {
+      return;
+    }
+    this.pendingBackgroundWakes.add(workspaceId);
+    this.emitCurrentWorkspaceActivity(workspaceId);
+  }
+
+  private async computePendingBackgroundWake(workspaceId: string): Promise<boolean> {
+    const session =
+      this.sessions.get(workspaceId) ?? this.transientStartupRecoverySessions.get(workspaceId);
+    const [monitorWakes, hasTerminalAttention] = await Promise.all([
+      this.bashMonitorWakeStore.listPending(workspaceId),
+      this.taskService?.hasPendingTerminalAttention(workspaceId) ?? Promise.resolve(false),
+    ]);
+    return (
+      monitorWakes.length > 0 ||
+      hasTerminalAttention ||
+      session?.isPreparingTurn() === true ||
+      session?.hasQueuedMessages() === true ||
+      session?.hasPendingAutoRetry() === true
+    );
+  }
+
+  public async refreshPendingBackgroundWake(workspaceId: string): Promise<void> {
+    const version = (this.pendingBackgroundWakeRefreshVersions.get(workspaceId) ?? 0) + 1;
+    this.pendingBackgroundWakeRefreshVersions.set(workspaceId, version);
+    const pending = await this.computePendingBackgroundWake(workspaceId);
+    if (this.pendingBackgroundWakeRefreshVersions.get(workspaceId) !== version) {
+      return;
+    }
+
+    const previous = this.pendingBackgroundWakes.has(workspaceId);
+    if (pending) {
+      this.pendingBackgroundWakes.add(workspaceId);
+      this.pendingBackgroundWakeSeenWorkspaces.add(workspaceId);
+    } else {
+      this.pendingBackgroundWakes.delete(workspaceId);
+    }
+    if (previous !== pending) {
+      this.emitCurrentWorkspaceActivity(workspaceId);
+    }
+  }
+
   /**
    * Public so AgentStatusService can broadcast a snapshot it produced after
    * a direct setX call. (Most callers use emitWorkspaceActivityUpdate, which
@@ -2741,7 +2837,10 @@ export class WorkspaceService extends EventEmitter {
         workspaceId,
         this.mergeCachedActiveWorkflowRunCount(
           workspaceId,
-          this.overlayPendingGoal(workspaceId, snapshot)
+          mergePendingBackgroundWake(
+            this.overlayPendingGoal(workspaceId, snapshot),
+            this.pendingBackgroundWakes.has(workspaceId)
+          )
         )
       ),
     });
@@ -3110,6 +3209,15 @@ export class WorkspaceService extends EventEmitter {
       this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
       if (this.shouldClearAgentStatusFromChatMessage(event.message)) {
         void this.updateAgentStatus(event.workspaceId, null);
+      }
+      if (
+        event.message.type === "stream-lifecycle" ||
+        event.message.type === "queued-message-changed" ||
+        event.message.type === "auto-retry-scheduled" ||
+        event.message.type === "auto-retry-starting" ||
+        event.message.type === "auto-retry-abandoned"
+      ) {
+        void this.refreshPendingBackgroundWake(event.workspaceId);
       }
     });
 
@@ -9460,6 +9568,9 @@ export class WorkspaceService extends EventEmitter {
       for (const workspaceId of this.activeWorkflowRunIdsByWorkspace.keys()) {
         workspaceIds.add(workspaceId);
       }
+      for (const workspaceId of this.pendingBackgroundWakeSeenWorkspaces) {
+        workspaceIds.add(workspaceId);
+      }
       for (const workspaceId of this.bashMonitorSeenWorkspaces) {
         workspaceIds.add(workspaceId);
       }
@@ -9483,6 +9594,15 @@ export class WorkspaceService extends EventEmitter {
             // "watching" state survives reconnect. The seen-set is used instead of the
             // dedupe map because dedupe entries are dropped around in-flight/failed emits.
             const hadBashMonitorActivityCache = this.bashMonitorSeenWorkspaces.has(workspaceId);
+            const hadPendingBackgroundWake =
+              this.pendingBackgroundWakeSeenWorkspaces.has(workspaceId);
+            // The list response should report current durable/session state, but must not mutate the
+            // live cache: a concurrent refresh may have a newer clear/set in flight, and list must
+            // never invalidate it or restore a stale pending value after the handoff finishes.
+            const pendingBackgroundWake = await this.computePendingBackgroundWake(workspaceId);
+            if (pendingBackgroundWake) {
+              this.pendingBackgroundWakeSeenWorkspaces.add(workspaceId);
+            }
             const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId);
             const activeBashMonitorCount = this.getActiveBashMonitorCount(workspaceId);
             if (activeBashMonitorCount > 0) {
@@ -9497,7 +9617,9 @@ export class WorkspaceService extends EventEmitter {
               activeWorkflowRunCount === 0 &&
               !hadWorkflowActivityCache &&
               activeBashMonitorCount === 0 &&
-              !hadBashMonitorActivityCache
+              !hadBashMonitorActivityCache &&
+              !pendingBackgroundWake &&
+              !hadPendingBackgroundWake
             ) {
               return null;
             }
@@ -9511,7 +9633,10 @@ export class WorkspaceService extends EventEmitter {
               // goal until the next live emit or goal read.
               mergeActiveCount(
                 mergeActiveCount(
-                  this.overlayPendingGoal(workspaceId, snapshot),
+                  mergePendingBackgroundWake(
+                    this.overlayPendingGoal(workspaceId, snapshot),
+                    pendingBackgroundWake
+                  ),
                   "activeWorkflowRunCount",
                   activeWorkflowRunCount
                 ),
