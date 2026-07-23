@@ -1325,6 +1325,12 @@ export class ProjectService {
 
   async githubRepoInfo(): Promise<ConfiguredProjectGitHubRepoInfo> {
     const projectPaths = Array.from(this.config.loadConfigOrDefault().projects.keys());
+    const configuredProjectPaths = new Set(projectPaths);
+    for (const cachedProjectPath of this.githubRepoInfoCache.keys()) {
+      if (!configuredProjectPaths.has(cachedProjectPath)) {
+        this.githubRepoInfoCache.delete(cachedProjectPath);
+      }
+    }
     const entries = await Promise.all(
       projectPaths.map(
         async (projectPath) => [projectPath, await this.getGitHubRepoInfo(projectPath)] as const

@@ -45,6 +45,24 @@ describe("buildFlatWorkspaceList", () => {
     expect(rows.map((row) => row.metadata.id)).toEqual(["newer", "parent", "child"]);
   });
 
+  test("uses canonical name and timestamp tie-breakers for roots", () => {
+    const zeta = workspace("a-id", "/repo/a", { name: "zeta", createdAt: "invalid" });
+    const alpha = workspace("z-id", "/repo/b", { name: "alpha", createdAt: "invalid" });
+
+    const rows = buildFlatWorkspaceList({
+      sortedWorkspacesByProject: new Map([
+        ["/repo/a", [zeta]],
+        ["/repo/b", [alpha]],
+      ]),
+      workspaceRecency: {},
+      userProjects: projects,
+      githubRepoInfoByProject: {},
+      multiProjectWorkspacesEnabled: true,
+    });
+
+    expect(rows.map((row) => row.metadata.id)).toEqual(["z-id", "a-id"]);
+  });
+
   test("includes scratch once and assigns multi-project rows to their primary project", () => {
     const scratch = workspace("scratch", "/scratch", { kind: "scratch" });
     const multi = workspace("multi", "/repo/a", {

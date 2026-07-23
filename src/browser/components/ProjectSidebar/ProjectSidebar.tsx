@@ -2059,6 +2059,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           .sort((left, right) => right.draft.createdAt - left.draft.createdAt)
       : [];
 
+  const hasVisibleFlatDrafts = flatDraftRows.some(({ projectPath, draft }) => {
+    const reactiveVisibility = draftVisibilityByProject[projectPath]?.[draft.draftId];
+    return reactiveVisibility ?? isDraftVisible(projectPath, draft.draftId);
+  });
+
   const renderFlatDraft = (
     entry: (typeof flatDraftRows)[number],
     index: number
@@ -2105,7 +2110,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         presentation="flat-card"
         githubRepoInfo={row.githubRepoInfo}
         metadata={metadata}
-        projectPath={metadata.projectPath}
+        projectPath={row.projectPath ?? metadata.projectPath}
         projectName={row.projectName}
         isSelected={selectedWorkspace?.workspaceId === metadata.id}
         isArchiving={archivingWorkspaceIds.has(metadata.id)}
@@ -2206,6 +2211,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
     const tierKey = `flat:${tierIndex}`;
     const isExpanded = expandedOldWorkspaces[tierKey] ?? false;
+    const displayCount = isExpanded ? flatAgePartition.buckets[tierIndex].length : remainingCount;
     const thresholdLabel = formatDaysThreshold(AGE_THRESHOLDS_DAYS[tierIndex]);
     const nextTier = findNextNonEmptyTier(flatAgePartition.buckets, tierIndex + 1);
     return (
@@ -2225,7 +2231,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
           />
           <span>Older than {thresholdLabel}</span>
-          <span className="text-dim font-normal">({remainingCount})</span>
+          <span className="text-dim font-normal">({displayCount})</span>
         </button>
         {isExpanded && (
           <>
@@ -2289,7 +2295,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 <div>
                   {sidebarDisplayStyle === "flat" ? (
                     <div className="py-2" data-testid="flat-sidebar-list">
-                      {flatWorkspaceMetadata.length === 0 && flatDraftRows.length === 0 ? (
+                      {flatWorkspaceMetadata.length === 0 && !hasVisibleFlatDrafts ? (
                         <div className="px-4 py-8 text-center">
                           <p className="text-muted mb-4 text-[13px]">No chats</p>
                           <button

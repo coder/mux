@@ -215,16 +215,10 @@ function HeartbeatFallbackIcon() {
   );
 }
 
-const failedAvatarUntilByUrl = new Map<string, number>();
-const AVATAR_NEGATIVE_CACHE_MS = 30_000;
-
 function ProjectAvatar(props: { info: GitHubRepoInfo | null | undefined; label: string }) {
   const url = props.info?.avatarUrl;
-  const [failedAvatar, setFailedAvatar] = useState<{ url: string; retryAt: number } | null>(() =>
-    url ? { url, retryAt: failedAvatarUntilByUrl.get(url) ?? 0 } : null
-  );
-  const failed =
-    failedAvatar != null && failedAvatar.url === url && failedAvatar.retryAt > Date.now();
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const failed = failedUrl === url;
 
   if (!url || failed) {
     return (
@@ -246,12 +240,8 @@ function ProjectAvatar(props: { info: GitHubRepoInfo | null | undefined; label: 
       width={28}
       height={28}
       className="h-7 w-7 shrink-0 rounded-full object-cover"
-      onLoad={() => failedAvatarUntilByUrl.delete(url)}
-      onError={() => {
-        const retryAt = Date.now() + AVATAR_NEGATIVE_CACHE_MS;
-        failedAvatarUntilByUrl.set(url, retryAt);
-        setFailedAvatar({ url, retryAt });
-      }}
+      onLoad={() => setFailedUrl(null)}
+      onError={() => setFailedUrl(url)}
     />
   );
 }
