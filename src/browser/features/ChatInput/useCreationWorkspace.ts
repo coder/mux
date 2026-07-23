@@ -647,11 +647,25 @@ export function useCreationWorkspace({
             : { staged: [], failures: [] };
         const stagingFailed = stagingOutcome.failures.length > 0;
 
+        // SendMessageOptions.muxMetadata is a black box (z.any); the creation
+        // caller only ever passes MuxMessageMetadata built in ChatInput.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        const overrideMuxMetadata: MuxMessageMetadata | undefined = optionsOverride?.muxMetadata;
+        const overrideRawCommand =
+          overrideMuxMetadata &&
+          "rawCommand" in overrideMuxMetadata &&
+          typeof overrideMuxMetadata.rawCommand === "string"
+            ? overrideMuxMetadata.rawCommand
+            : null;
+
         if (stagingFailed) {
           // Fail closed: a partial notice would misrepresent the workspace
           // contents. Transfer the draft (staged results kept, failed files
           // still pending) so the user can retry from the workspace composer.
-          transferDraftToWorkspace(metadata.id, messageText, [
+          // For slash-skill sends messageText is the rewritten skill text;
+          // restore the original typed command from rawCommand so the retry
+          // re-invokes the skill.
+          transferDraftToWorkspace(metadata.id, overrideRawCommand ?? messageText, [
             ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
             ...replacePendingFilesWithStaged(pendingFilesToStage, stagingOutcome.staged),
           ]);
@@ -749,21 +763,11 @@ export function useCreationWorkspace({
         // Skill metadata was built before staging, so its rawCommand (preferred
         // over message text for transcript display) lacks the notice; patch it
         // so the displayed message keeps the staged attachment chips.
-        // SendMessageOptions.muxMetadata is a black box (z.any); the creation
-        // caller only ever passes MuxMessageMetadata built in ChatInput.
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        const overrideMuxMetadata: MuxMessageMetadata | undefined = optionsOverride?.muxMetadata;
         const muxMetadataWithNotice =
-          stagingOutcome.staged.length > 0 &&
-          overrideMuxMetadata &&
-          "rawCommand" in overrideMuxMetadata &&
-          typeof overrideMuxMetadata.rawCommand === "string"
+          stagingOutcome.staged.length > 0 && overrideMuxMetadata && overrideRawCommand !== null
             ? {
                 ...overrideMuxMetadata,
-                rawCommand: appendStagedAttachmentNotice(
-                  overrideMuxMetadata.rawCommand,
-                  stagingOutcome.staged
-                ),
+                rawCommand: appendStagedAttachmentNotice(overrideRawCommand, stagingOutcome.staged),
               }
             : overrideMuxMetadata;
 

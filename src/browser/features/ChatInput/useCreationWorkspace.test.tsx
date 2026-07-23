@@ -1045,18 +1045,33 @@ describe("useCreationWorkspace", () => {
 
     let result: CreationSendResult | undefined;
     await act(async () => {
-      result = await getHook().handleSend("review my files", undefined, undefined, undefined, [
-        good,
-        bad,
-      ]);
+      // Simulates a slash-skill send: messageText is the rewritten skill text
+      // while muxMetadata.rawCommand preserves the original typed command.
+      result = await getHook().handleSend(
+        "review my files",
+        undefined,
+        {
+          muxMetadata: {
+            type: "agent-skill",
+            rawCommand: "/review my files",
+            commandPrefix: "/review",
+            skillName: "review",
+            scope: "project",
+          },
+        },
+        undefined,
+        [good, bad]
+      );
     });
 
     expect(result).toEqual({ success: false });
     expect(workspaceApi.sendMessage.mock.calls.length).toBe(0);
 
+    // The transferred draft restores the original slash command so a retry
+    // re-invokes the skill.
     expect(updatePersistedStateCalls).toContainEqual([
       getInputKey(TEST_WORKSPACE_ID),
-      "review my files",
+      "/review my files",
     ]);
     const attachmentsWrite = updatePersistedStateCalls.find(
       ([key]) => key === getInputAttachmentsKey(TEST_WORKSPACE_ID)
