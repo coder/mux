@@ -789,6 +789,15 @@ export function useCreationWorkspace({
           if (createdWorkspaceId) {
             workspaceStore.clearPendingInitialSendState(createdWorkspaceId);
           }
+          if (stagingOutcome.staged.length > 0) {
+            // The creation draft was already cleared; without a transferred
+            // draft the staged files would sit in the workspace with no
+            // chips/notice to retry the send with.
+            transferDraftToWorkspace(metadata.id, overrideRawCommand ?? messageText, [
+              ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
+              ...stagingOutcome.staged,
+            ]);
+          }
           if (sendResult.error) {
             // Persist the failure so the workspace view can surface a toast after navigation.
             updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), sendResult.error);

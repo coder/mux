@@ -1100,6 +1100,68 @@ describe("useCreationWorkspace", () => {
     expect(updatePersistedStateCalls).toContainEqual([getInputKey(pendingScopeId), ""]);
   });
 
+  test("handleSend transfers the staged draft when the first send fails after staging", async () => {
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        Promise.resolve({
+          success: false as const,
+          error: { type: "unknown", raw: "provider exploded" },
+        })
+    );
+    const { workspaceApi } = setupWindow({ sendMessage: sendMessageMock });
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated: mock((metadata: FrontendWorkspaceMetadata) => metadata),
+      message: "send my files",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    const pendingFile: PendingFileChatAttachment = {
+      kind: "pending-file",
+      id: "p1",
+      filename: "notes.md",
+      mediaType: "text/markdown",
+      sizeBytes: 8,
+      dataBase64: "bWFya2Rvd24=",
+    };
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend("send my files", undefined, undefined, undefined, [
+        pendingFile,
+      ]);
+    });
+
+    expect(result).toMatchObject({ success: false });
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(1);
+
+    // Staged files live in the new workspace; the draft must be transferred so
+    // the user can retry the send with the chips/notice intact.
+    expect(updatePersistedStateCalls).toContainEqual([
+      getInputKey(TEST_WORKSPACE_ID),
+      "send my files",
+    ]);
+    const attachmentsWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getInputAttachmentsKey(TEST_WORKSPACE_ID)
+    );
+    expect(attachmentsWrite?.[1]).toEqual([
+      {
+        kind: "staged",
+        id: "p1",
+        filename: "notes.md",
+        mediaType: "text/markdown",
+        sizeBytes: 8,
+        stagedPath: ".mux/user-attachments/uuid/notes.md",
+      },
+    ]);
+    const errorWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getPendingWorkspaceSendErrorKey(TEST_WORKSPACE_ID)
+    );
+    expect(errorWrite?.[1]).toMatchObject({ type: "unknown", raw: "provider exploded" });
+  });
+
   test("handleSend creates workspace and applies initial goal command without sending chat text", async () => {
     const setGoalMock = mock(
       (_args: WorkspaceSetGoalArgs): Promise<WorkspaceSetGoalResult> =>
