@@ -2585,12 +2585,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
-      const commandHandled = modelOneShot
-        ? false
-        : await executeParsedCommand(parsed, input, {
-            goalInterventionPolicy: overrides?.goalInterventionPolicy,
-            queueDispatchMode: overrides?.queueDispatchMode,
-          });
+      // Mirror the creation-composer /goal bypass: with attachments present,
+      // send the raw text as a normal message instead of processing the
+      // command, which would drop the files. Transferred staging-failure
+      // drafts (raw /goal text + staged/pending chips) retry through here.
+      const goalCommandBypassedForAttachments =
+        parsed?.type === "goal-set" && attachments.length > 0;
+      const commandHandled =
+        modelOneShot || goalCommandBypassedForAttachments
+          ? false
+          : await executeParsedCommand(parsed, input, {
+              goalInterventionPolicy: overrides?.goalInterventionPolicy,
+              queueDispatchMode: overrides?.queueDispatchMode,
+            });
       if (commandHandled) {
         return;
       }

@@ -48,9 +48,10 @@ export async function createAppHarness(options?: {
   runtimeConfig?: RuntimeConfig;
   /**
    * Optional hook to set up DOM-dependent globals (e.g. localStorage) before
-   * the App is rendered.
+   * the App is rendered. Receives the created workspace id so tests can seed
+   * workspace-scoped persisted state (e.g. draft attachments).
    */
-  beforeRender?: () => void;
+  beforeRender?: (workspaceId: string) => void;
 }): Promise<AppHarness> {
   const repoPath = await createTempGitRepo();
   const env = await createTestEnvironment();
@@ -86,7 +87,7 @@ export async function createAppHarness(options?: {
     metadata = createResult.metadata;
 
     cleanupDom = installDom();
-    options?.beforeRender?.();
+    options?.beforeRender?.(workspaceId);
     view = renderApp({ apiClient: env.orpc, metadata });
 
     await setupWorkspaceView(view, metadata, workspaceId);

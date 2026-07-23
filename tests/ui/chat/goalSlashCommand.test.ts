@@ -7,6 +7,8 @@ jest.mock("lottie-react", () => ({
 
 import { fireEvent, waitFor } from "@testing-library/react";
 
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getInputAttachmentsKey } from "@/common/constants/storage";
 import { preloadTestModules } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
 
@@ -48,6 +50,45 @@ describe("Goal slash command", () => {
         expect(goal?.objective).toBe("this is your new goal,");
         expect(goal?.status).toBe("active");
       });
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("sends /goal with staged attachments as a normal message instead of a command", async () => {
+    // Simulates a transferred staging-failure draft: raw /goal text plus a
+    // staged attachment chip persisted under the workspace draft keys.
+    // Seeded before render because attachments load once at ChatInput mount.
+    const app = await createAppHarness({
+      branchPrefix: "goal-staged",
+      beforeRender: (workspaceId) => {
+        updatePersistedState(getInputAttachmentsKey(workspaceId), [
+          {
+            kind: "staged",
+            id: "s1",
+            filename: "notes.md",
+            mediaType: "text/markdown",
+            sizeBytes: 8,
+            stagedPath: ".mux/user-attachments/uuid/notes.md",
+          },
+        ]);
+      },
+    });
+
+    try {
+      await waitFor(() => {
+        expect(app.view.container.textContent).toContain("notes.md");
+      });
+
+      await app.chat.send("/goal review the attached files");
+
+      // The bypass sends the raw text as a normal message; the command guard
+      // would otherwise block staged files with an error toast and no send.
+      await app.chat.expectTranscriptContains("Mock response:");
+      await app.chat.expectTranscriptContains("/goal review the attached files");
+
+      const { goal } = await app.env.orpc.workspace.getGoal({ workspaceId: app.workspaceId });
+      expect(goal).toBeNull();
     } finally {
       await app.dispose();
     }
