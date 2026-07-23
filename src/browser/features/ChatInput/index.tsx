@@ -63,6 +63,7 @@ import {
   getProjectScopeId,
   getPendingScopeId,
   getDraftScopeId,
+  getPendingDraftSkillDiscoveryKey,
   getPendingWorkspaceSendErrorKey,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
@@ -2439,6 +2440,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     closeSendModeMenu();
 
     const messageText = input.trim();
+    // A draft transferred from a failed creation send may have resolved its
+    // slash skill against the project path; honor that choice on the retry.
+    const transferredDraftProjectDiscovery =
+      variant === "workspace" && workspaceId
+        ? readPersistedState<boolean>(getPendingDraftSkillDiscoveryKey(workspaceId), false)
+        : false;
     const skillDiscovery: SkillResolutionTarget | null =
       variant === "creation"
         ? atMentionProjectPath
@@ -2448,7 +2455,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ? {
               kind: "workspace",
               workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+              disableWorkspaceAgents:
+                sendMessageOptions.disableWorkspaceAgents === true ||
+                transferredDraftProjectDiscovery,
             }
           : null;
     const { parsed, skillInvocation } = await parseCommandWithSkillInvocation({
@@ -2820,6 +2829,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
+          // Match the original creation send: project-scoped skill refs must
+          // resolve from the project path, not the new worktree.
+          ...(transferredDraftProjectDiscovery && hasProjectScopedSkillRef(combinedSkillRefs)
+            ? { disableWorkspaceAgents: true }
+            : {}),
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
@@ -2880,6 +2894,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // just interacted with the workspace (their own message bumps recencyTimestamp,
           // but since they initiated it, they've "read" the workspace).
           updatePersistedState(getWorkspaceLastReadKey(props.workspaceId), Date.now());
+
+          if (transferredDraftProjectDiscovery) {
+            // The transferred creation draft has been sent; later sends use
+            // normal workspace skill discovery again.
+            updatePersistedState(getPendingDraftSkillDiscoveryKey(props.workspaceId), undefined);
+          }
 
           // Mark attached reviews as completed (checked)
           if (sentReviewIds.length > 0) {

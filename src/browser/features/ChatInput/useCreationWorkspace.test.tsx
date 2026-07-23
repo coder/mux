@@ -13,6 +13,7 @@ import {
   getInputAttachmentsKey,
   getModelKey,
   getPendingScopeId,
+  getPendingDraftSkillDiscoveryKey,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
   getThinkingLevelKey,
@@ -1058,6 +1059,7 @@ describe("useCreationWorkspace", () => {
             skillName: "review",
             scope: "project",
           },
+          disableWorkspaceAgents: true,
         },
         undefined,
         [good, bad]
@@ -1068,10 +1070,14 @@ describe("useCreationWorkspace", () => {
     expect(workspaceApi.sendMessage.mock.calls.length).toBe(0);
 
     // The transferred draft restores the original slash command so a retry
-    // re-invokes the skill.
+    // re-invokes the skill, and preserves the forced project-path discovery.
     expect(updatePersistedStateCalls).toContainEqual([
       getInputKey(TEST_WORKSPACE_ID),
       "/review my files",
+    ]);
+    expect(updatePersistedStateCalls).toContainEqual([
+      getPendingDraftSkillDiscoveryKey(TEST_WORKSPACE_ID),
+      true,
     ]);
     const attachmentsWrite = updatePersistedStateCalls.find(
       ([key]) => key === getInputAttachmentsKey(TEST_WORKSPACE_ID)

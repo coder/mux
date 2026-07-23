@@ -275,6 +275,17 @@ export function getPendingWorkspaceSendErrorKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key marking that a creation draft transferred into this
+ * workspace was sent with forced project-path skill discovery. The retry from
+ * the workspace composer reads it so the slash skill resolves against the same
+ * source as the original send. Cleared after the next successful send.
+ * Format: "pendingDraftProjectSkillDiscovery:{workspaceId}"
+ */
+export function getPendingDraftSkillDiscoveryKey(workspaceId: string): string {
+  return `pendingDraftProjectSkillDiscovery:${workspaceId}`;
+}
+
+/**
  * LEGACY: Get the localStorage key for pre-backend auto-retry preference.
  *
  * Kept only for one-way migration during onChat subscription.
@@ -796,6 +807,7 @@ export function getPostCompactionStateKey(workspaceId: string): string {
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getPendingWorkspaceSendErrorKey,
+  getPendingDraftSkillDiscoveryKey,
   getNotifyOnResponseKey,
   getPlanContentKey, // Cache only, no need to preserve on fork
   getPostCompactionStateKey, // Cache only, no need to preserve on fork

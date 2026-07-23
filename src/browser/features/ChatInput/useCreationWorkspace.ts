@@ -30,6 +30,7 @@ import {
   getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
   getDraftScopeId,
+  getPendingDraftSkillDiscoveryKey,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
   GLOBAL_SCOPE_ID,
@@ -250,8 +251,15 @@ export type RuntimeAvailabilityState =
 function transferDraftToWorkspace(
   workspaceId: string,
   text: string,
-  attachments: ChatAttachment[]
+  attachments: ChatAttachment[],
+  forceProjectSkillDiscovery: boolean
 ): void {
+  if (forceProjectSkillDiscovery) {
+    // The original send resolved its slash skill against the project path;
+    // carry that choice so the retry cannot resolve a different skill from
+    // the new worktree.
+    updatePersistedState(getPendingDraftSkillDiscoveryKey(workspaceId), true);
+  }
   updatePersistedState(getInputKey(workspaceId), text);
   // Pending files carry base64 bytes; drop them when the draft exceeds the
   // persistence cap (they were memory-only before the transfer too).
@@ -665,10 +673,15 @@ export function useCreationWorkspace({
           // For slash-skill sends messageText is the rewritten skill text;
           // restore the original typed command from rawCommand so the retry
           // re-invokes the skill.
-          transferDraftToWorkspace(metadata.id, overrideRawCommand ?? messageText, [
-            ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
-            ...replacePendingFilesWithStaged(pendingFilesToStage, stagingOutcome.staged),
-          ]);
+          transferDraftToWorkspace(
+            metadata.id,
+            overrideRawCommand ?? messageText,
+            [
+              ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
+              ...replacePendingFilesWithStaged(pendingFilesToStage, stagingOutcome.staged),
+            ],
+            optionsOverride?.disableWorkspaceAgents === true
+          );
           updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), {
             type: "unknown",
             raw: formatPendingFileStagingError(stagingOutcome.failures),
@@ -793,10 +806,15 @@ export function useCreationWorkspace({
             // The creation draft was already cleared; without a transferred
             // draft the staged files would sit in the workspace with no
             // chips/notice to retry the send with.
-            transferDraftToWorkspace(metadata.id, overrideRawCommand ?? messageText, [
-              ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
-              ...stagingOutcome.staged,
-            ]);
+            transferDraftToWorkspace(
+              metadata.id,
+              overrideRawCommand ?? messageText,
+              [
+                ...filePartsToChatAttachments(fileParts ?? [], `${Date.now()}-transferred`),
+                ...stagingOutcome.staged,
+              ],
+              optionsOverride?.disableWorkspaceAgents === true
+            );
           }
           if (sendResult.error) {
             // Persist the failure so the workspace view can surface a toast after navigation.
