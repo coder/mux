@@ -649,6 +649,17 @@ export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
  */
 export const SIDEBAR_AGE_GROUPING_KEY = "sidebarAgeGrouping";
 
+export const SIDEBAR_DISPLAY_STYLE_KEY = "sidebarDisplayStyle";
+export const SIDEBAR_DISPLAY_STYLES = ["projects", "flat"] as const;
+export type SidebarDisplayStyle = (typeof SIDEBAR_DISPLAY_STYLES)[number];
+export const DEFAULT_SIDEBAR_DISPLAY_STYLE: SidebarDisplayStyle = "projects";
+
+export function normalizeSidebarDisplayStyle(value: unknown): SidebarDisplayStyle {
+  return SIDEBAR_DISPLAY_STYLES.includes(value as SidebarDisplayStyle)
+    ? (value as SidebarDisplayStyle)
+    : DEFAULT_SIDEBAR_DISPLAY_STYLE;
+}
+
 /**
  * Left sidebar width
  * Format: "left-sidebar:width"

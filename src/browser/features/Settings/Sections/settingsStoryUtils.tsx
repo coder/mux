@@ -22,6 +22,7 @@ import {
 import {
   SELECTED_WORKSPACE_KEY,
   SIDEBAR_AGE_GROUPING_KEY,
+  SIDEBAR_DISPLAY_STYLE_KEY,
   UI_THEME_KEY,
 } from "@/common/constants/storage";
 import type { ServerAuthSession } from "@/common/orpc/types";
@@ -52,6 +53,7 @@ export function resetStorybookPersistedStateForStory(): void {
     // Sidebar stories can write sidebarAgeGrouping=false into the shared
     // origin; clear it so the GeneralSection switch snapshots its default.
     localStorage.removeItem(SIDEBAR_AGE_GROUPING_KEY);
+    localStorage.removeItem(SIDEBAR_DISPLAY_STYLE_KEY);
   }
 }
 

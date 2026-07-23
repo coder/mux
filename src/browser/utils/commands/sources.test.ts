@@ -4,7 +4,8 @@ import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { GlobalWindow } from "happy-dom";
-import { getModelKey } from "@/common/constants/storage";
+import { getModelKey, SIDEBAR_DISPLAY_STYLE_KEY } from "@/common/constants/storage";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import type { APIClient } from "@/browser/contexts/API";
@@ -279,6 +280,24 @@ test("appearance commands omit auto when auto preference is already selected", (
   expect(themeSetCommandIds).toContain("appearance:theme:set:dark");
   expect(themeSetCommandIds).toContain("appearance:theme:set:light");
   expect(themeSetCommandIds).not.toContain("appearance:theme:set:auto");
+});
+
+test("appearance commands switch between project sections and flat cards", async () => {
+  await withTestWindow(async () => {
+    const flatAction = getActions().find((action) => action.id === "appearance:sidebar:set:flat");
+    expect(flatAction).toBeDefined();
+    await flatAction?.run();
+    expect(readPersistedState(SIDEBAR_DISPLAY_STYLE_KEY, "projects")).toBe("flat");
+
+    const flatActions = getActions();
+    expect(flatActions.some((action) => action.id === "appearance:sidebar:set:flat")).toBe(false);
+    const projectAction = flatActions.find(
+      (action) => action.id === "appearance:sidebar:set:projects"
+    );
+    expect(projectAction).toBeDefined();
+    await projectAction?.run();
+    expect(readPersistedState(SIDEBAR_DISPLAY_STYLE_KEY, "flat")).toBe("projects");
+  });
 });
 
 test("buildCoreSources adds thinking effort command", () => {

@@ -8,8 +8,9 @@ interface WorkspaceGroupConfig {
   id: string;
 }
 
-function flattenWorkspaceTree(
-  workspaces: FrontendWorkspaceMetadata[]
+export function flattenWorkspaceTree(
+  workspaces: FrontendWorkspaceMetadata[],
+  compareRoots?: (left: FrontendWorkspaceMetadata, right: FrontendWorkspaceMetadata) => number
 ): FrontendWorkspaceMetadata[] {
   if (workspaces.length === 0) return [];
 
@@ -37,6 +38,10 @@ function flattenWorkspaceTree(
     const children = childrenByParent.get(parentId) ?? [];
     children.push(workspace);
     childrenByParent.set(parentId, children);
+  }
+
+  if (compareRoots) {
+    roots.sort(compareRoots);
   }
 
   const result: FrontendWorkspaceMetadata[] = [];
@@ -639,6 +644,32 @@ function comparePinnedPlacement(
   return null;
 }
 
+export function compareWorkspacesByRecency(
+  left: FrontendWorkspaceMetadata,
+  right: FrontendWorkspaceMetadata,
+  workspaceRecency: Record<string, number>
+): number {
+  const pinnedPlacement = comparePinnedPlacement(left, right);
+  if (pinnedPlacement !== null) {
+    return pinnedPlacement;
+  }
+
+  const leftTimestamp = workspaceRecency[left.id] ?? 0;
+  const rightTimestamp = workspaceRecency[right.id] ?? 0;
+  if (leftTimestamp !== rightTimestamp) {
+    return rightTimestamp - leftTimestamp;
+  }
+
+  const leftCreatedAt = parseTimestampMs(left.createdAt);
+  const rightCreatedAt = parseTimestampMs(right.createdAt);
+  if (leftCreatedAt !== rightCreatedAt) {
+    return rightCreatedAt - leftCreatedAt;
+  }
+
+  const nameOrder = compareStringsAsc(left.name, right.name);
+  return nameOrder !== 0 ? nameOrder : compareStringsAsc(left.id, right.id);
+}
+
 /**
  * Build a map of project paths to sorted workspace metadata lists.
  * Includes both persisted workspaces (from config) and workspaces from
@@ -683,31 +714,7 @@ export function buildSortedWorkspacesByProject(
   // IMPORTANT: Include deterministic tie-breakers so Storybook visual snapshots can't
   // flip ordering when multiple workspaces have equal recency.
   for (const metadataList of result.values()) {
-    metadataList.sort((a, b) => {
-      const pinnedPlacement = comparePinnedPlacement(a, b);
-      if (pinnedPlacement !== null) {
-        return pinnedPlacement;
-      }
-
-      const aTimestamp = workspaceRecency[a.id] ?? 0;
-      const bTimestamp = workspaceRecency[b.id] ?? 0;
-      if (aTimestamp !== bTimestamp) {
-        return bTimestamp - aTimestamp;
-      }
-
-      const aCreatedAt = parseTimestampMs(a.createdAt);
-      const bCreatedAt = parseTimestampMs(b.createdAt);
-      if (aCreatedAt !== bCreatedAt) {
-        return bCreatedAt - aCreatedAt;
-      }
-
-      const nameOrder = compareStringsAsc(a.name, b.name);
-      if (nameOrder !== 0) {
-        return nameOrder;
-      }
-
-      return compareStringsAsc(a.id, b.id);
-    });
+    metadataList.sort((left, right) => compareWorkspacesByRecency(left, right, workspaceRecency));
   }
 
   // Ensure child workspaces appear directly below their parents.
