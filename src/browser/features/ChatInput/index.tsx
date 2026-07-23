@@ -24,6 +24,7 @@ import {
   readPersistedState,
   usePersistedState,
   updatePersistedState,
+  subscribePersistedStateWrites,
 } from "@/browser/hooks/usePersistedState";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -460,36 +461,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [processingAttachmentCount, setProcessingAttachmentCount] = useState(0);
   // Reviews restored from edits/queued drafts override attached review state while active.
   const [draftReviews, setDraftReviews] = useState<ReviewNoteDataForDisplay[] | null>(null);
+  // Distinguishes this component's own persisted writes from external ones
+  // (e.g. a creation-flow draft transfer landing after this composer mounted).
+  const selfAttachmentWriteRef = useRef(false);
   const persistAttachments = useCallback(
     (nextAttachments: ChatAttachment[]) => {
-      if (nextAttachments.length === 0) {
-        attachmentDraftTooLargeToastKeyRef.current = null;
-        updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
-        return;
-      }
-
-      const estimatedChars = estimatePersistedChatAttachmentsChars(nextAttachments);
-      if (estimatedChars > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS) {
-        // Clear persisted value to avoid restoring stale attachments on restart.
-        updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
-
-        if (attachmentDraftTooLargeToastKeyRef.current !== storageKeys.attachmentsKey) {
-          attachmentDraftTooLargeToastKeyRef.current = storageKeys.attachmentsKey;
-          pushToast({
-            type: "error",
-            message:
-              "This draft attachment is too large to save. It will be lost when you switch workspaces or restart.",
-            duration: 5000,
-          });
+      selfAttachmentWriteRef.current = true;
+      try {
+        if (nextAttachments.length === 0) {
+          attachmentDraftTooLargeToastKeyRef.current = null;
+          updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
+          return;
         }
-        return;
-      }
 
-      attachmentDraftTooLargeToastKeyRef.current = null;
-      updatePersistedState<ChatAttachment[] | undefined>(
-        storageKeys.attachmentsKey,
-        nextAttachments
-      );
+        const estimatedChars = estimatePersistedChatAttachmentsChars(nextAttachments);
+        if (estimatedChars > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS) {
+          // Clear persisted value to avoid restoring stale attachments on restart.
+          updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
+
+          if (attachmentDraftTooLargeToastKeyRef.current !== storageKeys.attachmentsKey) {
+            attachmentDraftTooLargeToastKeyRef.current = storageKeys.attachmentsKey;
+            pushToast({
+              type: "error",
+              message:
+                "This draft attachment is too large to save. It will be lost when you switch workspaces or restart.",
+              duration: 5000,
+            });
+          }
+          return;
+        }
+
+        attachmentDraftTooLargeToastKeyRef.current = null;
+        updatePersistedState<ChatAttachment[] | undefined>(
+          storageKeys.attachmentsKey,
+          nextAttachments
+        );
+      } finally {
+        selfAttachmentWriteRef.current = false;
+      }
     },
     [storageKeys.attachmentsKey, pushToast]
   );
@@ -498,6 +507,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     attachmentDraftTooLargeToastKeyRef.current = null;
     setAttachmentsState(readPersistedChatAttachments(storageKeys.attachmentsKey));
+  }, [storageKeys.attachmentsKey]);
+
+  // Attachments live in local state (a too-large draft stays in memory after
+  // its persisted copy is cleared), so external writes to the draft key, such
+  // as a creation-flow transfer that lands after this composer mounted, must
+  // be synced in explicitly. Self-writes are skipped to keep that in-memory
+  // exception intact.
+  useEffect(() => {
+    return subscribePersistedStateWrites((event) => {
+      if (event.key !== storageKeys.attachmentsKey || selfAttachmentWriteRef.current) {
+        return;
+      }
+      setAttachmentsState(readPersistedChatAttachments(storageKeys.attachmentsKey));
+    });
   }, [storageKeys.attachmentsKey]);
   const setAttachments = useCallback(
     (value: ChatAttachment[] | ((prev: ChatAttachment[]) => ChatAttachment[])) => {

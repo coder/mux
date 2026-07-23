@@ -5,7 +5,7 @@ jest.mock("lottie-react", () => ({
   default: () => null,
 }));
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getInputAttachmentsKey } from "@/common/constants/storage";
@@ -89,6 +89,36 @@ describe("Goal slash command", () => {
 
       const { goal } = await app.env.orpc.workspace.getGoal({ workspaceId: app.workspaceId });
       expect(goal).toBeNull();
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
+  test("shows attachment chips written to the draft key after the composer mounted", async () => {
+    const app = await createAppHarness({
+      branchPrefix: "late-attach",
+    });
+
+    try {
+      // Simulates a creation-flow draft transfer that lands after navigation:
+      // staging on deferred runtimes can finish minutes after the workspace
+      // composer mounted, so the write must sync into the mounted composer.
+      act(() => {
+        updatePersistedState(getInputAttachmentsKey(app.workspaceId), [
+          {
+            kind: "staged",
+            id: "s1",
+            filename: "late-transfer.md",
+            mediaType: "text/markdown",
+            sizeBytes: 8,
+            stagedPath: ".mux/user-attachments/uuid/late-transfer.md",
+          },
+        ]);
+      });
+
+      await waitFor(() => {
+        expect(app.view.container.textContent).toContain("late-transfer.md");
+      });
     } finally {
       await app.dispose();
     }
