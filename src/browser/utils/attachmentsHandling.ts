@@ -1,8 +1,14 @@
 import type { FilePart } from "@/common/orpc/types";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import { MAX_STAGED_ATTACHMENT_SIZE_BYTES } from "@/common/constants/stagedAttachments";
-import { getSupportedAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
-import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
+import {
+  getSupportedAttachmentMediaType,
+  getSupportedStagedAttachmentMediaType,
+} from "@/common/utils/attachments/supportedAttachmentMediaTypes";
+import type {
+  ChatAttachment,
+  PendingFileChatAttachment,
+} from "@/browser/features/ChatInput/ChatAttachments";
 import { resizeImageIfNeeded } from "@/browser/utils/imageResize";
 
 /**
@@ -21,6 +27,11 @@ export interface StageAttachmentResult {
 
 export interface ProcessAttachmentOptions {
   stageAttachment?: (file: File, dataBase64: string) => Promise<StageAttachmentResult>;
+  /**
+   * Hold non-provider files in memory as pending-file attachments. Used by creation
+   * composers, which have no workspace to stage into until the first send.
+   */
+  holdNonProviderFiles?: boolean;
 }
 
 function getSupportedMediaType(file: File): string | null {
@@ -40,8 +51,9 @@ export function chatAttachmentsToFileParts(
   const validate = options?.validate ?? false;
 
   return attachments.flatMap((attachment, index) => {
-    if (attachment.kind === "staged") {
-      // Staged files live in the workspace filesystem and must never be sent as provider file parts.
+    if (attachment.kind === "staged" || attachment.kind === "pending-file") {
+      // Staged and pending files belong in the workspace filesystem and must never
+      // be sent as provider file parts.
       return [];
     }
 
@@ -84,17 +96,21 @@ function fileBytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function fileToStagedChatAttachment(
-  file: File,
-  stageAttachment: (file: File, dataBase64: string) => Promise<StageAttachmentResult>
-): Promise<ChatAttachment> {
+async function readFileBase64ForStaging(file: File): Promise<string> {
   if (file.size > MAX_STAGED_ATTACHMENT_SIZE_BYTES) {
     throw new Error(
       `Attachments larger than ${MAX_STAGED_ATTACHMENT_SIZE_BYTES.toLocaleString()} bytes cannot be staged.`
     );
   }
 
-  const dataBase64 = fileBytesToBase64(new Uint8Array(await file.arrayBuffer()));
+  return fileBytesToBase64(new Uint8Array(await file.arrayBuffer()));
+}
+
+async function fileToStagedChatAttachment(
+  file: File,
+  stageAttachment: (file: File, dataBase64: string) => Promise<StageAttachmentResult>
+): Promise<ChatAttachment> {
+  const dataBase64 = await readFileBase64ForStaging(file);
   const staged = await stageAttachment(file, dataBase64);
   return {
     kind: "staged",
@@ -198,20 +214,40 @@ export function extractAttachmentsFromDrop(dataTransfer: DataTransfer): File[] {
   return Array.from(dataTransfer.files);
 }
 
+async function fileToPendingFileChatAttachment(file: File): Promise<PendingFileChatAttachment> {
+  const dataBase64 = await readFileBase64ForStaging(file);
+  return {
+    kind: "pending-file",
+    id: generateAttachmentId(),
+    filename: file.name,
+    // Resolve the media type the same way the backend does at staging time, so the
+    // chip shows what the staged file will report.
+    mediaType: getSupportedStagedAttachmentMediaType({
+      mediaType: file.type !== "" ? file.type : null,
+      filename: file.name,
+    }),
+    sizeBytes: file.size,
+    dataBase64,
+  };
+}
+
 export async function processAttachmentFiles(
   files: File[],
   options: ProcessAttachmentOptions = {}
 ): Promise<ChatAttachment[]> {
   return await Promise.all(
     files.map((file) => {
-      // Prefer provider-native formats before the optional workspace staging fallback.
+      // Prefer provider-native formats before the workspace staging fallbacks.
       if (getSupportedMediaType(file) != null) {
         return fileToChatAttachment(file);
       }
-      if (!options.stageAttachment) {
-        throw new Error("Files can be staged after opening a workspace.");
+      if (options.stageAttachment) {
+        return fileToStagedChatAttachment(file, options.stageAttachment);
       }
-      return fileToStagedChatAttachment(file, options.stageAttachment);
+      if (options.holdNonProviderFiles) {
+        return fileToPendingFileChatAttachment(file);
+      }
+      throw new Error("Files can be staged after opening a workspace.");
     })
   );
 }

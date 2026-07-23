@@ -44,6 +44,20 @@ import { ConfirmationModal } from "@/browser/components/ConfirmationModal/Confir
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { WorkspaceCreatedOptions } from "@/browser/features/ChatInput/types";
+import type {
+  ChatAttachment,
+  PendingFileChatAttachment,
+} from "@/browser/features/ChatInput/ChatAttachments";
+import {
+  formatPendingFileStagingError,
+  replacePendingFilesWithStaged,
+  stagePendingFiles,
+} from "@/browser/features/ChatInput/pendingFileAttachments";
+import { appendStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
+import {
+  estimatePersistedChatAttachmentsChars,
+  MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS,
+} from "@/browser/features/ChatInput/draftAttachmentsStorage";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { processSlashCommand, type SlashCommandContext } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -206,7 +220,8 @@ interface UseCreationWorkspaceReturn {
     message: string,
     fileParts?: FilePart[],
     optionsOverride?: Partial<SendMessageOptions>,
-    initialSlashCommand?: CreationInitialSlashCommand
+    initialSlashCommand?: CreationInitialSlashCommand,
+    pendingFiles?: PendingFileChatAttachment[]
   ) => Promise<CreationSendResult>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
@@ -227,6 +242,26 @@ export type RuntimeAvailabilityState =
   | { status: "loading" }
   | { status: "failed" }
   | { status: "loaded"; data: RuntimeAvailabilityMap };
+
+// Move a failed creation send's draft into the new workspace's composer so the
+// user can retry from there without creating a duplicate workspace.
+function transferDraftToWorkspace(
+  workspaceId: string,
+  text: string,
+  attachments: ChatAttachment[]
+): void {
+  updatePersistedState(getInputKey(workspaceId), text);
+  // Oversized pending payloads would blow the localStorage quota; drop them (they
+  // were memory-only in the creation composer too) and keep the rest.
+  const persistable =
+    estimatePersistedChatAttachmentsChars(attachments) > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS
+      ? attachments.filter((attachment) => attachment.kind !== "pending-file")
+      : attachments;
+  updatePersistedState(
+    getInputAttachmentsKey(workspaceId),
+    persistable.length > 0 ? persistable : undefined
+  );
+}
 
 /**
  * Hook for managing workspace creation state and logic
@@ -386,9 +421,14 @@ export function useCreationWorkspace({
       messageText: string,
       fileParts?: FilePart[],
       optionsOverride?: Partial<SendMessageOptions>,
-      initialSlashCommand?: CreationInitialSlashCommand
+      initialSlashCommand?: CreationInitialSlashCommand,
+      pendingFiles?: PendingFileChatAttachment[]
     ): Promise<CreationSendResult> => {
-      if (!messageText.trim() || isSending || !api) {
+      const pendingFilesToStage = pendingFiles ?? [];
+      // File-only sends are valid: the attached-files notice (or provider file
+      // parts) becomes the message content, matching workspace composer behavior.
+      const hasSendableAttachments = pendingFilesToStage.length > 0 || (fileParts?.length ?? 0) > 0;
+      if ((!messageText.trim() && !hasSendableAttachments) || isSending || !api) {
         return { success: false };
       }
 
@@ -597,6 +637,40 @@ export function useCreationWorkspace({
           updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
         };
 
+        // Stage pending files now that the worktree exists on disk. This must
+        // finish before the first send so the attached-files notice can
+        // reference real staged paths.
+        const stagingOutcome =
+          pendingFilesToStage.length > 0
+            ? await stagePendingFiles(api, metadata.id, pendingFilesToStage)
+            : { staged: [], failures: [] };
+        const stagingFailed = stagingOutcome.failures.length > 0;
+
+        if (stagingFailed) {
+          // Fail closed: a partial notice would misrepresent the workspace
+          // contents. Transfer the draft (staged results kept, failed files
+          // still pending) into the new workspace's composer before navigation
+          // so the user can retry from there.
+          const providerDraftAttachments: ChatAttachment[] = (fileParts ?? []).map(
+            (part, index) => ({
+              kind: "provider",
+              id: `${Date.now()}-transferred-${index}`,
+              url: part.url,
+              mediaType: part.mediaType,
+              filename: part.filename,
+            })
+          );
+          transferDraftToWorkspace(metadata.id, messageText, [
+            ...providerDraftAttachments,
+            ...replacePendingFilesWithStaged(pendingFilesToStage, stagingOutcome.staged),
+          ]);
+          // Surface the failure as a toast after navigation, like initial-send errors.
+          updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), {
+            type: "unknown",
+            raw: formatPendingFileStagingError(stagingOutcome.failures),
+          } satisfies SendMessageError);
+        }
+
         // Sync preferences before switching (keeps workspace settings consistent).
         syncCreationPreferences(projectPath, metadata.id);
 
@@ -613,8 +687,8 @@ export function useCreationWorkspace({
 
         onWorkspaceCreated(metadata, {
           autoNavigate: shouldAutoNavigate,
-          pendingStreamModel: shouldAutoNavigate ? baseModel : null,
-          markPendingInitialSend: initialSlashCommand == null,
+          pendingStreamModel: shouldAutoNavigate && !stagingFailed ? baseModel : null,
+          markPendingInitialSend: initialSlashCommand == null && !stagingFailed,
         });
 
         if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
@@ -625,6 +699,11 @@ export function useCreationWorkspace({
         // Persistently clear the draft as soon as the workspace exists so a refresh
         // during the initial send can't resurrect the draft entry in the sidebar.
         clearPendingDraft();
+
+        if (stagingFailed) {
+          setIsSending(false);
+          return { success: false };
+        }
 
         if (initialSlashCommand) {
           await initialAiSettingsPersisted;
@@ -679,7 +758,7 @@ export function useCreationWorkspace({
 
         const sendResult = await api.workspace.sendMessage({
           workspaceId: metadata.id,
-          message: messageText,
+          message: appendStagedAttachmentNotice(messageText, stagingOutcome.staged),
           options: {
             ...sendMessageOptions,
             ...optionsOverride,

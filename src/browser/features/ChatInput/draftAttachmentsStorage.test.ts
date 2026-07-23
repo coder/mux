@@ -78,6 +78,32 @@ describe("draftAttachmentsStorage", () => {
     ).toEqual([]);
   });
 
+  test("parsePersistedChatAttachments round-trips pending files with base64 bytes", () => {
+    const pendingFile = {
+      kind: "pending-file" as const,
+      id: "pending-1",
+      mediaType: "text/markdown",
+      filename: "notes.md",
+      sizeBytes: 8,
+      dataBase64: "bWFya2Rvd24=",
+    };
+    expect(parsePersistedChatAttachments([pendingFile])).toEqual([pendingFile]);
+  });
+
+  test("parsePersistedChatAttachments self-heals invalid pending-file records", () => {
+    expect(
+      parsePersistedChatAttachments([
+        {
+          kind: "pending-file",
+          id: "pending-1",
+          mediaType: "text/markdown",
+          filename: "notes.md",
+          sizeBytes: 8,
+        },
+      ])
+    ).toEqual([]);
+  });
+
   test("estimatePersistedChatAttachmentsChars matches JSON length", () => {
     const attachments = [
       {

@@ -32,6 +32,7 @@ import type {
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import type { PendingFileChatAttachment } from "./ChatAttachments";
 import type { WorkspaceCreatedOptions } from "./types";
 import { useCreationWorkspace, type CreationSendResult } from "./useCreationWorkspace";
 
@@ -256,13 +257,23 @@ type WorkspaceCreateScratchResult = Awaited<ReturnType<APIClient["workspace"]["c
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
+type WorkspaceStageAttachmentArgs = Parameters<APIClient["workspace"]["stageAttachment"]>[0];
+type WorkspaceStageAttachmentResult = Awaited<
+  ReturnType<APIClient["workspace"]["stageAttachment"]>
+>;
 type MockOrpcProjectsClient = Pick<
   APIClient["projects"],
   "list" | "listBranches" | "runtimeAvailability" | "setTrust"
 >;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
-  "sendMessage" | "create" | "createScratch" | "updateAgentAISettings" | "getGoal" | "setGoal"
+  | "sendMessage"
+  | "create"
+  | "createScratch"
+  | "updateAgentAISettings"
+  | "getGoal"
+  | "setGoal"
+  | "stageAttachment"
 >;
 type MockOrpcWorkflowsClient = Pick<APIClient["workflows"], "start" | "getRun">;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
@@ -317,6 +328,9 @@ interface SetupWindowOptions {
   nameGeneration?: ReturnType<
     typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
   >;
+  stageAttachment?: ReturnType<
+    typeof mock<(args: WorkspaceStageAttachmentArgs) => Promise<WorkspaceStageAttachmentResult>>
+  >;
 }
 
 const setupWindow = ({
@@ -331,6 +345,7 @@ const setupWindow = ({
   workflowStart,
   workflowGetRun,
   nameGeneration,
+  stageAttachment,
 }: SetupWindowOptions = {}) => {
   // Sync the useProjectContext mock with the default trusted config.
   // Tests that need untrusted projects override mockProjectConfigMap directly.
@@ -446,6 +461,22 @@ const setupWindow = ({
       } as NameGenerationResult);
     });
 
+  const stageAttachmentMock =
+    stageAttachment ??
+    mock<(args: WorkspaceStageAttachmentArgs) => Promise<WorkspaceStageAttachmentResult>>(
+      (args) => {
+        return Promise.resolve({
+          success: true,
+          data: {
+            filename: args.filename,
+            mediaType: args.mediaType ?? "application/octet-stream",
+            sizeBytes: args.sizeBytes,
+            stagedPath: `.mux/user-attachments/uuid/${args.filename}`,
+          },
+        } as WorkspaceStageAttachmentResult);
+      }
+    );
+
   currentORPCClient = {
     projects: {
       list: () => listProjectsMock(),
@@ -468,6 +499,7 @@ const setupWindow = ({
         updateAgentAISettingsMock(input),
       getGoal: (input: WorkspaceGetGoalArgs) => getGoalMock(input),
       setGoal: (input: WorkspaceSetGoalArgs) => setGoalMock(input),
+      stageAttachment: (input: WorkspaceStageAttachmentArgs) => stageAttachmentMock(input),
     },
     workflows: {
       start: (input: WorkflowStartArgs) => workflowStartMock(input),
@@ -583,6 +615,7 @@ const setupWindow = ({
       updateAgentAISettings: updateAgentAISettingsMock,
       getGoal: getGoalMock,
       setGoal: setGoalMock,
+      stageAttachment: stageAttachmentMock,
     },
     workflowsApi: { start: workflowStartMock, getRun: workflowGetRunMock },
     nameGenerationApi: { generate: nameGenerationMock },
@@ -878,6 +911,181 @@ describe("useCreationWorkspace", () => {
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
+  });
+
+  test("handleSend stages pending files after create and appends the attached-files notice", async () => {
+    const callOrder: string[] = [];
+    const createMock = mock((_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> => {
+      callOrder.push("create");
+      return Promise.resolve({ success: true, metadata: TEST_METADATA } as WorkspaceCreateResult);
+    });
+    const stageAttachmentMock = mock(
+      (args: WorkspaceStageAttachmentArgs): Promise<WorkspaceStageAttachmentResult> => {
+        callOrder.push(`stage:${args.filename}`);
+        return Promise.resolve({
+          success: true,
+          data: {
+            filename: args.filename,
+            mediaType: args.mediaType ?? "application/octet-stream",
+            sizeBytes: args.sizeBytes,
+            stagedPath: `.mux/user-attachments/uuid/${args.filename}`,
+          },
+        } as WorkspaceStageAttachmentResult);
+      }
+    );
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> => {
+        callOrder.push("send");
+        return Promise.resolve({ success: true as const, data: {} });
+      }
+    );
+    const { workspaceApi } = setupWindow({
+      create: createMock,
+      sendMessage: sendMessageMock,
+      stageAttachment: stageAttachmentMock,
+    });
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated: mock((metadata: FrontendWorkspaceMetadata) => metadata),
+      message: "check these files",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    const pendingFiles: PendingFileChatAttachment[] = [
+      {
+        kind: "pending-file",
+        id: "p1",
+        filename: "notes.md",
+        mediaType: "text/markdown",
+        sizeBytes: 8,
+        dataBase64: "bWFya2Rvd24=",
+      },
+      {
+        kind: "pending-file",
+        id: "p2",
+        filename: "data.bin",
+        mediaType: "application/octet-stream",
+        sizeBytes: 3,
+        dataBase64: "Ymlu",
+      },
+    ];
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend(
+        "check these files",
+        undefined,
+        undefined,
+        undefined,
+        pendingFiles
+      );
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(callOrder).toEqual(["create", "stage:notes.md", "stage:data.bin", "send"]);
+    expect(workspaceApi.stageAttachment.mock.calls[0]?.[0]?.workspaceId).toBe(TEST_WORKSPACE_ID);
+
+    const sendRequest = workspaceApi.sendMessage.mock.calls[0]?.[0];
+    expect(sendRequest?.message).toContain("check these files");
+    expect(sendRequest?.message).toContain(".mux/user-attachments/uuid/notes.md");
+    expect(sendRequest?.message).toContain(".mux/user-attachments/uuid/data.bin");
+  });
+
+  test("handleSend fails closed when staging fails and transfers the draft to the workspace", async () => {
+    const stageAttachmentMock = mock(
+      (args: WorkspaceStageAttachmentArgs): Promise<WorkspaceStageAttachmentResult> => {
+        if (args.filename === "bad.bin") {
+          return Promise.resolve({
+            success: false,
+            error: "disk full",
+          } as WorkspaceStageAttachmentResult);
+        }
+        return Promise.resolve({
+          success: true,
+          data: {
+            filename: args.filename,
+            mediaType: args.mediaType ?? "application/octet-stream",
+            sizeBytes: args.sizeBytes,
+            stagedPath: `.mux/user-attachments/uuid/${args.filename}`,
+          },
+        } as WorkspaceStageAttachmentResult);
+      }
+    );
+    const onWorkspaceCreated = mock(
+      (metadata: FrontendWorkspaceMetadata, _options?: WorkspaceCreatedOptions) => metadata
+    );
+    const { workspaceApi } = setupWindow({ stageAttachment: stageAttachmentMock });
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "review my files",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual([FALLBACK_BRANCH]));
+
+    const good: PendingFileChatAttachment = {
+      kind: "pending-file",
+      id: "p1",
+      filename: "good.md",
+      mediaType: "text/markdown",
+      sizeBytes: 8,
+      dataBase64: "bWFya2Rvd24=",
+    };
+    const bad: PendingFileChatAttachment = {
+      kind: "pending-file",
+      id: "p2",
+      filename: "bad.bin",
+      mediaType: "application/octet-stream",
+      sizeBytes: 3,
+      dataBase64: "Ymlu",
+    };
+
+    let result: CreationSendResult | undefined;
+    await act(async () => {
+      result = await getHook().handleSend("review my files", undefined, undefined, undefined, [
+        good,
+        bad,
+      ]);
+    });
+
+    expect(result).toEqual({ success: false });
+    expect(workspaceApi.sendMessage.mock.calls.length).toBe(0);
+
+    // Draft transferred to the new workspace: text, staged + still-pending files.
+    expect(updatePersistedStateCalls).toContainEqual([
+      getInputKey(TEST_WORKSPACE_ID),
+      "review my files",
+    ]);
+    const attachmentsWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getInputAttachmentsKey(TEST_WORKSPACE_ID)
+    );
+    expect(attachmentsWrite?.[1]).toEqual([
+      {
+        kind: "staged",
+        id: "p1",
+        filename: "good.md",
+        mediaType: "text/markdown",
+        sizeBytes: 8,
+        stagedPath: ".mux/user-attachments/uuid/good.md",
+      },
+      bad,
+    ]);
+    const errorWrite = updatePersistedStateCalls.find(
+      ([key]) => key === getPendingWorkspaceSendErrorKey(TEST_WORKSPACE_ID)
+    );
+    expect(errorWrite?.[1]).toMatchObject({ type: "unknown" });
+    expect((errorWrite?.[1] as { raw: string }).raw).toContain("bad.bin: disk full");
+
+    // The workspace still exists and is navigated to, but no initial send is pending.
+    expect(onWorkspaceCreated.mock.calls.length).toBe(1);
+    expect(onWorkspaceCreated.mock.calls[0][1]).toMatchObject({ markPendingInitialSend: false });
+
+    // The creation-scope draft is cleared after the transfer.
+    const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
+    expect(updatePersistedStateCalls).toContainEqual([getInputKey(pendingScopeId), ""]);
   });
 
   test("handleSend creates workspace and applies initial goal command without sending chat text", async () => {

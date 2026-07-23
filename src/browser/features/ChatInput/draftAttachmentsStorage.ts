@@ -1,6 +1,12 @@
 import type { ChatAttachment } from "@/browser/features/ChatInput/ChatAttachments";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 
+/**
+ * Attachment drafts above this JSON size are not persisted to localStorage
+ * (quota is typically 5-10 MB per origin); they stay memory-only.
+ */
+export const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -43,6 +49,27 @@ function isStagedChatAttachment(value: unknown): value is {
   );
 }
 
+function isPendingFileChatAttachment(value: unknown): value is {
+  kind: "pending-file";
+  id: string;
+  mediaType: string;
+  filename: string;
+  sizeBytes: number;
+  dataBase64: string;
+} {
+  if (!isRecord(value)) return false;
+  return (
+    value.kind === "pending-file" &&
+    typeof value.id === "string" &&
+    typeof value.mediaType === "string" &&
+    typeof value.filename === "string" &&
+    typeof value.sizeBytes === "number" &&
+    Number.isInteger(value.sizeBytes) &&
+    value.sizeBytes >= 0 &&
+    typeof value.dataBase64 === "string"
+  );
+}
+
 export function parsePersistedChatAttachments(raw: unknown): ChatAttachment[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -69,6 +96,18 @@ export function parsePersistedChatAttachments(raw: unknown): ChatAttachment[] {
         filename: item.filename,
         sizeBytes: item.sizeBytes,
         stagedPath: item.stagedPath,
+      });
+      continue;
+    }
+
+    if (isPendingFileChatAttachment(item)) {
+      attachments.push({
+        kind: "pending-file",
+        id: item.id,
+        mediaType: item.mediaType,
+        filename: item.filename,
+        sizeBytes: item.sizeBytes,
+        dataBase64: item.dataBase64,
       });
       continue;
     }

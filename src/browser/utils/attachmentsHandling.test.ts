@@ -207,6 +207,96 @@ describe("attachmentsHandling", () => {
         ])
       ).toEqual([]);
     });
+
+    test("does not convert pending files to provider file parts", () => {
+      expect(
+        chatAttachmentsToFileParts([
+          {
+            kind: "pending-file",
+            id: "file-1",
+            filename: "notes.md",
+            mediaType: "text/markdown",
+            sizeBytes: 1,
+            dataBase64: "bQ==",
+          },
+        ])
+      ).toEqual([]);
+    });
+  });
+
+  describe("pending files", () => {
+    test("holds non-provider files in memory with base64 bytes and resolved media type", async () => {
+      const markdown = new File(["markdown"], "notes.md", { type: "text/markdown" });
+      const binary = new File(["bin"], "data.bin", { type: "" });
+
+      const attachments = await processAttachmentFiles([markdown, binary], {
+        holdNonProviderFiles: true,
+      });
+
+      expect(attachments).toEqual([
+        {
+          kind: "pending-file",
+          id: expect.stringMatching(/^\d+-[a-z0-9]+$/),
+          filename: "notes.md",
+          mediaType: "text/markdown",
+          sizeBytes: 8,
+          dataBase64: "bWFya2Rvd24=",
+        },
+        {
+          kind: "pending-file",
+          id: expect.stringMatching(/^\d+-[a-z0-9]+$/),
+          filename: "data.bin",
+          mediaType: "application/octet-stream",
+          sizeBytes: 3,
+          dataBase64: "Ymlu",
+        },
+      ]);
+    });
+
+    test("routes provider-native files before the pending-file hold", async () => {
+      const image = new File(["image"], "photo.png", { type: "image/png" });
+
+      const attachments = await processAttachmentFiles([image], {
+        holdNonProviderFiles: true,
+      });
+
+      expect(attachments.map((attachment) => attachment.kind)).toEqual(["provider"]);
+    });
+
+    test("prefers staging over the pending-file hold when both are configured", async () => {
+      const markdown = new File(["markdown"], "notes.md", { type: "text/markdown" });
+
+      const attachments = await processAttachmentFiles([markdown], {
+        stageAttachment: (file) =>
+          Promise.resolve({
+            filename: file.name,
+            mediaType: file.type,
+            sizeBytes: file.size,
+            stagedPath: `.mux/user-attachments/id/${file.name}`,
+          }),
+        holdNonProviderFiles: true,
+      });
+
+      expect(attachments.map((attachment) => attachment.kind)).toEqual(["staged"]);
+    });
+
+    test("rejects oversized files before holding them", async () => {
+      let read = false;
+      const file = {
+        name: "large.bin",
+        type: "",
+        size: MAX_STAGED_ATTACHMENT_SIZE_BYTES + 1,
+        arrayBuffer: () => {
+          read = true;
+          return Promise.reject(new Error("should not read"));
+        },
+      } as unknown as File;
+
+      await expect(processAttachmentFiles([file], { holdNonProviderFiles: true })).rejects.toThrow(
+        "cannot be staged"
+      );
+      expect(read).toBe(false);
+    });
   });
 
   describe("processAttachmentFiles", () => {

@@ -189,8 +189,15 @@ import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import {
   estimatePersistedChatAttachmentsChars,
+  MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS,
   readPersistedChatAttachments,
 } from "./draftAttachmentsStorage";
+import {
+  formatPendingFileStagingError,
+  getPendingFileAttachments,
+  replacePendingFilesWithStaged,
+  stagePendingFiles,
+} from "./pendingFileAttachments";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
 import {
@@ -239,7 +246,6 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
 }
-const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
 // Shared so the three "blocked while editing a message" attachment guards surface identical copy
 // and can't drift if one is reworded.
@@ -918,9 +924,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "creation"
       ? (() => {
           const parsedCreationCommand = parseCommand(input.trim());
-          return parsedCreationCommand?.type === "goal-set"
-            ? parsedCreationCommand.objective
-            : input;
+          if (parsedCreationCommand?.type === "goal-set") {
+            return parsedCreationCommand.objective;
+          }
+          if (input.trim().length === 0 && attachments.length > 0) {
+            // File-only sends have no text to derive a workspace name from; use
+            // the attachment filenames instead.
+            const filenames = attachments
+              .map((attachment) => attachment.filename)
+              .filter((filename): filename is string => typeof filename === "string");
+            return filenames.length > 0 ? `Attached files: ${filenames.join(", ")}` : "";
+          }
+          return input;
         })()
       : "";
   const creationState = useCreationWorkspace(
@@ -2050,6 +2065,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 return result.data;
               }
             : undefined,
+        // Creation composers have no workspace yet; hold non-provider files in
+        // memory and stage them right after the workspace is created.
+        holdNonProviderFiles: variant === "creation",
       }).finally(() => {
         setProcessingAttachmentCount((count) => Math.max(0, count - 1));
       });
@@ -2172,7 +2190,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return true;
     }
 
-    if (getStagedAttachments(attachments).length > 0 && parsed.type !== "compact") {
+    // Pending files block every command (even /compact) because command sends
+    // never stage them, so they'd be silently dropped.
+    if (
+      getPendingFileAttachments(attachments).length > 0 ||
+      (getStagedAttachments(attachments).length > 0 && parsed.type !== "compact")
+    ) {
       setToast({
         id: Date.now().toString(),
         type: "error",
@@ -2448,8 +2471,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      const initialSlashCommand = parsed?.type === "goal-set" ? parsed : undefined;
-      if (!initialSlashCommand && parsed?.type !== "workflow-run") {
+      // The initial /goal path sets a goal without sending a user message, so
+      // attachments would be silently dropped. With attachments present, skip
+      // command processing and send the raw text as a normal message instead.
+      const goalCommandBypassedForAttachments =
+        parsed?.type === "goal-set" && attachments.length > 0;
+      const initialSlashCommand =
+        parsed?.type === "goal-set" && !goalCommandBypassedForAttachments ? parsed : undefined;
+      if (
+        !initialSlashCommand &&
+        !goalCommandBypassedForAttachments &&
+        parsed?.type !== "workflow-run"
+      ) {
         const commandHandled = await executeParsedCommand(parsed, input);
         if (commandHandled) {
           return;
@@ -2504,11 +2537,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Creation variant: simple message send + workspace creation
       const creationFileParts = chatAttachmentsToFileParts(attachments);
+      const creationPendingFiles = getPendingFileAttachments(attachments);
       const creationResult = await creationState.handleSend(
         creationMessageTextForSend,
         creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride,
-        initialSlashCommand
+        initialSlashCommand,
+        creationPendingFiles.length > 0 ? creationPendingFiles : undefined
       );
 
       if (creationResult.success) {
@@ -2565,19 +2600,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend = modelOneShot?.message ?? skillInvocation?.userText ?? messageText;
-      const skillMuxMetadata = skillInvocation
-        ? buildSkillInvocationMetadata(
-            appendStagedAttachmentNotice(messageText, attachments),
-            skillInvocation.descriptor,
-            skillInvocation.argumentText
-          )
-        : undefined;
 
       if (!api) {
         pushToast({ type: "error", message: "Not connected to server" });
         return;
       }
       setSendingCount((c) => c + 1);
+
+      // Stage pending files (drafts transferred from a failed creation send) so
+      // the attached-files notice references real workspace paths.
+      let sendAttachments = attachments;
+      const pendingFilesForSend = getPendingFileAttachments(attachments);
+      if (pendingFilesForSend.length > 0) {
+        const stagingOutcome = await stagePendingFiles(api, props.workspaceId, pendingFilesForSend);
+        if (stagingOutcome.staged.length > 0) {
+          sendAttachments = replacePendingFilesWithStaged(attachments, stagingOutcome.staged);
+          // Swap staged chips into the composer so a later failure or retry
+          // can't re-stage duplicate copies.
+          setAttachments(sendAttachments);
+        }
+        if (stagingOutcome.failures.length > 0) {
+          setToast(
+            createErrorToast({
+              type: "unknown",
+              raw: formatPendingFileStagingError(stagingOutcome.failures),
+            })
+          );
+          setSendingCount((c) => c - 1);
+          return;
+        }
+      }
+
+      const skillMuxMetadata = skillInvocation
+        ? buildSkillInvocationMetadata(
+            appendStagedAttachmentNotice(messageText, sendAttachments),
+            skillInvocation.descriptor,
+            skillInvocation.argumentText
+          )
+        : undefined;
 
       const policyModel = modelOverride ?? baseModel;
 
@@ -2627,14 +2687,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
         }
       }
-      // Save current draft state for restoration on error
-      const preSendDraft = getDraft();
+      // Save current draft state for restoration on error (with pending chips
+      // already swapped for their staged results).
+      const preSendDraft = { ...getDraft(), attachments: sendAttachments };
       const preSendReviews = draftReviews;
       const editMessageForSend = editingMessageForUi;
 
       try {
         // Prepare file parts if any
-        const fileParts = chatAttachmentsToFileParts(attachments, { validate: true });
+        const fileParts = chatAttachmentsToFileParts(sendAttachments, { validate: true });
         const sendFileParts = editMessageForSend
           ? fileParts
           : fileParts.length > 0
@@ -2670,9 +2731,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 parsed.continueMessage ||
                 sendFileParts?.length ||
                 reviewsData?.length ||
-                getStagedAttachments(attachments).length
+                getStagedAttachments(sendAttachments).length
                   ? {
-                      text: appendStagedAttachmentNotice(parsed.continueMessage ?? "", attachments),
+                      text: appendStagedAttachmentNotice(
+                        parsed.continueMessage ?? "",
+                        sendAttachments
+                      ),
                       fileParts: sendFileParts,
                       reviews: reviewsData,
                     }
@@ -2688,7 +2752,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
 
         const userMessageText = appendStagedNoticeToUserMessage
-          ? appendStagedAttachmentNotice(actualMessageText, attachments)
+          ? appendStagedAttachmentNotice(actualMessageText, sendAttachments)
           : actualMessageText;
         const { finalText: finalMessageText, metadata: reviewMetadata } = prepareUserMessageForSend(
           { text: userMessageText, reviews: reviewsData },
@@ -2712,7 +2776,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               .trimEnd()
           : undefined;
         const oneshotRawCommand = oneshotCommandPrefix
-          ? appendStagedAttachmentNotice(messageText.trim(), attachments)
+          ? appendStagedAttachmentNotice(messageText.trim(), sendAttachments)
           : undefined;
         muxMetadata = muxMetadata
           ? {
@@ -3365,7 +3429,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   <AttachFileButton
                     onFiles={handleAttachFiles}
                     disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
-                    canStageFiles={variant === "workspace"}
                   />
                   <VoiceInputButton
                     state={voiceInput.state}
