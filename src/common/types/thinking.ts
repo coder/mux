@@ -234,8 +234,7 @@ export function stripModelProviderPrefixes(modelString: string): string {
  * (distinct from "max").
  *
  * Matches:
- * - `claude-opus-4-7`, `claude-opus-4-8`, ... `claude-opus-4-99`, and any future Opus 5+
- *   (which we assume preserves or exceeds 4.7's capabilities).
+ * - `claude-opus-4-7`, `claude-opus-4-8`, ... `claude-opus-4-99`, and any Opus 5+.
  * - `claude-sonnet-5` and any future Sonnet 5+ (Sonnet 5 introduced native xhigh effort for
  *   the Sonnet tier; Sonnet 4.6 and earlier did not).
  * - Mythos-class models (`claude-fable-*`, `claude-mythos-*`), the tier above Opus.

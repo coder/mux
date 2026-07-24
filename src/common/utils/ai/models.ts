@@ -158,6 +158,7 @@ const ANTHROPIC_NATIVE_1M_PATTERNS = [
   // Mythos-class models (Fable 5 / Mythos 5) ship 1M context as standard metadata.
   new RegExp(`^claude-fable-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-mythos-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
+  new RegExp(`^claude-opus-5${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-8${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-7${OPTIONAL_VERSION_SUFFIX}$`, "i"),
   new RegExp(`^claude-opus-4-6${OPTIONAL_VERSION_SUFFIX}$`, "i"),

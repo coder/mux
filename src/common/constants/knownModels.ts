@@ -56,13 +56,17 @@ const MODEL_DEFINITIONS = {
     // approximate counting; real usage can run ~1.0-1.3x higher.
     tokenizerOverride: "anthropic/claude-opus-4.5",
   },
+  // Claude Opus 5 - released July 24, 2026. Successor to Opus 4.8 at the same pricing
+  // ($5/M input, $25/M output). API id `claude-opus-5`; Opus 4.8 stays usable as the
+  // custom model string `anthropic:claude-opus-4-8`.
   OPUS: {
     provider: "anthropic",
-    providerModelId: "claude-opus-4-8",
+    providerModelId: "claude-opus-5",
     aliases: ["opus"],
     warm: true,
-    // Opus 4.8 tokenizer not yet available upstream; reuse 4.5 for approximate counting
-    // (Opus 4.6/4.7 also reused 4.5 — tokenization is unchanged across the 4.x line).
+    // Opus 5 uses the newer Opus 4.7+ tokenizer (~30% more tokens for the same text),
+    // which isn't published upstream; reuse Opus 4.5 for approximate counting. Real
+    // usage can run ~1.0-1.3x higher than this estimate (same situation as FABLE above).
     tokenizerOverride: "anthropic/claude-opus-4.5",
   },
   // Claude Sonnet 5 - released June 30, 2026. The most agentic Sonnet yet (native 1M context,

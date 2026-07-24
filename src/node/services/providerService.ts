@@ -1075,7 +1075,7 @@ export class ProviderService {
         if (existingModels.length === 0) {
           providerConfig.models = [
             "anthropic/claude-sonnet-5",
-            "anthropic/claude-opus-4-8",
+            "anthropic/claude-opus-5",
             "openai/gpt-5.5",
           ];
         }

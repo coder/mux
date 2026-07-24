@@ -65,8 +65,9 @@ function createDesktopSessionManager(options: { available: boolean }) {
 
 describe("supportsAnthropicNativeWebFetch", () => {
   test.each([
-    // Major-only "5 generation" IDs (dateless naming) — Sonnet 5, Fable 5, Mythos 5.
+    // Major-only "5 generation" IDs (dateless naming): Sonnet 5, Opus 5, Fable 5, Mythos 5.
     ["claude-sonnet-5", true],
+    ["claude-opus-5", true],
     ["claude-fable-5", true],
     ["claude-mythos-5", true],
     // Two-segment IDs at/after the 4.6 cutoff.

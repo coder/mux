@@ -9,10 +9,9 @@ import type { ModelFallbacks } from "@/common/config/schemas/appConfigOnDisk";
 export const MODEL_FALLBACK_CHAIN_LIMIT = 3;
 
 /**
- * Default refusal-fallback chains shipped with the app. Fable 5 runs with
- * safeguards that refuse some requests Opus happily serves (Anthropic itself
- * falls back to Opus 4.8 server-side for flagged requests), so retrying on
- * Opus 4.8 is the sensible out-of-the-box behavior.
+ * Default refusal-fallback chains shipped with the app. Fable 5 safeguards
+ * may refuse requests the current Opus tier can serve, so retrying on Opus is
+ * the sensible out-of-the-box behavior.
  *
  * Seeded into the config exactly once, guarded by
  * migrations.defaultModelFallbacksSeeded — on versions that know the flag,

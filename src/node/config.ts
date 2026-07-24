@@ -918,7 +918,7 @@ export class Config {
           parsed.minThinkingLevelByModel
         );
         // One-time seed of the default refusal-fallback chains (e.g. Fable 5 →
-        // Opus 4.8). Guarded by migrations.defaultModelFallbacksSeeded so the
+        // Opus). Guarded by migrations.defaultModelFallbacksSeeded so the
         // seed is applied exactly once: users who later edit or delete the
         // default chains are not overridden on subsequent loads/updates.
         const migrationsBeforeSeed = normalizeConfigMigrations(parsed.migrations);

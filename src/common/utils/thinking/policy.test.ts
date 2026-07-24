@@ -414,6 +414,14 @@ describe("getThinkingPolicyForModel", () => {
       "xhigh",
       "max",
     ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-5")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
     expect(getThinkingPolicyForModel("anthropic:claude-opus-5-0")).toEqual([
       "off",
       "low",

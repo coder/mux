@@ -606,15 +606,15 @@ describe("useModelsFromSettings provider availability gating", () => {
         apiKeySet: true,
         isEnabled: true,
         isConfigured: true,
-        models: ["claude-opus-4.8"],
+        models: ["claude-haiku-4.5"],
       },
     };
     routePriority = ["github-copilot", "direct"];
 
     const { result } = renderHook(() => useModelsFromSettings());
 
-    expect(result.current.models).toContain(KNOWN_MODELS.OPUS.id);
-    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.OPUS.id);
+    expect(result.current.models).toContain(KNOWN_MODELS.HAIKU.id);
+    expect(result.current.hiddenModelsForSelector).not.toContain(KNOWN_MODELS.HAIKU.id);
     expect(result.current.customModels.some((model) => model.startsWith("github-copilot:"))).toBe(
       false
     );

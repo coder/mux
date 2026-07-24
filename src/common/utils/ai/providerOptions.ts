@@ -296,6 +296,9 @@ export function buildProviderOptions(
       // resolveEffectiveThinkingLevel, so "off" should not reach here — but if a stray
       // path does, omit `thinking` (API defaults to adaptive) rather than hard-erroring.
       //
+      // Opus 5 rejects disabled thinking above high effort. "off" maps to low,
+      // so this branch cannot produce that invalid combination.
+      //
       // Native-xhigh models require `thinking.display: "summarized"` to return
       // thinking content on adaptive requests; non-native adaptive models
       // (Opus 4.6 / Sonnet 4.6) must not receive `display`.
