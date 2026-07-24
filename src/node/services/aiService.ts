@@ -311,6 +311,32 @@ function mergeProviderExtrasUnderMux(
   return merged;
 }
 
+/**
+ * Builds a merger that folds user-provided provider extras (from
+ * providers.jsonc model-parameter overrides) UNDER a Mux-built provider-options
+ * object within the given provider namespace. Returns the input unchanged when
+ * there are no extras. Shared by the initial-model build and the fallback-model
+ * build (and their mid-turn thinking-level rebuilds) so every request shape
+ * stays identical regardless of which model produced it.
+ */
+function makeModelParameterExtrasMerger(
+  namespaceKey: string,
+  providerExtras: Record<string, unknown> | undefined
+): (builtOptions: Record<string, unknown>) => Record<string, unknown> {
+  return (builtOptions) => {
+    if (!providerExtras) {
+      return builtOptions;
+    }
+    const muxProviderNamespace = builtOptions[namespaceKey];
+    return {
+      ...builtOptions,
+      [namespaceKey]: isPlainObject(muxProviderNamespace)
+        ? mergeProviderExtrasUnderMux(providerExtras, muxProviderNamespace)
+        : providerExtras,
+    };
+  };
+}
+
 function markProviderMetadataCostsIncluded(
   providerMetadata: Record<string, unknown> | undefined,
   costsIncluded: boolean | undefined
@@ -2496,20 +2522,10 @@ export class AIService extends EventEmitter {
         canonicalProviderName,
         routeProvider
       );
-      const mergeModelParameterExtras = (
-        builtOptions: Record<string, unknown>
-      ): Record<string, unknown> => {
-        if (!resolvedOverrides.providerExtras) {
-          return builtOptions;
-        }
-        const muxProviderNamespace = builtOptions[providerOptionsNamespaceKey];
-        return {
-          ...builtOptions,
-          [providerOptionsNamespaceKey]: isPlainObject(muxProviderNamespace)
-            ? mergeProviderExtrasUnderMux(resolvedOverrides.providerExtras, muxProviderNamespace)
-            : resolvedOverrides.providerExtras,
-        };
-      };
+      const mergeModelParameterExtras = makeModelParameterExtrasMerger(
+        providerOptionsNamespaceKey,
+        resolvedOverrides.providerExtras
+      );
       const mergedProviderOptions = mergeModelParameterExtras(
         providerOptions as Record<string, unknown>
       );
@@ -2876,23 +2892,10 @@ export class AIService extends EventEmitter {
                   );
                   // Mirrors mergeModelParameterExtras for the fallback model;
                   // shared by this baseline build and mid-turn rebuilds below.
-                  const mergeNextModelParameterExtras = (
-                    builtOptions: Record<string, unknown>
-                  ): Record<string, unknown> => {
-                    if (!nextOverrides.providerExtras) {
-                      return builtOptions;
-                    }
-                    const nextMuxNamespace = builtOptions[nextNamespaceKey];
-                    return {
-                      ...builtOptions,
-                      [nextNamespaceKey]: isPlainObject(nextMuxNamespace)
-                        ? mergeProviderExtrasUnderMux(
-                            nextOverrides.providerExtras,
-                            nextMuxNamespace
-                          )
-                        : nextOverrides.providerExtras,
-                    };
-                  };
+                  const mergeNextModelParameterExtras = makeModelParameterExtrasMerger(
+                    nextNamespaceKey,
+                    nextOverrides.providerExtras
+                  );
                   const nextMergedProviderOptions = mergeNextModelParameterExtras(
                     nextProviderOptions as Record<string, unknown>
                   );

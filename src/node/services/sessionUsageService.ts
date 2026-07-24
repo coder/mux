@@ -6,7 +6,7 @@ import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
+import { sumUsageHistory, getTotalTokens } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import {
   normalizeUsage,
@@ -450,12 +450,7 @@ export class SessionUsageService {
         cachedTokens += usage.cached.tokens;
         cacheCreateTokens += usage.cacheCreate.tokens;
 
-        totalTokens +=
-          usage.input.tokens +
-          usage.output.tokens +
-          usage.reasoning.tokens +
-          usage.cached.tokens +
-          usage.cacheCreate.tokens;
+        totalTokens += getTotalTokens(usage);
         contextTokens += usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens;
 
         for (const bucket of [

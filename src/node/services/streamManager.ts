@@ -750,6 +750,26 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
+   * Emit the tool-call-execution-start chat event that tells the UI a tool's execute()
+   * has begun running. Shared by applyToolExecutionStart (part already stored) and the
+   * "tool-call" case that consumes a pending start recorded before the part landed.
+   */
+  private emitToolCallExecutionStart(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    toolCallId: string,
+    timestamp: number
+  ): void {
+    this.emit("tool-call-execution-start", {
+      type: "tool-call-execution-start",
+      workspaceId: workspaceId as string,
+      messageId: streamInfo.messageId,
+      toolCallId,
+      timestamp,
+    } satisfies ToolCallExecutionStartEvent);
+  }
+
+  /**
    * Record on the dynamic-tool part when its execute() actually began running and notify
    * the UI. Returns false when the part has not landed in streamInfo.parts yet.
    */
@@ -770,13 +790,7 @@ export class StreamManager extends EventEmitter {
     assert(part.type === "dynamic-tool", "applyToolExecutionStart matched a non-tool part");
     streamInfo.parts[partIndex] = { ...part, executionStartedAt: timestamp };
 
-    this.emit("tool-call-execution-start", {
-      type: "tool-call-execution-start",
-      workspaceId: workspaceId as string,
-      messageId: streamInfo.messageId,
-      toolCallId,
-      timestamp,
-    } satisfies ToolCallExecutionStartEvent);
+    this.emitToolCallExecutionStart(workspaceId, streamInfo, toolCallId, timestamp);
     return true;
   }
 
@@ -1315,13 +1329,12 @@ export class StreamManager extends EventEmitter {
       }
       streamInfo.parts.push(partToPersist);
       if (pendingExecutionStart !== undefined && part.type === "dynamic-tool") {
-        this.emit("tool-call-execution-start", {
-          type: "tool-call-execution-start",
-          workspaceId: workspaceId as string,
-          messageId: streamInfo.messageId,
-          toolCallId: part.toolCallId,
-          timestamp: pendingExecutionStart,
-        } satisfies ToolCallExecutionStartEvent);
+        this.emitToolCallExecutionStart(
+          workspaceId,
+          streamInfo,
+          part.toolCallId,
+          pendingExecutionStart
+        );
       }
       if (pendingAttachment != null && part.type === "dynamic-tool") {
         await this.flushPartialWrite(workspaceId, streamInfo);

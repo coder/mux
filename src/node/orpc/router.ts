@@ -665,6 +665,40 @@ async function getCurrentServerAuthSessionId(context: ORPCContext): Promise<stri
 }
 
 /**
+ * Resolve the OAuth callback redirect URI for MCP server flows from the request
+ * headers. Prefers the `Origin` header (used verbatim when it parses as a URL),
+ * then falls back to the forwarded/`Host` header with the forwarded proto
+ * (defaulting to `http`). Returns `undefined` when no usable Host header exists.
+ *
+ * Extracted so the global and per-project `startServerFlow` handlers share one
+ * copy of this security-sensitive resolution instead of drifting apart.
+ */
+function resolveMcpOauthRedirectUri(headers: ORPCContext["headers"]): string | undefined {
+  const callbackPath = "/auth/mcp-oauth/callback";
+
+  const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
+  if (origin) {
+    try {
+      return new URL(callbackPath, origin).toString();
+    } catch {
+      // Fall back to Host header.
+    }
+  }
+
+  const hostHeader = headers?.["x-forwarded-host"] ?? headers?.host;
+  const host = typeof hostHeader === "string" ? hostHeader.split(",")[0]?.trim() : "";
+  if (!host) {
+    return undefined;
+  }
+
+  const protoHeader = headers?.["x-forwarded-proto"];
+  const forwardedProto = typeof protoHeader === "string" ? protoHeader.split(",")[0]?.trim() : "";
+  const proto = forwardedProto.length ? forwardedProto : "http";
+
+  return `${proto}://${host}${callbackPath}`;
+}
+
+/**
  * Translate goal-board service errors (`WorkspaceGoalTransitionError`,
  * `WorkspaceGoalChildWorkspaceError`) into `ORPCError("BAD_REQUEST", …)`
  * so the original message reaches the renderer. Without this wrapper,
@@ -3085,34 +3119,10 @@ export const router = (authToken?: string) => {
           // Use mux home as a stable fallback so existing flow codepaths remain unchanged.
           const projectPath = input.projectPath ?? context.config.rootDir;
 
-          const headers = context.headers;
-
-          const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
-          if (origin) {
-            try {
-              const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
-              return context.mcpOauthService.startServerFlow({
-                ...input,
-                projectPath,
-                redirectUri,
-              });
-            } catch {
-              // Fall back to Host header.
-            }
-          }
-
-          const hostHeader = headers?.["x-forwarded-host"] ?? headers?.host;
-          const host = typeof hostHeader === "string" ? hostHeader.split(",")[0]?.trim() : "";
-          if (!host) {
+          const redirectUri = resolveMcpOauthRedirectUri(context.headers);
+          if (!redirectUri) {
             return Err("Missing Host header");
           }
-
-          const protoHeader = headers?.["x-forwarded-proto"];
-          const forwardedProto =
-            typeof protoHeader === "string" ? protoHeader.split(",")[0]?.trim() : "";
-          const proto = forwardedProto.length ? forwardedProto : "http";
-
-          const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
 
           return context.mcpOauthService.startServerFlow({
             ...input,
@@ -3591,30 +3601,10 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcpOauth.startServerFlow.input)
           .output(schemas.projects.mcpOauth.startServerFlow.output)
           .handler(async ({ context, input }) => {
-            const headers = context.headers;
-
-            const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
-            if (origin) {
-              try {
-                const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
-                return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
-              } catch {
-                // Fall back to Host header.
-              }
-            }
-
-            const hostHeader = headers?.["x-forwarded-host"] ?? headers?.host;
-            const host = typeof hostHeader === "string" ? hostHeader.split(",")[0]?.trim() : "";
-            if (!host) {
+            const redirectUri = resolveMcpOauthRedirectUri(context.headers);
+            if (!redirectUri) {
               return Err("Missing Host header");
             }
-
-            const protoHeader = headers?.["x-forwarded-proto"];
-            const forwardedProto =
-              typeof protoHeader === "string" ? protoHeader.split(",")[0]?.trim() : "";
-            const proto = forwardedProto.length ? forwardedProto : "http";
-
-            const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
 
             return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
           }),
