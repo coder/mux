@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { ChevronDown, Github, MessageCircle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
@@ -29,6 +29,8 @@ import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface WorkspaceFooterBarProps {
   workspaceId: string;
@@ -47,24 +49,29 @@ function WorkspaceDriftIndicator(props: {
 }) {
   const gitStatus = useGitStatus(props.workspaceId);
 
+  if (props.showMultiProjectStatus) {
+    // No mode toggle: the multi-project indicator shows a repo-level summary and
+    // has no lines/commits modes, so a toggle here would silently rewrite the
+    // shared preference without changing anything on screen.
+    return (
+      <MultiProjectGitStatusIndicator
+        workspaceId={props.workspaceId}
+        tooltipPosition="bottom"
+        isWorking={props.isWorking}
+      />
+    );
+  }
+
   return (
     <div className="flex shrink-0 items-center gap-1.5">
       <DriftModeToggle />
-      {props.showMultiProjectStatus ? (
-        <MultiProjectGitStatusIndicator
-          workspaceId={props.workspaceId}
-          tooltipPosition="bottom"
-          isWorking={props.isWorking}
-        />
-      ) : (
-        <GitStatusIndicator
-          gitStatus={gitStatus}
-          workspaceId={props.workspaceId}
-          projectPath={props.projectPath}
-          tooltipPosition="bottom"
-          isWorking={props.isWorking}
-        />
-      )}
+      <GitStatusIndicator
+        gitStatus={gitStatus}
+        workspaceId={props.workspaceId}
+        projectPath={props.projectPath}
+        tooltipPosition="bottom"
+        isWorking={props.isWorking}
+      />
     </div>
   );
 }
@@ -77,17 +84,36 @@ function DriftModeToggle() {
     { listener: true }
   );
   const isLineDelta = mode === "line-delta";
+  const toggleMode = () => setMode((prev) => (prev === "line-delta" ? "divergence" : "line-delta"));
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_DRIFT_MODE)) {
+        e.preventDefault();
+        toggleMode();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  });
 
   return (
-    <button
-      type="button"
-      className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-0.5 border-0 bg-transparent p-0 transition-colors"
-      onClick={() => setMode(isLineDelta ? "divergence" : "line-delta")}
-      onKeyDown={stopKeyboardPropagation}
-    >
-      {isLineDelta ? "Lines" : "Commits"}
-      <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-0.5 border-0 bg-transparent p-0 transition-colors"
+          onClick={toggleMode}
+          onKeyDown={stopKeyboardPropagation}
+        >
+          {isLineDelta ? "Lines" : "Commits"}
+          <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        Show {isLineDelta ? "commits" : "lines"} ({formatKeybind(KEYBINDS.TOGGLE_DRIFT_MODE)})
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

@@ -15,6 +15,7 @@ import * as BranchSelectorModule from "../BranchSelector/BranchSelector";
 import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndicator";
 import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import * as WorkspaceLinksModule from "../WorkspaceLinks/WorkspaceLinks";
+import { TooltipProvider } from "../Tooltip/Tooltip";
 import type { WorkspaceFooterBar as WorkspaceFooterBarComponent } from "./WorkspaceFooterBar";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -85,15 +86,17 @@ const repoMetadata: FrontendWorkspaceMetadata = {
 
 function renderFooter(overrides?: Partial<ComponentProps<typeof WorkspaceFooterBarComponent>>) {
   return render(
-    <WorkspaceFooterBar
-      workspaceId={workspaceId}
-      projectName="demo"
-      projectPath="/projects/demo"
-      workspaceName="feature-branch"
-      namedWorkspacePath="/projects/demo/workspaces/feature-branch"
-      runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
-      {...overrides}
-    />
+    <TooltipProvider delayDuration={0}>
+      <WorkspaceFooterBar
+        workspaceId={workspaceId}
+        projectName="demo"
+        projectPath="/projects/demo"
+        workspaceName="feature-branch"
+        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
+        runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
+        {...overrides}
+      />
+    </TooltipProvider>
   );
 }
 
@@ -170,6 +173,29 @@ describe("WorkspaceFooterBar repository controls", () => {
 
     expect(MultiProjectGitStatusIndicatorModule.MultiProjectGitStatusIndicator).toHaveBeenCalled();
     expect(GitStatusIndicatorModule.GitStatusIndicator).not.toHaveBeenCalled();
+  });
+
+  it("omits the drift mode toggle for multi-project workspaces", () => {
+    const multiProjectMetadata: FrontendWorkspaceMetadata = {
+      ...repoMetadata,
+      projects: [
+        { projectPath: "/projects/demo", projectName: "demo" },
+        { projectPath: "/projects/other", projectName: "other" },
+      ],
+    };
+    workspaceMetadata.set(workspaceId, multiProjectMetadata);
+
+    const { container } = renderFooter();
+
+    expect(container.textContent).not.toContain("Lines");
+  });
+
+  it("shows the drift mode toggle for single-repository workspaces", () => {
+    workspaceMetadata.set(workspaceId, repoMetadata);
+
+    const { container } = renderFooter();
+
+    expect(container.textContent).toContain("Lines");
   });
 
   it("shows the GitHub slug instead of the project label once a PR is detected", () => {

@@ -500,6 +500,10 @@ export const KEYBINDS = {
   // "N" for Notifications
   TOGGLE_NOTIFICATIONS: { key: "N", ctrl: true, shift: true },
 
+  /** Switch the footer/sidebar git drift readout between line counts and commit counts */
+  // "G" for Git
+  TOGGLE_DRIFT_MODE: { key: "G", ctrl: true, shift: true },
+
   /** Confirm action in confirmation dialogs */
   CONFIRM_DIALOG_YES: { key: "y", allowShift: true },
 
