@@ -15,7 +15,6 @@ import * as BranchSelectorModule from "../BranchSelector/BranchSelector";
 import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndicator";
 import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import * as WorkspaceLinksModule from "../WorkspaceLinks/WorkspaceLinks";
-import { TooltipProvider } from "../Tooltip/Tooltip";
 import type { WorkspaceFooterBar as WorkspaceFooterBarComponent } from "./WorkspaceFooterBar";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -86,17 +85,15 @@ const repoMetadata: FrontendWorkspaceMetadata = {
 
 function renderFooter(overrides?: Partial<ComponentProps<typeof WorkspaceFooterBarComponent>>) {
   return render(
-    <TooltipProvider delayDuration={0}>
-      <WorkspaceFooterBar
-        workspaceId={workspaceId}
-        projectName="demo"
-        projectPath="/projects/demo"
-        workspaceName="feature-branch"
-        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
-        runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
-        {...overrides}
-      />
-    </TooltipProvider>
+    <WorkspaceFooterBar
+      workspaceId={workspaceId}
+      projectName="demo"
+      projectPath="/projects/demo"
+      workspaceName="feature-branch"
+      namedWorkspacePath="/projects/demo/workspaces/feature-branch"
+      runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
+      {...overrides}
+    />
   );
 }
 

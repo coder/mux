@@ -28,7 +28,7 @@ import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 
 interface WorkspaceFooterBarProps {
   workspaceId: string;
@@ -178,20 +178,28 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className="text-muted flex shrink-0 items-center gap-1"
+    <Popover>
+      {/* A button, not a hover-only tooltip: the prompt text is the whole point of
+          this item, and touch has no hover while keyboard users need a focus target. */}
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 transition-colors"
           data-testid="workspace-footer-last-prompt"
+          onKeyDown={stopKeyboardPropagation}
         >
           <MessageCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
           Last prompt
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="end" className="line-clamp-6 whitespace-pre-wrap">
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="end"
+        className="max-h-60 max-w-100 overflow-y-auto text-xs whitespace-pre-wrap"
+      >
         {lastPrompt}
-      </TooltipContent>
-    </Tooltip>
+      </PopoverContent>
+    </Popover>
   );
 }
 
