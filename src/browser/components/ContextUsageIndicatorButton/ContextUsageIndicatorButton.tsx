@@ -235,18 +235,22 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
             <button
               aria-label={ariaLabel}
               aria-haspopup="dialog"
-              className="hover:bg-sidebar-hover flex cursor-pointer items-center rounded py-0.5"
+              className="border-border-medium hover:bg-sidebar-hover flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-0.5"
               type="button"
             >
               {/* Idle compaction indicator */}
               {isIdleCompactionEnabled && (
                 <span
                   title={`Auto-compact after ${idleHours}h idle`}
-                  className="mr-1.5 [@container(max-width:420px)]:hidden"
+                  className="[@container(max-width:420px)]:hidden"
                 >
                   <Hourglass className="text-muted h-3 w-3" />
                 </span>
               )}
+
+              <span className="text-muted text-[11px] [@container(max-width:520px)]:hidden">
+                Context
+              </span>
 
               {/* Full meter when there's room; fall back to a compact percentage label on narrow layouts. */}
               {data.totalTokens > 0 ? (
@@ -274,7 +278,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
 
               <span
                 data-context-usage-percent
-                className="text-muted hidden text-[10px] font-medium tabular-nums [@container(max-width:420px)]:block"
+                className="text-muted counter-nums text-[10px] font-medium"
               >
                 {compactLabel}
               </span>

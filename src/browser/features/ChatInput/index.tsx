@@ -3152,9 +3152,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const placeholder = (() => {
     // Creation view keeps the onboarding prompt; workspace stays concise for the inline hints.
     if (variant === "creation") {
+      // Per the Review 1.4 "start V2" frame: name the blank-prompt path explicitly
+      // so users learn that submitting empty is valid.
       return props.kind === "scratch"
-        ? "Type your first message to start a scratch chat..."
-        : "Type your first message to create a workspace...";
+        ? "Describe your goals, or leave blank to start an open-ended chat."
+        : "Describe your goals, or leave blank for a codebase summary.";
     }
 
     // Workspace variant placeholders
@@ -3222,7 +3224,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"
-            ? "bg-surface-primary w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
+            ? // Review 1.4 "start V2": a plain bordered surface, not a raised card, so the
+              // headline and configurator sentence carry the page instead of card chrome.
+              "w-full max-w-3xl rounded-md border border-border-light px-4 py-3"
             : `bg-surface-primary border-border-light px-4 
               pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
               mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
@@ -3422,8 +3426,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
             <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                {/* Agent mode leads the row per the Review 1.4 design: who is acting
+                    reads before which model acts. */}
                 <div
-                  className="flex min-w-0 items-center gap-1.5"
+                  className="min-w-0 [@container(max-width:340px)]:hidden"
+                  data-tutorial="mode-selector"
+                >
+                  <AgentModePicker
+                    className="min-w-0"
+                    onComplete={() => inputRef.current?.focus()}
+                  />
+                </div>
+
+                {/* Model and thinking level share one bordered pill, split by a divider,
+                    as in the design's "claude opus 4.5 | max". */}
+                <div
+                  className="border-border-medium flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5"
                   data-component="ModelSelectorGroup"
                   data-tutorial="model-selector"
                 >
@@ -3461,25 +3479,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       </>
                     }
                   />
+                  <span className="bg-border-medium h-3.5 w-px shrink-0" aria-hidden="true" />
+
+                  {/* On narrow layouts, hide the thinking paddles and PRO chip to prevent
+                      right-edge overflow (the chip pushed past a 375px viewport); pro mode
+                      stays reachable via the command palette. */}
+                  <div
+                    className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
+                    data-component="ThinkingSliderGroup"
+                  >
+                    <ThinkingSliderComponent modelString={baseModel} />
+                    <ProModeToggle modelString={baseModel} />
+                  </div>
                 </div>
 
-                {/* On narrow layouts, hide the thinking paddles and PRO chip to prevent
-                    right-edge overflow (the chip pushed past a 375px viewport); pro mode
-                    stays reachable via the command palette. */}
-                <div
-                  className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
-                  data-component="ThinkingSliderGroup"
-                >
-                  <ThinkingSliderComponent modelString={baseModel} />
-                  <ProModeToggle modelString={baseModel} />
-                </div>
-              </div>
-
-              <div
-                className="flex min-w-0 items-center justify-end gap-1.5"
-                data-component="ModelControls"
-                data-tutorial="mode-selector"
-              >
                 {variant === "workspace" && (
                   <ContextUsageIndicatorButton
                     data={contextUsageData}
@@ -3488,14 +3501,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     model={contextDisplayModel}
                   />
                 )}
+              </div>
 
-                <div className="min-w-0 [@container(max-width:340px)]:hidden">
-                  <AgentModePicker
-                    className="min-w-0"
-                    onComplete={() => inputRef.current?.focus()}
-                  />
-                </div>
-
+              <div
+                className="flex shrink-0 items-center justify-end gap-1.5"
+                data-component="ModelControls"
+              >
                 {/*
                   Input-method icons (attach, voice) cluster tightly with the Send button so
                   the trailing actions read as one unit, rather than as small icons stranded
@@ -3523,7 +3534,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   parent's gap-1.5 with a negative margin) so they form a single trailing
                   cluster.
                 */}
-                <div ref={sendModeMenuContainerRef} className="relative -ml-1.5">
+                <div ref={sendModeMenuContainerRef} className="relative">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -3547,9 +3558,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         size="xs"
                         variant="ghost"
                         className={cn(
-                          "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
-                          // Touch: wider tap target, keep icon centered.
-                          "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
+                          // Filled circle per the design, so send reads as the row's primary action.
+                          "bg-hover text-muted hover:text-foreground inline-flex h-7 w-7 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200 disabled:opacity-50",
+                          "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-9 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
                         )}
                       >
                         <SendHorizontal

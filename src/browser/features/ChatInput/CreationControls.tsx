@@ -847,17 +847,21 @@ export function CreationControls(props: CreationControlsProps) {
         </div>
       </div>
 
-      {/* Runtime and source branch controls */}
+      {/* Runtime and source branch controls.
+          Review 1.4 "start V2" states these as a sentence ("My project will use ...")
+          rather than stacked labelled fields. The controls and their handlers are
+          unchanged; only the labels and layout became inline prose. */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
-        <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
+          <span className="text-muted-foreground shrink-0">This workspace will use</span>
           {/* Workspace Type + Source Branch share a row on mobile */}
-          <div className="flex w-full items-end gap-3 md:contents md:w-auto">
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5 md:flex-initial">
+          <div className="flex w-full items-center gap-2 md:contents md:w-auto">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 md:flex-initial">
               <div className="flex items-center gap-1.5">
-                <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
-                  <Blocks className="h-3.5 w-3.5" />
+                <label className="sr-only" htmlFor="workspace-type-group">
                   Workspace Type
                 </label>
+                <Blocks className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
                 {/* Keep this compact while preserving quick access to project runtime defaults. */}
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -958,15 +962,17 @@ export function CreationControls(props: CreationControlsProps) {
               />
             </div>
 
+            <span className="text-muted-foreground shrink-0">from</span>
+
             <div
-              className="flex min-w-0 flex-1 flex-col gap-1.5 md:flex-initial"
+              className="flex min-w-0 flex-1 items-center gap-1.5 md:flex-initial"
               data-component="BranchSelector"
               data-tutorial="trunk-branch"
             >
-              <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
-                <GitBranch className="h-3.5 w-3.5" />
+              <label className="sr-only" htmlFor="source-branch-select">
                 Source Branch
               </label>
+              <GitBranch className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
               {props.branchesLoaded ? (
                 <RadixSelect
                   value={props.trunkBranch}
