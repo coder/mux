@@ -294,8 +294,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Resolve display properties for the trigger pill
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
-  // Review 1.4 tints the label and icon and keeps the pill's border neutral, so the agent's
-  // color reads as text rather than as the loudest chrome in the composer row.
+  // The agent's color tints the label and icon, not the border, so the pill is not the
+  // loudest chrome in the composer row.
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
     ? { color: activeOption.uiColor }
     : undefined;

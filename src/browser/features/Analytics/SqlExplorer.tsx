@@ -136,7 +136,7 @@ export function SqlExplorer(props: SqlExplorerProps) {
             />
           </Button>
           {showSamples && (
-            <div className="bg-sidebar border-border-medium absolute top-full right-0 z-50 mt-1 w-64 rounded-md border p-1 shadow-lg">
+            <div className="bg-dark border-border-medium absolute top-full right-0 z-50 mt-1 w-64 rounded-md border p-1 shadow-lg">
               {SAMPLE_QUERIES.map((sample) => (
                 <button
                   key={sample.label}

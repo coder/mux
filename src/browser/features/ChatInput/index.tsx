@@ -719,7 +719,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
-  const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
+  const agentColor = currentAgent?.uiColor ?? "var(--color-border-light)";
   const {
     models,
     hiddenModelsForSelector,
@@ -3326,9 +3326,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           />
 
           {/*
-            Review 1.4 draws the prompt as a single bordered box whose interior is the page
-            background, holding the textarea and the pill row. The border lives here rather than
-            on the textarea (no nested box) and carries the editing tint.
+            One bordered box holds the textarea and the pill row. The border lives here rather
+            than on the textarea so there is no nested box, and it carries the editing tint.
           */}
           <div
             className={cn(
@@ -3344,7 +3343,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               {voiceInput.state !== "idle" ? (
                 <RecordingOverlay
                   state={voiceInput.state}
-                  agentColor={focusBorderColor}
+                  agentColor={agentColor}
                   mediaRecorder={voiceInput.mediaRecorder}
                   onStop={voiceInput.toggle}
                 />
@@ -3539,7 +3538,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       requiresSecureContext={voiceInput.requiresSecureContext}
                       onToggle={voiceInput.toggle}
                       disabled={disabled || sendInFlightBlocksInput}
-                      agentColor={focusBorderColor}
+                      agentColor={agentColor}
                     />
                   </div>
 
@@ -3574,8 +3573,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           className={cn(
                             // Filled circle per the design, so send reads as the row's primary action.
                             "inline-flex h-7 w-7 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
-                            // The hover fill/text are pinned so the ghost variant's neutral hover
-                            // does not wash out the accent; hover feedback comes from opacity.
+                            // Pinned against the ghost variant's neutral hover, which would
+                            // otherwise wash out the accent fill.
                             canSend
                               ? "bg-composer-send hover:bg-composer-send text-composer-send-foreground hover:text-composer-send-foreground hover:opacity-90"
                               : "bg-surface-secondary text-muted",

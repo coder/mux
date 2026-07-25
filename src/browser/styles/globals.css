@@ -82,7 +82,7 @@
 
     /* Composer send: its own token because the Review 1.4 design gives the composer's
        primary action a cyan fill distinct from --color-accent's blue. */
-    --color-composer-send: hsla(188, 75%, 80%, 1);
+    --color-composer-send: #a4e8f2;
     --color-composer-send-foreground: var(--color-surface-primary);
 
     --color-debug-mode: hsl(214 100% 64%);
@@ -261,7 +261,9 @@
     --color-bg-light: hsl(0 0% 30%); /* #4c4c4c - light bg */
     --color-bg-subtle: hsl(240 3% 22%); /* #37373d - subtle bg */
 
-    --color-sidebar: #171717; /* neutral-900 - sidebar background */
+    /* Review 1.4 gives the chrome (sidebar, header bars, footer) the same fill as the page and
+       separates it with hairline borders instead of a lighter surface. */
+    --color-sidebar: var(--color-surface-primary);
     --color-separator: #262626; /* neutral-800 - dividers/separators */
     --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */
     --color-modal-bg: hsl(0 0% 18%); /* #2d2d30 - modal backgrounds */

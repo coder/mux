@@ -121,7 +121,7 @@ function applyThemeToDocument(theme: ThemeMode) {
 
   const body = document.body;
   if (body) {
-    body.style.backgroundColor = "var(--color-background)";
+    body.style.backgroundColor = "var(--color-surface-primary)";
   }
 
   applyThemeFavicon(theme);
