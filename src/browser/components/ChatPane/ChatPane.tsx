@@ -62,6 +62,7 @@ import {
   useWorkspaceStoreRaw,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceMenuBar } from "../WorkspaceMenuBar/WorkspaceMenuBar";
+import { WorkspaceFooterBar } from "./WorkspaceFooterBar";
 import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -286,6 +287,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           namedWorkspacePath={props.namedWorkspacePath}
           runtimeConfig={props.runtimeConfig}
           onOpenTerminal={props.onOpenTerminal}
+        />
+
+        {/* Review 1.4 footer info bar: repository state + usage lives below the
+            composer so the header stays focused on identity and actions. */}
+        <WorkspaceFooterBar
+          workspaceId={workspaceId}
+          projectPath={props.projectPath}
+          workspaceName={props.workspaceName}
+          runtimeConfig={props.runtimeConfig}
         />
       </div>
     </PerfRenderMarker>

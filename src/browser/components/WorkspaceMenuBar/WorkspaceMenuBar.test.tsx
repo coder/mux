@@ -9,7 +9,6 @@ import * as AgentContextModule from "@/browser/contexts/AgentContext";
 import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
-import * as GitStatusStoreModule from "@/browser/stores/GitStatusStore";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
 import * as OpenTerminalModule from "@/browser/hooks/useOpenTerminal";
 import * as OpenInEditorModule from "@/browser/hooks/useOpenInEditor";
@@ -18,17 +17,13 @@ import * as PopoverErrorHookModule from "@/browser/hooks/usePopoverError";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
 import * as TutorialContextModule from "@/browser/contexts/TutorialContext";
 import * as ChatCommandsModule from "@/browser/utils/chatCommands";
-import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndicator";
-import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import * as RuntimeBadgeModule from "../RuntimeBadge/RuntimeBadge";
-import * as BranchSelectorModule from "../BranchSelector/BranchSelector";
 import type { WorkspaceMenuBar as WorkspaceMenuBarComponent } from "./WorkspaceMenuBar";
 import * as WorkspaceMCPModalModule from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import * as TooltipModule from "../Tooltip/Tooltip";
 import * as PopoverModule from "../Popover/Popover";
 import * as CheckboxModule from "../Checkbox/Checkbox";
 import * as DebugLlmRequestModalModule from "../DebugLlmRequestModal/DebugLlmRequestModal";
-import * as WorkspaceLinksModule from "../WorkspaceLinks/WorkspaceLinks";
 import * as ConfirmationModalModule from "../ConfirmationModal/ConfirmationModal";
 import * as PopoverErrorModule from "../PopoverError/PopoverError";
 import * as WorkspaceActionsMenuContentModule from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
@@ -162,7 +157,6 @@ function installWorkspaceMenuBarTestDoubles() {
         skillLoadErrors: [],
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceSidebarState>
   );
-  spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => null);
   spyOn(RuntimeStatusStoreModule, "useRuntimeStatus").mockImplementation(() => "unsupported");
   spyOn(RuntimeStatusStoreModule, "useRuntimeStatusStoreRaw").mockImplementation(
     () =>
@@ -198,18 +192,8 @@ function installWorkspaceMenuBarTestDoubles() {
     Promise.resolve({ success: true as const })
   );
 
-  spyOn(GitStatusIndicatorModule, "GitStatusIndicator").mockImplementation(
-    (() => null) as unknown as typeof GitStatusIndicatorModule.GitStatusIndicator
-  );
-  spyOn(MultiProjectGitStatusIndicatorModule, "MultiProjectGitStatusIndicator").mockImplementation(
-    (() =>
-      null) as unknown as typeof MultiProjectGitStatusIndicatorModule.MultiProjectGitStatusIndicator
-  );
   spyOn(RuntimeBadgeModule, "RuntimeBadge").mockImplementation(
     (() => null) as unknown as typeof RuntimeBadgeModule.RuntimeBadge
-  );
-  spyOn(BranchSelectorModule, "BranchSelector").mockImplementation(
-    (() => null) as unknown as typeof BranchSelectorModule.BranchSelector
   );
   spyOn(WorkspaceMCPModalModule, "WorkspaceMCPModal").mockImplementation(
     (() => null) as unknown as typeof WorkspaceMCPModalModule.WorkspaceMCPModal
@@ -237,9 +221,6 @@ function installWorkspaceMenuBarTestDoubles() {
   );
   spyOn(DebugLlmRequestModalModule, "DebugLlmRequestModal").mockImplementation(
     (() => null) as unknown as typeof DebugLlmRequestModalModule.DebugLlmRequestModal
-  );
-  spyOn(WorkspaceLinksModule, "WorkspaceLinks").mockImplementation(
-    (() => null) as unknown as typeof WorkspaceLinksModule.WorkspaceLinks
   );
   spyOn(ConfirmationModalModule, "ConfirmationModal").mockImplementation(((props: {
     isOpen: boolean;
@@ -333,7 +314,7 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     cleanupDom = null;
   });
 
-  it("hides repository controls for scratch workspaces", () => {
+  it("hides repo-dependent More-menu actions for scratch workspaces", () => {
     const scratchPath = "/home/user/.mux/scratch/workspace-1";
     workspaceMetadata.set(workspaceId, {
       kind: "scratch",
@@ -358,14 +339,11 @@ describe("WorkspaceMenuBar archive confirmations", () => {
     );
 
     expect(view.getByText("Scratch")).toBeTruthy();
-    expect(BranchSelectorModule.BranchSelector).not.toHaveBeenCalled();
-    expect(GitStatusIndicatorModule.GitStatusIndicator).not.toHaveBeenCalled();
-    expect(
-      MultiProjectGitStatusIndicatorModule.MultiProjectGitStatusIndicator
-    ).not.toHaveBeenCalled();
 
-    // Repo-dependent More-menu actions must be hidden too: review events are
+    // Repo-dependent More-menu actions must be hidden: review events are
     // ignored by RightSidebar for scratch and forking scratch is unsupported.
+    // (Repository controls themselves live in WorkspaceFooterBar; scratch
+    // gating for them is covered by WorkspaceFooterBar.test.tsx.)
     const scratchMenuProps = getLastMenuContentProps();
     expect(scratchMenuProps?.onForkChat).toBeNull();
     expect(scratchMenuProps?.onEnterImmersiveReview).toBeNull();

@@ -294,6 +294,13 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                   <ConfigureProvidersPrompt />
                 ) : (
                   <>
+                    {/* Creation hero from the Review 1.4 page of the "Mux exploration"
+                        Figma ("start V2"): a headline anchors the creation surface so
+                        first-run and new-workspace flows read as an invitation rather
+                        than a bare form. */}
+                    <h1 className="text-foreground px-1 text-[32px] leading-10 font-semibold">
+                      Let&rsquo;s get building.
+                    </h1>
                     {shouldShowAgentsInitBanner && (
                       <AgentsInitBanner
                         onRunInit={handleRunAgentsInit}

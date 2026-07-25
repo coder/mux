@@ -11,18 +11,13 @@ import {
   getNotifyOnResponseKey,
   getNotifyOnResponseAutoEnableKey,
 } from "@/common/constants/storage";
-import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
-import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
-import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 import { Checkbox } from "../Checkbox/Checkbox";
 import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
-import { getDevcontainerStatusChip } from "@/browser/utils/runtimeUi";
-import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useRuntimeStatus, useRuntimeStatusStoreRaw } from "@/browser/stores/RuntimeStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/Button/Button";
@@ -37,7 +32,6 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { DebugLlmRequestModal } from "../DebugLlmRequestModal/DebugLlmRequestModal";
-import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 import { ConfirmationModal } from "../ConfirmationModal/ConfirmationModal";
 import { PopoverError } from "../PopoverError/PopoverError";
 import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/WorkspaceActionsMenuContent";
@@ -50,7 +44,6 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { useWorkspaceActions, useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
-import { isMultiProject } from "@/common/utils/multiProject";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
@@ -80,52 +73,6 @@ const COLLAPSED_LEFT_SIDEBAR_MENU_BAR_STYLE = {
   paddingLeft: `${WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX}px`,
 } as const;
 
-function WorkspaceRepositoryControls(props: {
-  workspaceId: string;
-  workspaceName: string;
-  projectPath: string;
-  isWorking: boolean;
-  showMultiProjectStatus: boolean;
-  devcontainerChip: ReturnType<typeof getDevcontainerStatusChip>;
-}) {
-  const gitStatus = useGitStatus(props.workspaceId);
-
-  return (
-    <div className="flex items-center gap-1">
-      <BranchSelector
-        key={props.workspaceId}
-        workspaceId={props.workspaceId}
-        workspaceName={props.workspaceName}
-      />
-      {props.devcontainerChip && (
-        <span
-          className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
-            props.devcontainerChip.className
-          )}
-        >
-          {props.devcontainerChip.label}
-        </span>
-      )}
-      {props.showMultiProjectStatus ? (
-        <MultiProjectGitStatusIndicator
-          workspaceId={props.workspaceId}
-          tooltipPosition="bottom"
-          isWorking={props.isWorking}
-        />
-      ) : (
-        <GitStatusIndicator
-          gitStatus={gitStatus}
-          workspaceId={props.workspaceId}
-          projectPath={props.projectPath}
-          tooltipPosition="bottom"
-          isWorking={props.isWorking}
-        />
-      )}
-    </div>
-  );
-}
-
 export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   workspaceId,
   projectName,
@@ -148,7 +95,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const runtimeStatus = useRuntimeStatus(workspaceId);
   const workspaceEntry = workspaceMetadata.get(workspaceId);
   const hasRepository = hasWorkspaceRepository(workspaceEntry);
-  const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
   // The workspace's metadata.projectName is the parent project (since worktrees
   // are owned by the top-most parent). When the workspace is scoped to a
   // sub-project we surface the hierarchy as "parent / child" so the menu bar
@@ -229,9 +175,6 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const isDevcontainerWorkspace = isDevcontainerRuntime(runtimeConfig);
   const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
-  const devcontainerChip = isDevcontainerWorkspace
-    ? getDevcontainerStatusChip(runtimeStatus)
-    : null;
 
   const getMoreMenuAnchor = useCallback(() => {
     const rect = moreActionsButtonRef.current?.getBoundingClientRect();
@@ -574,20 +517,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           workspaceName={workspaceName}
           tooltipSide="bottom"
         />
+        {/* Repository controls (branch, drift, PR) live in WorkspaceFooterBar per the
+            Review 1.4 design: the header keeps identity + actions only. */}
         <span className="min-w-0 truncate font-mono text-xs">{projectLabel}</span>
-        {hasRepository && (
-          <WorkspaceRepositoryControls
-            workspaceId={workspaceId}
-            workspaceName={workspaceName}
-            projectPath={projectPath}
-            isWorking={isWorking}
-            showMultiProjectStatus={showMultiProjectStatus}
-            devcontainerChip={devcontainerChip}
-          />
-        )}
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
-        <WorkspaceLinks workspaceId={workspaceId} />
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
           <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
             <TooltipTrigger asChild>
