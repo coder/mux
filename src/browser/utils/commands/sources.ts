@@ -69,6 +69,7 @@ import {
   UNPRICED_CURRENT_MODEL_GOAL_MESSAGE,
 } from "@/common/utils/goals/budgetPricing";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { canUseScheduledPromptsInWorkspace } from "@/browser/features/ScheduledPrompts/scheduledPromptAvailability";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
@@ -697,13 +698,19 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     // Right sidebar layout commands require a selected workspace (layout is per-workspace)
     const wsId = p.selectedWorkspace?.workspaceId;
     if (wsId) {
-      const canReviewDiffs = hasWorkspaceRepository(p.workspaceMetadata.get(wsId));
+      const selectedWorkspaceMetadata = p.workspaceMetadata.get(wsId) ?? null;
+      const canReviewDiffs = hasWorkspaceRepository(selectedWorkspaceMetadata);
+      const availableBaseTabIds = getOrderedBaseTabIds().filter(
+        (tabId) =>
+          tabId !== "schedule" || canUseScheduledPromptsInWorkspace(selectedWorkspaceMetadata)
+      );
+
       list.push(
         // Generic per-tab "Hide/Show <Name>" commands are only for optional tabs.
         // Default-layout tabs (Stats/Review/Instructions) are auto-restored by
         // the layout migration, so exposing hide commands for them would be a
         // no-op and obscure the fact that they are meant to be visible by default.
-        ...getOrderedBaseTabIds()
+        ...availableBaseTabIds
           .filter((tabId) => {
             const config = getTabConfig(tabId);
             return config.inDefaultLayout !== true && config.featureFlag == null;
@@ -765,7 +772,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 // Static tabs come straight from the lightweight config (in default order).
                 // Terminal is appended manually because it lives outside the static registry.
                 getOptions: () => [
-                  ...getOrderedBaseTabIds()
+                  ...availableBaseTabIds
                     .filter(
                       (tabId) =>
                         getTabConfig(tabId).featureFlag == null &&

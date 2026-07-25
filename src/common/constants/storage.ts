@@ -219,6 +219,14 @@ export function getInputKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for scheduled prompts for a workspace.
+ * Format: "scheduledPrompts:{workspaceId}"
+ */
+export function getScheduledPromptsKey(workspaceId: string): string {
+  return `scheduledPrompts:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for the pinned TODO panel expansion state.
  * Format: "pinnedTodoExpanded:{workspaceId}"
  */
@@ -809,6 +817,7 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
   getPendingWorkspaceSendErrorKey,
   getPendingDraftSkillDiscoveryKey,
   getNotifyOnResponseKey,
+  getScheduledPromptsKey, // Avoid duplicating future sends when a workspace is forked
   getPlanContentKey, // Cache only, no need to preserve on fork
   getPostCompactionStateKey, // Cache only, no need to preserve on fork
 ];

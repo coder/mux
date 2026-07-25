@@ -4,6 +4,7 @@ import {
   deleteWorkspaceStorage,
   getDraftScopeId,
   getInputAttachmentsKey,
+  getScheduledPromptsKey,
   normalizeTranscriptDensity,
 } from "@/common/constants/storage";
 
@@ -64,27 +65,36 @@ describe("storage workspace-scoped keys", () => {
     expect(getInputAttachmentsKey("ws-123")).toBe("inputAttachments:ws-123");
   });
 
+  test("getScheduledPromptsKey formats key", () => {
+    expect(getScheduledPromptsKey("ws-123")).toBe("scheduledPrompts:ws-123");
+  });
+
   test("normalizeTranscriptDensity falls back for corrupt values", () => {
     expect(normalizeTranscriptDensity("hyper")).toBe("hyper");
     expect(normalizeTranscriptDensity("compact")).toBe("normal");
     expect(normalizeTranscriptDensity(null)).toBe("normal");
   });
 
-  test("copyWorkspaceStorage copies inputAttachments key", () => {
+  test("copyWorkspaceStorage copies draft keys but not scheduled sends", () => {
     const source = "ws-source";
     const dest = "ws-dest";
 
-    const sourceKey = getInputAttachmentsKey(source);
-    const destKey = getInputAttachmentsKey(dest);
+    const sourceAttachmentsKey = getInputAttachmentsKey(source);
+    const destAttachmentsKey = getInputAttachmentsKey(dest);
+    const sourceScheduledPromptsKey = getScheduledPromptsKey(source);
+    const destScheduledPromptsKey = getScheduledPromptsKey(dest);
 
-    const value = JSON.stringify([
+    const attachmentsValue = JSON.stringify([
       { id: "img-1", url: "data:image/png;base64,AAA", mediaType: "image/png" },
     ]);
-    localStorage.setItem(sourceKey, value);
+    const scheduledPromptsValue = JSON.stringify([{ id: "prompt-1" }]);
+    localStorage.setItem(sourceAttachmentsKey, attachmentsValue);
+    localStorage.setItem(sourceScheduledPromptsKey, scheduledPromptsValue);
 
     copyWorkspaceStorage(source, dest);
 
-    expect(localStorage.getItem(destKey)).toBe(value);
+    expect(localStorage.getItem(destAttachmentsKey)).toBe(attachmentsValue);
+    expect(localStorage.getItem(destScheduledPromptsKey)).toBeNull();
   });
 
   test("copyWorkspaceStorage drops staged draft attachments", () => {
@@ -114,13 +124,16 @@ describe("storage workspace-scoped keys", () => {
     expect(JSON.parse(localStorage.getItem(destKey) ?? "null")).toEqual([providerAttachment]);
   });
 
-  test("deleteWorkspaceStorage removes inputAttachments key", () => {
+  test("deleteWorkspaceStorage removes workspace draft and scheduled send keys", () => {
     const workspaceId = "ws-delete";
-    const key = getInputAttachmentsKey(workspaceId);
+    const attachmentsKey = getInputAttachmentsKey(workspaceId);
+    const scheduledPromptsKey = getScheduledPromptsKey(workspaceId);
 
-    localStorage.setItem(key, "value");
+    localStorage.setItem(attachmentsKey, "value");
+    localStorage.setItem(scheduledPromptsKey, "value");
     deleteWorkspaceStorage(workspaceId);
 
-    expect(localStorage.getItem(key)).toBeNull();
+    expect(localStorage.getItem(attachmentsKey)).toBeNull();
+    expect(localStorage.getItem(scheduledPromptsKey)).toBeNull();
   });
 });

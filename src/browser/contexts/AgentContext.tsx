@@ -56,6 +56,7 @@ type AgentProviderProps =
   | {
       workspaceId?: string;
       projectPath?: string;
+      enableGlobalListeners?: boolean;
       children: ReactNode;
     };
 
@@ -78,6 +79,7 @@ export function AgentProvider(props: AgentProviderProps) {
 function AgentProviderWithState(props: {
   workspaceId?: string;
   projectPath?: string;
+  enableGlobalListeners?: boolean;
   children: ReactNode;
 }) {
   const { api } = useAPI();
@@ -297,6 +299,10 @@ function AgentProviderWithState(props: {
   }, [effectiveAgentId, isCurrentAgentLocked, selectableAgents, setAgentId]);
 
   useEffect(() => {
+    if (props.enableGlobalListeners === false) {
+      return;
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.TOGGLE_AGENT)) {
         e.preventDefault();
@@ -315,9 +321,13 @@ function AgentProviderWithState(props: {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleToNextAgent, isCurrentAgentLocked]);
+  }, [cycleToNextAgent, isCurrentAgentLocked, props.enableGlobalListeners]);
 
   useEffect(() => {
+    if (props.enableGlobalListeners === false) {
+      return;
+    }
+
     const handleRefreshRequested = () => {
       void refresh();
     };
@@ -325,7 +335,7 @@ function AgentProviderWithState(props: {
     window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
-  }, [refresh]);
+  }, [props.enableGlobalListeners, refresh]);
 
   const agentContextValue = useMemo(
     () => ({

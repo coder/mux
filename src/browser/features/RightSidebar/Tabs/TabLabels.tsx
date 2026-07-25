@@ -10,6 +10,7 @@
 import React from "react";
 import {
   BugPlay,
+  Clock3,
   ExternalLink,
   Monitor,
   Globe,
@@ -258,6 +259,13 @@ export function OutputTabLabel() {
 export function MemoryTabLabel() {
   return <>Memory</>;
 }
+
+export const ScheduleTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <Clock3 className="h-3 w-3 shrink-0" />
+    Schedule
+  </span>
+);
 
 interface InstructionsTabLabelProps {
   workspaceId: string;

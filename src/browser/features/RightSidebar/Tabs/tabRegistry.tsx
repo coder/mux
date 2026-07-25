@@ -24,6 +24,7 @@ import { DevToolsTab } from "@/browser/features/RightSidebar/DevToolsTab";
 import { GoalTab, type GoalCreateIntent } from "@/browser/features/RightSidebar/GoalTab";
 import { MemoryTab } from "@/browser/features/RightSidebar/Memory/MemoryTab";
 import { WorkflowsTab } from "@/browser/features/RightSidebar/Workflows/WorkflowsTab";
+import { ScheduledPromptsTab } from "@/browser/features/ScheduledPrompts/ScheduledPromptsTab";
 import type { GoalSnapshot, GoalStatus } from "@/common/types/goal";
 import type { ReviewNoteData } from "@/common/types/review";
 import { BASE_TAB_IDS, TAB_CONFIG, type BaseTabType, type TabConfig } from "./tabConfig";
@@ -36,6 +37,7 @@ import {
   MemoryTabLabel,
   OutputTabLabel,
   ReviewTabLabel,
+  ScheduleTabLabel,
   StatsTabLabel,
   WorkflowsTabLabel,
 } from "./TabLabels";
@@ -161,10 +163,6 @@ const TAB_RENDERERS = {
       </ErrorBoundary>
     ),
   },
-  memory: {
-    Label: MemoryTabLabel,
-    renderPanel: (ctx) => <MemoryTab workspaceId={ctx.workspaceId} />,
-  },
   workflows: {
     Label: ({ workspaceId }) => <WorkflowsTabLabel workspaceId={workspaceId} />,
     renderPanel: (ctx) => (
@@ -172,6 +170,18 @@ const TAB_RENDERERS = {
         <WorkflowsTab workspaceId={ctx.workspaceId} />
       </ErrorBoundary>
     ),
+  },
+  schedule: {
+    Label: ScheduleTabLabel,
+    renderPanel: (ctx) => (
+      <ErrorBoundary workspaceInfo="Schedule tab">
+        <ScheduledPromptsTab workspaceId={ctx.workspaceId} />
+      </ErrorBoundary>
+    ),
+  },
+  memory: {
+    Label: MemoryTabLabel,
+    renderPanel: (ctx) => <MemoryTab workspaceId={ctx.workspaceId} />,
   },
   desktop: {
     Label: DesktopTabLabel,

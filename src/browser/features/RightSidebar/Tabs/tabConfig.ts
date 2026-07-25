@@ -62,6 +62,12 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 36,
     paletteKeywords: ["workflow", "workflows", "orchestration", "agents", "run"],
   },
+  schedule: {
+    name: "Schedule",
+    contentClassName: "overflow-y-auto p-0",
+    defaultOrder: 37,
+    paletteKeywords: ["schedule", "scheduled", "prompt", "queue", "timer"],
+  },
   memory: {
     name: "Memory",
     contentClassName: "overflow-hidden p-0",

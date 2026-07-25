@@ -220,6 +220,7 @@ function createApiClient(): APIClient {
 function renderAgentHarness(props: {
   projectPath: string;
   workspaceId?: string;
+  enableGlobalListeners?: boolean;
   onChange: (value: AgentContextValue) => void;
 }) {
   return render(
@@ -227,7 +228,11 @@ function renderAgentHarness(props: {
       <RouterProvider>
         <ProjectProvider>
           <WorkspaceProvider>
-            <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+            <AgentProvider
+              workspaceId={props.workspaceId}
+              projectPath={props.projectPath}
+              enableGlobalListeners={props.enableGlobalListeners}
+            >
               <Harness onChange={props.onChange} />
             </AgentProvider>
           </WorkspaceProvider>
@@ -333,6 +338,56 @@ describe("AgentContext", () => {
     await waitFor(() => {
       expect(contextValue?.agentId).toBe("plan");
     });
+  });
+
+  test("disabled global listeners do not handle agent shortcuts", async () => {
+    const projectPath = "/tmp/project";
+    mockAgentDefinitions = [EXEC_AGENT, PLAN_AGENT];
+    window.localStorage.setItem(getAgentIdKey(GLOBAL_SCOPE_ID), JSON.stringify("exec"));
+
+    let contextValue: AgentContextValue | undefined;
+    let openPickerEvents = 0;
+    const handleOpenPicker = () => {
+      openPickerEvents += 1;
+    };
+    window.addEventListener(CUSTOM_EVENTS.OPEN_AGENT_PICKER, handleOpenPicker as EventListener);
+
+    try {
+      renderAgentHarness({
+        projectPath,
+        enableGlobalListeners: false,
+        onChange: (value) => (contextValue = value),
+      });
+
+      await waitFor(() => {
+        expect(contextValue?.agentId).toBe("exec");
+        expect(contextValue?.agents.map((agent) => agent.id)).toEqual(["exec", "plan"]);
+      });
+
+      window.api = { platform: "darwin", versions: {} };
+
+      fireEvent.keyDown(window, {
+        key: "A",
+        ctrlKey: true,
+        metaKey: true,
+        shiftKey: true,
+      });
+      fireEvent.keyDown(window, {
+        key: ".",
+        code: "Period",
+        metaKey: true,
+      });
+
+      await Promise.resolve();
+
+      expect(contextValue?.agentId).toBe("exec");
+      expect(openPickerEvents).toBe(0);
+    } finally {
+      window.removeEventListener(
+        CUSTOM_EVENTS.OPEN_AGENT_PICKER,
+        handleOpenPicker as EventListener
+      );
+    }
   });
 
   test("cycle shortcut advances away from a custom auto agent", async () => {
