@@ -46,6 +46,7 @@ import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
 import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
@@ -515,16 +516,26 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         <span className="min-w-0 truncate text-sm" data-testid="workspace-title">
           {workspaceTitle ?? workspaceName}
         </span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Info className="text-muted h-3.5 w-3.5 shrink-0" aria-label="Workspace details" />
-          </TooltipTrigger>
-          <TooltipContent align="start" className="flex flex-col gap-0.5">
+        {/* A button, not a bare icon: these details are the only place the project,
+            workspace name, and path appear, and touch has no hover while keyboard
+            users need a focus target. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center border-0 bg-transparent p-0 transition-colors"
+              aria-label="Workspace details"
+              onKeyDown={stopKeyboardPropagation}
+            >
+              <Info className="h-3.5 w-3.5" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="flex flex-col gap-0.5 text-xs">
             <span className="font-mono">{projectLabel}</span>
             <span>{workspaceName}</span>
             <span className="text-muted">{namedWorkspacePath}</span>
-          </TooltipContent>
-        </Tooltip>
+          </PopoverContent>
+        </Popover>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>

@@ -4618,16 +4618,11 @@ export function useActiveGoalCount(): number {
 
 export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   const store = getStoreInstance();
-  const subscribe = useCallback(
-    (listener: () => void) => store.subscribeKey(workspaceId, listener),
-    [store, workspaceId]
-  );
-  const getSnapshot = useCallback(
-    () => store.getWorkspaceLastUserPrompt(workspaceId),
-    [store, workspaceId]
-  );
 
-  return useSyncExternalStore(subscribe, getSnapshot);
+  return useSyncExternalStore(
+    (listener) => store.subscribeKey(workspaceId, listener),
+    () => store.getWorkspaceLastUserPrompt(workspaceId)
+  );
 }
 
 /**
