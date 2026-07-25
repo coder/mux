@@ -21,4 +21,17 @@ describe("boot theme palette", () => {
 
     expect(bootColors).toEqual({ ...CHROME_COLORS });
   });
+
+  // The static meta value is what a cold load shows before the boot script runs, and what
+  // survives when the script's catch path fires (blocked storage), where it falls back to dark.
+  it("starts from the dark chrome color before any script runs", () => {
+    const html = readFileSync(path.join(process.cwd(), "index.html"), "utf8");
+
+    const meta = /<meta name="theme-color" content="(#[0-9a-fA-F]{3,8})"/.exec(html);
+    if (!meta) {
+      throw new Error("Could not find the theme-color meta tag in index.html");
+    }
+
+    expect(meta[1]).toBe(CHROME_COLORS.dark);
+  });
 });
