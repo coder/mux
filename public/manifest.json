@@ -4,8 +4,8 @@
   "description": "Parallel agentic development with Electron + React",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#1e1e1e",
-  "theme_color": "#1e1e1e",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
   "orientation": "any",
   "icons": [
     {

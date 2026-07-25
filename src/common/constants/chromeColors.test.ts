@@ -34,4 +34,15 @@ describe("boot theme palette", () => {
 
     expect(meta[1]).toBe(CHROME_COLORS.dark);
   });
+
+  // The installed PWA paints its splash and OS chrome from the manifest, before any of the
+  // above runs.
+  it("matches the installed app's manifest colors", () => {
+    const manifest = JSON.parse(
+      readFileSync(path.join(process.cwd(), "public", "manifest.json"), "utf8")
+    ) as { background_color: string; theme_color: string };
+
+    expect(manifest.theme_color).toBe(CHROME_COLORS.dark);
+    expect(manifest.background_color).toBe(CHROME_COLORS.dark);
+  });
 });
