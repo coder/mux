@@ -107,10 +107,17 @@ function setupStory(workspaces: FrontendWorkspaceMetadata[]) {
   return createMockORPCClient({ projects, workspaces });
 }
 
-/** Helper: wait for the app to render then open the command palette */
+/**
+ * Helper: wait for the app to render then open the command palette.
+ *
+ * Matches all occurrences because the selected workspace's title renders in both
+ * the sidebar row and the workspace header.
+ */
 async function openPalette(canvasElement: HTMLElement, waitForText: string) {
   const canvas = within(canvasElement);
-  await expect(canvas.findByText(waitForText, {}, { timeout: 5000 })).resolves.toBeTruthy();
+  await expect(canvas.findAllByText(waitForText, {}, { timeout: 5000 })).resolves.not.toHaveLength(
+    0
+  );
   await userEvent.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");
 }
 
