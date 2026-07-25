@@ -1,13 +1,14 @@
 /**
  * Chrome colors for surfaces that cannot read CSS variables: the Electron titlebar overlay (main
- * process) and the `theme-color` meta tag. Each value mirrors `--color-surface-primary` for that
- * theme in `src/browser/styles/globals.css`; update both together.
+ * process) and the `theme-color` meta tag. Both sit against the app's chrome, so each value mirrors
+ * that theme's `--color-sidebar` in `src/browser/styles/globals.css`; update both together. Only the
+ * dark theme resolves that to the page fill, per the Review 1.4 design.
  */
 export const CHROME_COLORS = {
   dark: "#09090b",
-  light: "#ffffff",
-  "flexoki-light": "#fffcf0",
-  "flexoki-dark": "#100f0f",
+  light: "#f5f5f5",
+  "flexoki-light": "#f2f0e5",
+  "flexoki-dark": "#1c1b1a",
 } as const;
 
 /** The window is created before the renderer resolves a theme, so native chrome starts dark. */

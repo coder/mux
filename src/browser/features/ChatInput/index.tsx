@@ -3434,12 +3434,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 </div>
               )}
 
-              <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
+              {/* Sized to fit inside the 325px a 375px phone leaves after the section's px-4 and
+                this surface's border + p-2. It doubles as the container query threshold below, so
+                the agent pill drops out only once the row is clamped. */}
+              <div className="@container flex min-w-[320px] flex-nowrap items-center gap-1.5">
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   {/* Agent mode leads the row per the Review 1.4 design: who is acting
                     reads before which model acts. */}
                   <div
-                    className="min-w-0 [@container(max-width:340px)]:hidden"
+                    className="min-w-0 [@container(max-width:320px)]:hidden"
                     data-tutorial="mode-selector"
                   >
                     <AgentModePicker
