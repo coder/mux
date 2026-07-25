@@ -1,5 +1,6 @@
 import "../../../../tests/ui/dom";
 
+import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
@@ -7,12 +8,14 @@ import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as GitStatusStoreModule from "@/browser/stores/GitStatusStore";
+import * as PRStatusStoreModule from "@/browser/stores/PRStatusStore";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
 import * as RuntimeBadgeModule from "../RuntimeBadge/RuntimeBadge";
 import * as BranchSelectorModule from "../BranchSelector/BranchSelector";
 import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndicator";
 import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import * as WorkspaceLinksModule from "../WorkspaceLinks/WorkspaceLinks";
+import { TooltipProvider } from "../Tooltip/Tooltip";
 import type { WorkspaceFooterBar as WorkspaceFooterBarComponent } from "./WorkspaceFooterBar";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 
@@ -48,7 +51,9 @@ function installFooterBarTestDoubles() {
       ({ totalTokens: 0 }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceUsage>
   );
   spyOn(WorkspaceStoreModule, "useWorkspaceStreamingStats").mockImplementation(() => null);
+  spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(() => null);
   spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => null);
+  spyOn(PRStatusStoreModule, "useWorkspacePR").mockImplementation(() => null);
   spyOn(RuntimeStatusStoreModule, "useRuntimeStatus").mockImplementation(() => "unsupported");
 
   spyOn(RuntimeBadgeModule, "RuntimeBadge").mockImplementation(
@@ -78,6 +83,22 @@ const repoMetadata: FrontendWorkspaceMetadata = {
   runtimeConfig: { type: "worktree", srcBaseDir: "/tmp/src" },
   createdAt: "2026-01-01T00:00:00.000Z",
 };
+
+function renderFooter(overrides?: Partial<ComponentProps<typeof WorkspaceFooterBarComponent>>) {
+  return render(
+    <TooltipProvider delayDuration={0}>
+      <WorkspaceFooterBar
+        workspaceId={workspaceId}
+        projectName="demo"
+        projectPath="/projects/demo"
+        workspaceName="feature-branch"
+        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
+        runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
+        {...overrides}
+      />
+    </TooltipProvider>
+  );
+}
 
 describe("WorkspaceFooterBar repository controls", () => {
   beforeEach(() => {
@@ -111,16 +132,13 @@ describe("WorkspaceFooterBar repository controls", () => {
     };
     workspaceMetadata.set(workspaceId, scratchMetadata);
 
-    render(
-      <WorkspaceFooterBar
-        workspaceId={workspaceId}
-        projectName="Scratch"
-        projectPath={scratchPath}
-        workspaceName="scratch-workspace-1"
-        namedWorkspacePath={scratchPath}
-        runtimeConfig={{ type: "local" }}
-      />
-    );
+    renderFooter({
+      projectName: "Scratch",
+      projectPath: scratchPath,
+      workspaceName: "scratch-workspace-1",
+      namedWorkspacePath: scratchPath,
+      runtimeConfig: { type: "local" },
+    });
 
     expect(BranchSelectorModule.BranchSelector).not.toHaveBeenCalled();
     expect(GitStatusIndicatorModule.GitStatusIndicator).not.toHaveBeenCalled();
@@ -132,16 +150,7 @@ describe("WorkspaceFooterBar repository controls", () => {
   it("shows branch + single-project git status for repo-backed workspaces", () => {
     workspaceMetadata.set(workspaceId, repoMetadata);
 
-    render(
-      <WorkspaceFooterBar
-        workspaceId={workspaceId}
-        projectName="demo"
-        projectPath="/projects/demo"
-        workspaceName="feature-branch"
-        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
-        runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
-      />
-    );
+    renderFooter();
 
     expect(BranchSelectorModule.BranchSelector).toHaveBeenCalled();
     expect(GitStatusIndicatorModule.GitStatusIndicator).toHaveBeenCalled();
@@ -160,18 +169,75 @@ describe("WorkspaceFooterBar repository controls", () => {
     };
     workspaceMetadata.set(workspaceId, multiProjectMetadata);
 
-    render(
-      <WorkspaceFooterBar
-        workspaceId={workspaceId}
-        projectName="demo"
-        projectPath="/projects/demo"
-        workspaceName="feature-branch"
-        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
-        runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
-      />
-    );
+    renderFooter();
 
     expect(MultiProjectGitStatusIndicatorModule.MultiProjectGitStatusIndicator).toHaveBeenCalled();
     expect(GitStatusIndicatorModule.GitStatusIndicator).not.toHaveBeenCalled();
+  });
+
+  it("shows the GitHub slug instead of the project label once a PR is detected", () => {
+    workspaceMetadata.set(workspaceId, repoMetadata);
+    spyOn(PRStatusStoreModule, "useWorkspacePR").mockImplementation(
+      () =>
+        ({
+          type: "github-pr",
+          url: "https://github.com/acme/widgets/pull/7",
+          owner: "acme",
+          repo: "widgets",
+          number: 7,
+          detectedAt: 0,
+          occurrenceCount: 1,
+        }) as unknown as ReturnType<typeof PRStatusStoreModule.useWorkspacePR>
+    );
+
+    const { container } = renderFooter();
+
+    expect(container.textContent).toContain("acme/widgets");
+    expect(container.textContent).not.toContain("demo");
+  });
+
+  it("falls back to the project label when no PR is detected", () => {
+    workspaceMetadata.set(workspaceId, repoMetadata);
+
+    const { container } = renderFooter();
+
+    expect(container.textContent).toContain("demo");
+  });
+});
+
+describe("WorkspaceFooterBar last prompt", () => {
+  beforeEach(() => {
+    workspaceMetadata = new Map();
+    cleanupDom = installDom();
+    installFooterBarTestDoubles();
+    workspaceMetadata.set(workspaceId, repoMetadata);
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    ({ WorkspaceFooterBar } = require("./WorkspaceFooterBar?workspace-footer-bar-test=2") as {
+      WorkspaceFooterBar: typeof WorkspaceFooterBarComponent;
+    });
+    /* eslint-enable @typescript-eslint/no-require-imports */
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+    cleanupDom?.();
+    cleanupDom = null;
+  });
+
+  it("omits the item when the transcript has no user prompt", () => {
+    const { queryByTestId } = renderFooter();
+
+    expect(queryByTestId("workspace-footer-last-prompt")).toBeNull();
+  });
+
+  it("renders the item once a user prompt exists", () => {
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(
+      () => "ship the footer"
+    );
+
+    const { queryByTestId } = renderFooter();
+
+    expect(queryByTestId("workspace-footer-last-prompt")).not.toBeNull();
   });
 });

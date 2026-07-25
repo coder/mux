@@ -200,7 +200,7 @@ export function PRLinkBadge({ prLink }: PRLinkBadgeProps) {
         >
           <a href={prLink.url} target="_blank" rel="noopener noreferrer">
             <StatusIcon prLink={prLink} />
-            <span>#{prLink.number}</span>
+            <span>PR #{prLink.number}</span>
             <ExternalLink className="h-3 w-3 opacity-50" />
           </a>
         </Button>

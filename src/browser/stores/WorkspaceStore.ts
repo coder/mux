@@ -2423,6 +2423,26 @@ export class WorkspaceStore {
     return this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
   }
 
+  /** Skips synthetic turns (goal continuations, boundaries) the user never typed. */
+  getWorkspaceLastUserPrompt(workspaceId: string): string | null {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) {
+      return null;
+    }
+
+    const messages = aggregator.getDisplayedMessages();
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message.type !== "user" || message.isSynthetic === true) {
+        continue;
+      }
+      const trimmed = message.content.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+
+    return null;
+  }
+
   /**
    * Extract usage from session-usage.json (no tokenization or message iteration).
    *
@@ -4594,6 +4614,20 @@ export function useActiveGoalCount(): number {
     () => store.getActiveGoalCount(),
     () => 0
   );
+}
+
+export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
+  const store = getStoreInstance();
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeKey(workspaceId, listener),
+    [store, workspaceId]
+  );
+  const getSnapshot = useCallback(
+    () => store.getWorkspaceLastUserPrompt(workspaceId),
+    [store, workspaceId]
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 /**

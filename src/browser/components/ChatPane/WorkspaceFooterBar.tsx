@@ -1,5 +1,10 @@
 import React from "react";
+import { ChevronDown, Github, MessageCircle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import type { GitStatusIndicatorMode } from "../GitStatusIndicatorView/GitStatusIndicatorView";
 import { isDevcontainerRuntime, type RuntimeConfig } from "@/common/types/runtime";
 import { getDevcontainerStatusChip } from "@/browser/utils/runtimeUi";
 import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
@@ -7,11 +12,13 @@ import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import {
+  useWorkspaceLastUserPrompt,
   useWorkspaceSidebarState,
   useWorkspaceStreamingStats,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
+import { useWorkspacePR } from "@/browser/stores/PRStatusStore";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
@@ -21,6 +28,7 @@ import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
 import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 
 interface WorkspaceFooterBarProps {
   workspaceId: string;
@@ -31,41 +39,17 @@ interface WorkspaceFooterBarProps {
   runtimeConfig?: RuntimeConfig;
 }
 
-/**
- * Branch selector + devcontainer chip + git drift indicator.
- *
- * Moved here from WorkspaceMenuBar: the Review 1.4 design ("Mux exploration"
- * Figma) relocates repository state from the header into the footer status
- * bar so the header stays focused on identity (runtime, project, title) and
- * actions.
- */
-function WorkspaceRepositoryControls(props: {
+function WorkspaceDriftIndicator(props: {
   workspaceId: string;
-  workspaceName: string;
   projectPath: string;
   isWorking: boolean;
   showMultiProjectStatus: boolean;
-  devcontainerChip: ReturnType<typeof getDevcontainerStatusChip>;
 }) {
   const gitStatus = useGitStatus(props.workspaceId);
 
   return (
-    <div className="flex items-center gap-1">
-      <BranchSelector
-        key={props.workspaceId}
-        workspaceId={props.workspaceId}
-        workspaceName={props.workspaceName}
-      />
-      {props.devcontainerChip && (
-        <span
-          className={cn(
-            "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
-            props.devcontainerChip.className
-          )}
-        >
-          {props.devcontainerChip.label}
-        </span>
-      )}
+    <div className="flex shrink-0 items-center gap-1.5">
+      <DriftModeToggle />
       {props.showMultiProjectStatus ? (
         <MultiProjectGitStatusIndicator
           workspaceId={props.workspaceId}
@@ -85,6 +69,79 @@ function WorkspaceRepositoryControls(props: {
   );
 }
 
+/** Shares the divergence dialog's persisted mode key so both surfaces stay in sync. */
+function DriftModeToggle() {
+  const [mode, setMode] = usePersistedState<GitStatusIndicatorMode>(
+    GIT_STATUS_INDICATOR_MODE_KEY,
+    "line-delta",
+    { listener: true }
+  );
+  const isLineDelta = mode === "line-delta";
+
+  return (
+    <button
+      type="button"
+      className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-0.5 border-0 bg-transparent p-0 transition-colors"
+      onClick={() => setMode(isLineDelta ? "divergence" : "line-delta")}
+      onKeyDown={stopKeyboardPropagation}
+    >
+      {isLineDelta ? "Lines" : "Commits"}
+      <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+    </button>
+  );
+}
+
+function WorkspaceBranchControls(props: {
+  workspaceId: string;
+  workspaceName: string;
+  devcontainerChip: ReturnType<typeof getDevcontainerStatusChip>;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <BranchSelector
+        key={props.workspaceId}
+        workspaceId={props.workspaceId}
+        workspaceName={props.workspaceName}
+      />
+      {props.devcontainerChip && (
+        <span
+          className={cn(
+            "shrink-0 rounded px-1.5 py-0.5 text-[10px] leading-tight font-medium",
+            props.devcontainerChip.className
+          )}
+        >
+          {props.devcontainerChip.label}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The GitHub slug only becomes known once PR detection resolves a remote. */
+function FooterRepositoryLabel(props: { workspaceId: string; projectLabel: string }) {
+  const workspacePR = useWorkspacePR(props.workspaceId);
+
+  if (!workspacePR) {
+    return <FooterProjectLabel projectLabel={props.projectLabel} />;
+  }
+
+  return (
+    <span className="text-muted flex shrink-0 items-center gap-1">
+      <Github className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span className="font-mono">
+        {workspacePR.owner}/{workspacePR.repo}
+      </span>
+    </span>
+  );
+}
+
+/** Must not shrink: the bar scrolls, so a shrinking item collapses to zero width. */
+function FooterProjectLabel(props: { projectLabel: string }) {
+  return (
+    <span className="text-muted max-w-40 shrink-0 truncate font-mono">{props.projectLabel}</span>
+  );
+}
+
 /**
  * Session token usage readout. Subscribes at the leaf so per-delta streaming
  * stats never cascade re-renders through the transcript (see WorkspaceStore's
@@ -100,10 +157,41 @@ function FooterUsageStats(props: { workspaceId: string }) {
   }
 
   return (
-    <span className="text-muted flex shrink-0 items-center gap-1.5">
-      <span className="counter-nums">{formatTokens(usage.totalTokens)} tok</span>
-      {showTps && <span className="counter-nums">{Math.round(streamingStats.tps)} t/s</span>}
+    <span className="flex shrink-0 items-center gap-1.5">
+      <span className="text-foreground counter-nums">
+        {formatTokens(usage.totalTokens)} <span className="text-muted">tok</span>
+      </span>
+      {showTps && (
+        <span className="text-foreground counter-nums">
+          {Math.round(streamingStats.tps)} <span className="text-muted">t/s</span>
+        </span>
+      )}
     </span>
+  );
+}
+
+function FooterLastPrompt(props: { workspaceId: string }) {
+  const lastPrompt = useWorkspaceLastUserPrompt(props.workspaceId);
+
+  if (lastPrompt === null) {
+    return null;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="text-muted flex shrink-0 items-center gap-1"
+          data-testid="workspace-footer-last-prompt"
+        >
+          <MessageCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+          Last prompt
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="end" className="line-clamp-6 whitespace-pre-wrap">
+        {lastPrompt}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -111,11 +199,11 @@ function FooterUsageStats(props: { workspaceId: string }) {
  * Bottom status bar for the workspace chat pane.
  *
  * Implements the "footer info bar" from the Review 1.4 page of the
- * "Mux exploration" Figma: a persistent strip of workspace facts — PR link,
- * branch, line drift, token usage — anchored in a predictable spot instead of
- * competing for space in the header. Content that overflows simply scrolls
- * horizontally, matching the design note ("content gets truncated and the
- * user can slide to the remaining info").
+ * "Mux exploration" Figma: a persistent strip of workspace facts (PR link, line
+ * drift, repository, branch, token usage, last prompt) anchored in a predictable
+ * spot instead of competing for space in the header. Content that overflows
+ * simply scrolls horizontally, matching the design note ("content gets truncated
+ * and the user can slide to the remaining info").
  */
 export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => {
   const { workspaceMetadata } = useWorkspaceContext();
@@ -149,7 +237,7 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
   return (
     <footer
       data-testid="workspace-footer-bar"
-      className="bg-sidebar border-border-light flex h-7 shrink-0 items-center gap-2 overflow-x-auto border-t px-2 text-xs whitespace-nowrap"
+      className="bg-sidebar border-border-light scrollbar-none flex h-7 shrink-0 items-center gap-2 overflow-x-auto border-t px-2 text-xs whitespace-nowrap"
     >
       <RuntimeBadge
         runtimeConfig={props.runtimeConfig}
@@ -159,20 +247,25 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
         tooltipSide="top"
       />
       <WorkspaceLinks workspaceId={props.workspaceId} />
-      <span className="text-muted min-w-0 truncate font-mono">{projectLabel}</span>
       {hasRepository && (
-        <WorkspaceRepositoryControls
-          workspaceId={props.workspaceId}
-          workspaceName={props.workspaceName}
-          projectPath={props.projectPath}
-          isWorking={isWorking}
-          showMultiProjectStatus={showMultiProjectStatus}
-          devcontainerChip={devcontainerChip}
-        />
+        <>
+          <WorkspaceDriftIndicator
+            workspaceId={props.workspaceId}
+            projectPath={props.projectPath}
+            isWorking={isWorking}
+            showMultiProjectStatus={showMultiProjectStatus}
+          />
+          <FooterRepositoryLabel workspaceId={props.workspaceId} projectLabel={projectLabel} />
+          <WorkspaceBranchControls
+            workspaceId={props.workspaceId}
+            workspaceName={props.workspaceName}
+            devcontainerChip={devcontainerChip}
+          />
+        </>
       )}
-      {/* Push usage to the right edge so the bar reads status-bar-like even when sparse. */}
-      <span className="min-w-0 flex-1" />
+      {!hasRepository && <FooterProjectLabel projectLabel={projectLabel} />}
       <FooterUsageStats workspaceId={props.workspaceId} />
+      <FooterLastPrompt workspaceId={props.workspaceId} />
     </footer>
   );
 };
