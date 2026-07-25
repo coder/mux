@@ -1,10 +1,14 @@
 import type { AppStory } from "@/browser/stories/meta.js";
-import { appMeta, AppWithMocks } from "@/browser/stories/meta.js";
+import { appMeta, AppWithMocks, PIXEL_DISABLED } from "@/browser/stories/meta.js";
 import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
 import { setWorkspaceInput } from "@/browser/stories/helpers/uiState";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import { createFileReadTool } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
+import {
+  blurActiveElement,
+  waitForChatInputAutofocusDone,
+} from "@/browser/stories/storyPlayHelpers.js";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 const meta = { ...appMeta, title: "App/Chat/Input" };
@@ -33,6 +37,47 @@ export const VoiceInputNoApiKey: AppStory = {
           "Shows the voice input button in disabled state when OpenAI API key is not configured. Hover over the mic icon in the chat input to see the user education tooltip.",
       },
     },
+  },
+};
+
+/**
+ * The composer's border is its only focus indicator: the textarea inside it has no border or
+ * outline of its own, so this asserts the rendered border actually changes on focus.
+ */
+export const FocusedComposer: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-focus-border",
+          messages: [],
+        })
+      }
+    />
+  ),
+  parameters: {
+    ...appMeta.parameters,
+    pixel: PIXEL_DISABLED,
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    await waitForChatInputAutofocusDone(storyRoot);
+
+    const textarea = await canvas.findByLabelText("Message Claude");
+    const surface = storyRoot.querySelector('[data-component="ChatInputSurface"]');
+    if (!surface) throw new Error("Composer surface not rendered");
+
+    blurActiveElement();
+    const blurredBorder = getComputedStyle(surface).borderColor;
+
+    textarea.focus();
+    await waitFor(() => {
+      if (getComputedStyle(surface).borderColor === blurredBorder) {
+        throw new Error(`Focusing the composer left its border at ${blurredBorder}`);
+      }
+    });
   },
 };
 

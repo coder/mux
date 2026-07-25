@@ -720,6 +720,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Use current agent's uiColor, or neutral border until agents load
   const agentColor = currentAgent?.uiColor ?? "var(--color-border-light)";
+  const composerSurfaceStyle: React.CSSProperties & { "--composer-focus-border": string } = {
+    "--composer-focus-border": agentColor,
+  };
   const {
     models,
     hiddenModelsForSelector,
@@ -3327,15 +3330,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           {/*
             One bordered box holds the textarea and the pill row. The border lives here rather
-            than on the textarea so there is no nested box, and it carries the editing tint.
+            than on the textarea so there is no nested box, and it carries the editing tint. The
+            textarea has no border of its own, so this border also has to show its focus state;
+            it keys off the textarea rather than focus-within so tabbing across the pills (which
+            carry their own focus rings) does not light up the whole box.
           */}
           <div
             className={cn(
               "rounded-md border p-2",
               editingMessageForUi
                 ? "bg-editing-mode-alpha border-editing-mode"
-                : "border-border-light"
+                : "border-border-light has-[textarea:focus]:border-[var(--composer-focus-border)]"
             )}
+            style={composerSurfaceStyle}
             data-component="ChatInputSurface"
           >
             <div className="relative flex items-end pb-1" data-component="ChatInputControls">
