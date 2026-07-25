@@ -3152,11 +3152,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const placeholder = (() => {
     // Creation view keeps the onboarding prompt; workspace stays concise for the inline hints.
     if (variant === "creation") {
-      // Per the Review 1.4 "start V2" frame: name the blank-prompt path explicitly
-      // so users learn that submitting empty is valid.
+      // The Review 1.4 "start V2" frame also advertises submitting blank ("or leave
+      // blank for a codebase summary"), but canSend requires text/attachments, so
+      // that path stays unadvertised until it actually works.
       return props.kind === "scratch"
-        ? "Describe your goals, or leave blank to start an open-ended chat."
-        : "Describe your goals, or leave blank for a codebase summary.";
+        ? "Describe your goals to start a scratch chat..."
+        : "Describe your goals to create a workspace...";
     }
 
     // Workspace variant placeholders
