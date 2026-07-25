@@ -293,8 +293,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             composer so the header stays focused on identity and actions. */}
         <WorkspaceFooterBar
           workspaceId={workspaceId}
+          projectName={props.projectName}
           projectPath={props.projectPath}
           workspaceName={props.workspaceName}
+          namedWorkspacePath={props.namedWorkspacePath}
           runtimeConfig={props.runtimeConfig}
         />
       </div>

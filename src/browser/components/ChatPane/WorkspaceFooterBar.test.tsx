@@ -4,9 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import { cleanup, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
+import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
 import * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import * as GitStatusStoreModule from "@/browser/stores/GitStatusStore";
 import * as RuntimeStatusStoreModule from "@/browser/stores/RuntimeStatusStore";
+import * as RuntimeBadgeModule from "../RuntimeBadge/RuntimeBadge";
 import * as BranchSelectorModule from "../BranchSelector/BranchSelector";
 import * as GitStatusIndicatorModule from "../GitStatusIndicator/GitStatusIndicator";
 import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
@@ -27,6 +29,12 @@ function installFooterBarTestDoubles() {
         typeof WorkspaceContextModule.useWorkspaceContext
       >
   );
+  spyOn(ProjectContextModule, "useProjectContext").mockImplementation(
+    () =>
+      ({ userProjects: new Map() }) as unknown as ReturnType<
+        typeof ProjectContextModule.useProjectContext
+      >
+  );
   spyOn(WorkspaceStoreModule, "useWorkspaceSidebarState").mockImplementation(
     () =>
       ({
@@ -43,6 +51,9 @@ function installFooterBarTestDoubles() {
   spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => null);
   spyOn(RuntimeStatusStoreModule, "useRuntimeStatus").mockImplementation(() => "unsupported");
 
+  spyOn(RuntimeBadgeModule, "RuntimeBadge").mockImplementation(
+    (() => null) as unknown as typeof RuntimeBadgeModule.RuntimeBadge
+  );
   spyOn(BranchSelectorModule, "BranchSelector").mockImplementation(
     (() => null) as unknown as typeof BranchSelectorModule.BranchSelector
   );
@@ -103,8 +114,10 @@ describe("WorkspaceFooterBar repository controls", () => {
     render(
       <WorkspaceFooterBar
         workspaceId={workspaceId}
+        projectName="Scratch"
         projectPath={scratchPath}
         workspaceName="scratch-workspace-1"
+        namedWorkspacePath={scratchPath}
         runtimeConfig={{ type: "local" }}
       />
     );
@@ -122,8 +135,10 @@ describe("WorkspaceFooterBar repository controls", () => {
     render(
       <WorkspaceFooterBar
         workspaceId={workspaceId}
+        projectName="demo"
         projectPath="/projects/demo"
         workspaceName="feature-branch"
+        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
         runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
       />
     );
@@ -148,8 +163,10 @@ describe("WorkspaceFooterBar repository controls", () => {
     render(
       <WorkspaceFooterBar
         workspaceId={workspaceId}
+        projectName="demo"
         projectPath="/projects/demo"
         workspaceName="feature-branch"
+        namedWorkspacePath="/projects/demo/workspaces/feature-branch"
         runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
       />
     );

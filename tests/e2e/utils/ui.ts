@@ -138,7 +138,10 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       // workspace we need to confirm the navigation actually landed on the demo workspace
       // (not just any transcript).
       const expectedProjectName = path.basename(context.projectPath);
-      await expect(page.getByTestId("workspace-menu-bar")).toContainText(expectedProjectName, {
+      // Project identity moved from the header into the footer status bar
+      // (Review 1.4 layout); the footer is only rendered on workspace routes,
+      // so this doubles as the navigation check.
+      await expect(page.getByTestId("workspace-footer-bar")).toContainText(expectedProjectName, {
         timeout: 20_000,
       });
 

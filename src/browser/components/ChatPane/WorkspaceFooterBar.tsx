@@ -13,6 +13,10 @@ import {
 } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useRuntimeStatus } from "@/browser/stores/RuntimeStatusStore";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
+import { SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
+import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
 import { BranchSelector } from "../BranchSelector/BranchSelector";
 import { GitStatusIndicator } from "../GitStatusIndicator/GitStatusIndicator";
 import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProjectGitStatusIndicator";
@@ -20,8 +24,10 @@ import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 
 interface WorkspaceFooterBarProps {
   workspaceId: string;
+  projectName: string;
   projectPath: string;
   workspaceName: string;
+  namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
 }
 
@@ -117,6 +123,19 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
   const hasRepository = hasWorkspaceRepository(workspaceEntry);
   const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
 
+  // The workspace's metadata.projectName is the parent project (worktrees are
+  // owned by the top-most parent). When the workspace is scoped to a
+  // sub-project, surface the hierarchy as "parent / child" so the footer alone
+  // reveals the sub-project context.
+  const { userProjects } = useProjectContext();
+  const subProjectPath = workspaceEntry?.subProjectPath;
+  const projectLabel =
+    workspaceEntry?.kind === "scratch"
+      ? SCRATCH_PROJECT_NAME
+      : subProjectPath && userProjects.has(subProjectPath)
+        ? formatProjectHierarchyLabel(subProjectPath, userProjects)
+        : props.projectName;
+
   const { canInterrupt, isStarting, awaitingUserQuestion } = useWorkspaceSidebarState(
     props.workspaceId
   );
@@ -132,7 +151,15 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
       data-testid="workspace-footer-bar"
       className="bg-sidebar border-border-light flex h-7 shrink-0 items-center gap-2 overflow-x-auto border-t px-2 text-xs whitespace-nowrap"
     >
+      <RuntimeBadge
+        runtimeConfig={props.runtimeConfig}
+        isWorking={isWorking}
+        workspacePath={props.namedWorkspacePath}
+        workspaceName={props.workspaceName}
+        tooltipSide="top"
+      />
       <WorkspaceLinks workspaceId={props.workspaceId} />
+      <span className="text-muted min-w-0 truncate font-mono">{projectLabel}</span>
       {hasRepository && (
         <WorkspaceRepositoryControls
           workspaceId={props.workspaceId}

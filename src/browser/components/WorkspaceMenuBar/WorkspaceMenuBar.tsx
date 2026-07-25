@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Ellipsis, Menu, Pencil } from "lucide-react";
+import { Bell, BellOff, Ellipsis, Info, Menu, Pencil } from "lucide-react";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { cn } from "@/common/lib/utils";
@@ -11,7 +11,6 @@ import {
   getNotifyOnResponseKey,
   getNotifyOnResponseAutoEnableKey,
 } from "@/common/constants/storage";
-import { RuntimeBadge } from "../RuntimeBadge/RuntimeBadge";
 import { WorkspaceHeartbeatModal } from "../WorkspaceHeartbeatModal";
 import { WorkspaceMCPModal } from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
@@ -490,7 +489,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     >
       <div
         className={cn(
-          "text-foreground flex min-w-0 items-center gap-2.5 overflow-hidden font-semibold",
+          "text-foreground flex min-w-0 items-center gap-1.5 overflow-hidden",
           isDesktop && "titlebar-no-drag"
         )}
       >
@@ -510,16 +509,22 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             <TooltipContent>Open sidebar ({formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})</TooltipContent>
           </Tooltip>
         )}
-        <RuntimeBadge
-          runtimeConfig={runtimeConfig}
-          isWorking={isWorking}
-          workspacePath={namedWorkspacePath}
-          workspaceName={workspaceName}
-          tooltipSide="bottom"
-        />
-        {/* Repository controls (branch, drift, PR) live in WorkspaceFooterBar per the
-            Review 1.4 design: the header keeps identity + actions only. */}
-        <span className="min-w-0 truncate font-mono text-xs">{projectLabel}</span>
+        {/* Review 1.4 header: the workspace title is the header's identity; runtime,
+            project, and repository state live in WorkspaceFooterBar. The info icon
+            keeps the project/name details one hover away. */}
+        <span className="min-w-0 truncate text-sm" data-testid="workspace-title">
+          {workspaceTitle ?? workspaceName}
+        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Info className="text-muted h-3.5 w-3.5 shrink-0" aria-label="Workspace details" />
+          </TooltipTrigger>
+          <TooltipContent align="start" className="flex flex-col gap-0.5">
+            <span className="font-mono">{projectLabel}</span>
+            <span>{workspaceName}</span>
+            <span className="text-muted">{namedWorkspacePath}</span>
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>

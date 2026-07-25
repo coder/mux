@@ -17,7 +17,6 @@ import * as PopoverErrorHookModule from "@/browser/hooks/usePopoverError";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
 import * as TutorialContextModule from "@/browser/contexts/TutorialContext";
 import * as ChatCommandsModule from "@/browser/utils/chatCommands";
-import * as RuntimeBadgeModule from "../RuntimeBadge/RuntimeBadge";
 import type { WorkspaceMenuBar as WorkspaceMenuBarComponent } from "./WorkspaceMenuBar";
 import * as WorkspaceMCPModalModule from "../WorkspaceMCPModal/WorkspaceMCPModal";
 import * as TooltipModule from "../Tooltip/Tooltip";
@@ -192,9 +191,6 @@ function installWorkspaceMenuBarTestDoubles() {
     Promise.resolve({ success: true as const })
   );
 
-  spyOn(RuntimeBadgeModule, "RuntimeBadge").mockImplementation(
-    (() => null) as unknown as typeof RuntimeBadgeModule.RuntimeBadge
-  );
   spyOn(WorkspaceMCPModalModule, "WorkspaceMCPModal").mockImplementation(
     (() => null) as unknown as typeof WorkspaceMCPModalModule.WorkspaceMCPModal
   );
@@ -338,7 +334,9 @@ describe("WorkspaceMenuBar archive confirmations", () => {
       />
     );
 
-    expect(view.getByText("Scratch")).toBeTruthy();
+    // The header shows the workspace title (project identity lives in the
+    // footer bar per the Review 1.4 design).
+    expect(view.getByTestId("workspace-title").textContent).toBe("Feature branch");
 
     // Repo-dependent More-menu actions must be hidden: review events are
     // ignored by RightSidebar for scratch and forking scratch is unsupported.
