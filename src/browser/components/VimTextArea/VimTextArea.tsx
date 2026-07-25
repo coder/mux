@@ -29,32 +29,16 @@ export interface VimTextAreaProps extends Omit<
 > {
   value: string;
   onChange: (next: string, caretIndex?: number) => void;
-  isEditing?: boolean;
   suppressKeys?: string[]; // keys for which Vim should not interfere (e.g. ["Tab","ArrowUp","ArrowDown","Escape"]) when popovers are open
   ghostHint?: string | null;
   /** Called when Escape is pressed in normal mode (vim) - useful for cancel edit */
   onEscapeInNormalMode?: () => void;
-  /** Focus border color (CSS color value). */
-  focusBorderColor: string;
 }
 
 type VimMode = vim.VimMode;
 
 export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProps>(
-  (
-    {
-      value,
-      onChange,
-      isEditing,
-      suppressKeys,
-      onKeyDown,
-      ghostHint,
-      onEscapeInNormalMode,
-      focusBorderColor,
-      ...rest
-    },
-    ref
-  ) => {
+  ({ value, onChange, suppressKeys, onKeyDown, ghostHint, onEscapeInNormalMode, ...rest }, ref) => {
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     // Expose DOM ref to parent
     useEffect(() => {
@@ -245,13 +229,11 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       setTimeout(() => applyDomSelection(newState), 0);
     };
 
-    const textareaStyle: React.CSSProperties & { "--focus-border-color"?: string } = {
+    const textareaStyle: React.CSSProperties = {
       // Mirror textarea defaults in inline styles so ghost hint overlay can reuse exact metrics.
       padding: "0.375rem 0.5rem",
       fontSize: "13px",
       ...(rest.style ?? {}),
-      // Focus border color from agent definition
-      "--focus-border-color": !isEditing ? focusBorderColor : undefined,
     };
 
     // Screen-reader announcement for vim mode changes (visually hidden)
@@ -290,13 +272,12 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             {...rest}
             style={textareaStyle}
             className={cn(
-              "w-full border text-light py-1.5 px-2 rounded text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
+              // No fill or border of its own: the composer surface that wraps this textarea
+              // and the pill row is the single bordered box, per the Review 1.4 design.
+              "w-full bg-transparent text-light py-1.5 px-2 text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
               vimEnabled ? "font-monospace" : "font-sans",
               "placeholder:text-placeholder",
               "focus:outline-none",
-              isEditing
-                ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
-                : "bg-dark border-border-light focus:border-[var(--focus-border-color)]",
               vimMode === "insert"
                 ? "caret-current selection:bg-selection"
                 : "caret-transparent selection:bg-white/50",

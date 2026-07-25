@@ -54,7 +54,7 @@ import {
  * Fixed width ensures Select (with chevron) and text inputs render identically.
  */
 const INLINE_CONTROL_CLASSES =
-  "h-7 w-[140px] rounded border border-border-medium bg-separator px-2 text-xs text-foreground focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
+  "h-7 w-[140px] rounded border border-border-light bg-transparent px-2 text-xs text-foreground focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
 
 /** Credential sharing checkbox - used by Docker and Devcontainer runtimes */
 function CredentialSharingCheckbox(props: {

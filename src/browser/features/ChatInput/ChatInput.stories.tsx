@@ -102,9 +102,10 @@ export const EditingMessage: AppStory = {
 
     // Wait for the editing state to be applied
     await waitFor(() => {
-      const textarea = canvas.getByLabelText("Edit your last message");
-      if (!textarea.className.includes("border-editing-mode")) {
-        throw new Error("Textarea not in editing state");
+      canvas.getByLabelText("Edit your last message");
+      const surface = storyRoot.querySelector('[data-component="ChatInputSurface"]');
+      if (!surface?.className.includes("border-editing-mode")) {
+        throw new Error("Composer surface not in editing state");
       }
     });
 

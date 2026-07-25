@@ -3225,10 +3225,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"
-            ? // Review 1.4 "start V2": a plain bordered surface, not a raised card, so the
-              // headline and configurator sentence carry the page instead of card chrome.
-              "w-full max-w-3xl rounded-md border border-border-light px-4 py-3"
-            : `bg-surface-primary border-border-light px-4 
+            ? "w-full max-w-3xl"
+            : `bg-surface-primary px-4 
               pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
               mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
         )}
@@ -3327,297 +3325,318 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             highlightQuery={lastSymbolQueryRef.current}
           />
 
-          <div className="relative flex items-end pb-1" data-component="ChatInputControls">
-            {/* Recording/transcribing overlay - replaces textarea when active */}
-            {voiceInput.state !== "idle" ? (
-              <RecordingOverlay
-                state={voiceInput.state}
-                agentColor={focusBorderColor}
-                mediaRecorder={voiceInput.mediaRecorder}
-                onStop={voiceInput.toggle}
-              />
-            ) : (
-              <>
-                {/* Give the input more vertical room so the shortcut hints sit above the footer. */}
-                <VimTextArea
-                  ref={inputRef}
-                  data-escape-interrupts-stream="true"
-                  value={input}
-                  ghostHint={commandGhostHint}
-                  isEditing={!!editingMessageForUi}
-                  focusBorderColor={focusBorderColor}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  onPaste={handlePaste}
-                  onKeyUp={handleAtMentionCursorActivity}
-                  onMouseUp={handleAtMentionCursorActivity}
-                  onSelect={handleAtMentionCursorActivity}
-                  onDragOver={handleDragOver}
-                  onDrop={handleDrop}
-                  onEscapeInNormalMode={handleEscapeInNormalMode}
-                  suppressKeys={
-                    showAtMentionSuggestions
-                      ? FILE_SUGGESTION_KEYS
-                      : showSkillSuggestions
-                        ? FILE_SUGGESTION_KEYS
-                        : showSymbolSuggestions
-                          ? FILE_SUGGESTION_KEYS
-                          : showCommandSuggestions
-                            ? COMMAND_SUGGESTION_KEYS
-                            : undefined
-                  }
-                  placeholder={placeholder}
-                  disabled={!editingMessageForUi && (disabled || sendInFlightBlocksInput)}
-                  aria-label={editingMessageForUi ? "Edit your last message" : "Message Claude"}
-                  aria-autocomplete="list"
-                  aria-controls={
-                    showAtMentionSuggestions && atMentionSuggestions.length > 0
-                      ? atMentionListId
-                      : showSkillSuggestions && skillSuggestions.length > 0
-                        ? skillListId
-                        : showSymbolSuggestions && symbolSuggestions.length > 0
-                          ? symbolListId
-                          : showCommandSuggestions && commandSuggestions.length > 0
-                            ? commandListId
-                            : undefined
-                  }
-                  aria-expanded={
-                    (showCommandSuggestions && commandSuggestions.length > 0) ||
-                    (showAtMentionSuggestions && atMentionSuggestions.length > 0) ||
-                    (showSkillSuggestions && skillSuggestions.length > 0) ||
-                    (showSymbolSuggestions && symbolSuggestions.length > 0)
-                  }
-                  className={variant === "creation" ? "min-h-28" : "min-h-16"}
+          {/*
+            Review 1.4 draws the prompt as a single bordered box whose interior is the page
+            background, holding the textarea and the pill row. The border lives here rather than
+            on the textarea (no nested box) and carries the editing tint.
+          */}
+          <div
+            className={cn(
+              "rounded-md border p-2",
+              editingMessageForUi
+                ? "bg-editing-mode-alpha border-editing-mode"
+                : "border-border-light"
+            )}
+            data-component="ChatInputSurface"
+          >
+            <div className="relative flex items-end pb-1" data-component="ChatInputControls">
+              {/* Recording/transcribing overlay - replaces textarea when active */}
+              {voiceInput.state !== "idle" ? (
+                <RecordingOverlay
+                  state={voiceInput.state}
+                  agentColor={focusBorderColor}
+                  mediaRecorder={voiceInput.mediaRecorder}
+                  onStop={voiceInput.toggle}
                 />
-                {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
-                {input.trim() === "" && !editingMessageForUi && (
-                  <div className="mobile-hide-shortcut-hints text-muted @container pointer-events-none absolute right-2 bottom-3 left-2 flex flex-nowrap items-center gap-4 overflow-hidden text-[11px] whitespace-nowrap">
-                    <span className="shrink-0">
-                      <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
-                      <span> - focus chat</span>
-                    </span>
-                    <span className="shrink-0 [@container(max-width:520px)]:hidden">
-                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
-                      <span> - change model</span>
-                    </span>
-                    <span className="shrink-0 [@container(max-width:640px)]:hidden">
-                      <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
-                      <span> - change agent</span>
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Attachments */}
-          <ChatAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
-
-          <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
-            {/* Editing indicator - workspace only */}
-            {variant === "workspace" && editingMessageForUi && (
-              <div className="text-edit-mode text-[11px] font-medium">
-                Editing message{" "}
-                <span className="mobile-hide-shortcut-hints">
-                  ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
-                  {vimEnabled ? "×2" : ""} to cancel)
-                </span>
-              </div>
-            )}
-
-            <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                {/* Agent mode leads the row per the Review 1.4 design: who is acting
-                    reads before which model acts. */}
-                <div
-                  className="min-w-0 [@container(max-width:340px)]:hidden"
-                  data-tutorial="mode-selector"
-                >
-                  <AgentModePicker
-                    className="min-w-0"
-                    onComplete={() => inputRef.current?.focus()}
-                  />
-                </div>
-
-                {/* Model and thinking level share one bordered pill, split by a divider,
-                    as in the design's "claude opus 4.5 | max". */}
-                <div
-                  className="border-border-medium flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5"
-                  data-component="ModelSelectorGroup"
-                  data-tutorial="model-selector"
-                >
-                  <ModelSelector
-                    ref={modelSelectorRef}
-                    value={baseModel}
-                    onChange={setPreferredModel}
-                    models={models}
-                    onComplete={() => inputRef.current?.focus()}
-                    defaultModel={defaultModel}
-                    onSetDefaultModel={setDefaultModel}
-                    hiddenModels={hiddenModelsForSelector}
-                    onOpenSettings={() => open("models")}
-                    className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
-                    tooltipExtraContent={
-                      <>
-                        <strong>Click to edit</strong>
-                        <br />
-                        <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
-                        <br />
-                        <br />
-                        <strong>Abbreviations:</strong>
-                        {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
-                          <React.Fragment key={ex.abbrev}>
-                            <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
-                          </React.Fragment>
-                        ))}
-                        <br />
-                        <br />
-                        <strong>Full format:</strong>
-                        <br />
-                        <code>/model provider:model-name</code>
-                        <br />
-                        (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
-                      </>
+              ) : (
+                <>
+                  {/* Give the input more vertical room so the shortcut hints sit above the footer. */}
+                  <VimTextArea
+                    ref={inputRef}
+                    data-escape-interrupts-stream="true"
+                    value={input}
+                    ghostHint={commandGhostHint}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
+                    onKeyUp={handleAtMentionCursorActivity}
+                    onMouseUp={handleAtMentionCursorActivity}
+                    onSelect={handleAtMentionCursorActivity}
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    onEscapeInNormalMode={handleEscapeInNormalMode}
+                    suppressKeys={
+                      showAtMentionSuggestions
+                        ? FILE_SUGGESTION_KEYS
+                        : showSkillSuggestions
+                          ? FILE_SUGGESTION_KEYS
+                          : showSymbolSuggestions
+                            ? FILE_SUGGESTION_KEYS
+                            : showCommandSuggestions
+                              ? COMMAND_SUGGESTION_KEYS
+                              : undefined
                     }
+                    placeholder={placeholder}
+                    disabled={!editingMessageForUi && (disabled || sendInFlightBlocksInput)}
+                    aria-label={editingMessageForUi ? "Edit your last message" : "Message Claude"}
+                    aria-autocomplete="list"
+                    aria-controls={
+                      showAtMentionSuggestions && atMentionSuggestions.length > 0
+                        ? atMentionListId
+                        : showSkillSuggestions && skillSuggestions.length > 0
+                          ? skillListId
+                          : showSymbolSuggestions && symbolSuggestions.length > 0
+                            ? symbolListId
+                            : showCommandSuggestions && commandSuggestions.length > 0
+                              ? commandListId
+                              : undefined
+                    }
+                    aria-expanded={
+                      (showCommandSuggestions && commandSuggestions.length > 0) ||
+                      (showAtMentionSuggestions && atMentionSuggestions.length > 0) ||
+                      (showSkillSuggestions && skillSuggestions.length > 0) ||
+                      (showSymbolSuggestions && symbolSuggestions.length > 0)
+                    }
+                    className={variant === "creation" ? "min-h-28" : "min-h-16"}
                   />
-                  <span className="bg-border-medium h-3.5 w-px shrink-0" aria-hidden="true" />
+                  {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
+                  {input.trim() === "" && !editingMessageForUi && (
+                    <div className="mobile-hide-shortcut-hints text-muted @container pointer-events-none absolute right-2 bottom-3 left-2 flex flex-nowrap items-center gap-4 overflow-hidden text-[11px] whitespace-nowrap">
+                      <span className="shrink-0">
+                        <span className="font-mono">{formatKeybind(KEYBINDS.FOCUS_CHAT)}</span>
+                        <span> - focus chat</span>
+                      </span>
+                      <span className="shrink-0 [@container(max-width:520px)]:hidden">
+                        <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_MODEL)}</span>
+                        <span> - change model</span>
+                      </span>
+                      <span className="shrink-0 [@container(max-width:640px)]:hidden">
+                        <span className="font-mono">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span>
+                        <span> - change agent</span>
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
-                  {/* On narrow layouts, hide the thinking paddles and PRO chip to prevent
+            {/* Attachments */}
+            <ChatAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
+
+            <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
+              {/* Editing indicator - workspace only */}
+              {variant === "workspace" && editingMessageForUi && (
+                <div className="text-edit-mode text-[11px] font-medium">
+                  Editing message{" "}
+                  <span className="mobile-hide-shortcut-hints">
+                    ({formatKeybind(KEYBINDS.CANCEL_EDIT)}
+                    {vimEnabled ? "×2" : ""} to cancel)
+                  </span>
+                </div>
+              )}
+
+              <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  {/* Agent mode leads the row per the Review 1.4 design: who is acting
+                    reads before which model acts. */}
+                  <div
+                    className="min-w-0 [@container(max-width:340px)]:hidden"
+                    data-tutorial="mode-selector"
+                  >
+                    <AgentModePicker
+                      className="min-w-0"
+                      onComplete={() => inputRef.current?.focus()}
+                    />
+                  </div>
+
+                  {/* Model and thinking level share one bordered pill, split by a divider,
+                    as in the design's "claude opus 4.5 | max". */}
+                  <div
+                    className="border-border-light flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5"
+                    data-component="ModelSelectorGroup"
+                    data-tutorial="model-selector"
+                  >
+                    <ModelSelector
+                      ref={modelSelectorRef}
+                      value={baseModel}
+                      onChange={setPreferredModel}
+                      models={models}
+                      onComplete={() => inputRef.current?.focus()}
+                      defaultModel={defaultModel}
+                      onSetDefaultModel={setDefaultModel}
+                      hiddenModels={hiddenModelsForSelector}
+                      onOpenSettings={() => open("models")}
+                      className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
+                      tooltipExtraContent={
+                        <>
+                          <strong>Click to edit</strong>
+                          <br />
+                          <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
+                          <br />
+                          <br />
+                          <strong>Abbreviations:</strong>
+                          {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+                            <React.Fragment key={ex.abbrev}>
+                              <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+                            </React.Fragment>
+                          ))}
+                          <br />
+                          <br />
+                          <strong>Full format:</strong>
+                          <br />
+                          <code>/model provider:model-name</code>
+                          <br />
+                          (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+                        </>
+                      }
+                    />
+                    <span className="bg-border-light h-3.5 w-px shrink-0" aria-hidden="true" />
+
+                    {/* On narrow layouts, hide the thinking paddles and PRO chip to prevent
                       right-edge overflow (the chip pushed past a 375px viewport); pro mode
                       stays reachable via the command palette. */}
-                  <div
-                    className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
-                    data-component="ThinkingSliderGroup"
-                  >
-                    <ThinkingSliderComponent modelString={baseModel} />
-                    <ProModeToggle modelString={baseModel} />
+                    <div
+                      className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
+                      data-component="ThinkingSliderGroup"
+                    >
+                      <ThinkingSliderComponent modelString={baseModel} />
+                      <ProModeToggle modelString={baseModel} />
+                    </div>
                   </div>
+
+                  {variant === "workspace" && (
+                    <ContextUsageIndicatorButton
+                      data={contextUsageData}
+                      autoCompaction={autoCompactionProps}
+                      idleCompaction={idleCompactionProps}
+                      model={contextDisplayModel}
+                    />
+                  )}
                 </div>
 
-                {variant === "workspace" && (
-                  <ContextUsageIndicatorButton
-                    data={contextUsageData}
-                    autoCompaction={autoCompactionProps}
-                    idleCompaction={idleCompactionProps}
-                    model={contextDisplayModel}
-                  />
-                )}
-              </div>
-
-              <div
-                className="flex shrink-0 items-center justify-end gap-1.5"
-                data-component="ModelControls"
-              >
-                {/*
+                <div
+                  className="flex shrink-0 items-center justify-end gap-1.5"
+                  data-component="ModelControls"
+                >
+                  {/*
                   Input-method icons (attach, voice) cluster tightly with the Send button so
                   the trailing actions read as one unit, rather than as small icons stranded
                   inside the row's gap-1.5 cadence. They live below the textarea (not as an
                   absolute overlay) so they can never visually intersect typed/wrapped text.
                 */}
-                <div className="flex shrink-0 items-center gap-0" data-component="InputMethodGroup">
-                  <AttachFileButton
-                    onFiles={handleAttachFiles}
-                    disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
-                  />
-                  <VoiceInputButton
-                    state={voiceInput.state}
-                    isAvailable={voiceInput.isAvailable}
-                    shouldShowUI={voiceInput.shouldShowUI}
-                    requiresSecureContext={voiceInput.requiresSecureContext}
-                    onToggle={voiceInput.toggle}
-                    disabled={disabled || sendInFlightBlocksInput}
-                    agentColor={focusBorderColor}
-                  />
-                </div>
+                  <div
+                    className="flex shrink-0 items-center gap-0"
+                    data-component="InputMethodGroup"
+                  >
+                    <AttachFileButton
+                      onFiles={handleAttachFiles}
+                      disabled={disabled || sendInFlightBlocksInput || !!editingMessageForUi}
+                    />
+                    <VoiceInputButton
+                      state={voiceInput.state}
+                      isAvailable={voiceInput.isAvailable}
+                      shouldShowUI={voiceInput.shouldShowUI}
+                      requiresSecureContext={voiceInput.requiresSecureContext}
+                      onToggle={voiceInput.toggle}
+                      disabled={disabled || sendInFlightBlocksInput}
+                      agentColor={focusBorderColor}
+                    />
+                  </div>
 
-                {/*
+                  {/*
                   Pull the Send button flush against the input-method icons (override the
                   parent's gap-1.5 with a negative margin) so they form a single trailing
                   cluster.
                 */}
-                <div ref={sendModeMenuContainerRef} className="relative">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          if (suppressSendClickIfLongPress()) {
-                            return;
-                          }
-
-                          void handleSend();
-                        }}
-                        onContextMenu={openSendModeMenuFromContext}
-                        onTouchStart={sendModeMenuTouchHandlers.onTouchStart}
-                        onTouchEnd={sendModeMenuTouchHandlers.onTouchEnd}
-                        onTouchMove={sendModeMenuTouchHandlers.onTouchMove}
-                        onTouchCancel={sendModeMenuTouchHandlers.onTouchEnd}
-                        disabled={!canSend}
-                        aria-label="Send message"
-                        aria-expanded={canChooseDispatchMode ? isSendModeMenuOpen : undefined}
-                        aria-haspopup={canChooseDispatchMode ? "menu" : undefined}
-                        size="xs"
-                        variant="ghost"
-                        className={cn(
-                          // Filled circle per the design, so send reads as the row's primary action.
-                          "bg-hover text-muted hover:text-foreground inline-flex h-7 w-7 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200 disabled:opacity-50",
-                          "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-9 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
-                        )}
-                      >
-                        <SendHorizontal
-                          className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
-                          strokeWidth={2.5}
-                        />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent align="start" className="max-w-80 whitespace-normal">
-                      <strong>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</strong>
-                      {variant === "workspace" && (
-                        <>
-                          <br />
-                          <br />
-                          <strong>Right-click or long-press for advanced send modes:</strong>
-                          {runningGoalActive && !editingMessageForUi && (
-                            <>
-                              <br />
-                              Manual sends pause the current goal; use Resume to continue it.
-                            </>
-                          )}
-                          {SEND_DISPATCH_MODES.map((entry) => (
-                            <React.Fragment key={entry.mode}>
-                              <br />
-                              {entry.label}: <kbd>{formatKeybind(entry.keybind)}</kbd>
-                            </React.Fragment>
-                          ))}
-                        </>
-                      )}
-                    </TooltipContent>
-                  </Tooltip>
-
-                  {canChooseDispatchMode && isSendModeMenuOpen && (
-                    <div className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 min-w-[12.5rem] rounded-md border p-1.5 shadow-md">
-                      {SEND_DISPATCH_MODES.map((entry) => (
-                        <button
-                          key={entry.mode}
+                  <div ref={sendModeMenuContainerRef} className="relative">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
                           type="button"
-                          className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
                           onClick={() => {
-                            closeSendModeMenu();
-                            void handleSend(
-                              entry.mode === "tool-end"
-                                ? undefined
-                                : { queueDispatchMode: entry.mode }
-                            );
+                            if (suppressSendClickIfLongPress()) {
+                              return;
+                            }
+
+                            void handleSend();
                           }}
+                          onContextMenu={openSendModeMenuFromContext}
+                          onTouchStart={sendModeMenuTouchHandlers.onTouchStart}
+                          onTouchEnd={sendModeMenuTouchHandlers.onTouchEnd}
+                          onTouchMove={sendModeMenuTouchHandlers.onTouchMove}
+                          onTouchCancel={sendModeMenuTouchHandlers.onTouchEnd}
+                          disabled={!canSend}
+                          aria-label="Send message"
+                          aria-expanded={canChooseDispatchMode ? isSendModeMenuOpen : undefined}
+                          aria-haspopup={canChooseDispatchMode ? "menu" : undefined}
+                          size="xs"
+                          variant="ghost"
+                          className={cn(
+                            // Filled circle per the design, so send reads as the row's primary action.
+                            "inline-flex h-7 w-7 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
+                            // The hover fill/text are pinned so the ghost variant's neutral hover
+                            // does not wash out the accent; hover feedback comes from opacity.
+                            canSend
+                              ? "bg-composer-send hover:bg-composer-send text-composer-send-foreground hover:text-composer-send-foreground hover:opacity-90"
+                              : "bg-surface-secondary text-muted",
+                            "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-9 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
+                          )}
                         >
-                          <span className="whitespace-nowrap">{entry.label}</span>
-                          <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-1.5 py-px font-mono text-[10px] whitespace-nowrap">
-                            {formatKeybind(entry.keybind)}
-                          </kbd>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                          <SendHorizontal
+                            className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
+                            strokeWidth={2.5}
+                          />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                        <strong>Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})</strong>
+                        {variant === "workspace" && (
+                          <>
+                            <br />
+                            <br />
+                            <strong>Right-click or long-press for advanced send modes:</strong>
+                            {runningGoalActive && !editingMessageForUi && (
+                              <>
+                                <br />
+                                Manual sends pause the current goal; use Resume to continue it.
+                              </>
+                            )}
+                            {SEND_DISPATCH_MODES.map((entry) => (
+                              <React.Fragment key={entry.mode}>
+                                <br />
+                                {entry.label}: <kbd>{formatKeybind(entry.keybind)}</kbd>
+                              </React.Fragment>
+                            ))}
+                          </>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+
+                    {canChooseDispatchMode && isSendModeMenuOpen && (
+                      <div className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 min-w-[12.5rem] rounded-md border p-1.5 shadow-md">
+                        {SEND_DISPATCH_MODES.map((entry) => (
+                          <button
+                            key={entry.mode}
+                            type="button"
+                            className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs"
+                            onClick={() => {
+                              closeSendModeMenu();
+                              void handleSend(
+                                entry.mode === "tool-end"
+                                  ? undefined
+                                  : { queueDispatchMode: entry.mode }
+                              );
+                            }}
+                          >
+                            <span className="whitespace-nowrap">{entry.label}</span>
+                            <kbd className="bg-background-secondary text-foreground border-border-medium rounded border px-1.5 py-px font-mono text-[10px] whitespace-nowrap">
+                              {formatKeybind(entry.keybind)}
+                            </kbd>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

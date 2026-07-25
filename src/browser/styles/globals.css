@@ -80,6 +80,11 @@
     --color-editing-mode-alpha: hsla(38 70% 50% / 0.08);
     --color-pending: hsl(30 100% 70%);
 
+    /* Composer send: its own token because the Review 1.4 design gives the composer's
+       primary action a cyan fill distinct from --color-accent's blue. */
+    --color-composer-send: hsla(188, 75%, 80%, 1);
+    --color-composer-send-foreground: var(--color-surface-primary);
+
     --color-debug-mode: hsl(214 100% 64%);
     --color-debug-light: hsl(214 100% 76%);
     --color-debug-text: hsl(214 100% 80%);
@@ -374,6 +379,9 @@
 
   --color-pending: hsl(30 100% 64%);
 
+  --color-composer-send: hsla(194, 49%, 45%, 1);
+  --color-composer-send-foreground: var(--color-surface-primary);
+
   --color-debug-mode: hsl(214 100% 56%);
   --color-debug-light: hsl(214 100% 68%);
   --color-debug-text: hsl(214 100% 32%);
@@ -630,6 +638,9 @@
 
   --color-pending: #bc5215; /* Flexoki orange-600 */
 
+  --color-composer-send: #24837b; /* Flexoki cyan-600 */
+  --color-composer-send-foreground: var(--color-surface-primary);
+
   --color-debug-mode: var(--color-plan-mode);
   --color-debug-light: color-mix(in srgb, var(--color-debug-mode), white 42%);
   --color-debug-text: color-mix(in srgb, var(--color-debug-mode), black 30%);
@@ -860,6 +871,9 @@
   --color-editing-mode-alpha: hsl(from var(--color-editing-mode) h s l / 0.12);
 
   --color-pending: #da702c; /* Flexoki orange-400 */
+
+  --color-composer-send: #3aa99f; /* Flexoki cyan-400 */
+  --color-composer-send-foreground: var(--color-surface-primary);
 
   --color-debug-mode: var(--color-plan-mode);
   --color-debug-light: color-mix(in srgb, var(--color-debug-mode), white 22%);

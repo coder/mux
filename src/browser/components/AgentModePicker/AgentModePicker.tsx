@@ -294,10 +294,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Resolve display properties for the trigger pill
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
+  // Review 1.4 tints the label and icon and keeps the pill's border neutral, so the agent's
+  // color reads as text rather than as the loudest chrome in the composer row.
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
-    ? { borderColor: activeOption.uiColor }
+    ? { color: activeOption.uiColor }
     : undefined;
-  const activeClassName = activeOption?.uiColor ? "" : "border-exec-mode";
+  const activeClassName = activeOption?.uiColor ? "" : "text-exec-mode";
   const TriggerIcon = getAgentIcon(normalizedAgentId);
 
   return (
@@ -321,14 +323,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "text-foreground hover:bg-hover flex items-center gap-1.5 rounded-sm border-[0.5px] px-1.5 py-0.5 text-[11px] font-medium transition-[background-color] duration-150",
+              "text-foreground border-border-light hover:bg-hover flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-[background-color] duration-150",
               activeClassName
             )}
           >
-            <TriggerIcon
-              className="h-3 w-3 shrink-0"
-              style={activeOption?.uiColor ? { color: activeOption.uiColor } : undefined}
-            />
+            <TriggerIcon className="h-3 w-3 shrink-0" />
             <span className="max-w-[clamp(4.5rem,30vw,130px)] truncate">{activeDisplayName}</span>
             {!isAgentLocked && (
               <ChevronDown

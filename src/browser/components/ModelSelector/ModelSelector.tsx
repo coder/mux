@@ -273,7 +273,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
       ? cn("border-border-medium h-9 flex-1 min-w-0 rounded border", className)
-      : cn("bg-background rounded-sm text-[11px]", className ?? "w-32");
+      : cn("bg-transparent rounded-sm text-[11px]", className ?? "w-32");
 
     const hasValue = value.trim().length > 0;
     const explicitGateway = hasValue ? getExplicitGatewayPrefix(value) : undefined;

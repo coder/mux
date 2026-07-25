@@ -235,7 +235,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
             <button
               aria-label={ariaLabel}
               aria-haspopup="dialog"
-              className="border-border-medium hover:bg-sidebar-hover flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-0.5"
+              className="border-border-light hover:bg-sidebar-hover flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-0.5"
               type="button"
             >
               {/* Idle compaction indicator */}
@@ -262,7 +262,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
                     segments={data.segments}
                     orientation="horizontal"
                     className="h-3"
-                    trackClassName="bg-dark"
+                    trackClassName="bg-surface-quaternary"
                   />
                   {isAutoCompactionEnabled && (
                     <CompactThresholdIndicator threshold={autoCompaction.threshold} />
@@ -272,7 +272,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
                 /* Empty meter placeholder - allows access to settings with no usage */
                 <div
                   data-context-usage-meter
-                  className="bg-dark relative h-3 w-14 rounded-full [@container(max-width:420px)]:hidden"
+                  className="bg-surface-quaternary relative h-3 w-14 rounded-full [@container(max-width:420px)]:hidden"
                 />
               )}
 
