@@ -29,6 +29,7 @@ import type {
 import type { TimelineSubscriptionEvent } from "@/common/orpc/schemas/timeline";
 import { TIMELINE_DEFAULT_PAGE_LIMIT } from "@/node/services/timelineService";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { MCPHeaderValue, MCPServerInfo } from "@/common/types/mcp";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
   createAuthMiddleware,
@@ -821,6 +822,42 @@ function resolveMcpOauthRedirectUri(headers: ORPCContext["headers"]): string | u
   const proto = forwardedProto.length ? forwardedProto : "http";
 
   return `${proto}://${host}${callbackPath}`;
+}
+
+/**
+ * Derive the `has_headers` / `uses_secret_headers` flags reported alongside
+ * `mcp_server_config_changed` telemetry from an MCP header map.
+ *
+ * A header counts as "secret" when it is stored as a `{ secret: <key> }`
+ * reference instead of a literal string, which lets us measure secret-indirection
+ * usage without ever capturing header names or values.
+ */
+function describeMcpHeaderTelemetry(headers: Record<string, MCPHeaderValue> | undefined): {
+  hasHeaders: boolean;
+  usesSecretHeaders: boolean;
+} {
+  return {
+    hasHeaders: Boolean(headers && Object.keys(headers).length > 0),
+    usesSecretHeaders: Boolean(
+      headers &&
+      Object.values(headers).some((v) => typeof v === "object" && v !== null && "secret" in v)
+    ),
+  };
+}
+
+/**
+ * Same flags, but for an already-persisted server config. stdio servers cannot
+ * carry headers at all (the field only exists on the HTTP-ish variants), so they
+ * always report `false` — matching the `transport !== "stdio" && …` guards that
+ * every `mcp_server_config_changed` capture site used to repeat inline.
+ */
+function describeMcpServerHeaderTelemetry(server: MCPServerInfo): {
+  hasHeaders: boolean;
+  usesSecretHeaders: boolean;
+} {
+  return server.transport === "stdio"
+    ? { hasHeaders: false, usesSecretHeaders: false }
+    : describeMcpHeaderTelemetry(server.headers);
 }
 
 /**
@@ -2955,13 +2992,7 @@ export const router = (authToken?: string) => {
             }
           }
 
-          const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
-          const usesSecretHeaders = Boolean(
-            input.headers &&
-            Object.values(input.headers).some(
-              (v) => typeof v === "object" && v !== null && "secret" in v
-            )
-          );
+          const { hasHeaders, usesSecretHeaders } = describeMcpHeaderTelemetry(input.headers);
 
           const action = (() => {
             if (!existingServer) {
@@ -3018,17 +3049,7 @@ export const router = (authToken?: string) => {
           const result = await context.mcpConfigService.removeServer(input.name);
 
           if (result.success && server) {
-            const hasHeaders =
-              server.transport !== "stdio" &&
-              Boolean(server.headers && Object.keys(server.headers).length > 0);
-            const usesSecretHeaders =
-              server.transport !== "stdio" &&
-              Boolean(
-                server.headers &&
-                Object.values(server.headers).some(
-                  (v) => typeof v === "object" && v !== null && "secret" in v
-                )
-              );
+            const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
             context.telemetryService.capture({
               event: "mcp_server_config_changed",
@@ -3150,17 +3171,7 @@ export const router = (authToken?: string) => {
           const result = await context.mcpConfigService.setServerEnabled(input.name, input.enabled);
 
           if (result.success && server) {
-            const hasHeaders =
-              server.transport !== "stdio" &&
-              Boolean(server.headers && Object.keys(server.headers).length > 0);
-            const usesSecretHeaders =
-              server.transport !== "stdio" &&
-              Boolean(
-                server.headers &&
-                Object.values(server.headers).some(
-                  (v) => typeof v === "object" && v !== null && "secret" in v
-                )
-              );
+            const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
             context.telemetryService.capture({
               event: "mcp_server_config_changed",
@@ -3194,17 +3205,7 @@ export const router = (authToken?: string) => {
           );
 
           if (result.success && server) {
-            const hasHeaders =
-              server.transport !== "stdio" &&
-              Boolean(server.headers && Object.keys(server.headers).length > 0);
-            const usesSecretHeaders =
-              server.transport !== "stdio" &&
-              Boolean(
-                server.headers &&
-                Object.values(server.headers).some(
-                  (v) => typeof v === "object" && v !== null && "secret" in v
-                )
-              );
+            const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
             context.telemetryService.capture({
               event: "mcp_server_config_changed",
@@ -3504,13 +3505,7 @@ export const router = (authToken?: string) => {
                 return { success: false, error: "MCP transport is disabled by policy" };
               }
             }
-            const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
-            const usesSecretHeaders = Boolean(
-              input.headers &&
-              Object.values(input.headers).some(
-                (v) => typeof v === "object" && v !== null && "secret" in v
-              )
-            );
+            const { hasHeaders, usesSecretHeaders } = describeMcpHeaderTelemetry(input.headers);
 
             const action = (() => {
               if (!existingServer) {
@@ -3567,17 +3562,7 @@ export const router = (authToken?: string) => {
             const result = await context.mcpConfigService.removeServer(input.name);
 
             if (result.success && server) {
-              const hasHeaders =
-                server.transport !== "stdio" &&
-                Boolean(server.headers && Object.keys(server.headers).length > 0);
-              const usesSecretHeaders =
-                server.transport !== "stdio" &&
-                Boolean(
-                  server.headers &&
-                  Object.values(server.headers).some(
-                    (v) => typeof v === "object" && v !== null && "secret" in v
-                  )
-                );
+              const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
               context.telemetryService.capture({
                 event: "mcp_server_config_changed",
@@ -3684,17 +3669,7 @@ export const router = (authToken?: string) => {
             );
 
             if (result.success && server) {
-              const hasHeaders =
-                server.transport !== "stdio" &&
-                Boolean(server.headers && Object.keys(server.headers).length > 0);
-              const usesSecretHeaders =
-                server.transport !== "stdio" &&
-                Boolean(
-                  server.headers &&
-                  Object.values(server.headers).some(
-                    (v) => typeof v === "object" && v !== null && "secret" in v
-                  )
-                );
+              const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
               context.telemetryService.capture({
                 event: "mcp_server_config_changed",
@@ -3728,17 +3703,7 @@ export const router = (authToken?: string) => {
             );
 
             if (result.success && server) {
-              const hasHeaders =
-                server.transport !== "stdio" &&
-                Boolean(server.headers && Object.keys(server.headers).length > 0);
-              const usesSecretHeaders =
-                server.transport !== "stdio" &&
-                Boolean(
-                  server.headers &&
-                  Object.values(server.headers).some(
-                    (v) => typeof v === "object" && v !== null && "secret" in v
-                  )
-                );
+              const { hasHeaders, usesSecretHeaders } = describeMcpServerHeaderTelemetry(server);
 
               context.telemetryService.capture({
                 event: "mcp_server_config_changed",
