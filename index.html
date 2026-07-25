@@ -145,9 +145,11 @@
           "flexoki-dark",
         ]);
 
+        // Keep in sync with CHROME_COLORS in src/common/constants/chromeColors.ts; a colocated
+        // test compares the two, because drift flashes the wrong browser chrome on cold loads.
         const THEME_COLORS = {
-          dark: "#1e1e1e",
-          light: "#f5f6f8",
+          dark: "#09090b",
+          light: "#ffffff",
           "flexoki-light": "#fffcf0",
           "flexoki-dark": "#100f0f",
         };
