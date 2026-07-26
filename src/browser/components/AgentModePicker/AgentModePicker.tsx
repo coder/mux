@@ -361,7 +361,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           onKeyDown={handleDropdownKeyDown}
           // Anchored left: the trigger sits at the left edge of the composer row, so a
           // right-anchored menu would open off the viewport.
-          className="bg-separator border-border-light absolute bottom-full left-0 z-[1020] mb-1 min-w-52 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)] outline-none"
+          className="bg-surface-primary border-border-light absolute bottom-full left-0 z-[1020] mb-1 min-w-52 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)] outline-none"
         >
           {/* Agent list — scrollable for long lists */}
           <div className="max-h-64 overflow-y-auto py-1">

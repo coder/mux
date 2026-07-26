@@ -2,6 +2,7 @@ import React, { useRef, useCallback, useState, useEffect } from "react";
 import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
+import { CREATION_COLUMN_MAX_WIDTH_CLASS } from "@/constants/layout";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { ChatInput } from "@/browser/features/ChatInput/index";
@@ -284,7 +285,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
           <div className="min-h-0 flex-1 overflow-y-auto">
             {/* Main content - vertically centered with reduced gaps */}
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
-              <div className="flex w-full max-w-3xl flex-col gap-4">
+              <div className={cn("flex w-full flex-col gap-4", CREATION_COLUMN_MAX_WIDTH_CLASS)}>
                 {/* Git init banner - shown above ChatInput when not a git repo */}
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
@@ -340,7 +341,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
 
             {/* MCP servers: overview between creation and archived workspaces */}
             <div className="flex justify-center px-4 pb-4">
-              <div className="w-full max-w-3xl">
+              <div className={cn("w-full", CREATION_COLUMN_MAX_WIDTH_CLASS)}>
                 <ProjectMCPOverview projectPath={projectPath} />
               </div>
             </div>
@@ -348,7 +349,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
             {/* Archived workspaces: separate section below centered area */}
             {archivedWorkspaces.length > 0 && (
               <div className="flex justify-center px-4 pb-4">
-                <div className="w-full max-w-3xl">
+                <div className={cn("w-full", CREATION_COLUMN_MAX_WIDTH_CLASS)}>
                   <ArchivedWorkspaces
                     projectPath={projectPath}
                     projectName={projectName}

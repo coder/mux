@@ -37,6 +37,7 @@ export const AttachFileButton: React.FC<AttachFileButtonProps> = (props) => {
             aria-label="Attach file"
             className={cn(
               "inline-flex items-center justify-center rounded p-0.5 transition-colors duration-150",
+              "focus-visible:ring-accent focus-visible:ring-1",
               "disabled:cursor-not-allowed disabled:opacity-40",
               "text-muted/50 hover:text-muted"
             )}

@@ -3,6 +3,7 @@ import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { cn } from "@/common/lib/utils";
+import { CREATION_COLUMN_MAX_WIDTH_CLASS } from "@/constants/layout";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
@@ -88,7 +89,7 @@ export function ScratchPage(props: ScratchPageProps) {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-4 py-6">
-              <div className="flex w-full max-w-3xl flex-col gap-4">
+              <div className={cn("flex w-full flex-col gap-4", CREATION_COLUMN_MAX_WIDTH_CLASS)}>
                 {!providersLoading && !hasProviders ? (
                   <ConfigureProvidersPrompt />
                 ) : (
@@ -118,7 +119,7 @@ export function ScratchPage(props: ScratchPageProps) {
             </div>
             {archivedWorkspaces.length > 0 && (
               <div className="flex justify-center px-4 pb-4">
-                <div className="w-full max-w-3xl">
+                <div className={cn("w-full", CREATION_COLUMN_MAX_WIDTH_CLASS)}>
                   <ArchivedWorkspaces
                     projectPath={SCRATCH_PROJECT_CONFIG_KEY}
                     projectName={SCRATCH_PROJECT_NAME}

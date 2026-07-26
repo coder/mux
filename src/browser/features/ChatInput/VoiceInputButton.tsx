@@ -69,6 +69,7 @@ export const VoiceInputButton: React.FC<VoiceInputButtonProps> = (props) => {
           aria-pressed={isRecording}
           className={cn(
             "inline-flex items-center justify-center rounded p-0.5 transition-colors duration-150",
+            "focus-visible:ring-accent focus-visible:ring-1",
             "disabled:cursor-not-allowed disabled:opacity-40",
             colorClass
           )}

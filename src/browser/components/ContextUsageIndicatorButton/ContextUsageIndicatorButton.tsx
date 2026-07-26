@@ -235,7 +235,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
             <button
               aria-label={ariaLabel}
               aria-haspopup="dialog"
-              className="border-border-light hover:bg-hover flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-0.5"
+              className="border-border-light hover:bg-hover focus-visible:ring-accent flex cursor-pointer items-center gap-1.5 rounded-md border px-1.5 py-0.5 focus-visible:ring-1"
               type="button"
             >
               {/* Idle compaction indicator */}

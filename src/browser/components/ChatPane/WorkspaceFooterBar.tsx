@@ -102,7 +102,7 @@ function DriftModeToggle() {
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-0.5 border-0 bg-transparent p-0 transition-colors"
+          className="text-muted hover:text-foreground focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-0.5 border-0 bg-transparent p-0 transition-colors focus-visible:ring-1"
           onClick={toggleMode}
           onKeyDown={stopKeyboardPropagation}
         >
@@ -210,7 +210,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 transition-colors"
+          className="text-muted hover:text-foreground focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 transition-colors focus-visible:ring-1"
           data-testid="workspace-footer-last-prompt"
           onKeyDown={stopKeyboardPropagation}
         >

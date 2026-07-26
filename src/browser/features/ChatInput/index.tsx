@@ -220,6 +220,7 @@ import { normalizeAgentId } from "@/common/utils/agentIds";
 import { isGoalRunning } from "@/common/types/goal";
 import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAttachments";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { CREATION_COLUMN_MAX_WIDTH_CLASS } from "@/constants/layout";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -3228,7 +3229,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"
-            ? "w-full max-w-3xl"
+            ? cn("w-full", CREATION_COLUMN_MAX_WIDTH_CLASS)
             : `bg-surface-primary px-4 
               pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
               mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
@@ -3402,7 +3403,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       (showSkillSuggestions && skillSuggestions.length > 0) ||
                       (showSymbolSuggestions && symbolSuggestions.length > 0)
                     }
-                    className={variant === "creation" ? "min-h-28" : "min-h-16"}
+                    // Sized so the bordered surface lands within ~2px of the Review 1.4
+                    // frames, whose PNG exports measure 1:1 in CSS px: 146px for the
+                    // workspace composer, 201px for creation.
+                    className={variant === "creation" ? "min-h-36" : "min-h-22"}
                   />
                   {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                   {input.trim() === "" && !editingMessageForUi && (
@@ -3551,11 +3555,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                   </div>
 
-                  {/*
-                  Pull the Send button flush against the input-method icons (override the
-                  parent's gap-1.5 with a negative margin) so they form a single trailing
-                  cluster.
-                */}
+                  {/* Positioning anchor for the dispatch-mode menu below. */}
                   <div ref={sendModeMenuContainerRef} className="relative">
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -3581,7 +3581,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           variant="ghost"
                           className={cn(
                             // Filled circle per the design, so send reads as the row's primary action.
-                            "inline-flex h-7 w-7 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
+                            "inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
                             // Pinned against the ghost variant's neutral hover, which would
                             // otherwise wash out the accent fill.
                             canSend
@@ -3590,10 +3590,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                             "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-9 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
                           )}
                         >
-                          <SendHorizontal
-                            className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
-                            strokeWidth={2.5}
-                          />
+                          <SendHorizontal className="h-4 w-4" strokeWidth={2.5} />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent align="start" className="max-w-80 whitespace-normal">
