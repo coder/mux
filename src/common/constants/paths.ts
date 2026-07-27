@@ -9,6 +9,8 @@ const MUX_DIR_NAME = ".mux";
  * Session-dir file holding the active chat history epoch (latest compaction
  * boundary onward). Example: ~/.mux/sessions/<workspace>/chat.jsonl
  */
+export const TIMELINE_FILE_NAME = "timeline.jsonl";
+
 export const CHAT_FILE_NAME = "chat.jsonl";
 
 /**

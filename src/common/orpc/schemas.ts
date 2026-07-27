@@ -275,6 +275,22 @@ export {
   WorkspaceInitEventSchema,
 } from "./schemas/stream";
 
+export {
+  TIMELINE_EVENT_KINDS,
+  TimelineAnchorSchema,
+  TimelineEventDataSchema,
+  TimelineEventDraftSchema,
+  TimelineEventKindSchema,
+  TimelineEventSchema,
+  TimelineListInputSchema,
+  TimelinePageSchema,
+  TimelinePreviewInputSchema,
+  TimelinePreviewSchema,
+  TimelineSourceSchema,
+  TimelineStatusSchema,
+  TimelineSubscriptionEventSchema,
+} from "./schemas/timeline";
+
 // API router schemas
 export {
   ApiServerStatusSchema,

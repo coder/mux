@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, test } from "bun:test";
-import { cleanupObsoleteMuxBinArtifacts } from "./paths";
+import { cleanupObsoleteMuxBinArtifacts, TIMELINE_FILE_NAME } from "./paths";
 
 const tempDirs: string[] = [];
 
@@ -24,6 +24,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("uses the timeline sidecar filename", () => {
+  expect(TIMELINE_FILE_NAME).toBe("timeline.jsonl");
 });
 
 describe("cleanupObsoleteMuxBinArtifacts", () => {
