@@ -213,6 +213,9 @@ function TimelineEventRow(props: {
     <button
       type="button"
       aria-pressed={props.selected}
+      data-timeline-event-id={props.event.id}
+      data-timeline-event-kind={props.event.kind}
+      data-timeline-source={props.event.source.system}
       onClick={() => props.onSelect(props.event.id)}
       className={cn(
         "grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors",
@@ -273,6 +276,9 @@ function CollapsedEventRun(props: {
       <div className="flex min-w-0 flex-col gap-1">
         <button
           type="button"
+          aria-expanded="true"
+          data-timeline-collapsed-kind={props.run.kind}
+          data-timeline-collapsed-count={props.run.events.length}
           onClick={() => props.onToggle(props.run.key)}
           className="text-muted hover:bg-hover focus-visible:ring-accent flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] focus-visible:ring-1 focus-visible:outline-none"
         >
@@ -295,6 +301,9 @@ function CollapsedEventRun(props: {
   return (
     <button
       type="button"
+      aria-expanded="false"
+      data-timeline-collapsed-kind={props.run.kind}
+      data-timeline-collapsed-count={props.run.events.length}
       onClick={() => props.onToggle(props.run.key)}
       className="border-border bg-surface-secondary/50 hover:bg-hover focus-visible:ring-accent grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left focus-visible:ring-1 focus-visible:outline-none"
     >
@@ -500,6 +509,7 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
             {hasTranscriptTarget ? (
               <button
                 type="button"
+                data-testid="timeline-reveal"
                 disabled={revealState === "revealing"}
                 onClick={() => void handleReveal()}
                 className="border-border bg-surface-primary text-content-primary hover:bg-hover focus-visible:ring-accent rounded-md border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
@@ -523,7 +533,9 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
             ) : null}
           </div>
           {revealState === "not-found" ? (
-            <div className="text-muted text-[10px]">Too far back; showing preview only</div>
+            <div data-testid="timeline-reveal-not-found" className="text-muted text-[10px]">
+              Too far back; showing preview only
+            </div>
           ) : revealState === "error" ? (
             <div className="text-muted text-[10px]">Reveal unavailable</div>
           ) : null}
