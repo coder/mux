@@ -2057,6 +2057,12 @@ span.search-highlight {
   border-radius: 2px;
 }
 
+.timeline-reveal-highlight {
+  background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+  border-radius: 0.375rem;
+}
+
 /* Shiki code highlighting */
 .shiki,
 .shiki pre {

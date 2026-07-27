@@ -112,6 +112,11 @@ import {
 } from "@/browser/utils/messages/transcriptRenderProjection";
 import { isBlockedPreStreamTaskStatus } from "@/browser/utils/ui/workspaceFiltering";
 import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
+import {
+  CUSTOM_EVENTS,
+  type CustomEventType,
+  type CustomEventPayloads,
+} from "@/common/constants/events";
 
 // Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
 // fire. This marker records synthetic commit timings for selected subtrees so automated perf
@@ -221,6 +226,24 @@ function findTranscriptMessageElement(
   return Array.from(scrollContainer.querySelectorAll<HTMLElement>("[data-message-id]")).find(
     (element) => element.getAttribute("data-message-id") === historyId
   );
+}
+
+function findTranscriptRevealElement(
+  scrollContainer: HTMLElement,
+  anchor: CustomEventPayloads[typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR]
+): HTMLElement | undefined {
+  if (anchor.toolCallId) {
+    const toolElement = Array.from(
+      scrollContainer.querySelectorAll<HTMLElement>("[data-tool-call-id]")
+    ).find((element) => element.dataset.toolCallId === anchor.toolCallId);
+    if (toolElement) {
+      return toolElement;
+    }
+  }
+
+  return anchor.messageId
+    ? findTranscriptMessageElement(scrollContainer, anchor.messageId)
+    : undefined;
 }
 
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
@@ -561,6 +584,55 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     handleScrollContainerMouseUp,
     handleScrollContainerKeyDown,
   } = useAutoScroll();
+
+  const highlightedTimelineElementRef = useRef<HTMLElement | null>(null);
+  const timelineHighlightTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleTimelineReveal = (event: Event) => {
+      const customEvent = event as CustomEventType<typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR>;
+      if (customEvent.detail.workspaceId !== workspaceId) {
+        return;
+      }
+
+      disableAutoScroll();
+      requestAnimationFrame(() => {
+        const scrollContainer = contentRef.current;
+        if (!scrollContainer) {
+          return;
+        }
+
+        const targetElement = findTranscriptRevealElement(scrollContainer, customEvent.detail);
+        if (!targetElement) {
+          return;
+        }
+
+        if (timelineHighlightTimeoutRef.current != null) {
+          window.clearTimeout(timelineHighlightTimeoutRef.current);
+        }
+        highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
+        highlightedTimelineElementRef.current = targetElement;
+        targetElement.classList.add("timeline-reveal-highlight");
+        targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        timelineHighlightTimeoutRef.current = window.setTimeout(() => {
+          targetElement.classList.remove("timeline-reveal-highlight");
+          if (highlightedTimelineElementRef.current === targetElement) {
+            highlightedTimelineElementRef.current = null;
+          }
+          timelineHighlightTimeoutRef.current = null;
+        }, 1600);
+      });
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, handleTimelineReveal);
+    return () => {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, handleTimelineReveal);
+      if (timelineHighlightTimeoutRef.current != null) {
+        window.clearTimeout(timelineHighlightTimeoutRef.current);
+      }
+      highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
+    };
+  }, [contentRef, disableAutoScroll, workspaceId]);
 
   // The composer dock lives inside the scrollport (sticky to its bottom), so
   // mousedown/keydown events from the composer bubble to the transcript
