@@ -148,6 +148,7 @@ import {
   type MuxMessage,
 } from "@/common/types/message";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
+import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   isActiveWorkflowRunStatus,
   isNestedWorkflowRun,
@@ -1680,21 +1681,22 @@ function extractUserPromptText(message: MuxMessage): string {
       ? muxMeta.rawCommand.trim()
       : "";
   if (rawCommand.length > 0) {
-    return appendCompactionFollowUp(rawCommand, message);
+    return stripStagedAttachmentNotice(appendCompactionFollowUp(rawCommand, message)).trim();
   }
 
   if (!Array.isArray(message.parts)) {
     return "";
   }
 
-  return message.parts
+  const partsText = message.parts
     .map((part) =>
       part && typeof part === "object" && part.type === "text" && typeof part.text === "string"
         ? part.text
         : ""
     )
-    .join("")
-    .trim();
+    .join("");
+
+  return stripStagedAttachmentNotice(partsText).trim();
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging

@@ -39,6 +39,7 @@ import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
+import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
   WORKFLOW_TRIGGER_DISPLAY_METADATA_TYPE,
@@ -13090,6 +13091,48 @@ describe("WorkspaceService.getLastUserPrompt", () => {
           },
         },
       } as typeof message);
+    });
+
+    expect(prompt).toBe("/compact");
+  });
+
+  test("keeps scanning past a staged-attachment notice", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u1", "user", "summarize the attached data", { historySequence: 1 })
+      );
+      const notice = buildStagedAttachmentNotice([
+        {
+          kind: "staged",
+          id: "csv-1",
+          filename: "data.csv",
+          mediaType: "text/csv",
+          sizeBytes: 34,
+          stagedPath: ".mux/user-attachments/id/data.csv",
+        },
+      ]);
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u2", "user", notice.trimStart(), { historySequence: 2 })
+      );
+    });
+
+    expect(prompt).toBe("summarize the attached data");
+  });
+
+  test("survives a compaction row whose parsed metadata is missing", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      const message = createMuxMessage("u1", "user", "Expanded compaction instructions", {
+        historySequence: 1,
+      });
+      await historyService.appendToHistory(workspaceId, {
+        ...message,
+        metadata: {
+          ...message.metadata,
+          muxMetadata: { type: "compaction-request", rawCommand: "/compact" },
+        },
+      } as unknown as typeof message);
     });
 
     expect(prompt).toBe("/compact");

@@ -520,11 +520,18 @@ export function getCompactionFollowUpContent(
     return undefined;
   }
 
+  // Persisted history can carry a compaction row without `parsed`, and a throw here would
+  // abort whichever scan or render is walking that history.
+  const parsed: unknown = metadata.parsed;
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+
   // Legacy compaction requests stored follow-up content in `continueMessage`.
-  const parsed = metadata.parsed as CompactionRequestData & {
+  const legacyParsed = parsed as CompactionRequestData & {
     continueMessage?: CompactionRequestData["followUpContent"];
   };
-  return parsed.followUpContent ?? parsed.continueMessage;
+  return legacyParsed.followUpContent ?? legacyParsed.continueMessage;
 }
 
 /** Type for compaction-summary metadata variant */

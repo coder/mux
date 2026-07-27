@@ -25,6 +25,7 @@ import {
   getStatusStateKey,
 } from "@/common/constants/storage";
 import type { TodoItem } from "@/common/types/tools";
+import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import { WorkspaceStore } from "./WorkspaceStore";
 import type { ResponseCompleteEvent } from "@/browser/utils/messages/responseCompletionMetadata";
 
@@ -5828,6 +5829,27 @@ describe("WorkspaceStore", () => {
       ]);
 
       expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBe("describe this screenshot");
+    });
+
+    it("keeps scanning past a staged-attachment notice", () => {
+      const workspaceId = "last-prompt-staged-notice";
+      createAndAddWorkspace(store, workspaceId);
+      const notice = buildStagedAttachmentNotice([
+        {
+          kind: "staged",
+          id: "csv-1",
+          filename: "data.csv",
+          mediaType: "text/csv",
+          sizeBytes: 34,
+          stagedPath: ".mux/user-attachments/id/data.csv",
+        },
+      ]);
+      seedUserMessages(workspaceId, [
+        { id: "u1", text: "summarize the attached data" },
+        { id: "u2", text: notice.trimStart() },
+      ]);
+
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBe("summarize the attached data");
     });
 
     it("returns null when every user turn is empty", () => {

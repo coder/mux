@@ -1,4 +1,5 @@
 import assert from "@/common/utils/assert";
+import { stripStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import type { MuxMessage, DisplayedMessage, QueuedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { isGoalPendingPersistence, type GoalSnapshot } from "@/common/types/goal";
@@ -2441,9 +2442,9 @@ export class WorkspaceStore {
       if (message.type !== "user" || message.isSynthetic === true) {
         continue;
       }
-      // Attachment-only sends are allowed, so a real user turn can carry empty text.
-      // Keep scanning past those rather than hiding an older typed prompt.
-      const trimmed = message.content.trim();
+      // Attachment-only sends are allowed, and their persisted text is the generated
+      // <attached-files> notice, so strip it rather than surfacing provider markup as a prompt.
+      const trimmed = stripStagedAttachmentNotice(message.content).trim();
       if (trimmed.length > 0) {
         return trimmed;
       }
