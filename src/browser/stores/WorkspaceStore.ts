@@ -4645,7 +4645,7 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceLastUserPrompt(workspaceId)
   );
-  // Scoped to full replays rather than every transcript mutation: the disk read is
+  // Scoped to replays and deletions rather than every transcript mutation: the disk read is
   // O(total history), so reacting to streaming deltas would queue a scan per delta.
   const historyEpoch = useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
@@ -4675,8 +4675,8 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     };
   }, [store, workspaceId, displayed, historyEpoch]);
 
-  // Matching the epoch discards a stale fallback on the first render after a replay, rather than
-  // exposing a deleted prompt for as long as the refetch takes.
+  // Matching the epoch discards a stale fallback on the first render after history changes,
+  // rather than exposing a deleted prompt for as long as the refetch takes.
   const fallbackPrompt =
     fallback?.workspaceId === workspaceId && fallback.historyEpoch === historyEpoch
       ? fallback.prompt

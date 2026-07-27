@@ -478,8 +478,8 @@ export class StreamingMessageAggregator {
   private recencyTimestamp: number | null = null;
   private lastResponseCompletedAt: number | null = null;
   /**
-   * Bumped only when a full replay replaces state, so consumers can invalidate caches derived
-   * from durable history (compaction, context reset, a hard clear) without reacting to deltas.
+   * Bumped when durable history is replaced or rows are deleted, so consumers can invalidate
+   * caches derived from it (compaction, context reset, a hard clear) without reacting to deltas.
    */
   private historyEpoch = 0;
 
@@ -1961,6 +1961,9 @@ export class StreamingMessageAggregator {
       }
     }
 
+    // Bump unconditionally: a hard clear on a compacted workspace deletes rows that were never
+    // in this window, so matching nothing here still invalidates history-derived caches.
+    this.historyEpoch++;
     this.invalidateCache();
   }
 

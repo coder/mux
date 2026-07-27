@@ -5880,6 +5880,23 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceHistoryEpoch(workspaceId)).toBe(epoch);
     });
 
+    it("advances the history epoch when rows this window never held are deleted", () => {
+      const workspaceId = "last-prompt-epoch-clear";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [{ id: "u1", text: "first prompt" }]);
+      const epoch = store.getWorkspaceHistoryEpoch(workspaceId);
+
+      getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store).handleChatMessage(workspaceId, {
+        type: "delete",
+        historySequences: [99],
+      });
+
+      expect(store.getWorkspaceHistoryEpoch(workspaceId)).toBeGreaterThan(epoch);
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBe("first prompt");
+    });
+
     it("advances the history epoch when a full replay replaces the transcript", () => {
       const workspaceId = "last-prompt-epoch-replay";
       createAndAddWorkspace(store, workspaceId);
