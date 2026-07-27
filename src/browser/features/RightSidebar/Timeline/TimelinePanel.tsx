@@ -2,6 +2,10 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
+import {
+  toWorkspaceSelection,
+  useOptionalWorkspaceContext,
+} from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   showAllMessages,
@@ -346,6 +350,7 @@ type PreviewState =
 
 function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent }) {
   const { api } = useAPI();
+  const workspaceContext = useOptionalWorkspaceContext();
   const workspaceStore = useWorkspaceStoreRaw();
   const [previewState, setPreviewState] = useState<PreviewState>({ status: "loading" });
   const [revealState, setRevealState] = useState<"idle" | "revealing" | "not-found" | "error">(
@@ -381,6 +386,9 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
   }, [api, props.event, props.workspaceId]);
 
   const anchor = props.event.anchor;
+  const childWorkspace = anchor?.childWorkspaceId
+    ? workspaceContext?.workspaceMetadata.get(anchor.childWorkspaceId)
+    : undefined;
   const hasTranscriptTarget =
     anchor?.toolCallId != null || anchor?.messageId != null || anchor?.historySequence != null;
 
@@ -484,16 +492,34 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
         </div>
       )}
 
-      {hasTranscriptTarget ? (
+      {hasTranscriptTarget || anchor?.childWorkspaceId ? (
         <div className="mt-3 flex flex-col items-start gap-1.5">
-          <button
-            type="button"
-            disabled={revealState === "revealing"}
-            onClick={() => void handleReveal()}
-            className="border-border bg-surface-primary text-content-primary hover:bg-hover focus-visible:ring-accent rounded-md border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
-          >
-            {revealState === "revealing" ? "Revealing…" : "Reveal in transcript"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {hasTranscriptTarget ? (
+              <button
+                type="button"
+                disabled={revealState === "revealing"}
+                onClick={() => void handleReveal()}
+                className="border-border bg-surface-primary text-content-primary hover:bg-hover focus-visible:ring-accent rounded-md border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
+              >
+                {revealState === "revealing" ? "Revealing…" : "Reveal in transcript"}
+              </button>
+            ) : null}
+            {anchor?.childWorkspaceId ? (
+              <button
+                type="button"
+                disabled={!childWorkspace || !workspaceContext}
+                onClick={() => {
+                  if (childWorkspace && workspaceContext) {
+                    workspaceContext.setSelectedWorkspace(toWorkspaceSelection(childWorkspace));
+                  }
+                }}
+                className="border-border bg-surface-primary text-content-primary hover:bg-hover focus-visible:ring-accent rounded-md border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:opacity-60"
+              >
+                Open child workspace
+              </button>
+            ) : null}
+          </div>
           {revealState === "not-found" ? (
             <div className="text-muted text-[10px]">Too far back; showing preview only</div>
           ) : revealState === "error" ? (
