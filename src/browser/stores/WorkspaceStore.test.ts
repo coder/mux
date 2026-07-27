@@ -11,6 +11,7 @@ import {
   type Mock,
 } from "bun:test";
 import type { CompactionFollowUpRequest, DisplayedMessage } from "@/common/types/message";
+import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
 import type { StreamStartEvent, ToolCallStartEvent } from "@/common/types/stream";
@@ -5837,15 +5838,38 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBeNull();
     });
 
-    it("swaps the displayed-messages reference when the transcript changes", () => {
-      const workspaceId = "last-prompt-revision";
+    it("holds the history epoch steady while messages stream in", () => {
+      const workspaceId = "last-prompt-epoch-stable";
       createAndAddWorkspace(store, workspaceId);
       seedUserMessages(workspaceId, [{ id: "u1", text: "first prompt" }]);
-      const before = store.getWorkspaceDisplayedMessages(workspaceId);
+      const epoch = store.getWorkspaceHistoryEpoch(workspaceId);
 
-      seedUserMessages(workspaceId, [{ id: "u2", text: "second prompt" }]);
+      getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store).handleChatMessage(workspaceId, {
+        type: "message",
+        id: "u2",
+        role: "user",
+        parts: [{ type: "text", text: "second prompt" }],
+        metadata: { historySequence: 2, timestamp: 2_000 },
+      });
 
-      expect(store.getWorkspaceDisplayedMessages(workspaceId)).not.toBe(before);
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBe("second prompt");
+      expect(store.getWorkspaceHistoryEpoch(workspaceId)).toBe(epoch);
+    });
+
+    it("advances the history epoch when a full replay replaces the transcript", () => {
+      const workspaceId = "last-prompt-epoch-replay";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [{ id: "u1", text: "first prompt" }]);
+      const epoch = store.getWorkspaceHistoryEpoch(workspaceId);
+
+      getInternal<{ aggregators: Map<string, StreamingMessageAggregator> }>(store)
+        .aggregators.get(workspaceId)!
+        .loadHistoricalMessages([], false, { mode: "replace" });
+
+      expect(store.getWorkspaceHistoryEpoch(workspaceId)).toBeGreaterThan(epoch);
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBeNull();
     });
   });
 });

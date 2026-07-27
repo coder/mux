@@ -94,7 +94,6 @@ import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessage
 
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
-const EMPTY_DISPLAYED_MESSAGES: readonly DisplayedMessage[] = [];
 
 export type AutoRetryStatus = Extract<
   WorkspaceChatMessage,
@@ -2424,17 +2423,19 @@ export class WorkspaceStore {
     return this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
   }
 
-  /**
-   * The aggregator caches this array and swaps its reference on every transcript mutation, so
-   * callers can use it as a revision token (see useWorkspaceLastUserPrompt).
-   */
-  getWorkspaceDisplayedMessages(workspaceId: string): readonly DisplayedMessage[] {
-    return this.aggregators.get(workspaceId)?.getDisplayedMessages() ?? EMPTY_DISPLAYED_MESSAGES;
+  /** Changes only when a full replay replaces the transcript, not on streaming deltas. */
+  getWorkspaceHistoryEpoch(workspaceId: string): number {
+    return this.aggregators.get(workspaceId)?.getHistoryEpoch() ?? 0;
   }
 
   /** Skips synthetic turns (goal continuations, boundaries) the user never typed. */
   getWorkspaceLastUserPrompt(workspaceId: string): string | null {
-    const messages = this.getWorkspaceDisplayedMessages(workspaceId);
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) {
+      return null;
+    }
+
+    const messages = aggregator.getDisplayedMessages();
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
       if (message.type !== "user" || message.isSynthetic === true) {
@@ -4639,21 +4640,25 @@ export function useActiveGoalCount(): number {
 export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   const store = getStoreInstance();
 
-  const displayedMessages = useSyncExternalStore(
+  const displayed = useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
-    () => store.getWorkspaceDisplayedMessages(workspaceId)
+    () => store.getWorkspaceLastUserPrompt(workspaceId)
   );
-  const displayed = store.getWorkspaceLastUserPrompt(workspaceId);
+  // Scoped to full replays rather than every transcript mutation: the disk read is
+  // O(total history), so reacting to streaming deltas would queue a scan per delta.
+  const historyEpoch = useSyncExternalStore(
+    (listener) => store.subscribeKey(workspaceId, listener),
+    () => store.getWorkspaceHistoryEpoch(workspaceId)
+  );
 
   // Compaction prunes older turns from the transcript, and a fresh replay only carries the
   // latest boundary epoch, so fall back to history on disk when the prompt predates it.
-  const [fallback, setFallback] = useState<{ workspaceId: string; prompt: string | null } | null>(
-    null
-  );
+  const [fallback, setFallback] = useState<{
+    workspaceId: string;
+    historyEpoch: number;
+    prompt: string | null;
+  } | null>(null);
 
-  // displayedMessages is a dependency, not just displayed: truncating history (a hard /clear)
-  // leaves displayed null on both sides of the change, so without a revision token the cached
-  // fallback would keep serving a prompt that no longer exists on disk.
   useEffect(() => {
     if (displayed !== null) {
       return;
@@ -4661,15 +4666,22 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     let cancelled = false;
     void store.fetchLastUserPromptFromHistory(workspaceId).then((prompt) => {
       if (!cancelled) {
-        setFallback({ workspaceId, prompt });
+        setFallback({ workspaceId, historyEpoch, prompt });
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [store, workspaceId, displayed, displayedMessages]);
+  }, [store, workspaceId, displayed, historyEpoch]);
 
-  return displayed ?? (fallback?.workspaceId === workspaceId ? fallback.prompt : null);
+  // Matching the epoch discards a stale fallback on the first render after a replay, rather than
+  // exposing a deleted prompt for as long as the refetch takes.
+  const fallbackPrompt =
+    fallback?.workspaceId === workspaceId && fallback.historyEpoch === historyEpoch
+      ? fallback.prompt
+      : null;
+
+  return displayed ?? fallbackPrompt;
 }
 
 /**
