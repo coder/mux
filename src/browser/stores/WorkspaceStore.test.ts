@@ -5786,4 +5786,55 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceState(workspaceId).canInterrupt).toBe(true);
     });
   });
+
+  describe("getWorkspaceLastUserPrompt", () => {
+    const seedUserMessages = (workspaceId: string, rows: Array<{ id: string; text: string }>) => {
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+      rawStore.handleChatMessage(workspaceId, caughtUpEvent());
+      rows.forEach((row, index) => {
+        rawStore.handleChatMessage(workspaceId, {
+          type: "message",
+          id: row.id,
+          role: "user",
+          parts: [{ type: "text", text: row.text }],
+          metadata: {
+            historySequence: index + 1,
+            timestamp: (index + 1) * 1_000,
+          },
+        });
+      });
+    };
+
+    it("returns the most recent typed prompt", () => {
+      const workspaceId = "last-prompt-basic";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [
+        { id: "u1", text: "first prompt" },
+        { id: "u2", text: "second prompt" },
+      ]);
+
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBe("second prompt");
+    });
+
+    it("keeps scanning past an attachment-only turn with empty text", () => {
+      const workspaceId = "last-prompt-attachment-only";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [
+        { id: "u1", text: "describe this screenshot" },
+        { id: "u2", text: "   " },
+      ]);
+
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBe("describe this screenshot");
+    });
+
+    it("returns null when every user turn is empty", () => {
+      const workspaceId = "last-prompt-all-empty";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [{ id: "u1", text: "" }]);
+
+      expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBeNull();
+    });
+  });
 });

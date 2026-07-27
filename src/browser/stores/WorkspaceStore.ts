@@ -2436,8 +2436,12 @@ export class WorkspaceStore {
       if (message.type !== "user" || message.isSynthetic === true) {
         continue;
       }
+      // Attachment-only sends are allowed, so a real user turn can carry empty text.
+      // Keep scanning past those rather than hiding an older typed prompt.
       const trimmed = message.content.trim();
-      return trimmed.length > 0 ? trimmed : null;
+      if (trimmed.length > 0) {
+        return trimmed;
+      }
     }
 
     return null;
