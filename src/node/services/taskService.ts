@@ -87,6 +87,7 @@ import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "@/node/services/timelineRecorder";
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import {
   coerceOpenAIReasoningMode,
@@ -1201,6 +1202,7 @@ export class TaskService {
   // (possibly failing) removal as success and let ancestor deletion orphan the child.
   private readonly pendingTaskWorkspaceRemovals = new Map<string, Promise<Result<void>>>();
   private readonly gitPatchArtifactService: GitPatchArtifactService;
+  private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
   private readonly handoffInProgress = new Set<string>();
   /**
    * Hard-interrupted parent workspaces must not auto-resume until the next user message.
@@ -1498,6 +1500,18 @@ export class TaskService {
     return null;
   }
 
+  private recordTaskInterrupted(taskId: string, parentWorkspaceId: string | undefined): void {
+    if (!parentWorkspaceId) {
+      return;
+    }
+    this.timelineRecorder.record(parentWorkspaceId, {
+      kind: "task.interrupted",
+      source: { system: "task" },
+      status: "interrupted",
+      anchor: { taskId, childWorkspaceId: taskId },
+    });
+  }
+
   private applyInterruptedTaskStatus(
     workspace: WorkspaceConfigEntry
   ): InterruptedTaskStatusMutation {
@@ -1535,13 +1549,21 @@ export class TaskService {
     }
 
     let interrupted = false;
+    let transitionedToInterrupted = false;
+    let parentWorkspaceId: string | undefined;
     await this.editWorkspaceEntry(
       taskId,
       (ws) => {
+        const previousStatus = ws.taskStatus;
+        parentWorkspaceId = ws.parentWorkspaceId;
         interrupted = this.applyInterruptedTaskStatus(ws) === "interrupted";
+        transitionedToInterrupted = interrupted && previousStatus !== "interrupted";
       },
       { allowMissing: true }
     );
+    if (transitionedToInterrupted) {
+      this.recordTaskInterrupted(taskId, parentWorkspaceId);
+    }
 
     log.debug("Skipping workflow-owned task recovery after inactive workflow owner", {
       taskId,
@@ -1633,6 +1655,10 @@ export class TaskService {
           log.error("TaskService.handleTaskStreamError failed", { error });
         });
     });
+  }
+
+  setTimelineRecorder(recorder: TimelineRecorder): void {
+    this.timelineRecorder = recorder;
   }
 
   // Prefer per-agent settings so tasks inherit the correct agent defaults;
@@ -2841,14 +2867,21 @@ export class TaskService {
 
   private async markTaskLaunchFailed(taskId: string, message: string): Promise<void> {
     assert(taskId.length > 0, "markTaskLaunchFailed requires taskId");
+    let transitionedToInterrupted = false;
+    let parentWorkspaceId: string | undefined;
     await this.editWorkspaceEntry(
       taskId,
       (ws) => {
+        transitionedToInterrupted = ws.taskStatus !== "interrupted";
+        parentWorkspaceId = ws.parentWorkspaceId;
         ws.taskStatus = "interrupted";
         ws.taskLaunchError = message;
       },
       { allowMissing: true }
     );
+    if (transitionedToInterrupted) {
+      this.recordTaskInterrupted(taskId, parentWorkspaceId);
+    }
     await this.emitWorkspaceMetadata(taskId);
     this.rejectWaiters(taskId, new Error(message));
     this.scheduleMaybeStartQueuedTasks();
@@ -4369,11 +4402,17 @@ export class TaskService {
         }
 
         let preservedCompletedDescendant = false;
+        let transitionedToInterrupted = false;
+        let parentWorkspaceId: string | undefined;
         const updated = await this.editWorkspaceEntry(
           id,
           (ws) => {
+            const previousStatus = ws.taskStatus;
+            parentWorkspaceId = ws.parentWorkspaceId;
             preservedCompletedDescendant =
               this.applyInterruptedTaskStatus(ws) === "preserved-completed-report";
+            transitionedToInterrupted =
+              !preservedCompletedDescendant && previousStatus !== "interrupted";
           },
           { allowMissing: true }
         );
@@ -4392,6 +4431,10 @@ export class TaskService {
             taskId: id,
           });
           continue;
+        }
+
+        if (transitionedToInterrupted) {
+          this.recordTaskInterrupted(id, parentWorkspaceId);
         }
 
         // Report monotonicity: descendants that did not complete a report must reject waiters
@@ -8268,6 +8311,7 @@ export class TaskService {
     );
 
     let revertedToInterrupted = false;
+    let parentWorkspaceId: string | undefined;
     await this.editWorkspaceEntry(
       workspaceId,
       (ws) => {
@@ -8278,6 +8322,7 @@ export class TaskService {
           return;
         }
 
+        parentWorkspaceId = ws.parentWorkspaceId;
         ws.taskStatus = "interrupted";
         ws.reportedAt = undefined;
         revertedToInterrupted = true;
@@ -8289,6 +8334,7 @@ export class TaskService {
       return;
     }
 
+    this.recordTaskInterrupted(workspaceId, parentWorkspaceId);
     await this.emitWorkspaceMetadata(workspaceId);
   }
 
@@ -9450,17 +9496,23 @@ export class TaskService {
       "failAgentTaskTerminally: errorMessage must be non-empty"
     );
 
+    let transitionedToInterrupted = false;
+    let parentWorkspaceId = entry.workspace.parentWorkspaceId;
     await this.editWorkspaceEntry(
       workspaceId,
       (ws) => {
+        transitionedToInterrupted = ws.taskStatus !== "interrupted";
+        parentWorkspaceId = ws.parentWorkspaceId;
         ws.taskStatus = "interrupted";
         ws.taskLaunchError = failure.errorMessage;
       },
       { allowMissing: true }
     );
+    if (transitionedToInterrupted) {
+      this.recordTaskInterrupted(workspaceId, parentWorkspaceId);
+    }
     await this.emitWorkspaceMetadata(workspaceId);
 
-    const parentWorkspaceId = entry.workspace.parentWorkspaceId;
     if (parentWorkspaceId) {
       const cfg = this.config.loadConfigOrDefault();
       const index = this.buildAgentTaskIndex(cfg);
@@ -9674,14 +9726,21 @@ export class TaskService {
       const error = new Error(
         "Workflow plan agents return { reportMarkdown, planFilePath }; do not provide schema/outputSchema."
       );
+      let transitionedToInterrupted = false;
+      let parentWorkspaceId = args.entry.workspace.parentWorkspaceId;
       await this.editWorkspaceEntry(
         args.workspaceId,
         (workspace) => {
+          transitionedToInterrupted = workspace.taskStatus !== "interrupted";
+          parentWorkspaceId = workspace.parentWorkspaceId;
           workspace.taskStatus = "interrupted";
           workspace.taskLaunchError = error.message;
         },
         { allowMissing: true }
       );
+      if (transitionedToInterrupted) {
+        this.recordTaskInterrupted(args.workspaceId, parentWorkspaceId);
+      }
       this.rejectWaiters(args.workspaceId, error);
       await this.emitWorkspaceMetadata(args.workspaceId);
       return;
@@ -10431,6 +10490,18 @@ export class TaskService {
       void this.maybeStartQueuedTasks();
       return { finalized: true };
     }
+
+    const reportTitle = coerceNonEmptyString(reportArgs.title);
+    this.timelineRecorder.record(parentWorkspaceId, {
+      kind: "task.reported",
+      source: { system: "task" },
+      status: "completed",
+      anchor: { taskId: childWorkspaceId, childWorkspaceId },
+      data: {
+        ...(reportTitle ? { title: reportTitle } : {}),
+        digest: reportArgs.reportMarkdown,
+      },
+    });
 
     const isWorkflowOwnedChildReport = latestChildEntry?.workspace.workflowTask != null;
 
