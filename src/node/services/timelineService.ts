@@ -29,7 +29,7 @@ import { isErrnoWithCode } from "@/node/utils/fs";
 import type { TimelineRecorder } from "@/node/services/timelineRecorder";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 
-const DEFAULT_PAGE_LIMIT = 50;
+export const TIMELINE_DEFAULT_PAGE_LIMIT = 50;
 const REVERSE_READ_CHUNK_SIZE = 256 * 1024;
 const RECENT_SOURCE_KEY_LIMIT = 1_000;
 
@@ -93,7 +93,7 @@ export class TimelineService implements TimelineRecorder {
   }
 
   async list(workspaceId: string, input: TimelineListInput = {}): Promise<TimelinePage> {
-    const limit = input.limit ?? DEFAULT_PAGE_LIMIT;
+    const limit = input.limit ?? TIMELINE_DEFAULT_PAGE_LIMIT;
     const events: TimelineEvent[] = [];
     let hasOlder = false;
 

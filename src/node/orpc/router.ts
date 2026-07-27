@@ -27,6 +27,7 @@ import type {
   SendMessageOptions,
 } from "@/common/orpc/types";
 import type { TimelineSubscriptionEvent } from "@/common/orpc/schemas/timeline";
+import { TIMELINE_DEFAULT_PAGE_LIMIT } from "@/node/services/timelineService";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
@@ -4096,9 +4097,11 @@ export const router = (authToken?: string) => {
                 input.workspaceId
               );
               snapshotSequence = snapshotMaxSequence;
+              // Match the list default so the store's initial page and this
+              // snapshot agree on hasOlder/nextCursor.
               const snapshot = await context.timelineService.list(input.workspaceId, {
                 cursor: snapshotMaxSequence + 1,
-                limit: 200,
+                limit: TIMELINE_DEFAULT_PAGE_LIMIT,
               });
               const appended = pendingEvents.filter((event) => event.seq > snapshotMaxSequence);
               if (appended.length > 0) {
