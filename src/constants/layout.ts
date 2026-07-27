@@ -6,10 +6,6 @@ export const LEFT_SIDEBAR_COLLAPSED_WIDTH_PX = 20;
 // When the left sidebar is collapsed, WorkspaceMenuBar still needs extra room for the
 // floating reopen affordance so the header content doesn't sit underneath it.
 export const WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX = 60;
-// Creation surfaces (ProjectPage, ScratchPage) share one content column, measured from the
-// Review 1.4 "start V2" design frame.
 export const CREATION_COLUMN_MAX_WIDTH_CLASS = "max-w-[67rem]";
-// The composer's agent, model+thinking, and context controls read as one row of equal-height
-// pills in the Review 1.4 frames, so all three pin the same height rather than sizing to
-// content (or relying on Button's xs height happening to match).
+// Keep composer controls aligned without relying on individual component defaults.
 export const COMPOSER_CONTROL_HEIGHT_CLASS = "h-6";

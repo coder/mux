@@ -289,11 +289,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           onOpenTerminal={props.onOpenTerminal}
         />
 
-        {/* Review 1.4 footer info bar: repository state + usage lives below the
-            composer so the header stays focused on identity and actions. */}
-        {/* Keyed by workspace: ChatPane stays mounted across workspace switches, so without a
-            remount the bar would keep the previous workspace's horizontal scroll offset and open
-            with its leading items off-screen on narrow viewports. */}
+        {/* Reset the footer's scroll and popover state because ChatPane remains mounted across
+            workspace switches. */}
         <WorkspaceFooterBar
           key={workspaceId}
           workspaceId={workspaceId}

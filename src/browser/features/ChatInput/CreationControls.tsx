@@ -847,10 +847,6 @@ export function CreationControls(props: CreationControlsProps) {
         </div>
       </div>
 
-      {/* Runtime and source branch controls.
-          Review 1.4 "start V2" states these as a sentence ("My project will use ...")
-          rather than stacked labelled fields. The controls and their handlers are
-          unchanged; only the labels and layout became inline prose. */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
           <span className="text-muted-foreground shrink-0">This workspace will use</span>
@@ -973,8 +969,6 @@ export function CreationControls(props: CreationControlsProps) {
           </div>
           {/* end mobile row wrapper */}
 
-          {/* A stacked label above the input made this field taller than the rest of the sentence
-              row, so a runtime's one extra value reads as another clause instead. */}
           {selectedRuntime.mode === "ssh" &&
             !isCoderSelected &&
             (props.allowSshHost ?? true) &&

@@ -1648,9 +1648,8 @@ function mergeActiveCount(
 }
 
 /**
- * `/compact <follow-up>` persists the command and its follow-up separately, so the bare
- * `rawCommand` would hide what the user actually asked for. Mirrors the reconstruction in
- * displayedMessageBuilder.
+ * `/compact` stores its follow-up separately from `rawCommand`; reconstruct it to match the
+ * transcript display.
  */
 function appendCompactionFollowUp(rawCommand: string, message: MuxMessage): string {
   const muxMeta: unknown = message.metadata?.muxMetadata;
@@ -1664,12 +1663,8 @@ function appendCompactionFollowUp(rawCommand: string, message: MuxMessage): stri
 }
 
 /**
- * Mirrors the transcript's user-message precedence (displayedMessageBuilder prefers
- * `rawCommand` over part text) so a materialized slash command reads as the user typed
- * it instead of the expanded skill or compaction body sent to the provider.
- *
- * Tolerates structurally malformed rows: persisted history must not be able to abort the
- * scan and hide older valid prompts.
+ * Prefer `rawCommand` so slash commands match the transcript instead of provider-expanded content.
+ * Treat malformed persisted rows as empty so they cannot hide older valid prompts.
  */
 function extractUserPromptText(message: MuxMessage): string {
   const muxMeta: unknown = message.metadata?.muxMetadata;
@@ -9600,10 +9595,7 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  /**
-   * Scans backward through full history, not the replayed boundary epoch, because compaction
-   * prunes older turns from the transcript the frontend holds.
-   */
+  /** Full history is required because compaction removes older prompts from replay. */
   async getLastUserPrompt(workspaceId: string): Promise<string | null> {
     assert(
       typeof workspaceId === "string" && workspaceId.trim().length > 0,
@@ -9615,7 +9607,7 @@ export class WorkspaceService extends EventEmitter {
       workspaceId,
       "backward",
       (chunk) => {
-        // Backward iteration already hands each chunk newest-first, so walk it in order.
+        // Each backward chunk is newest-first; reversing it can return an older prompt.
         for (const message of chunk) {
           if (message.role !== "user" || message.metadata?.synthetic === true) {
             continue;

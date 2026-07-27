@@ -295,8 +295,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Resolve display properties for the trigger pill
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
-  // The agent's color tints the label and icon, not the border, so the pill is not the
-  // loudest chrome in the composer row.
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
     ? { color: activeOption.uiColor }
     : undefined;
@@ -361,8 +359,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           ref={dropdownRef}
           tabIndex={-1}
           onKeyDown={handleDropdownKeyDown}
-          // Anchored left: the trigger sits at the left edge of the composer row, so a
-          // right-anchored menu would open off the viewport.
+          // Left alignment prevents the menu from opening beyond the viewport.
           className="bg-surface-primary border-border-light absolute bottom-full left-0 z-[1020] mb-1 min-w-52 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)] outline-none"
         >
           {/* Agent list — scrollable for long lists */}

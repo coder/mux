@@ -145,8 +145,8 @@
           "flexoki-dark",
         ]);
 
-        // Keep in sync with CHROME_COLORS in src/common/constants/chromeColors.ts; a colocated
-        // test compares the two, because drift flashes the wrong browser chrome on cold loads.
+        // This boot script runs before the app bundle, so chromeColors.test.ts enforces parity
+        // with CHROME_COLORS.
         const THEME_COLORS = {
           dark: "#09090b",
           light: "#f5f5f5",

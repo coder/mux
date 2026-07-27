@@ -334,14 +334,10 @@ describe("WorkspaceMenuBar archive confirmations", () => {
       />
     );
 
-    // The header shows the workspace title (project identity lives in the
-    // footer bar per the Review 1.4 design).
     expect(view.getByTestId("workspace-title").textContent).toBe("Feature branch");
 
     // Repo-dependent More-menu actions must be hidden: review events are
     // ignored by RightSidebar for scratch and forking scratch is unsupported.
-    // (Repository controls themselves live in WorkspaceFooterBar; scratch
-    // gating for them is covered by WorkspaceFooterBar.test.tsx.)
     const scratchMenuProps = getLastMenuContentProps();
     expect(scratchMenuProps?.onForkChat).toBeNull();
     expect(scratchMenuProps?.onEnterImmersiveReview).toBeNull();

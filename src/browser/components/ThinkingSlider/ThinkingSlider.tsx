@@ -8,8 +8,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
 import { cn } from "@/common/lib/utils";
 
-// Matches the model name's type so both halves of the pill read as one label; the fixed 5ch
-// width reserves room for the widest level (XHIGH) so cycling never resizes the pill.
+// Fixed width prevents the pill from resizing as the thinking level changes.
 const THINKING_LABEL_CLASSES =
   "text-foreground w-[5ch] shrink-0 text-center text-[11px] font-medium select-none";
 

@@ -19,7 +19,6 @@ describe("useWorkspaceLastUserPrompt", () => {
     cleanupDom = null;
   });
 
-  /** Drives the hook against the singleton store the hook itself resolves. */
   function setupStore(options: { caughtUp: boolean }) {
     const storeHook = renderHook(() => useWorkspaceStoreRaw());
     const store = storeHook.result.current;

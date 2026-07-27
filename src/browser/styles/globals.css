@@ -80,8 +80,6 @@
     --color-editing-mode-alpha: hsla(38 70% 50% / 0.08);
     --color-pending: hsl(30 100% 70%);
 
-    /* Composer send: sampled from the Review 1.4 frames, which fill it with a neutral rather
-       than an accent, and swap only the fill (never the glyph) to signal send-ability. */
     --color-composer-send: #888895;
     --color-composer-send-foreground: var(--color-surface-primary);
 
@@ -260,8 +258,6 @@
     --color-bg-light: hsl(0 0% 30%); /* #4c4c4c - light bg */
     --color-bg-subtle: hsl(240 3% 22%); /* #37373d - subtle bg */
 
-    /* Review 1.4 gives the chrome (sidebar, header bars, footer) the same fill as the page and
-       separates it with hairline borders instead of a lighter surface. */
     --color-sidebar: var(--color-surface-primary);
     --color-separator: #262626; /* neutral-800 - dividers/separators */
     --color-separator-light: hsl(0 0% 27%); /* #464647 - lighter separator */

@@ -3156,9 +3156,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const placeholder = (() => {
     // Creation view keeps the onboarding prompt; workspace stays concise for the inline hints.
     if (variant === "creation") {
-      // The Review 1.4 "start V2" frame also advertises submitting blank ("or leave
-      // blank for a codebase summary"), but canSend requires text/attachments, so
-      // that path stays unadvertised until it actually works.
       return props.kind === "scratch"
         ? "Describe your goals to start a scratch chat..."
         : "Describe your goals to create a workspace...";
@@ -3230,7 +3227,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           "relative flex flex-col gap-1",
           variant === "creation"
             ? `w-full ${CREATION_COLUMN_MAX_WIDTH_CLASS}`
-            : // No safe-area padding here: the footer info bar below owns the bottom inset.
+            : // WorkspaceFooterBar owns the bottom safe-area inset.
               "bg-surface-primary px-4 pb-2"
         )}
         data-component="ChatInputSection"
@@ -3328,12 +3325,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             highlightQuery={lastSymbolQueryRef.current}
           />
 
-          {/*
-            One bordered box holds the textarea and the pill row. The border lives here rather
-            than on the textarea so there is no nested box, and it carries both the editing tint
-            and the focus state the textarea's own border used to show. It keys off textarea
-            focus, not focus-within, so the border keeps meaning "the prompt has focus".
-          */}
+          {/* Scope the focus border to the textarea so sibling controls do not trigger it. */}
           <div
             className={cn(
               "rounded-md border p-2",
@@ -3402,8 +3394,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       (showSkillSuggestions && skillSuggestions.length > 0) ||
                       (showSymbolSuggestions && symbolSuggestions.length > 0)
                     }
-                    // Creation gets the taller box the design gives its primary prompt;
-                    // the workspace composer shares the transcript's vertical space.
+                    // Creation favors prompt space; workspaces preserve transcript space.
                     className={variant === "creation" ? "min-h-36" : "min-h-22"}
                   />
                   {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
@@ -3427,7 +3418,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               )}
             </div>
 
-            {/* Attachments */}
             <ChatAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
 
             <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
@@ -3442,14 +3432,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 </div>
               )}
 
-              {/* 320px is the container query threshold below, not a floor: a 375px phone leaves
-                this row 325px after the section's px-4 and this surface's border + p-2, so the
-                agent pill drops out just below that. A min-width here would instead push the
-                trailing controls outside the bordered surface on narrower devices. */}
+              {/* 320px is a container breakpoint, not a minimum width. The row must shrink to
+                keep trailing controls inside narrow composers. */}
               <div className="@container flex flex-nowrap items-center gap-1.5">
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  {/* Agent mode leads the row per the Review 1.4 design: who is acting
-                    reads before which model acts. */}
                   <div
                     className="min-w-0 [@container(max-width:320px)]:hidden"
                     data-tutorial="mode-selector"
@@ -3460,8 +3446,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                   </div>
 
-                  {/* Model and thinking level share one bordered pill, split by a divider,
-                    as in the design's "claude opus 4.5 | max". */}
                   <div
                     className={cn(
                       "border-border-light flex min-w-0 items-center gap-1.5 rounded-md border px-1.5",
@@ -3506,9 +3490,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                     <span className="bg-border-light h-3.5 w-px shrink-0" aria-hidden="true" />
 
-                    {/* On narrow layouts, hide the PRO chip to prevent right-edge overflow (it
-                      pushed past a 375px viewport); pro mode stays reachable via the command
-                      palette. */}
+                    {/* Hide the PRO chip below 420px to prevent overflow; the command palette
+                      still provides access to pro mode. */}
                     <div
                       className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden"
                       data-component="ThinkingSliderGroup"
@@ -3532,12 +3515,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   className="flex shrink-0 items-center justify-end gap-1.5"
                   data-component="ModelControls"
                 >
-                  {/*
-                  Input-method icons (attach, voice) cluster tightly with the Send button so
-                  the trailing actions read as one unit, rather than as small icons stranded
-                  inside the row's gap-1.5 cadence. They live below the textarea (not as an
-                  absolute overlay) so they can never visually intersect typed/wrapped text.
-                */}
+                  {/* Attach and voice sit below the textarea rather than in an absolute overlay so
+                  they can never visually intersect typed or wrapped text. */}
                   <div
                     className="flex shrink-0 items-center gap-0"
                     data-component="InputMethodGroup"
@@ -3581,11 +3560,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           size="xs"
                           variant="ghost"
                           className={cn(
-                            // Filled circle per the design, so send reads as the row's primary action.
                             "inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
-                            // Only the fill distinguishes the two states, per the design: the glyph
-                            // keeps the page color throughout. Hover is pinned so the ghost
-                            // variant's own hover cannot override the fill.
+                            // Pin text colors because the ghost variant otherwise overrides the glyph.
                             canSend
                               ? "bg-composer-send hover:bg-composer-send text-composer-send-foreground hover:text-composer-send-foreground hover:opacity-90"
                               : "bg-surface-secondary text-composer-send-foreground",

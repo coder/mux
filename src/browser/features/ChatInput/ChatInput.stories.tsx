@@ -40,10 +40,6 @@ export const VoiceInputNoApiKey: AppStory = {
   },
 };
 
-/**
- * The composer's border is its only focus indicator: the textarea inside it has no border or
- * outline of its own, so this asserts the rendered border actually changes on focus.
- */
 export const FocusedComposer: AppStory = {
   render: () => (
     <AppWithMocks

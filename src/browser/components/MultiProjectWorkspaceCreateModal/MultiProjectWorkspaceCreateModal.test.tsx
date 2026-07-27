@@ -7,8 +7,7 @@ import { installDom } from "../../../../tests/ui/dom";
 import * as ExperimentsModule from "@/browser/hooks/useExperiments";
 import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
 
-// bun test shares one module registry across files, so this stub would otherwise render every
-// later suite's dialogs as null. Snapshot the real exports (imports evaluate first) and restore.
+// bun test shares module mocks across suites; leaking this stub would hide later dialogs.
 const realDialogExports = { ...RealDialogModule };
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({

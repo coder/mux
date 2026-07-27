@@ -4,8 +4,7 @@ import path from "node:path";
 
 import { CHROME_COLORS } from "./chromeColors";
 
-// index.html sets theme-color synchronously, before any bundle loads, so it carries its own copy
-// of this palette. If the two drift, cold loads paint the browser chrome one color and then flip.
+// index.html duplicates this palette to paint browser chrome before the bundle loads.
 describe("boot theme palette", () => {
   it("matches the shared chrome palette", () => {
     const html = readFileSync(path.join(process.cwd(), "index.html"), "utf8");
@@ -22,8 +21,7 @@ describe("boot theme palette", () => {
     expect(bootColors).toEqual({ ...CHROME_COLORS });
   });
 
-  // The static meta value is what a cold load shows before the boot script runs, and what
-  // survives when the script's catch path fires (blocked storage), where it falls back to dark.
+  // The static meta remains visible if storage access prevents early theme resolution.
   it("starts from the dark chrome color before any script runs", () => {
     const html = readFileSync(path.join(process.cwd(), "index.html"), "utf8");
 
@@ -35,8 +33,7 @@ describe("boot theme palette", () => {
     expect(meta[1]).toBe(CHROME_COLORS.dark);
   });
 
-  // The installed PWA reads its splash and OS chrome colors from the manifest, not from the
-  // document.
+  // Installed PWAs take splash and OS chrome colors from the manifest.
   it("matches the installed app's manifest colors", () => {
     const manifest = JSON.parse(
       readFileSync(path.join(process.cwd(), "public", "manifest.json"), "utf8")

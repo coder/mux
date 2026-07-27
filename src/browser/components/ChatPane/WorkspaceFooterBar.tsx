@@ -143,7 +143,6 @@ function WorkspaceBranchControls(props: {
   );
 }
 
-/** The GitHub slug only becomes known once PR detection resolves a remote. */
 function FooterRepositoryLabel(props: { workspaceId: string; projectLabel: string }) {
   const workspacePR = useWorkspacePR(props.workspaceId);
 
@@ -168,11 +167,7 @@ function FooterProjectLabel(props: { projectLabel: string }) {
   );
 }
 
-/**
- * Session token usage readout. Subscribes at the leaf so per-delta streaming
- * stats never cascade re-renders through the transcript (see WorkspaceStore's
- * streaming-stats subscription notes).
- */
+/** Subscribe at the leaf so streaming deltas do not re-render the transcript subtree. */
 function FooterUsageStats(props: { workspaceId: string }) {
   const usage = useWorkspaceUsage(props.workspaceId);
   const streamingStats = useWorkspaceStreamingStats(props.workspaceId);
@@ -201,8 +196,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   const [open, setOpen] = React.useState(false);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
 
-  // No listener while there is nothing to show, and drop any open state left over from a
-  // prompt that has gone away, so the panel cannot pop open when a new prompt arrives.
+  // Reset open state when the prompt disappears so a later prompt cannot inherit it.
   useEffect(() => {
     if (lastPrompt === null) {
       setOpen(false);
@@ -245,7 +239,6 @@ function FooterLastPrompt(props: { workspaceId: string }) {
           Show last prompt ({formatKeybind(KEYBINDS.SHOW_LAST_PROMPT)})
         </TooltipContent>
       </Tooltip>
-      {/* Let prompt content determine the width instead of matching the trigger. */}
       <PopoverContent
         side="top"
         align="end"
@@ -259,26 +252,14 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   );
 }
 
-/**
- * Bottom status bar for the workspace chat pane.
- *
- * Implements the "footer info bar" from the Review 1.4 page of the
- * "Mux exploration" Figma: a persistent strip of workspace facts (PR link, line
- * drift, repository, branch, token usage, last prompt) anchored in a predictable
- * spot instead of competing for space in the header. Content that overflows
- * simply scrolls horizontally, matching the design note ("content gets truncated
- * and the user can slide to the remaining info").
- */
 export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => {
   const { workspaceMetadata } = useWorkspaceContext();
   const workspaceEntry = workspaceMetadata.get(props.workspaceId);
   const hasRepository = hasWorkspaceRepository(workspaceEntry);
   const showMultiProjectStatus = workspaceEntry != null && isMultiProject(workspaceEntry);
 
-  // The workspace's metadata.projectName is the parent project (worktrees are
-  // owned by the top-most parent). When the workspace is scoped to a
-  // sub-project, surface the hierarchy as "parent / child" so the footer alone
-  // reveals the sub-project context.
+  // Metadata uses the top-level project name, so include a known sub-project path to preserve
+  // the workspace's full project context.
   const { userProjects } = useProjectContext();
   const subProjectPath = workspaceEntry?.subProjectPath;
   const projectLabel =

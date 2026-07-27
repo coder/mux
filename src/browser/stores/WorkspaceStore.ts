@@ -2424,12 +2424,10 @@ export class WorkspaceStore {
     return this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
   }
 
-  /** Changes only when a full replay replaces the transcript, not on streaming deltas. */
   getWorkspaceHistoryEpoch(workspaceId: string): number {
     return this.aggregators.get(workspaceId)?.getHistoryEpoch() ?? 0;
   }
 
-  /** Skips synthetic turns (goal continuations, boundaries) the user never typed. */
   getWorkspaceLastUserPrompt(workspaceId: string): string | null {
     const aggregator = this.aggregators.get(workspaceId);
     if (!aggregator) {
@@ -2442,8 +2440,7 @@ export class WorkspaceStore {
       if (message.type !== "user" || message.isSynthetic === true) {
         continue;
       }
-      // Attachment-only sends are allowed, and their persisted text is the generated
-      // <attached-files> notice, so strip it rather than surfacing provider markup as a prompt.
+      // Generated attachment markup is provider context, not part of the user's prompt.
       const trimmed = stripStagedAttachmentNotice(message.content).trim();
       if (trimmed.length > 0) {
         return trimmed;
@@ -4645,21 +4642,18 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceLastUserPrompt(workspaceId)
   );
-  // Scoped to replays and deletions rather than every transcript mutation: the disk read is
-  // O(total history), so reacting to streaming deltas would queue a scan per delta.
+  // The fallback scans full history, so streaming deltas must not invalidate it.
   const historyEpoch = useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceHistoryEpoch(workspaceId)
   );
-  // An empty transcript mid-hydration is indistinguishable from one with no prompt, and the
-  // in-flight read cannot be cancelled, so waiting for catch-up avoids scanning twice per open.
+  // Wait for catch-up because empty replay state is not yet authoritative.
   const isCaughtUp = useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.isWorkspaceTranscriptCaughtUp(workspaceId)
   );
 
-  // Compaction prunes older turns from the transcript, and a fresh replay only carries the
-  // latest boundary epoch, so fall back to history on disk when the prompt predates it.
+  // Compaction can hide the latest user prompt behind the replay boundary.
   const [fallback, setFallback] = useState<{
     workspaceId: string;
     historyEpoch: number;
@@ -4681,8 +4675,7 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     };
   }, [store, workspaceId, displayed, historyEpoch, isCaughtUp]);
 
-  // Matching the epoch discards a stale fallback on the first render after history changes,
-  // rather than exposing a deleted prompt for as long as the refetch takes.
+  // Ignore fallback results from a superseded replay or deletion.
   const fallbackPrompt =
     fallback?.workspaceId === workspaceId && fallback.historyEpoch === historyEpoch
       ? fallback.prompt

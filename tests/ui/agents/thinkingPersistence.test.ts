@@ -101,8 +101,6 @@ async function selectModel(
 }
 
 async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
-  // The label is the only thinking control: clicking it cycles through the allowed levels and
-  // wraps, so repeated clicks reach XHIGH regardless of the starting level.
   await waitFor(
     async () => {
       const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
@@ -119,7 +117,7 @@ async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
 
       const label = labelButton.textContent?.trim()?.toUpperCase();
       if (label === "XHIGH") {
-        return; // Done!
+        return;
       }
 
       fireEvent.click(labelButton);

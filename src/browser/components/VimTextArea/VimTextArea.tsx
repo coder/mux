@@ -272,8 +272,6 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             {...rest}
             style={textareaStyle}
             className={cn(
-              // No fill or border of its own: the composer surface that wraps this textarea
-              // and the pill row is the single bordered box, per the Review 1.4 design.
               "w-full bg-transparent text-light py-1.5 px-2 text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
               vimEnabled ? "font-monospace" : "font-sans",
               "placeholder:text-placeholder",

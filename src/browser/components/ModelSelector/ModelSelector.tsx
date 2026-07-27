@@ -270,8 +270,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     const isBoxVariant = variant === "box";
-    // min-w-0 lets the trigger's clamped width shrink inside a constrained row; without it the
-    // trigger's fixed width becomes this wrapper's floor and siblings spill past the parent.
+    // min-w-0 lets the clamped trigger shrink without pushing sibling controls outside the row.
     const containerClassName = cn(
       "relative flex min-w-0 items-center gap-1",
       isBoxVariant && "w-full"

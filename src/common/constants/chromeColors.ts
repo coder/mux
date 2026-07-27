@@ -1,8 +1,6 @@
 /**
- * Chrome colors for surfaces that cannot read CSS variables: the Electron titlebar overlay (main
- * process), the `theme-color` meta tag, and the PWA manifest. They all sit against the app's chrome,
- * so each value mirrors that theme's `--color-sidebar` in `src/browser/styles/globals.css`. Only the
- * dark theme resolves that to the page fill, per the Review 1.4 design.
+ * Shared palette for native and static surfaces that cannot read renderer CSS variables.
+ * Values mirror each theme's `--color-sidebar`.
  */
 export const CHROME_COLORS = {
   dark: "#09090b",

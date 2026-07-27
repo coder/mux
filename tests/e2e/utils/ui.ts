@@ -130,9 +130,6 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       // workspace we need to confirm the navigation actually landed on the demo workspace
       // (not just any transcript).
       const expectedProjectName = path.basename(context.projectPath);
-      // Project identity moved from the header into the footer status bar
-      // (Review 1.4 layout); the footer is only rendered on workspace routes,
-      // so this doubles as the navigation check.
       await expect(page.getByTestId("workspace-footer-bar")).toContainText(expectedProjectName, {
         timeout: 20_000,
       });
@@ -186,11 +183,9 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
       const label = thinkingLevelLabel(page);
 
-      // Wait for thinking controls to be visible
       await expect(label).toBeVisible();
 
-      // Read the internal level from the accessible name rather than the visible text: display
-      // labels are provider-dependent and collide (xhigh renders as "MAX" on some models).
+      // Accessible names carry canonical levels; visible labels can collide across model mappings.
       const readCurrentLevel = async (): Promise<ThinkingLevel> => {
         const ariaLabel = (await label.getAttribute("aria-label")) ?? "";
         const match = /Thinking level:\s*([a-z]+)/i.exec(ariaLabel);
@@ -201,8 +196,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         return level;
       };
 
-      // The label is the only thinking control: it advances one level per click and wraps at the
-      // top of the model's allowed ladder.
+      // The label cycles through the model's allowed levels and wraps.
       const cycleOnce = async (previousLevel: ThinkingLevel): Promise<ThinkingLevel> => {
         for (let attempt = 0; attempt < 3; attempt++) {
           await label.dispatchEvent("click");
@@ -225,7 +219,6 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         return await readCurrentLevel();
       };
 
-      // Walk one full cycle to learn which levels this model allows, ending back at the start.
       const discoverAllowedLevels = async (): Promise<ThinkingLevel[]> => {
         const startLevel = await readCurrentLevel();
         const seen = new Set<ThinkingLevel>([startLevel]);
@@ -247,8 +240,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       const targetIndex = Math.min(targetLevel, allowedLevels.length - 1);
       const target = allowedLevels[targetIndex];
 
-      // cycleOnce() retries the interaction and dispatches DOM clicks directly so transient
-      // Linux Electron overlays do not interfere with toolbar hit-testing.
+      // Direct DOM clicks avoid transient Linux Electron overlays that interfere with hit-testing.
       for (let i = 0; i < allowedLevels.length; i++) {
         const currentLevel = await readCurrentLevel();
         if (currentLevel === target) {

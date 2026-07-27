@@ -290,11 +290,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
                 )}
-                {/* Creation hero from the Review 1.4 page of the "Mux exploration"
-                    Figma ("start V2"): a headline anchors the creation surface so
-                    first-run and new-workspace flows read as an invitation rather
-                    than a bare form. Rendered outside the provider branch so it is
-                    present during provider setup and does not shift on load. */}
+                {/* Keep the heading outside the provider branch to prevent layout shifts during setup. */}
                 <h1 className="text-foreground px-1 text-[32px] leading-10 font-semibold">
                   Let&rsquo;s get building.
                 </h1>
@@ -322,10 +318,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       onReady={handleChatReady}
                       onWorkspaceCreated={onWorkspaceCreated}
                     />
-                    {/* Provider status sits below the composer per the Review 1.4 start frame:
-                        the prompt is the primary action, so setup state reads as a footnote. */}
                     {providersLoading ? (
-                      // Skeleton placeholder matching ConfiguredProvidersBar height
                       <div className="flex items-center justify-center gap-2 py-1.5">
                         <Skeleton className="h-7 w-32" />
                       </div>

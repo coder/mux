@@ -523,15 +523,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
             <TooltipContent>Open sidebar ({formatKeybind(KEYBINDS.TOGGLE_SIDEBAR)})</TooltipContent>
           </Tooltip>
         )}
-        {/* Review 1.4 header: the workspace title is the header's identity; runtime,
-            project, and repository state live in WorkspaceFooterBar. The info icon
-            keeps the project/name details one hover away. */}
         <span className="min-w-0 truncate text-sm" data-testid="workspace-title">
           {workspaceTitle ?? workspaceName}
         </span>
-        {/* A button, not a bare icon: these details are the only place the project,
-            workspace name, and path appear, and touch has no hover while keyboard
-            users need a focus target. */}
+        {/* Touch and keyboard users need a focusable control for workspace details. */}
         <Popover open={detailsPopoverOpen} onOpenChange={setDetailsPopoverOpen}>
           <Tooltip
             open={detailsTooltipOpen && !detailsPopoverOpen}

@@ -520,8 +520,7 @@ export function getCompactionFollowUpContent(
     return undefined;
   }
 
-  // Persisted history can carry a compaction row without `parsed`, and a throw here would
-  // abort whichever scan or render is walking that history.
+  // Malformed persisted compaction metadata has no recoverable follow-up content.
   const parsed: unknown = metadata.parsed;
   if (typeof parsed !== "object" || parsed === null) {
     return undefined;

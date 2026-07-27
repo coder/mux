@@ -64,7 +64,6 @@ export interface GitStatusIndicatorViewProps {
   isRefreshing?: boolean;
 }
 
-// Paired counters form one visual quantity in both footer modes.
 const CounterPill: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <span className="bg-surface-tertiary flex h-5 shrink-0 items-center rounded-md">{children}</span>
 );
@@ -341,9 +340,7 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
               )}
             </CounterPill>
           ) : (
-            // Nothing local to report, so fall back to the lines arriving from the base branch.
-            // This mode must stay in line units: rendering the behind *commit* count here made
-            // both modes show the same number, so switching them looked like a no-op.
+            // Keep line-delta mode in line units when only incoming changes exist.
             incomingLines > 0 && (
               <span className="text-muted flex items-center font-normal">
                 ↓{formatCountAbbrev(incomingLines)}
