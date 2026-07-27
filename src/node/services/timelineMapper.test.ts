@@ -91,7 +91,7 @@ describe("mapChatEventToTimeline", () => {
     });
   });
 
-  test("clears stream and tool state after a terminal stream error", () => {
+  test("clears stream state after a terminal stream error", () => {
     const started = map({
       type: "stream-start",
       workspaceId: "ws-1",
@@ -100,19 +100,6 @@ describe("mapChatEventToTimeline", () => {
       historySequence: 12,
       startTime: 200,
     });
-    const toolStarted = map(
-      {
-        type: "tool-call-start",
-        workspaceId: "ws-1",
-        messageId: "assistant-failed",
-        toolCallId: "tool-failed",
-        toolName: "bash",
-        args: { script: "git status" },
-        tokens: 1,
-        timestamp: 210,
-      },
-      started.state
-    );
     const failed = map(
       {
         type: "stream-error",
@@ -121,21 +108,20 @@ describe("mapChatEventToTimeline", () => {
         error: "provider failed",
         errorType: "api",
       },
-      toolStarted.state
+      started.state
     );
 
     expect(failed.state.openStreams.size).toBe(0);
-    expect(failed.state.openToolCalls.size).toBe(0);
   });
 
-  test("maps notable tool completion and drops routine reads", () => {
+  test("ignores tool call lifecycle events", () => {
     const started = map({
       type: "tool-call-start",
       workspaceId: "ws-1",
       messageId: "assistant-1",
       toolCallId: "tool-1",
       toolName: "bash",
-      args: { script: "git status" },
+      args: { script: "git commit -m x" },
       tokens: 3,
       timestamp: 300,
       executionStartedAt: 310,
@@ -147,45 +133,17 @@ describe("mapChatEventToTimeline", () => {
         messageId: "assistant-1",
         toolCallId: "tool-1",
         toolName: "bash",
-        result: { success: true },
+        result: { success: false, error: "boom" },
         timestamp: 350,
       },
       started.state
     );
-    const readStarted = map({
-      type: "tool-call-start",
-      workspaceId: "ws-1",
-      messageId: "assistant-1",
-      toolCallId: "tool-2",
-      toolName: "bash",
-      args: { script: "ls" },
-      tokens: 1,
-      timestamp: 360,
-    });
-    const readCompleted = map(
-      {
-        type: "tool-call-end",
-        workspaceId: "ws-1",
-        messageId: "assistant-1",
-        toolCallId: "tool-2",
-        toolName: "bash",
-        result: { success: true },
-        timestamp: 370,
-      },
-      readStarted.state
-    );
 
-    expect(completed.drafts).toHaveLength(1);
-    expect(completed.drafts[0]).toMatchObject({
-      kind: "tool.call",
-      status: "completed",
-      data: { toolName: "bash", durationMs: 40, digest: "git status" },
-    });
-    expect(completed.state.openToolCalls.size).toBe(0);
-    expect(readCompleted.drafts).toEqual([]);
+    expect(started.drafts).toEqual([]);
+    expect(completed.drafts).toEqual([]);
   });
 
-  test("synthesizes interrupted rows for notable open tools on stream abort", () => {
+  test("emits a single turn row when a stream with open tool calls aborts", () => {
     const started = map({
       type: "tool-call-start",
       workspaceId: "ws-1",
@@ -207,18 +165,11 @@ describe("mapChatEventToTimeline", () => {
       started.state
     );
 
-    expect(aborted.drafts).toHaveLength(2);
+    expect(aborted.drafts).toHaveLength(1);
     expect(aborted.drafts[0]).toMatchObject({
       kind: "turn.interrupted",
       status: "interrupted",
     });
-    expect(aborted.drafts[1]).toMatchObject({
-      kind: "tool.call",
-      status: "interrupted",
-      anchor: { toolCallId: "tool-1" },
-      data: { toolName: "file_edit_insert", digest: "src/app.ts" },
-    });
-    expect(aborted.state.openToolCalls.size).toBe(0);
   });
 
   test("maps retry, task, workflow, and user turn events", () => {

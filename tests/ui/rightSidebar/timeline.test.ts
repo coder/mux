@@ -122,9 +122,9 @@ describe("TimelinePanel", () => {
     const events = [
       makeEvent("user-turn", "turn.user", 1),
       makeEvent("future-event", "future.kind", 2),
-      makeEvent("agent-mark", "agent.mark", 3, {
+      makeEvent("agent-event", "agent.event", 3, {
         source: { system: "agent" },
-        data: { label: "Milestone", detail: "Validation completed" },
+        data: { description: "Committed the backend slice", category: "milestone" },
       }),
     ];
 
@@ -138,10 +138,11 @@ describe("TimelinePanel", () => {
     ).not.toBeNull();
     expect(
       view.container.querySelector(
-        '[data-timeline-event-id="agent-mark"][data-timeline-source="agent"]'
+        '[data-timeline-event-id="agent-event"][data-timeline-source="agent"]'
       )
     ).not.toBeNull();
-    expect(view.getByText("Milestone · Validation completed")).not.toBeNull();
+    expect(view.getByText("Committed the backend slice")).not.toBeNull();
+    expect(view.getByText("milestone")).not.toBeNull();
     expect(
       view.container.querySelector(
         '[data-timeline-event-id="user-turn"][data-timeline-source="chat"]'
@@ -149,28 +150,28 @@ describe("TimelinePanel", () => {
     ).not.toBeNull();
   });
 
-  test("category filters narrow the feed and isolate agent notes", () => {
+  test("category filters narrow the feed and isolate agent events", () => {
     const events = [
       makeEvent("turn", "turn.completed", 1),
-      makeEvent("tool", "tool.call", 2),
-      makeEvent("agent-mark", "agent.mark", 3, { source: { system: "agent" } }),
-      makeEvent("agent-status", "agent.status", 4, { source: { system: "agent" } }),
+      makeEvent("task", "task.created", 2, { source: { system: "task" } }),
+      makeEvent("agent-event", "agent.event", 3, { source: { system: "agent" } }),
+      makeEvent("agent-plan", "agent.plan_proposed", 4, { source: { system: "agent" } }),
     ];
 
     const view = renderTimeline({ events });
     const filterButtons = Array.from(view.container.querySelectorAll("button[aria-pressed]"));
-    const toolsFilter = filterButtons.find((button) => button.textContent === "Tools");
-    const agentNotesFilter = filterButtons.find((button) => button.textContent === "Agent notes");
+    const subagentsFilter = filterButtons.find((button) => button.textContent === "Subagents");
+    const agentFilter = filterButtons.find((button) => button.textContent === "Agent");
 
-    if (!toolsFilter || !agentNotesFilter) {
+    if (!subagentsFilter || !agentFilter) {
       throw new Error("Expected timeline category controls");
     }
 
-    fireEvent.click(toolsFilter);
+    fireEvent.click(subagentsFilter);
     expect(view.container.querySelectorAll("[data-timeline-event-id]")).toHaveLength(1);
-    expect(view.container.querySelector('[data-timeline-event-id="tool"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="task"]')).not.toBeNull();
 
-    fireEvent.click(agentNotesFilter);
+    fireEvent.click(agentFilter);
     const visibleRows = Array.from(
       view.container.querySelectorAll<HTMLElement>("[data-timeline-event-id]")
     );
@@ -180,31 +181,31 @@ describe("TimelinePanel", () => {
 
   test("collapses three consecutive same-kind rows and expands the run", () => {
     const events = [
-      makeEvent("tool-1", "tool.call", 1),
-      makeEvent("tool-2", "tool.call", 2),
-      makeEvent("tool-3", "tool.call", 3),
+      makeEvent("heartbeat-1", "heartbeat.dispatched", 1, { source: { system: "heartbeat" } }),
+      makeEvent("heartbeat-2", "heartbeat.dispatched", 2, { source: { system: "heartbeat" } }),
+      makeEvent("heartbeat-3", "heartbeat.dispatched", 3, { source: { system: "heartbeat" } }),
       makeEvent("turn", "turn.completed", 4),
     ];
 
     const view = renderTimeline({ events });
     const collapsedRun = view.container.querySelector<HTMLElement>(
-      '[data-timeline-collapsed-kind="tool.call"][data-timeline-collapsed-count="3"]'
+      '[data-timeline-collapsed-kind="heartbeat.dispatched"][data-timeline-collapsed-count="3"]'
     );
 
     expect(collapsedRun).not.toBeNull();
     expect(collapsedRun?.getAttribute("aria-expanded")).toBe("false");
-    expect(view.container.querySelectorAll('[data-timeline-event-kind="tool.call"]')).toHaveLength(
-      0
-    );
+    expect(
+      view.container.querySelectorAll('[data-timeline-event-kind="heartbeat.dispatched"]')
+    ).toHaveLength(0);
 
     fireEvent.click(collapsedRun!);
 
-    expect(view.container.querySelectorAll('[data-timeline-event-kind="tool.call"]')).toHaveLength(
-      3
-    );
+    expect(
+      view.container.querySelectorAll('[data-timeline-event-kind="heartbeat.dispatched"]')
+    ).toHaveLength(3);
     expect(
       view.container
-        .querySelector('[data-timeline-collapsed-kind="tool.call"]')
+        .querySelector('[data-timeline-collapsed-kind="heartbeat.dispatched"]')
         ?.getAttribute("aria-expanded")
     ).toBe("true");
   });

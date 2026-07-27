@@ -18,7 +18,7 @@ const baseEvent = {
 
 describe("timeline schemas", () => {
   test("keeps known kinds exhaustive while accepting unknown persisted kinds", () => {
-    expect(TIMELINE_EVENT_KINDS).toContain("agent.mark");
+    expect(TIMELINE_EVENT_KINDS).toContain("agent.event");
     expect(TimelineEventSchema.parse({ ...baseEvent, kind: "future.event" }).kind).toBe(
       "future.event"
     );
@@ -27,10 +27,14 @@ describe("timeline schemas", () => {
   test("accepts typed flat event data and rejects untyped fields", () => {
     const parsed = TimelineEventSchema.parse({
       ...baseEvent,
-      data: { toolName: "bash", durationMs: 42, digest: "git status" },
+      data: { description: "Pushed the branch", durationMs: 42, category: "milestone" },
     });
 
-    expect(parsed.data).toEqual({ toolName: "bash", durationMs: 42, digest: "git status" });
+    expect(parsed.data).toEqual({
+      description: "Pushed the branch",
+      durationMs: 42,
+      category: "milestone",
+    });
     expect(() =>
       TimelineEventSchema.parse({ ...baseEvent, data: { arbitraryPayload: { nested: true } } })
     ).toThrow();
@@ -50,10 +54,7 @@ describe("timeline schemas", () => {
     });
     const preview = TimelinePreviewSchema.parse({
       role: "assistant",
-      timestamp: baseEvent.ts,
       textExcerpt: "Finished the change",
-      toolName: "bash",
-      status: "completed",
     });
 
     expect(draft.anchor?.historySequence).toBe(7);

@@ -1812,11 +1812,10 @@ export class WorkspaceService extends EventEmitter {
   // from older streams from clobbering a newer streaming=true snapshot after async awaits.
   private readonly streamingGenerations = new Map<string, number>();
 
+  private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
+
   // Serialize todo snapshot refreshes so back-to-back todo_write/propose_plan updates cannot
   // finish out of order and briefly restore stale progress in workspace activity metadata.
-  private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
-  private readonly lastAgentStatusByWorkspace = new Map<string, WorkspaceAgentStatus | null>();
-  private readonly completedTodosByWorkspace = new Map<string, Set<string>>();
   private readonly todoStatusUpdateQueue = new Map<string, Promise<void>>();
 
   // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
@@ -2809,25 +2808,9 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     agentStatus: WorkspaceAgentStatus | null
   ): Promise<void> {
-    const previous = this.lastAgentStatusByWorkspace.get(workspaceId);
-    const changed =
-      previous?.emoji !== agentStatus?.emoji ||
-      previous?.message !== agentStatus?.message ||
-      previous?.url !== agentStatus?.url;
-
     await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace agent status", () =>
       this.extensionMetadata.setAgentStatus(workspaceId, agentStatus)
     );
-    this.lastAgentStatusByWorkspace.set(workspaceId, agentStatus);
-
-    if (changed && agentStatus != null) {
-      this.timelineRecorder.record(workspaceId, {
-        kind: "agent.status",
-        source: { system: "agent" },
-        status: "completed",
-        data: { digest: agentStatus.message },
-      });
-    }
   }
 
   private async updateTodoStatusFromStorage(workspaceId: string): Promise<void> {
@@ -2837,23 +2820,6 @@ export class WorkspaceService extends EventEmitter {
       .then(async () => {
         const sessionDir = this.config.getSessionDir(workspaceId);
         const todos = await readTodosForSessionDir(sessionDir);
-        const completedTodos = new Set(
-          todos.filter((todo) => todo.status === "completed").map((todo) => todo.content)
-        );
-        const previousCompletedTodos = this.completedTodosByWorkspace.get(workspaceId);
-        if (previousCompletedTodos != null) {
-          for (const content of completedTodos) {
-            if (!previousCompletedTodos.has(content)) {
-              this.timelineRecorder.record(workspaceId, {
-                kind: "agent.todo_completed",
-                source: { system: "agent" },
-                status: "completed",
-                data: { digest: content },
-              });
-            }
-          }
-        }
-        this.completedTodosByWorkspace.set(workspaceId, completedTodos);
         const todoStatus = deriveTodoStatus(todos) ?? null;
 
         await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace todo status", () =>

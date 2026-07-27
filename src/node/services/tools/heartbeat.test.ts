@@ -8,6 +8,8 @@ import type {
   WorkspaceHeartbeatToolService,
 } from "@/common/utils/tools/tools";
 import { HEARTBEAT_DEFAULT_CONTEXT_MODE } from "@/constants/heartbeat";
+import { createTestHistoryService } from "@/node/services/testHistoryService";
+import { TimelineService } from "@/node/services/timelineService";
 import { createHeartbeatTool } from "./heartbeat";
 import { createTestToolConfig, mockToolCallOptions, TestTempDir } from "./testHelpers";
 
@@ -201,6 +203,32 @@ describe("heartbeat tool", () => {
       summary: "Heartbeat settings removed for this workspace.",
     });
     expect(getStored()).toBeNull();
+  });
+
+  test("records a timeline event only when the schedule changes", async () => {
+    using tempDir = new TestTempDir("heartbeat-tool-timeline");
+    const testHistory = await createTestHistoryService();
+    const timelineService = new TimelineService(testHistory.config, testHistory.historyService, {
+      isExperimentEnabled: () => true,
+    });
+    const { service } = createService();
+    const tool = createHeartbeatTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "ws-heartbeat" }),
+      workspaceHeartbeatService: service,
+      timelineService,
+    });
+
+    await tool.execute!({ action: "set", intervalMs: 30 * 60 * 1000 }, mockToolCallOptions);
+    await tool.execute!({ action: "get" }, mockToolCallOptions);
+    await tool.execute!({ action: "unset" }, mockToolCallOptions);
+    await timelineService.flush();
+
+    const page = await timelineService.list("ws-heartbeat", {});
+    expect(page.events.map((event) => event.kind)).toEqual([
+      "heartbeat.configured",
+      "heartbeat.configured",
+    ]);
+    await testHistory.cleanup();
   });
 
   test("returns a typed error when the service is unavailable", async () => {

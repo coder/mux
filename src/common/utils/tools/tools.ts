@@ -24,7 +24,7 @@ import { createSetGoalTool } from "@/node/services/tools/set_goal";
 import { createGetGoalTool } from "@/node/services/tools/get_goal";
 import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
 import { createNotifyTool } from "@/node/services/tools/notify";
-import { createTimelineMarkTool } from "@/node/services/tools/timeline_mark";
+import { createTimelineEventTool } from "@/node/services/tools/timeline_event";
 import { createToolSearchTool } from "@/node/services/tools/toolSearch";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
@@ -603,7 +603,7 @@ export async function getToolsForModel(
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
     ...(config.toolSearchRuntime ? { tool_catalog_search: createToolSearchTool(config) } : {}),
     ...(config.timelineService && config.experiments?.timeline
-      ? { timeline_mark: createTimelineMarkTool(config) }
+      ? { timeline_event: createTimelineEventTool(config) }
       : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
@@ -747,7 +747,7 @@ export async function getToolsForModel(
       ),
       enableAdvisor: Boolean(config.advisorRuntime),
       enableMemory: Boolean(config.memoryService && config.experiments?.memory),
-      enableTimelineMark: Boolean(config.timelineService && config.experiments?.timeline),
+      enableTimelineEvent: Boolean(config.timelineService && config.experiments?.timeline),
       enableToolSearch: Boolean(config.toolSearchRuntime),
       // The Review pane belongs to the user-facing parent workspace. config
       // .enableAgentReport is the canonical "is sub-agent" signal (set true iff

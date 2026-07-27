@@ -29,6 +29,7 @@ import type {
 import {
   TIMELINE_CATEGORIES,
   getTimelineEventCategory,
+  getTimelineEventTitle,
   getTimelinePresentation,
   type TimelineCategory,
 } from "./timelinePresentation";
@@ -170,11 +171,8 @@ function getEventDetail(event: TimelineEvent): string | null {
   if (!data) return null;
 
   const details: string[] = [];
-  if (data.toolName) details.push(data.toolName);
   if (data.title) details.push(data.title);
   else if (data.digest) details.push(data.digest);
-  else if (data.label) details.push(data.label);
-  if (data.detail) details.push(data.detail);
   if (data.model || data.mode) details.push([data.model, data.mode].filter(Boolean).join(" · "));
   if (data.reason) details.push(data.reason);
   if (data.setting) {
@@ -212,8 +210,10 @@ function TimelineEventRow(props: {
 }) {
   const presentation = getTimelinePresentation(props.event.kind);
   const Icon = presentation.icon;
+  const title = getTimelineEventTitle(props.event);
   const detail = getEventDetail(props.event);
   const agentAuthored = props.event.source.system === "agent";
+  const badge = props.event.data?.category?.replace(/_/g, " ") ?? "Agent";
   const failed = props.event.status === "failed";
   const interrupted = props.event.status === "interrupted";
 
@@ -246,12 +246,10 @@ function TimelineEventRow(props: {
       </span>
       <span className="min-w-0">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="text-content-primary min-w-0 truncate text-xs font-medium">
-            {presentation.label}
-          </span>
+          <span className="text-content-primary min-w-0 truncate text-xs font-medium">{title}</span>
           {agentAuthored ? (
             <span className="border-ask-mode/30 text-ask-mode shrink-0 rounded border px-1 py-px text-[9px] font-medium uppercase">
-              Agent note
+              {badge}
             </span>
           ) : null}
         </span>
@@ -481,44 +479,43 @@ function TimelinePreviewCard(props: {
     }
   };
 
+  const eventText = props.event.data?.description ?? props.event.data?.digest ?? null;
+  const excerpt = previewState.status === "ready" ? previewState.preview.textExcerpt : "";
+
   return (
     <div className="border-border bg-surface-secondary mx-3 mb-3 shrink-0 rounded-md border p-3">
-      {previewState.status === "loading" ? (
-        <div className="text-muted text-xs">Loading preview…</div>
-      ) : previewState.status === "unavailable" ? (
-        <div className="text-muted text-xs">Preview unavailable</div>
-      ) : (
-        <div className="flex min-w-0 flex-col gap-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="text-content-primary text-xs font-medium capitalize">
-              {previewState.preview.role}
-            </span>
-            {previewState.preview.timestamp != null ? (
-              <time
-                dateTime={new Date(previewState.preview.timestamp).toISOString()}
-                className="text-muted counter-nums text-[10px]"
-              >
-                {timeFormatter.format(previewState.preview.timestamp)}
-              </time>
-            ) : null}
-          </div>
-          {previewState.preview.textExcerpt ? (
-            <div className="text-content-secondary max-h-24 overflow-hidden text-xs whitespace-pre-wrap">
-              {previewState.preview.textExcerpt}
-            </div>
-          ) : null}
-          {previewState.preview.toolName || previewState.preview.status ? (
-            <div className="text-muted flex min-w-0 items-center gap-2 text-[10px]">
-              {previewState.preview.toolName ? (
-                <span className="min-w-0 truncate">{previewState.preview.toolName}</span>
-              ) : null}
-              {previewState.preview.status ? (
-                <span className="shrink-0 capitalize">{previewState.preview.status}</span>
-              ) : null}
-            </div>
-          ) : null}
+      <div className="flex min-w-0 flex-col gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-content-primary min-w-0 truncate text-xs font-medium">
+            {getTimelineEventTitle(props.event)}
+          </span>
+          <time
+            dateTime={new Date(props.event.ts).toISOString()}
+            className="text-muted counter-nums shrink-0 text-[10px]"
+          >
+            {timeFormatter.format(props.event.ts)}
+          </time>
         </div>
-      )}
+        {eventText ? (
+          <div className="text-content-secondary max-h-24 overflow-hidden text-xs whitespace-pre-wrap">
+            {eventText}
+          </div>
+        ) : null}
+        {previewState.status === "loading" ? (
+          <div className="text-muted text-xs">Loading preview…</div>
+        ) : excerpt ? (
+          <div className="border-border flex min-w-0 flex-col gap-1 border-t pt-2">
+            <span className="text-muted text-[10px] capitalize">
+              {previewState.status === "ready" ? previewState.preview.role : ""}
+            </span>
+            <div className="text-content-secondary max-h-24 overflow-hidden text-xs whitespace-pre-wrap">
+              {excerpt}
+            </div>
+          </div>
+        ) : eventText == null ? (
+          <div className="text-muted text-xs">Preview unavailable</div>
+        ) : null}
+      </div>
 
       {hasTranscriptTarget || anchor?.childWorkspaceId ? (
         <div className="mt-3 flex flex-col items-start gap-1.5">
@@ -625,7 +622,7 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
             <div className="text-content-primary text-sm font-medium">No timeline events yet</div>
             <div className="text-muted mt-1 text-xs">
-              Recording begins when the timeline experiment is enabled.
+              Prompts, agent events, goals, heartbeats, sub-agents, and workflows land here.
             </div>
           </div>
         ) : filteredEvents.length === 0 ? (

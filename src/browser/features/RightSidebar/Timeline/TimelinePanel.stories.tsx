@@ -33,68 +33,75 @@ const MIXED_EVENTS: TimelineEvent[] = [
     data: { model: "anthropic/claude-sonnet-4", mode: "exec", durationMs: 84_000 },
     anchor: { messageId: "assistant-20" },
   }),
-  makeEvent("failed-tool", "tool.call", 19, {
-    status: "failed",
-    data: { toolName: "bash", reason: "Typecheck exited with status 1" },
-    anchor: { toolCallId: "tool-failed" },
-  }),
-  makeEvent("agent-status", "agent.status", 18, {
-    source: { system: "agent", key: "timeline-agent" },
-    status: "started",
-    data: { statusMessage: "Validating the Timeline panel" },
-  }),
-  makeEvent("agent-mark", "agent.mark", 17, {
-    source: { system: "agent", key: "timeline-agent" },
+  makeEvent("agent-handoff", "agent.event", 19, {
+    source: { system: "agent", key: "timeline-event:handoff" },
     data: {
-      title: "Pagination guard verified",
-      detail: "Reveal stops after ten older-history pages.",
-      category: "milestone",
+      description: "Pushed mike/timeline and opened PR #4821",
+      category: "handoff",
     },
+    anchor: { toolCallId: "tool-timeline-event-2" },
   }),
-  makeEvent("task-reported", "task.reported", 16, {
+  makeEvent("turn-failed", "turn.failed", 18, {
+    status: "failed",
+    data: { reason: "Provider returned 529", errorKind: "api" },
+    anchor: { messageId: "assistant-18" },
+  }),
+  makeEvent("task-reported", "task.reported", 17, {
     source: { system: "task", key: "task_timeline_story" },
     status: "completed",
-    data: { title: "Timeline story fixture completed" },
+    data: { title: "Timeline fixture sub-agent finished" },
     anchor: { taskId: "task_timeline_story", childWorkspaceId: "timeline-child-workspace" },
   }),
+  makeEvent("task-created", "task.created", 16, {
+    source: { system: "task", key: "task_timeline_story" },
+    status: "started",
+    anchor: { taskId: "task_timeline_story", toolCallId: "tool-task-1" },
+  }),
   makeEvent("compaction", "compaction.completed", 15, {
-    source: { system: "chat" },
     status: "completed",
     epoch: 3,
-    data: { durationMs: 2_400 },
   }),
-  makeEvent("file-edit-5", "tool.call", 14, {
+  makeEvent("heartbeat-3", "heartbeat.dispatched", 14, {
+    source: { system: "heartbeat" },
     status: "completed",
-    data: { toolName: "file_edit", title: "tests/ui/rightSidebar/timeline.test.ts" },
-    anchor: { toolCallId: "tool-file-edit-5" },
   }),
-  makeEvent("file-edit-4", "tool.call", 13, {
+  makeEvent("heartbeat-2", "heartbeat.dispatched", 13, {
+    source: { system: "heartbeat" },
     status: "completed",
-    data: { toolName: "file_edit", title: "TimelinePanel.stories.tsx" },
-    anchor: { toolCallId: "tool-file-edit-4" },
   }),
-  makeEvent("file-edit-3", "tool.call", 12, {
+  makeEvent("heartbeat-1", "heartbeat.dispatched", 12, {
+    source: { system: "heartbeat" },
     status: "completed",
-    data: { toolName: "file_edit", title: "timelinePresentation.ts" },
-    anchor: { toolCallId: "tool-file-edit-3" },
   }),
-  makeEvent("file-edit-2", "tool.call", 11, {
+  makeEvent("heartbeat-configured", "heartbeat.configured", 11, {
+    source: { system: "heartbeat" },
     status: "completed",
-    data: { toolName: "file_edit", title: "TimelinePanel.tsx" },
-    anchor: { toolCallId: "tool-file-edit-2" },
+    data: { digest: "Heartbeat is enabled for this workspace at every 30 minutes." },
   }),
-  makeEvent("file-edit-1", "tool.call", 10, {
-    status: "completed",
-    data: { toolName: "file_edit", title: "WorkspaceStore.ts" },
-    anchor: { toolCallId: "tool-file-edit-1" },
+  makeEvent("goal-set", "goal.set", 10, {
+    source: { system: "goal" },
+    status: "started",
+    data: { digest: "Land the timeline panel with green checks and a Codex approval" },
   }),
-  makeEvent("future-event", "future.kind", 9, {
+  makeEvent("workflow-attached", "workflow.attached", 9, {
+    data: { runId: "wfr_timeline_story" },
+    anchor: { toolCallId: "tool-workflow-1" },
+  }),
+  makeEvent("agent-picked-up", "agent.event", 8, {
+    source: { system: "agent", key: "timeline-event:picked-up" },
+    data: {
+      description: "Picked up review feedback on the retry backoff and rewrote the schedule",
+      category: "picked_up",
+    },
+    anchor: { toolCallId: "tool-timeline-event-1" },
+  }),
+  makeEvent("future-event", "future.kind", 7, {
     source: { system: "settings", key: "future-fixture" },
-    data: { label: "Forward-compatible event" },
+    data: { digest: "Forward-compatible event" },
   }),
-  makeEvent("user-turn", "turn.user", 8, {
-    data: { title: "Add Timeline behavior coverage and responsive stories" },
-    anchor: { messageId: "user-8" },
+  makeEvent("user-turn", "turn.user", 6, {
+    data: { digest: "Add Timeline behavior coverage and responsive stories" },
+    anchor: { messageId: "user-6" },
   }),
 ];
 

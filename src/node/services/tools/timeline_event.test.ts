@@ -5,15 +5,15 @@ import { getToolsForModel } from "@/common/utils/tools/tools";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
 import { TimelineService } from "@/node/services/timelineService";
 import { createTestToolConfig, getTestDeps } from "./testHelpers";
-import { createTimelineMarkTool } from "./timeline_mark";
+import { createTimelineEventTool } from "./timeline_event";
 
-const WORKSPACE_ID = "timeline-mark-workspace";
+const WORKSPACE_ID = "timeline-event-workspace";
 
 function options(toolCallId: string): ToolExecutionOptions<unknown> {
   return { toolCallId, messages: [], context: undefined };
 }
 
-describe("timeline_mark tool", () => {
+describe("timeline_event tool", () => {
   let timelineService: TimelineService;
   let tempDir: string;
   let cleanup: () => Promise<void>;
@@ -32,15 +32,15 @@ describe("timeline_mark tool", () => {
     await cleanup();
   });
 
-  test("appends an agent mark", async () => {
-    const tool = createTimelineMarkTool({
+  test("appends an agent event", async () => {
+    const tool = createTimelineEventTool({
       ...createTestToolConfig(tempDir, { workspaceId: WORKSPACE_ID }),
       timelineService,
     });
 
     const result: unknown = await tool.execute!(
-      { label: "Backend complete", detail: "All service tests pass", category: "milestone" },
-      options("mark-1")
+      { description: "Committed the backend slice", category: "milestone" },
+      options("event-1")
     );
     await timelineService.flush();
 
@@ -48,29 +48,28 @@ describe("timeline_mark tool", () => {
     const page = await timelineService.list(WORKSPACE_ID, {});
     expect(page.events).toHaveLength(1);
     expect(page.events[0]).toMatchObject({
-      kind: "agent.mark",
-      source: { system: "agent", key: "timeline-mark:mark-1" },
-      anchor: { toolCallId: "mark-1" },
+      kind: "agent.event",
+      source: { system: "agent", key: "timeline-event:event-1" },
+      anchor: { toolCallId: "event-1" },
       data: {
-        label: "Backend complete",
-        detail: "All service tests pass",
+        description: "Committed the backend slice",
         category: "milestone",
       },
     });
   });
 
-  test("drops duplicate labels and marks over the per-turn cap", async () => {
-    const tool = createTimelineMarkTool({
+  test("drops duplicate descriptions and events over the per-turn cap", async () => {
+    const tool = createTimelineEventTool({
       ...createTestToolConfig(tempDir, { workspaceId: WORKSPACE_ID }),
       timelineService,
     });
 
-    const first: unknown = await tool.execute!({ label: "One" }, options("mark-1"));
-    const duplicate: unknown = await tool.execute!({ label: "One" }, options("mark-2"));
+    const first: unknown = await tool.execute!({ description: "One" }, options("event-1"));
+    const duplicate: unknown = await tool.execute!({ description: "One" }, options("event-2"));
     for (let index = 2; index <= 5; index++) {
-      await tool.execute!({ label: `Mark ${index}` }, options(`mark-${index + 1}`));
+      await tool.execute!({ description: `Event ${index}` }, options(`event-${index + 1}`));
     }
-    const overLimit: unknown = await tool.execute!({ label: "Mark 6" }, options("mark-7"));
+    const overLimit: unknown = await tool.execute!({ description: "Event 6" }, options("event-7"));
     await timelineService.flush();
 
     expect(first).toEqual({ success: true, recorded: true });
@@ -93,14 +92,14 @@ describe("timeline_mark tool", () => {
       WORKSPACE_ID,
       initStateManager
     );
-    expect(tools.timeline_mark).toBeUndefined();
+    expect(tools.timeline_event).toBeUndefined();
   });
 
   test("is absent from the allowlist when disabled", () => {
     expect(
       getAvailableTools("anthropic:claude-sonnet-4-20250514", {
-        enableTimelineMark: false,
+        enableTimelineEvent: false,
       })
-    ).not.toContain("timeline_mark");
+    ).not.toContain("timeline_event");
   });
 });

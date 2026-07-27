@@ -8,7 +8,6 @@ export const TIMELINE_EVENT_KINDS = [
   "turn.failed",
   "retry.scheduled",
   "retry.abandoned",
-  "tool.call",
   "compaction.triggered",
   "compaction.completed",
   "context.reset",
@@ -17,6 +16,7 @@ export const TIMELINE_EVENT_KINDS = [
   "task.reported",
   "task.interrupted",
   "workflow.attached",
+  "heartbeat.configured",
   "heartbeat.dispatched",
   "heartbeat.skipped",
   "goal.set",
@@ -24,15 +24,22 @@ export const TIMELINE_EVENT_KINDS = [
   "goal.budget_limited",
   "goal.continuation_dispatched",
   "settings.changed",
-  "agent.mark",
-  "agent.status",
+  "agent.event",
   "agent.plan_proposed",
-  "agent.todo_completed",
   "agent.notified",
 ] as const;
 
 export const TimelineEventKindSchema = z.enum(TIMELINE_EVENT_KINDS);
 export type TimelineEventKind = z.infer<typeof TimelineEventKindSchema>;
+
+// Kinds recorded by earlier builds of the timeline experiment. Unknown kinds render generically,
+// so retired ones stay hidden instead of resurfacing the per-tool-call noise the feed dropped.
+export const TIMELINE_RETIRED_KINDS: ReadonlySet<string> = new Set([
+  "tool.call",
+  "agent.mark",
+  "agent.status",
+  "agent.todo_completed",
+]);
 
 export const TimelineSourceSchema = z
   .object({
@@ -63,7 +70,6 @@ const TimelineSettingValueSchema = z.union([z.string(), z.number(), z.boolean(),
 
 export const TimelineEventDataSchema = z
   .object({
-    toolName: z.string().optional(),
     model: z.string().optional(),
     mode: z.string().optional(),
     agentId: z.string().optional(),
@@ -72,8 +78,7 @@ export const TimelineEventDataSchema = z
     durationMs: z.number().nonnegative().optional(),
     title: z.string().optional(),
     digest: z.string().optional(),
-    label: z.string().optional(),
-    detail: z.string().optional(),
+    description: z.string().optional(),
     category: z.enum(["picked_up", "milestone", "decision", "blocker", "handoff"]).optional(),
     usagePercent: z.number().optional(),
     newUsagePercent: z.number().optional(),
@@ -138,10 +143,7 @@ export const TimelinePreviewInputSchema = TimelineAnchorSchema;
 export const TimelinePreviewSchema = z
   .object({
     role: z.enum(["system", "user", "assistant"]),
-    timestamp: z.number().optional(),
     textExcerpt: z.string().max(600),
-    toolName: z.string().optional(),
-    status: TimelineStatusSchema.optional(),
   })
   .strict();
 

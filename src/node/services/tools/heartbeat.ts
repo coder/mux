@@ -42,7 +42,7 @@ function summarize(
 function buildSuccessResult(
   action: HeartbeatToolArgs["action"],
   settings: WorkspaceHeartbeatSettings | null
-): HeartbeatToolResult {
+): Extract<HeartbeatToolResult, { success: true }> {
   return {
     success: true,
     action,
@@ -65,6 +65,16 @@ export const createHeartbeatTool: ToolFactory = (config) =>
           return { success: false, error: "Heartbeat service is unavailable" };
         }
 
+        const recordConfigured = (result: HeartbeatToolResult & { success: true }) => {
+          config.timelineService?.record(workspaceId, {
+            kind: "heartbeat.configured",
+            source: { system: "heartbeat" },
+            status: "completed",
+            data: { digest: result.summary },
+          });
+          return result;
+        };
+
         if (args.action === "get") {
           const settings = heartbeatService.getHeartbeatSettings(workspaceId);
           return buildSuccessResult(args.action, settings);
@@ -75,7 +85,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
           if (!unsetResult.success) {
             return { success: false, error: unsetResult.error };
           }
-          return buildSuccessResult(args.action, null);
+          return recordConfigured(buildSuccessResult(args.action, null));
         }
 
         const settingsUpdate: WorkspaceHeartbeatSettingsUpdate = {};
@@ -107,7 +117,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
         }
 
         const settings = setResult.data;
-        return buildSuccessResult(args.action, settings);
+        return recordConfigured(buildSuccessResult(args.action, settings));
       } catch (error) {
         return { success: false, error: getErrorMessage(error) };
       }

@@ -5,17 +5,15 @@ import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import type { TimelineEvent, TimelineEventDraft } from "@/common/orpc/schemas/timeline";
 import type { MuxMessage } from "@/common/types/message";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
-import { setTodosForSessionDir } from "./tools/todo";
 import { TimelineService } from "./timelineService";
-import { WorkspaceService } from "./workspaceService";
 
 const WORKSPACE_ID = "timeline-test-workspace";
 
-function draft(key: string, kind = "agent.mark"): TimelineEventDraft {
+function draft(key: string, kind = "agent.event"): TimelineEventDraft {
   return {
     kind,
     source: { system: "agent", key },
-    data: { label: key },
+    data: { description: key },
   };
 }
 
@@ -111,7 +109,7 @@ describe("TimelineService", () => {
     await service.flush();
 
     const page = await service.list(WORKSPACE_ID, {});
-    expect(page.events.map((event) => event.data?.label)).toEqual(["valid-2", "valid-1"]);
+    expect(page.events.map((event) => event.data?.description)).toEqual(["valid-2", "valid-1"]);
   });
 
   test("preserves unknown event kinds", async () => {
@@ -128,6 +126,43 @@ describe("TimelineService", () => {
 
     const page = await service.list(WORKSPACE_ID, {});
     expect(page.events).toEqual([unknownEvent]);
+  });
+
+  test("hides events recorded under retired kinds", async () => {
+    const retired: TimelineEvent = {
+      v: 1,
+      seq: 1,
+      id: "retired-event",
+      ts: 100,
+      kind: "tool.call",
+      source: { system: "chat" },
+    };
+    await fs.mkdir(config.getSessionDir(WORKSPACE_ID), { recursive: true });
+    await fs.writeFile(timelinePath(), `${JSON.stringify(retired)}\n`, "utf-8");
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events).toEqual([]);
+  });
+
+  test("previews a tool anchor with its readable input field", async () => {
+    await historyService.appendToHistory(WORKSPACE_ID, {
+      id: "assistant-tool",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "call-1",
+          toolName: "task",
+          state: "output-available",
+          input: { title: "Investigate retry backoff", run_in_background: false },
+          output: { taskId: "task-1", reportMarkdown: "long report" },
+        },
+      ],
+      metadata: {},
+    });
+
+    const preview = await service.previewAnchor(WORKSPACE_ID, { toolCallId: "call-1" });
+    expect(preview).toEqual({ role: "assistant", textExcerpt: "Investigate retry backoff" });
   });
 
   test("does not create a file when the experiment is off", async () => {
@@ -183,7 +218,6 @@ describe("TimelineService", () => {
     const preview = await service.previewAnchor(WORKSPACE_ID, { messageId: "target" });
     expect(preview).toEqual({
       role: "user",
-      timestamp: 123,
       textExcerpt: "Archived target text",
     });
 
@@ -197,62 +231,6 @@ describe("TimelineService", () => {
       "utf-8"
     );
     expect(active).not.toContain('"id":"target"');
-  });
-
-  test("unchanged agent status appends nothing", async () => {
-    const workspaceService = Object.create(WorkspaceService.prototype) as WorkspaceService;
-    Object.assign(workspaceService, {
-      lastAgentStatusByWorkspace: new Map(),
-      timelineRecorder: service,
-      emitWorkspaceActivityUpdate: () => Promise.resolve(),
-    });
-
-    await workspaceService.updateAgentStatus(WORKSPACE_ID, {
-      emoji: "working",
-      message: "Running",
-    });
-    await workspaceService.updateAgentStatus(WORKSPACE_ID, {
-      emoji: "working",
-      message: "Running",
-    });
-    await service.flush();
-
-    const page = await service.list(WORKSPACE_ID, {});
-    expect(page.events.map((event) => event.kind)).toEqual(["agent.status"]);
-  });
-
-  test("todo harvest appends only newly completed items", async () => {
-    const workspaceService = Object.create(WorkspaceService.prototype) as WorkspaceService;
-    Object.assign(workspaceService, {
-      config,
-      completedTodosByWorkspace: new Map(),
-      todoStatusUpdateQueue: new Map(),
-      timelineRecorder: service,
-      emitWorkspaceActivityUpdate: () => Promise.resolve(),
-    });
-    const updateTodoStatusFromStorage = (
-      workspaceService as unknown as {
-        updateTodoStatusFromStorage: (workspaceId: string) => Promise<void>;
-      }
-    ).updateTodoStatusFromStorage.bind(workspaceService);
-    const sessionDir = config.getSessionDir(WORKSPACE_ID);
-
-    await setTodosForSessionDir(WORKSPACE_ID, sessionDir, [
-      { content: "Already done", status: "completed" },
-      { content: "Finish backend", status: "in_progress" },
-    ]);
-    await updateTodoStatusFromStorage(WORKSPACE_ID);
-    await setTodosForSessionDir(WORKSPACE_ID, sessionDir, [
-      { content: "Already done", status: "completed" },
-      { content: "Finish backend", status: "completed" },
-    ]);
-    await updateTodoStatusFromStorage(WORKSPACE_ID);
-    await service.flush();
-
-    const page = await service.list(WORKSPACE_ID, {});
-    expect(page.events.map((event) => [event.kind, event.data?.digest])).toEqual([
-      ["agent.todo_completed", "Finish backend"],
-    ]);
   });
 
   test("history compaction leaves the timeline bytes unchanged", async () => {

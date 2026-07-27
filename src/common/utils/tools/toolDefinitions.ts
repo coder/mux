@@ -2148,23 +2148,21 @@ export const TOOL_DEFINITIONS = {
       "Do not use it for the final result—the final assistant message completes the sub-agent task.",
     schema: AgentReportToolArgsSchema,
   },
-  timeline_mark: {
+  timeline_event: {
     description:
-      "Add a durable timeline marker only at one of these five trigger moments: " +
-      "1. external input was picked up, such as a review comment or CI failure; " +
-      "2. a milestone was completed; " +
-      "3. the approach changed, including why; " +
-      "4. a blocker was hit or resolved; " +
-      "5. work was handed off. " +
-      "Do not use this tool for general narration.",
+      "Record one notable step on the durable workspace timeline, which is a birds-eye record of the work rather than a tool log. " +
+      "Call it when: a notable implementation step landed; work was committed, pushed, or opened as a PR; " +
+      "external input was picked up, such as a review comment, CI failure, or issue; " +
+      "the approach changed, including why; a blocker was hit or resolved; work was handed off. " +
+      "Describe what happened in one plain sentence. " +
+      "Prompts, goals, heartbeats, sub-agents, and workflows are already recorded automatically, so do not restate them or narrate routine tool use.",
     schema: z
       .object({
-        label: z.string().min(1).max(120).describe("Short label for the timeline marker."),
-        detail: z.string().max(500).nullish().describe("Optional supporting detail."),
+        description: z.string().min(1).max(300).describe("One sentence describing what happened."),
         category: z
           .enum(["picked_up", "milestone", "decision", "blocker", "handoff"])
           .nullish()
-          .describe("Optional marker category."),
+          .describe("Optional event category."),
       })
       .strict(),
   },
@@ -3029,7 +3027,7 @@ export function getAvailableTools(
     enableDynamicWorkflows?: boolean;
     /** Whether the agent memory tool is available (memory experiment enabled). */
     enableMemory?: boolean;
-    enableTimelineMark?: boolean;
+    enableTimelineEvent?: boolean;
     /** Whether tool_catalog_search is available (tool-search experiment + deferred MCP tools present). */
     enableToolSearch?: boolean;
     /**
@@ -3049,7 +3047,7 @@ export function getAvailableTools(
   const enableAdvisor = options?.enableAdvisor ?? false;
   const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
   const enableMemory = options?.enableMemory ?? false;
-  const enableTimelineMark = options?.enableTimelineMark ?? false;
+  const enableTimelineEvent = options?.enableTimelineEvent ?? false;
   const enableToolSearch = options?.enableToolSearch ?? false;
   const enableReviewPane = options?.enableReviewPane ?? true;
 
@@ -3081,7 +3079,7 @@ export function getAvailableTools(
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
     ...(enableMemory ? ["memory"] : []),
-    ...(enableTimelineMark ? ["timeline_mark"] : []),
+    ...(enableTimelineEvent ? ["timeline_event"] : []),
     ...(enableAdvisor ? ["advisor"] : []),
     ...(enableToolSearch ? ["tool_catalog_search"] : []),
     "ask_user_question",

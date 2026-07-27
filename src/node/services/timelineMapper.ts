@@ -2,21 +2,6 @@ import type { TimelineEventData, TimelineEventDraft } from "@/common/orpc/schema
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { getContextBoundaryKind } from "@/common/utils/messages/compactionBoundary";
-import {
-  isFailedToolCallResult,
-  isNotableToolCall,
-  readTimelineStringField,
-} from "./timelineNotability";
-
-interface OpenToolCall {
-  workspaceId: string;
-  messageId: string;
-  toolCallId: string;
-  toolName: string;
-  args: unknown;
-  timestamp: number;
-  executionStartedAt?: number;
-}
 
 interface OpenStream {
   workspaceId: string;
@@ -29,7 +14,6 @@ interface OpenStream {
 }
 
 export interface TimelineMapperState {
-  readonly openToolCalls: ReadonlyMap<string, OpenToolCall>;
   readonly openStreams: ReadonlyMap<string, OpenStream>;
 }
 
@@ -39,15 +23,11 @@ export interface TimelineMapperResult {
 }
 
 export function createTimelineMapperState(): TimelineMapperState {
-  return { openToolCalls: new Map(), openStreams: new Map() };
+  return { openStreams: new Map() };
 }
 
 function eventKey(...parts: Array<string | number | undefined>): string {
   return parts.filter((part) => part != null).join(":");
-}
-
-function toolKey(workspaceId: string, toolCallId: string): string {
-  return eventKey(workspaceId, toolCallId);
 }
 
 function streamKey(workspaceId: string, messageId: string): string {
@@ -57,26 +37,6 @@ function streamKey(workspaceId: string, messageId: string): string {
 function truncateDigest(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length <= 120 ? normalized : `${normalized.slice(0, 117)}...`;
-}
-
-function toolDigest(toolName: string, args: unknown): string | undefined {
-  if (toolName === "bash") {
-    const script = readTimelineStringField(args, "script");
-    return script != null && script.trim() !== "" ? truncateDigest(script) : undefined;
-  }
-
-  for (const field of ["path", "title", "label", "display_name"] as const) {
-    const value = readTimelineStringField(args, field);
-    if (value != null && value.trim() !== "") {
-      return truncateDigest(value);
-    }
-  }
-
-  if (toolName === "memory") {
-    return readTimelineStringField(args, "command");
-  }
-
-  return undefined;
 }
 
 function messageTimestamp(
@@ -104,6 +64,12 @@ function mapMessage(
   const epoch = event.metadata?.compactionEpoch;
 
   if (event.role === "user") {
+    const digest = truncateDigest(
+      event.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n")
+    );
     return [
       {
         ts,
@@ -111,6 +77,7 @@ function mapMessage(
         source: { system: "chat", key: eventKey("message", event.id) },
         anchor,
         ...(epoch != null ? { epoch } : {}),
+        ...(digest !== "" ? { data: { digest } } : {}),
       },
     ];
   }
@@ -143,27 +110,11 @@ function mapMessage(
   return [];
 }
 
-function toolData(openTool: OpenToolCall | undefined, toolName: string, durationMs?: number) {
-  const digest = toolDigest(toolName, openTool?.args);
-  return {
-    toolName,
-    ...(durationMs != null ? { durationMs } : {}),
-    ...(digest != null ? { digest } : {}),
-  };
-}
-
 function clearMessageState(
   state: TimelineMapperState,
   workspaceId: string | undefined,
   messageId: string
 ): TimelineMapperState {
-  const openToolCalls = new Map(state.openToolCalls);
-  for (const [key, tool] of openToolCalls) {
-    if (tool.messageId === messageId && (workspaceId == null || tool.workspaceId === workspaceId)) {
-      openToolCalls.delete(key);
-    }
-  }
-
   const openStreams = new Map(state.openStreams);
   for (const [key, stream] of openStreams) {
     if (
@@ -173,7 +124,7 @@ function clearMessageState(
       openStreams.delete(key);
     }
   }
-  return { openToolCalls, openStreams };
+  return { openStreams };
 }
 
 export function mapChatEventToTimeline(
@@ -230,47 +181,23 @@ export function mapChatEventToTimeline(
 
     case "stream-abort": {
       const openStream = state.openStreams.get(streamKey(event.workspaceId, event.messageId));
-      const drafts: TimelineEventDraft[] = [
-        {
-          ts: receivedAt,
-          kind: "turn.interrupted",
-          source: { system: "chat", key: eventKey("stream-abort", event.messageId) },
-          anchor: {
-            ...(openStream != null ? { historySequence: openStream.historySequence } : {}),
-            messageId: event.messageId,
-          },
-          status: "interrupted",
-          data: {
-            ...(event.abortReason != null ? { reason: event.abortReason } : {}),
-            ...(event.metadata?.duration != null ? { durationMs: event.metadata.duration } : {}),
-          },
-        },
-      ];
-
-      for (const openTool of state.openToolCalls.values()) {
-        if (
-          openTool.workspaceId !== event.workspaceId ||
-          openTool.messageId !== event.messageId ||
-          !isNotableToolCall(openTool.toolName, openTool.args, { success: true })
-        ) {
-          continue;
-        }
-
-        drafts.push({
-          ts: receivedAt,
-          kind: "tool.call",
-          source: { system: "chat", key: eventKey("tool-interrupted", openTool.toolCallId) },
-          anchor: {
-            messageId: openTool.messageId,
-            toolCallId: openTool.toolCallId,
-          },
-          status: "interrupted",
-          data: toolData(openTool, openTool.toolName),
-        });
-      }
-
       return {
-        drafts,
+        drafts: [
+          {
+            ts: receivedAt,
+            kind: "turn.interrupted",
+            source: { system: "chat", key: eventKey("stream-abort", event.messageId) },
+            anchor: {
+              ...(openStream != null ? { historySequence: openStream.historySequence } : {}),
+              messageId: event.messageId,
+            },
+            status: "interrupted",
+            data: {
+              ...(event.abortReason != null ? { reason: event.abortReason } : {}),
+              ...(event.metadata?.duration != null ? { durationMs: event.metadata.duration } : {}),
+            },
+          },
+        ],
         state: clearMessageState(state, event.workspaceId, event.messageId),
       };
     }
@@ -297,60 +224,6 @@ export function mapChatEventToTimeline(
           event.messageId
         ),
       };
-
-    case "tool-call-start": {
-      const openToolCalls = new Map(state.openToolCalls);
-      openToolCalls.set(toolKey(event.workspaceId, event.toolCallId), {
-        workspaceId: event.workspaceId,
-        messageId: event.messageId,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        args: event.args,
-        timestamp: event.timestamp,
-        ...(event.executionStartedAt != null
-          ? { executionStartedAt: event.executionStartedAt }
-          : {}),
-      });
-      return { drafts: [], state: { ...state, openToolCalls } };
-    }
-
-    case "tool-call-execution-start": {
-      const key = toolKey(event.workspaceId, event.toolCallId);
-      const openTool = state.openToolCalls.get(key);
-      if (openTool == null) {
-        return { drafts: [], state };
-      }
-      const openToolCalls = new Map(state.openToolCalls);
-      openToolCalls.set(key, { ...openTool, executionStartedAt: event.timestamp });
-      return { drafts: [], state: { ...state, openToolCalls } };
-    }
-
-    case "tool-call-end": {
-      const key = toolKey(event.workspaceId, event.toolCallId);
-      const openTool = state.openToolCalls.get(key);
-      const openToolCalls = new Map(state.openToolCalls);
-      openToolCalls.delete(key);
-      if (!isNotableToolCall(event.toolName, openTool?.args, event.result)) {
-        return { drafts: [], state: { ...state, openToolCalls } };
-      }
-
-      const startedAt = openTool?.executionStartedAt ?? openTool?.timestamp;
-      const durationMs = startedAt != null ? Math.max(0, event.timestamp - startedAt) : undefined;
-      const failed = isFailedToolCallResult(event.result);
-      return {
-        drafts: [
-          {
-            ts: event.timestamp,
-            kind: "tool.call",
-            source: { system: "chat", key: eventKey("tool-end", event.toolCallId) },
-            anchor: { messageId: event.messageId, toolCallId: event.toolCallId },
-            status: failed ? "failed" : "completed",
-            data: toolData(openTool, event.toolName, durationMs),
-          },
-        ],
-        state: { ...state, openToolCalls },
-      };
-    }
 
     case "auto-compaction-triggered":
       return {

@@ -5,6 +5,7 @@ import * as path from "path";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import {
+  TIMELINE_RETIRED_KINDS,
   TimelineEventSchema,
   type TimelineAnchor,
   type TimelineEvent,
@@ -24,7 +25,6 @@ import {
   mapChatEventToTimeline,
   type TimelineMapperState,
 } from "@/node/services/timelineMapper";
-import { isFailedToolCallResult } from "@/node/services/timelineNotability";
 import { isErrnoWithCode } from "@/node/utils/fs";
 import type { TimelineRecorder } from "@/node/services/timelineRecorder";
 import type { WorkspaceService } from "@/node/services/workspaceService";
@@ -32,6 +32,24 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 export const TIMELINE_DEFAULT_PAGE_LIMIT = 50;
 const REVERSE_READ_CHUNK_SIZE = 256 * 1024;
 const RECENT_SOURCE_KEY_LIMIT = 1_000;
+
+const TOOL_PREVIEW_TEXT_FIELDS = ["title", "description", "prompt", "objective", "message"];
+
+function readPreviewText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value !== "object" || value === null) {
+    return "";
+  }
+  for (const field of TOOL_PREVIEW_TEXT_FIELDS) {
+    const candidate = (value as Record<string, unknown>)[field];
+    if (typeof candidate === "string" && candidate.trim() !== "") {
+      return candidate;
+    }
+  }
+  return "";
+}
 
 type TimelineAppendedListener = (event: { workspaceId: string; events: TimelineEvent[] }) => void;
 
@@ -106,6 +124,9 @@ export class TimelineService implements TimelineRecorder {
       }
 
       if (input.cursor != null && parsed.seq >= input.cursor) {
+        return true;
+      }
+      if (TIMELINE_RETIRED_KINDS.has(parsed.kind)) {
         return true;
       }
       if (events.length < limit) {
@@ -330,10 +351,7 @@ export class TimelineService implements TimelineRecorder {
       }
       return {
         role: "assistant",
-        timestamp: toolPart.timestamp ?? message.metadata?.timestamp,
         textExcerpt: this.truncateExcerpt(this.toolPartText(toolPart)),
-        toolName: toolPart.toolName,
-        status: this.toolPartStatus(toolPart, message.metadata?.partial === true),
       };
     }
 
@@ -343,36 +361,18 @@ export class TimelineService implements TimelineRecorder {
       .join("\n");
     return {
       role: message.role,
-      timestamp: message.metadata?.timestamp,
       textExcerpt: this.truncateExcerpt(text),
-      ...(message.metadata?.error != null
-        ? { status: "failed" as const }
-        : message.metadata?.partial === true
-          ? { status: "interrupted" as const }
-          : {}),
     };
   }
 
+  // Serialized tool payloads are unreadable in a preview card, so surface the human-readable
+  // field the call was built around (a task title, a prompt) and show nothing otherwise.
   private toolPartText(part: MuxToolPart): string {
-    const value = part.state === "output-available" ? part.output : part.input;
-    if (typeof value === "string") {
-      return value;
+    const fromInput = readPreviewText(part.input);
+    if (fromInput !== "") {
+      return fromInput;
     }
-    try {
-      return JSON.stringify(value) ?? "";
-    } catch {
-      return "";
-    }
-  }
-
-  private toolPartStatus(part: MuxToolPart, isPartial: boolean): TimelinePreview["status"] {
-    if (part.state === "output-available") {
-      return isFailedToolCallResult(part.output) ? "failed" : "completed";
-    }
-    if (part.state === "output-redacted") {
-      return part.failed === true ? "failed" : "completed";
-    }
-    return isPartial ? "interrupted" : "started";
+    return part.state === "output-available" ? readPreviewText(part.output) : "";
   }
 
   private truncateExcerpt(value: string): string {
@@ -384,9 +384,6 @@ export class TimelineService implements TimelineRecorder {
     this.nextSequences.delete(workspaceId);
     this.recentSourceKeys.delete(workspaceId);
     this.mapperState = {
-      openToolCalls: new Map(
-        [...this.mapperState.openToolCalls].filter(([, tool]) => tool.workspaceId !== workspaceId)
-      ),
       openStreams: new Map(
         [...this.mapperState.openStreams].filter(([, stream]) => stream.workspaceId !== workspaceId)
       ),

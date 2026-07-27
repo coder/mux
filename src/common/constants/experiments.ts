@@ -221,7 +221,8 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
   [EXPERIMENT_IDS.TIMELINE]: {
     id: EXPERIMENT_IDS.TIMELINE,
     name: "Timeline",
-    description: "Record a durable, curated event timeline for each workspace",
+    description:
+      "Record a durable birds-eye timeline per workspace: prompts, agent events, goals, heartbeats, sub-agents, and workflows",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
