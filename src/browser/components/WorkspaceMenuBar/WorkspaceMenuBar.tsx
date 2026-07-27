@@ -157,6 +157,8 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   // Popover state for notification settings (interactive on click)
   const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+  const [detailsPopoverOpen, setDetailsPopoverOpen] = useState(false);
+  const [detailsTooltipOpen, setDetailsTooltipOpen] = useState(false);
 
   const handleOpenTerminal = useCallback(() => {
     // On mobile touch devices, always use popout since the right sidebar is hidden
@@ -406,6 +408,17 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, [setNotifyOnResponse]);
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SHOW_WORKSPACE_DETAILS)) {
+        e.preventDefault();
+        setDetailsPopoverOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   // Keybind for opening MCP configuration
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -519,17 +532,27 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         {/* A button, not a bare icon: these details are the only place the project,
             workspace name, and path appear, and touch has no hover while keyboard
             users need a focus target. */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="text-muted hover:text-foreground flex shrink-0 cursor-pointer items-center border-0 bg-transparent p-0 transition-colors"
-              aria-label="Workspace details"
-              onKeyDown={stopKeyboardPropagation}
-            >
-              <Info className="h-3.5 w-3.5" />
-            </button>
-          </PopoverTrigger>
+        <Popover open={detailsPopoverOpen} onOpenChange={setDetailsPopoverOpen}>
+          <Tooltip
+            open={detailsTooltipOpen && !detailsPopoverOpen}
+            onOpenChange={setDetailsTooltipOpen}
+          >
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="text-muted hover:text-foreground focus-visible:ring-accent flex shrink-0 cursor-pointer items-center border-0 bg-transparent p-0 transition-colors focus-visible:ring-1"
+                  aria-label="Workspace details"
+                  onKeyDown={stopKeyboardPropagation}
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent>
+              Workspace details ({formatKeybind(KEYBINDS.SHOW_WORKSPACE_DETAILS)})
+            </TooltipContent>
+          </Tooltip>
           <PopoverContent align="start" className="flex flex-col gap-0.5 text-xs">
             <span className="font-mono">{projectLabel}</span>
             <span>{workspaceName}</span>

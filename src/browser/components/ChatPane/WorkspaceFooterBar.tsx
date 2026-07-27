@@ -198,26 +198,46 @@ function FooterUsageStats(props: { workspaceId: string }) {
 
 function FooterLastPrompt(props: { workspaceId: string }) {
   const lastPrompt = useWorkspaceLastUserPrompt(props.workspaceId);
+  const [open, setOpen] = React.useState(false);
+  const [tooltipOpen, setTooltipOpen] = React.useState(false);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SHOW_LAST_PROMPT)) {
+        e.preventDefault();
+        setOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   if (lastPrompt === null) {
     return null;
   }
 
   return (
-    <Popover>
-      {/* A button, not a hover-only tooltip: the prompt text is the whole point of
-          this item, and touch has no hover while keyboard users need a focus target. */}
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="text-muted hover:text-foreground focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 transition-colors focus-visible:ring-1"
-          data-testid="workspace-footer-last-prompt"
-          onKeyDown={stopKeyboardPropagation}
-        >
-          <MessageCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
-          Last prompt
-        </button>
-      </PopoverTrigger>
+    <Popover open={open} onOpenChange={setOpen}>
+      {/* The prompt itself opens in a popover rather than a hover tooltip: touch has no
+          hover, and keyboard users need a focus target. The tooltip only carries the hint. */}
+      <Tooltip open={tooltipOpen && !open} onOpenChange={setTooltipOpen}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="text-muted hover:text-foreground focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 transition-colors focus-visible:ring-1"
+              data-testid="workspace-footer-last-prompt"
+              onKeyDown={stopKeyboardPropagation}
+            >
+              <MessageCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+              Last prompt
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          Show last prompt ({formatKeybind(KEYBINDS.SHOW_LAST_PROMPT)})
+        </TooltipContent>
+      </Tooltip>
       <PopoverContent
         side="top"
         align="end"

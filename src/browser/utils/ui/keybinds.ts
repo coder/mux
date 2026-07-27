@@ -504,6 +504,14 @@ export const KEYBINDS = {
   // "G" for Git
   TOGGLE_DRIFT_MODE: { key: "G", ctrl: true, shift: true },
 
+  /** Reveal the header's workspace details popover (project, name, path) */
+  // "D" for Details
+  SHOW_WORKSPACE_DETAILS: { key: "D", ctrl: true, shift: true },
+
+  /** Reveal the footer's last user prompt popover */
+  // "L" for Last prompt
+  SHOW_LAST_PROMPT: { key: "L", ctrl: true, shift: true },
+
   /** Confirm action in confirmation dialogs */
   CONFIRM_DIALOG_YES: { key: "y", allowShift: true },
 

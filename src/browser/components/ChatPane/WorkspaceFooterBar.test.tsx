@@ -2,7 +2,7 @@ import "../../../../tests/ui/dom";
 
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
@@ -262,5 +262,21 @@ describe("WorkspaceFooterBar last prompt", () => {
     const { queryByTestId } = renderFooter();
 
     expect(queryByTestId("workspace-footer-last-prompt")).not.toBeNull();
+  });
+
+  it("toggles the prompt popover from the keyboard shortcut", () => {
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(
+      () => "ship the footer"
+    );
+
+    const { getByTestId } = renderFooter();
+    const trigger = getByTestId("workspace-footer-last-prompt");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.keyDown(window, { key: "L", ctrlKey: true, shiftKey: true });
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.keyDown(window, { key: "L", ctrlKey: true, shiftKey: true });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 });
