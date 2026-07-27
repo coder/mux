@@ -15,6 +15,7 @@ import {
   Globe,
   Sparkles,
   Target,
+  ListTree,
   Terminal as TerminalIcon,
   Workflow,
   X,
@@ -253,6 +254,15 @@ export const WorkflowsTabLabel: React.FC<WorkflowsTabLabelProps> = ({ workspaceI
 
 export function OutputTabLabel() {
   return <>Output</>;
+}
+
+export function TimelineTabLabel() {
+  return (
+    <span className="inline-flex items-center gap-1">
+      <ListTree className="h-3 w-3 shrink-0" />
+      Timeline
+    </span>
+  );
 }
 
 export function MemoryTabLabel() {

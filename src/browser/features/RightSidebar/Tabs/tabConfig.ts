@@ -62,6 +62,13 @@ const TAB_CONFIG_DEF = {
     defaultOrder: 36,
     paletteKeywords: ["workflow", "workflows", "orchestration", "agents", "run"],
   },
+  timeline: {
+    name: "Timeline",
+    contentClassName: "overflow-hidden p-0",
+    featureFlag: EXPERIMENT_IDS.TIMELINE,
+    defaultOrder: 37,
+    paletteKeywords: ["timeline", "events", "history", "activity"],
+  },
   memory: {
     name: "Memory",
     contentClassName: "overflow-hidden p-0",
