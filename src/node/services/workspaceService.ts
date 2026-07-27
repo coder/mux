@@ -9560,8 +9560,8 @@ export class WorkspaceService extends EventEmitter {
       workspaceId,
       "backward",
       (chunk) => {
-        for (let index = chunk.length - 1; index >= 0; index--) {
-          const message = chunk[index];
+        // Backward iteration already hands each chunk newest-first, so walk it in order.
+        for (const message of chunk) {
           if (message.role !== "user" || message.metadata?.synthetic === true) {
             continue;
           }

@@ -13038,4 +13038,17 @@ describe("WorkspaceService.getLastUserPrompt", () => {
 
     expect(prompt).toBeNull();
   });
+
+  test("returns the newest prompt when several share one reverse-read chunk", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      for (const [index, text] of ["oldest prompt", "middle prompt", "newest prompt"].entries()) {
+        await historyService.appendToHistory(
+          workspaceId,
+          createMuxMessage(`u${index}`, "user", text, { historySequence: index + 1 })
+        );
+      }
+    });
+
+    expect(prompt).toBe("newest prompt");
+  });
 });
