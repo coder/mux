@@ -23,6 +23,7 @@ export const EXPERIMENT_IDS = {
   TOOL_SEARCH: "tool-search",
   CLAUDE_SKILLS_COMPAT: "claude-skills-compat",
   SKILL_DYNAMIC_CONTEXT: "skill-dynamic-context",
+  TIMELINE: "timeline",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -216,6 +217,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     // Executes repo-controlled shell commands: enabling must be a deliberate
     // local user action, never a remote rollout bucket.
     localOverrideOnly: true,
+  },
+  [EXPERIMENT_IDS.TIMELINE]: {
+    id: EXPERIMENT_IDS.TIMELINE,
+    name: "Timeline",
+    description: "Record a durable, curated event timeline for each workspace",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
   },
 };
 
