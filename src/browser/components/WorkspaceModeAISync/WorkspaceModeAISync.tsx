@@ -31,11 +31,6 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     {},
     { listener: true }
   );
-  const [workspaceByAgent] = usePersistedState<WorkspaceAISettingsCache>(
-    getWorkspaceAISettingsByAgentKey(workspaceId),
-    {},
-    { listener: true }
-  );
 
   // User request: this effect runs on mount and during background sync (defaults/config).
   // Only treat *real* agentId changes as explicit (origin "agent"); everything else is "sync"
@@ -58,6 +53,14 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     // Update refs for the next run (even if no model changes).
     prevAgentIdRef.current = normalizedAgentId;
     prevWorkspaceIdRef.current = workspaceId;
+
+    // Read at call time rather than subscribing: this cache only feeds explicit agent
+    // switches, yet every model/thinking/pro-mode change rewrites it, so a subscription
+    // would re-run this effect and re-apply the mode default over the user's own pick.
+    const workspaceByAgent = readPersistedState<WorkspaceAISettingsCache>(
+      getWorkspaceAISettingsByAgentKey(workspaceId),
+      {}
+    );
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
@@ -94,7 +97,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     if (existingReasoning !== resolvedReasoningMode) {
       updatePersistedState(reasoningKey, resolvedReasoningMode);
     }
-  }, [agentAiDefaults, agentId, workspaceByAgent, workspaceId]);
+  }, [agentAiDefaults, agentId, workspaceId]);
 
   return null;
 }

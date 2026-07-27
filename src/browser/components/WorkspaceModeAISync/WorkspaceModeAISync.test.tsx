@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 
 import { AgentProvider } from "@/browser/contexts/AgentContext";
@@ -201,6 +201,46 @@ describe("WorkspaceModeAISync", () => {
       expect(readPersistedState(getModelKey(workspaceId), "")).toBe(existingModel);
       expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(existingThinking);
     });
+  });
+
+  test("keeps the user's model when per-agent settings change without an agent switch", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const configuredModel = "anthropic:claude-haiku-4-5";
+    const userModel = "anthropic:claude-sonnet-4-5";
+
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+      exec: { modelString: configuredModel },
+    });
+    updatePersistedState(getModelKey(workspaceId), configuredModel);
+    updatePersistedState(getThinkingLevelKey(workspaceId), "off");
+
+    renderSync({ workspaceId, agentId: "exec" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(configuredModel);
+    });
+
+    // Picking a model writes both the model key and the per-agent settings cache.
+    act(() => {
+      updatePersistedState(getModelKey(workspaceId), userModel);
+      updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+        exec: { model: userModel, thinkingLevel: "off" },
+      });
+    });
+
+    expect(readPersistedState(getModelKey(workspaceId), "")).toBe(userModel);
+
+    // Changing the thinking level rewrites the same per-agent cache entry.
+    act(() => {
+      updatePersistedState(getThinkingLevelKey(workspaceId), "high");
+      updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+        exec: { model: userModel, thinkingLevel: "high" },
+      });
+    });
+
+    expect(readPersistedState(getModelKey(workspaceId), "")).toBe(userModel);
+    expect(readPersistedState(getThinkingLevelKey(workspaceId), "")).toBe("high");
   });
 
   test("does not inherit base defaults when selected agent has its own partial settings entry", async () => {
