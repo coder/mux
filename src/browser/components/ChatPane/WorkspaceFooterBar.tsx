@@ -245,8 +245,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
           Show last prompt ({formatKeybind(KEYBINDS.SHOW_LAST_PROMPT)})
         </TooltipContent>
       </Tooltip>
-      {/* w-auto overrides the shared trigger-width default: the trigger is a short label, so
-          inheriting its width would wrap the prompt into an unreadable column. */}
+      {/* Let prompt content determine the width instead of matching the trigger. */}
       <PopoverContent
         side="top"
         align="end"

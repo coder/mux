@@ -64,10 +64,7 @@ export interface GitStatusIndicatorViewProps {
   isRefreshing?: boolean;
 }
 
-/**
- * Per the Review 1.4 info bar, the two drift counters read as one quantity rather
- * than two loose numbers in the footer strip.
- */
+// Paired counters form one visual quantity in both footer modes.
 const CounterPill: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <span className="bg-surface-tertiary flex h-5 shrink-0 items-center rounded-md">{children}</span>
 );
@@ -307,19 +304,21 @@ export const GitStatusIndicatorView: React.FC<GitStatusIndicatorViewProps> = ({
   const triggerContent = (
     <>
       {mode === "divergence" ? (
-        <CounterPill>
-          {gitStatus.ahead > 0 && (
-            <span className="flex items-center px-1.5 font-normal">
-              ↑{formatCountAbbrev(gitStatus.ahead)}
-            </span>
-          )}
-          {gitStatus.ahead > 0 && gitStatus.behind > 0 && <CounterPillDivider />}
-          {gitStatus.behind > 0 && (
-            <span className="flex items-center px-1.5 font-normal">
-              ↓{formatCountAbbrev(gitStatus.behind)}
-            </span>
-          )}
-        </CounterPill>
+        hasCommitDivergence && (
+          <CounterPill>
+            {gitStatus.ahead > 0 && (
+              <span className="flex items-center px-1.5 font-normal">
+                ↑{formatCountAbbrev(gitStatus.ahead)}
+              </span>
+            )}
+            {gitStatus.ahead > 0 && gitStatus.behind > 0 && <CounterPillDivider />}
+            {gitStatus.behind > 0 && (
+              <span className="flex items-center px-1.5 font-normal">
+                ↓{formatCountAbbrev(gitStatus.behind)}
+              </span>
+            )}
+          </CounterPill>
+        )
       ) : (
         <>
           {outgoingHasDelta ? (

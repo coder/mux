@@ -89,6 +89,13 @@ describe("GitStatusIndicatorView counter pill", () => {
     expect(pill?.querySelectorAll("span.w-px")).toHaveLength(1);
   });
 
+  it("does not render an empty pill for dirty-only divergence", () => {
+    const { container } = renderIndicator("divergence", gitStatus({ dirty: true }));
+
+    expect(counterPill(container)).toBeNull();
+    expect(container.textContent).toContain("*");
+  });
+
   it("keeps the behind-only fallback outside the pill in line mode", () => {
     const { container } = renderIndicator("line-delta", gitStatus({ behind: 16 }));
 
