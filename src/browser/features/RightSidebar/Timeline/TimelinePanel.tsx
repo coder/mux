@@ -245,16 +245,21 @@ function TimelineEventRow(props: {
         <Icon className="h-3.5 w-3.5" />
       </span>
       <span className="min-w-0">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="text-content-primary min-w-0 truncate text-xs font-medium">{title}</span>
-          {agentAuthored ? (
-            <span className="border-ask-mode/30 text-ask-mode shrink-0 rounded border px-1 py-px text-[9px] font-medium uppercase">
-              {badge}
-            </span>
-          ) : null}
+        {/* Agent descriptions are full sentences, so the title wraps instead of truncating. */}
+        <span className="text-content-primary line-clamp-2 min-w-0 text-xs font-medium">
+          {title}
         </span>
-        {detail ? (
-          <span className="text-muted mt-0.5 block min-w-0 truncate text-[11px]">{detail}</span>
+        {agentAuthored || detail ? (
+          <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
+            {agentAuthored ? (
+              <span className="border-ask-mode/30 text-ask-mode shrink-0 rounded border px-1 py-px text-[9px] font-medium uppercase">
+                {badge}
+              </span>
+            ) : null}
+            {detail ? (
+              <span className="text-muted min-w-0 truncate text-[11px]">{detail}</span>
+            ) : null}
+          </span>
         ) : null}
       </span>
       <time
@@ -479,16 +484,16 @@ function TimelinePreviewCard(props: {
     }
   };
 
-  const eventText = props.event.data?.description ?? props.event.data?.digest ?? null;
+  const title = getTimelineEventTitle(props.event);
+  const digest = props.event.data?.description ?? props.event.data?.digest ?? null;
+  const eventText = digest === title ? null : digest;
   const excerpt = previewState.status === "ready" ? previewState.preview.textExcerpt : "";
 
   return (
     <div className="border-border bg-surface-secondary mx-3 mb-3 shrink-0 rounded-md border p-3">
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-content-primary min-w-0 truncate text-xs font-medium">
-            {getTimelineEventTitle(props.event)}
-          </span>
+          <span className="text-content-primary min-w-0 text-xs font-medium">{title}</span>
           <time
             dateTime={new Date(props.event.ts).toISOString()}
             className="text-muted counter-nums shrink-0 text-[10px]"
@@ -512,7 +517,7 @@ function TimelinePreviewCard(props: {
               {excerpt}
             </div>
           </div>
-        ) : eventText == null ? (
+        ) : digest == null ? (
           <div className="text-muted text-xs">Preview unavailable</div>
         ) : null}
       </div>
