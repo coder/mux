@@ -9545,6 +9545,49 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Scans backward through full history, not the replayed boundary epoch, because compaction
+   * prunes older turns from the transcript the frontend holds.
+   */
+  async getLastUserPrompt(workspaceId: string): Promise<string | null> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.trim().length > 0,
+      "workspaceId is required"
+    );
+
+    let found: string | null = null;
+    const result = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (chunk) => {
+        for (let index = chunk.length - 1; index >= 0; index--) {
+          const message = chunk[index];
+          if (message.role !== "user" || message.metadata?.synthetic === true) {
+            continue;
+          }
+          const text = message.parts
+            .map((part) => (part.type === "text" ? part.text : ""))
+            .join("")
+            .trim();
+          if (text.length > 0) {
+            found = text;
+            return false;
+          }
+        }
+      }
+    );
+
+    if (!result.success) {
+      log.warn("workspace.history.lastUserPrompt: failed to read history", {
+        workspaceId,
+        error: result.error,
+      });
+      return null;
+    }
+
+    return found;
+  }
+
   async getHistoryLoadMore(
     workspaceId: string,
     cursor: WorkspaceHistoryLoadMoreCursor | null | undefined

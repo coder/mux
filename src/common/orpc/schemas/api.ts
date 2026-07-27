@@ -1498,6 +1498,11 @@ export const workspace = {
         hasOlder: z.boolean(),
       }),
     },
+    /** Latest typed user prompt, readable even when it predates the replayed boundary epoch. */
+    lastUserPrompt: {
+      input: z.object({ workspaceId: z.string() }),
+      output: z.string().nullable(),
+    },
   },
   /**
    * Load an archived subagent transcript (chat.jsonl + optional partial.json) from this workspace's

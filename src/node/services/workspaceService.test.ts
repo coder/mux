@@ -12973,3 +12973,69 @@ describe("getSideQuestionModelCandidates", () => {
     expect(candidates.filter((candidate) => candidate === liveModel)).toHaveLength(1);
   });
 });
+
+describe("WorkspaceService.getLastUserPrompt", () => {
+  async function withService(
+    seed: (historyService: HistoryService, workspaceId: string) => Promise<void>
+  ): Promise<string | null> {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "last-user-prompt";
+    try {
+      await seed(historyService, workspaceId);
+      const workspaceService = createWorkspaceServiceForTest({ config, historyService });
+      return await workspaceService.getLastUserPrompt(workspaceId);
+    } finally {
+      await cleanup();
+    }
+  }
+
+  test("returns a typed prompt that predates the latest compaction boundary", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u1", "user", "the prompt before compaction", { historySequence: 1 })
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("summary", "assistant", "Compacted summary", {
+          historySequence: 2,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        })
+      );
+    });
+
+    expect(prompt).toBe("the prompt before compaction");
+  });
+
+  test("skips synthetic and empty user turns", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u1", "user", "typed by the user", { historySequence: 1 })
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u2", "user", "   ", { historySequence: 2 })
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u3", "user", "injected turn", { historySequence: 3, synthetic: true })
+      );
+    });
+
+    expect(prompt).toBe("typed by the user");
+  });
+
+  test("returns null when the workspace has no typed prompt", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("a1", "assistant", "hello", { historySequence: 1 })
+      );
+    });
+
+    expect(prompt).toBeNull();
+  });
+});

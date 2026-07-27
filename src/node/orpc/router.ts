@@ -4864,6 +4864,12 @@ export const router = (authToken?: string) => {
           .handler(async ({ context, input }) => {
             return context.workspaceService.getHistoryLoadMore(input.workspaceId, input.cursor);
           }),
+        lastUserPrompt: t
+          .input(schemas.workspace.history.lastUserPrompt.input)
+          .output(schemas.workspace.history.lastUserPrompt.output)
+          .handler(async ({ context, input }) => {
+            return context.workspaceService.getLastUserPrompt(input.workspaceId);
+          }),
       },
       getPlanContent: t
         .input(schemas.workspace.getPlanContent.input)

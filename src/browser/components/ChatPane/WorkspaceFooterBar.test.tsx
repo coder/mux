@@ -279,4 +279,49 @@ describe("WorkspaceFooterBar last prompt", () => {
     fireEvent.keyDown(window, { key: "L", ctrlKey: true, shiftKey: true });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
+
+  it("does not reopen the popover when a prompt returns after being absent", () => {
+    let currentPrompt: string | null = "ship the footer";
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(
+      () => currentPrompt
+    );
+
+    const view = renderFooter();
+    fireEvent.keyDown(window, { key: "L", ctrlKey: true, shiftKey: true });
+    expect(view.getByTestId("workspace-footer-last-prompt").getAttribute("aria-expanded")).toBe(
+      "true"
+    );
+
+    currentPrompt = null;
+    view.rerender(
+      <TooltipProvider delayDuration={0}>
+        <WorkspaceFooterBar
+          workspaceId={workspaceId}
+          projectName="demo"
+          projectPath="/projects/demo"
+          workspaceName="feature-branch"
+          namedWorkspacePath="/projects/demo/workspaces/feature-branch"
+          runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
+        />
+      </TooltipProvider>
+    );
+    expect(view.queryByTestId("workspace-footer-last-prompt")).toBeNull();
+
+    currentPrompt = "a brand new prompt";
+    view.rerender(
+      <TooltipProvider delayDuration={0}>
+        <WorkspaceFooterBar
+          workspaceId={workspaceId}
+          projectName="demo"
+          projectPath="/projects/demo"
+          workspaceName="feature-branch"
+          namedWorkspacePath="/projects/demo/workspaces/feature-branch"
+          runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
+        />
+      </TooltipProvider>
+    );
+    expect(view.getByTestId("workspace-footer-last-prompt").getAttribute("aria-expanded")).toBe(
+      "false"
+    );
+  });
 });

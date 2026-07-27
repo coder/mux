@@ -201,7 +201,14 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   const [open, setOpen] = React.useState(false);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
 
+  // No listener while there is nothing to show, and drop any open state left over from a
+  // prompt that has gone away, so the panel cannot pop open when a new prompt arrives.
   useEffect(() => {
+    if (lastPrompt === null) {
+      setOpen(false);
+      setTooltipOpen(false);
+      return;
+    }
     const handler = (e: KeyboardEvent) => {
       if (matchesKeybind(e, KEYBINDS.SHOW_LAST_PROMPT)) {
         e.preventDefault();
@@ -210,7 +217,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [lastPrompt]);
 
   if (lastPrompt === null) {
     return null;

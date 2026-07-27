@@ -31,7 +31,7 @@ import {
   BASH_TRUNCATE_MAX_TOTAL_BYTES,
 } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   isCaughtUpMessage,
   isStreamAbort,
@@ -2447,6 +2447,18 @@ export class WorkspaceStore {
     return null;
   }
 
+  async fetchLastUserPromptFromHistory(workspaceId: string): Promise<string | null> {
+    const client = this.client;
+    if (!client) {
+      return null;
+    }
+    try {
+      return await client.workspace.history.lastUserPrompt({ workspaceId });
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Extract usage from session-usage.json (no tokenization or message iteration).
    *
@@ -4623,10 +4635,33 @@ export function useActiveGoalCount(): number {
 export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   const store = getStoreInstance();
 
-  return useSyncExternalStore(
+  const displayed = useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceLastUserPrompt(workspaceId)
   );
+
+  // Compaction prunes older turns from the transcript, and a fresh replay only carries the
+  // latest boundary epoch, so fall back to history on disk when the prompt predates it.
+  const [fallback, setFallback] = useState<{ workspaceId: string; prompt: string | null } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (displayed !== null) {
+      return;
+    }
+    let cancelled = false;
+    void store.fetchLastUserPromptFromHistory(workspaceId).then((prompt) => {
+      if (!cancelled) {
+        setFallback({ workspaceId, prompt });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [store, workspaceId, displayed]);
+
+  return displayed ?? (fallback?.workspaceId === workspaceId ? fallback.prompt : null);
 }
 
 /**
