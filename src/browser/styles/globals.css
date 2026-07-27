@@ -80,9 +80,9 @@
     --color-editing-mode-alpha: hsla(38 70% 50% / 0.08);
     --color-pending: hsl(30 100% 70%);
 
-    /* Composer send: its own token because the Review 1.4 design gives the composer's
-       primary action a cyan fill distinct from --color-accent's blue. */
-    --color-composer-send: #a4e8f2;
+    /* Composer send: sampled from the Review 1.4 frames, which fill it with a neutral rather
+       than an accent, and swap only the fill (never the glyph) to signal send-ability. */
+    --color-composer-send: #888895;
     --color-composer-send-foreground: var(--color-surface-primary);
 
     --color-debug-mode: hsl(214 100% 64%);
@@ -381,7 +381,7 @@
 
   --color-pending: hsl(30 100% 64%);
 
-  --color-composer-send: hsla(194, 49%, 45%, 1);
+  --color-composer-send: hsla(240, 4%, 42%, 1);
   --color-composer-send-foreground: var(--color-surface-primary);
 
   --color-debug-mode: hsl(214 100% 56%);
@@ -640,7 +640,7 @@
 
   --color-pending: #bc5215; /* Flexoki orange-600 */
 
-  --color-composer-send: #24837b; /* Flexoki cyan-600 */
+  --color-composer-send: #6f6e69; /* Flexoki base-600 */
   --color-composer-send-foreground: var(--color-surface-primary);
 
   --color-debug-mode: var(--color-plan-mode);
@@ -874,7 +874,7 @@
 
   --color-pending: #da702c; /* Flexoki orange-400 */
 
-  --color-composer-send: #3aa99f; /* Flexoki cyan-400 */
+  --color-composer-send: #878580; /* Flexoki base-500 */
   --color-composer-send-foreground: var(--color-surface-primary);
 
   --color-debug-mode: var(--color-plan-mode);

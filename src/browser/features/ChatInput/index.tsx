@@ -3582,11 +3582,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           className={cn(
                             // Filled circle per the design, so send reads as the row's primary action.
                             "inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
-                            // Pinned against the ghost variant's neutral hover, which would
-                            // otherwise wash out the accent fill.
+                            // Only the fill distinguishes the two states, per the design: the glyph
+                            // keeps the page color throughout. Hover is pinned so the ghost
+                            // variant's own hover cannot override the fill.
                             canSend
                               ? "bg-composer-send hover:bg-composer-send text-composer-send-foreground hover:text-composer-send-foreground hover:opacity-90"
-                              : "bg-surface-secondary text-muted",
+                              : "bg-surface-secondary text-composer-send-foreground",
                             "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-9 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
                           )}
                         >
