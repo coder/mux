@@ -1,7 +1,413 @@
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useState } from "react";
+
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useWorkspaceStoreRaw, useWorkspaceTimeline } from "@/browser/stores/WorkspaceStore";
+import { cn } from "@/common/lib/utils";
+import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
+
+import {
+  TIMELINE_CATEGORIES,
+  getTimelineEventCategory,
+  getTimelinePresentation,
+  type TimelineCategory,
+} from "./timelinePresentation";
+
 interface TimelinePanelProps {
   workspaceId: string;
 }
 
+type TimelineFilter = "all" | TimelineCategory;
+
+interface DayGroup {
+  key: string;
+  label: string;
+  events: TimelineEvent[];
+}
+
+interface CollapsedRun {
+  key: string;
+  kind: string;
+  events: TimelineEvent[];
+}
+
+type DayItem = TimelineEvent | CollapsedRun;
+
+const SEPARATOR_KINDS = new Set([
+  "compaction.triggered",
+  "compaction.completed",
+  "context.reset",
+  "history.cleared",
+]);
+
+const FILTERS: Array<{ value: TimelineFilter; label: string }> = [
+  { value: "all", label: "All" },
+  ...TIMELINE_CATEGORIES.map((category) => ({
+    value: category,
+    label: category.replace(/^./, (character) => character.toUpperCase()),
+  })),
+];
+
+const timeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const dayFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+function isTimelineFilter(value: string): value is TimelineFilter {
+  return value === "all" || TIMELINE_CATEGORIES.some((category) => category === value);
+}
+
+function getDayKey(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function getDayLabel(timestamp: number): string {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayOffset = Math.round((startOfToday - startOfDate) / 86_400_000);
+
+  if (dayOffset === 0) return "Today";
+  if (dayOffset === 1) return "Yesterday";
+  return dayFormatter.format(date);
+}
+
+function groupEventsByDay(events: TimelineEvent[]): DayGroup[] {
+  const groups = new Map<string, DayGroup>();
+  for (const event of events) {
+    const key = getDayKey(event.ts);
+    const existing = groups.get(key);
+    if (existing) {
+      existing.events.push(event);
+    } else {
+      groups.set(key, { key, label: getDayLabel(event.ts), events: [event] });
+    }
+  }
+  return Array.from(groups.values());
+}
+
+function collapseConsecutiveEvents(events: TimelineEvent[]): DayItem[] {
+  const items: DayItem[] = [];
+  let index = 0;
+
+  while (index < events.length) {
+    const event = events[index];
+    if (SEPARATOR_KINDS.has(event.kind)) {
+      items.push(event);
+      index++;
+      continue;
+    }
+
+    let end = index + 1;
+    while (
+      end < events.length &&
+      !SEPARATOR_KINDS.has(events[end].kind) &&
+      events[end].kind === event.kind
+    ) {
+      end++;
+    }
+
+    const run = events.slice(index, end);
+    if (run.length >= 3) {
+      items.push({ key: `${event.id}:${event.kind}`, kind: event.kind, events: run });
+    } else {
+      items.push(...run);
+    }
+    index = end;
+  }
+
+  return items;
+}
+
+function isCollapsedRun(item: DayItem): item is CollapsedRun {
+  return "events" in item;
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1000) return `${Math.round(durationMs)} ms`;
+  if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
+  return `${Math.round(durationMs / 60_000)} min`;
+}
+
+function formatSettingValue(value: string | number | boolean | null | undefined): string | null {
+  if (value === undefined) return null;
+  if (value === null) return "none";
+  return String(value);
+}
+
+function getEventDetail(event: TimelineEvent): string | null {
+  const data = event.data;
+  if (!data) return null;
+
+  const details: string[] = [];
+  if (data.toolName) details.push(data.toolName);
+  if (data.title) details.push(data.title);
+  else if (data.digest) details.push(data.digest);
+  else if (data.label) details.push(data.label);
+  if (data.model || data.mode) details.push([data.model, data.mode].filter(Boolean).join(" · "));
+  if (data.reason) details.push(data.reason);
+  if (data.setting) {
+    const previous = formatSettingValue(data.previousValue);
+    const next = formatSettingValue(data.nextValue);
+    details.push(
+      previous != null || next != null
+        ? `${data.setting}: ${previous ?? "?"} to ${next ?? "?"}`
+        : data.setting
+    );
+  }
+  if (data.durationMs != null) details.push(formatDuration(data.durationMs));
+  return details.length > 0 ? details.join(" · ") : null;
+}
+
+function TimelineSeparator(props: { event: TimelineEvent }) {
+  const presentation = getTimelinePresentation(props.event.kind);
+  const epoch = props.event.epoch != null ? `Epoch ${props.event.epoch}` : "Context boundary";
+
+  return (
+    <div className="my-2 flex min-w-0 items-center gap-2" role="separator">
+      <div className="border-border min-w-3 flex-1 border-t" />
+      <span className="text-muted counter-nums min-w-0 truncate text-[10px] font-medium tracking-wide uppercase">
+        {epoch} · {presentation.label}
+      </span>
+      <div className="border-border min-w-3 flex-1 border-t" />
+    </div>
+  );
+}
+
+function TimelineEventRow(props: {
+  event: TimelineEvent;
+  selected: boolean;
+  onSelect: (eventId: string) => void;
+}) {
+  const presentation = getTimelinePresentation(props.event.kind);
+  const Icon = presentation.icon;
+  const detail = getEventDetail(props.event);
+  const agentAuthored = props.event.source.system === "agent";
+  const failed = props.event.status === "failed";
+  const interrupted = props.event.status === "interrupted";
+
+  return (
+    <button
+      type="button"
+      aria-pressed={props.selected}
+      onClick={() => props.onSelect(props.event.id)}
+      className={cn(
+        "grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors",
+        "hover:bg-hover focus-visible:ring-accent focus-visible:ring-1 focus-visible:outline-none",
+        agentAuthored && "border-ask-mode/25 bg-ask-mode-alpha",
+        failed && "border-danger/40 bg-danger-overlay",
+        interrupted && !failed && "border-warning/40 bg-warning-overlay",
+        props.selected && "border-accent/60 bg-accent/10"
+      )}
+    >
+      <span
+        className={cn(
+          "border-border bg-surface-secondary text-content-secondary mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border",
+          agentAuthored && "border-ask-mode/40 text-ask-mode",
+          failed && "border-danger/50 text-danger",
+          interrupted && !failed && "border-warning/50 text-warning"
+        )}
+      >
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <span className="min-w-0">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="text-content-primary min-w-0 truncate text-xs font-medium">
+            {presentation.label}
+          </span>
+          {agentAuthored ? (
+            <span className="border-ask-mode/30 text-ask-mode shrink-0 rounded border px-1 py-px text-[9px] font-medium uppercase">
+              Agent note
+            </span>
+          ) : null}
+        </span>
+        {detail ? (
+          <span className="text-muted mt-0.5 block min-w-0 truncate text-[11px]">{detail}</span>
+        ) : null}
+      </span>
+      <time
+        dateTime={new Date(props.event.ts).toISOString()}
+        className="text-muted counter-nums shrink-0 pt-0.5 text-[10px]"
+      >
+        {timeFormatter.format(props.event.ts)}
+      </time>
+    </button>
+  );
+}
+
+function CollapsedEventRun(props: {
+  run: CollapsedRun;
+  expanded: boolean;
+  selectedEventId: string | null;
+  onToggle: (key: string) => void;
+  onSelect: (eventId: string) => void;
+}) {
+  const presentation = getTimelinePresentation(props.run.kind);
+  const Icon = presentation.icon;
+
+  if (props.expanded) {
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <button
+          type="button"
+          onClick={() => props.onToggle(props.run.key)}
+          className="text-muted hover:bg-hover focus-visible:ring-accent flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] focus-visible:ring-1 focus-visible:outline-none"
+        >
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          <span className="counter-nums shrink-0">{props.run.events.length}</span>
+          <span className="min-w-0 truncate">{presentation.label} events</span>
+        </button>
+        {props.run.events.map((event) => (
+          <TimelineEventRow
+            key={event.id}
+            event={event}
+            selected={props.selectedEventId === event.id}
+            onSelect={props.onSelect}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => props.onToggle(props.run.key)}
+      className="border-border bg-surface-secondary/50 hover:bg-hover focus-visible:ring-accent grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left focus-visible:ring-1 focus-visible:outline-none"
+    >
+      <span className="border-border bg-surface-primary text-content-secondary flex h-6 w-6 shrink-0 items-center justify-center rounded-full border">
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <span className="text-content-secondary min-w-0 truncate text-xs">
+        <span className="counter-nums font-medium">{props.run.events.length}</span>{" "}
+        {presentation.label} events
+      </span>
+      <ChevronRight className="text-muted h-3.5 w-3.5 shrink-0" />
+    </button>
+  );
+}
+
 export function TimelinePanel(props: TimelinePanelProps) {
-  return <div data-workspace-id={props.workspaceId} />;
+  const timeline = useWorkspaceTimeline(props.workspaceId);
+  const workspaceStore = useWorkspaceStoreRaw();
+  const [storedFilter, setStoredFilter] = usePersistedState<string>(
+    `timeline-filter:${props.workspaceId}`,
+    "all"
+  );
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({});
+  const filter = isTimelineFilter(storedFilter) ? storedFilter : "all";
+  const filteredEvents = timeline.events
+    .filter((event) => filter === "all" || getTimelineEventCategory(event) === filter)
+    .toSorted((a, b) => b.seq - a.seq);
+  const dayGroups = groupEventsByDay(filteredEvents);
+
+  const toggleRun = (key: string) => {
+    setExpandedRuns((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+      <div className="border-border shrink-0 border-b px-3 py-2.5">
+        <div className="scrollbar-none flex min-w-0 gap-1.5 overflow-x-auto">
+          {FILTERS.map((item) => (
+            <button
+              key={item.value}
+              type="button"
+              aria-pressed={filter === item.value}
+              onClick={() => setStoredFilter(item.value)}
+              className={cn(
+                "border-border bg-surface-secondary text-content-secondary hover:bg-hover shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                filter === item.value && "border-accent/60 bg-accent/10 text-content-primary"
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="scrollbar-none min-h-0 min-w-0 flex-1 overflow-y-auto px-3 py-3">
+        {!timeline.initialized ? (
+          <div className="text-muted flex h-full items-center justify-center text-sm">
+            Loading timeline…
+          </div>
+        ) : timeline.events.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <div className="text-content-primary text-sm font-medium">No timeline events yet</div>
+            <div className="text-muted mt-1 text-xs">
+              Recording begins when the timeline experiment is enabled.
+            </div>
+          </div>
+        ) : filteredEvents.length === 0 ? (
+          <div className="text-muted flex h-full items-center justify-center px-6 text-center text-sm">
+            No events match this filter.
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-col gap-4">
+            {dayGroups.map((group) => (
+              <section key={group.key} className="min-w-0">
+                <h2 className="text-muted mb-2 text-[10px] font-semibold tracking-wide uppercase">
+                  {group.label}
+                </h2>
+                <div className="flex min-w-0 flex-col gap-1">
+                  {collapseConsecutiveEvents(group.events).map((item) => {
+                    if (isCollapsedRun(item)) {
+                      return (
+                        <CollapsedEventRun
+                          key={item.key}
+                          run={item}
+                          expanded={Boolean(expandedRuns[item.key])}
+                          selectedEventId={selectedEventId}
+                          onToggle={toggleRun}
+                          onSelect={setSelectedEventId}
+                        />
+                      );
+                    }
+                    if (SEPARATOR_KINDS.has(item.kind)) {
+                      return <TimelineSeparator key={item.id} event={item} />;
+                    }
+                    return (
+                      <TimelineEventRow
+                        key={item.id}
+                        event={item}
+                        selected={selectedEventId === item.id}
+                        onSelect={setSelectedEventId}
+                      />
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+
+            <div className="flex flex-col items-center gap-2 pt-1 pb-2">
+              {timeline.loadError ? (
+                <div className="text-danger max-w-full truncate text-xs">{timeline.loadError}</div>
+              ) : null}
+              {timeline.hasOlder ? (
+                <button
+                  type="button"
+                  disabled={timeline.loadingOlder}
+                  onClick={() => void workspaceStore.loadOlderTimeline(props.workspaceId)}
+                  className="border-border bg-surface-secondary text-content-secondary hover:bg-hover focus-visible:ring-accent rounded-md border px-3 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
+                >
+                  {timeline.loadingOlder ? "Loading older…" : "Load older"}
+                </button>
+              ) : (
+                <div className="text-muted text-[10px]">Beginning of timeline</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

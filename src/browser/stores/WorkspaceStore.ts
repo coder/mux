@@ -95,7 +95,24 @@ import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessage
 
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
-const EMPTY_TIMELINE: TimelineEvent[] = [];
+
+export interface WorkspaceTimelineSnapshot {
+  events: TimelineEvent[];
+  nextCursor: number | null;
+  hasOlder: boolean;
+  initialized: boolean;
+  loadingOlder: boolean;
+  loadError: string | null;
+}
+
+const EMPTY_TIMELINE_SNAPSHOT: WorkspaceTimelineSnapshot = {
+  events: [],
+  nextCursor: null,
+  hasOlder: false,
+  initialized: false,
+  loadingOlder: false,
+  loadError: null,
+};
 
 export type AutoRetryStatus = Extract<
   WorkspaceChatMessage,
@@ -719,8 +736,8 @@ export class WorkspaceStore {
   // Used to only subscribe to backend stats when something in the UI is actually reading them.
   private statsListenerCounts = new Map<string, number>();
 
-  private workspaceTimelines = new Map<string, TimelineEvent[]>();
-  private timelineStore = new MapStore<string, TimelineEvent[]>();
+  private workspaceTimelines = new Map<string, WorkspaceTimelineSnapshot>();
+  private timelineStore = new MapStore<string, WorkspaceTimelineSnapshot>();
   private timelineUnsubscribers = new Map<string, () => void>();
   private timelineListenerCounts = new Map<string, number>();
 
@@ -1659,8 +1676,9 @@ export class WorkspaceStore {
   }
 
   private subscribeToTimeline(workspaceId: string): void {
+    const client = this.client;
     if (
-      !this.client ||
+      !client ||
       !this.isWorkspaceRegistered(workspaceId) ||
       (this.timelineListenerCounts.get(workspaceId) ?? 0) <= 0 ||
       this.timelineUnsubscribers.has(workspaceId)
@@ -1674,7 +1692,19 @@ export class WorkspaceStore {
 
     (async () => {
       try {
-        const subscribedIterator = await this.client!.workspace.timeline.subscribe(
+        const initialPage = await client.workspace.timeline.list({ workspaceId });
+        if (signal.aborted) return;
+        this.workspaceTimelines.set(workspaceId, {
+          events: initialPage.events,
+          nextCursor: initialPage.nextCursor,
+          hasOlder: initialPage.hasOlder,
+          initialized: true,
+          loadingOlder: false,
+          loadError: null,
+        });
+        this.timelineStore.bump(workspaceId);
+
+        const subscribedIterator = await client.workspace.timeline.subscribe(
           { workspaceId },
           { signal }
         );
@@ -1683,26 +1713,27 @@ export class WorkspaceStore {
         for await (const update of subscribedIterator) {
           if (signal.aborted) break;
           queueMicrotask(() => {
-            if (signal.aborted) return;
+            if (signal.aborted || update.events.length === 0) return;
 
-            if (update.type === "snapshot") {
-              this.workspaceTimelines.set(workspaceId, update.events);
-            } else if (update.events.length > 0) {
-              const current = this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE;
-              const appendedIds = new Set(update.events.map((event) => event.id));
-              this.workspaceTimelines.set(workspaceId, [
-                ...update.events.toSorted((a, b) => b.seq - a.seq),
-                ...current.filter((event) => !appendedIds.has(event.id)),
-              ]);
-            } else {
-              return;
-            }
+            const current = this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE_SNAPSHOT;
+            const incomingIds = new Set(update.events.map((event) => event.id));
+            const events = [
+              ...update.events,
+              ...current.events.filter((event) => !incomingIds.has(event.id)),
+            ].toSorted((a, b) => b.seq - a.seq);
+            this.workspaceTimelines.set(workspaceId, { ...current, events, initialized: true });
             this.timelineStore.bump(workspaceId);
           });
         }
       } catch (error) {
         if (signal.aborted || isAbortError(error)) return;
         console.warn(`[WorkspaceStore] Error in timeline subscription for ${workspaceId}:`, error);
+        this.workspaceTimelines.set(workspaceId, {
+          ...(this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE_SNAPSHOT),
+          initialized: true,
+          loadError: error instanceof Error ? error.message : "Failed to load timeline",
+        });
+        this.timelineStore.bump(workspaceId);
       }
     })();
 
@@ -2784,11 +2815,56 @@ export class WorkspaceStore {
     };
   }
 
-  getWorkspaceTimeline(workspaceId: string): TimelineEvent[] {
+  getWorkspaceTimeline(workspaceId: string): WorkspaceTimelineSnapshot {
     return this.timelineStore.get(
       workspaceId,
-      () => this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE
+      () => this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE_SNAPSHOT
     );
+  }
+
+  async loadOlderTimeline(workspaceId: string): Promise<void> {
+    const client = this.client;
+    const current = this.workspaceTimelines.get(workspaceId);
+    if (!client || !current?.hasOlder || current.loadingOlder || current.nextCursor == null) {
+      return;
+    }
+
+    const requestedCursor = current.nextCursor;
+    this.workspaceTimelines.set(workspaceId, {
+      ...current,
+      loadingOlder: true,
+      loadError: null,
+    });
+    this.timelineStore.bump(workspaceId);
+
+    try {
+      const page = await client.workspace.timeline.list({
+        workspaceId,
+        cursor: requestedCursor,
+      });
+      const latest = this.workspaceTimelines.get(workspaceId);
+      if (latest?.nextCursor !== requestedCursor || !latest.loadingOlder) return;
+
+      const existingIds = new Set(latest.events.map((event) => event.id));
+      const olderEvents = page.events.filter((event) => !existingIds.has(event.id));
+      this.workspaceTimelines.set(workspaceId, {
+        ...latest,
+        events: [...latest.events, ...olderEvents].toSorted((a, b) => b.seq - a.seq),
+        nextCursor: page.nextCursor,
+        hasOlder: page.hasOlder,
+        loadingOlder: false,
+      });
+      this.timelineStore.bump(workspaceId);
+    } catch (error) {
+      const latest = this.workspaceTimelines.get(workspaceId);
+      if (latest?.nextCursor !== requestedCursor) return;
+      this.workspaceTimelines.set(workspaceId, {
+        ...latest,
+        loadingOlder: false,
+        loadError: error instanceof Error ? error.message : "Failed to load older events",
+      });
+      this.timelineStore.bump(workspaceId);
+    }
   }
 
   subscribeTimeline(workspaceId: string, listener: () => void): () => void {
@@ -5016,7 +5092,7 @@ export function useWorkspaceStatsSnapshot(workspaceId: string): WorkspaceStatsSn
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 
-export function useWorkspaceTimeline(workspaceId: string): TimelineEvent[] {
+export function useWorkspaceTimeline(workspaceId: string): WorkspaceTimelineSnapshot {
   const store = getStoreInstance();
   const subscribe = useCallback(
     (listener: () => void) => store.subscribeTimeline(workspaceId, listener),
