@@ -66,49 +66,54 @@ export const TimelineStatusSchema = z.enum([
   "skipped",
 ]);
 
-const TimelineSettingValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const timelineEventDataShape = {
+  model: z.string().optional(),
+  mode: z.string().optional(),
+  agentId: z.string().optional(),
+  reason: z.string().optional(),
+  errorKind: z.string().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  title: z.string().optional(),
+  digest: z.string().optional(),
+  description: z.string().optional(),
+  category: z.enum(["picked_up", "milestone", "decision", "blocker", "handoff"]).optional(),
+  usagePercent: z.number().optional(),
+  newUsagePercent: z.number().optional(),
+  attempt: z.number().int().positive().optional(),
+  delayMs: z.number().nonnegative().optional(),
+  scheduledAt: z.number().optional(),
+  runId: z.string().optional(),
+  goalId: z.string().optional(),
+};
 
-export const TimelineEventDataSchema = z
-  .object({
-    model: z.string().optional(),
-    mode: z.string().optional(),
-    agentId: z.string().optional(),
-    reason: z.string().optional(),
-    errorKind: z.string().optional(),
-    durationMs: z.number().nonnegative().optional(),
-    title: z.string().optional(),
-    digest: z.string().optional(),
-    description: z.string().optional(),
-    category: z.enum(["picked_up", "milestone", "decision", "blocker", "handoff"]).optional(),
-    usagePercent: z.number().optional(),
-    newUsagePercent: z.number().optional(),
-    attempt: z.number().int().positive().optional(),
-    delayMs: z.number().nonnegative().optional(),
-    scheduledAt: z.number().optional(),
-    runId: z.string().optional(),
-    goalId: z.string().optional(),
-    statusMessage: z.string().optional(),
-    emoji: z.string().optional(),
-    setting: z.string().optional(),
-    previousValue: TimelineSettingValueSchema.optional(),
-    nextValue: TimelineSettingValueSchema.optional(),
-  })
-  .strict();
+export const TimelineEventDataSchema = z.object(timelineEventDataShape).strict();
 
-export const TimelineEventSchema = z
-  .object({
-    v: z.literal(1),
-    seq: z.number().int().positive(),
-    id: z.string().min(1),
-    ts: z.number().nonnegative(),
-    kind: z.string().min(1),
-    source: TimelineSourceSchema,
-    anchor: TimelineAnchorSchema.optional(),
-    epoch: z.number().int().positive().optional(),
-    status: TimelineStatusSchema.optional(),
-    data: TimelineEventDataSchema.optional(),
-  })
-  .strict();
+const timelineEventShape = {
+  v: z.literal(1),
+  seq: z.number().int().positive(),
+  id: z.string().min(1),
+  ts: z.number().nonnegative(),
+  kind: z.string().min(1),
+  source: TimelineSourceSchema,
+  anchor: TimelineAnchorSchema.optional(),
+  epoch: z.number().int().positive().optional(),
+  status: TimelineStatusSchema.optional(),
+  data: TimelineEventDataSchema.optional(),
+};
+
+export const TimelineEventSchema = z.object(timelineEventShape).strict();
+
+// Reads tolerate payload keys this build does not declare, because a newer build may add fields
+// and retired kinds carry fields that were removed. Writes stay strict so we only persist known
+// facts; dropping a row on read instead would hide it and break sequence recovery.
+export const TimelineStoredEventSchema = z.object({
+  ...timelineEventShape,
+  data: z.object(timelineEventDataShape).optional(),
+});
+
+// Sequence recovery must survive rows this build cannot otherwise parse, or a new append could
+// reuse a sequence number that already exists on disk.
+export const TimelineSequenceEnvelopeSchema = z.object({ seq: z.number().int().positive() });
 
 export const TimelineEventDraftSchema = TimelineEventSchema.omit({
   v: true,

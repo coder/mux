@@ -7,10 +7,6 @@ interface OpenStream {
   workspaceId: string;
   messageId: string;
   historySequence: number;
-  startTime: number;
-  model: string;
-  mode?: string;
-  agentId?: string;
 }
 
 export interface TimelineMapperState {
@@ -146,10 +142,6 @@ export function mapChatEventToTimeline(
         workspaceId: event.workspaceId,
         messageId: event.messageId,
         historySequence: event.historySequence,
-        startTime: event.startTime,
-        model: event.model,
-        ...(event.mode != null ? { mode: event.mode } : {}),
-        ...(event.agentId != null ? { agentId: event.agentId } : {}),
       });
       return { drafts: [], state: { ...state, openStreams } };
     }

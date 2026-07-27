@@ -128,20 +128,42 @@ describe("TimelineService", () => {
     expect(page.events).toEqual([unknownEvent]);
   });
 
-  test("hides events recorded under retired kinds", async () => {
-    const retired: TimelineEvent = {
+  test("hides retired rows without reusing their sequence numbers", async () => {
+    // Legacy tool.call rows carry payload fields this build no longer declares.
+    const retired = {
       v: 1,
-      seq: 1,
+      seq: 7,
       id: "retired-event",
       ts: 100,
       kind: "tool.call",
       source: { system: "chat" },
+      data: { toolName: "bash", durationMs: 40, digest: "git status" },
     };
     await fs.mkdir(config.getSessionDir(WORKSPACE_ID), { recursive: true });
     await fs.writeFile(timelinePath(), `${JSON.stringify(retired)}\n`, "utf-8");
 
+    service.record(WORKSPACE_ID, draft("after-retired"));
+    await service.flush();
+
     const page = await service.list(WORKSPACE_ID, {});
-    expect(page.events).toEqual([]);
+    expect(page.events.map((event) => [event.kind, event.seq])).toEqual([["agent.event", 8]]);
+  });
+
+  test("keeps rows carrying payload fields from a newer build", async () => {
+    const forwardCompatible = {
+      v: 1,
+      seq: 1,
+      id: "future-payload",
+      ts: 100,
+      kind: "agent.event",
+      source: { system: "agent" },
+      data: { description: "Landed the slice", unknownFutureField: "keep me readable" },
+    };
+    await fs.mkdir(config.getSessionDir(WORKSPACE_ID), { recursive: true });
+    await fs.writeFile(timelinePath(), `${JSON.stringify(forwardCompatible)}\n`, "utf-8");
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.data?.description)).toEqual(["Landed the slice"]);
   });
 
   test("previews a tool anchor with its readable input field", async () => {

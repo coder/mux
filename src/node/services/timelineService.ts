@@ -7,6 +7,8 @@ import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import {
   TIMELINE_RETIRED_KINDS,
   TimelineEventSchema,
+  TimelineSequenceEnvelopeSchema,
+  TimelineStoredEventSchema,
   type TimelineAnchor,
   type TimelineEvent,
   type TimelineEventDraft,
@@ -118,7 +120,7 @@ export class TimelineService implements TimelineRecorder {
     await this.readLinesBackward(this.getFilePath(workspaceId), (line) => {
       let parsed: TimelineEvent;
       try {
-        parsed = TimelineEventSchema.parse(JSON.parse(line));
+        parsed = TimelineStoredEventSchema.parse(JSON.parse(line));
       } catch {
         return true;
       }
@@ -252,8 +254,7 @@ export class TimelineService implements TimelineRecorder {
     let sequence = 0;
     await this.readLinesBackward(this.getFilePath(workspaceId), (line) => {
       try {
-        const parsed = TimelineEventSchema.parse(JSON.parse(line));
-        sequence = parsed.seq;
+        sequence = TimelineSequenceEnvelopeSchema.parse(JSON.parse(line)).seq;
         return false;
       } catch {
         return true;

@@ -160,12 +160,6 @@ function isCollapsedRun(item: DayItem): item is CollapsedRun {
   return "events" in item;
 }
 
-function formatSettingValue(value: string | number | boolean | null | undefined): string | null {
-  if (value === undefined) return null;
-  if (value === null) return "none";
-  return String(value);
-}
-
 function getEventDetail(event: TimelineEvent): string | null {
   const data = event.data;
   if (!data) return null;
@@ -175,15 +169,6 @@ function getEventDetail(event: TimelineEvent): string | null {
   else if (data.digest) details.push(data.digest);
   if (data.model || data.mode) details.push([data.model, data.mode].filter(Boolean).join(" · "));
   if (data.reason) details.push(data.reason);
-  if (data.setting) {
-    const previous = formatSettingValue(data.previousValue);
-    const next = formatSettingValue(data.nextValue);
-    details.push(
-      previous != null || next != null
-        ? `${data.setting}: ${previous ?? "?"} to ${next ?? "?"}`
-        : data.setting
-    );
-  }
   if (data.durationMs != null) details.push(formatDuration(data.durationMs, "precise"));
   return details.length > 0 ? details.join(" · ") : null;
 }
@@ -245,7 +230,7 @@ function TimelineEventRow(props: {
         <Icon className="h-3.5 w-3.5" />
       </span>
       <span className="min-w-0">
-        {/* Agent descriptions are full sentences, so the title wraps instead of truncating. */}
+        {/* Event descriptions are sentence-length, so let the title wrap rather than truncate. */}
         <span className="text-content-primary line-clamp-2 min-w-0 text-xs font-medium">
           {title}
         </span>

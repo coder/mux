@@ -97,8 +97,7 @@ export function getTimelinePresentation(kind: string): TimelinePresentation {
   };
 }
 
-// Agent-authored events carry their own sentence, which reads better as the row title than the
-// generic kind label.
+// An agent-written description reads better as the row title than the generic kind label.
 export function getTimelineEventTitle(event: TimelineEvent): string {
   return event.data?.description ?? getTimelinePresentation(event.kind).label;
 }
