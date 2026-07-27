@@ -4651,6 +4651,12 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceHistoryEpoch(workspaceId)
   );
+  // An empty transcript mid-hydration is indistinguishable from one with no prompt, and the
+  // in-flight read cannot be cancelled, so waiting for catch-up avoids scanning twice per open.
+  const isCaughtUp = useSyncExternalStore(
+    (listener) => store.subscribeKey(workspaceId, listener),
+    () => store.isWorkspaceTranscriptCaughtUp(workspaceId)
+  );
 
   // Compaction prunes older turns from the transcript, and a fresh replay only carries the
   // latest boundary epoch, so fall back to history on disk when the prompt predates it.
@@ -4661,7 +4667,7 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   } | null>(null);
 
   useEffect(() => {
-    if (displayed !== null) {
+    if (displayed !== null || !isCaughtUp) {
       return;
     }
     let cancelled = false;
@@ -4673,7 +4679,7 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     return () => {
       cancelled = true;
     };
-  }, [store, workspaceId, displayed, historyEpoch]);
+  }, [store, workspaceId, displayed, historyEpoch, isCaughtUp]);
 
   // Matching the epoch discards a stale fallback on the first render after history changes,
   // rather than exposing a deleted prompt for as long as the refetch takes.
