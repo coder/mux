@@ -270,7 +270,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }, [highlightedIndex]);
 
     const isBoxVariant = variant === "box";
-    const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
+    // min-w-0 lets the trigger's clamped width shrink inside a constrained row; without it the
+    // trigger's fixed width becomes this wrapper's floor and siblings spill past the parent.
+    const containerClassName = cn(
+      "relative flex min-w-0 items-center gap-1",
+      isBoxVariant && "w-full"
+    );
     const triggerClassName = isBoxVariant
       ? cn("border-border-medium h-9 flex-1 min-w-0 rounded border", className)
       : cn("bg-transparent rounded-sm text-[11px]", className ?? "w-32");

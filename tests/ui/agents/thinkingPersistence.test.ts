@@ -101,9 +101,8 @@ async function selectModel(
 }
 
 async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
-  // Wait for the thinking slider to render and for it to show XHIGH.
-  // We click the right paddle (second button) repeatedly to increase levels.
-  // For this OpenAI model the levels are: OFF → LOW → MED → HIGH → XHIGH
+  // The label is the only thinking control: clicking it cycles through the allowed levels and
+  // wraps, so repeated clicks reach XHIGH regardless of the starting level.
   await waitFor(
     async () => {
       const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
@@ -111,22 +110,19 @@ async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
         throw new Error("ThinkingSliderGroup not found");
       }
 
-      const label = group
-        .querySelector("[data-thinking-label]")
-        ?.textContent?.trim()
-        ?.toUpperCase();
+      const labelButton = group.querySelector(
+        "button[data-thinking-label]"
+      ) as HTMLButtonElement | null;
+      if (!labelButton) {
+        throw new Error("Thinking label button not found");
+      }
+
+      const label = labelButton.textContent?.trim()?.toUpperCase();
       if (label === "XHIGH") {
         return; // Done!
       }
 
-      const rightPaddle = group.querySelector(
-        'button[data-thinking-paddle="right"]'
-      ) as HTMLButtonElement | null;
-      if (!rightPaddle) {
-        throw new Error("Right paddle button not found");
-      }
-
-      fireEvent.click(rightPaddle);
+      fireEvent.click(labelButton);
       throw new Error(`Cycling thinking level, currently at: ${label ?? "<missing>"}`);
     },
     { timeout: 10000, interval: 200 }

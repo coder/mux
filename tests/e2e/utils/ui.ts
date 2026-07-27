@@ -90,15 +90,6 @@ function sanitizeMode(mode: ChatMode): ChatMode {
   }
 }
 
-// Thinking level paddle controls (replaced old slider UI)
-function thinkingDecreasePaddle(page: Page): Locator {
-  return page.getByRole("button", { name: "Decrease thinking level" });
-}
-
-function thinkingIncreasePaddle(page: Page): Locator {
-  return page.getByRole("button", { name: "Increase thinking level" });
-}
-
 function thinkingLevelLabel(page: Page): Locator {
   return page.getByLabel(/Thinking level:/);
 }
@@ -192,8 +183,6 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
       const levelLabels = ["OFF", "LOW", "MED", "HIGH", "XHIGH"];
       const label = thinkingLevelLabel(page);
-      const decreasePaddle = thinkingDecreasePaddle(page);
-      const increasePaddle = thinkingIncreasePaddle(page);
 
       // Wait for thinking controls to be visible
       await expect(label).toBeVisible();
@@ -206,16 +195,11 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         return levelLabels.find((candidate) => normalized === candidate) ?? levelLabels[0];
       };
 
-      const clickUntilLabelChanges = async (
-        control: Locator,
-        previousLabel: string
-      ): Promise<string> => {
-        if (await control.isDisabled()) {
-          return previousLabel;
-        }
-
+      // The label is the only thinking control: it advances one level per click and wraps at the
+      // top of the model's allowed ladder.
+      const cycleOnce = async (previousLabel: string): Promise<string> => {
         for (let attempt = 0; attempt < 3; attempt++) {
-          await control.dispatchEvent("click");
+          await label.dispatchEvent("click");
           try {
             await expect
               .poll(
@@ -235,40 +219,19 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         return await readCurrentLabel();
       };
 
+      // Walk one full cycle to learn which levels this model allows, ending back at the start.
       const discoverAllowedLabels = async (): Promise<string[]> => {
         const startLabel = await readCurrentLabel();
         const seen = new Set<string>([startLabel]);
         let currentLabel = startLabel;
 
-        while (!(await decreasePaddle.isDisabled())) {
-          const nextLabel = await clickUntilLabelChanges(decreasePaddle, currentLabel);
-          if (nextLabel === currentLabel) {
+        for (let step = 0; step < levelLabels.length; step++) {
+          const nextLabel = await cycleOnce(currentLabel);
+          if (nextLabel === currentLabel || nextLabel === startLabel) {
             break;
           }
           currentLabel = nextLabel;
           seen.add(currentLabel);
-        }
-
-        while (!(await increasePaddle.isDisabled())) {
-          const nextLabel = await clickUntilLabelChanges(increasePaddle, currentLabel);
-          if (nextLabel === currentLabel) {
-            break;
-          }
-          currentLabel = nextLabel;
-          seen.add(currentLabel);
-        }
-
-        while (currentLabel !== startLabel) {
-          const needsLowerLevel =
-            levelLabels.indexOf(currentLabel) > levelLabels.indexOf(startLabel);
-          const nextLabel = await clickUntilLabelChanges(
-            needsLowerLevel ? decreasePaddle : increasePaddle,
-            currentLabel
-          );
-          if (nextLabel === currentLabel) {
-            break;
-          }
-          currentLabel = nextLabel;
         }
 
         return [...seen].sort(
@@ -280,40 +243,15 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       const clampedTargetLevel = Math.max(0, Math.min(targetLevel, allowedLabels.length - 1));
       const targetLabel = allowedLabels[clampedTargetLevel] ?? allowedLabels[0] ?? levelLabels[0];
 
-      const getCurrentLevel = async (): Promise<number> => {
+      // cycleOnce() retries the interaction and dispatches DOM clicks directly so transient
+      // Linux Electron overlays do not interfere with toolbar hit-testing.
+      for (let i = 0; i < allowedLabels.length; i++) {
         const currentLabel = await readCurrentLabel();
-        const labelIndex = allowedLabels.findIndex((candidate) => currentLabel === candidate);
-        return labelIndex === -1 ? 0 : labelIndex;
-      };
-
-      // Click paddles until we reach the target level. clickUntilLabelChanges() retries
-      // the interaction and dispatches DOM clicks directly so transient Linux Electron
-      // overlays do not interfere with toolbar hit-testing.
-      for (let i = 0; i < allowedLabels.length * 2; i++) {
-        const currentLevel = await getCurrentLevel();
-        if (currentLevel === clampedTargetLevel) {
+        if (currentLabel === targetLabel) {
           break;
         }
-
-        const currentLabel = allowedLabels[currentLevel] ?? (await readCurrentLabel());
-        const nextLabel = await clickUntilLabelChanges(
-          currentLevel < clampedTargetLevel ? increasePaddle : decreasePaddle,
-          currentLabel
-        );
-        if (nextLabel === currentLabel) {
+        if ((await cycleOnce(currentLabel)) === currentLabel) {
           break;
-        }
-      }
-
-      let finalLevel = await getCurrentLevel();
-      if (finalLevel !== clampedTargetLevel) {
-        for (let i = 0; i < allowedLabels.length; i++) {
-          const currentLabel = await readCurrentLabel();
-          const nextLabel = await clickUntilLabelChanges(label, currentLabel);
-          finalLevel = await getCurrentLevel();
-          if (finalLevel === clampedTargetLevel || nextLabel === currentLabel) {
-            break;
-          }
         }
       }
 
