@@ -109,6 +109,8 @@ export const TimelineEventDraftSchema = TimelineEventSchema.omit({
   v: true,
   seq: true,
   id: true,
+}).extend({
+  ts: z.number().nonnegative().optional(),
 });
 
 export const TimelineListInputSchema = z
