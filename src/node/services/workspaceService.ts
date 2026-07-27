@@ -141,11 +141,13 @@ import {
 import type { UIMode } from "@/common/types/mode";
 import {
   createMuxMessage,
+  getCompactionFollowUpContent,
   pickPreservedSendOptions,
   type CompactionFollowUpRequest,
   type MuxMessageMetadata,
   type MuxMessage,
 } from "@/common/types/message";
+import { getFollowUpContentText } from "@/browser/utils/compaction/format";
 import {
   isActiveWorkflowRunStatus,
   isNestedWorkflowRun,
@@ -1645,6 +1647,22 @@ function mergeActiveCount(
 }
 
 /**
+ * `/compact <follow-up>` persists the command and its follow-up separately, so the bare
+ * `rawCommand` would hide what the user actually asked for. Mirrors the reconstruction in
+ * displayedMessageBuilder.
+ */
+function appendCompactionFollowUp(rawCommand: string, message: MuxMessage): string {
+  const muxMeta: unknown = message.metadata?.muxMetadata;
+  if (rawCommand.includes("\n") || typeof muxMeta !== "object" || muxMeta === null) {
+    return rawCommand;
+  }
+  const followUpText = getFollowUpContentText(
+    getCompactionFollowUpContent(message.metadata?.muxMetadata)
+  );
+  return followUpText === null ? rawCommand : `${rawCommand}\n${followUpText}`;
+}
+
+/**
  * Mirrors the transcript's user-message precedence (displayedMessageBuilder prefers
  * `rawCommand` over part text) so a materialized slash command reads as the user typed
  * it instead of the expanded skill or compaction body sent to the provider.
@@ -1662,7 +1680,7 @@ function extractUserPromptText(message: MuxMessage): string {
       ? muxMeta.rawCommand.trim()
       : "";
   if (rawCommand.length > 0) {
-    return rawCommand;
+    return appendCompactionFollowUp(rawCommand, message);
   }
 
   if (!Array.isArray(message.parts)) {

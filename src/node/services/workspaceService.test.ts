@@ -13053,6 +13053,48 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     expect(prompt).toBe("/compact");
   });
 
+  test("reconstructs a compaction command's follow-up text", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      const message = createMuxMessage("u1", "user", "Expanded compaction instructions", {
+        historySequence: 1,
+      });
+      await historyService.appendToHistory(workspaceId, {
+        ...message,
+        metadata: {
+          ...message.metadata,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: { followUpContent: { text: "then rerun the failing test" } },
+          },
+        },
+      } as typeof message);
+    });
+
+    expect(prompt).toBe("/compact\nthen rerun the failing test");
+  });
+
+  test("keeps the bare compaction command when the follow-up is the resume sentinel", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      const message = createMuxMessage("u1", "user", "Expanded compaction instructions", {
+        historySequence: 1,
+      });
+      await historyService.appendToHistory(workspaceId, {
+        ...message,
+        metadata: {
+          ...message.metadata,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: { followUpContent: { text: "Continue" } },
+          },
+        },
+      } as typeof message);
+    });
+
+    expect(prompt).toBe("/compact");
+  });
+
   test("keeps scanning past a user row with primitive muxMetadata", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(
