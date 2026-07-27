@@ -86,7 +86,7 @@ export const ConcurrentLocalWarningDecoration: React.FC<ConcurrentLocalWarningVi
   props
 ) => {
   return (
-    <div className="border-border bg-surface-primary border-t px-4 py-1.5">
+    <div className="bg-surface-primary px-4 py-1.5">
       <ConcurrentLocalWarningView
         streamingWorkspaceName={props.streamingWorkspaceName}
         className={cn("mx-auto max-w-4xl", props.className)}

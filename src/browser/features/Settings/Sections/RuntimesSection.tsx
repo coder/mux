@@ -629,8 +629,8 @@ export function RuntimesSection() {
                       ) : null}
                     </div>
                     <div className="text-muted text-xs">{runtime.description}</div>
-                    {/* Configurable option inputs — project scope uses the same labeled
-                        input component and localStorage defaults as the creation flow. */}
+                    {/* Configurable option inputs: project scope uses the same input component
+                        and localStorage defaults as the creation flow. */}
                     {!optionSpec || !selectedProjectPath ? (
                       runtime.options && !selectedProjectPath ? (
                         <div className="text-muted/70 text-[11px]">Options: {runtime.options}</div>

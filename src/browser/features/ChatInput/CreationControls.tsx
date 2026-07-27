@@ -55,6 +55,9 @@ import {
 const INLINE_CONTROL_CLASSES =
   "h-7 w-[140px] rounded border border-border-light bg-transparent px-2 text-xs text-foreground focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
 
+/** Trailing clause of the configurator sentence: full width on mobile, inline from md up. */
+const SENTENCE_CLAUSE_CLASSES = "flex w-full min-w-0 items-center gap-2 md:w-auto";
+
 /** Credential sharing checkbox - used by Docker and Devcontainer runtimes */
 function CredentialSharingCheckbox(props: {
   checked: boolean;
@@ -971,44 +974,52 @@ export function CreationControls(props: CreationControlsProps) {
           </div>
           {/* end mobile row wrapper */}
 
-          {/* SSH Host Input - shown in the same row when SSH (non-Coder) is selected */}
+          {/* Runtimes that need one extra value continue the sentence with their own clause.
+              A stacked label above the input made the field taller than the rest of the row. */}
           {selectedRuntime.mode === "ssh" &&
             !isCoderSelected &&
             (props.allowSshHost ?? true) &&
             !props.coderProps?.enabled &&
             // Also hide when Coder is still checking but has saved config (will enable after check)
             !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
-              <RuntimeConfigInput
-                id="ssh-host"
-                fieldSpec={RUNTIME_OPTION_FIELDS.ssh}
-                value={selectedRuntime.host}
-                onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
-                disabled={props.disabled}
-                hasError={props.runtimeFieldError === "ssh"}
-                inputClassName={INLINE_CONTROL_CLASSES}
-                stacked
-              />
+              <div className={SENTENCE_CLAUSE_CLASSES}>
+                <span className="text-muted-foreground shrink-0">on host</span>
+                <RuntimeConfigInput
+                  id="ssh-host"
+                  fieldSpec={RUNTIME_OPTION_FIELDS.ssh}
+                  value={selectedRuntime.host}
+                  onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
+                  disabled={props.disabled}
+                  hasError={props.runtimeFieldError === "ssh"}
+                  className="min-w-0 flex-1 md:flex-initial"
+                  labelClassName="sr-only"
+                  inputClassName={cn(INLINE_CONTROL_CLASSES, "w-full md:w-[160px]")}
+                />
+              </div>
             )}
 
-          {/* Docker Image Input - shown in the same row when Docker is selected */}
           {selectedRuntime.mode === "docker" && (
-            <RuntimeConfigInput
-              fieldSpec={RUNTIME_OPTION_FIELDS.docker}
-              value={selectedRuntime.image}
-              onChange={(value) =>
-                onSelectedRuntimeChange({
-                  mode: "docker",
-                  image: value,
-                  shareCredentials: selectedRuntime.shareCredentials,
-                })
-              }
-              disabled={props.disabled}
-              hasError={props.runtimeFieldError === "docker"}
-              id="docker-image"
-              ariaLabel="Docker image"
-              inputClassName={INLINE_CONTROL_CLASSES}
-              stacked
-            />
+            <div className={SENTENCE_CLAUSE_CLASSES}>
+              <span className="text-muted-foreground shrink-0">with image</span>
+              <RuntimeConfigInput
+                fieldSpec={RUNTIME_OPTION_FIELDS.docker}
+                value={selectedRuntime.image}
+                onChange={(value) =>
+                  onSelectedRuntimeChange({
+                    mode: "docker",
+                    image: value,
+                    shareCredentials: selectedRuntime.shareCredentials,
+                  })
+                }
+                disabled={props.disabled}
+                hasError={props.runtimeFieldError === "docker"}
+                id="docker-image"
+                ariaLabel="Docker image"
+                className="min-w-0 flex-1 md:flex-initial"
+                labelClassName="sr-only"
+                inputClassName={cn(INLINE_CONTROL_CLASSES, "w-full md:w-[160px]")}
+              />
+            </div>
           )}
         </div>
 
