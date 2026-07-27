@@ -58,24 +58,36 @@ describe("timeline_event tool", () => {
     });
   });
 
-  test("drops duplicate descriptions and events over the per-turn cap", async () => {
-    const tool = createTimelineEventTool({
+  test("throttles duplicates and over-limit events across toolset rebuilds", async () => {
+    const config = {
       ...createTestToolConfig(tempDir, { workspaceId: WORKSPACE_ID }),
       timelineService,
-    });
+    };
+    const tool = createTimelineEventTool(config);
 
     const first: unknown = await tool.execute!({ description: "One" }, options("event-1"));
     const duplicate: unknown = await tool.execute!({ description: "One" }, options("event-2"));
-    for (let index = 2; index <= 5; index++) {
-      await tool.execute!({ description: `Event ${index}` }, options(`event-${index + 1}`));
+    for (let index = 2; index <= 10; index++) {
+      await tool.execute!({ description: `Event ${index}` }, options(`event-${index}`));
     }
-    const overLimit: unknown = await tool.execute!({ description: "Event 6" }, options("event-7"));
+
+    // The model-fallback path rebuilds the toolset mid-turn; the budget must not reset with it.
+    const rebuilt = createTimelineEventTool(config);
+    const afterRebuild: unknown = await tool.execute!(
+      { description: "Over limit" },
+      options("event-over")
+    );
+    const afterRebuiltInstance: unknown = await rebuilt.execute!(
+      { description: "Over limit via rebuilt tool" },
+      options("event-over-rebuilt")
+    );
     await timelineService.flush();
 
     expect(first).toEqual({ success: true, recorded: true });
     expect(duplicate).toEqual({ success: true, recorded: false });
-    expect(overLimit).toEqual({ success: true, recorded: false });
-    expect((await timelineService.list(WORKSPACE_ID, {})).events).toHaveLength(5);
+    expect(afterRebuild).toEqual({ success: true, recorded: false });
+    expect(afterRebuiltInstance).toEqual({ success: true, recorded: false });
+    expect((await timelineService.list(WORKSPACE_ID, {})).events).toHaveLength(10);
   });
 
   test("is absent from getToolsForModel when the experiment is off", async () => {

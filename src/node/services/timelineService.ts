@@ -11,6 +11,7 @@ import {
   TimelineStoredEventSchema,
   type TimelineAnchor,
   type TimelineEvent,
+  type TimelineEventData,
   type TimelineEventDraft,
   type TimelineListInput,
   type TimelinePage,
@@ -34,6 +35,12 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 export const TIMELINE_DEFAULT_PAGE_LIMIT = 50;
 const REVERSE_READ_CHUNK_SIZE = 256 * 1024;
 const RECENT_SOURCE_KEY_LIMIT = 1_000;
+
+// Agent-event throttling lives here rather than in the tool closure: the toolset is rebuilt
+// mid-turn on the model-fallback path, which would otherwise hand a chatty agent a fresh budget.
+const AGENT_EVENT_WINDOW_MS = 5 * 60_000;
+const AGENT_EVENT_WINDOW_LIMIT = 10;
+const AGENT_EVENT_DUPLICATE_WINDOW_MS = 30_000;
 
 const TOOL_PREVIEW_TEXT_FIELDS = ["title", "description", "prompt", "objective", "message"];
 
@@ -63,6 +70,7 @@ export class TimelineService implements TimelineRecorder {
   private readonly writeQueues = new Map<string, Promise<void>>();
   private readonly nextSequences = new Map<string, number>();
   private readonly recentSourceKeys = new Map<string, Map<string, true>>();
+  private readonly recentAgentEvents = new Map<string, Map<string, number>>();
   private mapperState: TimelineMapperState = createTimelineMapperState();
 
   constructor(
@@ -102,6 +110,48 @@ export class TimelineService implements TimelineRecorder {
       await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf-8");
       this.events.emit("appended", { workspaceId, events: [event] });
     });
+  }
+
+  // Returns false when the event was throttled, so the tool can tell the agent it was not kept.
+  recordAgentEvent(
+    workspaceId: string,
+    input: {
+      description: string;
+      category?: NonNullable<TimelineEventData["category"]>;
+      toolCallId: string;
+    }
+  ): boolean {
+    const now = Date.now();
+    const recent = this.recentAgentEvents.get(workspaceId) ?? new Map<string, number>();
+    for (const [description, seenAt] of recent) {
+      if (now - seenAt >= AGENT_EVENT_WINDOW_MS) {
+        recent.delete(description);
+      }
+    }
+
+    const duplicateAt = recent.get(input.description);
+    if (
+      recent.size >= AGENT_EVENT_WINDOW_LIMIT ||
+      (duplicateAt != null && now - duplicateAt < AGENT_EVENT_DUPLICATE_WINDOW_MS)
+    ) {
+      this.recentAgentEvents.set(workspaceId, recent);
+      return false;
+    }
+
+    recent.set(input.description, now);
+    this.recentAgentEvents.set(workspaceId, recent);
+    this.record(workspaceId, {
+      ts: now,
+      kind: "agent.event",
+      source: { system: "agent", key: `timeline-event:${input.toolCallId}` },
+      anchor: { toolCallId: input.toolCallId },
+      status: "completed",
+      data: {
+        description: input.description,
+        ...(input.category != null ? { category: input.category } : {}),
+      },
+    });
+    return true;
   }
 
   async flush(workspaceId?: string): Promise<void> {
@@ -384,6 +434,7 @@ export class TimelineService implements TimelineRecorder {
   private clearWorkspaceCaches(workspaceId: string): void {
     this.nextSequences.delete(workspaceId);
     this.recentSourceKeys.delete(workspaceId);
+    this.recentAgentEvents.delete(workspaceId);
     this.mapperState = {
       openStreams: new Map(
         [...this.mapperState.openStreams].filter(([, stream]) => stream.workspaceId !== workspaceId)
