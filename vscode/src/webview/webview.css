@@ -53,7 +53,6 @@
     --color-debug-text: hsl(214 100% 80%);
 
     --color-thinking-mode: hsl(271 76% 53%);
-    --color-thinking-mode-light: hsl(271 76% 65%);
     --color-thinking-border: hsl(271 76% 53%);
 
     /* Runtime icon colors (matches Tailwind blue-500/purple-500) */

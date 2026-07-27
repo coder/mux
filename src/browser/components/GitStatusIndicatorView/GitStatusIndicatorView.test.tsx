@@ -96,10 +96,24 @@ describe("GitStatusIndicatorView counter pill", () => {
     expect(container.textContent).toContain("*");
   });
 
-  it("keeps the behind-only fallback outside the pill in line mode", () => {
-    const { container } = renderIndicator("line-delta", gitStatus({ behind: 16 }));
+  it("keeps the incoming-only fallback outside the pill in line mode", () => {
+    const { container } = renderIndicator(
+      "line-delta",
+      gitStatus({ behind: 16, incomingAdditions: 120, incomingDeletions: 30 })
+    );
 
     expect(counterPill(container)).toBeNull();
-    expect(container.textContent).toContain("↓16");
+    expect(container.textContent).toContain("↓150");
+  });
+
+  it("reports lines rather than the behind commit count in line mode", () => {
+    const status = gitStatus({ behind: 16, incomingAdditions: 120, incomingDeletions: 30 });
+
+    const lineMode = renderIndicator("line-delta", status);
+    expect(lineMode.container.textContent).not.toContain("↓16");
+    cleanup();
+
+    const commitMode = renderIndicator("divergence", status);
+    expect(commitMode.container.textContent).toContain("↓16");
   });
 });

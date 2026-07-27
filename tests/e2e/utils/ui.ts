@@ -1,5 +1,6 @@
 import path from "path";
 import { expect, type Locator, type Page } from "@playwright/test";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import type { DemoProjectConfig } from "./demoProject";
 
 type ChatMode = "Plan" | "Exec";
@@ -177,86 +178,88 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       if (!Number.isInteger(targetLevel)) {
         throw new Error("Thinking level must be an integer");
       }
-      if (targetLevel < 0 || targetLevel > 4) {
-        throw new Error(`Thinking level ${targetLevel} is outside expected range 0-4`);
+      if (targetLevel < 0 || targetLevel >= THINKING_LEVELS.length) {
+        throw new Error(
+          `Thinking level ${targetLevel} is outside expected range 0-${THINKING_LEVELS.length - 1}`
+        );
       }
 
-      const levelLabels = ["OFF", "LOW", "MED", "HIGH", "XHIGH"];
       const label = thinkingLevelLabel(page);
 
       // Wait for thinking controls to be visible
       await expect(label).toBeVisible();
 
-      const readCurrentLabel = async (): Promise<string> => {
-        const text = await label.textContent();
-        const normalized = text?.trim().toUpperCase() ?? "";
-
-        // Note: XHIGH contains HIGH as a substring, so we must avoid includes()-based matching here.
-        return levelLabels.find((candidate) => normalized === candidate) ?? levelLabels[0];
+      // Read the internal level from the accessible name rather than the visible text: display
+      // labels are provider-dependent and collide (xhigh renders as "MAX" on some models).
+      const readCurrentLevel = async (): Promise<ThinkingLevel> => {
+        const ariaLabel = (await label.getAttribute("aria-label")) ?? "";
+        const match = /Thinking level:\s*([a-z]+)/i.exec(ariaLabel);
+        const level = THINKING_LEVELS.find((candidate) => candidate === match?.[1]?.toLowerCase());
+        if (!level) {
+          throw new Error(`Could not read thinking level from aria-label: ${ariaLabel}`);
+        }
+        return level;
       };
 
       // The label is the only thinking control: it advances one level per click and wraps at the
       // top of the model's allowed ladder.
-      const cycleOnce = async (previousLabel: string): Promise<string> => {
+      const cycleOnce = async (previousLevel: ThinkingLevel): Promise<ThinkingLevel> => {
         for (let attempt = 0; attempt < 3; attempt++) {
           await label.dispatchEvent("click");
           try {
             await expect
               .poll(
                 async () => {
-                  const currentLabel = await readCurrentLabel();
-                  return currentLabel === previousLabel ? null : currentLabel;
+                  const currentLevel = await readCurrentLevel();
+                  return currentLevel === previousLevel ? null : currentLevel;
                 },
                 { timeout: 1_000 }
               )
               .not.toBeNull();
-            return await readCurrentLabel();
+            return await readCurrentLevel();
           } catch {
             // Linux CI can drop clicks during rapid mode transitions; retry the same control.
           }
         }
 
-        return await readCurrentLabel();
+        return await readCurrentLevel();
       };
 
       // Walk one full cycle to learn which levels this model allows, ending back at the start.
-      const discoverAllowedLabels = async (): Promise<string[]> => {
-        const startLabel = await readCurrentLabel();
-        const seen = new Set<string>([startLabel]);
-        let currentLabel = startLabel;
+      const discoverAllowedLevels = async (): Promise<ThinkingLevel[]> => {
+        const startLevel = await readCurrentLevel();
+        const seen = new Set<ThinkingLevel>([startLevel]);
+        let currentLevel = startLevel;
 
-        for (let step = 0; step < levelLabels.length; step++) {
-          const nextLabel = await cycleOnce(currentLabel);
-          if (nextLabel === currentLabel || nextLabel === startLabel) {
+        for (let step = 0; step < THINKING_LEVELS.length; step++) {
+          const nextLevel = await cycleOnce(currentLevel);
+          if (nextLevel === currentLevel || nextLevel === startLevel) {
             break;
           }
-          currentLabel = nextLabel;
-          seen.add(currentLabel);
+          currentLevel = nextLevel;
+          seen.add(currentLevel);
         }
 
-        return [...seen].sort(
-          (left, right) => levelLabels.indexOf(left) - levelLabels.indexOf(right)
-        );
+        return THINKING_LEVELS.filter((candidate) => seen.has(candidate));
       };
 
-      const allowedLabels = await discoverAllowedLabels();
-      const clampedTargetLevel = Math.max(0, Math.min(targetLevel, allowedLabels.length - 1));
-      const targetLabel = allowedLabels[clampedTargetLevel] ?? allowedLabels[0] ?? levelLabels[0];
+      const allowedLevels = await discoverAllowedLevels();
+      const targetIndex = Math.min(targetLevel, allowedLevels.length - 1);
+      const target = allowedLevels[targetIndex];
 
       // cycleOnce() retries the interaction and dispatches DOM clicks directly so transient
       // Linux Electron overlays do not interfere with toolbar hit-testing.
-      for (let i = 0; i < allowedLabels.length; i++) {
-        const currentLabel = await readCurrentLabel();
-        if (currentLabel === targetLabel) {
+      for (let i = 0; i < allowedLevels.length; i++) {
+        const currentLevel = await readCurrentLevel();
+        if (currentLevel === target) {
           break;
         }
-        if ((await cycleOnce(currentLabel)) === currentLabel) {
+        if ((await cycleOnce(currentLevel)) === currentLevel) {
           break;
         }
       }
 
-      // Verify we reached the target
-      await expect(label).toContainText(targetLabel);
+      expect(await readCurrentLevel()).toBe(target);
     },
 
     async sendMessage(message: string): Promise<void> {

@@ -39,7 +39,6 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
 
   const displayLabel = getThinkingDisplayLabel(effectiveThinkingLevel, modelString);
 
-  // Single-option policy: render non-interactive text
   if (allowed.length <= 1) {
     const fixedLevel = allowed[0] || "off";
     const tooltipMessage = `Model ${modelString} locks thinking at ${getThinkingDisplayLabel(fixedLevel, modelString)} to match its capabilities.`;

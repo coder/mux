@@ -90,7 +90,6 @@
     --color-debug-text: hsl(214 100% 80%);
 
     --color-thinking-mode: hsl(271 76% 53%);
-    --color-thinking-mode-light: hsl(271 76% 65%);
     --color-thinking-border: hsl(271 76% 53%);
 
     /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
@@ -389,7 +388,6 @@
   --color-debug-text: hsl(214 100% 32%);
 
   --color-thinking-mode: hsl(271 70% 46%);
-  --color-thinking-mode-light: hsl(271 70% 62%);
   --color-thinking-border: hsl(271 70% 46%);
 
   /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
@@ -648,7 +646,6 @@
   --color-debug-text: color-mix(in srgb, var(--color-debug-mode), black 30%);
 
   --color-thinking-mode: #a02f6f; /* Flexoki magenta-600 */
-  --color-thinking-mode-light: color-mix(in srgb, var(--color-thinking-mode), white 42%);
   --color-thinking-border: var(--color-thinking-mode);
 
   /* Runtime badges (ensure readable on light background) */
@@ -882,7 +879,6 @@
   --color-debug-text: color-mix(in srgb, var(--color-debug-mode), white 30%);
 
   --color-thinking-mode: #ce5d97; /* Flexoki magenta-400 */
-  --color-thinking-mode-light: color-mix(in srgb, var(--color-thinking-mode), white 22%);
   --color-thinking-border: var(--color-thinking-mode);
 
   /* Flexoki neutrals */
