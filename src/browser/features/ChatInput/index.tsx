@@ -3229,7 +3229,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         className={cn(
           "relative flex flex-col gap-1",
           variant === "creation"
-            ? cn("w-full", CREATION_COLUMN_MAX_WIDTH_CLASS)
+            ? `w-full ${CREATION_COLUMN_MAX_WIDTH_CLASS}`
             : `bg-surface-primary px-4 
               pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
               mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
@@ -3403,9 +3403,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       (showSkillSuggestions && skillSuggestions.length > 0) ||
                       (showSymbolSuggestions && symbolSuggestions.length > 0)
                     }
-                    // Sized so the bordered surface lands within ~2px of the Review 1.4
-                    // frames, whose PNG exports measure 1:1 in CSS px: 146px for the
-                    // workspace composer, 201px for creation.
+                    // Creation gets the taller box the design gives its primary prompt;
+                    // the workspace composer shares the transcript's vertical space.
                     className={variant === "creation" ? "min-h-36" : "min-h-22"}
                   />
                   {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
@@ -3555,7 +3554,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                   </div>
 
-                  {/* Positioning anchor for the dispatch-mode menu below. */}
                   <div ref={sendModeMenuContainerRef} className="relative">
                     <Tooltip>
                       <TooltipTrigger asChild>
