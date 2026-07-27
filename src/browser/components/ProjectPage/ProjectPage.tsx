@@ -309,18 +309,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                         onDismiss={handleDismissAgentsInit}
                       />
                     )}
-                    {/* Configured providers bar - compact icon carousel */}
-                    {providersLoading ? (
-                      // Skeleton placeholder matching ConfiguredProvidersBar height
-                      <div className="flex items-center justify-center gap-2 py-1.5">
-                        <Skeleton className="h-7 w-32" />
-                      </div>
-                    ) : (
-                      hasProviders &&
-                      providersConfig && (
-                        <ConfiguredProvidersBar providersConfig={providersConfig} />
-                      )
-                    )}
                     {/* ChatInput for workspace creation. */}
                     <ChatInput
                       // Key by project + draft so project navigation and draft switches both remount
@@ -334,6 +322,19 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       onReady={handleChatReady}
                       onWorkspaceCreated={onWorkspaceCreated}
                     />
+                    {/* Provider status sits below the composer per the Review 1.4 start frame:
+                        the prompt is the primary action, so setup state reads as a footnote. */}
+                    {providersLoading ? (
+                      // Skeleton placeholder matching ConfiguredProvidersBar height
+                      <div className="flex items-center justify-center gap-2 py-1.5">
+                        <Skeleton className="h-7 w-32" />
+                      </div>
+                    ) : (
+                      hasProviders &&
+                      providersConfig && (
+                        <ConfiguredProvidersBar providersConfig={providersConfig} />
+                      )
+                    )}
                   </>
                 )}
               </div>

@@ -18,6 +18,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { sortAgentsStable } from "@/browser/utils/agents";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { COMPOSER_CONTROL_HEIGHT_CLASS } from "@/constants/layout";
 
 interface AgentModePickerProps {
   className?: string;
@@ -323,7 +324,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "text-foreground border-border-light hover:bg-hover flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-[background-color] duration-150",
+              "text-foreground border-border-light hover:bg-hover flex items-center gap-1.5 rounded-md border px-1.5 text-[11px] font-medium transition-[background-color] duration-150",
+              COMPOSER_CONTROL_HEIGHT_CLASS,
               activeClassName
             )}
           >

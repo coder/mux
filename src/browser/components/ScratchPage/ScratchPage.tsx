@@ -94,15 +94,6 @@ export function ScratchPage(props: ScratchPageProps) {
                   <ConfigureProvidersPrompt />
                 ) : (
                   <>
-                    {providersLoading ? (
-                      <div className="flex items-center justify-center gap-2 py-1.5">
-                        <Skeleton className="h-7 w-32" />
-                      </div>
-                    ) : (
-                      providersConfig && (
-                        <ConfiguredProvidersBar providersConfig={providersConfig} />
-                      )
-                    )}
                     <ChatInput
                       key={`${SCRATCH_PROJECT_CONFIG_KEY}:${props.pendingDraftId ?? "__pending__"}`}
                       variant="creation"
@@ -113,6 +104,15 @@ export function ScratchPage(props: ScratchPageProps) {
                       onReady={handleChatReady}
                       onWorkspaceCreated={props.onWorkspaceCreated}
                     />
+                    {providersLoading ? (
+                      <div className="flex items-center justify-center gap-2 py-1.5">
+                        <Skeleton className="h-7 w-32" />
+                      </div>
+                    ) : (
+                      providersConfig && (
+                        <ConfiguredProvidersBar providersConfig={providersConfig} />
+                      )
+                    )}
                   </>
                 )}
               </div>

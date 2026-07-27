@@ -220,7 +220,7 @@ import { normalizeAgentId } from "@/common/utils/agentIds";
 import { isGoalRunning } from "@/common/types/goal";
 import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAttachments";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { CREATION_COLUMN_MAX_WIDTH_CLASS } from "@/constants/layout";
+import { COMPOSER_CONTROL_HEIGHT_CLASS, CREATION_COLUMN_MAX_WIDTH_CLASS } from "@/constants/layout";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -3463,7 +3463,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   {/* Model and thinking level share one bordered pill, split by a divider,
                     as in the design's "claude opus 4.5 | max". */}
                   <div
-                    className="border-border-light flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5"
+                    className={cn(
+                      "border-border-light flex min-w-0 items-center gap-1.5 rounded-md border px-1.5",
+                      COMPOSER_CONTROL_HEIGHT_CLASS
+                    )}
                     data-component="ModelSelectorGroup"
                     data-tutorial="model-selector"
                   >
@@ -3477,7 +3480,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       onSetDefaultModel={setDefaultModel}
                       hiddenModels={hiddenModelsForSelector}
                       onOpenSettings={() => open("models")}
-                      className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
+                      className="h-full w-[clamp(5.5rem,28vw,8rem)] min-w-0"
                       tooltipExtraContent={
                         <>
                           <strong>Click to edit</strong>

@@ -232,7 +232,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="text-muted hover:text-foreground focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-1 border-0 bg-transparent p-0 transition-colors focus-visible:ring-1"
+              className="text-muted hover:bg-hover hover:text-foreground focus-visible:ring-accent flex h-5 shrink-0 cursor-pointer items-center gap-1 rounded-md border-0 bg-transparent px-1.5 transition-colors focus-visible:ring-1"
               data-testid="workspace-footer-last-prompt"
               onKeyDown={stopKeyboardPropagation}
             >
@@ -245,10 +245,14 @@ function FooterLastPrompt(props: { workspaceId: string }) {
           Show last prompt ({formatKeybind(KEYBINDS.SHOW_LAST_PROMPT)})
         </TooltipContent>
       </Tooltip>
+      {/* w-auto overrides the shared trigger-width default: the trigger is a short label, so
+          inheriting its width would wrap the prompt into an unreadable column. */}
       <PopoverContent
         side="top"
         align="end"
-        className="max-h-60 max-w-100 overflow-y-auto text-xs whitespace-pre-wrap"
+        sideOffset={8}
+        collisionPadding={12}
+        className="max-h-60 w-auto max-w-100 overflow-y-auto p-3 text-xs leading-relaxed whitespace-pre-wrap"
       >
         {lastPrompt}
       </PopoverContent>

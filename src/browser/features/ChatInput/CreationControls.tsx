@@ -20,10 +20,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
-import { Blocks, Cog, GitBranch, Loader2, Wand2 } from "lucide-react";
+import { GitBranch, Loader2, Wand2 } from "lucide-react";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
-import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
 import { cn } from "@/common/lib/utils";
@@ -522,7 +521,6 @@ export function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  */
 export function CreationControls(props: CreationControlsProps) {
   const { userProjects } = useProjectContext();
-  const settings = useSettings();
   const { beginWorkspaceCreation } = useWorkspaceContext();
   const { nameState, runtimeAvailabilityState } = props;
 
@@ -857,36 +855,9 @@ export function CreationControls(props: CreationControlsProps) {
           {/* Workspace Type + Source Branch share a row on mobile */}
           <div className="flex w-full items-center gap-2 md:contents md:w-auto">
             <div className="flex min-w-0 flex-1 items-center gap-1.5 md:flex-initial">
-              <div className="flex items-center gap-1.5">
-                <label className="sr-only" htmlFor="workspace-type-group">
-                  Workspace Type
-                </label>
-                <Blocks className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-                {/* Keep this compact while preserving quick access to project runtime defaults. */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        settings.open("runtimes", { runtimesProjectPath: props.projectPath })
-                      }
-                      className={cn(
-                        "text-muted-foreground hover:text-foreground inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm transition-colors",
-                        runtimeChoice !== props.defaultRuntimeMode &&
-                          "text-warning hover:text-warning"
-                      )}
-                      aria-label="Configure runtimes"
-                    >
-                      <Cog className="h-3 w-3" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent align="center">
-                    {runtimeChoice !== props.defaultRuntimeMode
-                      ? "Set project runtime defaults"
-                      : "Configure runtimes"}
-                  </TooltipContent>
-                </Tooltip>
-              </div>
+              <label className="sr-only" htmlFor="workspace-type-group">
+                Workspace Type
+              </label>
               <RuntimeButtonGroup
                 value={runtimeChoice}
                 onChange={(mode) => {
