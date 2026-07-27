@@ -55,7 +55,6 @@ import {
 const INLINE_CONTROL_CLASSES =
   "h-7 w-[140px] rounded border border-border-light bg-transparent px-2 text-xs text-foreground focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
 
-/** Trailing clause of the configurator sentence: full width on mobile, inline from md up. */
 const SENTENCE_CLAUSE_CLASSES = "flex w-full min-w-0 items-center gap-2 md:w-auto";
 
 /** Credential sharing checkbox - used by Docker and Devcontainer runtimes */
@@ -974,8 +973,8 @@ export function CreationControls(props: CreationControlsProps) {
           </div>
           {/* end mobile row wrapper */}
 
-          {/* Runtimes that need one extra value continue the sentence with their own clause.
-              A stacked label above the input made the field taller than the rest of the row. */}
+          {/* A stacked label above the input made this field taller than the rest of the sentence
+              row, so a runtime's one extra value reads as another clause instead. */}
           {selectedRuntime.mode === "ssh" &&
             !isCoderSelected &&
             (props.allowSshHost ?? true) &&
