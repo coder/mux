@@ -280,6 +280,7 @@ export class ServiceContainer {
     this.taskService.setTimelineRecorder(this.timelineService);
     this.heartbeatService.setTimelineRecorder(this.timelineService);
     this.workspaceGoalService.setTimelineRecorder(this.timelineService);
+    this.aiService.setTimelineService(this.timelineService);
     this.timelineService.subscribeToWorkspace(this.workspaceService);
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(

@@ -737,6 +737,7 @@ export const ExperimentsSchema = z.object({
   dynamicWorkflows: z.boolean().optional(),
   execSubagentHardRestart: z.boolean().optional(),
   memory: z.boolean().optional(),
+  timeline: z.boolean().optional(),
   workspaceHeartbeats: z.boolean().optional(),
   toolSearch: z.boolean().optional(),
 });

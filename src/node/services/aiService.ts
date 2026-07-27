@@ -473,6 +473,7 @@ export class AIService extends EventEmitter {
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
   private memoryService?: MemoryService;
+  private timelineService?: ToolConfiguration["timelineService"];
   private extraTools?: Record<string, Tool>;
   private onWorkflowRunStatusChanged?: (
     event: WorkflowRunStatusChangedEvent
@@ -554,6 +555,10 @@ export class AIService extends EventEmitter {
 
   setMemoryService(memoryService: MemoryService): void {
     this.memoryService = memoryService;
+  }
+
+  setTimelineService(timelineService: NonNullable<ToolConfiguration["timelineService"]>): void {
+    this.timelineService = timelineService;
   }
 
   /**
@@ -1448,6 +1453,9 @@ export class AIService extends EventEmitter {
       const memoryExperimentEnabled =
         experiments?.memory ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
+      const timelineExperimentEnabled =
+        experiments?.timeline ??
+        this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.TIMELINE) === true;
       const workspaceHeartbeatsExperimentEnabled =
         experiments?.workspaceHeartbeats ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS) === true;
@@ -2113,6 +2121,7 @@ export class AIService extends EventEmitter {
         ancestorPlanFilePaths,
         workspaceId,
         muxScope,
+        timelineService: timelineExperimentEnabled ? this.timelineService : undefined,
         workspaceHeartbeatService: this.workspaceHeartbeatService,
         workflowService,
         goalService: workspaceGoalService,
@@ -2209,6 +2218,7 @@ export class AIService extends EventEmitter {
           ...experiments,
           dynamicWorkflows: dynamicWorkflowsExperimentEnabled,
           memory: memoryExperimentEnabled,
+          timeline: timelineExperimentEnabled,
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
           toolSearch: toolSearchExperimentEnabled,
           claudeSkillsCompat: claudeSkillsCompatExperimentEnabled,

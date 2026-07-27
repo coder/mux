@@ -5,7 +5,9 @@ import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import type { TimelineEvent, TimelineEventDraft } from "@/common/orpc/schemas/timeline";
 import type { MuxMessage } from "@/common/types/message";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
+import { setTodosForSessionDir } from "./tools/todo";
 import { TimelineService } from "./timelineService";
+import { WorkspaceService } from "./workspaceService";
 
 const WORKSPACE_ID = "timeline-test-workspace";
 
@@ -180,6 +182,60 @@ describe("TimelineService", () => {
       "utf-8"
     );
     expect(active).not.toContain('"id":"target"');
+  });
+
+  test("unchanged agent status appends nothing", async () => {
+    const workspaceService = Object.assign(Object.create(WorkspaceService.prototype), {
+      lastAgentStatusByWorkspace: new Map(),
+      timelineRecorder: service,
+      emitWorkspaceActivityUpdate: () => Promise.resolve(),
+    }) as WorkspaceService;
+
+    await workspaceService.updateAgentStatus(WORKSPACE_ID, {
+      emoji: "working",
+      message: "Running",
+    });
+    await workspaceService.updateAgentStatus(WORKSPACE_ID, {
+      emoji: "working",
+      message: "Running",
+    });
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.kind)).toEqual(["agent.status"]);
+  });
+
+  test("todo harvest appends only newly completed items", async () => {
+    const workspaceService = Object.assign(Object.create(WorkspaceService.prototype), {
+      config,
+      completedTodosByWorkspace: new Map(),
+      todoStatusUpdateQueue: new Map(),
+      timelineRecorder: service,
+      emitWorkspaceActivityUpdate: () => Promise.resolve(),
+    });
+    const updateTodoStatusFromStorage = (
+      workspaceService as unknown as {
+        updateTodoStatusFromStorage: (workspaceId: string) => Promise<void>;
+      }
+    ).updateTodoStatusFromStorage.bind(workspaceService);
+    const sessionDir = config.getSessionDir(WORKSPACE_ID);
+
+    await setTodosForSessionDir(WORKSPACE_ID, sessionDir, [
+      { content: "Already done", status: "completed" },
+      { content: "Finish backend", status: "in_progress" },
+    ]);
+    await updateTodoStatusFromStorage(WORKSPACE_ID);
+    await setTodosForSessionDir(WORKSPACE_ID, sessionDir, [
+      { content: "Already done", status: "completed" },
+      { content: "Finish backend", status: "completed" },
+    ]);
+    await updateTodoStatusFromStorage(WORKSPACE_ID);
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => [event.kind, event.data?.digest])).toEqual([
+      ["agent.todo_completed", "Finish backend"],
+    ]);
   });
 
   test("history compaction leaves the timeline bytes unchanged", async () => {

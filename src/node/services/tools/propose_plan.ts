@@ -27,7 +27,7 @@ export const createProposePlanTool: ToolFactory = (config) => {
   return tool({
     description: TOOL_DEFINITIONS.propose_plan.description,
     inputSchema: proposePlanSchema,
-    execute: async () => {
+    execute: async (_input, options) => {
       const planPath = config.planFilePath;
 
       if (!planPath) {
@@ -91,6 +91,16 @@ export const createProposePlanTool: ToolFactory = (config) => {
             error,
           });
         }
+      }
+
+      if (config.workspaceId != null && config.timelineService != null) {
+        config.timelineService.record(config.workspaceId, {
+          kind: "agent.plan_proposed",
+          source: { system: "agent", key: `propose-plan:${options.toolCallId}` },
+          anchor: { toolCallId: options.toolCallId },
+          status: "completed",
+          data: { digest: planPath },
+        });
       }
 
       return {

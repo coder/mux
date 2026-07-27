@@ -71,6 +71,7 @@ import type { MemoryIndexEntry, MemoryService } from "@/node/services/memoryServ
 import type { MemoryScopeAccess } from "@/common/constants/memory";
 import { createMemoryTool } from "@/node/services/tools/memory";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import type { TimelineService } from "@/node/services/timelineService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
@@ -177,6 +178,8 @@ export interface ToolConfiguration {
   agentSkillsRoots?: ToolAgentSkillsRoots;
   /** Memory service for the memory tool (present only when the memory experiment is enabled). */
   memoryService?: MemoryService;
+  /** Timeline service for timeline recording and the timeline_mark tool. */
+  timelineService?: TimelineService;
   /** Per-scope memory write policy for the current agent (defaults to read-only). */
   memoryAccess?: MemoryScopeAccess;
   /** Callback to record file state for external edit detection (plan files) */
@@ -267,6 +270,7 @@ export interface ToolConfiguration {
     execSubagentHardRestart?: boolean;
     dynamicWorkflows?: boolean;
     memory?: boolean;
+    timeline?: boolean;
     workspaceHeartbeats?: boolean;
     toolSearch?: boolean;
     /** claude-skills-compat: discover skills from .claude/skills and ~/.claude/skills (read-only). */
