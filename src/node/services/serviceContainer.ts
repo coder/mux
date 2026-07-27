@@ -40,6 +40,7 @@ import { BrowserControlService } from "@/node/services/browser/BrowserControlSer
 import { BrowserSessionStateHub } from "@/node/services/browser/BrowserSessionStateHub";
 import { DevToolsService } from "@/node/services/devToolsService";
 import { SessionTimingService } from "@/node/services/sessionTimingService";
+import { TimelineService } from "@/node/services/timelineService";
 import {
   AnalyticsService,
   type IngestWorkspaceMeta,
@@ -120,6 +121,7 @@ export class ServiceContainer {
   public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly telemetryService: TelemetryService;
   public readonly sessionTimingService: SessionTimingService;
+  public readonly timelineService: TimelineService;
   public readonly devToolsService: DevToolsService;
   public readonly browserSessionDiscoveryService: AgentBrowserSessionDiscoveryService;
   public readonly browserBridgeTokenManager: BrowserBridgeTokenManager;
@@ -269,6 +271,16 @@ export class ServiceContainer {
       this.taskService,
       this.idleDispatcher
     );
+    this.timelineService = new TimelineService(
+      config,
+      this.historyService,
+      this.experimentsService
+    );
+    this.workspaceService.setTimelineRecorder(this.timelineService);
+    this.taskService.setTimelineRecorder(this.timelineService);
+    this.heartbeatService.setTimelineRecorder(this.timelineService);
+    this.workspaceGoalService.setTimelineRecorder(this.timelineService);
+    this.timelineService.subscribeToWorkspace(this.workspaceService);
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(
       config,
@@ -603,6 +615,7 @@ export class ServiceContainer {
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
       mcpServerManager: this.mcpServerManager,
       sessionTimingService: this.sessionTimingService,
+      timelineService: this.timelineService,
       telemetryService: this.telemetryService,
       analyticsService: this.analyticsService,
       experimentsService: this.experimentsService,
@@ -641,6 +654,7 @@ export class ServiceContainer {
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();
     this.browserBridgeTokenManager.dispose();
+    await this.timelineService.flush();
     await this.analyticsService.dispose();
     await this.telemetryService.shutdown();
   }
@@ -688,5 +702,6 @@ export class ServiceContainer {
     this.serverAuthService.dispose();
     this.providerService.dispose();
     await this.backgroundProcessManager.terminateAll();
+    await this.timelineService.flush();
   }
 }
