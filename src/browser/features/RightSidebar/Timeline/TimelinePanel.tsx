@@ -1,10 +1,12 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceStoreRaw, useWorkspaceTimeline } from "@/browser/stores/WorkspaceStore";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
-import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
+import type { TimelineEvent, TimelinePreview } from "@/common/orpc/schemas/timeline";
 
 import {
   TIMELINE_CATEGORIES,
@@ -295,6 +297,85 @@ function CollapsedEventRun(props: {
   );
 }
 
+type PreviewState =
+  | { status: "loading" }
+  | { status: "ready"; preview: TimelinePreview }
+  | { status: "unavailable" };
+
+function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent }) {
+  const { api } = useAPI();
+  const [previewState, setPreviewState] = useState<PreviewState>({ status: "loading" });
+
+  useEffect(() => {
+    const anchor = props.event.anchor;
+    if (!anchor || !api) {
+      setPreviewState({ status: "unavailable" });
+      return;
+    }
+
+    let cancelled = false;
+    setPreviewState({ status: "loading" });
+
+    api.workspace.timeline
+      .preview({ workspaceId: props.workspaceId, ...anchor })
+      .then((preview) => {
+        if (!cancelled) {
+          setPreviewState(preview ? { status: "ready", preview } : { status: "unavailable" });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPreviewState({ status: "unavailable" });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, props.event, props.workspaceId]);
+
+  return (
+    <div className="border-border bg-surface-secondary mx-3 mb-3 shrink-0 rounded-md border p-3">
+      {previewState.status === "loading" ? (
+        <div className="text-muted text-xs">Loading preview…</div>
+      ) : previewState.status === "unavailable" ? (
+        <div className="text-muted text-xs">Preview unavailable</div>
+      ) : (
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="text-content-primary text-xs font-medium capitalize">
+              {previewState.preview.role}
+            </span>
+            {previewState.preview.timestamp != null ? (
+              <time
+                dateTime={new Date(previewState.preview.timestamp).toISOString()}
+                className="text-muted counter-nums text-[10px]"
+              >
+                {timeFormatter.format(previewState.preview.timestamp)}
+              </time>
+            ) : null}
+          </div>
+          {previewState.preview.textExcerpt ? (
+            <div className="text-content-secondary max-h-24 overflow-hidden text-xs whitespace-pre-wrap">
+              {previewState.preview.textExcerpt}
+            </div>
+          ) : null}
+          {previewState.preview.toolName || previewState.preview.status ? (
+            <div className="text-muted flex min-w-0 items-center gap-2 text-[10px]">
+              {previewState.preview.toolName ? (
+                <span className="min-w-0 truncate">{previewState.preview.toolName}</span>
+              ) : null}
+              {previewState.preview.status ? (
+                <span className="shrink-0 capitalize">{previewState.preview.status}</span>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TimelinePanel(props: TimelinePanelProps) {
   const timeline = useWorkspaceTimeline(props.workspaceId);
   const workspaceStore = useWorkspaceStoreRaw();
@@ -308,6 +389,7 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const filteredEvents = timeline.events
     .filter((event) => filter === "all" || getTimelineEventCategory(event) === filter)
     .toSorted((a, b) => b.seq - a.seq);
+  const selectedEvent = filteredEvents.find((event) => event.id === selectedEventId);
   const dayGroups = groupEventsByDay(filteredEvents);
 
   const toggleRun = (key: string) => {
@@ -315,7 +397,15 @@ export function TimelinePanel(props: TimelinePanelProps) {
   };
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col">
+    <div
+      className="flex h-full min-h-0 min-w-0 flex-col"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && selectedEventId) {
+          stopKeyboardPropagation(event);
+          setSelectedEventId(null);
+        }
+      }}
+    >
       <div className="border-border shrink-0 border-b px-3 py-2.5">
         <div className="scrollbar-none flex min-w-0 gap-1.5 overflow-x-auto">
           {FILTERS.map((item) => (
@@ -408,6 +498,14 @@ export function TimelinePanel(props: TimelinePanelProps) {
           </div>
         )}
       </div>
+
+      {selectedEvent?.anchor ? (
+        <TimelinePreviewCard
+          key={selectedEvent.id}
+          workspaceId={props.workspaceId}
+          event={selectedEvent}
+        />
+      ) : null}
     </div>
   );
 }
