@@ -7,7 +7,7 @@ export const LEFT_SIDEBAR_COLLAPSED_WIDTH_PX = 20;
 // floating reopen affordance so the header content doesn't sit underneath it.
 export const WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX = 60;
 // Creation surfaces (ProjectPage, ScratchPage) share one content column, measured from the
-// Review 1.4 "start V2" frame (rfc/20260725_review-1.4-layouts.md).
+// Review 1.4 "start V2" design frame.
 export const CREATION_COLUMN_MAX_WIDTH_CLASS = "max-w-[67rem]";
 // The composer's agent, model+thinking, and context controls read as one row of equal-height
 // pills in the Review 1.4 frames, so all three pin the same height rather than sizing to
