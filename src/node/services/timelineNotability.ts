@@ -1,4 +1,4 @@
-import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import type { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 type ToolName = keyof typeof TOOL_DEFINITIONS;
 

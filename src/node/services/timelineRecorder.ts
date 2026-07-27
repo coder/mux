@@ -5,5 +5,5 @@ export interface TimelineRecorder {
 }
 
 export const NOOP_TIMELINE_RECORDER: TimelineRecorder = {
-  record: () => {},
+  record: () => undefined,
 };
