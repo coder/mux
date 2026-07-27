@@ -676,6 +676,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   const browserExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_BROWSER);
   const memoryExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
   const workflowsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
+  const timelineExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.TIMELINE);
   // Child task workspaces can't run goal actions — backend rejects them
   // via `WorkspaceGoalService.assertParentWorkspace`. We use this flag
   // both to hide the Goal tab below and to gate any inline goal UX.
@@ -1007,6 +1008,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [workflowsExperimentEnabled, initialActiveTab, setLayoutRaw]);
+
+  React.useEffect(() => {
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasTimeline = collectAllTabs(prev.root).includes("timeline");
+
+      if (timelineExperimentEnabled && !hasTimeline) {
+        return addTabToFocusedTabset(prev, "timeline", false);
+      }
+
+      if (!timelineExperimentEnabled && hasTimeline) {
+        return removeTabEverywhere(prev, "timeline");
+      }
+
+      return prev;
+    });
+  }, [timelineExperimentEnabled, initialActiveTab, setLayoutRaw]);
 
   React.useEffect(() => {
     setLayoutRaw((prevRaw) => {
