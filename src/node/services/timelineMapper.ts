@@ -161,18 +161,25 @@ function toolData(openTool: OpenToolCall | undefined, toolName: string, duration
 
 function clearMessageState(
   state: TimelineMapperState,
-  workspaceId: string,
+  workspaceId: string | undefined,
   messageId: string
 ): TimelineMapperState {
   const openToolCalls = new Map(state.openToolCalls);
   for (const [key, tool] of openToolCalls) {
-    if (tool.workspaceId === workspaceId && tool.messageId === messageId) {
+    if (tool.messageId === messageId && (workspaceId == null || tool.workspaceId === workspaceId)) {
       openToolCalls.delete(key);
     }
   }
 
   const openStreams = new Map(state.openStreams);
-  openStreams.delete(streamKey(workspaceId, messageId));
+  for (const [key, stream] of openStreams) {
+    if (
+      stream.messageId === messageId &&
+      (workspaceId == null || stream.workspaceId === workspaceId)
+    ) {
+      openStreams.delete(key);
+    }
+  }
   return { openToolCalls, openStreams };
 }
 
@@ -291,7 +298,11 @@ export function mapChatEventToTimeline(
             },
           },
         ],
-        state,
+        state: clearMessageState(
+          state,
+          "workspaceId" in event ? event.workspaceId : undefined,
+          event.messageId
+        ),
       };
 
     case "tool-call-start": {

@@ -135,7 +135,13 @@ describe("TimelineService", () => {
     service.record(WORKSPACE_ID, draft("disabled"));
     await service.flush();
 
-    await expect(fs.stat(timelinePath())).rejects.toMatchObject({ code: "ENOENT" });
+    let error: unknown;
+    try {
+      await fs.stat(timelinePath());
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ code: "ENOENT" });
   });
 
   test("drops duplicate recent source keys", async () => {
@@ -185,11 +191,12 @@ describe("TimelineService", () => {
   });
 
   test("unchanged agent status appends nothing", async () => {
-    const workspaceService = Object.assign(Object.create(WorkspaceService.prototype), {
+    const workspaceService = Object.create(WorkspaceService.prototype) as WorkspaceService;
+    Object.assign(workspaceService, {
       lastAgentStatusByWorkspace: new Map(),
       timelineRecorder: service,
       emitWorkspaceActivityUpdate: () => Promise.resolve(),
-    }) as WorkspaceService;
+    });
 
     await workspaceService.updateAgentStatus(WORKSPACE_ID, {
       emoji: "working",
@@ -206,7 +213,8 @@ describe("TimelineService", () => {
   });
 
   test("todo harvest appends only newly completed items", async () => {
-    const workspaceService = Object.assign(Object.create(WorkspaceService.prototype), {
+    const workspaceService = Object.create(WorkspaceService.prototype) as WorkspaceService;
+    Object.assign(workspaceService, {
       config,
       completedTodosByWorkspace: new Map(),
       todoStatusUpdateQueue: new Map(),

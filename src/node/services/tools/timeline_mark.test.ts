@@ -38,7 +38,7 @@ describe("timeline_mark tool", () => {
       timelineService,
     });
 
-    const result = await tool.execute!(
+    const result: unknown = await tool.execute!(
       { label: "Backend complete", detail: "All service tests pass", category: "milestone" },
       options("mark-1")
     );
@@ -65,12 +65,12 @@ describe("timeline_mark tool", () => {
       timelineService,
     });
 
-    const first = await tool.execute!({ label: "One" }, options("mark-1"));
-    const duplicate = await tool.execute!({ label: "One" }, options("mark-2"));
+    const first: unknown = await tool.execute!({ label: "One" }, options("mark-1"));
+    const duplicate: unknown = await tool.execute!({ label: "One" }, options("mark-2"));
     for (let index = 2; index <= 5; index++) {
       await tool.execute!({ label: `Mark ${index}` }, options(`mark-${index + 1}`));
     }
-    const overLimit = await tool.execute!({ label: "Mark 6" }, options("mark-7"));
+    const overLimit: unknown = await tool.execute!({ label: "Mark 6" }, options("mark-7"));
     await timelineService.flush();
 
     expect(first).toEqual({ success: true, recorded: true });

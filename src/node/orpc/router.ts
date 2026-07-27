@@ -4062,12 +4062,23 @@ export const router = (authToken?: string) => {
           .output(schemas.workspace.timeline.subscribe.output)
           .handler(async function* ({ context, input, signal }) {
             const queue = createAsyncEventQueue<TimelineSubscriptionEvent>();
+            const pendingEvents: TimelineSubscriptionEvent["events"] = [];
+            let snapshotSequence: number | undefined;
             const onAppended = (event: {
               workspaceId: string;
               events: TimelineSubscriptionEvent["events"];
             }) => {
-              if (event.workspaceId === input.workspaceId) {
-                queue.push({ type: "appended", events: event.events });
+              if (event.workspaceId !== input.workspaceId) {
+                return;
+              }
+              const currentSequence = snapshotSequence;
+              if (currentSequence == null) {
+                pendingEvents.push(...event.events);
+                return;
+              }
+              const events = event.events.filter((item) => item.seq > currentSequence);
+              if (events.length > 0) {
+                queue.push({ type: "appended", events });
               }
             };
             context.timelineService.on("appended", onAppended);
@@ -4081,9 +4092,18 @@ export const router = (authToken?: string) => {
             }
 
             try {
+              const snapshotMaxSequence = await context.timelineService.getLastSequence(
+                input.workspaceId
+              );
+              snapshotSequence = snapshotMaxSequence;
               const snapshot = await context.timelineService.list(input.workspaceId, {
+                cursor: snapshotMaxSequence + 1,
                 limit: 200,
               });
+              const appended = pendingEvents.filter((event) => event.seq > snapshotMaxSequence);
+              if (appended.length > 0) {
+                queue.push({ type: "appended", events: appended });
+              }
               yield { type: "snapshot" as const, events: snapshot.events };
               yield* queue.iterate();
             } finally {

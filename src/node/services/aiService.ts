@@ -1454,7 +1454,6 @@ export class AIService extends EventEmitter {
         experiments?.memory ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.MEMORY) === true;
       const timelineExperimentEnabled =
-        experiments?.timeline ??
         this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.TIMELINE) === true;
       const workspaceHeartbeatsExperimentEnabled =
         experiments?.workspaceHeartbeats ??

@@ -179,7 +179,6 @@ export interface ToolConfiguration {
   agentSkillsRoots?: ToolAgentSkillsRoots;
   /** Memory service for the memory tool (present only when the memory experiment is enabled). */
   memoryService?: MemoryService;
-  /** Timeline service for timeline recording and the timeline_mark tool. */
   timelineService?: TimelineService;
   /** Per-scope memory write policy for the current agent (defaults to read-only). */
   memoryAccess?: MemoryScopeAccess;

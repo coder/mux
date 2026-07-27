@@ -13,7 +13,7 @@ export const createTimelineMarkTool: ToolFactory = (config) => {
   return tool({
     description: TOOL_DEFINITIONS.timeline_mark.description,
     inputSchema: TOOL_DEFINITIONS.timeline_mark.schema,
-    execute: async ({ label, detail, category }, options) => {
+    execute: ({ label, detail, category }, options) => {
       assert(config.workspaceId, "timeline_mark requires workspaceId");
       assert(config.timelineService, "timeline_mark requires timelineService");
 

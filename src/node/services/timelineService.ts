@@ -25,6 +25,7 @@ import {
   type TimelineMapperState,
 } from "@/node/services/timelineMapper";
 import { isFailedToolCallResult } from "@/node/services/timelineNotability";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import type { TimelineRecorder } from "@/node/services/timelineRecorder";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 
@@ -32,20 +33,10 @@ const DEFAULT_PAGE_LIMIT = 50;
 const REVERSE_READ_CHUNK_SIZE = 256 * 1024;
 const RECENT_SOURCE_KEY_LIMIT = 1_000;
 
-interface TimelineServiceEvents {
-  appended: (event: { workspaceId: string; events: TimelineEvent[] }) => void;
-}
+type TimelineAppendedListener = (event: { workspaceId: string; events: TimelineEvent[] }) => void;
 
-export declare interface TimelineService {
-  on<U extends keyof TimelineServiceEvents>(event: U, listener: TimelineServiceEvents[U]): this;
-  off<U extends keyof TimelineServiceEvents>(event: U, listener: TimelineServiceEvents[U]): this;
-  emit<U extends keyof TimelineServiceEvents>(
-    event: U,
-    ...args: Parameters<TimelineServiceEvents[U]>
-  ): boolean;
-}
-
-export class TimelineService extends EventEmitter implements TimelineRecorder {
+export class TimelineService implements TimelineRecorder {
+  private readonly events = new EventEmitter();
   private readonly config: Pick<Config, "getSessionDir">;
   private readonly historyService: HistoryService;
   private readonly experimentsService: Pick<ExperimentsService, "isExperimentEnabled">;
@@ -59,7 +50,6 @@ export class TimelineService extends EventEmitter implements TimelineRecorder {
     historyService: HistoryService,
     experimentsService: Pick<ExperimentsService, "isExperimentEnabled">
   ) {
-    super();
     this.config = config;
     this.historyService = historyService;
     this.experimentsService = experimentsService;
@@ -90,7 +80,7 @@ export class TimelineService extends EventEmitter implements TimelineRecorder {
       const filePath = this.getFilePath(workspaceId);
       await fs.mkdir(path.dirname(filePath), { recursive: true });
       await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf-8");
-      this.emit("appended", { workspaceId, events: [event] });
+      this.events.emit("appended", { workspaceId, events: [event] });
     });
   }
 
@@ -134,51 +124,98 @@ export class TimelineService extends EventEmitter implements TimelineRecorder {
     };
   }
 
+  async getLastSequence(workspaceId: string): Promise<number> {
+    await this.flush(workspaceId);
+    return this.readLastSequence(workspaceId);
+  }
+
   async previewAnchor(
     workspaceId: string,
     anchor: TimelineAnchor
   ): Promise<TimelinePreview | null> {
     let preview: TimelinePreview | null = null;
-    await this.historyService.iterateFullHistory(workspaceId, "backward", (messages) => {
-      for (const message of messages) {
-        if (!this.matchesMessageAnchor(message, anchor)) {
-          continue;
+    const result = await this.historyService.iterateFullHistory(
+      workspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          if (!this.matchesMessageAnchor(message, anchor)) {
+            continue;
+          }
+          preview = this.createPreview(message, anchor);
+          if (preview != null) {
+            return false;
+          }
         }
-        preview = this.createPreview(message, anchor);
-        if (preview != null) {
-          return false;
-        }
+        return true;
       }
-      return true;
-    });
+    );
+    if (!result.success) {
+      log.warn("Failed to preview timeline anchor", {
+        workspaceId,
+        anchor,
+        error: result.error,
+      });
+    }
     return preview;
   }
 
+  on(event: "appended", listener: TimelineAppendedListener): this {
+    this.events.on(event, listener);
+    return this;
+  }
+
+  off(event: "appended", listener: TimelineAppendedListener): this {
+    this.events.off(event, listener);
+    return this;
+  }
+
   subscribeToWorkspace(workspaceService: WorkspaceService): () => void {
-    const listener = (event: { workspaceId: string; message: WorkspaceChatMessage }) => {
+    const chatListener = (event: { workspaceId: string; message: WorkspaceChatMessage }) => {
       const mapped = mapChatEventToTimeline(event.message, this.mapperState, Date.now());
       this.mapperState = mapped.state;
       for (const draft of mapped.drafts) {
         this.record(event.workspaceId, draft);
       }
     };
-    workspaceService.on("chat", listener);
-    return () => workspaceService.off("chat", listener);
+    const metadataListener = (event: { workspaceId: string; metadata: unknown }) => {
+      if (event.metadata !== null) {
+        return;
+      }
+      const cleanup = this.flush(event.workspaceId).then(() =>
+        this.clearWorkspaceCaches(event.workspaceId)
+      );
+      cleanup.catch((error: unknown) => {
+        log.warn("Failed to clear timeline workspace caches", {
+          workspaceId: event.workspaceId,
+          error,
+        });
+      });
+    };
+    workspaceService.on("chat", chatListener);
+    workspaceService.on("metadata", metadataListener);
+    return () => {
+      workspaceService.off("chat", chatListener);
+      workspaceService.off("metadata", metadataListener);
+    };
   }
 
   private enqueueWrite(workspaceId: string, fn: () => Promise<void>): void {
     const previous = this.writeQueues.get(workspaceId) ?? Promise.resolve();
-    const next = previous.then(fn, fn).catch((error: unknown) => {
+    const queued = previous.then(fn, fn).catch((error: unknown) => {
       log.error("Failed to append timeline event", { workspaceId, error });
     });
-    this.writeQueues.set(workspaceId, next);
+    const tracked = queued.finally(() => {
+      if (this.writeQueues.get(workspaceId) === tracked) {
+        this.writeQueues.delete(workspaceId);
+      }
+    });
+    this.writeQueues.set(workspaceId, tracked);
   }
 
   private async takeNextSequence(workspaceId: string): Promise<number> {
     let next = this.nextSequences.get(workspaceId);
-    if (next == null) {
-      next = (await this.readLastSequence(workspaceId)) + 1;
-    }
+    next ??= (await this.readLastSequence(workspaceId)) + 1;
     this.nextSequences.set(workspaceId, next + 1);
     return next;
   }
@@ -205,7 +242,7 @@ export class TimelineService extends EventEmitter implements TimelineRecorder {
     try {
       fileSize = (await fs.stat(filePath)).size;
     } catch (error) {
-      if (this.isMissingFile(error)) {
+      if (isErrnoWithCode(error, "ENOENT")) {
         return;
       }
       throw error;
@@ -336,6 +373,19 @@ export class TimelineService extends EventEmitter implements TimelineRecorder {
     return normalized.length <= 600 ? normalized : normalized.slice(0, 600);
   }
 
+  private clearWorkspaceCaches(workspaceId: string): void {
+    this.nextSequences.delete(workspaceId);
+    this.recentSourceKeys.delete(workspaceId);
+    this.mapperState = {
+      openToolCalls: new Map(
+        [...this.mapperState.openToolCalls].filter(([, tool]) => tool.workspaceId !== workspaceId)
+      ),
+      openStreams: new Map(
+        [...this.mapperState.openStreams].filter(([, stream]) => stream.workspaceId !== workspaceId)
+      ),
+    };
+  }
+
   private getFilePath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), TIMELINE_FILE_NAME);
   }
@@ -355,11 +405,5 @@ export class TimelineService extends EventEmitter implements TimelineRecorder {
       }
     }
     this.recentSourceKeys.set(workspaceId, keys);
-  }
-
-  private isMissingFile(error: unknown): boolean {
-    return (
-      typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT"
-    );
   }
 }
