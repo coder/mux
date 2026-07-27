@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
@@ -151,6 +151,15 @@ describe("TimelineService", () => {
 
     const page = await service.list(WORKSPACE_ID, {});
     expect(page.events).toHaveLength(1);
+  });
+
+  test("does not scan history for anchors without transcript targets", async () => {
+    const iterateFullHistory = spyOn(historyService, "iterateFullHistory");
+
+    expect(
+      await service.previewAnchor(WORKSPACE_ID, { childWorkspaceId: "child-workspace" })
+    ).toBeNull();
+    expect(iterateFullHistory).not.toHaveBeenCalled();
   });
 
   test("previews a message stored only in the sealed archive", async () => {

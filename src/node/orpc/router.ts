@@ -4097,8 +4097,7 @@ export const router = (authToken?: string) => {
                 input.workspaceId
               );
               snapshotSequence = snapshotMaxSequence;
-              // Match the list default so the store's initial page and this
-              // snapshot agree on hasOlder/nextCursor.
+              // Keep subscription pagination metadata consistent with the initial list page.
               const snapshot = await context.timelineService.list(input.workspaceId, {
                 cursor: snapshotMaxSequence + 1,
                 limit: TIMELINE_DEFAULT_PAGE_LIMIT,

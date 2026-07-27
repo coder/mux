@@ -129,10 +129,6 @@ export const CUSTOM_EVENTS = {
    */
   GOAL_CHILD_BUDGET_TOAST: "mux:goalChildBudgetToast",
 
-  /**
-   * Event to reveal a timeline anchor in the active transcript.
-   * Detail: { workspaceId: string, messageId?: string, toolCallId?: string }
-   */
   REVEAL_TIMELINE_ANCHOR: "mux:revealTimelineAnchor",
 
   /**

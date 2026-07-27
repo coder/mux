@@ -627,10 +627,8 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     };
   }, [disableAutoScroll, workspaceId]);
 
-  // The panel dispatches right after the store loads the target, so the
-  // deferred transcript may not contain it yet. Stay pending until it appears,
-  // then expand each collapsed bundle hiding it (guarded set-if-absent so the
-  // effect re-runs once per expansion), and only then scroll.
+  // Store history loads can finish before the deferred transcript renders.
+  // Keep the reveal pending while its collapsed bundles expand.
   useLayoutEffect(() => {
     if (!pendingTimelineReveal) {
       return;

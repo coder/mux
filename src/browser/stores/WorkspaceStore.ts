@@ -96,6 +96,16 @@ import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessage
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
 
+function mergeTimelineEvents(
+  preferred: TimelineEvent[],
+  fallback: TimelineEvent[]
+): TimelineEvent[] {
+  const preferredIds = new Set(preferred.map((event) => event.id));
+  return [...preferred, ...fallback.filter((event) => !preferredIds.has(event.id))].toSorted(
+    (a, b) => b.seq - a.seq
+  );
+}
+
 export interface WorkspaceTimelineSnapshot {
   events: TimelineEvent[];
   nextCursor: number | null;
@@ -1711,6 +1721,10 @@ export class WorkspaceStore {
           { signal }
         );
         iterator = subscribedIterator;
+        if (signal.aborted) {
+          await subscribedIterator.return?.();
+          return;
+        }
 
         for await (const update of subscribedIterator) {
           if (signal.aborted) break;
@@ -1718,11 +1732,7 @@ export class WorkspaceStore {
             if (signal.aborted || update.events.length === 0) return;
 
             const current = this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE_SNAPSHOT;
-            const incomingIds = new Set(update.events.map((event) => event.id));
-            const events = [
-              ...update.events,
-              ...current.events.filter((event) => !incomingIds.has(event.id)),
-            ].toSorted((a, b) => b.seq - a.seq);
+            const events = mergeTimelineEvents(update.events, current.events);
             this.workspaceTimelines.set(workspaceId, { ...current, events, initialized: true });
             this.timelineStore.bump(workspaceId);
           });
@@ -2852,11 +2862,9 @@ export class WorkspaceStore {
       const latest = this.workspaceTimelines.get(workspaceId);
       if (latest?.nextCursor !== requestedCursor || !latest.loadingOlder) return;
 
-      const existingIds = new Set(latest.events.map((event) => event.id));
-      const olderEvents = page.events.filter((event) => !existingIds.has(event.id));
       this.workspaceTimelines.set(workspaceId, {
         ...latest,
-        events: [...latest.events, ...olderEvents].toSorted((a, b) => b.seq - a.seq),
+        events: mergeTimelineEvents(latest.events, page.events),
         nextCursor: page.nextCursor,
         hasOlder: page.hasOlder,
         loadingOlder: false,

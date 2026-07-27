@@ -2,7 +2,11 @@ import type { TimelineEventData, TimelineEventDraft } from "@/common/orpc/schema
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { getContextBoundaryKind } from "@/common/utils/messages/compactionBoundary";
-import { isFailedToolCallResult, isNotableToolCall } from "./timelineNotability";
+import {
+  isFailedToolCallResult,
+  isNotableToolCall,
+  readTimelineStringField,
+} from "./timelineNotability";
 
 interface OpenToolCall {
   workspaceId: string;
@@ -50,17 +54,6 @@ function streamKey(workspaceId: string, messageId: string): string {
   return eventKey(workspaceId, messageId);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function stringField(value: unknown, field: string): string | undefined {
-  const fieldValue = asRecord(value)?.[field];
-  return typeof fieldValue === "string" ? fieldValue : undefined;
-}
-
 function truncateDigest(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length <= 120 ? normalized : `${normalized.slice(0, 117)}...`;
@@ -68,19 +61,19 @@ function truncateDigest(value: string): string {
 
 function toolDigest(toolName: string, args: unknown): string | undefined {
   if (toolName === "bash") {
-    const script = stringField(args, "script");
+    const script = readTimelineStringField(args, "script");
     return script != null && script.trim() !== "" ? truncateDigest(script) : undefined;
   }
 
   for (const field of ["path", "title", "label", "display_name"] as const) {
-    const value = stringField(args, field);
+    const value = readTimelineStringField(args, field);
     if (value != null && value.trim() !== "") {
       return truncateDigest(value);
     }
   }
 
   if (toolName === "memory") {
-    return stringField(args, "command");
+    return readTimelineStringField(args, "command");
   }
 
   return undefined;

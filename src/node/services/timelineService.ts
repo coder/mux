@@ -133,6 +133,10 @@ export class TimelineService implements TimelineRecorder {
     workspaceId: string,
     anchor: TimelineAnchor
   ): Promise<TimelinePreview | null> {
+    if (anchor.toolCallId == null && anchor.messageId == null && anchor.historySequence == null) {
+      return null;
+    }
+
     let preview: TimelinePreview | null = null;
     const result = await this.historyService.iterateFullHistory(
       workspaceId,
@@ -172,6 +176,9 @@ export class TimelineService implements TimelineRecorder {
 
   subscribeToWorkspace(workspaceService: WorkspaceService): () => void {
     const chatListener = (event: { workspaceId: string; message: WorkspaceChatMessage }) => {
+      if (!this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.TIMELINE)) {
+        return;
+      }
       const mapped = mapChatEventToTimeline(event.message, this.mapperState, Date.now());
       this.mapperState = mapped.state;
       for (const draft of mapped.drafts) {

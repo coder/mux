@@ -122,7 +122,10 @@ describe("TimelinePanel", () => {
     const events = [
       makeEvent("user-turn", "turn.user", 1),
       makeEvent("future-event", "future.kind", 2),
-      makeEvent("agent-mark", "agent.mark", 3, { source: { system: "agent" } }),
+      makeEvent("agent-mark", "agent.mark", 3, {
+        source: { system: "agent" },
+        data: { label: "Milestone", detail: "Validation completed" },
+      }),
     ];
 
     const view = renderTimeline({ events });
@@ -138,6 +141,7 @@ describe("TimelinePanel", () => {
         '[data-timeline-event-id="agent-mark"][data-timeline-source="agent"]'
       )
     ).not.toBeNull();
+    expect(view.getByText("Milestone · Validation completed")).not.toBeNull();
     expect(
       view.container.querySelector(
         '[data-timeline-event-id="user-turn"][data-timeline-source="chat"]'
@@ -193,7 +197,7 @@ describe("TimelinePanel", () => {
       0
     );
 
-    fireEvent.click(collapsedRun as HTMLElement);
+    fireEvent.click(collapsedRun!);
 
     expect(view.container.querySelectorAll('[data-timeline-event-kind="tool.call"]')).toHaveLength(
       3
@@ -212,9 +216,7 @@ describe("TimelinePanel", () => {
     });
     const view = renderTimeline({ events: [event], loadOlderHistory });
 
-    fireEvent.click(
-      view.container.querySelector('[data-timeline-event-id="anchored"]') as HTMLElement
-    );
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="anchored"]')!);
 
     const revealButton = await waitFor(() => {
       const button = view.getByTestId("timeline-reveal");

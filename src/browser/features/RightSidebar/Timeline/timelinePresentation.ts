@@ -33,6 +33,7 @@ import {
   type TimelineEvent,
   type TimelineEventKind,
 } from "@/common/orpc/schemas/timeline";
+import { capitalize } from "@/common/utils/capitalize";
 
 export const TIMELINE_CATEGORIES = [
   "turns",
@@ -46,13 +47,13 @@ export const TIMELINE_CATEGORIES = [
 
 export type TimelineCategory = (typeof TIMELINE_CATEGORIES)[number];
 
-export interface TimelinePresentation {
+interface TimelinePresentation {
   label: string;
   icon: LucideIcon;
   category: TimelineCategory;
 }
 
-export const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
+const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   "turn.user": { label: "User turn", icon: MessageSquare, category: "turns" },
   "turn.synthetic": { label: "Synthetic turn", icon: WandSparkles, category: "turns" },
   "turn.completed": { label: "Turn completed", icon: CheckCircle2, category: "turns" },
@@ -95,7 +96,7 @@ export function getTimelinePresentation(kind: string): TimelinePresentation {
   }
 
   return {
-    label: kind.replace(/[._-]+/g, " ").replace(/^./, (character) => character.toUpperCase()),
+    label: capitalize(kind.replace(/[._-]+/g, " ")),
     icon: CircleEllipsis,
     category: "context",
   };

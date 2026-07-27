@@ -2159,9 +2159,12 @@ export const TOOL_DEFINITIONS = {
       "Do not use this tool for general narration.",
     schema: z
       .object({
-        label: z.string().min(1).max(120),
-        detail: z.string().max(500).nullish(),
-        category: z.enum(["picked_up", "milestone", "decision", "blocker", "handoff"]).nullish(),
+        label: z.string().min(1).max(120).describe("Short label for the timeline marker."),
+        detail: z.string().max(500).nullish().describe("Optional supporting detail."),
+        category: z
+          .enum(["picked_up", "milestone", "decision", "blocker", "handoff"])
+          .nullish()
+          .describe("Optional marker category."),
       })
       .strict(),
   },

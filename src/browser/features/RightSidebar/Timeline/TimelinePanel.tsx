@@ -18,6 +18,8 @@ import {
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
+import { capitalize } from "@/common/utils/capitalize";
+import { formatDuration } from "@/common/utils/formatDuration";
 import type {
   TimelineAnchor,
   TimelineEvent,
@@ -70,7 +72,7 @@ const FILTERS: Array<{ value: TimelineFilter; label: string }> = [
   { value: "all", label: "All" },
   ...TIMELINE_CATEGORIES.map((category) => ({
     value: category,
-    label: category.replace(/^./, (character) => character.toUpperCase()),
+    label: capitalize(category),
   })),
 ];
 
@@ -157,12 +159,6 @@ function isCollapsedRun(item: DayItem): item is CollapsedRun {
   return "events" in item;
 }
 
-function formatDuration(durationMs: number): string {
-  if (durationMs < 1000) return `${Math.round(durationMs)} ms`;
-  if (durationMs < 60_000) return `${(durationMs / 1000).toFixed(durationMs < 10_000 ? 1 : 0)} s`;
-  return `${Math.round(durationMs / 60_000)} min`;
-}
-
 function formatSettingValue(value: string | number | boolean | null | undefined): string | null {
   if (value === undefined) return null;
   if (value === null) return "none";
@@ -178,6 +174,7 @@ function getEventDetail(event: TimelineEvent): string | null {
   if (data.title) details.push(data.title);
   else if (data.digest) details.push(data.digest);
   else if (data.label) details.push(data.label);
+  if (data.detail) details.push(data.detail);
   if (data.model || data.mode) details.push([data.model, data.mode].filter(Boolean).join(" · "));
   if (data.reason) details.push(data.reason);
   if (data.setting) {
@@ -189,7 +186,7 @@ function getEventDetail(event: TimelineEvent): string | null {
         : data.setting
     );
   }
-  if (data.durationMs != null) details.push(formatDuration(data.durationMs));
+  if (data.durationMs != null) details.push(formatDuration(data.durationMs, "precise"));
   return details.length > 0 ? details.join(" · ") : null;
 }
 
@@ -361,7 +358,11 @@ function TimelinePreviewCard(props: {
 
   useEffect(() => {
     const anchor = props.event.anchor;
-    if (!anchor || !api) {
+    if (
+      !anchor ||
+      !api ||
+      (anchor.toolCallId == null && anchor.messageId == null && anchor.historySequence == null)
+    ) {
       setPreviewState({ status: "unavailable" });
       return;
     }
@@ -435,7 +436,6 @@ function TimelinePreviewCard(props: {
 
     const operation = ++revealOperationRef.current;
     setRevealState("revealing");
-    showAllMessages(props.workspaceId);
 
     try {
       let target = resolveRevealTarget(anchor);
@@ -444,6 +444,8 @@ function TimelinePreviewCard(props: {
         setRevealState("idle");
         return;
       }
+
+      showAllMessages(props.workspaceId);
 
       for (let page = 0; page < MAX_REVEAL_HISTORY_PAGES; page++) {
         const workspaceState = workspaceStore.getWorkspaceState(props.workspaceId);
@@ -575,9 +577,9 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({});
   const filter = isTimelineFilter(storedFilter) ? storedFilter : "all";
-  const filteredEvents = timeline.events
-    .filter((event) => filter === "all" || getTimelineEventCategory(event) === filter)
-    .toSorted((a, b) => b.seq - a.seq);
+  const filteredEvents = timeline.events.filter(
+    (event) => filter === "all" || getTimelineEventCategory(event) === filter
+  );
   const selectedEvent = filteredEvents.find((event) => event.id === selectedEventId);
   const dayGroups = groupEventsByDay(filteredEvents);
 

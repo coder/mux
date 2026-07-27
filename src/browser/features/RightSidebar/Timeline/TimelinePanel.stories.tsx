@@ -8,7 +8,7 @@ import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
 import { TimelinePanelView, type TimelineWorkspaceStore } from "./TimelinePanel";
 
 const WORKSPACE_ID = "timeline-story-workspace";
-const BASE_TIMESTAMP = Date.UTC(2026, 6, 27, 15, 0, 0);
+const BASE_TIMESTAMP = Date.UTC(2020, 0, 15, 15, 0, 0);
 
 function makeEvent(
   id: string,
