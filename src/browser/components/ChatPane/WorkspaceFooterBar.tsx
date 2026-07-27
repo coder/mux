@@ -299,37 +299,41 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
     : null;
 
   return (
+    // As the chat column's last row, this bar owns the mobile bottom inset: padding clears the
+    // home indicator, and the negative margin lets its fill reach the screen edge.
     <footer
       data-testid="workspace-footer-bar"
-      className="bg-sidebar border-border-light scrollbar-none flex h-7 shrink-0 items-center gap-2 overflow-x-auto border-t px-2 text-xs whitespace-nowrap"
+      className="bg-sidebar border-border-light mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))] shrink-0 border-t pb-[min(env(safe-area-inset-bottom,0px),40px)]"
     >
-      <RuntimeBadge
-        runtimeConfig={props.runtimeConfig}
-        isWorking={isWorking}
-        workspacePath={props.namedWorkspacePath}
-        workspaceName={props.workspaceName}
-        tooltipSide="top"
-      />
-      <WorkspaceLinks workspaceId={props.workspaceId} />
-      {hasRepository && (
-        <>
-          <WorkspaceDriftIndicator
-            workspaceId={props.workspaceId}
-            projectPath={props.projectPath}
-            isWorking={isWorking}
-            showMultiProjectStatus={showMultiProjectStatus}
-          />
-          <FooterRepositoryLabel workspaceId={props.workspaceId} projectLabel={projectLabel} />
-          <WorkspaceBranchControls
-            workspaceId={props.workspaceId}
-            workspaceName={props.workspaceName}
-            devcontainerChip={devcontainerChip}
-          />
-        </>
-      )}
-      {!hasRepository && <FooterProjectLabel projectLabel={projectLabel} />}
-      <FooterUsageStats workspaceId={props.workspaceId} />
-      <FooterLastPrompt workspaceId={props.workspaceId} />
+      <div className="scrollbar-none flex h-7 items-center gap-2 overflow-x-auto px-2 text-xs whitespace-nowrap">
+        <RuntimeBadge
+          runtimeConfig={props.runtimeConfig}
+          isWorking={isWorking}
+          workspacePath={props.namedWorkspacePath}
+          workspaceName={props.workspaceName}
+          tooltipSide="top"
+        />
+        <WorkspaceLinks workspaceId={props.workspaceId} />
+        {hasRepository && (
+          <>
+            <WorkspaceDriftIndicator
+              workspaceId={props.workspaceId}
+              projectPath={props.projectPath}
+              isWorking={isWorking}
+              showMultiProjectStatus={showMultiProjectStatus}
+            />
+            <FooterRepositoryLabel workspaceId={props.workspaceId} projectLabel={projectLabel} />
+            <WorkspaceBranchControls
+              workspaceId={props.workspaceId}
+              workspaceName={props.workspaceName}
+              devcontainerChip={devcontainerChip}
+            />
+          </>
+        )}
+        {!hasRepository && <FooterProjectLabel projectLabel={projectLabel} />}
+        <FooterUsageStats workspaceId={props.workspaceId} />
+        <FooterLastPrompt workspaceId={props.workspaceId} />
+      </div>
     </footer>
   );
 };

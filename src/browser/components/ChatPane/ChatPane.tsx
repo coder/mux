@@ -1688,7 +1688,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
 const TranscriptOnlyNoticePane: React.FC = () => {
   return (
-    <div className="bg-surface-primary border-border-light mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))] border-t px-4 pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))]">
+    <div className="bg-surface-primary border-border-light border-t px-4 pb-2">
       <div className="mx-auto max-w-4xl py-4">
         <p role="note" className="text-muted text-sm leading-6">
           {TRANSCRIPT_ONLY_NOTICE}

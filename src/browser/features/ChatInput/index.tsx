@@ -3230,9 +3230,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           "relative flex flex-col gap-1",
           variant === "creation"
             ? `w-full ${CREATION_COLUMN_MAX_WIDTH_CLASS}`
-            : `bg-surface-primary px-4 
-              pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] 
-              mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]`
+            : // No safe-area padding here: the footer info bar below owns the bottom inset.
+              "bg-surface-primary px-4 pb-2"
         )}
         data-component="ChatInputSection"
         data-autofocus-state="done"
