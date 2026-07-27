@@ -5,7 +5,7 @@ import {
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
-import { normalizeAgentId as normalizeWorkspaceAgentId } from "@/common/utils/agentIds";
+import { normalizeAgentId } from "@/common/utils/agentIds";
 
 export type WorkspaceAISettingsCache = Partial<
   Record<
@@ -13,10 +13,6 @@ export type WorkspaceAISettingsCache = Partial<
     { model: string; thinkingLevel: ThinkingLevel; reasoningMode?: OpenAIReasoningMode }
   >
 >;
-
-function normalizeAgentId(agentId: string): string {
-  return normalizeWorkspaceAgentId(agentId, "exec");
-}
 
 // Keep agent -> model/thinking precedence in one place so mode switches that send immediately
 // (like propose_plan Implement / Continue in Auto) resolve the same settings as sync effects.
