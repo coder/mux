@@ -11,6 +11,9 @@ import {
   showAllMessages,
   useWorkspaceStoreRaw,
   useWorkspaceTimeline,
+  type HistoryLoadResult,
+  type WorkspaceState,
+  type WorkspaceTimelineSnapshot,
 } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -30,6 +33,14 @@ import {
 
 interface TimelinePanelProps {
   workspaceId: string;
+}
+
+export interface TimelineWorkspaceStore {
+  getWorkspaceState: (
+    workspaceId: string
+  ) => Pick<WorkspaceState, "messages" | "muxMessages" | "hasOlderHistory">;
+  loadOlderHistory: (workspaceId: string) => Promise<HistoryLoadResult>;
+  loadOlderTimeline: (workspaceId: string) => Promise<void>;
 }
 
 type TimelineFilter = "all" | TimelineCategory;
@@ -326,10 +337,14 @@ type PreviewState =
   | { status: "ready"; preview: TimelinePreview }
   | { status: "unavailable" };
 
-function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent }) {
+function TimelinePreviewCard(props: {
+  workspaceId: string;
+  event: TimelineEvent;
+  workspaceStore: TimelineWorkspaceStore;
+}) {
   const { api } = useAPI();
   const workspaceContext = useOptionalWorkspaceContext();
-  const workspaceStore = useWorkspaceStoreRaw();
+  const workspaceStore = props.workspaceStore;
   const [previewState, setPreviewState] = useState<PreviewState>({ status: "loading" });
   const [revealState, setRevealState] = useState<"idle" | "revealing" | "not-found" | "error">(
     "idle"
@@ -545,9 +560,14 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
   );
 }
 
-export function TimelinePanel(props: TimelinePanelProps) {
-  const timeline = useWorkspaceTimeline(props.workspaceId);
-  const workspaceStore = useWorkspaceStoreRaw();
+interface TimelinePanelViewProps extends TimelinePanelProps {
+  timeline: WorkspaceTimelineSnapshot;
+  workspaceStore: TimelineWorkspaceStore;
+}
+
+export function TimelinePanelView(props: TimelinePanelViewProps) {
+  const timeline = props.timeline;
+  const workspaceStore = props.workspaceStore;
   const [storedFilter, setStoredFilter] = usePersistedState<string>(
     `timeline-filter:${props.workspaceId}`,
     "all"
@@ -673,8 +693,22 @@ export function TimelinePanel(props: TimelinePanelProps) {
           key={selectedEvent.id}
           workspaceId={props.workspaceId}
           event={selectedEvent}
+          workspaceStore={workspaceStore}
         />
       ) : null}
     </div>
+  );
+}
+
+export function TimelinePanel(props: TimelinePanelProps) {
+  const timeline = useWorkspaceTimeline(props.workspaceId);
+  const workspaceStore = useWorkspaceStoreRaw();
+
+  return (
+    <TimelinePanelView
+      workspaceId={props.workspaceId}
+      timeline={timeline}
+      workspaceStore={workspaceStore}
+    />
   );
 }
