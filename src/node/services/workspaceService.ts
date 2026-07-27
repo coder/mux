@@ -138,7 +138,7 @@ import {
   AskUserQuestionToolArgsSchema,
   AskUserQuestionToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
-import type { UIMode } from "@/common/types/mode";
+import { UIModeSchema, type UIMode } from "@/common/types/mode";
 import {
   createMuxMessage,
   pickPreservedSendOptions,
@@ -234,6 +234,7 @@ import type {
   GoalContinuationRuntimeState,
   WorkspaceGoalService,
 } from "@/node/services/workspaceGoalService";
+import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "@/node/services/timelineRecorder";
 import type {
   BackgroundProcessManager,
   MonitorArmedPayload,
@@ -1813,6 +1814,9 @@ export class WorkspaceService extends EventEmitter {
 
   // Serialize todo snapshot refreshes so back-to-back todo_write/propose_plan updates cannot
   // finish out of order and briefly restore stale progress in workspace activity metadata.
+  private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
+  private readonly lastAgentStatusByWorkspace = new Map<string, WorkspaceAgentStatus | null>();
+  private readonly completedTodosByWorkspace = new Map<string, Set<string>>();
   private readonly todoStatusUpdateQueue = new Map<string, Promise<void>>();
 
   // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
@@ -2262,6 +2266,10 @@ export class WorkspaceService extends EventEmitter {
   private workspaceGoalService?: WorkspaceGoalService;
   /** Narrow DevTools cleanup surface; wired by coreServices when a DevToolsService exists. */
   private devToolsService?: { removeWorkspaceData(workspaceId: string): Promise<void> };
+
+  setTimelineRecorder(recorder: TimelineRecorder): void {
+    this.timelineRecorder = recorder;
+  }
 
   /**
    * Set the MCP server manager for tool access.
@@ -2801,9 +2809,25 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     agentStatus: WorkspaceAgentStatus | null
   ): Promise<void> {
+    const previous = this.lastAgentStatusByWorkspace.get(workspaceId);
+    const changed =
+      previous?.emoji !== agentStatus?.emoji ||
+      previous?.message !== agentStatus?.message ||
+      previous?.url !== agentStatus?.url;
+
     await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace agent status", () =>
       this.extensionMetadata.setAgentStatus(workspaceId, agentStatus)
     );
+    this.lastAgentStatusByWorkspace.set(workspaceId, agentStatus);
+
+    if (changed && agentStatus != null) {
+      this.timelineRecorder.record(workspaceId, {
+        kind: "agent.status",
+        source: { system: "agent" },
+        status: "completed",
+        data: { digest: agentStatus.message },
+      });
+    }
   }
 
   private async updateTodoStatusFromStorage(workspaceId: string): Promise<void> {
@@ -2813,6 +2837,23 @@ export class WorkspaceService extends EventEmitter {
       .then(async () => {
         const sessionDir = this.config.getSessionDir(workspaceId);
         const todos = await readTodosForSessionDir(sessionDir);
+        const completedTodos = new Set(
+          todos.filter((todo) => todo.status === "completed").map((todo) => todo.content)
+        );
+        const previousCompletedTodos = this.completedTodosByWorkspace.get(workspaceId);
+        if (previousCompletedTodos != null) {
+          for (const content of completedTodos) {
+            if (!previousCompletedTodos.has(content)) {
+              this.timelineRecorder.record(workspaceId, {
+                kind: "agent.todo_completed",
+                source: { system: "agent" },
+                status: "completed",
+                data: { digest: content },
+              });
+            }
+          }
+        }
+        this.completedTodosByWorkspace.set(workspaceId, completedTodos);
         const todoStatus = deriveTodoStatus(todos) ?? null;
 
         await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace todo status", () =>
@@ -7500,6 +7541,20 @@ export class WorkspaceService extends EventEmitter {
         return Err(persistResult.error);
       }
 
+      if (persistResult.data) {
+        const parsedMode = UIModeSchema.safeParse(agentId);
+        this.timelineRecorder.record(workspaceId, {
+          kind: "settings.changed",
+          source: { system: "settings" },
+          status: "completed",
+          data: {
+            agentId,
+            model: normalized.data.model,
+            mode: parsedMode.success ? parsedMode.data : undefined,
+          },
+        });
+      }
+
       return Ok(undefined);
     } catch (error) {
       const message = getErrorMessage(error);
@@ -9405,6 +9460,11 @@ export class WorkspaceService extends EventEmitter {
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);
         }
+        this.timelineRecorder.record(workspaceId, {
+          kind: "history.cleared",
+          source: { system: "chat" },
+          status: "completed",
+        });
         deletedSequences = clearResult.data;
       }
 

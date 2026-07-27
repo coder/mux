@@ -52,6 +52,7 @@ import {
 import { buildGoalBudgetLimitMessage, buildGoalContinuationMessage } from "@/constants/goalPrompts";
 import type { IdleDispatcher, IdleDispatchPayload } from "./idleDispatcher";
 import { log } from "./log";
+import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "./timelineRecorder";
 
 const GOAL_FILE = "goal.json";
 const GOAL_BOARD_FILE = "goal-board.json";
@@ -404,6 +405,8 @@ export class WorkspaceGoalService {
   private goalContinuationDispatcher: IdleDispatcher | null = null;
   private goalContinuationConsumerDisposer: (() => void) | null = null;
 
+  private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
+
   private onActivityChange?: (workspaceId: string, snapshot: WorkspaceActivitySnapshot) => void;
 
   /**
@@ -438,6 +441,10 @@ export class WorkspaceGoalService {
   ): Promise<void> {
     assert(workspaceId.trim().length > 0, "restoreGoalAccountingSnapshot requires workspaceId");
     await this.restorePersistedGoalSnapshot(workspaceId, { streamStartedAtMs });
+  }
+
+  setTimelineRecorder(recorder: TimelineRecorder): void {
+    this.timelineRecorder = recorder;
   }
 
   setOnActivityChange(
@@ -575,7 +582,7 @@ export class WorkspaceGoalService {
 
       await this.writeGoal(workspaceId, next);
       await this.pushGoalReadSnapshot(workspaceId, next);
-      this.emitBudgetLimited(next, current.status);
+      this.emitBudgetLimited(workspaceId, next, current.status);
       this.emitStatusLifecycle(next, current.status, "auto");
       return next;
     });
@@ -1164,6 +1171,12 @@ export class WorkspaceGoalService {
             this.scheduleContinuationReRequest(workspaceId, Date.now() + 1_000);
             return;
           }
+          this.timelineRecorder.record(workspaceId, {
+            kind: "goal.continuation_dispatched",
+            source: { system: "goal" },
+            status: "started",
+            data: { reason: "budget_limit", digest: goal.objective },
+          });
           const reserved = await this.tryMarkBudgetLimitInjected(
             workspaceId,
             goal.goalId,
@@ -1199,6 +1212,12 @@ export class WorkspaceGoalService {
           this.scheduleContinuationReRequest(workspaceId, Date.now() + 1_000);
           return;
         }
+        this.timelineRecorder.record(workspaceId, {
+          kind: "goal.continuation_dispatched",
+          source: { system: "goal" },
+          status: "started",
+          data: { digest: goal.objective },
+        });
         await this.recordContinuationFired(workspaceId, goal.goalId, Date.now());
         if (candidate.source !== "kickoff") {
           this.deletePendingCandidateIfStillSame(workspaceId, candidate);
@@ -1418,7 +1437,7 @@ export class WorkspaceGoalService {
       if (next !== current) {
         await this.writeGoal(workspaceId, next);
         await this.pushGoalReadSnapshot(workspaceId, next);
-        this.emitBudgetLimited(next, current.status);
+        this.emitBudgetLimited(workspaceId, next, current.status);
         this.emitStatusLifecycle(next, current.status, "auto");
         return next;
       }
@@ -1713,6 +1732,7 @@ export class WorkspaceGoalService {
   }
 
   private emitBudgetLimited(
+    workspaceId: string,
     goal: GoalRecordV1,
     previousStatus: GoalStatus,
     properties?: GoalLifecycleProperties
@@ -1721,6 +1741,12 @@ export class WorkspaceGoalService {
       return;
     }
 
+    this.timelineRecorder.record(workspaceId, {
+      kind: "goal.budget_limited",
+      source: { system: "goal", key: `goal-budget-limited:${goal.goalId}:${goal.updatedAtMs}` },
+      status: "completed",
+      data: { digest: goal.objective },
+    });
     this.emitLifecycle("goal_budget_limited", {
       hasBudget: goal.budgetCents != null,
       hasTurnCap: goal.turnCap != null,
@@ -2145,7 +2171,7 @@ export class WorkspaceGoalService {
         await this.pushSnapshot(input.workspaceId, withEdits);
         await this.pushLiveGoalPreviewOverlay(input.workspaceId, withEdits);
         this.emitBudgetChanged(current, withEdits, input);
-        this.emitBudgetLimited(withEdits, previousStatus);
+        this.emitBudgetLimited(input.workspaceId, withEdits, previousStatus);
         this.emitStatusLifecycle(withEdits, previousStatus, input.initiator ?? "user");
         // Lifecycle event: this is a rename, not a replace. Reuse
         // `goal_replaced` (same-objective semantics already overloaded for
@@ -2201,7 +2227,7 @@ export class WorkspaceGoalService {
           await this.pushSnapshot(input.workspaceId, updated);
           await this.pushLiveGoalPreviewOverlay(input.workspaceId, updated);
           this.emitBudgetChanged(current, updated, input);
-          this.emitBudgetLimited(updated, previousStatus);
+          this.emitBudgetLimited(input.workspaceId, updated, previousStatus);
           this.emitStatusLifecycle(updated, previousStatus, input.initiator ?? "user");
           await this.maybeAutoPromoteOnComplete(input.workspaceId, updated, previousStatus);
         }
@@ -2260,6 +2286,29 @@ export class WorkspaceGoalService {
 
     if (!result.success) {
       return result;
+    }
+
+    if (input.objective != null) {
+      this.timelineRecorder.record(input.workspaceId, {
+        kind: "goal.set",
+        source: {
+          system: "goal",
+          key: `goal-set:${result.data.goalId}:${result.data.updatedAtMs}`,
+        },
+        status: "completed",
+        data: { digest: result.data.objective },
+      });
+    }
+    if (input.status === "complete" && result.data.status === "complete") {
+      this.timelineRecorder.record(input.workspaceId, {
+        kind: "goal.completed",
+        source: {
+          system: "goal",
+          key: `goal-completed:${result.data.goalId}:${result.data.updatedAtMs}`,
+        },
+        status: "completed",
+        data: { digest: result.data.completionSummary ?? result.data.objective },
+      });
     }
 
     if (input.status === "paused" && result.data.status === "paused") {
@@ -2663,7 +2712,7 @@ export class WorkspaceGoalService {
       await this.writeGoal(input.workspaceId, next);
       await this.pushSnapshot(input.workspaceId, next);
       this.recordLastGoalStream(input.workspaceId, originKind, next.goalId);
-      this.emitBudgetLimited(next, current.status);
+      this.emitBudgetLimited(input.workspaceId, next, current.status);
       return next;
     });
   }
@@ -2720,7 +2769,9 @@ export class WorkspaceGoalService {
 
       await this.writeGoal(input.parentWorkspaceId, next);
       await this.pushSnapshot(input.parentWorkspaceId, next);
-      this.emitBudgetLimited(next, current.status, { "caused-by-child": true });
+      this.emitBudgetLimited(input.parentWorkspaceId, next, current.status, {
+        "caused-by-child": true,
+      });
       // when child attribution drives the
       // goal into budget_limited, arm the same wrap-up stamp + candidate the
       // restart-recovery path uses. Without this the goal sits stuck in

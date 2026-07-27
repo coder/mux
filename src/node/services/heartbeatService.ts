@@ -16,6 +16,7 @@ import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import { IdleDispatcher, type IdleDispatchPayload } from "./idleDispatcher";
 import { log } from "./log";
 import type { TaskService } from "./taskService";
+import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "./timelineRecorder";
 import type { WorkspaceService } from "./workspaceService";
 
 const STARTUP_DELAY_MS = 60 * 1000; // 60s - let startup settle
@@ -58,6 +59,8 @@ export class HeartbeatService {
   private readonly taskService: TaskService;
   private readonly idleDispatcher: IdleDispatcher;
 
+  private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
+
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
   private checkInterval: ReturnType<typeof setInterval> | null = null;
   private stopped = true;
@@ -96,6 +99,10 @@ export class HeartbeatService {
 
     this.onActivity = (event) => this.handleActivityEvent(event);
     this.onMetadata = (event) => this.handleMetadataEvent(event);
+  }
+
+  setTimelineRecorder(recorder: TimelineRecorder): void {
+    this.timelineRecorder = recorder;
   }
 
   start(): void {
@@ -668,12 +675,23 @@ export class HeartbeatService {
         workspaceId,
         reason: eligibility.reason,
       });
+      this.timelineRecorder.record(workspaceId, {
+        kind: "heartbeat.skipped",
+        source: { system: "heartbeat" },
+        status: "skipped",
+        data: { reason: eligibility.reason },
+      });
       return null;
     }
 
     return {
       dispatch: async () => {
         log.info("HeartbeatService: executing heartbeat", { workspaceId });
+        this.timelineRecorder.record(workspaceId, {
+          kind: "heartbeat.dispatched",
+          source: { system: "heartbeat" },
+          status: "started",
+        });
         await this.workspaceService.executeHeartbeat(workspaceId);
       },
     };
