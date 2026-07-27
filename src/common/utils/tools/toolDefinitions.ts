@@ -2148,6 +2148,23 @@ export const TOOL_DEFINITIONS = {
       "Do not use it for the final result—the final assistant message completes the sub-agent task.",
     schema: AgentReportToolArgsSchema,
   },
+  timeline_mark: {
+    description:
+      "Add a durable timeline marker only at one of these five trigger moments: " +
+      "1. external input was picked up, such as a review comment or CI failure; " +
+      "2. a milestone was completed; " +
+      "3. the approach changed, including why; " +
+      "4. a blocker was hit or resolved; " +
+      "5. work was handed off. " +
+      "Do not use this tool for general narration.",
+    schema: z
+      .object({
+        label: z.string().min(1).max(120),
+        detail: z.string().max(500).nullish(),
+        category: z.enum(["picked_up", "milestone", "decision", "blocker", "handoff"]).nullish(),
+      })
+      .strict(),
+  },
   set_goal: {
     description:
       "Create or replace a durable goal for this current parent workspace when the user explicitly asks for multi-turn, verifiable work. " +
@@ -3009,6 +3026,7 @@ export function getAvailableTools(
     enableDynamicWorkflows?: boolean;
     /** Whether the agent memory tool is available (memory experiment enabled). */
     enableMemory?: boolean;
+    enableTimelineMark?: boolean;
     /** Whether tool_catalog_search is available (tool-search experiment + deferred MCP tools present). */
     enableToolSearch?: boolean;
     /**
@@ -3028,6 +3046,7 @@ export function getAvailableTools(
   const enableAdvisor = options?.enableAdvisor ?? false;
   const enableDynamicWorkflows = options?.enableDynamicWorkflows ?? false;
   const enableMemory = options?.enableMemory ?? false;
+  const enableTimelineMark = options?.enableTimelineMark ?? false;
   const enableToolSearch = options?.enableToolSearch ?? false;
   const enableReviewPane = options?.enableReviewPane ?? true;
 
@@ -3059,6 +3078,7 @@ export function getAvailableTools(
     // "file_edit_replace_lines", // DISABLED: causes models to break repo state
     "file_edit_insert",
     ...(enableMemory ? ["memory"] : []),
+    ...(enableTimelineMark ? ["timeline_mark"] : []),
     ...(enableAdvisor ? ["advisor"] : []),
     ...(enableToolSearch ? ["tool_catalog_search"] : []),
     "ask_user_question",
