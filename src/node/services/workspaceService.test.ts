@@ -13039,6 +13039,36 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     expect(prompt).toBeNull();
   });
 
+  test("prefers the raw slash command over its expanded provider text", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      const message = createMuxMessage("u1", "user", "Expanded skill body sent to the model", {
+        historySequence: 1,
+      });
+      await historyService.appendToHistory(workspaceId, {
+        ...message,
+        metadata: { ...message.metadata, muxMetadata: { rawCommand: "/compact" } },
+      } as typeof message);
+    });
+
+    expect(prompt).toBe("/compact");
+  });
+
+  test("keeps scanning past a user row with malformed parts", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u1", "user", "the older valid prompt", { historySequence: 1 })
+      );
+      const broken = createMuxMessage("u2", "user", "ignored", { historySequence: 2 });
+      await historyService.appendToHistory(workspaceId, {
+        ...broken,
+        parts: undefined,
+      } as unknown as typeof broken);
+    });
+
+    expect(prompt).toBe("the older valid prompt");
+  });
+
   test("returns the newest prompt when several share one reverse-read chunk", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       for (const [index, text] of ["oldest prompt", "middle prompt", "newest prompt"].entries()) {

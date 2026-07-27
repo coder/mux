@@ -1644,6 +1644,38 @@ function mergeActiveCount(
   return merged;
 }
 
+/**
+ * Mirrors the transcript's user-message precedence (displayedMessageBuilder prefers
+ * `rawCommand` over part text) so a materialized slash command reads as the user typed
+ * it instead of the expanded skill or compaction body sent to the provider.
+ *
+ * Tolerates structurally malformed rows: persisted history must not be able to abort the
+ * scan and hide older valid prompts.
+ */
+function extractUserPromptText(message: MuxMessage): string {
+  const muxMeta = message.metadata?.muxMetadata;
+  const rawCommand =
+    muxMeta && "rawCommand" in muxMeta && typeof muxMeta.rawCommand === "string"
+      ? muxMeta.rawCommand.trim()
+      : "";
+  if (rawCommand.length > 0) {
+    return rawCommand;
+  }
+
+  if (!Array.isArray(message.parts)) {
+    return "";
+  }
+
+  return message.parts
+    .map((part) =>
+      part && typeof part === "object" && part.type === "text" && typeof part.text === "string"
+        ? part.text
+        : ""
+    )
+    .join("")
+    .trim();
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class WorkspaceService extends EventEmitter {
   private readonly sessions = new Map<string, AgentSession>();
@@ -9565,10 +9597,7 @@ export class WorkspaceService extends EventEmitter {
           if (message.role !== "user" || message.metadata?.synthetic === true) {
             continue;
           }
-          const text = message.parts
-            .map((part) => (part.type === "text" ? part.text : ""))
-            .join("")
-            .trim();
+          const text = extractUserPromptText(message);
           if (text.length > 0) {
             found = text;
             return false;
