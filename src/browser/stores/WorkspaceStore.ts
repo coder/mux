@@ -14,6 +14,7 @@ import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
 import type { AssistedReviewHunk } from "@/common/types/review";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
+import type { TimelineEvent, TimelineSubscriptionEvent } from "@/common/orpc/schemas/timeline";
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
 import {
   StreamingMessageAggregator,
@@ -94,6 +95,7 @@ import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessage
 
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
+const EMPTY_TIMELINE: TimelineEvent[] = [];
 
 export type AutoRetryStatus = Extract<
   WorkspaceChatMessage,
@@ -716,6 +718,12 @@ export class WorkspaceStore {
   // Per-workspace listener refcount for useWorkspaceStatsSnapshot().
   // Used to only subscribe to backend stats when something in the UI is actually reading them.
   private statsListenerCounts = new Map<string, number>();
+
+  private workspaceTimelines = new Map<string, TimelineEvent[]>();
+  private timelineStore = new MapStore<string, TimelineEvent[]>();
+  private timelineUnsubscribers = new Map<string, () => void>();
+  private timelineListenerCounts = new Map<string, number>();
+
   // Cumulative session usage (from session-usage.json)
 
   private sessionUsage = new Map<string, z.infer<typeof SessionUsageFileSchema>>();
@@ -1277,6 +1285,10 @@ export class WorkspaceStore {
       unsubscribe();
     }
     this.statsUnsubscribers.clear();
+    for (const unsubscribe of this.timelineUnsubscribers.values()) {
+      unsubscribe();
+    }
+    this.timelineUnsubscribers.clear();
 
     this.client = client;
     this.clientChangeController.abort();
@@ -1300,6 +1312,9 @@ export class WorkspaceStore {
     // Re-subscribe any workspaces that already have UI consumers.
     for (const workspaceId of this.statsListenerCounts.keys()) {
       this.subscribeToStats(workspaceId);
+    }
+    for (const workspaceId of this.timelineListenerCounts.keys()) {
+      this.subscribeToTimeline(workspaceId);
     }
 
     this.ensureActiveOnChatSubscription();
@@ -1638,6 +1653,60 @@ export class WorkspaceStore {
     })();
 
     this.statsUnsubscribers.set(workspaceId, () => {
+      controller.abort();
+      void iterator?.return?.();
+    });
+  }
+
+  private subscribeToTimeline(workspaceId: string): void {
+    if (
+      !this.client ||
+      !this.isWorkspaceRegistered(workspaceId) ||
+      (this.timelineListenerCounts.get(workspaceId) ?? 0) <= 0 ||
+      this.timelineUnsubscribers.has(workspaceId)
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const { signal } = controller;
+    let iterator: AsyncIterator<TimelineSubscriptionEvent> | null = null;
+
+    (async () => {
+      try {
+        const subscribedIterator = await this.client!.workspace.timeline.subscribe(
+          { workspaceId },
+          { signal }
+        );
+        iterator = subscribedIterator;
+
+        for await (const update of subscribedIterator) {
+          if (signal.aborted) break;
+          queueMicrotask(() => {
+            if (signal.aborted) return;
+
+            if (update.type === "snapshot") {
+              this.workspaceTimelines.set(workspaceId, update.events);
+            } else if (update.events.length > 0) {
+              const current = this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE;
+              const appendedIds = new Set(update.events.map((event) => event.id));
+              this.workspaceTimelines.set(workspaceId, [
+                ...update.events.toSorted((a, b) => b.seq - a.seq),
+                ...current.filter((event) => !appendedIds.has(event.id)),
+              ]);
+            } else {
+              return;
+            }
+            this.timelineStore.bump(workspaceId);
+          });
+        }
+      } catch (error) {
+        if (signal.aborted || isAbortError(error)) return;
+        console.warn(`[WorkspaceStore] Error in timeline subscription for ${workspaceId}:`, error);
+      }
+    })();
+
+    this.timelineUnsubscribers.set(workspaceId, () => {
       controller.abort();
       void iterator?.return?.();
     });
@@ -2715,6 +2784,41 @@ export class WorkspaceStore {
     };
   }
 
+  getWorkspaceTimeline(workspaceId: string): TimelineEvent[] {
+    return this.timelineStore.get(
+      workspaceId,
+      () => this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE
+    );
+  }
+
+  subscribeTimeline(workspaceId: string, listener: () => void): () => void {
+    const unsubscribeFromStore = this.timelineStore.subscribeKey(workspaceId, listener);
+    const previousCount = this.timelineListenerCounts.get(workspaceId) ?? 0;
+    this.timelineListenerCounts.set(workspaceId, previousCount + 1);
+
+    if (previousCount === 0) {
+      this.subscribeToTimeline(workspaceId);
+    }
+
+    return () => {
+      unsubscribeFromStore();
+      const currentCount = this.timelineListenerCounts.get(workspaceId);
+      if (!currentCount) return;
+
+      if (currentCount === 1) {
+        this.timelineListenerCounts.delete(workspaceId);
+        this.timelineUnsubscribers.get(workspaceId)?.();
+        this.timelineUnsubscribers.delete(workspaceId);
+        this.workspaceTimelines.delete(workspaceId);
+        this.timelineStore.bump(workspaceId);
+        this.timelineStore.delete(workspaceId);
+        return;
+      }
+
+      this.timelineListenerCounts.set(workspaceId, currentCount - 1);
+    };
+  }
+
   /**
    * Subscribe to consumer store changes for a specific workspace.
    */
@@ -3783,6 +3887,7 @@ export class WorkspaceStore {
 
     // Stats snapshots are subscribed lazily via subscribeStats().
     this.subscribeToStats(workspaceId);
+    this.subscribeToTimeline(workspaceId);
 
     this.ensureActiveOnChatSubscription();
 
@@ -3832,6 +3937,11 @@ export class WorkspaceStore {
       statsUnsubscribe();
       this.statsUnsubscribers.delete(workspaceId);
     }
+    const timelineUnsubscribe = this.timelineUnsubscribers.get(workspaceId);
+    if (timelineUnsubscribe) {
+      timelineUnsubscribe();
+      this.timelineUnsubscribers.delete(workspaceId);
+    }
 
     const unsubscribe = this.ipcUnsubscribers.get(workspaceId);
     if (unsubscribe) {
@@ -3864,6 +3974,9 @@ export class WorkspaceStore {
     this.workspaceStats.delete(workspaceId);
     this.statsStore.delete(workspaceId);
     this.statsListenerCounts.delete(workspaceId);
+    this.workspaceTimelines.delete(workspaceId);
+    this.timelineStore.delete(workspaceId);
+    this.timelineListenerCounts.delete(workspaceId);
     this.historyPagination.delete(workspaceId);
     this.preReplayUsageSnapshot.delete(workspaceId);
     this.sessionUsage.delete(workspaceId);
@@ -3918,6 +4031,10 @@ export class WorkspaceStore {
       unsubscribe();
     }
     this.statsUnsubscribers.clear();
+    for (const unsubscribe of this.timelineUnsubscribers.values()) {
+      unsubscribe();
+    }
+    this.timelineUnsubscribers.clear();
 
     for (const unsubscribe of this.ipcUnsubscribers.values()) {
       unsubscribe();
@@ -3956,6 +4073,9 @@ export class WorkspaceStore {
     this.workspaceStats.clear();
     this.statsStore.clear();
     this.statsListenerCounts.clear();
+    this.workspaceTimelines.clear();
+    this.timelineStore.clear();
+    this.timelineListenerCounts.clear();
     this.historyPagination.clear();
     this.preReplayUsageSnapshot.clear();
     this.sessionUsage.clear();
@@ -4890,6 +5010,20 @@ export function useWorkspaceStatsSnapshot(workspaceId: string): WorkspaceStatsSn
   );
   const getSnapshot = useCallback(
     () => store.getWorkspaceStatsSnapshot(workspaceId),
+    [store, workspaceId]
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
+export function useWorkspaceTimeline(workspaceId: string): TimelineEvent[] {
+  const store = getStoreInstance();
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeTimeline(workspaceId, listener),
+    [store, workspaceId]
+  );
+  const getSnapshot = useCallback(
+    () => store.getWorkspaceTimeline(workspaceId),
     [store, workspaceId]
   );
 
