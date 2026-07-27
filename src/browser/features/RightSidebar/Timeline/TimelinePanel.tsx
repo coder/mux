@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
 import {
@@ -312,37 +312,6 @@ function CollapsedEventRun(props: {
 
 const MAX_REVEAL_HISTORY_PAGES = 10;
 
-function findRenderedTranscriptAnchor(anchor: {
-  messageId?: string;
-  toolCallId?: string;
-}): HTMLElement | undefined {
-  const transcript = document.querySelector<HTMLElement>('[data-testid="message-window"]');
-  if (!transcript) {
-    return undefined;
-  }
-
-  if (anchor.toolCallId) {
-    const toolElement = Array.from(
-      transcript.querySelectorAll<HTMLElement>("[data-tool-call-id]")
-    ).find((element) => element.dataset.toolCallId === anchor.toolCallId);
-    if (toolElement) {
-      return toolElement;
-    }
-  }
-
-  if (!anchor.messageId) {
-    return undefined;
-  }
-
-  return Array.from(transcript.querySelectorAll<HTMLElement>("[data-message-id]")).find(
-    (element) => element.dataset.messageId === anchor.messageId
-  );
-}
-
-function waitForTranscriptRender(): Promise<void> {
-  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
-}
-
 type PreviewState =
   | { status: "loading" }
   | { status: "ready"; preview: TimelinePreview }
@@ -356,6 +325,15 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
   const [revealState, setRevealState] = useState<"idle" | "revealing" | "not-found" | "error">(
     "idle"
   );
+
+  const revealOperationRef = useRef(0);
+
+  useEffect(() => {
+    const operationRef = revealOperationRef;
+    return () => {
+      operationRef.current++;
+    };
+  }, []);
 
   useEffect(() => {
     const anchor = props.event.anchor;
@@ -405,6 +383,18 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
     return { messageId, toolCallId: currentAnchor.toolCallId };
   };
 
+  const isRevealTargetLoaded = (target: { messageId?: string; toolCallId?: string }) => {
+    const messages = workspaceStore.getWorkspaceState(props.workspaceId).messages;
+    if (target.toolCallId) {
+      return messages.some(
+        (message) => message.type === "tool" && message.toolCallId === target.toolCallId
+      );
+    }
+    return target.messageId
+      ? messages.some((message) => "historyId" in message && message.historyId === target.messageId)
+      : false;
+  };
+
   const dispatchReveal = (target: { messageId?: string; toolCallId?: string }) => {
     window.dispatchEvent(
       createCustomEvent(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, {
@@ -419,13 +409,13 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
       return;
     }
 
+    const operation = ++revealOperationRef.current;
     setRevealState("revealing");
     showAllMessages(props.workspaceId);
 
     try {
-      await waitForTranscriptRender();
       let target = resolveRevealTarget(anchor);
-      if (findRenderedTranscriptAnchor(target)) {
+      if (isRevealTargetLoaded(target)) {
         dispatchReveal(target);
         setRevealState("idle");
         return;
@@ -437,19 +427,31 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
           break;
         }
 
-        await workspaceStore.loadOlderHistory(props.workspaceId);
-        await waitForTranscriptRender();
+        const loadResult = await workspaceStore.loadOlderHistory(props.workspaceId);
+        if (operation !== revealOperationRef.current) {
+          return;
+        }
+        if (loadResult === "failed" || loadResult === "busy" || loadResult === "unavailable") {
+          setRevealState("error");
+          return;
+        }
+
         target = resolveRevealTarget(anchor);
-        if (findRenderedTranscriptAnchor(target)) {
+        if (isRevealTargetLoaded(target)) {
           dispatchReveal(target);
           setRevealState("idle");
           return;
+        }
+        if (loadResult === "exhausted") {
+          break;
         }
       }
 
       setRevealState("not-found");
     } catch {
-      setRevealState("error");
+      if (operation === revealOperationRef.current) {
+        setRevealState("error");
+      }
     }
   };
 

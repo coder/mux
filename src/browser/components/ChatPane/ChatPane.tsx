@@ -246,6 +246,26 @@ function findTranscriptRevealElement(
     : undefined;
 }
 
+function findTimelineRevealMessageIndex(
+  messages: readonly DisplayedMessage[],
+  anchor: CustomEventPayloads[typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR]
+): number {
+  if (anchor.toolCallId) {
+    const toolIndex = messages.findIndex(
+      (message) => message.type === "tool" && message.toolCallId === anchor.toolCallId
+    );
+    if (toolIndex >= 0) {
+      return toolIndex;
+    }
+  }
+
+  return anchor.messageId
+    ? messages.findIndex(
+        (message) => "historyId" in message && message.historyId === anchor.messageId
+      )
+    : -1;
+}
+
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const workspaceId = props.workspaceId;
   const immersiveHidden = props.immersiveHidden ?? false;
@@ -585,6 +605,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     handleScrollContainerKeyDown,
   } = useAutoScroll();
 
+  const [pendingTimelineReveal, setPendingTimelineReveal] = useState<
+    CustomEventPayloads[typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR] | null
+  >(null);
   const highlightedTimelineElementRef = useRef<HTMLElement | null>(null);
   const timelineHighlightTimeoutRef = useRef<number | null>(null);
 
@@ -594,45 +617,104 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       if (customEvent.detail.workspaceId !== workspaceId) {
         return;
       }
-
       disableAutoScroll();
-      requestAnimationFrame(() => {
-        const scrollContainer = contentRef.current;
-        if (!scrollContainer) {
-          return;
-        }
-
-        const targetElement = findTranscriptRevealElement(scrollContainer, customEvent.detail);
-        if (!targetElement) {
-          return;
-        }
-
-        if (timelineHighlightTimeoutRef.current != null) {
-          window.clearTimeout(timelineHighlightTimeoutRef.current);
-        }
-        highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
-        highlightedTimelineElementRef.current = targetElement;
-        targetElement.classList.add("timeline-reveal-highlight");
-        targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
-        timelineHighlightTimeoutRef.current = window.setTimeout(() => {
-          targetElement.classList.remove("timeline-reveal-highlight");
-          if (highlightedTimelineElementRef.current === targetElement) {
-            highlightedTimelineElementRef.current = null;
-          }
-          timelineHighlightTimeoutRef.current = null;
-        }, 1600);
-      });
+      setPendingTimelineReveal(customEvent.detail);
     };
 
     window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, handleTimelineReveal);
     return () => {
       window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, handleTimelineReveal);
+    };
+  }, [disableAutoScroll, workspaceId]);
+
+  // The panel dispatches right after the store loads the target, so the
+  // deferred transcript may not contain it yet. Stay pending until it appears,
+  // then expand each collapsed bundle hiding it (guarded set-if-absent so the
+  // effect re-runs once per expansion), and only then scroll.
+  useLayoutEffect(() => {
+    if (!pendingTimelineReveal) {
+      return;
+    }
+    if (pendingTimelineReveal.workspaceId !== workspaceId) {
+      setPendingTimelineReveal(null);
+      return;
+    }
+
+    const targetIndex = findTimelineRevealMessageIndex(deferredMessages, pendingTimelineReveal);
+    if (targetIndex < 0) {
+      return;
+    }
+
+    const bashOutputGroup = bashOutputGroupInfos[targetIndex];
+    const bashGroupKey = bashOutputGroup
+      ? deferredMessages[bashOutputGroup.firstIndex]?.id
+      : undefined;
+    if (bashGroupKey && !expandedBashGroups.has(bashGroupKey)) {
+      setExpandedBashGroups((current) => new Set(current).add(bashGroupKey));
+      return;
+    }
+
+    const workBundle = workBundleInfos?.[targetIndex];
+    if (workBundle && workBundleExpansionOverrides.get(workBundle.key) !== true) {
+      setWorkBundleExpansionOverrides((current) => new Map(current).set(workBundle.key, true));
+      return;
+    }
+
+    const operationalBundle = operationalBundleInfos?.[targetIndex];
+    if (
+      operationalBundle &&
+      operationalBundleExpansionOverrides.get(operationalBundle.key) !== true
+    ) {
+      setOperationalBundleExpansionOverrides((current) =>
+        new Map(current).set(operationalBundle.key, true)
+      );
+      return;
+    }
+
+    const scrollContainer = contentRef.current;
+    const targetElement = scrollContainer
+      ? findTranscriptRevealElement(scrollContainer, pendingTimelineReveal)
+      : undefined;
+    if (!targetElement) {
+      return;
+    }
+
+    if (timelineHighlightTimeoutRef.current != null) {
+      window.clearTimeout(timelineHighlightTimeoutRef.current);
+    }
+    highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
+    highlightedTimelineElementRef.current = targetElement;
+    targetElement.classList.add("timeline-reveal-highlight");
+    targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+    timelineHighlightTimeoutRef.current = window.setTimeout(() => {
+      targetElement.classList.remove("timeline-reveal-highlight");
+      if (highlightedTimelineElementRef.current === targetElement) {
+        highlightedTimelineElementRef.current = null;
+      }
+      timelineHighlightTimeoutRef.current = null;
+    }, 1600);
+    setPendingTimelineReveal(null);
+  }, [
+    bashOutputGroupInfos,
+    contentRef,
+    deferredMessages,
+    expandedBashGroups,
+    operationalBundleExpansionOverrides,
+    operationalBundleInfos,
+    pendingTimelineReveal,
+    workBundleExpansionOverrides,
+    workBundleInfos,
+    workspaceId,
+  ]);
+
+  useEffect(() => {
+    return () => {
       if (timelineHighlightTimeoutRef.current != null) {
         window.clearTimeout(timelineHighlightTimeoutRef.current);
       }
       highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
     };
-  }, [contentRef, disableAutoScroll, workspaceId]);
+  }, [workspaceId]);
 
   // The composer dock lives inside the scrollport (sticky to its bottom), so
   // mousedown/keydown events from the composer bubble to the transcript
@@ -859,6 +941,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     setExpandedBashGroups(new Set());
     setWorkBundleExpansionOverrides(new Map());
     setOperationalBundleExpansionOverrides(new Map());
+    setPendingTimelineReveal(null);
   }, [workspaceId]);
 
   const handleChatInputReady = useCallback((api: ChatInputAPI) => {

@@ -121,6 +121,8 @@ export type AutoRetryStatus = Extract<
   | { type: "auto-retry-abandoned" }
 >;
 
+export type HistoryLoadResult = "loaded" | "exhausted" | "busy" | "unavailable" | "failed";
+
 export interface WorkspaceState {
   name: string; // User-facing workspace name (e.g., "feature-branch")
   messages: DisplayedMessage[];
@@ -2357,7 +2359,7 @@ export class WorkspaceStore {
     this.states.bump(workspaceId);
   }
 
-  async loadOlderHistory(workspaceId: string): Promise<void> {
+  async loadOlderHistory(workspaceId: string): Promise<HistoryLoadResult> {
     assert(
       typeof workspaceId === "string" && workspaceId.length > 0,
       "loadOlderHistory requires a non-empty workspaceId"
@@ -2366,7 +2368,7 @@ export class WorkspaceStore {
     const client = this.client;
     if (!client) {
       console.warn(`[WorkspaceStore] Cannot load older history for ${workspaceId}: no ORPC client`);
-      return;
+      return "unavailable";
     }
 
     const paginationState = this.historyPagination.get(workspaceId);
@@ -2374,18 +2376,21 @@ export class WorkspaceStore {
       console.warn(
         `[WorkspaceStore] Cannot load older history for ${workspaceId}: pagination state is not initialized`
       );
-      return;
+      return "unavailable";
     }
 
-    if (!paginationState.hasOlder || paginationState.loading) {
-      return;
+    if (!paginationState.hasOlder) {
+      return "exhausted";
+    }
+    if (paginationState.loading) {
+      return "busy";
     }
 
     if (!this.aggregators.has(workspaceId)) {
       console.warn(
         `[WorkspaceStore] Cannot load older history for ${workspaceId}: workspace is not registered`
       );
-      return;
+      return "unavailable";
     }
 
     const requestedCursor = paginationState.nextCursor
@@ -2416,7 +2421,7 @@ export class WorkspaceStore {
         !latestPagination.loading ||
         !areHistoryPaginationCursorsEqual(latestPagination.nextCursor, requestedCursor)
       ) {
-        return;
+        return "busy";
       }
 
       if (result.hasOlder) {
@@ -2447,6 +2452,7 @@ export class WorkspaceStore {
         hasOlder: result.hasOlder,
         loading: false,
       });
+      return "loaded";
     } catch (error) {
       console.error(`[WorkspaceStore] Failed to load older history for ${workspaceId}:`, error);
 
@@ -2457,6 +2463,7 @@ export class WorkspaceStore {
           loading: false,
         });
       }
+      return "failed";
     } finally {
       if (this.isWorkspaceRegistered(workspaceId)) {
         this.states.bump(workspaceId);
