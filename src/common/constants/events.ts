@@ -130,6 +130,12 @@ export const CUSTOM_EVENTS = {
   GOAL_CHILD_BUDGET_TOAST: "mux:goalChildBudgetToast",
 
   /**
+   * Event to reveal a timeline anchor in the active transcript.
+   * Detail: { workspaceId: string, messageId?: string, toolCallId?: string }
+   */
+  REVEAL_TIMELINE_ANCHOR: "mux:revealTimelineAnchor",
+
+  /**
    * Event emitted when LLM debug logs are toggled in Settings.
    * Detail: { enabled: boolean }
    */
@@ -202,6 +208,11 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.GOAL_CHILD_BUDGET_TOAST]: {
     workspaceId: string;
     message: string;
+  };
+  [CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR]: {
+    workspaceId: string;
+    messageId?: string;
+    toolCallId?: string;
   };
   [CUSTOM_EVENTS.LLM_DEBUG_LOGS_CHANGED]: {
     enabled: boolean;

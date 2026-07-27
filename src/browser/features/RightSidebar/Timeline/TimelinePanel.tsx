@@ -3,10 +3,19 @@ import { useEffect, useState } from "react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceStoreRaw, useWorkspaceTimeline } from "@/browser/stores/WorkspaceStore";
+import {
+  showAllMessages,
+  useWorkspaceStoreRaw,
+  useWorkspaceTimeline,
+} from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
-import type { TimelineEvent, TimelinePreview } from "@/common/orpc/schemas/timeline";
+import type {
+  TimelineAnchor,
+  TimelineEvent,
+  TimelinePreview,
+} from "@/common/orpc/schemas/timeline";
 
 import {
   TIMELINE_CATEGORIES,
@@ -297,6 +306,39 @@ function CollapsedEventRun(props: {
   );
 }
 
+const MAX_REVEAL_HISTORY_PAGES = 10;
+
+function findRenderedTranscriptAnchor(anchor: {
+  messageId?: string;
+  toolCallId?: string;
+}): HTMLElement | undefined {
+  const transcript = document.querySelector<HTMLElement>('[data-testid="message-window"]');
+  if (!transcript) {
+    return undefined;
+  }
+
+  if (anchor.toolCallId) {
+    const toolElement = Array.from(
+      transcript.querySelectorAll<HTMLElement>("[data-tool-call-id]")
+    ).find((element) => element.dataset.toolCallId === anchor.toolCallId);
+    if (toolElement) {
+      return toolElement;
+    }
+  }
+
+  if (!anchor.messageId) {
+    return undefined;
+  }
+
+  return Array.from(transcript.querySelectorAll<HTMLElement>("[data-message-id]")).find(
+    (element) => element.dataset.messageId === anchor.messageId
+  );
+}
+
+function waitForTranscriptRender(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 type PreviewState =
   | { status: "loading" }
   | { status: "ready"; preview: TimelinePreview }
@@ -304,7 +346,11 @@ type PreviewState =
 
 function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent }) {
   const { api } = useAPI();
+  const workspaceStore = useWorkspaceStoreRaw();
   const [previewState, setPreviewState] = useState<PreviewState>({ status: "loading" });
+  const [revealState, setRevealState] = useState<"idle" | "revealing" | "not-found" | "error">(
+    "idle"
+  );
 
   useEffect(() => {
     const anchor = props.event.anchor;
@@ -333,6 +379,71 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
       cancelled = true;
     };
   }, [api, props.event, props.workspaceId]);
+
+  const anchor = props.event.anchor;
+  const hasTranscriptTarget =
+    anchor?.toolCallId != null || anchor?.messageId != null || anchor?.historySequence != null;
+
+  const resolveRevealTarget = (currentAnchor: TimelineAnchor) => {
+    const messageId =
+      currentAnchor.messageId ??
+      (currentAnchor.historySequence != null
+        ? workspaceStore
+            .getWorkspaceState(props.workspaceId)
+            .muxMessages.find(
+              (message) => message.metadata?.historySequence === currentAnchor.historySequence
+            )?.id
+        : undefined);
+    return { messageId, toolCallId: currentAnchor.toolCallId };
+  };
+
+  const dispatchReveal = (target: { messageId?: string; toolCallId?: string }) => {
+    window.dispatchEvent(
+      createCustomEvent(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, {
+        workspaceId: props.workspaceId,
+        ...target,
+      })
+    );
+  };
+
+  const handleReveal = async () => {
+    if (!anchor || !hasTranscriptTarget || revealState === "revealing") {
+      return;
+    }
+
+    setRevealState("revealing");
+    showAllMessages(props.workspaceId);
+
+    try {
+      await waitForTranscriptRender();
+      let target = resolveRevealTarget(anchor);
+      if (findRenderedTranscriptAnchor(target)) {
+        dispatchReveal(target);
+        setRevealState("idle");
+        return;
+      }
+
+      for (let page = 0; page < MAX_REVEAL_HISTORY_PAGES; page++) {
+        const workspaceState = workspaceStore.getWorkspaceState(props.workspaceId);
+        if (!workspaceState.hasOlderHistory) {
+          break;
+        }
+
+        await workspaceStore.loadOlderHistory(props.workspaceId);
+        await waitForTranscriptRender();
+        target = resolveRevealTarget(anchor);
+        if (findRenderedTranscriptAnchor(target)) {
+          dispatchReveal(target);
+          setRevealState("idle");
+          return;
+        }
+      }
+
+      setRevealState("not-found");
+    } catch {
+      setRevealState("error");
+    }
+  };
 
   return (
     <div className="border-border bg-surface-secondary mx-3 mb-3 shrink-0 rounded-md border p-3">
@@ -372,6 +483,24 @@ function TimelinePreviewCard(props: { workspaceId: string; event: TimelineEvent 
           ) : null}
         </div>
       )}
+
+      {hasTranscriptTarget ? (
+        <div className="mt-3 flex flex-col items-start gap-1.5">
+          <button
+            type="button"
+            disabled={revealState === "revealing"}
+            onClick={() => void handleReveal()}
+            className="border-border bg-surface-primary text-content-primary hover:bg-hover focus-visible:ring-accent rounded-md border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
+          >
+            {revealState === "revealing" ? "Revealing…" : "Reveal in transcript"}
+          </button>
+          {revealState === "not-found" ? (
+            <div className="text-muted text-[10px]">Too far back; showing preview only</div>
+          ) : revealState === "error" ? (
+            <div className="text-muted text-[10px]">Reveal unavailable</div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
