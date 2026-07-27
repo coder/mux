@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { WorkspaceChatMessageSchema } from "@/common/orpc/schemas/stream";
+import { TimelineEventDraftSchema } from "@/common/orpc/schemas/timeline";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   createTimelineMapperState,
@@ -170,6 +171,69 @@ describe("mapChatEventToTimeline", () => {
       kind: "turn.interrupted",
       status: "interrupted",
     });
+  });
+
+  test("records the first prompt in a workspace, which anchors at history sequence 0", () => {
+    const first = map({
+      type: "message",
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Create a small Python utility" }],
+      metadata: { historySequence: 0, timestamp: 100 },
+    });
+
+    expect(first.drafts).toHaveLength(1);
+    expect(first.drafts[0]).toMatchObject({
+      kind: "turn.user",
+      anchor: { historySequence: 0, messageId: "user-1" },
+      data: { digest: "Create a small Python utility" },
+    });
+    expect(TimelineEventDraftSchema.safeParse(first.drafts[0]).success).toBe(true);
+  });
+
+  test("classifies a /compact request as compaction rather than a user prompt", () => {
+    const compactRequest = map({
+      type: "message",
+      id: "user-compact",
+      role: "user",
+      parts: [{ type: "text", text: "Summarize this conversation for a new Assistant" }],
+      metadata: {
+        historySequence: 4,
+        timestamp: 100,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      },
+    });
+    const heartbeatTurn = map({
+      type: "message",
+      id: "user-heartbeat",
+      role: "user",
+      parts: [{ type: "text", text: "Heartbeat check" }],
+      metadata: {
+        historySequence: 6,
+        timestamp: 100,
+        muxMetadata: { type: "heartbeat-request" },
+      },
+    });
+
+    expect(compactRequest.drafts[0]).toMatchObject({
+      kind: "compaction.triggered",
+      status: "started",
+    });
+    expect(heartbeatTurn.drafts[0]).toMatchObject({ kind: "turn.synthetic" });
+  });
+
+  test("omits an empty message id instead of losing the row to validation", () => {
+    const failed = map({
+      type: "stream-error",
+      workspaceId: "ws-1",
+      messageId: "",
+      error: "provider failed",
+      errorType: "api",
+    });
+
+    expect(failed.drafts).toHaveLength(1);
+    expect(failed.drafts[0].anchor).toEqual({});
+    expect(TimelineEventDraftSchema.safeParse(failed.drafts[0]).success).toBe(true);
   });
 
   test("maps retry, task, workflow, and user turn events", () => {

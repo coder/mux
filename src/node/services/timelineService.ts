@@ -6,6 +6,7 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import {
   TIMELINE_RETIRED_KINDS,
+  TimelineEventDraftSchema,
   TimelineEventSchema,
   TimelineSequenceEnvelopeSchema,
   TimelineStoredEventSchema,
@@ -88,6 +89,19 @@ export class TimelineService implements TimelineRecorder {
       return;
     }
 
+    // Validate before a sequence number is allocated. A draft the schema rejects used to be
+    // discarded mid-write, which both lost the row and burned its sequence, leaving a permanent
+    // gap that made later appends look like they had reused a number.
+    const validated = TimelineEventDraftSchema.safeParse(draft);
+    if (!validated.success) {
+      log.error("Rejected invalid timeline event draft", {
+        workspaceId,
+        kind: draft.kind,
+        error: validated.error.message,
+      });
+      return;
+    }
+
     const sourceKey = draft.source.key;
     if (sourceKey != null && this.hasRecentSourceKey(workspaceId, sourceKey)) {
       return;
@@ -99,7 +113,7 @@ export class TimelineService implements TimelineRecorder {
     this.enqueueWrite(workspaceId, async () => {
       const seq = await this.takeNextSequence(workspaceId);
       const event = TimelineEventSchema.parse({
-        ...draft,
+        ...validated.data,
         v: 1,
         seq,
         id: randomUUID(),

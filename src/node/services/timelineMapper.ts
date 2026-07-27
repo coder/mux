@@ -47,8 +47,47 @@ function messageAnchor(event: Extract<WorkspaceChatMessage, { type: "message" }>
     ...(event.metadata?.historySequence != null
       ? { historySequence: event.metadata.historySequence }
       : {}),
-    messageId: event.id,
+    ...anchorMessageId(event.id),
   };
+}
+
+// Stream lifecycle events can carry an empty message id; an empty anchor field fails validation and
+// would cost the whole row, so omit it rather than anchoring to nothing.
+function anchorMessageId(messageId: string | undefined): { messageId?: string } {
+  return messageId != null && messageId !== "" ? { messageId } : {};
+}
+
+// Mux dispatches several user-role turns on the agent's behalf. They belong on the timeline, but as
+// synthetic turns, so the prompts filter stays a record of what the human actually asked for.
+const MACHINE_AUTHORED_TURN_TYPES = new Set([
+  "heartbeat-request",
+  "bash-monitor-wake",
+  "workspace-turn-task",
+  "workflow-trigger-display",
+  "workflow-result",
+]);
+
+// muxMetadata crosses the oRPC boundary as `any`, so read its string fields defensively.
+function readMuxMetadataField(
+  metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"],
+  field: "type" | "source"
+): string | undefined {
+  const muxMetadata: unknown = metadata?.muxMetadata;
+  if (typeof muxMetadata !== "object" || muxMetadata === null) {
+    return undefined;
+  }
+  const value = (muxMetadata as Record<string, unknown>)[field];
+  return typeof value === "string" ? value : undefined;
+}
+
+function isMachineAuthoredTurn(
+  metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"]
+): boolean {
+  if (metadata?.synthetic === true) {
+    return true;
+  }
+  const muxType = readMuxMetadataField(metadata, "type");
+  return muxType != null && MACHINE_AUTHORED_TURN_TYPES.has(muxType);
 }
 
 function mapMessage(
@@ -60,6 +99,23 @@ function mapMessage(
   const epoch = event.metadata?.compactionEpoch;
 
   if (event.role === "user") {
+    // A /compact request is persisted as a user message, but it is Mux asking for a summary, not a
+    // prompt the human wrote, so it must not appear among their prompts.
+    if (readMuxMetadataField(event.metadata, "type") === "compaction-request") {
+      const compactionSource = readMuxMetadataField(event.metadata, "source");
+      return [
+        {
+          ts,
+          kind: "compaction.triggered",
+          source: { system: "chat", key: eventKey("compaction-request", event.id) },
+          anchor,
+          ...(epoch != null ? { epoch } : {}),
+          status: "started",
+          ...(compactionSource != null ? { data: { reason: compactionSource } } : {}),
+        },
+      ];
+    }
+
     const digest = truncateDigest(
       event.parts
         .filter((part) => part.type === "text")
@@ -69,7 +125,7 @@ function mapMessage(
     return [
       {
         ts,
-        kind: event.metadata?.synthetic === true ? "turn.synthetic" : "turn.user",
+        kind: isMachineAuthoredTurn(event.metadata) ? "turn.synthetic" : "turn.user",
         source: { system: "chat", key: eventKey("message", event.id) },
         anchor,
         ...(epoch != null ? { epoch } : {}),
@@ -160,7 +216,7 @@ export function mapChatEventToTimeline(
         source: { system: "chat", key: eventKey("stream-end", event.messageId) },
         anchor: {
           ...(openStream != null ? { historySequence: openStream.historySequence } : {}),
-          messageId: event.messageId,
+          ...anchorMessageId(event.messageId),
         },
         status: "completed",
         data,
@@ -181,7 +237,7 @@ export function mapChatEventToTimeline(
             source: { system: "chat", key: eventKey("stream-abort", event.messageId) },
             anchor: {
               ...(openStream != null ? { historySequence: openStream.historySequence } : {}),
-              messageId: event.messageId,
+              ...anchorMessageId(event.messageId),
             },
             status: "interrupted",
             data: {
@@ -202,7 +258,7 @@ export function mapChatEventToTimeline(
             ts: receivedAt,
             kind: "turn.failed",
             source: { system: "chat", key: eventKey(event.type, event.messageId) },
-            anchor: { messageId: event.messageId },
+            anchor: anchorMessageId(event.messageId),
             status: "failed",
             data: {
               reason: event.error,
@@ -302,7 +358,7 @@ export function mapChatEventToTimeline(
             kind: "workflow.attached",
             source: { system: "chat", key: eventKey("workflow-attached", event.runId) },
             anchor: {
-              ...(event.messageId != null ? { messageId: event.messageId } : {}),
+              ...anchorMessageId(event.messageId),
               toolCallId: event.toolCallId,
             },
             data: { runId: event.runId },

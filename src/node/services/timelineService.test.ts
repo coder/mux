@@ -201,6 +201,21 @@ describe("TimelineService", () => {
     expect(error).toMatchObject({ code: "ENOENT" });
   });
 
+  test("rejects an invalid draft without consuming a sequence number", async () => {
+    service.record(WORKSPACE_ID, {
+      kind: "turn.user",
+      source: { system: "chat", key: "invalid-anchor" },
+      anchor: { messageId: "" },
+    });
+    service.record(WORKSPACE_ID, draft("after-invalid"));
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => [event.data?.description, event.seq])).toEqual([
+      ["after-invalid", 1],
+    ]);
+  });
+
   test("drops duplicate recent source keys", async () => {
     service.record(WORKSPACE_ID, draft("same-key"));
     service.record(WORKSPACE_ID, draft("same-key"));

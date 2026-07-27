@@ -50,7 +50,8 @@ export const TimelineSourceSchema = z
 
 export const TimelineAnchorSchema = z
   .object({
-    historySequence: z.number().int().positive().optional(),
+    // History sequences are 0-based, so the first message in a workspace anchors at 0.
+    historySequence: z.number().int().nonnegative().optional(),
     messageId: z.string().min(1).optional(),
     toolCallId: z.string().min(1).optional(),
     taskId: z.string().min(1).optional(),
