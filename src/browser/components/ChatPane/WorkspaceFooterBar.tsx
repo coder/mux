@@ -251,7 +251,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
         align="end"
         sideOffset={8}
         collisionPadding={12}
-        className="max-h-60 w-auto max-w-100 overflow-y-auto p-3 text-xs leading-relaxed whitespace-pre-wrap"
+        className="max-h-60 w-auto max-w-[min(25rem,var(--radix-popover-content-available-width,25rem))] overflow-y-auto p-3 text-xs leading-relaxed break-words whitespace-pre-wrap"
       >
         {lastPrompt}
       </PopoverContent>
