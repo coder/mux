@@ -26,6 +26,7 @@ import type {
   FrontendWorkspaceMetadataSchemaType,
   SendMessageOptions,
 } from "@/common/orpc/types";
+import type { TimelineSubscriptionEvent } from "@/common/orpc/schemas/timeline";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
@@ -4048,6 +4049,57 @@ export const router = (authToken?: string) => {
           }
           return { success: true };
         }),
+      timeline: {
+        list: t
+          .input(schemas.workspace.timeline.list.input)
+          .output(schemas.workspace.timeline.list.output)
+          .handler(({ context, input }) => {
+            const { workspaceId, ...listInput } = input;
+            return context.timelineService.list(workspaceId, listInput);
+          }),
+        subscribe: t
+          .input(schemas.workspace.timeline.subscribe.input)
+          .output(schemas.workspace.timeline.subscribe.output)
+          .handler(async function* ({ context, input, signal }) {
+            const queue = createAsyncEventQueue<TimelineSubscriptionEvent>();
+            const onAppended = (event: {
+              workspaceId: string;
+              events: TimelineSubscriptionEvent["events"];
+            }) => {
+              if (event.workspaceId === input.workspaceId) {
+                queue.push({ type: "appended", events: event.events });
+              }
+            };
+            context.timelineService.on("appended", onAppended);
+            const onAbort = () => queue.end();
+            if (signal) {
+              if (signal.aborted) {
+                onAbort();
+              } else {
+                signal.addEventListener("abort", onAbort, { once: true });
+              }
+            }
+
+            try {
+              const snapshot = await context.timelineService.list(input.workspaceId, {
+                limit: 200,
+              });
+              yield { type: "snapshot" as const, events: snapshot.events };
+              yield* queue.iterate();
+            } finally {
+              queue.end();
+              signal?.removeEventListener("abort", onAbort);
+              context.timelineService.off("appended", onAppended);
+            }
+          }),
+        preview: t
+          .input(schemas.workspace.timeline.preview.input)
+          .output(schemas.workspace.timeline.preview.output)
+          .handler(({ context, input }) => {
+            const { workspaceId, ...anchor } = input;
+            return context.timelineService.previewAnchor(workspaceId, anchor);
+          }),
+      },
       heartbeat: {
         get: t
           .input(schemas.workspace.heartbeat.get.input)

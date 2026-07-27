@@ -59,6 +59,13 @@ import {
   UpdateStatusSchema,
   WorkspaceChatMessageSchema,
 } from "./stream";
+import {
+  TimelineListInputSchema,
+  TimelinePageSchema,
+  TimelinePreviewInputSchema,
+  TimelinePreviewSchema,
+  TimelineSubscriptionEventSchema,
+} from "./timeline";
 import { LayoutPresetsConfigSchema } from "./uiLayouts";
 import {
   TerminalCreateParamsSchema,
@@ -1164,6 +1171,20 @@ export const workspace = {
   regenerateTitle: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.object({ title: z.string() }), z.string()),
+  },
+  timeline: {
+    list: {
+      input: TimelineListInputSchema.extend({ workspaceId: z.string() }),
+      output: TimelinePageSchema,
+    },
+    subscribe: {
+      input: z.object({ workspaceId: z.string() }).strict(),
+      output: eventIterator(TimelineSubscriptionEventSchema),
+    },
+    preview: {
+      input: TimelinePreviewInputSchema.extend({ workspaceId: z.string() }),
+      output: TimelinePreviewSchema.nullable(),
+    },
   },
   heartbeat: {
     get: {
