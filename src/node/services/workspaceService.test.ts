@@ -13053,6 +13053,22 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     expect(prompt).toBe("/compact");
   });
 
+  test("keeps scanning past a user row with primitive muxMetadata", async () => {
+    const prompt = await withService(async (historyService, workspaceId) => {
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("u1", "user", "the older valid prompt", { historySequence: 1 })
+      );
+      const broken = createMuxMessage("u2", "user", "   ", { historySequence: 2 });
+      await historyService.appendToHistory(workspaceId, {
+        ...broken,
+        metadata: { ...broken.metadata, muxMetadata: "corrupted" },
+      } as unknown as typeof broken);
+    });
+
+    expect(prompt).toBe("the older valid prompt");
+  });
+
   test("keeps scanning past a user row with malformed parts", async () => {
     const prompt = await withService(async (historyService, workspaceId) => {
       await historyService.appendToHistory(

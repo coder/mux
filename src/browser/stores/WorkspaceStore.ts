@@ -94,6 +94,7 @@ import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessage
 
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
+const EMPTY_DISPLAYED_MESSAGES: readonly DisplayedMessage[] = [];
 
 export type AutoRetryStatus = Extract<
   WorkspaceChatMessage,
@@ -2423,14 +2424,17 @@ export class WorkspaceStore {
     return this.chatTransientState.get(workspaceId)?.caughtUp ?? false;
   }
 
+  /**
+   * The aggregator caches this array and swaps its reference on every transcript mutation, so
+   * callers can use it as a revision token (see useWorkspaceLastUserPrompt).
+   */
+  getWorkspaceDisplayedMessages(workspaceId: string): readonly DisplayedMessage[] {
+    return this.aggregators.get(workspaceId)?.getDisplayedMessages() ?? EMPTY_DISPLAYED_MESSAGES;
+  }
+
   /** Skips synthetic turns (goal continuations, boundaries) the user never typed. */
   getWorkspaceLastUserPrompt(workspaceId: string): string | null {
-    const aggregator = this.aggregators.get(workspaceId);
-    if (!aggregator) {
-      return null;
-    }
-
-    const messages = aggregator.getDisplayedMessages();
+    const messages = this.getWorkspaceDisplayedMessages(workspaceId);
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
       if (message.type !== "user" || message.isSynthetic === true) {
@@ -4635,10 +4639,11 @@ export function useActiveGoalCount(): number {
 export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   const store = getStoreInstance();
 
-  const displayed = useSyncExternalStore(
+  const displayedMessages = useSyncExternalStore(
     (listener) => store.subscribeKey(workspaceId, listener),
-    () => store.getWorkspaceLastUserPrompt(workspaceId)
+    () => store.getWorkspaceDisplayedMessages(workspaceId)
   );
+  const displayed = store.getWorkspaceLastUserPrompt(workspaceId);
 
   // Compaction prunes older turns from the transcript, and a fresh replay only carries the
   // latest boundary epoch, so fall back to history on disk when the prompt predates it.
@@ -4646,6 +4651,9 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     null
   );
 
+  // displayedMessages is a dependency, not just displayed: truncating history (a hard /clear)
+  // leaves displayed null on both sides of the change, so without a revision token the cached
+  // fallback would keep serving a prompt that no longer exists on disk.
   useEffect(() => {
     if (displayed !== null) {
       return;
@@ -4659,7 +4667,7 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
     return () => {
       cancelled = true;
     };
-  }, [store, workspaceId, displayed]);
+  }, [store, workspaceId, displayed, displayedMessages]);
 
   return displayed ?? (fallback?.workspaceId === workspaceId ? fallback.prompt : null);
 }

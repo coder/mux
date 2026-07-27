@@ -5836,5 +5836,16 @@ describe("WorkspaceStore", () => {
 
       expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBeNull();
     });
+
+    it("swaps the displayed-messages reference when the transcript changes", () => {
+      const workspaceId = "last-prompt-revision";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [{ id: "u1", text: "first prompt" }]);
+      const before = store.getWorkspaceDisplayedMessages(workspaceId);
+
+      seedUserMessages(workspaceId, [{ id: "u2", text: "second prompt" }]);
+
+      expect(store.getWorkspaceDisplayedMessages(workspaceId)).not.toBe(before);
+    });
   });
 });

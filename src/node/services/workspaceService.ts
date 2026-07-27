@@ -1653,9 +1653,12 @@ function mergeActiveCount(
  * scan and hide older valid prompts.
  */
 function extractUserPromptText(message: MuxMessage): string {
-  const muxMeta = message.metadata?.muxMetadata;
+  const muxMeta: unknown = message.metadata?.muxMetadata;
   const rawCommand =
-    muxMeta && "rawCommand" in muxMeta && typeof muxMeta.rawCommand === "string"
+    typeof muxMeta === "object" &&
+    muxMeta !== null &&
+    "rawCommand" in muxMeta &&
+    typeof muxMeta.rawCommand === "string"
       ? muxMeta.rawCommand.trim()
       : "";
   if (rawCommand.length > 0) {
