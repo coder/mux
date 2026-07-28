@@ -1,7 +1,19 @@
-import type { TimelineEventData, TimelineEventDraft } from "@/common/orpc/schemas/timeline";
+import type {
+  TimelineAnchor,
+  TimelineEventData,
+  TimelineEventDraft,
+  TimelineSource,
+  TimelineStatus,
+} from "@/common/orpc/schemas/timeline";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
+import { classifyMachineTurnPromptKind } from "@/common/utils/machineTurnPrompts";
 import { getContextBoundaryKind } from "@/common/utils/messages/compactionBoundary";
+import {
+  SUBAGENT_FAILURE_ENVELOPE_TAG,
+  parseSubagentReportEnvelope,
+} from "@/common/utils/subagentReportEnvelope";
+import { WORKFLOW_RESULT_METADATA_TYPE } from "@/common/utils/workflowRunMessages";
 
 interface OpenStream {
   workspaceId: string;
@@ -64,19 +76,19 @@ function messageEventKey(prefix: string, messageId: string): string | undefined 
 }
 
 // Mux dispatches several user-role turns on the agent's behalf. They belong on the timeline, but as
-// synthetic turns, so the prompts filter stays a record of what the human actually asked for.
+// machine-authored turns, so the prompts filter stays a record of what the human actually asked for.
+// A workflow trigger row is deliberately absent: it carries the slash command the human typed.
 const MACHINE_AUTHORED_TURN_TYPES = new Set([
   "heartbeat-request",
   "bash-monitor-wake",
   "workspace-turn-task",
-  "workflow-trigger-display",
-  "workflow-result",
+  WORKFLOW_RESULT_METADATA_TYPE,
 ]);
 
 // muxMetadata crosses the oRPC boundary as `any`, so read its string fields defensively.
 function readMuxMetadataField(
   metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"],
-  field: "type" | "source"
+  field: "type" | "source" | "runId"
 ): string | undefined {
   const muxMetadata: unknown = metadata?.muxMetadata;
   if (typeof muxMetadata !== "object" || muxMetadata === null) {
@@ -94,6 +106,128 @@ function isMachineAuthoredTurn(
   }
   const muxType = readMuxMetadataField(metadata, "type");
   return muxType != null && MACHINE_AUTHORED_TURN_TYPES.has(muxType);
+}
+
+/**
+ * Machine-authored turns that must not become rows: skill and @file snapshots only carry context
+ * into the next request and are hidden from the transcript, while heartbeats, goal continuations and
+ * goal pauses are recorded by the service that dispatched them, with the reason and goal id the
+ * prompt text cannot supply.
+ *
+ * Only a wholly synthetic turn qualifies. The message queue coalesces a pending dispatch with a
+ * prompt the human typed, keeping the dispatch's metadata but dropping the synthetic flag, and that
+ * merged turn carries a real request that must stay on the feed.
+ */
+function isUnloggedMachineTurn(
+  metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"]
+): boolean {
+  if (metadata?.synthetic !== true) {
+    return false;
+  }
+  if (metadata.agentSkillSnapshot != null || metadata.fileAtMentionSnapshot != null) {
+    return true;
+  }
+  if (metadata.kind === "goal_continuation" || metadata.kind === "goal_budget_limit") {
+    return true;
+  }
+  const muxType = readMuxMetadataField(metadata, "type");
+  return muxType === "heartbeat-request" || muxType === "goal-pause-boundary";
+}
+
+// Process names the wake-up reports, which read better as the row detail than the prompt's opening.
+function readMonitorWakeProcesses(
+  metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"]
+): string | undefined {
+  const muxMetadata: unknown = metadata?.muxMetadata;
+  const records: unknown =
+    typeof muxMetadata === "object" && muxMetadata !== null
+      ? (muxMetadata as Record<string, unknown>).records
+      : undefined;
+  if (!Array.isArray(records)) {
+    return undefined;
+  }
+  const names = new Set<string>();
+  for (const record of records) {
+    const displayName: unknown =
+      typeof record === "object" && record !== null
+        ? (record as Record<string, unknown>).displayName
+        : undefined;
+    if (typeof displayName === "string" && displayName !== "") {
+      names.add(displayName);
+    }
+  }
+  return names.size > 0 ? [...names].join(", ") : undefined;
+}
+
+function readFailedTaskId(text: string): string | undefined {
+  const taskId = /<task_id>([^\n<]+)<\/task_id>/.exec(text)?.[1]?.trim();
+  return taskId != null && taskId !== "" ? taskId : undefined;
+}
+
+interface MachineTurnRow {
+  kind: string;
+  system?: TimelineSource["system"];
+  key?: string;
+  status?: TimelineStatus;
+  data?: TimelineEventData;
+  anchor?: TimelineAnchor;
+}
+
+export function subagentReportSourceKey(taskId: string): string {
+  return eventKey("task-report", taskId);
+}
+
+function classifyMachineTurn(
+  event: Extract<WorkspaceChatMessage, { type: "message" }>,
+  text: string
+): MachineTurnRow | null {
+  const muxType = readMuxMetadataField(event.metadata, "type");
+  if (muxType === "bash-monitor-wake") {
+    const processes = readMonitorWakeProcesses(event.metadata);
+    return {
+      kind: "turn.monitor_wake",
+      ...(processes != null ? { data: { title: processes } } : {}),
+    };
+  }
+  if (muxType === WORKFLOW_RESULT_METADATA_TYPE) {
+    const runId = readMuxMetadataField(event.metadata, "runId");
+    return {
+      kind: "workflow.result",
+      status: "completed",
+      ...(runId != null ? { data: { runId } } : {}),
+    };
+  }
+  if (muxType === "workspace-turn-task") {
+    return { kind: "turn.delegated" };
+  }
+
+  const report = parseSubagentReportEnvelope(text);
+  if (report != null) {
+    const completed = report.status === "completed";
+    return {
+      kind: completed ? "task.reported" : "task.progress",
+      system: "task",
+      // TaskService records this key when it accepts the report, so the injected copy is dropped as
+      // a duplicate and only stands in (with a transcript anchor) when that row was never written.
+      ...(completed ? { key: subagentReportSourceKey(report.taskId) } : {}),
+      status: completed ? "completed" : "started",
+      anchor: { taskId: report.taskId, childWorkspaceId: report.taskId },
+      data: { title: report.title, digest: truncateDigest(report.reportMarkdown) },
+    };
+  }
+
+  if (text.startsWith(SUBAGENT_FAILURE_ENVELOPE_TAG)) {
+    const taskId = readFailedTaskId(text);
+    return {
+      kind: "task.failed",
+      system: "task",
+      status: "failed",
+      ...(taskId != null ? { anchor: { taskId, childWorkspaceId: taskId } } : {}),
+    };
+  }
+
+  const promptKind = classifyMachineTurnPromptKind(text);
+  return promptKind != null ? { kind: promptKind } : null;
 }
 
 function mapMessage(
@@ -122,20 +256,48 @@ function mapMessage(
       ];
     }
 
-    const digest = truncateDigest(
-      event.parts
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n")
-    );
+    const text = event.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+    const digest = truncateDigest(text);
+
+    if (!isMachineAuthoredTurn(event.metadata)) {
+      return [
+        {
+          ts,
+          kind: "turn.user",
+          source: { system: "chat", key: eventKey("message", event.id) },
+          anchor,
+          ...(epoch != null ? { epoch } : {}),
+          ...(digest !== "" ? { data: { digest } } : {}),
+        },
+      ];
+    }
+
+    if (isUnloggedMachineTurn(event.metadata)) {
+      return [];
+    }
+
+    // An unrecognized machine turn still belongs on the feed: its digest is the only record of what
+    // was dispatched on the agent's behalf.
+    const row = classifyMachineTurn(event, text) ?? { kind: "turn.synthetic" };
+    const data: TimelineEventData = {
+      ...(digest !== "" ? { digest } : {}),
+      ...row.data,
+    };
     return [
       {
         ts,
-        kind: isMachineAuthoredTurn(event.metadata) ? "turn.synthetic" : "turn.user",
-        source: { system: "chat", key: eventKey("message", event.id) },
-        anchor,
+        kind: row.kind,
+        source: {
+          system: row.system ?? "chat",
+          key: row.key ?? eventKey("message", event.id),
+        },
+        anchor: { ...anchor, ...row.anchor },
         ...(epoch != null ? { epoch } : {}),
-        ...(digest !== "" ? { data: { digest } } : {}),
+        ...(row.status != null ? { status: row.status } : {}),
+        ...(Object.keys(data).length > 0 ? { data } : {}),
       },
     ];
   }

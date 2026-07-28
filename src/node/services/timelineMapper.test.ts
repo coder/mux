@@ -3,8 +3,17 @@ import { WorkspaceChatMessageSchema } from "@/common/orpc/schemas/stream";
 import { TimelineEventDraftSchema } from "@/common/orpc/schemas/timeline";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import {
+  BACKGROUND_WORK_WAKE_OPENINGS,
+  BASH_MONITOR_WAKE_HEADINGS,
+} from "@/common/utils/machineTurnPrompts";
+import {
+  SUBAGENT_FAILURE_ENVELOPE_TAG,
+  formatSubagentReportEnvelope,
+} from "@/common/utils/subagentReportEnvelope";
+import {
   createTimelineMapperState,
   mapChatEventToTimeline,
+  subagentReportSourceKey,
   type TimelineMapperState,
 } from "./timelineMapper";
 
@@ -252,6 +261,7 @@ describe("mapChatEventToTimeline", () => {
       metadata: {
         historySequence: 6,
         timestamp: 100,
+        synthetic: true,
         muxMetadata: { type: "heartbeat-request" },
       },
     });
@@ -260,7 +270,221 @@ describe("mapChatEventToTimeline", () => {
       kind: "compaction.triggered",
       status: "started",
     });
-    expect(heartbeatTurn.drafts[0]).toMatchObject({ kind: "turn.synthetic" });
+    // HeartbeatService records heartbeat.dispatched, so this turn would only duplicate it.
+    expect(heartbeatTurn.drafts).toEqual([]);
+  });
+
+  test("names machine-authored turns after the work that dispatched them", () => {
+    const monitorWake = map({
+      type: "message",
+      id: "user-monitor",
+      role: "user",
+      parts: [
+        { type: "text", text: `${BASH_MONITOR_WAKE_HEADINGS.matched}\n\nProcess: CI watcher` },
+      ],
+      metadata: {
+        historySequence: 8,
+        timestamp: 100,
+        synthetic: true,
+        muxMetadata: {
+          type: "bash-monitor-wake",
+          records: [
+            { kind: "match", displayName: "CI watcher", filter: "^done", filterExclude: false },
+            { kind: "match", displayName: "CI watcher", filter: "^fail", filterExclude: false },
+          ],
+        },
+      },
+    });
+    const backgroundWake = map({
+      type: "message",
+      id: "user-background",
+      role: "user",
+      parts: [{ type: "text", text: `${BACKGROUND_WORK_WAKE_OPENINGS.subagentsCompleted} Write.` }],
+      metadata: { historySequence: 9, timestamp: 100, synthetic: true },
+    });
+    const workflowResult = map({
+      type: "message",
+      id: "user-workflow",
+      role: "user",
+      parts: [{ type: "text", text: "The workflow finished" }],
+      metadata: {
+        historySequence: 10,
+        timestamp: 100,
+        synthetic: true,
+        muxMetadata: { type: "workflow-result", rawCommand: "/research", runId: "wfr_1" },
+      },
+    });
+    const unrecognized = map({
+      type: "message",
+      id: "user-recovery",
+      role: "user",
+      parts: [{ type: "text", text: "Mux restarted while this task was running." }],
+      metadata: { historySequence: 11, timestamp: 100, synthetic: true },
+    });
+
+    expect(monitorWake.drafts[0]).toMatchObject({
+      kind: "turn.monitor_wake",
+      data: { title: "CI watcher" },
+    });
+    expect(backgroundWake.drafts[0]).toMatchObject({ kind: "turn.background_wake" });
+    expect(workflowResult.drafts[0]).toMatchObject({
+      kind: "workflow.result",
+      data: { runId: "wfr_1" },
+    });
+    expect(unrecognized.drafts[0]).toMatchObject({ kind: "turn.synthetic" });
+  });
+
+  test("maps injected sub-agent reports onto their task rows", () => {
+    const progress = map({
+      type: "message",
+      id: "user-progress",
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: formatSubagentReportEnvelope({
+            taskId: "child-1",
+            agentType: "explore",
+            status: "in_progress",
+            title: "Halfway",
+            reportMarkdown: "Found the call sites",
+          }),
+        },
+      ],
+      metadata: { historySequence: 12, timestamp: 100, synthetic: true },
+    });
+    const reported = map({
+      type: "message",
+      id: "user-report",
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: formatSubagentReportEnvelope({
+            taskId: "child-1",
+            agentType: "explore",
+            status: "completed",
+            title: "Done",
+            reportMarkdown: "Every producer is listed",
+          }),
+        },
+      ],
+      metadata: { historySequence: 13, timestamp: 100, synthetic: true },
+    });
+    const failure = map({
+      type: "message",
+      id: "user-failure",
+      role: "user",
+      parts: [
+        {
+          type: "text",
+          text: `${SUBAGENT_FAILURE_ENVELOPE_TAG}\n<task_id>child-2</task_id>\n<agent_type>exec</agent_type>`,
+        },
+      ],
+      metadata: { historySequence: 14, timestamp: 100, synthetic: true },
+    });
+
+    expect(progress.drafts[0]).toMatchObject({
+      kind: "task.progress",
+      status: "started",
+      anchor: { historySequence: 12, messageId: "user-progress", childWorkspaceId: "child-1" },
+      data: { title: "Halfway", digest: "Found the call sites" },
+    });
+    expect(reported.drafts[0]).toMatchObject({
+      kind: "task.reported",
+      status: "completed",
+      // Shared with TaskService's own row so one report cannot produce two.
+      source: { system: "task", key: subagentReportSourceKey("child-1") },
+      anchor: { messageId: "user-report", childWorkspaceId: "child-1" },
+    });
+    expect(failure.drafts[0]).toMatchObject({
+      kind: "task.failed",
+      status: "failed",
+      anchor: { taskId: "child-2", childWorkspaceId: "child-2" },
+    });
+  });
+
+  test("skips machine turns that only carry context into the next request", () => {
+    const skillSnapshot = map({
+      type: "message",
+      id: "user-skill",
+      role: "user",
+      parts: [{ type: "text", text: '<agent-skill name="tdd">' }],
+      metadata: {
+        historySequence: 15,
+        timestamp: 100,
+        synthetic: true,
+        agentSkillSnapshot: { skillName: "tdd", scope: "global", sha256: "abc" },
+      },
+    });
+    const fileSnapshot = map({
+      type: "message",
+      id: "user-file",
+      role: "user",
+      parts: [{ type: "text", text: '<mux-file path="src/main.ts">' }],
+      metadata: {
+        historySequence: 16,
+        timestamp: 100,
+        synthetic: true,
+        fileAtMentionSnapshot: ["@src/main.ts"],
+      },
+    });
+    const goalContinuation = map({
+      type: "message",
+      id: "user-goal",
+      role: "user",
+      parts: [{ type: "text", text: "Continue working on the active workspace goal." }],
+      metadata: {
+        historySequence: 17,
+        timestamp: 100,
+        synthetic: true,
+        kind: "goal_continuation",
+      },
+    });
+
+    expect(skillSnapshot.drafts).toEqual([]);
+    expect(fileSnapshot.drafts).toEqual([]);
+    expect(goalContinuation.drafts).toEqual([]);
+  });
+
+  test("keeps a queued heartbeat that was coalesced with a human prompt", () => {
+    const coalesced = map({
+      type: "message",
+      id: "user-coalesced",
+      role: "user",
+      parts: [{ type: "text", text: "[Scheduled heartbeat] check in\nAlso rebase onto main" }],
+      metadata: {
+        historySequence: 19,
+        timestamp: 100,
+        muxMetadata: { type: "heartbeat-request", source: "heartbeat" },
+      },
+    });
+
+    expect(coalesced.drafts).toHaveLength(1);
+    expect(coalesced.drafts[0]).toMatchObject({ anchor: { messageId: "user-coalesced" } });
+  });
+
+  test("treats a workflow slash command as the human prompt it is", () => {
+    const trigger = map({
+      type: "message",
+      id: "workflow-run-command-wfr_2",
+      role: "user",
+      parts: [{ type: "text", text: "/deep-research timeline" }],
+      metadata: {
+        historySequence: 18,
+        timestamp: 100,
+        muxMetadata: {
+          type: "workflow-trigger-display",
+          rawCommand: "/deep-research timeline",
+          runId: "wfr_2",
+        },
+      },
+    });
+
+    expect(trigger.drafts[0]).toMatchObject({
+      kind: "turn.user",
+      data: { digest: "/deep-research timeline" },
+    });
   });
 
   test("omits an empty message id instead of losing the row to validation", () => {

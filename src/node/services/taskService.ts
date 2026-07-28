@@ -17,9 +17,11 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
 import {
+  SUBAGENT_FAILURE_ENVELOPE_TAG,
   formatSubagentReportEnvelope,
   parseSubagentReportEnvelope,
 } from "@/common/utils/subagentReportEnvelope";
+import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
 import { log } from "@/node/services/log";
 import {
@@ -87,6 +89,7 @@ import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
+import { subagentReportSourceKey } from "@/node/services/timelineMapper";
 import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "@/node/services/timelineRecorder";
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import {
@@ -321,7 +324,7 @@ function formatSubagentFailureUserMessage(params: {
   assert(params.errorMessage.length > 0, "subagent failure message requires error message");
 
   return [
-    "<mux_subagent_failure>",
+    SUBAGENT_FAILURE_ENVELOPE_TAG,
     `<task_id>${params.childWorkspaceId}</task_id>`,
     `<agent_type>${params.agentType}</agent_type>`,
     `<error_type>${params.errorType}</error_type>`,
@@ -336,7 +339,7 @@ function formatSubagentFailureUserMessage(params: {
 // Completed background reports are already persisted into the parent context; asking the parent
 // to call task_await burns an extra model/tool turn before it can synthesize the final answer.
 const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
-  "Background sub-agent task(s) have completed. Their accepted reports and any structured outputs " +
+  `${BACKGROUND_WORK_WAKE_OPENINGS.subagentsCompleted} Their accepted reports and any structured outputs ` +
   "are already injected into this workspace context as task tool results or synthetic user report " +
   "messages. Write the final response now, integrating those results. If a required report appears " +
   "missing, explain the missing context instead of waiting for another handoff.";
@@ -345,7 +348,7 @@ const COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
 // were already appended to the parent context as synthetic mux_subagent_failure
 // messages, so the wake-up prompt itself stays generic.
 const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
-  "Background sub-agent task(s) failed terminally and will not produce reports. The failure " +
+  `${BACKGROUND_WORK_WAKE_OPENINGS.subagentsFailed} The failure ` +
   "details are already injected into this workspace context as synthetic user messages. Do not " +
   "re-await those tasks. Integrate the failures into your work now: adjust your approach (e.g. a " +
   "different model, agent, or task design) or surface the failures in your response.";
@@ -358,7 +361,7 @@ const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
 function buildCompletedWorkspaceTurnPrompt(handleIds: string[]): string {
   assert(handleIds.length > 0, "buildCompletedWorkspaceTurnPrompt requires at least one handle id");
   return (
-    "Background workspace turn(s) have reached a terminal state: " +
+    `${BACKGROUND_WORK_WAKE_OPENINGS.workspaceTurnsTerminal} ` +
     `${handleIds.join(", ")}. ` +
     `Call task_await now with task_ids: ${JSON.stringify(handleIds)} and timeout_secs: 0 to ` +
     "retrieve their terminal output, then integrate it into your work. These handles are already " +
@@ -862,7 +865,7 @@ function buildBackgroundAwaitPrompt(params: {
   const taskIds = [...params.taskIds, ...params.workflowRunIds];
 
   return (
-    `You have active background ${targetLabels.join(" and ")}. ` +
+    `${BACKGROUND_WORK_WAKE_OPENINGS.awaitableWorkActive}${targetLabels.join(" and ")}. ` +
     "You MUST NOT end your turn while any listed task handles are queued/starting/running/awaiting_report or workflow runs are pending/running/backgrounded. " +
     `Call task_await now with task_ids: ${JSON.stringify(taskIds)} to wait for them. ` +
     "If any are still queued/starting/running/awaiting_report/backgrounded after that, call task_await again. " +
@@ -10494,7 +10497,9 @@ export class TaskService {
     const reportTitle = coerceNonEmptyString(reportArgs.title);
     this.timelineRecorder.record(parentWorkspaceId, {
       kind: "task.reported",
-      source: { system: "task" },
+      // Background reports are also injected into parent history, which the timeline maps; keying
+      // both on the task keeps one row per report.
+      source: { system: "task", key: subagentReportSourceKey(childWorkspaceId) },
       status: "completed",
       anchor: { taskId: childWorkspaceId, childWorkspaceId },
       data: {

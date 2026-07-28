@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { z } from "zod";
 
 import assert from "@/common/utils/assert";
+import { BASH_MONITOR_WAKE_HEADINGS } from "@/common/utils/machineTurnPrompts";
 import type { MuxMessageMetadata } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
@@ -217,10 +218,10 @@ export function buildBashMonitorWakePrompt(records: readonly BashMonitorWakeReco
 
   const header =
     lostRecords.length === 0
-      ? "A background bash monitor matched output."
+      ? BASH_MONITOR_WAKE_HEADINGS.matched
       : matchRecords.length === 0
-        ? "Mux restarted and background bash monitors were lost."
-        : "Background bash monitor updates (including monitors lost to a Mux restart).";
+        ? BASH_MONITOR_WAKE_HEADINGS.lost
+        : BASH_MONITOR_WAKE_HEADINGS.mixed;
 
   const closingParts = ["This is a condition-driven wake-up. Continue from this event."];
   if (matchRecords.length > 0) {

@@ -3,16 +3,21 @@ import {
   Archive,
   Ban,
   Bell,
+  Bot,
   CheckCircle2,
   CircleEllipsis,
   CirclePause,
   CircleX,
   ClipboardCheck,
+  Forward,
   HeartPulse,
+  Inbox,
   Layers,
   ListTodo,
   Map,
   MessageSquare,
+  PackageCheck,
+  Radar,
   RefreshCcw,
   RotateCcw,
   Send,
@@ -32,6 +37,7 @@ import {
   type TimelineEventKind,
 } from "@/common/orpc/schemas/timeline";
 import { capitalize } from "@/common/utils/capitalize";
+import { classifyMachineTurnPromptKind } from "@/common/utils/machineTurnPrompts";
 
 export const TIMELINE_CATEGORIES = [
   "prompts",
@@ -57,6 +63,9 @@ const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   // rather than a request, so both are agent activity. Terminal events carry no provenance, so
   // leaving them in Prompts would file every heartbeat and continuation outcome as a human request.
   "turn.synthetic": { label: "Synthetic prompt", icon: WandSparkles, category: "agent" },
+  "turn.monitor_wake": { label: "Monitor wake", icon: Radar, category: "agent" },
+  "turn.background_wake": { label: "Background work wake", icon: Inbox, category: "subagents" },
+  "turn.delegated": { label: "Delegated prompt", icon: Forward, category: "agent" },
   "turn.completed": { label: "Turn completed", icon: CheckCircle2, category: "agent" },
   "turn.interrupted": { label: "Turn interrupted", icon: CirclePause, category: "agent" },
   "turn.failed": { label: "Turn failed", icon: CircleX, category: "errors" },
@@ -67,9 +76,12 @@ const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   "context.reset": { label: "Context reset", icon: RefreshCcw, category: "context" },
   "history.cleared": { label: "History cleared", icon: Trash2, category: "context" },
   "task.created": { label: "Sub-agent started", icon: ListTodo, category: "subagents" },
+  "task.progress": { label: "Sub-agent update", icon: Bot, category: "subagents" },
   "task.reported": { label: "Sub-agent reported", icon: ClipboardCheck, category: "subagents" },
+  "task.failed": { label: "Sub-agent failed", icon: CircleX, category: "subagents" },
   "task.interrupted": { label: "Sub-agent interrupted", icon: CirclePause, category: "subagents" },
   "workflow.attached": { label: "Workflow started", icon: Workflow, category: "subagents" },
+  "workflow.result": { label: "Workflow finished", icon: PackageCheck, category: "subagents" },
   "heartbeat.configured": { label: "Heartbeat configured", icon: Timer, category: "goals" },
   "heartbeat.dispatched": { label: "Heartbeat dispatched", icon: HeartPulse, category: "goals" },
   "heartbeat.skipped": { label: "Heartbeat skipped", icon: Activity, category: "goals" },
@@ -101,14 +113,27 @@ export function getTimelinePresentation(kind: string): TimelinePresentation {
   };
 }
 
-// A descriptive event payload reads better as the row title than the generic kind label.
-export function getTimelineEventTitle(event: TimelineEvent): string {
-  return event.data?.description ?? getTimelinePresentation(event.kind).label;
+/**
+ * Rows recorded before machine-authored turns were classified carry only the prompt digest, and the
+ * log is never rewritten, so recover the kind from that text instead of labeling them all the same.
+ */
+export function getTimelineEventKind(event: TimelineEvent): string {
+  if (event.kind !== "turn.synthetic") {
+    return event.kind;
+  }
+  return classifyMachineTurnPromptKind(event.data?.digest ?? "") ?? event.kind;
 }
 
-export function getTimelineEventCategory(event: TimelineEvent): TimelineCategory {
-  if (event.status === "failed") {
-    return "errors";
-  }
-  return getTimelinePresentation(event.kind).category;
+// A descriptive event payload reads better as the row title than the generic kind label.
+export function getTimelineEventTitle(event: TimelineEvent): string {
+  return event.data?.description ?? getTimelinePresentation(getTimelineEventKind(event)).label;
+}
+
+/**
+ * Categories an event is filed under. A failure also matches Errors, in addition to the category of
+ * its kind, so a cross-cutting error view never removes the event from the feed it belongs to.
+ */
+export function getTimelineEventCategories(event: TimelineEvent): TimelineCategory[] {
+  const category = getTimelinePresentation(getTimelineEventKind(event)).category;
+  return event.status === "failed" && category !== "errors" ? [category, "errors"] : [category];
 }

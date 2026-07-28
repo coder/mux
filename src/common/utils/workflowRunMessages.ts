@@ -75,6 +75,11 @@ export function stripWorkflowRunRecordForModel(toolName: string, output: unknown
 
 export const WORKFLOW_RESULT_XML_TAG = "mux_workflow_result";
 
+// Exported so the timeline can recognize a workflow-result turn from its text alone: a coalesced
+// terminal-attention wake carries this section without the workflow-result metadata.
+export const WORKFLOW_RESULT_MESSAGE_OPENING =
+  "The workflow below has finished. Continue the agent turn for the original request using this workflow result. Do not merely restate the raw payload; synthesize the next answer or action from it.";
+
 function getWorkflowResultValue(result: unknown, run: WorkflowRunRecord | null): unknown {
   if (result != null) {
     return result;
@@ -144,7 +149,7 @@ export function buildWorkflowResultContextMessage(input: {
   };
 
   return [
-    "The workflow below has finished. Continue the agent turn for the original request using this workflow result. Do not merely restate the raw payload; synthesize the next answer or action from it.",
+    WORKFLOW_RESULT_MESSAGE_OPENING,
     `Original workflow command: ${input.rawCommand}`,
     `<${WORKFLOW_RESULT_XML_TAG}>\n${stringifyWorkflowResultPayload(payload)}\n</${WORKFLOW_RESULT_XML_TAG}>`,
   ].join("\n\n");

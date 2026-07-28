@@ -29,7 +29,8 @@ import type {
 
 import {
   TIMELINE_CATEGORIES,
-  getTimelineEventCategory,
+  getTimelineEventCategories,
+  getTimelineEventKind,
   getTimelineEventTitle,
   getTimelinePresentation,
   type TimelineCategory,
@@ -64,12 +65,21 @@ interface CollapsedRun {
 
 type DayItem = TimelineEvent | CollapsedRun;
 
-const SEPARATOR_KINDS = new Set([
+const BOUNDARY_KINDS = new Set([
   "compaction.triggered",
   "compaction.completed",
   "context.reset",
   "history.cleared",
 ]);
+
+// A completed turn is a boundary between two stretches of work rather than an event of its own, so
+// it renders as a rule. Interruptions and failures keep the full row: they need to stand out.
+const TURN_END_KIND = "turn.completed";
+
+// Rule rows are already a single line, so collapsing a run of them would hide more than it saves.
+function isRuleKind(kind: string): boolean {
+  return kind === TURN_END_KIND || BOUNDARY_KINDS.has(kind);
+}
 
 const FILTERS: Array<{ value: TimelineFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -131,24 +141,21 @@ function collapseConsecutiveEvents(events: TimelineEvent[]): DayItem[] {
 
   while (index < events.length) {
     const event = events[index];
-    if (SEPARATOR_KINDS.has(event.kind)) {
+    const kind = getTimelineEventKind(event);
+    if (isRuleKind(kind)) {
       items.push(event);
       index++;
       continue;
     }
 
     let end = index + 1;
-    while (
-      end < events.length &&
-      !SEPARATOR_KINDS.has(events[end].kind) &&
-      events[end].kind === event.kind
-    ) {
+    while (end < events.length && getTimelineEventKind(events[end]) === kind) {
       end++;
     }
 
     const run = events.slice(index, end);
     if (run.length >= 3) {
-      items.push({ key: `${event.id}:${event.kind}`, kind: event.kind, events: run });
+      items.push({ key: `${event.id}:${kind}`, kind, events: run });
     } else {
       items.push(...run);
     }
@@ -179,31 +186,53 @@ function hasTranscriptAnchor(anchor: TimelineAnchor | undefined): boolean {
   return anchor?.toolCallId != null || anchor?.messageId != null || anchor?.historySequence != null;
 }
 
-function TimelineSeparator(props: {
+function TimelineRuleRow(props: {
   event: TimelineEvent;
   selected: boolean;
   onSelect: (eventId: string) => void;
 }) {
-  const presentation = getTimelinePresentation(props.event.kind);
+  const kind = getTimelineEventKind(props.event);
+  const turnEnd = kind === TURN_END_KIND;
+  const presentation = getTimelinePresentation(kind);
+  const detail = getEventDetail(props.event);
   const epoch = props.event.epoch != null ? `Epoch ${props.event.epoch}` : "Context boundary";
-  const rule = <div className="border-border min-w-3 flex-1 border-t" />;
+  const rule = (
+    <div className={cn("border-border min-w-3 flex-1 border-t", turnEnd && "border-dotted")} />
+  );
   const label = (
     <span
       className={cn(
-        "text-muted counter-nums min-w-0 truncate text-[10px] font-medium tracking-wide uppercase",
+        "text-muted counter-nums min-w-0 truncate text-[10px] font-medium tracking-wide",
+        !turnEnd && "uppercase",
         props.selected && "text-content-primary"
       )}
     >
-      {epoch} · {presentation.label}
+      {turnEnd ? (detail ?? presentation.label) : `${epoch} · ${presentation.label}`}
     </span>
+  );
+  const body = turnEnd ? (
+    <>
+      {rule}
+      {label}
+      <time
+        dateTime={new Date(props.event.ts).toISOString()}
+        className="text-muted counter-nums shrink-0 text-[10px]"
+      >
+        {timeFormatter.format(props.event.ts)}
+      </time>
+    </>
+  ) : (
+    <>
+      {rule}
+      {label}
+      {rule}
+    </>
   );
 
   if (!hasTranscriptAnchor(props.event.anchor)) {
     return (
       <div className="my-2 flex min-w-0 items-center gap-2" role="separator">
-        {rule}
-        {label}
-        {rule}
+        {body}
       </div>
     );
   }
@@ -219,9 +248,7 @@ function TimelineSeparator(props: {
       onClick={() => props.onSelect(props.event.id)}
       className="hover:bg-hover focus-visible:ring-accent my-2 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1 focus-visible:ring-1 focus-visible:outline-none"
     >
-      {rule}
-      {label}
-      {rule}
+      {body}
     </button>
   );
 }
@@ -231,7 +258,7 @@ function TimelineEventRow(props: {
   selected: boolean;
   onSelect: (eventId: string) => void;
 }) {
-  const presentation = getTimelinePresentation(props.event.kind);
+  const presentation = getTimelinePresentation(getTimelineEventKind(props.event));
   const Icon = presentation.icon;
   const title = getTimelineEventTitle(props.event);
   const detail = getEventDetail(props.event);
@@ -632,7 +659,7 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({});
   const filter = isTimelineFilter(storedFilter) ? storedFilter : "all";
   const filteredEvents = timeline.events.filter(
-    (event) => filter === "all" || getTimelineEventCategory(event) === filter
+    (event) => filter === "all" || getTimelineEventCategories(event).includes(filter)
   );
   const selectedEvent = filteredEvents.find((event) => event.id === selectedEventId);
   const dayGroups = groupEventsByDay(filteredEvents);
@@ -725,9 +752,9 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
                         />
                       );
                     }
-                    if (SEPARATOR_KINDS.has(item.kind)) {
+                    if (isRuleKind(getTimelineEventKind(item))) {
                       return (
-                        <TimelineSeparator
+                        <TimelineRuleRow
                           key={item.id}
                           event={item}
                           selected={selectedEventId === item.id}

@@ -13,6 +13,7 @@ import {
 } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
+import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 
 import { installDom } from "../dom";
 
@@ -210,6 +211,67 @@ describe("TimelinePanel", () => {
     expect(visible).toEqual(["human"]);
   });
 
+  test("renders completed turns as compact rules that are never collapsed", () => {
+    const events = [
+      makeEvent("turn-1", "turn.completed", 1, {
+        status: "completed",
+        data: { model: "anthropic:claude-opus-5", mode: "exec", durationMs: 33_000 },
+      }),
+      makeEvent("turn-2", "turn.completed", 2, { status: "completed" }),
+      makeEvent("turn-3", "turn.completed", 3, { status: "completed" }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(
+      view.container.querySelector('[data-timeline-collapsed-kind="turn.completed"]')
+    ).toBeNull();
+    expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(3);
+    expect(view.container.textContent).toContain("anthropic:claude-opus-5");
+  });
+
+  test("classifies persisted synthetic rows from their prompt digest", () => {
+    const events = [
+      makeEvent("legacy-wake", "turn.synthetic", 1, {
+        data: { digest: `${BACKGROUND_WORK_WAKE_OPENINGS.subagentsCompleted} Write the response.` },
+      }),
+      makeEvent("legacy-other", "turn.synthetic", 2, { data: { digest: "Implement the plan." } }),
+    ];
+
+    const view = renderTimeline({ events });
+    const subagentsFilter = Array.from(view.container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Subagents"
+    );
+    if (!subagentsFilter) throw new Error("Expected the subagents filter control");
+    fireEvent.click(subagentsFilter);
+
+    const visible = Array.from(
+      view.container.querySelectorAll<HTMLElement>("[data-timeline-event-id]")
+    ).map((row) => row.dataset.timelineEventId);
+    expect(visible).toEqual(["legacy-wake"]);
+  });
+
+  test("keeps a failed event in its own category as well as errors", () => {
+    const view = renderTimeline({
+      events: [
+        makeEvent("failed-task", "task.failed", 1, {
+          source: { system: "task" },
+          status: "failed",
+        }),
+      ],
+    });
+    const filterButtons = Array.from(view.container.querySelectorAll("button[aria-pressed]"));
+    const subagentsFilter = filterButtons.find((button) => button.textContent === "Subagents");
+    const errorsFilter = filterButtons.find((button) => button.textContent === "Errors");
+    if (!subagentsFilter || !errorsFilter) throw new Error("Expected timeline category controls");
+
+    fireEvent.click(subagentsFilter);
+    expect(view.container.querySelectorAll("[data-timeline-event-id]")).toHaveLength(1);
+
+    fireEvent.click(errorsFilter);
+    expect(view.container.querySelectorAll("[data-timeline-event-id]")).toHaveLength(1);
+  });
+
   test("collapses three consecutive same-kind rows and expands the run", () => {
     const events = [
       makeEvent("heartbeat-1", "heartbeat.dispatched", 1, { source: { system: "heartbeat" } }),
@@ -360,7 +422,7 @@ describe("TimelinePanel", () => {
 
   test("offers a reconnect when the subscription dies with rows already on screen", () => {
     const view = renderTimeline({
-      events: [makeEvent("kept", "turn.completed", 1)],
+      events: [makeEvent("kept", "turn.user", 1)],
       snapshot: { loadError: "Subscription closed", loadErrorKind: "subscription" },
     });
 
@@ -376,7 +438,7 @@ describe("TimelinePanel", () => {
 
   test("does not offer a reconnect for a failed older page", () => {
     const view = renderTimeline({
-      events: [makeEvent("kept", "turn.completed", 1)],
+      events: [makeEvent("kept", "turn.user", 1)],
       snapshot: {
         loadError: "Failed to load older events",
         loadErrorKind: "pagination",

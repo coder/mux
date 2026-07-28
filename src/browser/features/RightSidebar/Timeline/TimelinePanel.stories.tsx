@@ -4,6 +4,10 @@ import { APIContext } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
+import {
+  BACKGROUND_WORK_WAKE_OPENINGS,
+  BASH_MONITOR_WAKE_HEADINGS,
+} from "@/common/utils/machineTurnPrompts";
 
 import { TimelinePanelView, type TimelineWorkspaceStore } from "./TimelinePanel";
 
@@ -102,6 +106,38 @@ const MIXED_EVENTS: TimelineEvent[] = [
   makeEvent("user-turn", "turn.user", 6, {
     data: { digest: "Add Timeline behavior coverage and responsive stories" },
     anchor: { messageId: "user-6" },
+  }),
+  makeEvent("monitor-wake", "turn.monitor_wake", 5, {
+    data: {
+      title: "Stack CI_Codex watcher",
+      digest: `${BASH_MONITOR_WAKE_HEADINGS.matched} Process: Stack CI_Codex watcher`,
+    },
+    anchor: { messageId: "user-5" },
+  }),
+  makeEvent("background-wake", "turn.background_wake", 4, {
+    data: { digest: BACKGROUND_WORK_WAKE_OPENINGS.subagentsCompleted },
+    anchor: { messageId: "user-4" },
+  }),
+  makeEvent("subagent-update", "task.progress", 3, {
+    source: { system: "task", key: "message:user-3" },
+    status: "started",
+    data: { title: "Halfway through the producer audit", digest: "Checked 6 of 12 producers" },
+    anchor: {
+      messageId: "user-3",
+      taskId: "timeline-child-workspace",
+      childWorkspaceId: "timeline-child-workspace",
+    },
+  }),
+  makeEvent("workflow-result", "workflow.result", 2, {
+    status: "completed",
+    data: { runId: "wfr_timeline_story" },
+    anchor: { messageId: "user-2" },
+  }),
+  makeEvent("subagent-failure", "task.failed", 1, {
+    source: { system: "task" },
+    status: "failed",
+    data: { digest: "Sub-agent exec failed terminally: context limit reached" },
+    anchor: { taskId: "timeline-child-workspace", childWorkspaceId: "timeline-child-workspace" },
   }),
 ];
 
