@@ -11,7 +11,7 @@ import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMe
 import { cn } from "@/common/lib/utils";
 import { Toggle1MContext } from "../Toggle1MContext/Toggle1MContext";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
-import { COMPOSER_CONTROL_HEIGHT_CLASS } from "@/constants/layout";
+import { COMPOSER_COMPACT_HIDE_CLASS, COMPOSER_CONTROL_HEIGHT_CLASS } from "@/constants/layout";
 
 /** Compact threshold tick mark for the button view */
 const CompactThresholdIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
@@ -246,21 +246,22 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
               {isIdleCompactionEnabled && (
                 <span
                   title={`Auto-compact after ${idleHours}h idle`}
-                  className="[@container(max-width:420px)]:hidden"
+                  className={COMPOSER_COMPACT_HIDE_CLASS}
                 >
                   <Hourglass className="text-muted h-3 w-3" />
                 </span>
               )}
 
-              <span className="text-muted text-[11px] [@container(max-width:520px)]:hidden">
+              <span className={cn("text-muted text-[11px]", COMPOSER_COMPACT_HIDE_CLASS)}>
                 Context
               </span>
 
-              {/* Full meter when there's room; fall back to a compact percentage label on narrow layouts. */}
+              {/* Narrow composers keep the percentage only: a 56px meter reads as an empty bar at
+                low usage while starving the model and agent labels next to it. */}
               {data.totalTokens > 0 ? (
                 <div
                   data-context-usage-meter
-                  className="relative h-3 w-14 [@container(max-width:420px)]:hidden"
+                  className={cn("relative h-3 w-14", COMPOSER_COMPACT_HIDE_CLASS)}
                 >
                   <TokenMeter
                     segments={data.segments}
@@ -276,7 +277,10 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
                 /* Empty meter placeholder - allows access to settings with no usage */
                 <div
                   data-context-usage-meter
-                  className="bg-surface-quaternary relative h-3 w-14 rounded-full [@container(max-width:420px)]:hidden"
+                  className={cn(
+                    "bg-surface-quaternary relative h-3 w-14 rounded-full",
+                    COMPOSER_COMPACT_HIDE_CLASS
+                  )}
                 />
               )}
 

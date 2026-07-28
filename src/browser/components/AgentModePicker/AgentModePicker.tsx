@@ -18,7 +18,7 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { sortAgentsStable } from "@/browser/utils/agents";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { COMPOSER_CONTROL_HEIGHT_CLASS } from "@/constants/layout";
+import { COMPOSER_CONTROL_HEIGHT_CLASS, COMPOSER_ICON_ONLY_HIDE_CLASS } from "@/constants/layout";
 
 interface AgentModePickerProps {
   className?: string;
@@ -328,11 +328,19 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             )}
           >
             <TriggerIcon className="h-3 w-3 shrink-0" />
-            <span className="max-w-[clamp(4.5rem,30vw,130px)] truncate">{activeDisplayName}</span>
+            <span
+              className={cn(
+                "max-w-[clamp(4.5rem,30vw,130px)] truncate",
+                COMPOSER_ICON_ONLY_HIDE_CLASS
+              )}
+            >
+              {activeDisplayName}
+            </span>
             {!isAgentLocked && (
               <ChevronDown
                 className={cn(
                   "text-muted h-3 w-3 transition-transform duration-150",
+                  COMPOSER_ICON_ONLY_HIDE_CLASS,
                   isPickerOpen && "rotate-180"
                 )}
               />
@@ -340,6 +348,9 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           </Button>
         </TooltipTrigger>
         <TooltipContent align="start" className="max-w-80 whitespace-normal">
+          {/* Name the active agent here because narrow composers render the trigger icon-only. */}
+          <strong>{activeDisplayName}</strong>
+          <br />
           Selects an agent definition (system prompt + tool policy).
           <br />
           <br />
