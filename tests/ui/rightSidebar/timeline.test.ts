@@ -11,6 +11,7 @@ import {
   useWorkspaceTimeline,
   type WorkspaceTimelineSnapshot,
 } from "@/browser/stores/WorkspaceStore";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
 
 import { installDom } from "../dom";
@@ -60,13 +61,15 @@ function renderTimeline(params: {
   events: TimelineEvent[];
   loadOlderHistory?: jest.Mock<Promise<"loaded">, [string]>;
   snapshot?: Partial<WorkspaceTimelineSnapshot>;
+  hasOlderHistory?: boolean;
 }) {
   const loadOlderHistory = params.loadOlderHistory ?? jest.fn().mockResolvedValue("loaded");
-  const workspaceState = {
-    messages: [],
-    muxMessages: [],
-    hasOlderHistory: true,
-  };
+  const workspaceState: { messages: unknown[]; muxMessages: unknown[]; hasOlderHistory: boolean } =
+    {
+      messages: [],
+      muxMessages: [],
+      hasOlderHistory: params.hasOlderHistory ?? true,
+    };
   const workspaceStore = {
     getWorkspaceState: jest.fn(() => workspaceState),
     loadOlderHistory,
@@ -104,7 +107,7 @@ function renderTimeline(params: {
     })
   );
 
-  return { ...view, loadOlderHistory, workspaceStore };
+  return { ...view, loadOlderHistory, workspaceStore, workspaceState };
 }
 
 describe("TimelinePanel", () => {
@@ -238,6 +241,33 @@ describe("TimelinePanel", () => {
     expect(loadOlderHistory).toHaveBeenCalledTimes(10);
     expect(loadOlderHistory).toHaveBeenCalledWith(WORKSPACE_ID);
     expect(mockShowAllMessages).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
+
+  test("reveals a target that expanding the display cap makes renderable", async () => {
+    const event = makeEvent("anchored", "turn.completed", 1, {
+      anchor: { messageId: "capped-message" },
+    });
+    // No older history to page, so the only way to reach the target is the cap expansion.
+    const view = renderTimeline({ events: [event], hasOlderHistory: false });
+    mockShowAllMessages.mockImplementation(() => {
+      view.workspaceState.messages = [{ historyId: "capped-message" }];
+    });
+    const revealed: unknown[] = [];
+    const listener = (revealEvent: Event) => revealed.push(revealEvent);
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+
+    try {
+      fireEvent.click(view.container.querySelector('[data-timeline-event-id="anchored"]')!);
+      const revealButton = await waitFor(() => view.getByTestId("timeline-reveal"));
+      fireEvent.click(revealButton);
+
+      await waitFor(() => {
+        if (revealed.length === 0) throw new Error("Reveal was not dispatched");
+      });
+      expect(view.queryByTestId("timeline-reveal-not-found")).toBeNull();
+    } finally {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+    }
   });
 
   test("keeps pagination reachable when the active filter has no matches", () => {

@@ -73,6 +73,9 @@ export class TimelineService implements TimelineRecorder {
   private readonly writeQueues = new Map<string, Promise<void>>();
   private readonly nextSequences = new Map<string, number>();
   private readonly recentSourceKeys = new Map<string, Map<string, true>>();
+  // Removed workspaces, kept for the process lifetime: an append recreates the session directory, so
+  // a record arriving after removal must be dropped rather than merely flushed.
+  private readonly closedWorkspaces = new Set<string>();
   private readonly recentAgentEvents = new Map<string, Map<string, number>>();
   // Emission timestamps, tracked apart from recentAgentEvents: that map is keyed by description, so
   // repeating one replaces its entry and its size would undercount how many rows were kept.
@@ -90,7 +93,10 @@ export class TimelineService implements TimelineRecorder {
   }
 
   record(workspaceId: string, draft: TimelineEventDraft): void {
-    if (!this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.TIMELINE)) {
+    if (
+      !this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.TIMELINE) ||
+      this.closedWorkspaces.has(workspaceId)
+    ) {
       return;
     }
 
@@ -198,6 +204,11 @@ export class TimelineService implements TimelineRecorder {
       },
     });
     return true;
+  }
+
+  async closeWorkspace(workspaceId: string): Promise<void> {
+    this.closedWorkspaces.add(workspaceId);
+    await this.flush(workspaceId);
   }
 
   async flush(workspaceId?: string): Promise<void> {

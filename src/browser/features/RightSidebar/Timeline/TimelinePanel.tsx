@@ -433,7 +433,15 @@ function TimelinePreviewCard(props: {
         return;
       }
 
+      // Expanding the display cap can make an already-loaded target renderable, so re-resolve before
+      // paging history: otherwise a target hidden only by the cap reports "Too far back".
       showAllMessages(props.workspaceId);
+      target = resolveRevealTarget(anchor);
+      if (isRevealTargetLoaded(target)) {
+        dispatchReveal(target);
+        setRevealState("idle");
+        return;
+      }
 
       for (let page = 0; page < MAX_REVEAL_HISTORY_PAGES; page++) {
         const workspaceState = workspaceStore.getWorkspaceState(props.workspaceId);

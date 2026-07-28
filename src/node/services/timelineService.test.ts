@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync } from "fs";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
@@ -244,6 +245,38 @@ describe("TimelineService", () => {
 
     const page = await service.list(WORKSPACE_ID, {});
     expect(page.events.map((event) => event.source.key)).toEqual(["retryable"]);
+  });
+
+  test("skips a row whose timestamp Date cannot represent, keeping the rest of the feed", async () => {
+    service.record(WORKSPACE_ID, draft("valid"));
+    await service.flush();
+    // 9e15 exceeds the maximum Date value, so rendering it would throw a RangeError.
+    await fs.appendFile(
+      timelinePath(),
+      `${JSON.stringify({
+        v: 1,
+        seq: 2,
+        id: "out-of-range",
+        ts: 9e15,
+        kind: "turn.user",
+        source: { system: "chat" },
+      })}\n`,
+      "utf-8"
+    );
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.source.key)).toEqual(["valid"]);
+  });
+
+  test("drops records for a closed workspace so a late append cannot recreate its session dir", async () => {
+    service.record(WORKSPACE_ID, draft("before-close"));
+    await service.closeWorkspace(WORKSPACE_ID);
+    await fs.rm(config.getSessionDir(WORKSPACE_ID), { recursive: true, force: true });
+
+    service.record(WORKSPACE_ID, draft("after-close"));
+    await service.flush();
+
+    expect(existsSync(config.getSessionDir(WORKSPACE_ID))).toBe(false);
   });
 
   test("keeps a new event readable after an interrupted write left an unterminated line", async () => {

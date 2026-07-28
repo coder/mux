@@ -102,11 +102,17 @@ const timelineEventDataShape = {
 
 export const TimelineEventDataSchema = z.object(timelineEventDataShape).strict();
 
+/**
+ * Largest value `Date` accepts. A persisted row beyond it would throw a RangeError from
+ * `toISOString()` while rendering, taking the whole feed down, so such a row is skipped on read.
+ */
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
 const timelineEventShape = {
   v: z.literal(1),
   seq: z.number().int().positive(),
   id: z.string().min(1),
-  ts: z.number().nonnegative(),
+  ts: z.number().nonnegative().max(MAX_DATE_MS),
   kind: z.string().min(1),
   source: TimelineSourceSchema,
   anchor: TimelineAnchorSchema.optional(),
@@ -134,7 +140,7 @@ export const TimelineEventDraftSchema = TimelineEventSchema.omit({
   seq: true,
   id: true,
 }).extend({
-  ts: z.number().nonnegative().optional(),
+  ts: z.number().nonnegative().max(MAX_DATE_MS).optional(),
 });
 
 export const TimelineListInputSchema = z

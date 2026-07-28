@@ -7940,10 +7940,10 @@ describe("WorkspaceService remove desktop session cleanup", () => {
     const order: string[] = [];
     workspaceService.setTimelineRecorder({
       record: () => undefined,
-      flush: () => {
-        // A queued append recreates the session directory, so the flush is only useful while the
+      closeWorkspace: () => {
+        // A queued append recreates the session directory, so closing is only useful while the
         // directory still exists.
-        order.push(existsSync(sessionDir) ? "flush-before-delete" : "flush-after-delete");
+        order.push(existsSync(sessionDir) ? "closed-before-delete" : "closed-after-delete");
         return Promise.resolve();
       },
     });
@@ -7951,7 +7951,7 @@ describe("WorkspaceService remove desktop session cleanup", () => {
     const result = await workspaceService.remove(workspaceId);
 
     expect(result.success).toBe(true);
-    expect(order).toEqual(["flush-before-delete"]);
+    expect(order).toEqual(["closed-before-delete"]);
     expect(existsSync(sessionDir)).toBe(false);
   });
 

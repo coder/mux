@@ -4806,9 +4806,9 @@ export class WorkspaceService extends EventEmitter {
       // delete, recreating the session directory for a workspace the user removed.
       this.disposeSession(workspaceId);
       try {
-        await this.timelineRecorder.flush(workspaceId);
+        await this.timelineRecorder.closeWorkspace(workspaceId);
       } catch (error: unknown) {
-        log.warn("Failed to flush timeline before workspace removal", {
+        log.warn("Failed to close the timeline before workspace removal", {
           workspaceId,
           error: getErrorMessage(error),
         });

@@ -2,12 +2,13 @@ import type { TimelineEventDraft } from "@/common/orpc/schemas/timeline";
 
 export interface TimelineRecorder {
   record(workspaceId: string, draft: TimelineEventDraft): void;
-  // Appends are queued, so a caller about to delete the session directory must await this first:
-  // an append that lands afterwards recreates the directory for a workspace the user deleted.
-  flush(workspaceId?: string): Promise<void>;
+  // Call before deleting a session directory. Rejecting later records is as important as draining
+  // the queue: an append recreates the directory, so a straggler would resurrect a deleted
+  // workspace even after a successful flush.
+  closeWorkspace(workspaceId: string): Promise<void>;
 }
 
 export const NOOP_TIMELINE_RECORDER: TimelineRecorder = {
   record: () => undefined,
-  flush: () => Promise.resolve(),
+  closeWorkspace: () => Promise.resolve(),
 };
