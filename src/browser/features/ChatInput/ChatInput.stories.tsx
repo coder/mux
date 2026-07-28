@@ -188,10 +188,32 @@ export const NarrowControlRowCollapse: AppStory = {
       assertNoOverflow("pro-returns");
     });
 
-    await resizeRowInto(490, 365, 495);
+    // Phone-width workspace rows land here. The agent label does not fit alongside the context pill
+    // yet, so it must stay hidden rather than clip, and the model name must keep its own room.
+    await resizeRowInto(474, 365, 445);
+    await waitFor(() => {
+      if (agentTrigger.innerText.trim() !== "") {
+        throw new Error(
+          `Agent pill should stay icon-only while the context pill shares the row, showing "${agentTrigger.innerText}"`
+        );
+      }
+      assertNoOverflow("phone-width");
+
+      const modelName = storyRoot.querySelector<HTMLElement>(
+        '[data-component="ModelSelectorGroup"] button span'
+      );
+      if (!modelName) throw new Error("Model name not rendered");
+      if (modelName.scrollWidth > modelName.clientWidth) {
+        throw new Error(
+          `Model name is clipped to "${modelName.innerText}" at a phone-width row that has room for it`
+        );
+      }
+    });
+
+    await resizeRowInto(544, 455, 495);
     await waitFor(() => {
       if (agentTrigger.innerText.trim() === "") {
-        throw new Error("Agent pill should show its label once the row clears 360px");
+        throw new Error("Agent pill should show its label once the row clears 450px");
       }
       if (!/^\d+%$/.test(contextTrigger.innerText.trim())) {
         throw new Error(
@@ -230,6 +252,7 @@ export const NarrowControlRowCollapse: AppStory = {
     });
   },
 };
+
 /**
  * Editing message state - shows the edit cutoff barrier and amber-styled input.
  * Demonstrates the UI when a user clicks "Edit" on a previous message.

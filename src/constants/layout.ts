@@ -20,3 +20,10 @@ export const COMPOSER_CONTROL_HEIGHT_CLASS = "h-6";
 export const COMPOSER_COMPACT_HIDE_CLASS = "[@container(max-width:500px)]:hidden";
 export const COMPOSER_ICON_ONLY_HIDE_CLASS = "[@container(max-width:360px)]:hidden";
 export const COMPOSER_PRO_HIDE_CLASS = "[@container(max-width:340px)]:hidden";
+
+// Workspace rows also carry the context pill, so the agent label needs more room here than on the
+// creation row. A container query cannot measure sibling text, so this is set for the widest
+// realistic content (a long agent name next to a long model name at XHIGH) rather than the
+// narrowest: the agent label does not shrink, so a threshold set too low shows a label that then
+// squeezes its neighbours instead of hiding.
+export const COMPOSER_WORKSPACE_ICON_ONLY_HIDE_CLASS = "[@container(max-width:450px)]:hidden";

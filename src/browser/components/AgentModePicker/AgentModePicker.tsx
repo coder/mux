@@ -23,6 +23,12 @@ import { COMPOSER_CONTROL_HEIGHT_CLASS, COMPOSER_ICON_ONLY_HIDE_CLASS } from "@/
 interface AgentModePickerProps {
   className?: string;
 
+  /**
+   * Overrides when the trigger drops to icon-only, because the width the label needs depends on
+   * which sibling controls share its row.
+   */
+  iconOnlyHideClassName?: string;
+
   /** Called when the picker closes (best-effort). Useful for restoring focus. */
   onComplete?: () => void;
 }
@@ -90,6 +96,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
   } = useAgent();
 
   const onComplete = props.onComplete;
+  const iconOnlyHideClassName = props.iconOnlyHideClassName ?? COMPOSER_ICON_ONLY_HIDE_CLASS;
 
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
@@ -328,10 +335,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             )}
           >
             <TriggerIcon className="h-3 w-3 shrink-0" />
+            {/* shrink-0 leaves iconOnlyHideClassName as the only thing that hides this label. Without
+              it a tight row shrinks the label to a letter and an ellipsis instead. */}
             <span
               className={cn(
-                "max-w-[clamp(4.5rem,30vw,130px)] truncate",
-                COMPOSER_ICON_ONLY_HIDE_CLASS
+                "max-w-[clamp(4.5rem,30vw,130px)] shrink-0 truncate",
+                iconOnlyHideClassName
               )}
             >
               {activeDisplayName}
@@ -339,8 +348,8 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             {!isAgentLocked && (
               <ChevronDown
                 className={cn(
-                  "text-muted h-3 w-3 transition-transform duration-150",
-                  COMPOSER_ICON_ONLY_HIDE_CLASS,
+                  "text-muted h-3 w-3 shrink-0 transition-transform duration-150",
+                  iconOnlyHideClassName,
                   isPickerOpen && "rotate-180"
                 )}
               />

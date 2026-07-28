@@ -222,7 +222,9 @@ import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAtta
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   COMPOSER_CONTROL_HEIGHT_CLASS,
+  COMPOSER_ICON_ONLY_HIDE_CLASS,
   COMPOSER_PRO_HIDE_CLASS,
+  COMPOSER_WORKSPACE_ICON_ONLY_HIDE_CLASS,
   CREATION_COLUMN_MAX_WIDTH_CLASS,
 } from "@/constants/layout";
 
@@ -3449,6 +3451,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   >
                     <AgentModePicker
                       className="min-w-0"
+                      iconOnlyHideClassName={
+                        variant === "workspace"
+                          ? COMPOSER_WORKSPACE_ICON_ONLY_HIDE_CLASS
+                          : COMPOSER_ICON_ONLY_HIDE_CLASS
+                      }
                       onComplete={() => inputRef.current?.focus()}
                     />
                   </div>

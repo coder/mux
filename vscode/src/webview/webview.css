@@ -33,9 +33,12 @@
     --color-plan-mode-light: hsl(210 70% 68%);
     --color-plan-mode-alpha: hsla(210 70% 40% / 0.1);
 
-    --color-exec-mode: hsl(268.56 94.04% 55.19%);
-    --color-exec-mode-hover: hsl(268.56 94.04% 67%);
-    --color-exec-mode-light: hsl(268.56 94.04% 78%);
+    /* Same teal hue as the renderer, but at the light theme's darker lightness: here the token is a
+      fill behind white text (ChatComposer's agent toggle and send button), so the renderer's pale
+      dark-theme value would leave white on near-white. This matches how plan-mode reads. */
+    --color-exec-mode: hsl(187.7 75% 30%);
+    --color-exec-mode-hover: hsl(187.7 75% 38%);
+    --color-exec-mode-light: hsl(187.7 75% 48%);
 
     /* Edit mode: amber/gold for editing warnings and barriers */
     --color-edit-mode: hsl(38 80% 45%);
