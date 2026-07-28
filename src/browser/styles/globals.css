@@ -1158,10 +1158,10 @@ body,
     min-width: 44px;
   }
 
-  /* The rule above only lifts buttons, so a bordered surface that groups several of them (the
-     composer's model + thinking pill) kept its desktop height while its sibling pills grew to 44px,
-     leaving the row ragged and the inner buttons overflowing their own border. */
-  .composer-control-surface {
+  /* Opt-in for containers of the buttons above: the rule only lifts the buttons themselves, so a
+     fixed-height wrapper keeps its desktop height while its children grow to 44px and overflow it.
+     Seen on the composer's model + thinking pill and the footer's scrolling info row. */
+  .touch-target-container {
     min-height: 44px;
   }
 
