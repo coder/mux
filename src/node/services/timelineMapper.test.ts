@@ -5,7 +5,9 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   BACKGROUND_WORK_WAKE_OPENINGS,
   BASH_MONITOR_WAKE_HEADINGS,
+  classifyMachineTurnPromptKind,
 } from "@/common/utils/machineTurnPrompts";
+import { buildWorkflowResultContextMessage } from "@/common/utils/workflowRunMessages";
 import {
   SUBAGENT_FAILURE_ENVELOPE_TAG,
   formatSubagentReportEnvelope,
@@ -443,6 +445,38 @@ describe("mapChatEventToTimeline", () => {
     expect(skillSnapshot.drafts).toEqual([]);
     expect(fileSnapshot.drafts).toEqual([]);
     expect(goalContinuation.drafts).toEqual([]);
+  });
+
+  test("classifies text-matched turns from the digest the mapper persists", () => {
+    // Rows written before machine turns were classified carry only this digest, so an opening that
+    // does not survive truncation would leave them permanently labeled a generic synthetic prompt.
+    const digestOf = (text: string): string => {
+      const drafts = map({
+        type: "message",
+        id: "user-digest",
+        role: "user",
+        parts: [{ type: "text", text }],
+        metadata: { historySequence: 20, timestamp: 100, synthetic: true },
+      }).drafts;
+      return drafts[0]?.data?.digest ?? "";
+    };
+
+    const workflowResult = buildWorkflowResultContextMessage({
+      rawCommand: "/deep-research timeline",
+      name: "deep-research",
+      runId: "wfr_3",
+      status: "completed",
+      result: { reportMarkdown: "Findings" },
+      run: null,
+    });
+
+    expect(classifyMachineTurnPromptKind(digestOf(workflowResult))).toBe("workflow.result");
+    expect(classifyMachineTurnPromptKind(digestOf(BASH_MONITOR_WAKE_HEADINGS.mixed))).toBe(
+      "turn.monitor_wake"
+    );
+    expect(
+      classifyMachineTurnPromptKind(digestOf(BACKGROUND_WORK_WAKE_OPENINGS.subagentsFailed))
+    ).toBe("turn.background_wake");
   });
 
   test("keeps a queued heartbeat that was coalesced with a human prompt", () => {

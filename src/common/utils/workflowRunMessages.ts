@@ -75,10 +75,18 @@ export function stripWorkflowRunRecordForModel(toolName: string, output: unknown
 
 export const WORKFLOW_RESULT_XML_TAG = "mux_workflow_result";
 
-// Exported so the timeline can recognize a workflow-result turn from its text alone: a coalesced
-// terminal-attention wake carries this section without the workflow-result metadata.
+/**
+ * First sentence of the opening, split out so the timeline can recognize a workflow-result turn from
+ * its text alone: a coalesced terminal-attention wake carries this section without the
+ * workflow-result metadata. Matching uses this sentence rather than the full opening because timeline
+ * row digests are truncated to 120 characters, which the full opening exceeds.
+ */
+export const WORKFLOW_RESULT_MESSAGE_OPENING_SENTENCE = "The workflow below has finished.";
+
 export const WORKFLOW_RESULT_MESSAGE_OPENING =
-  "The workflow below has finished. Continue the agent turn for the original request using this workflow result. Do not merely restate the raw payload; synthesize the next answer or action from it.";
+  `${WORKFLOW_RESULT_MESSAGE_OPENING_SENTENCE} Continue the agent turn for the original request ` +
+  "using this workflow result. Do not merely restate the raw payload; synthesize the next answer or " +
+  "action from it.";
 
 function getWorkflowResultValue(result: unknown, run: WorkflowRunRecord | null): unknown {
   if (result != null) {

@@ -1,5 +1,5 @@
 import type { TimelineEventKind } from "@/common/orpc/schemas/timeline";
-import { WORKFLOW_RESULT_MESSAGE_OPENING } from "@/common/utils/workflowRunMessages";
+import { WORKFLOW_RESULT_MESSAGE_OPENING_SENTENCE } from "@/common/utils/workflowRunMessages";
 
 // Fallback openings used when specific muxMetadata is absent or only a persisted digest remains.
 // Prompt producers and timeline classification share them so their wording cannot drift.
@@ -21,13 +21,14 @@ const PROMPT_OPENINGS_BY_KIND: ReadonlyArray<{
   openings: readonly string[];
 }> = [
   { kind: "turn.monitor_wake", openings: Object.values(BASH_MONITOR_WAKE_HEADINGS) },
-  { kind: "workflow.result", openings: [WORKFLOW_RESULT_MESSAGE_OPENING] },
+  { kind: "workflow.result", openings: [WORKFLOW_RESULT_MESSAGE_OPENING_SENTENCE] },
   { kind: "turn.background_wake", openings: Object.values(BACKGROUND_WORK_WAKE_OPENINGS) },
 ];
 
 /**
  * Classifies a machine-authored turn from its prompt text. Also used on persisted timeline rows,
- * whose digest is whitespace-collapsed, so every opening above must stay single-spaced.
+ * whose digest is whitespace-collapsed and truncated to 120 characters, so every opening above must
+ * stay single-spaced and shorter than that.
  */
 export function classifyMachineTurnPromptKind(text: string): TimelineEventKind | null {
   const normalized = text.trimStart();
