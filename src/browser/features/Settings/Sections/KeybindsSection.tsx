@@ -45,6 +45,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   DECREASE_THINKING: "Decrease thinking level",
   FOCUS_CHAT: "Focus chat input",
   CLOSE_TAB: "Close tab",
+  REVEAL_TIMELINE_EVENT: "Reveal selected timeline event in transcript",
   SIDEBAR_TAB_1: "Tab 1",
   SIDEBAR_TAB_2: "Tab 2",
   SIDEBAR_TAB_3: "Tab 3",
@@ -159,6 +160,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "SIDEBAR_TAB_8",
       "SIDEBAR_TAB_9",
       "CLOSE_TAB",
+      "REVEAL_TIMELINE_EVENT",
     ],
   },
   {

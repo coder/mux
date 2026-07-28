@@ -41,23 +41,23 @@ export const TIMELINE_RETIRED_KINDS: ReadonlySet<string> = new Set([
   "agent.todo_completed",
 ]);
 
-export const TimelineSourceSchema = z
-  .object({
-    system: z.enum(["chat", "heartbeat", "goal", "task", "settings", "agent"]),
-    key: z.string().min(1).optional(),
-  })
-  .strict();
+const timelineSourceShape = {
+  system: z.enum(["chat", "heartbeat", "goal", "task", "settings", "agent"]),
+  key: z.string().min(1).optional(),
+};
 
-export const TimelineAnchorSchema = z
-  .object({
-    // History sequences are 0-based, so the first message in a workspace anchors at 0.
-    historySequence: z.number().int().nonnegative().optional(),
-    messageId: z.string().min(1).optional(),
-    toolCallId: z.string().min(1).optional(),
-    taskId: z.string().min(1).optional(),
-    childWorkspaceId: z.string().min(1).optional(),
-  })
-  .strict();
+export const TimelineSourceSchema = z.object(timelineSourceShape).strict();
+
+const timelineAnchorShape = {
+  // History sequences are 0-based, so the first message in a workspace anchors at 0.
+  historySequence: z.number().int().nonnegative().optional(),
+  messageId: z.string().min(1).optional(),
+  toolCallId: z.string().min(1).optional(),
+  taskId: z.string().min(1).optional(),
+  childWorkspaceId: z.string().min(1).optional(),
+};
+
+export const TimelineAnchorSchema = z.object(timelineAnchorShape).strict();
 
 export const TimelineStatusSchema = z.enum([
   "started",
@@ -123,11 +123,15 @@ const timelineEventShape = {
 
 export const TimelineEventSchema = z.object(timelineEventShape).strict();
 
-// Reads tolerate payload keys this build does not declare, because a newer build may add fields
-// and retired kinds carry fields that were removed. Writes stay strict so we only persist known
-// facts; dropping such a row on read instead would hide it from the feed entirely.
+// Reads tolerate keys and enum values this build does not declare, at every level, because a
+// downgrade must still render rows a newer build wrote and retired kinds carry fields that were
+// removed. Writes stay strict so we only persist known facts; dropping such a row on read instead
+// would hide it from the feed entirely, and the log is never rewritten to repair it.
 export const TimelineStoredEventSchema = z.object({
   ...timelineEventShape,
+  source: z.object({ ...timelineSourceShape, system: z.string().min(1) }),
+  anchor: z.object(timelineAnchorShape).optional(),
+  status: z.string().min(1).optional(),
   data: z.object(timelineEventDataShape).optional(),
 });
 
@@ -150,9 +154,11 @@ export const TimelineListInputSchema = z
   })
   .strict();
 
+// Wire payloads carry rows straight off disk, so they must tolerate the same future shapes reads
+// do; validating them strictly would fail a whole page over one row a newer build wrote.
 export const TimelinePageSchema = z
   .object({
-    events: z.array(TimelineEventSchema),
+    events: z.array(TimelineStoredEventSchema),
     nextCursor: z.number().int().positive().nullable(),
     hasOlder: z.boolean(),
   })
@@ -165,12 +171,12 @@ export const TimelineSubscriptionEventSchema = z.discriminatedUnion("type", [
   z
     .object({
       type: z.literal("snapshot"),
-      events: z.array(TimelineEventSchema),
+      events: z.array(TimelineStoredEventSchema),
       nextCursor: z.number().int().positive().nullable(),
       hasOlder: z.boolean(),
     })
     .strict(),
-  z.object({ type: z.literal("appended"), events: z.array(TimelineEventSchema) }).strict(),
+  z.object({ type: z.literal("appended"), events: z.array(TimelineStoredEventSchema) }).strict(),
 ]);
 
 export const TimelinePreviewInputSchema = TimelineAnchorSchema;
@@ -186,7 +192,7 @@ export type TimelineSource = z.infer<typeof TimelineSourceSchema>;
 export type TimelineAnchor = z.infer<typeof TimelineAnchorSchema>;
 export type TimelineStatus = z.infer<typeof TimelineStatusSchema>;
 export type TimelineEventData = z.infer<typeof TimelineEventDataSchema>;
-export type TimelineEvent = z.infer<typeof TimelineEventSchema>;
+export type TimelineEvent = z.infer<typeof TimelineStoredEventSchema>;
 export type TimelineEventDraft = z.infer<typeof TimelineEventDraftSchema>;
 export type TimelineListInput = z.infer<typeof TimelineListInputSchema>;
 export type TimelinePage = z.infer<typeof TimelinePageSchema>;

@@ -40,6 +40,26 @@ describe("timeline schemas", () => {
     ).toThrow();
   });
 
+  test("reads future source and anchor shapes that writes still reject", () => {
+    const futureRow = {
+      ...baseEvent,
+      source: { system: "workflow", key: "run-1", origin: "future" },
+      anchor: { messageId: "message-1", stepId: "future-step" },
+      status: "queued",
+    };
+
+    const page = TimelinePageSchema.parse({
+      events: [futureRow],
+      nextCursor: null,
+      hasOlder: false,
+    });
+
+    expect(page.events[0]?.source.system).toBe("workflow");
+    expect(page.events[0]?.status).toBe("queued");
+    expect(page.events[0]?.anchor).toEqual({ messageId: "message-1" });
+    expect(() => TimelineEventSchema.parse(futureRow)).toThrow();
+  });
+
   test("defines drafts, pages, and bounded previews for the backend API", () => {
     const draft = TimelineEventDraftSchema.parse({
       ts: baseEvent.ts,

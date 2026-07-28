@@ -271,6 +271,52 @@ describe("TimelinePanel", () => {
     }
   });
 
+  test("selects an anchored context boundary so its summary stays reachable", async () => {
+    const events = [
+      makeEvent("boundary", "compaction.completed", 1, {
+        epoch: 2,
+        anchor: { messageId: "summary-message" },
+      }),
+      makeEvent("plain-boundary", "context.reset", 2),
+    ];
+
+    const view = renderTimeline({ events });
+    const boundary = view.container.querySelector<HTMLElement>(
+      '[data-timeline-event-id="boundary"]'
+    );
+    if (!boundary) throw new Error("Expected the anchored boundary to be selectable");
+    expect(view.container.querySelector('[data-timeline-event-id="plain-boundary"]')).toBeNull();
+
+    fireEvent.click(boundary);
+
+    await waitFor(() => view.getByTestId("timeline-reveal"));
+    expect(boundary.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("reveals the selected event from the keyboard shortcut", async () => {
+    const event = makeEvent("anchored", "turn.completed", 1, {
+      anchor: { messageId: "loaded-message" },
+    });
+    const view = renderTimeline({ events: [event] });
+    view.workspaceState.messages = [{ historyId: "loaded-message" }];
+    const revealed: unknown[] = [];
+    const listener = (revealEvent: Event) => revealed.push(revealEvent);
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+
+    try {
+      fireEvent.click(view.container.querySelector('[data-timeline-event-id="anchored"]')!);
+      await waitFor(() => view.getByTestId("timeline-reveal"));
+
+      fireEvent.keyDown(window, { key: "Enter", ctrlKey: true, shiftKey: true });
+
+      await waitFor(() => {
+        if (revealed.length === 0) throw new Error("Reveal was not dispatched");
+      });
+    } finally {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+    }
+  });
+
   test("keeps pagination reachable when the active filter has no matches", () => {
     const view = renderTimeline({
       events: [makeEvent("task", "task.created", 1, { source: { system: "task" } })],

@@ -431,6 +431,9 @@ export const KEYBINDS = {
   // macOS: Cmd+W (matches Ghostty), Win/Linux: Ctrl+W
   CLOSE_TAB: { key: "w", ctrl: true, macCtrlBehavior: "command" },
 
+  /** Reveal the selected timeline event in the transcript */
+  REVEAL_TIMELINE_EVENT: { key: "Enter", ctrl: true, shift: true },
+
   /** Switch to tab by position in right sidebar (1-9) */
   // macOS: Cmd+N, Win/Linux: Ctrl+N
   // NOTE: Both Ctrl and Cmd work for switching tabs on Mac (macOS has no standard Cmd+number behavior)

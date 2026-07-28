@@ -228,6 +228,11 @@ function findTranscriptMessageElement(
   );
 }
 
+// Both are declared in globals.css; the animation name is matched against animation events, so the
+// two must stay in sync.
+const TIMELINE_REVEAL_HIGHLIGHT_CLASS = "timeline-reveal-highlight";
+const TIMELINE_REVEAL_ANIMATION = "timeline-reveal-highlight-fade";
+
 function findTranscriptRevealElement(
   scrollContainer: HTMLElement,
   anchor: CustomEventPayloads[typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR]
@@ -609,7 +614,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     CustomEventPayloads[typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR] | null
   >(null);
   const highlightedTimelineElementRef = useRef<HTMLElement | null>(null);
-  const timelineHighlightTimeoutRef = useRef<number | null>(null);
+  const timelineHighlightCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const handleTimelineReveal = (event: Event) => {
@@ -677,20 +682,33 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       return;
     }
 
-    if (timelineHighlightTimeoutRef.current != null) {
-      window.clearTimeout(timelineHighlightTimeoutRef.current);
-    }
-    highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
+    timelineHighlightCleanupRef.current?.();
     highlightedTimelineElementRef.current = targetElement;
-    targetElement.classList.add("timeline-reveal-highlight");
+    targetElement.classList.add(TIMELINE_REVEAL_HIGHLIGHT_CLASS);
     targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
-    timelineHighlightTimeoutRef.current = window.setTimeout(() => {
-      targetElement.classList.remove("timeline-reveal-highlight");
+
+    // The class carries its own fade, so the highlight is dropped when that animation reports it is
+    // over. A timer would keep the highlight applied past its interval whenever the tab is
+    // backgrounded and throttled. Unrelated animations on the row or its children also end here, so
+    // both the target and the animation name are checked.
+    const cleanup = () => {
+      targetElement.removeEventListener("animationend", onAnimationDone);
+      targetElement.removeEventListener("animationcancel", onAnimationDone);
+      targetElement.classList.remove(TIMELINE_REVEAL_HIGHLIGHT_CLASS);
       if (highlightedTimelineElementRef.current === targetElement) {
         highlightedTimelineElementRef.current = null;
       }
-      timelineHighlightTimeoutRef.current = null;
-    }, 1600);
+      timelineHighlightCleanupRef.current = null;
+    };
+    function onAnimationDone(event: AnimationEvent) {
+      if (event.target !== targetElement || event.animationName !== TIMELINE_REVEAL_ANIMATION) {
+        return;
+      }
+      cleanup();
+    }
+    targetElement.addEventListener("animationend", onAnimationDone);
+    targetElement.addEventListener("animationcancel", onAnimationDone);
+    timelineHighlightCleanupRef.current = cleanup;
     setPendingTimelineReveal(null);
   }, [
     bashOutputGroupInfos,
@@ -707,10 +725,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   useEffect(() => {
     return () => {
-      if (timelineHighlightTimeoutRef.current != null) {
-        window.clearTimeout(timelineHighlightTimeoutRef.current);
-      }
-      highlightedTimelineElementRef.current?.classList.remove("timeline-reveal-highlight");
+      timelineHighlightCleanupRef.current?.();
     };
   }, [workspaceId]);
 

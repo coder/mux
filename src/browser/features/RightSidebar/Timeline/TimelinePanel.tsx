@@ -16,6 +16,7 @@ import {
   type WorkspaceTimelineSnapshot,
 } from "@/browser/stores/WorkspaceStore";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { KEYBINDS, isEditableElement, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import { capitalize } from "@/common/utils/capitalize";
@@ -174,18 +175,54 @@ function getEventDetail(event: TimelineEvent): string | null {
   return details.length > 0 ? details.join(" · ") : null;
 }
 
-function TimelineSeparator(props: { event: TimelineEvent }) {
+function hasTranscriptAnchor(anchor: TimelineAnchor | undefined): boolean {
+  return anchor?.toolCallId != null || anchor?.messageId != null || anchor?.historySequence != null;
+}
+
+function TimelineSeparator(props: {
+  event: TimelineEvent;
+  selected: boolean;
+  onSelect: (eventId: string) => void;
+}) {
   const presentation = getTimelinePresentation(props.event.kind);
   const epoch = props.event.epoch != null ? `Epoch ${props.event.epoch}` : "Context boundary";
+  const rule = <div className="border-border min-w-3 flex-1 border-t" />;
+  const label = (
+    <span
+      className={cn(
+        "text-muted counter-nums min-w-0 truncate text-[10px] font-medium tracking-wide uppercase",
+        props.selected && "text-content-primary"
+      )}
+    >
+      {epoch} · {presentation.label}
+    </span>
+  );
 
+  if (!hasTranscriptAnchor(props.event.anchor)) {
+    return (
+      <div className="my-2 flex min-w-0 items-center gap-2" role="separator">
+        {rule}
+        {label}
+        {rule}
+      </div>
+    );
+  }
+
+  // A boundary anchors at its own summary message, which may exist only in archived history, so it
+  // stays selectable: rendering it as a plain separator would discard the only path to that message.
   return (
-    <div className="my-2 flex min-w-0 items-center gap-2" role="separator">
-      <div className="border-border min-w-3 flex-1 border-t" />
-      <span className="text-muted counter-nums min-w-0 truncate text-[10px] font-medium tracking-wide uppercase">
-        {epoch} · {presentation.label}
-      </span>
-      <div className="border-border min-w-3 flex-1 border-t" />
-    </div>
+    <button
+      type="button"
+      aria-pressed={props.selected}
+      data-timeline-event-id={props.event.id}
+      data-timeline-event-kind={props.event.kind}
+      onClick={() => props.onSelect(props.event.id)}
+      className="hover:bg-hover focus-visible:ring-accent my-2 flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1 focus-visible:ring-1 focus-visible:outline-none"
+    >
+      {rule}
+      {label}
+      {rule}
+    </button>
   );
 }
 
@@ -336,6 +373,7 @@ function TimelinePreviewCard(props: {
   );
 
   const revealOperationRef = useRef(0);
+  const revealButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const operationRef = revealOperationRef;
@@ -380,8 +418,7 @@ function TimelinePreviewCard(props: {
   const childWorkspace = anchor?.childWorkspaceId
     ? workspaceContext?.workspaceMetadata.get(anchor.childWorkspaceId)
     : undefined;
-  const hasTranscriptTarget =
-    anchor?.toolCallId != null || anchor?.messageId != null || anchor?.historySequence != null;
+  const hasTranscriptTarget = hasTranscriptAnchor(anchor);
 
   const resolveRevealTarget = (currentAnchor: TimelineAnchor) => {
     const messageId =
@@ -477,6 +514,27 @@ function TimelinePreviewCard(props: {
     }
   };
 
+  // The card is mounted only while an event is selected, so a window listener is scoped to the
+  // selection and works without focusing the sidebar. Activating the button rather than calling the
+  // handler keeps one reveal path and inherits its disabled state while a reveal is in flight.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const button = revealButtonRef.current;
+      if (
+        !button ||
+        button.disabled ||
+        !matchesKeybind(event, KEYBINDS.REVEAL_TIMELINE_EVENT) ||
+        isEditableElement(event.target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      button.click();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   const title = getTimelineEventTitle(props.event);
   const digest = props.event.data?.description ?? props.event.data?.digest ?? null;
   const eventText = digest === title ? null : digest;
@@ -521,6 +579,7 @@ function TimelinePreviewCard(props: {
             {hasTranscriptTarget ? (
               <button
                 type="button"
+                ref={revealButtonRef}
                 data-testid="timeline-reveal"
                 disabled={revealState === "revealing"}
                 onClick={() => void handleReveal()}
@@ -667,7 +726,14 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
                       );
                     }
                     if (SEPARATOR_KINDS.has(item.kind)) {
-                      return <TimelineSeparator key={item.id} event={item} />;
+                      return (
+                        <TimelineSeparator
+                          key={item.id}
+                          event={item}
+                          selected={selectedEventId === item.id}
+                          onSelect={setSelectedEventId}
+                        />
+                      );
                     }
                     return (
                       <TimelineEventRow

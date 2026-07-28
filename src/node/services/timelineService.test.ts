@@ -171,6 +171,25 @@ describe("TimelineService", () => {
     expect(page.events.map((event) => event.data?.description)).toEqual(["Landed the slice"]);
   });
 
+  test("keeps rows whose source and anchor carry values from a newer build", async () => {
+    const forwardCompatible = {
+      v: 1,
+      seq: 1,
+      id: "future-nested",
+      ts: 100,
+      kind: "workflow.attached",
+      source: { system: "workflow", key: "run-1", origin: "future" },
+      anchor: { messageId: "message-1", stepId: "future-step" },
+      status: "queued",
+    };
+    await fs.mkdir(config.getSessionDir(WORKSPACE_ID), { recursive: true });
+    await fs.writeFile(timelinePath(), `${JSON.stringify(forwardCompatible)}\n`, "utf-8");
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.id)).toEqual(["future-nested"]);
+    expect(page.events[0]?.anchor?.messageId).toBe("message-1");
+  });
+
   test("previews a tool anchor with its readable input field", async () => {
     await historyService.appendToHistory(WORKSPACE_ID, {
       id: "assistant-tool",

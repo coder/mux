@@ -2057,10 +2057,23 @@ span.search-highlight {
   border-radius: 2px;
 }
 
+/* The highlight fades itself out and ChatPane drops the class on animationend, so cleanup never
+   depends on a timer that a backgrounded tab can throttle. `forwards` keeps the faded end state,
+   so a missed cleanup is invisible rather than a permanently highlighted message. */
+@keyframes timeline-reveal-highlight-fade {
+  from {
+    background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+  }
+  to {
+    background-color: transparent;
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
 .timeline-reveal-highlight {
-  background-color: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
   border-radius: 0.375rem;
+  animation: timeline-reveal-highlight-fade 1600ms ease-out forwards;
 }
 
 /* Shiki code highlighting */
