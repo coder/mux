@@ -1,7 +1,9 @@
 import type { AppStory } from "@/browser/stories/meta.js";
 import { appMeta, AppWithMocks, PIXEL_DISABLED } from "@/browser/stories/meta.js";
 import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
-import { setWorkspaceInput } from "@/browser/stories/helpers/uiState";
+import { collapseLeftSidebar, setWorkspaceInput } from "@/browser/stories/helpers/uiState";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getModelKey } from "@/common/constants/storage";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import { createFileReadTool } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
@@ -77,6 +79,116 @@ export const FocusedComposer: AppStory = {
   },
 };
 
+/**
+ * The composer control row collapses on container width, not viewport width, so a fixed-width
+ * wrapper reproduces every stage: the play resizes the wrapper and asserts each one. Guarding on
+ * the measured row width keeps the assertions honest if the surrounding layout ever changes.
+ */
+export const NarrowControlRowCollapse: AppStory = {
+  render: () => (
+    <div data-testid="composer-width-wrapper" style={{ width: 900, height: 700 }}>
+      <AppWithMocks
+        setup={() => {
+          collapseLeftSidebar();
+          // A pro-capable OpenAI model on a direct route is what makes the PRO chip render, so the
+          // narrow-width assertions below can cover it too.
+          updatePersistedState(getModelKey("ws-composer-breakpoints"), "openai:gpt-5.6-sol");
+          return setupSimpleChatStory({
+            workspaceId: "ws-composer-breakpoints",
+            providersConfig: {
+              openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+            },
+            messages: [
+              createUserMessage("msg-1", "Summarize the composer layout rules", {
+                historySequence: 1,
+              }),
+              createAssistantMessage("msg-2", "The control row collapses in two stages.", {
+                historySequence: 2,
+                contextUsage: { inputTokens: 120_000, outputTokens: 8_000 },
+              }),
+            ],
+          });
+        }}
+      />
+    </div>
+  ),
+  parameters: {
+    ...appMeta.parameters,
+    pixel: PIXEL_DISABLED,
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatInputAutofocusDone(storyRoot);
+    blurActiveElement();
+
+    const wrapper = within(storyRoot).getByTestId("composer-width-wrapper");
+    const agentTrigger = within(storyRoot).getByLabelText("Select agent");
+    const contextTrigger = storyRoot.querySelector<HTMLElement>('[aria-label^="Context usage"]');
+    if (!contextTrigger) throw new Error("Context usage control not rendered");
+
+    const rowWidth = () => {
+      const row = storyRoot.querySelector<HTMLElement>('[data-component="ComposerControlRow"]');
+      if (!row) throw new Error("Composer control row not rendered");
+      return row.getBoundingClientRect().width;
+    };
+    const meterVisible = () =>
+      (storyRoot.querySelector("[data-context-usage-meter]")?.getBoundingClientRect().width ?? 0) >
+      0;
+    const proChip = storyRoot.querySelector<HTMLElement>('[data-component="ProModeToggle"]');
+    if (!proChip) throw new Error("PRO chip not rendered; the story's model must be pro-capable");
+    const proVisible = () => proChip.getBoundingClientRect().width > 0;
+
+    async function resizeRowInto(wrapperWidth: number, min: number, max: number) {
+      wrapper.style.width = `${wrapperWidth}px`;
+      await waitFor(() => {
+        const width = rowWidth();
+        if (width <= min || width >= max) {
+          throw new Error(
+            `Wrapper ${wrapperWidth}px put the control row at ${Math.round(width)}px, outside the ${min}-${max}px band this assertion needs`
+          );
+        }
+      });
+    }
+
+    await resizeRowInto(400, 320, 420);
+    await waitFor(() => {
+      if (agentTrigger.innerText.trim() !== "") {
+        throw new Error(`Agent pill should be icon-only, showing "${agentTrigger.innerText}"`);
+      }
+      if (!/^\d+%$/.test(contextTrigger.innerText.trim())) {
+        throw new Error(
+          `Context pill should be percentage-only, showing "${contextTrigger.innerText}"`
+        );
+      }
+      if (meterVisible()) throw new Error("Context meter should be hidden on an icon-only row");
+      if (proVisible()) throw new Error("PRO chip should be hidden on an icon-only row");
+    });
+
+    await resizeRowInto(560, 430, 510);
+    await waitFor(() => {
+      if (agentTrigger.innerText.trim() === "") {
+        throw new Error("Agent pill should show its label once the row clears 420px");
+      }
+      if (!/^\d+%$/.test(contextTrigger.innerText.trim())) {
+        throw new Error(
+          `Context pill should stay percentage-only below 520px, showing "${contextTrigger.innerText}"`
+        );
+      }
+      if (meterVisible()) throw new Error("Context meter should stay hidden below 520px");
+      if (!proVisible()) throw new Error("PRO chip should return once the row clears 420px");
+    });
+
+    await resizeRowInto(900, 530, 1200);
+    await waitFor(() => {
+      if (!contextTrigger.innerText.includes("Context")) {
+        throw new Error(
+          `Context pill should regain its label above 520px, showing "${contextTrigger.innerText}"`
+        );
+      }
+      if (!meterVisible()) throw new Error("Context meter should be visible above 520px");
+    });
+  },
+};
 /**
  * Editing message state - shows the edit cutoff barrier and amber-styled input.
  * Demonstrates the UI when a user clicks "Edit" on a previous message.

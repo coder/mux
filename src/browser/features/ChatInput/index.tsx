@@ -3438,7 +3438,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
               {/* 320px is a container breakpoint, not a minimum width. The row must shrink to
                 keep trailing controls inside narrow composers. */}
-              <div className="@container flex flex-nowrap items-center gap-1.5">
+              <div
+                className="@container flex flex-nowrap items-center gap-1.5"
+                data-component="ComposerControlRow"
+              >
                 <div className="flex min-w-0 flex-1 items-center gap-1.5">
                   <div
                     className="min-w-0 [@container(max-width:320px)]:hidden"
