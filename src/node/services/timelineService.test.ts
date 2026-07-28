@@ -184,8 +184,13 @@ describe("TimelineService", () => {
     service.record(WORKSPACE_ID, draft("first"));
     service.record(WORKSPACE_ID, draft("second"));
     const recordedAt = Date.now();
-    await service.flush();
-    appendFile.mockRestore();
+    try {
+      await service.flush();
+    } finally {
+      // Every test file shares one bun process, so a spy that outlives a failure here would stall
+      // appends in unrelated suites.
+      appendFile.mockRestore();
+    }
 
     const page = await service.list(WORKSPACE_ID, {});
     const second = page.events.find((event) => event.data?.description === "second");

@@ -46,6 +46,7 @@ describe("timeline schemas", () => {
       source: { system: "workflow", key: "run-1", origin: "future" },
       anchor: { messageId: "message-1", stepId: "future-step" },
       status: "queued",
+      data: { category: "future_category" },
     };
 
     const page = TimelinePageSchema.parse({
@@ -57,6 +58,7 @@ describe("timeline schemas", () => {
     expect(page.events[0]?.source.system).toBe("workflow");
     expect(page.events[0]?.status).toBe("queued");
     expect(page.events[0]?.anchor).toEqual({ messageId: "message-1" });
+    expect(page.events[0]?.data?.category).toBe("future_category");
     expect(() => TimelineEventSchema.parse(futureRow)).toThrow();
   });
 

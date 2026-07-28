@@ -52,11 +52,13 @@ interface TimelinePresentation {
 
 const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   "turn.user": { label: "User prompt", icon: MessageSquare, category: "prompts" },
-  // Mux dispatches these on the agent's behalf, so they stay out of Prompts: that filter is a record
-  // of what the human asked for.
+  // Only `turn.user` belongs to Prompts: that filter is a record of what the human asked for.
+  // Synthetic turns are dispatched on the agent's behalf, and a turn's outcome is the agent's work
+  // rather than a request, so both are agent activity. Terminal events carry no provenance, so
+  // leaving them in Prompts would file every heartbeat and continuation outcome as a human request.
   "turn.synthetic": { label: "Synthetic prompt", icon: WandSparkles, category: "agent" },
-  "turn.completed": { label: "Turn completed", icon: CheckCircle2, category: "prompts" },
-  "turn.interrupted": { label: "Turn interrupted", icon: CirclePause, category: "prompts" },
+  "turn.completed": { label: "Turn completed", icon: CheckCircle2, category: "agent" },
+  "turn.interrupted": { label: "Turn interrupted", icon: CirclePause, category: "agent" },
   "turn.failed": { label: "Turn failed", icon: CircleX, category: "errors" },
   "retry.scheduled": { label: "Retry scheduled", icon: RotateCcw, category: "errors" },
   "retry.abandoned": { label: "Retry abandoned", icon: Ban, category: "errors" },

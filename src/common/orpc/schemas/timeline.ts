@@ -132,7 +132,7 @@ export const TimelineStoredEventSchema = z.object({
   source: z.object({ ...timelineSourceShape, system: z.string().min(1) }),
   anchor: z.object(timelineAnchorShape).optional(),
   status: z.string().min(1).optional(),
-  data: z.object(timelineEventDataShape).optional(),
+  data: z.object({ ...timelineEventDataShape, category: z.string().min(1).optional() }).optional(),
 });
 
 // Sequence recovery must survive rows this build cannot otherwise parse, or a new append could

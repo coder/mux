@@ -161,7 +161,7 @@ describe("TimelinePanel", () => {
 
   test("category filters narrow the feed and isolate agent events", () => {
     const events = [
-      makeEvent("turn", "turn.completed", 1),
+      makeEvent("turn", "turn.user", 1),
       makeEvent("task", "task.created", 2, { source: { system: "task" } }),
       makeEvent("agent-event", "agent.event", 3, { source: { system: "agent" } }),
       makeEvent("agent-plan", "agent.plan_proposed", 4, { source: { system: "agent" } }),
@@ -188,8 +188,13 @@ describe("TimelinePanel", () => {
     expect(visibleRows.every((row) => row.dataset.timelineSource === "agent")).toBe(true);
   });
 
-  test("keeps machine-dispatched turns out of the prompts filter", () => {
-    const events = [makeEvent("human", "turn.user", 1), makeEvent("wakeup", "turn.synthetic", 2)];
+  test("keeps machine-dispatched turns and turn outcomes out of the prompts filter", () => {
+    const events = [
+      makeEvent("human", "turn.user", 1),
+      makeEvent("wakeup", "turn.synthetic", 2),
+      makeEvent("outcome", "turn.completed", 3),
+      makeEvent("stopped", "turn.interrupted", 4),
+    ];
 
     const view = renderTimeline({ events });
     const promptsFilter = Array.from(view.container.querySelectorAll("button")).find(
