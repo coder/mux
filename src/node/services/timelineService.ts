@@ -6,6 +6,7 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import {
   TIMELINE_RETIRED_KINDS,
+  TIMELINE_TEXT_MAX_LENGTH,
   TimelineEventDraftSchema,
   TimelineEventSchema,
   TimelineSequenceEnvelopeSchema,
@@ -73,6 +74,9 @@ export class TimelineService implements TimelineRecorder {
   private readonly nextSequences = new Map<string, number>();
   private readonly recentSourceKeys = new Map<string, Map<string, true>>();
   private readonly recentAgentEvents = new Map<string, Map<string, number>>();
+  // Emission timestamps, tracked apart from recentAgentEvents: that map is keyed by description, so
+  // repeating one replaces its entry and its size would undercount how many rows were kept.
+  private readonly recentAgentEventTimes = new Map<string, number[]>();
   private mapperState: TimelineMapperState = createTimelineMapperState();
 
   constructor(
@@ -161,18 +165,24 @@ export class TimelineService implements TimelineRecorder {
         recent.delete(description);
       }
     }
+    const emittedAt = (this.recentAgentEventTimes.get(workspaceId) ?? []).filter(
+      (seenAt) => now - seenAt < AGENT_EVENT_WINDOW_MS
+    );
 
     const duplicateAt = recent.get(input.description);
     if (
-      recent.size >= AGENT_EVENT_WINDOW_LIMIT ||
+      emittedAt.length >= AGENT_EVENT_WINDOW_LIMIT ||
       (duplicateAt != null && now - duplicateAt < AGENT_EVENT_DUPLICATE_WINDOW_MS)
     ) {
       this.recentAgentEvents.set(workspaceId, recent);
+      this.recentAgentEventTimes.set(workspaceId, emittedAt);
       return false;
     }
 
     recent.set(input.description, now);
+    emittedAt.push(now);
     this.recentAgentEvents.set(workspaceId, recent);
+    this.recentAgentEventTimes.set(workspaceId, emittedAt);
     this.record(workspaceId, {
       ts: now,
       kind: "agent.event",
@@ -455,13 +465,16 @@ export class TimelineService implements TimelineRecorder {
 
   private truncateExcerpt(value: string): string {
     const normalized = value.replace(/\s+/g, " ").trim();
-    return normalized.length <= 600 ? normalized : normalized.slice(0, 600);
+    return normalized.length <= TIMELINE_TEXT_MAX_LENGTH
+      ? normalized
+      : normalized.slice(0, TIMELINE_TEXT_MAX_LENGTH);
   }
 
   private clearWorkspaceCaches(workspaceId: string): void {
     this.nextSequences.delete(workspaceId);
     this.recentSourceKeys.delete(workspaceId);
     this.recentAgentEvents.delete(workspaceId);
+    this.recentAgentEventTimes.delete(workspaceId);
     this.mapperState = {
       openStreams: new Map(
         [...this.mapperState.openStreams].filter(([, stream]) => stream.workspaceId !== workspaceId)

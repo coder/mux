@@ -5113,16 +5113,16 @@ export function useWorkspaceStatsSnapshot(workspaceId: string): WorkspaceStatsSn
 
 export function useWorkspaceTimeline(workspaceId: string): WorkspaceTimelineSnapshot {
   const store = getStoreInstance();
+
+  // NOTE: subscribeTimeline() is refcounted; dropping the last listener closes the ORPC
+  // subscription and discards the loaded page. useSyncExternalStore resubscribes whenever this
+  // identity changes, so this useCallback is for correctness, not performance.
   const subscribe = useCallback(
     (listener: () => void) => store.subscribeTimeline(workspaceId, listener),
     [store, workspaceId]
   );
-  const getSnapshot = useCallback(
-    () => store.getWorkspaceTimeline(workspaceId),
-    [store, workspaceId]
-  );
 
-  return useSyncExternalStore(subscribe, getSnapshot);
+  return useSyncExternalStore(subscribe, () => store.getWorkspaceTimeline(workspaceId));
 }
 
 /**

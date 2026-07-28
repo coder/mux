@@ -68,16 +68,16 @@ export const TimelineStatusSchema = z.enum([
 ]);
 
 /**
- * Digests are previews rendered in a sidebar row, but some sources (a sub-agent's full report) are
- * unbounded. Bound them before they reach the append-only log, which is never rewritten.
+ * Digests and previews are rendered in a sidebar row, but some sources (a sub-agent's full report)
+ * are unbounded. Bound them before they reach the append-only log, which is never rewritten.
  */
-export const TIMELINE_DIGEST_MAX_LENGTH = 600;
+export const TIMELINE_TEXT_MAX_LENGTH = 600;
 
 export function truncateTimelineDigest(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length <= TIMELINE_DIGEST_MAX_LENGTH
+  return normalized.length <= TIMELINE_TEXT_MAX_LENGTH
     ? normalized
-    : `${normalized.slice(0, TIMELINE_DIGEST_MAX_LENGTH - 3)}...`;
+    : `${normalized.slice(0, TIMELINE_TEXT_MAX_LENGTH - 3)}...`;
 }
 
 const timelineEventDataShape = {
@@ -172,7 +172,7 @@ export const TimelinePreviewInputSchema = TimelineAnchorSchema;
 export const TimelinePreviewSchema = z
   .object({
     role: z.enum(["system", "user", "assistant"]),
-    textExcerpt: z.string().max(600),
+    textExcerpt: z.string().max(TIMELINE_TEXT_MAX_LENGTH),
   })
   .strict();
 

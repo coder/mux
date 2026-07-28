@@ -3,7 +3,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import {
-  TIMELINE_DIGEST_MAX_LENGTH,
+  TIMELINE_TEXT_MAX_LENGTH,
   type TimelineEvent,
   type TimelineEventDraft,
 } from "@/common/orpc/schemas/timeline";
@@ -256,7 +256,7 @@ describe("TimelineService", () => {
 
     const page = await service.list(WORKSPACE_ID, {});
     const digest = page.events[0].data?.digest ?? "";
-    expect(digest).toHaveLength(TIMELINE_DIGEST_MAX_LENGTH);
+    expect(digest).toHaveLength(TIMELINE_TEXT_MAX_LENGTH);
     expect(digest.endsWith("...")).toBe(true);
   });
 

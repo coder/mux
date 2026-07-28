@@ -286,7 +286,7 @@ describe("mapChatEventToTimeline", () => {
     expect(task.drafts).toHaveLength(1);
     expect(task.drafts[0]).toMatchObject({
       kind: "task.created",
-      anchor: { toolCallId: "tool-task", taskId: "task-1" },
+      anchor: { toolCallId: "tool-task", taskId: "task-1", childWorkspaceId: "task-1" },
     });
 
     const workflow = map({

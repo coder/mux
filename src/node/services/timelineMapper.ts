@@ -349,7 +349,13 @@ export function mapChatEventToTimeline(
             ts: event.timestamp,
             kind: "task.created",
             source: { system: "task", key: eventKey("task-created", event.taskId) },
-            anchor: { toolCallId: event.toolCallId, taskId: event.taskId },
+            // A task's id is its child workspace id, and the preview card offers "Open child
+            // workspace" only when the anchor names one.
+            anchor: {
+              toolCallId: event.toolCallId,
+              taskId: event.taskId,
+              childWorkspaceId: event.taskId,
+            },
             status: "started",
           },
         ],

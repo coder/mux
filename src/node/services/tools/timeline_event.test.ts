@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { getToolsForModel } from "@/common/utils/tools/tools";
@@ -88,6 +88,36 @@ describe("timeline_event tool", () => {
     expect(afterRebuild).toEqual({ success: true, recorded: false });
     expect(afterRebuiltInstance).toEqual({ success: true, recorded: false });
     expect((await timelineService.list(WORKSPACE_ID, {})).events).toHaveLength(10);
+  });
+
+  test("counts repeats toward the window limit, not just distinct descriptions", async () => {
+    const tool = createTimelineEventTool({
+      ...createTestToolConfig(tempDir, { workspaceId: WORKSPACE_ID }),
+      timelineService,
+    });
+    let now = Date.UTC(2026, 0, 1);
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    try {
+      // Nine distinct descriptions, then advance past the duplicate window so repeats are allowed.
+      // Counting distinct descriptions would leave room for unlimited repeats.
+      for (let index = 1; index <= 9; index++) {
+        await tool.execute!({ description: `Event ${index}` }, options(`event-${index}`));
+      }
+      now += 31_000;
+      const tenth: unknown = await tool.execute!({ description: "Event 1" }, options("repeat-1"));
+      const eleventh: unknown = await tool.execute!(
+        { description: "Event 2" },
+        options("repeat-2")
+      );
+      await timelineService.flush();
+
+      expect(tenth).toEqual({ success: true, recorded: true });
+      expect(eleventh).toEqual({ success: true, recorded: false });
+      expect((await timelineService.list(WORKSPACE_ID, {})).events).toHaveLength(10);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   test("is absent from getToolsForModel when the experiment is off", async () => {
