@@ -57,6 +57,12 @@ function anchorMessageId(messageId: string | undefined): { messageId?: string } 
   return messageId != null && messageId !== "" ? { messageId } : {};
 }
 
+// An empty message id cannot identify a turn, so it must not become a dedupe key: the service
+// suppresses repeats of a key, which would silently drop every later id-less failure.
+function messageEventKey(prefix: string, messageId: string): string | undefined {
+  return messageId === "" ? undefined : eventKey(prefix, messageId);
+}
+
 // Mux dispatches several user-role turns on the agent's behalf. They belong on the timeline, but as
 // synthetic turns, so the prompts filter stays a record of what the human actually asked for.
 const MACHINE_AUTHORED_TURN_TYPES = new Set([
@@ -213,7 +219,7 @@ export function mapChatEventToTimeline(
       const draft: TimelineEventDraft = {
         ts: event.metadata.timestamp ?? receivedAt,
         kind: "turn.completed",
-        source: { system: "chat", key: eventKey("stream-end", event.messageId) },
+        source: { system: "chat", key: messageEventKey("stream-end", event.messageId) },
         anchor: {
           ...(openStream != null ? { historySequence: openStream.historySequence } : {}),
           ...anchorMessageId(event.messageId),
@@ -234,7 +240,7 @@ export function mapChatEventToTimeline(
           {
             ts: receivedAt,
             kind: "turn.interrupted",
-            source: { system: "chat", key: eventKey("stream-abort", event.messageId) },
+            source: { system: "chat", key: messageEventKey("stream-abort", event.messageId) },
             anchor: {
               ...(openStream != null ? { historySequence: openStream.historySequence } : {}),
               ...anchorMessageId(event.messageId),
@@ -257,7 +263,7 @@ export function mapChatEventToTimeline(
           {
             ts: receivedAt,
             kind: "turn.failed",
-            source: { system: "chat", key: eventKey(event.type, event.messageId) },
+            source: { system: "chat", key: messageEventKey(event.type, event.messageId) },
             anchor: anchorMessageId(event.messageId),
             status: "failed",
             data: {
@@ -368,6 +374,11 @@ export function mapChatEventToTimeline(
       };
 
     case "goal-budget-limited":
+      // WorkspaceGoalService records every transition into budget_limited, including the ones child
+      // attribution causes. Mapping this event too would put a second row on the same transition.
+      if (event.causedByChild) {
+        return { drafts: [], state };
+      }
       return {
         drafts: [
           {

@@ -230,7 +230,6 @@ function TimelineEventRow(props: {
         <Icon className="h-3.5 w-3.5" />
       </span>
       <span className="min-w-0">
-        {/* Event descriptions are sentence-length, so let the title wrap rather than truncate. */}
         <span className="text-content-primary line-clamp-2 min-w-0 text-xs font-medium">
           {title}
         </span>

@@ -234,6 +234,32 @@ describe("mapChatEventToTimeline", () => {
     expect(failed.drafts).toHaveLength(1);
     expect(failed.drafts[0].anchor).toEqual({});
     expect(TimelineEventDraftSchema.safeParse(failed.drafts[0]).success).toBe(true);
+
+    expect(failed.drafts[0].source.key).toBeUndefined();
+    const second = map({
+      type: "stream-error",
+      workspaceId: "ws-1",
+      messageId: "",
+      error: "provider failed again",
+      errorType: "api",
+    });
+    expect(second.drafts[0].source.key).toBeUndefined();
+  });
+
+  test("leaves a child-caused budget limit to the goal service to avoid a duplicate row", () => {
+    const base = {
+      type: "goal-budget-limited" as const,
+      workspaceId: "ws-1",
+      goalId: "goal-1",
+      message: "Child workspace exceeded the parent's goal budget.",
+    };
+
+    expect(map({ ...base, causedByChild: true, childWorkspaceId: "child-1" }).drafts).toHaveLength(
+      0
+    );
+    expect(map({ ...base, causedByChild: false }).drafts).toMatchObject([
+      { kind: "goal.budget_limited" },
+    ]);
   });
 
   test("maps retry, task, workflow, and user turn events", () => {
