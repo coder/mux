@@ -54,6 +54,7 @@ function timelineSnapshot(events: TimelineEvent[]): WorkspaceTimelineSnapshot {
     initialized: true,
     loadingOlder: false,
     loadError: null,
+    loadErrorKind: null,
   };
 }
 
@@ -287,6 +288,41 @@ describe("TimelinePanel", () => {
       button.textContent?.startsWith("Load older")
     );
     expect(loadOlder).not.toBeUndefined();
+  });
+
+  test("offers a reconnect when the subscription dies with rows already on screen", () => {
+    const view = renderTimeline({
+      events: [makeEvent("kept", "turn.completed", 1)],
+      snapshot: { loadError: "Subscription closed", loadErrorKind: "subscription" },
+    });
+
+    expect(view.container.querySelectorAll("[data-timeline-event-id]")).toHaveLength(1);
+    const reconnect = Array.from(view.container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Reconnect"
+    );
+    if (!reconnect) throw new Error("Expected a reconnect control");
+    fireEvent.click(reconnect);
+
+    expect(view.workspaceStore.retryTimeline).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
+
+  test("does not offer a reconnect for a failed older page", () => {
+    const view = renderTimeline({
+      events: [makeEvent("kept", "turn.completed", 1)],
+      snapshot: {
+        loadError: "Failed to load older events",
+        loadErrorKind: "pagination",
+        hasOlder: true,
+        nextCursor: 1,
+      },
+    });
+
+    expect(view.container.textContent).toContain("Failed to load older events");
+    expect(
+      Array.from(view.container.querySelectorAll("button")).some(
+        (button) => button.textContent === "Reconnect"
+      )
+    ).toBe(false);
   });
 
   test("reports a failed load instead of an empty timeline, and retries on request", () => {

@@ -131,30 +131,31 @@ export class TimelineService implements TimelineRecorder {
           };
 
     this.enqueueWrite(workspaceId, async () => {
-      const seq = await this.takeNextSequence(workspaceId);
-      const event = TimelineEventSchema.parse({
-        ...bounded,
-        v: 1,
-        seq,
-        id: randomUUID(),
-        ts: draft.ts ?? Date.now(),
-      });
-      const filePath = this.getFilePath(workspaceId);
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      // An interrupted write can leave the last record unterminated. Appending straight onto it
-      // would merge the two into one unparseable line, losing this event as well as the fragment.
-      const separator = (await this.hasUnterminatedTail(filePath)) ? "\n" : "";
+      // The key is registered before this runs so concurrent records dedupe against each other.
+      // Any failure here means nothing was persisted, so the key must not outlive the attempt or it
+      // would suppress a later retry of the same event for the rest of the process.
       try {
+        const seq = await this.takeNextSequence(workspaceId);
+        const event = TimelineEventSchema.parse({
+          ...bounded,
+          v: 1,
+          seq,
+          id: randomUUID(),
+          ts: draft.ts ?? Date.now(),
+        });
+        const filePath = this.getFilePath(workspaceId);
+        await fs.mkdir(path.dirname(filePath), { recursive: true });
+        // An interrupted write can leave the last record unterminated. Appending straight onto it
+        // would merge the two into one unparseable line, losing this event as well as the fragment.
+        const separator = (await this.hasUnterminatedTail(filePath)) ? "\n" : "";
         await fs.appendFile(filePath, `${separator}${JSON.stringify(event)}\n`, "utf-8");
+        this.events.emit("appended", { workspaceId, events: [event] });
       } catch (error) {
-        // The key is registered before the append so concurrent records dedupe against each other.
-        // Once the write fails, keeping it would suppress a later retry of the same event forever.
         if (sourceKey != null) {
           this.forgetSourceKey(workspaceId, sourceKey);
         }
         throw error;
       }
-      this.events.emit("appended", { workspaceId, events: [event] });
     });
   }
 

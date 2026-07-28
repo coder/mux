@@ -247,6 +247,24 @@ describe("TimelineService", () => {
     expect(page.events.map((event) => event.source.key)).toEqual(["retryable"]);
   });
 
+  test("releases a source key when a write fails before the append itself", async () => {
+    // mkdir runs before the append, so this only passes if the whole queued write releases the key.
+    const mkdir = spyOn(fs, "mkdir").mockImplementationOnce(() => {
+      throw new Error("permission denied");
+    });
+
+    service.record(WORKSPACE_ID, draft("retryable-early"));
+    await service.flush();
+    expect(mkdir).toHaveBeenCalledTimes(1);
+    mkdir.mockRestore();
+
+    service.record(WORKSPACE_ID, draft("retryable-early"));
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.source.key)).toEqual(["retryable-early"]);
+  });
+
   test("skips a row whose timestamp Date cannot represent, keeping the rest of the feed", async () => {
     service.record(WORKSPACE_ID, draft("valid"));
     await service.flush();

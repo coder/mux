@@ -152,6 +152,7 @@ const populatedTimeline = {
   initialized: true,
   loadingOlder: false,
   loadError: null,
+  loadErrorKind: null,
 };
 
 export const Default: Story = {
@@ -195,6 +196,7 @@ export const Empty: Story = {
       initialized: true,
       loadingOlder: false,
       loadError: null,
+      loadErrorKind: null,
     },
     workspaceStore: STORY_STORE,
   },
@@ -210,6 +212,7 @@ export const LoadFailed: Story = {
       initialized: true,
       loadingOlder: false,
       loadError: "Failed to load timeline",
+      loadErrorKind: "subscription",
     },
     workspaceStore: STORY_STORE,
   },

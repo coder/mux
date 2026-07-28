@@ -686,6 +686,17 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
               {timeline.loadError ? (
                 <div className="text-danger max-w-full truncate text-xs">{timeline.loadError}</div>
               ) : null}
+              {/* A dead subscription stops delivering new events, so it needs an explicit retry even
+                  though rows are already on screen. A failed page recovers via "Load older". */}
+              {timeline.loadErrorKind === "subscription" ? (
+                <button
+                  type="button"
+                  onClick={() => workspaceStore.retryTimeline(props.workspaceId)}
+                  className="border-border bg-surface-secondary text-content-secondary hover:bg-hover focus-visible:ring-accent rounded-md border px-3 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none"
+                >
+                  Reconnect
+                </button>
+              ) : null}
               {timeline.hasOlder ? (
                 <button
                   type="button"

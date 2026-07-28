@@ -113,6 +113,8 @@ export interface WorkspaceTimelineSnapshot {
   initialized: boolean;
   loadingOlder: boolean;
   loadError: string | null;
+  // A dead subscription needs a retry to recover; a failed page can just be requested again.
+  loadErrorKind: "subscription" | "pagination" | null;
 }
 
 const EMPTY_TIMELINE_SNAPSHOT: WorkspaceTimelineSnapshot = {
@@ -122,6 +124,7 @@ const EMPTY_TIMELINE_SNAPSHOT: WorkspaceTimelineSnapshot = {
   initialized: false,
   loadingOlder: false,
   loadError: null,
+  loadErrorKind: null,
 };
 
 export type AutoRetryStatus = Extract<
@@ -1729,6 +1732,7 @@ export class WorkspaceStore {
                 initialized: true,
                 loadingOlder: false,
                 loadError: null,
+                loadErrorKind: null,
               });
               this.timelineStore.bump(workspaceId);
               return;
@@ -1748,6 +1752,7 @@ export class WorkspaceStore {
           ...(this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE_SNAPSHOT),
           initialized: true,
           loadError: error instanceof Error ? error.message : "Failed to load timeline",
+          loadErrorKind: "subscription",
         });
         this.timelineStore.bump(workspaceId);
       }
@@ -2865,6 +2870,7 @@ export class WorkspaceStore {
       ...current,
       loadingOlder: true,
       loadError: null,
+      loadErrorKind: null,
     });
     this.timelineStore.bump(workspaceId);
 
@@ -2891,6 +2897,7 @@ export class WorkspaceStore {
         ...latest,
         loadingOlder: false,
         loadError: error instanceof Error ? error.message : "Failed to load older events",
+        loadErrorKind: "pagination",
       });
       this.timelineStore.bump(workspaceId);
     }
