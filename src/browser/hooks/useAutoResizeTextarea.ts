@@ -38,11 +38,16 @@ function readInlineHeightPx(el: HTMLTextAreaElement): number | null {
 /**
  * Auto-resize a textarea to fit its content.
  * Uses useLayoutEffect to measure and set height synchronously before paint.
+ *
+ * `sizingKey` is any value whose change can move the element's CSS height floor (the composer
+ * lowers its `min-height` on phone viewports). Without it the cached inline height pins the old
+ * floor until the draft itself changes.
  */
 export function useAutoResizeTextarea(
   ref: RefObject<HTMLTextAreaElement | null>,
   value: string,
-  maxHeightVh = 30
+  maxHeightVh = 30,
+  sizingKey?: string
 ): void {
   const previousValueRef = useRef<string | null>(null);
   const previousMaxRef = useRef<number | null>(null);
@@ -110,5 +115,5 @@ export function useAutoResizeTextarea(
 
     previousValueRef.current = value;
     previousMaxRef.current = max;
-  }, [ref, value, maxHeightVh]);
+  }, [ref, value, maxHeightVh, sizingKey]);
 }

@@ -155,6 +155,22 @@ describe("useAutoResizeTextarea", () => {
     expect(textarea.assignments).toEqual(["500px"]);
   });
 
+  it("remeasures when the sizing key changes but the draft does not", () => {
+    const textarea = createFakeTextarea(88);
+    const { rerender } = renderHook(
+      ({ value, sizingKey }) => useAutoResizeTextarea(textarea.ref, value, 50, sizingKey),
+      { initialProps: { value: "line one", sizingKey: "min-h-22" } }
+    );
+    expect(textarea.assignments).toEqual(["auto", "88px"]);
+    textarea.assignments.length = 0;
+
+    // Crossing into the phone layout lowers the CSS floor the draft was measured against.
+    textarea.setScrollHeight(36);
+    rerender({ value: "line one", sizingKey: "min-h-9" });
+
+    expect(textarea.assignments).toEqual(["auto", "36px"]);
+  });
+
   it("shrinks when a longer replacement does not preserve the previous text", () => {
     const textarea = createFakeTextarea(84);
     const { rerender } = renderHook(({ value }) => useAutoResizeTextarea(textarea.ref, value, 50), {

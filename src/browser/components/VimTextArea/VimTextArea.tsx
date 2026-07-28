@@ -79,7 +79,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const lastEditRef = useRef<vim.LastEdit | null>(null);
     const cursorRef = useRef<number>(0);
 
-    useAutoResizeTextarea(textareaRef, value, 50);
+    useAutoResizeTextarea(textareaRef, value, 50, rest.className);
 
     const suppressSet = useMemo(() => new Set(suppressKeys ?? []), [suppressKeys]);
 
