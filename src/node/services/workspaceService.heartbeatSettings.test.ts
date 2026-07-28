@@ -123,7 +123,11 @@ describe("WorkspaceService heartbeat settings", () => {
 
   test("records a timeline row for user-driven heartbeat changes, but not for no-ops", async () => {
     const record = mock<(workspaceId: string, draft: { kind: string }) => void>(() => undefined);
-    service.setTimelineRecorder({ record, closeWorkspace: () => Promise.resolve() });
+    service.setTimelineRecorder({
+      record,
+      closeWorkspace: () => Promise.resolve(),
+      reopenWorkspace: () => undefined,
+    });
 
     await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
       enabled: true,

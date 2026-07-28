@@ -228,10 +228,7 @@ function findTranscriptMessageElement(
   );
 }
 
-// Both are declared in globals.css; the animation name is matched against animation events, so the
-// two must stay in sync.
 const TIMELINE_REVEAL_HIGHLIGHT_CLASS = "timeline-reveal-highlight";
-const TIMELINE_REVEAL_ANIMATION = "timeline-reveal-highlight-fade";
 
 function findTranscriptRevealElement(
   scrollContainer: HTMLElement,
@@ -614,7 +611,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     CustomEventPayloads[typeof CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR] | null
   >(null);
   const highlightedTimelineElementRef = useRef<HTMLElement | null>(null);
-  const timelineHighlightCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const handleTimelineReveal = (event: Event) => {
@@ -682,33 +678,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       return;
     }
 
-    timelineHighlightCleanupRef.current?.();
+    // The highlight marks where the reveal landed and stays until the next reveal replaces it or the
+    // pane unmounts. Dismissing it on a timer would coordinate DOM state outside React and can
+    // overrun whenever a backgrounded tab throttles timers.
+    highlightedTimelineElementRef.current?.classList.remove(TIMELINE_REVEAL_HIGHLIGHT_CLASS);
     highlightedTimelineElementRef.current = targetElement;
     targetElement.classList.add(TIMELINE_REVEAL_HIGHLIGHT_CLASS);
     targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
-
-    // The class carries its own fade, so the highlight is dropped when that animation reports it is
-    // over. A timer would keep the highlight applied past its interval whenever the tab is
-    // backgrounded and throttled. Unrelated animations on the row or its children also end here, so
-    // both the target and the animation name are checked.
-    const cleanup = () => {
-      targetElement.removeEventListener("animationend", onAnimationDone);
-      targetElement.removeEventListener("animationcancel", onAnimationDone);
-      targetElement.classList.remove(TIMELINE_REVEAL_HIGHLIGHT_CLASS);
-      if (highlightedTimelineElementRef.current === targetElement) {
-        highlightedTimelineElementRef.current = null;
-      }
-      timelineHighlightCleanupRef.current = null;
-    };
-    function onAnimationDone(event: AnimationEvent) {
-      if (event.target !== targetElement || event.animationName !== TIMELINE_REVEAL_ANIMATION) {
-        return;
-      }
-      cleanup();
-    }
-    targetElement.addEventListener("animationend", onAnimationDone);
-    targetElement.addEventListener("animationcancel", onAnimationDone);
-    timelineHighlightCleanupRef.current = cleanup;
     setPendingTimelineReveal(null);
   }, [
     bashOutputGroupInfos,
@@ -725,7 +701,8 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   useEffect(() => {
     return () => {
-      timelineHighlightCleanupRef.current?.();
+      highlightedTimelineElementRef.current?.classList.remove(TIMELINE_REVEAL_HIGHLIGHT_CLASS);
+      highlightedTimelineElementRef.current = null;
     };
   }, [workspaceId]);
 

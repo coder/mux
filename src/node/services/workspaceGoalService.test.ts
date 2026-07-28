@@ -3467,6 +3467,7 @@ describe("WorkspaceGoalService", () => {
         record: (_workspaceId, draft) =>
           recorded.push({ kind: draft.kind, digest: draft.data?.digest }),
         closeWorkspace: () => Promise.resolve(),
+        reopenWorkspace: () => undefined,
       });
 
       await setGoalOk(service, { workspaceId, objective: "First objective" });

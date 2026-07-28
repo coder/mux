@@ -4335,6 +4335,8 @@ export class WorkspaceService extends EventEmitter {
       return Ok(undefined);
     }
     this.removingWorkspaces.add(workspaceId);
+    let timelineClosed = false;
+    let removedFromConfig = false;
 
     // If this workspace is mid-init, cancel the fire-and-forget init work (postCreateSetup,
     // sync/checkout, .mux/init hook, etc.) so removal doesn't leave orphaned background work.
@@ -4809,6 +4811,7 @@ export class WorkspaceService extends EventEmitter {
       this.disposeSession(workspaceId);
       try {
         await this.timelineRecorder.closeWorkspace(workspaceId);
+        timelineClosed = true;
       } catch (error: unknown) {
         log.warn("Failed to close the timeline before workspace removal", {
           workspaceId,
@@ -4867,6 +4870,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Remove from config
       await this.config.removeWorkspace(workspaceId);
+      removedFromConfig = true;
       this.autoTitlingWorkspaces.delete(workspaceId);
 
       this.emit("metadata", {
@@ -4877,6 +4881,11 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
+      // An abort before the workspace left the config leaves it usable, so undo the timeline close:
+      // otherwise every later event for it would be dropped for the rest of the process.
+      if (timelineClosed && !removedFromConfig) {
+        this.timelineRecorder.reopenWorkspace(workspaceId);
+      }
       const message = getErrorMessage(error);
       return Err(`Failed to remove workspace: ${message}`);
     } finally {

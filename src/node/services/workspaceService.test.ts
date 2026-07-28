@@ -7934,6 +7934,24 @@ describe("WorkspaceService remove desktop session cleanup", () => {
     expect(close).toHaveBeenCalledWith(workspaceId);
   });
 
+  test("remove() reopens the timeline when removal aborts with the workspace still configured", async () => {
+    await fsPromises.mkdir(path.join(tempRoot, "sessions", workspaceId), { recursive: true });
+    const reopened: string[] = [];
+    workspaceService.setTimelineRecorder({
+      record: () => undefined,
+      closeWorkspace: () => Promise.resolve(),
+      reopenWorkspace: (id) => reopened.push(id),
+    });
+    removeWorkspaceMock.mockImplementation(() => {
+      throw new Error("config write failed");
+    });
+
+    const result = await workspaceService.remove(workspaceId);
+
+    expect(result.success).toBe(false);
+    expect(reopened).toEqual([workspaceId]);
+  });
+
   test("remove() flushes the timeline before deleting the session directory", async () => {
     const sessionDir = path.join(tempRoot, "sessions", workspaceId);
     await fsPromises.mkdir(sessionDir, { recursive: true });
@@ -7946,6 +7964,7 @@ describe("WorkspaceService remove desktop session cleanup", () => {
         order.push(existsSync(sessionDir) ? "closed-before-delete" : "closed-after-delete");
         return Promise.resolve();
       },
+      reopenWorkspace: () => undefined,
     });
 
     const result = await workspaceService.remove(workspaceId);

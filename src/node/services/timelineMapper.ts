@@ -279,36 +279,12 @@ export function mapChatEventToTimeline(
         ),
       };
 
+    // Automatic compaction persists a `compaction-request` message and, on completion, a boundary
+    // summary message. Both are mapped above, with an anchor and a compaction epoch the lifecycle
+    // events cannot supply, so mapping these too would put a second row on the same transition.
     case "auto-compaction-triggered":
-      return {
-        drafts: [
-          {
-            ts: receivedAt,
-            kind: "compaction.triggered",
-            source: {
-              system: "chat",
-              key: eventKey("compaction-triggered", event.reason, receivedAt),
-            },
-            status: "started",
-            data: { reason: event.reason, usagePercent: event.usagePercent },
-          },
-        ],
-        state,
-      };
-
     case "auto-compaction-completed":
-      return {
-        drafts: [
-          {
-            ts: receivedAt,
-            kind: "compaction.completed",
-            source: { system: "chat", key: eventKey("compaction-completed", receivedAt) },
-            status: "completed",
-            data: { newUsagePercent: event.newUsagePercent },
-          },
-        ],
-        state,
-      };
+      return { drafts: [], state };
 
     case "auto-retry-scheduled":
       return {

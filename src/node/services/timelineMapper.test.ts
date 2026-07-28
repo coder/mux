@@ -191,6 +191,47 @@ describe("mapChatEventToTimeline", () => {
     expect(TimelineEventDraftSchema.safeParse(first.drafts[0]).success).toBe(true);
   });
 
+  test("records one row per automatic compaction transition", () => {
+    // Auto-compaction persists the request/boundary messages AND emits its own lifecycle events.
+    const request = map({
+      type: "message",
+      id: "auto-compact-request",
+      role: "user",
+      parts: [{ type: "text", text: "Summarize this conversation for a new Assistant" }],
+      metadata: {
+        historySequence: 4,
+        timestamp: 100,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      },
+    });
+    const triggered = map(
+      { type: "auto-compaction-triggered", reason: "on-send", usagePercent: 92 },
+      request.state
+    );
+    const boundary = map({
+      type: "message",
+      id: "auto-compact-boundary",
+      role: "assistant",
+      parts: [{ type: "text", text: "summary" }],
+      metadata: {
+        historySequence: 5,
+        timestamp: 100,
+        compacted: "idle",
+        compactionBoundary: true,
+        compactionEpoch: 3,
+      },
+    });
+    const completed = map(
+      { type: "auto-compaction-completed", newUsagePercent: 0 },
+      boundary.state
+    );
+
+    expect(request.drafts.map((draft) => draft.kind)).toEqual(["compaction.triggered"]);
+    expect(boundary.drafts.map((draft) => draft.kind)).toEqual(["compaction.completed"]);
+    expect(triggered.drafts).toEqual([]);
+    expect(completed.drafts).toEqual([]);
+  });
+
   test("classifies a /compact request as compaction rather than a user prompt", () => {
     const compactRequest = map({
       type: "message",

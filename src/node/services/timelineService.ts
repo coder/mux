@@ -214,6 +214,10 @@ export class TimelineService implements TimelineRecorder {
     await this.flush(workspaceId);
   }
 
+  reopenWorkspace(workspaceId: string): void {
+    this.closedWorkspaces.delete(workspaceId);
+  }
+
   async flush(workspaceId?: string): Promise<void> {
     if (workspaceId != null) {
       await (this.writeQueues.get(workspaceId) ?? Promise.resolve());

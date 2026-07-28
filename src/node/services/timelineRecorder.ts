@@ -6,9 +6,13 @@ export interface TimelineRecorder {
   // the queue: an append recreates the directory, so a straggler would resurrect a deleted
   // workspace even after a successful flush.
   closeWorkspace(workspaceId: string): Promise<void>;
+  // Call when a removal that already closed the workspace aborts: the workspace stays usable, so
+  // leaving it closed would silently discard its events for the rest of the process.
+  reopenWorkspace(workspaceId: string): void;
 }
 
 export const NOOP_TIMELINE_RECORDER: TimelineRecorder = {
   record: () => undefined,
   closeWorkspace: () => Promise.resolve(),
+  reopenWorkspace: () => undefined,
 };
