@@ -59,6 +59,7 @@ function timelineSnapshot(events: TimelineEvent[]): WorkspaceTimelineSnapshot {
 function renderTimeline(params: {
   events: TimelineEvent[];
   loadOlderHistory?: jest.Mock<Promise<"loaded">, [string]>;
+  snapshot?: Partial<WorkspaceTimelineSnapshot>;
 }) {
   const loadOlderHistory = params.loadOlderHistory ?? jest.fn().mockResolvedValue("loaded");
   const workspaceState = {
@@ -70,9 +71,13 @@ function renderTimeline(params: {
     getWorkspaceState: jest.fn(() => workspaceState),
     loadOlderHistory,
     loadOlderTimeline: jest.fn().mockResolvedValue(undefined),
+    retryTimeline: jest.fn(),
   };
 
-  mockUseWorkspaceTimeline.mockReturnValue(timelineSnapshot(params.events));
+  mockUseWorkspaceTimeline.mockReturnValue({
+    ...timelineSnapshot(params.events),
+    ...params.snapshot,
+  });
   mockUseWorkspaceStoreRaw.mockReturnValue(workspaceStore as never);
 
   const api = {
@@ -99,7 +104,7 @@ function renderTimeline(params: {
     })
   );
 
-  return { ...view, loadOlderHistory };
+  return { ...view, loadOlderHistory, workspaceStore };
 }
 
 describe("TimelinePanel", () => {
@@ -233,5 +238,42 @@ describe("TimelinePanel", () => {
     expect(loadOlderHistory).toHaveBeenCalledTimes(10);
     expect(loadOlderHistory).toHaveBeenCalledWith(WORKSPACE_ID);
     expect(mockShowAllMessages).toHaveBeenCalledWith(WORKSPACE_ID);
+  });
+
+  test("keeps pagination reachable when the active filter has no matches", () => {
+    const view = renderTimeline({
+      events: [makeEvent("task", "task.created", 1, { source: { system: "task" } })],
+      snapshot: { hasOlder: true, nextCursor: 1 },
+    });
+
+    const filterButton = Array.from(view.container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Prompts"
+    );
+    if (!filterButton) throw new Error("Expected the prompts filter control");
+    fireEvent.click(filterButton);
+
+    expect(view.container.querySelectorAll("[data-timeline-event-id]")).toHaveLength(0);
+    const loadOlder = Array.from(view.container.querySelectorAll("button")).find((button) =>
+      button.textContent?.startsWith("Load older")
+    );
+    expect(loadOlder).not.toBeUndefined();
+  });
+
+  test("reports a failed load instead of an empty timeline, and retries on request", () => {
+    const view = renderTimeline({
+      events: [],
+      snapshot: { loadError: "Failed to load timeline" },
+    });
+
+    expect(view.container.textContent).toContain("Failed to load timeline");
+    expect(view.container.textContent).not.toContain("No timeline events yet");
+
+    const retry = Array.from(view.container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Retry"
+    );
+    if (!retry) throw new Error("Expected a retry control");
+    fireEvent.click(retry);
+
+    expect(view.workspaceStore.retryTimeline).toHaveBeenCalledWith(WORKSPACE_ID);
   });
 });

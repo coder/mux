@@ -109,6 +109,7 @@ const STORY_STORE: TimelineWorkspaceStore = {
   getWorkspaceState: () => ({ messages: [], muxMessages: [], hasOlderHistory: false }),
   loadOlderHistory: () => Promise.resolve("exhausted"),
   loadOlderTimeline: () => Promise.resolve(),
+  retryTimeline: () => undefined,
 };
 
 const STORY_API = createMockORPCClient();
@@ -194,6 +195,21 @@ export const Empty: Story = {
       initialized: true,
       loadingOlder: false,
       loadError: null,
+    },
+    workspaceStore: STORY_STORE,
+  },
+};
+
+export const LoadFailed: Story = {
+  args: {
+    workspaceId: `${WORKSPACE_ID}-error`,
+    timeline: {
+      events: [],
+      nextCursor: null,
+      hasOlder: false,
+      initialized: true,
+      loadingOlder: false,
+      loadError: "Failed to load timeline",
     },
     workspaceStore: STORY_STORE,
   },

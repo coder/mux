@@ -2843,6 +2843,16 @@ export class WorkspaceStore {
     );
   }
 
+  retryTimeline(workspaceId: string): void {
+    // Tear the failed subscription down first: subscribeToTimeline no-ops while an unsubscriber for
+    // this workspace is still registered.
+    this.timelineUnsubscribers.get(workspaceId)?.();
+    this.timelineUnsubscribers.delete(workspaceId);
+    this.workspaceTimelines.set(workspaceId, { ...EMPTY_TIMELINE_SNAPSHOT });
+    this.timelineStore.bump(workspaceId);
+    this.subscribeToTimeline(workspaceId);
+  }
+
   async loadOlderTimeline(workspaceId: string): Promise<void> {
     const client = this.client;
     const current = this.workspaceTimelines.get(workspaceId);

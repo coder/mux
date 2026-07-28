@@ -44,6 +44,7 @@ export interface TimelineWorkspaceStore {
   ) => Pick<WorkspaceState, "messages" | "muxMessages" | "hasOlderHistory">;
   loadOlderHistory: (workspaceId: string) => Promise<HistoryLoadResult>;
   loadOlderTimeline: (workspaceId: string) => Promise<void>;
+  retryTimeline: (workspaceId: string) => void;
 }
 
 type TimelineFilter = "all" | TimelineCategory;
@@ -608,18 +609,36 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
             Loading timeline…
           </div>
         ) : timeline.events.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <div className="text-content-primary text-sm font-medium">No timeline events yet</div>
-            <div className="text-muted mt-1 text-xs">
-              Prompts, agent events, goals, heartbeats, sub-agents, and workflows land here.
+          timeline.loadError ? (
+            // A failed subscription also lands here with no events, so it must not be reported as an
+            // empty timeline: without this the panel stays stuck until it is unmounted and reopened.
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
+              <div className="text-content-primary text-sm font-medium">Timeline unavailable</div>
+              <div className="text-danger max-w-full text-xs break-words">{timeline.loadError}</div>
+              <button
+                type="button"
+                onClick={() => workspaceStore.retryTimeline(props.workspaceId)}
+                className="border-border bg-surface-secondary text-content-secondary hover:bg-hover focus-visible:ring-accent rounded-md border px-3 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none"
+              >
+                Retry
+              </button>
             </div>
-          </div>
-        ) : filteredEvents.length === 0 ? (
-          <div className="text-muted flex h-full items-center justify-center px-6 text-center text-sm">
-            No events match this filter.
-          </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+              <div className="text-content-primary text-sm font-medium">No timeline events yet</div>
+              <div className="text-muted mt-1 text-xs">
+                Prompts, agent events, goals, heartbeats, sub-agents, and workflows land here.
+              </div>
+            </div>
+          )
         ) : (
           <div className="flex min-w-0 flex-col gap-4">
+            {filteredEvents.length === 0 ? (
+              // Older pages may still hold matches, so this keeps the pagination footer reachable.
+              <div className="text-muted px-6 py-6 text-center text-sm">
+                No events match this filter.
+              </div>
+            ) : null}
             {dayGroups.map((group) => (
               <section key={group.key} className="min-w-0">
                 <h2 className="text-muted mb-2 text-[10px] font-semibold tracking-wide uppercase">
