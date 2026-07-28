@@ -7,10 +7,14 @@ export const LEFT_SIDEBAR_COLLAPSED_WIDTH_PX = 20;
 // floating reopen affordance so the header content doesn't sit underneath it.
 export const WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX = 60;
 export const CREATION_COLUMN_MAX_WIDTH_CLASS = "max-w-[67rem]";
-// Keep composer controls aligned without relying on individual component defaults. The pills that
-// wrap buttons rather than being one need touch-target-container so they match the mobile touch
-// height their children get; see the mobile block in globals.css.
-export const COMPOSER_CONTROL_HEIGHT_CLASS = "touch-target-container h-6";
+// Minimum height globals.css gives touch targets on coarse-pointer viewports. Shared so tests can
+// reproduce that environment, which Storybook and Pixel cannot: neither emulates `pointer: coarse`.
+export const MOBILE_TOUCH_TARGET_PX = 44;
+
+// Keep composer controls aligned without relying on individual component defaults. This is a floor,
+// not a fixed height: mobile raises touch targets to MOBILE_TOUCH_TARGET_PX, and a pill that caps
+// its height would clip the controls inside it instead of growing with them.
+export const COMPOSER_CONTROL_HEIGHT_CLASS = "min-h-6";
 
 // The composer control row sheds detail in container-query stages as it narrows, widest threshold
 // first. Keeping the ladder here rather than inline is what stops two controls in the row from

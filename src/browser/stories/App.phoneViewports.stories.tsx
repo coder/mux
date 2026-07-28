@@ -12,8 +12,9 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { MOBILE_TOUCH_TARGET_PX } from "@/constants/layout";
 
-import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { appMeta, AppWithMocks, PIXEL_DISABLED, type AppStory } from "./meta.js";
 import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import { STABLE_TIMESTAMP, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { setupSimpleChatStory } from "./helpers/chatSetup";
@@ -203,6 +204,78 @@ export const IPhone17ProMax: AppStory = {
   },
   play: async ({ canvasElement }) => {
     await stabilizePhoneViewportStory(canvasElement);
+  },
+};
+
+/**
+ * Stands in for the `pointer: coarse` coverage gap noted above. Neither Pixel nor the Storybook
+ * test-runner emulates touch, so this applies the touch-target floor that globals.css would apply
+ * and asserts the rows that hold those controls grow with them instead of clipping them.
+ */
+export const IPhone17ProMaxTouchTargetRows: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-touch-target-rows",
+          workspaceName: "mobile-touch",
+          projectName: "mux",
+          messages: [...MESSAGES],
+        })
+      }
+    />
+  ),
+  decorators: [IPhone17ProMaxDecorator],
+  parameters: {
+    ...appMeta.parameters,
+    pixel: PIXEL_DISABLED,
+  },
+  play: async ({ canvasElement }) => {
+    await stabilizePhoneViewportStory(canvasElement);
+
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const footerRow = storyRoot.querySelector<HTMLElement>(
+      '[data-testid="workspace-footer-bar"] > div'
+    );
+    if (!footerRow) throw new Error("Footer row not rendered");
+    const modelGroup = storyRoot.querySelector<HTMLElement>(
+      '[data-component="ModelSelectorGroup"]'
+    );
+    if (!modelGroup) throw new Error("Composer model group not rendered");
+
+    const rows = [
+      { label: "footer info row", el: footerRow },
+      { label: "composer model pill", el: modelGroup },
+    ];
+    for (const row of rows) {
+      if (row.el.querySelectorAll("button, a").length === 0) {
+        throw new Error(`${row.label} has no touch targets to size against`);
+      }
+    }
+
+    const touchFloor = document.createElement("style");
+    touchFloor.textContent = `[data-testid="workspace-footer-bar"] button, [data-testid="workspace-footer-bar"] a, [data-component="ModelSelectorGroup"] button { min-height: ${MOBILE_TOUCH_TARGET_PX}px; }`;
+    document.head.append(touchFloor);
+
+    try {
+      await waitFor(() => {
+        for (const row of rows) {
+          const height = row.el.getBoundingClientRect().height;
+          if (height < MOBILE_TOUCH_TARGET_PX) {
+            throw new Error(
+              `${row.label} caps its height at ${Math.round(height)}px, clipping ${MOBILE_TOUCH_TARGET_PX}px touch targets`
+            );
+          }
+          if (row.el.scrollHeight > row.el.clientHeight) {
+            throw new Error(
+              `${row.label} clips ${row.el.scrollHeight - row.el.clientHeight}px of its controls`
+            );
+          }
+        }
+      });
+    } finally {
+      touchFloor.remove();
+    }
   },
 };
 

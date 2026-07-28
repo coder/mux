@@ -1154,15 +1154,9 @@ body,
   button,
   a,
   [role="button"] {
+    /* Keep in sync with MOBILE_TOUCH_TARGET_PX, which tests use to reproduce this rule. */
     min-height: 44px;
     min-width: 44px;
-  }
-
-  /* Opt-in for containers of the buttons above: the rule only lifts the buttons themselves, so a
-     fixed-height wrapper keeps its desktop height while its children grow to 44px and overflow it.
-     Seen on the composer's model + thinking pill and the footer's scrolling info row. */
-  .touch-target-container {
-    min-height: 44px;
   }
 
   /* Keep workspace header visible when keyboard opens - fixed positioning
