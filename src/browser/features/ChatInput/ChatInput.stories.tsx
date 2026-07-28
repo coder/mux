@@ -81,9 +81,10 @@ export const FocusedComposer: AppStory = {
 
 /**
  * The composer control row collapses on container width, not viewport width, so a fixed-width
- * wrapper reproduces every stage: the play resizes the wrapper and asserts each one, including the
- * 380-420px band where the PRO chip is back but the agent label is not. Guarding on the measured
- * row width keeps the assertions honest if the surrounding layout ever changes.
+ * wrapper reproduces every stage: the play resizes the wrapper and asserts each one. Guarding on the
+ * measured row width keeps the assertions honest if the surrounding layout ever changes, and each
+ * stage also asserts the row does not overflow, since a threshold set too low trades a hidden label
+ * for clipped controls.
  */
 export const NarrowControlRowCollapse: AppStory = {
   render: () => (
@@ -151,7 +152,17 @@ export const NarrowControlRowCollapse: AppStory = {
       });
     }
 
-    await resizeRowInto(400, 320, 420);
+    const assertNoOverflow = (stage: string) => {
+      const row = storyRoot.querySelector<HTMLElement>('[data-component="ComposerControlRow"]');
+      if (!row) throw new Error("Composer control row not rendered");
+      if (row.scrollWidth > row.clientWidth) {
+        throw new Error(
+          `Row overflows by ${row.scrollWidth - row.clientWidth}px at the ${stage} stage`
+        );
+      }
+    };
+
+    await resizeRowInto(400, 300, 341);
     await waitFor(() => {
       if (agentTrigger.innerText.trim() !== "") {
         throw new Error(`Agent pill should be icon-only, showing "${agentTrigger.innerText}"`);
@@ -162,43 +173,60 @@ export const NarrowControlRowCollapse: AppStory = {
         );
       }
       if (meterVisible()) throw new Error("Context meter should be hidden on an icon-only row");
-      if (proVisible()) throw new Error("PRO chip should be hidden on an icon-only row");
+      if (proVisible()) throw new Error("PRO chip should be hidden on the tightest row");
+      assertNoOverflow("tightest");
     });
 
-    await resizeRowInto(470, 385, 415);
+    await resizeRowInto(425, 344, 359);
     await waitFor(() => {
       if (agentTrigger.innerText.trim() !== "") {
         throw new Error(
-          `Agent pill should still be icon-only below 420px, showing "${agentTrigger.innerText}"`
+          `Agent pill should still be icon-only at or below 360px, showing "${agentTrigger.innerText}"`
         );
       }
-      if (!proVisible()) {
-        throw new Error("PRO chip should return once the row clears 380px");
-      }
+      if (!proVisible()) throw new Error("PRO chip should return once the row clears 340px");
+      assertNoOverflow("pro-returns");
     });
 
-    await resizeRowInto(560, 430, 510);
+    await resizeRowInto(490, 365, 495);
     await waitFor(() => {
       if (agentTrigger.innerText.trim() === "") {
-        throw new Error("Agent pill should show its label once the row clears 420px");
+        throw new Error("Agent pill should show its label once the row clears 360px");
       }
       if (!/^\d+%$/.test(contextTrigger.innerText.trim())) {
         throw new Error(
-          `Context pill should stay percentage-only below 520px, showing "${contextTrigger.innerText}"`
+          `Context pill should stay percentage-only at or below 500px, showing "${contextTrigger.innerText}"`
         );
       }
-      if (meterVisible()) throw new Error("Context meter should stay hidden below 520px");
-      if (!proVisible()) throw new Error("PRO chip should stay visible above 420px");
+      if (meterVisible()) throw new Error("Context meter should stay hidden at or below 500px");
+      if (!proVisible()) throw new Error("PRO chip should stay visible above 340px");
+      assertNoOverflow("agent-label-returns");
     });
 
-    await resizeRowInto(900, 530, 1200);
+    await resizeRowInto(640, 505, 1200);
     await waitFor(() => {
       if (!contextTrigger.innerText.includes("Context")) {
         throw new Error(
-          `Context pill should regain its label above 520px, showing "${contextTrigger.innerText}"`
+          `Context pill should regain its label above 500px, showing "${contextTrigger.innerText}"`
         );
       }
-      if (!meterVisible()) throw new Error("Context meter should be visible above 520px");
+      if (!meterVisible()) throw new Error("Context meter should be visible above 500px");
+      assertNoOverflow("full-detail");
+
+      // Checked here rather than on a narrow row because a narrow row is under flex-shrink pressure,
+      // which trims a fixed width down to roughly its content width and hides the difference. With
+      // slack available, a fixed width sits at its full cap while a content-sized one does not.
+      const modelTrigger = storyRoot.querySelector<HTMLElement>(
+        '[data-component="ModelSelectorGroup"] button'
+      );
+      if (!modelTrigger) throw new Error("Model trigger not rendered");
+      const triggerWidth = modelTrigger.getBoundingClientRect().width;
+      const capPx = 8 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+      if (triggerWidth >= capPx - 8) {
+        throw new Error(
+          `Model trigger reserves ${Math.round(triggerWidth)}px of its ${Math.round(capPx)}px cap for a short name instead of sizing to content`
+        );
+      }
     });
   },
 };

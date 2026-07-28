@@ -3471,7 +3471,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       onSetDefaultModel={setDefaultModel}
                       hiddenModels={hiddenModelsForSelector}
                       onOpenSettings={() => open("models")}
-                      className="h-full w-[clamp(5.5rem,28vw,8rem)] min-w-0"
+                      className="h-full max-w-[8rem] min-w-0"
                       tooltipExtraContent={
                         <>
                           <strong>Click to edit</strong>
