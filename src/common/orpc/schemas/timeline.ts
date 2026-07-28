@@ -68,8 +68,9 @@ export const TimelineStatusSchema = z.enum([
 ]);
 
 /**
- * Digests and previews are rendered in a sidebar row, but some sources (a sub-agent's full report)
- * are unbounded. Bound them before they reach the append-only log, which is never rewritten.
+ * Text reaching a timeline row is rendered in the sidebar, but several sources are unbounded: a
+ * sub-agent's full report, or a provider error whose payload can run to megabytes. Bound it before
+ * it reaches the append-only log, which is never rewritten and is shipped over IPC on every page.
  */
 export const TIMELINE_TEXT_MAX_LENGTH = 600;
 
@@ -78,6 +79,25 @@ export function truncateTimelineDigest(value: string): string {
   return normalized.length <= TIMELINE_TEXT_MAX_LENGTH
     ? normalized
     : `${normalized.slice(0, TIMELINE_TEXT_MAX_LENGTH - 3)}...`;
+}
+
+// Free-text payload fields, as opposed to identifiers and enums that are bounded by their producer.
+export const TIMELINE_TEXT_DATA_FIELDS = ["digest", "description", "reason", "title"] as const;
+
+export function boundTimelineTextFields(
+  data: TimelineEventData | undefined
+): TimelineEventData | undefined {
+  if (data == null) {
+    return data;
+  }
+  let bounded = data;
+  for (const field of TIMELINE_TEXT_DATA_FIELDS) {
+    const value = bounded[field];
+    if (value != null) {
+      bounded = { ...bounded, [field]: truncateTimelineDigest(value) };
+    }
+  }
+  return bounded;
 }
 
 const timelineEventDataShape = {

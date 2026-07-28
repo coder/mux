@@ -171,6 +171,27 @@ describe("TimelineService", () => {
     expect(page.events.map((event) => event.data?.description)).toEqual(["Landed the slice"]);
   });
 
+  test("bounds every free-text field, not just the digest", async () => {
+    const huge = "x".repeat(TIMELINE_TEXT_MAX_LENGTH * 4);
+    service.record(WORKSPACE_ID, {
+      kind: "turn.failed",
+      source: { system: "chat", key: "huge-error" },
+      status: "failed",
+      data: { reason: huge, digest: huge, description: huge, title: huge },
+    });
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    const data = page.events[0]?.data;
+    const truncated = `${"x".repeat(TIMELINE_TEXT_MAX_LENGTH - 3)}...`;
+    expect([data?.reason, data?.digest, data?.description, data?.title]).toEqual([
+      truncated,
+      truncated,
+      truncated,
+      truncated,
+    ]);
+  });
+
   test("stamps a draft without a timestamp at record time, not when its write drains", async () => {
     const realAppendFile = fs.appendFile;
     const stallMs = 60;

@@ -7,11 +7,11 @@ import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
 import {
   TIMELINE_RETIRED_KINDS,
   TIMELINE_TEXT_MAX_LENGTH,
+  boundTimelineTextFields,
   TimelineEventDraftSchema,
   TimelineEventSchema,
   TimelineSequenceEnvelopeSchema,
   TimelineStoredEventSchema,
-  truncateTimelineDigest,
   type TimelineAnchor,
   type TimelineEvent,
   type TimelineEventData,
@@ -121,16 +121,14 @@ export class TimelineService implements TimelineRecorder {
       this.rememberSourceKey(workspaceId, sourceKey);
     }
 
-    const digest = validated.data.data?.digest;
+    const boundedData = boundTimelineTextFields(validated.data.data);
     const bounded = {
       ...validated.data,
       // Resolved here rather than inside the queued write, which only runs once every earlier append
       // for this workspace has drained: on a backed-up disk the event would otherwise be stamped
       // with the drain time and could even land under the wrong day.
       ts: validated.data.ts ?? Date.now(),
-      ...(digest == null
-        ? {}
-        : { data: { ...validated.data.data, digest: truncateTimelineDigest(digest) } }),
+      ...(boundedData == null ? {} : { data: boundedData }),
     };
 
     this.enqueueWrite(workspaceId, async () => {
