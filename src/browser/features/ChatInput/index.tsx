@@ -222,7 +222,7 @@ import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAtta
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   COMPOSER_CONTROL_HEIGHT_CLASS,
-  COMPOSER_ICON_ONLY_HIDE_CLASS,
+  COMPOSER_PRO_HIDE_CLASS,
   CREATION_COLUMN_MAX_WIDTH_CLASS,
 } from "@/constants/layout";
 
@@ -3497,17 +3497,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                     <span className="bg-border-light h-3.5 w-px shrink-0" aria-hidden="true" />
 
-                    {/* The PRO chip drops out with the row's other icon-only collapses; the command
-                      palette still provides access to pro mode. */}
+                    {/* The command palette still provides access to pro mode once the chip drops. */}
                     <div
                       className="flex shrink-0 items-center"
                       data-component="ThinkingSliderGroup"
                     >
                       <ThinkingSliderComponent modelString={baseModel} />
-                      <ProModeToggle
-                        modelString={baseModel}
-                        className={COMPOSER_ICON_ONLY_HIDE_CLASS}
-                      />
+                      <ProModeToggle modelString={baseModel} className={COMPOSER_PRO_HIDE_CLASS} />
                     </div>
                   </div>
 

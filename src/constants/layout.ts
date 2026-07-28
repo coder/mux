@@ -10,7 +10,11 @@ export const CREATION_COLUMN_MAX_WIDTH_CLASS = "max-w-[67rem]";
 // Keep composer controls aligned without relying on individual component defaults.
 export const COMPOSER_CONTROL_HEIGHT_CLASS = "h-6";
 
-// The composer control row sheds detail in two container-query stages as it narrows. Controls in
-// the row share these thresholds so they collapse together instead of competing for the width left.
+// The composer control row sheds detail in container-query stages as it narrows, widest threshold
+// first. Keeping the ladder here rather than inline is what stops two controls in the row from
+// disagreeing about when they collapse.
 export const COMPOSER_COMPACT_HIDE_CLASS = "[@container(max-width:520px)]:hidden";
 export const COMPOSER_ICON_ONLY_HIDE_CLASS = "[@container(max-width:420px)]:hidden";
+// The PRO chip survives one stage longer than the agent label: the model group is width-capped, so
+// the row still has room for the chip down to 380px without overflowing or truncating the model name.
+export const COMPOSER_PRO_HIDE_CLASS = "[@container(max-width:380px)]:hidden";

@@ -81,8 +81,9 @@ export const FocusedComposer: AppStory = {
 
 /**
  * The composer control row collapses on container width, not viewport width, so a fixed-width
- * wrapper reproduces every stage: the play resizes the wrapper and asserts each one. Guarding on
- * the measured row width keeps the assertions honest if the surrounding layout ever changes.
+ * wrapper reproduces every stage: the play resizes the wrapper and asserts each one, including the
+ * 380-420px band where the PRO chip is back but the agent label is not. Guarding on the measured
+ * row width keeps the assertions honest if the surrounding layout ever changes.
  */
 export const NarrowControlRowCollapse: AppStory = {
   render: () => (
@@ -164,6 +165,18 @@ export const NarrowControlRowCollapse: AppStory = {
       if (proVisible()) throw new Error("PRO chip should be hidden on an icon-only row");
     });
 
+    await resizeRowInto(470, 385, 415);
+    await waitFor(() => {
+      if (agentTrigger.innerText.trim() !== "") {
+        throw new Error(
+          `Agent pill should still be icon-only below 420px, showing "${agentTrigger.innerText}"`
+        );
+      }
+      if (!proVisible()) {
+        throw new Error("PRO chip should return once the row clears 380px");
+      }
+    });
+
     await resizeRowInto(560, 430, 510);
     await waitFor(() => {
       if (agentTrigger.innerText.trim() === "") {
@@ -175,7 +188,7 @@ export const NarrowControlRowCollapse: AppStory = {
         );
       }
       if (meterVisible()) throw new Error("Context meter should stay hidden below 520px");
-      if (!proVisible()) throw new Error("PRO chip should return once the row clears 420px");
+      if (!proVisible()) throw new Error("PRO chip should stay visible above 420px");
     });
 
     await resizeRowInto(900, 530, 1200);
