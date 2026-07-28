@@ -55,8 +55,10 @@
     --color-debug-light: hsl(214 100% 76%);
     --color-debug-text: hsl(214 100% 80%);
 
-    --color-thinking-mode: hsl(271 76% 53%);
-    --color-thinking-border: hsl(271 76% 53%);
+    /* Mirrors the renderer's dark-theme value: this webview shares ReasoningMessage and is always
+      dark, so it must not keep the old purple. */
+    --color-thinking-mode: hsl(213 90% 68%);
+    --color-thinking-border: hsl(213 90% 68%);
 
     /* Runtime icon colors (matches Tailwind blue-500/purple-500) */
     --color-runtime-ssh: #3b82f6;

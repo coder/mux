@@ -7,8 +7,10 @@ export const LEFT_SIDEBAR_COLLAPSED_WIDTH_PX = 20;
 // floating reopen affordance so the header content doesn't sit underneath it.
 export const WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX = 60;
 export const CREATION_COLUMN_MAX_WIDTH_CLASS = "max-w-[67rem]";
-// Keep composer controls aligned without relying on individual component defaults.
-export const COMPOSER_CONTROL_HEIGHT_CLASS = "h-6";
+// Keep composer controls aligned without relying on individual component defaults. The marker class
+// is what globals.css uses to give the row's non-button surfaces the same touch height as its
+// buttons; see the mobile block there.
+export const COMPOSER_CONTROL_HEIGHT_CLASS = "composer-control-surface h-6";
 
 // The composer control row sheds detail in container-query stages as it narrows, widest threshold
 // first. Keeping the ladder here rather than inline is what stops two controls in the row from
