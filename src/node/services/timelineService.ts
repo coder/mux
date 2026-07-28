@@ -122,13 +122,16 @@ export class TimelineService implements TimelineRecorder {
     }
 
     const digest = validated.data.data?.digest;
-    const bounded =
-      digest == null
-        ? validated.data
-        : {
-            ...validated.data,
-            data: { ...validated.data.data, digest: truncateTimelineDigest(digest) },
-          };
+    const bounded = {
+      ...validated.data,
+      // Resolved here rather than inside the queued write, which only runs once every earlier append
+      // for this workspace has drained: on a backed-up disk the event would otherwise be stamped
+      // with the drain time and could even land under the wrong day.
+      ts: validated.data.ts ?? Date.now(),
+      ...(digest == null
+        ? {}
+        : { data: { ...validated.data.data, digest: truncateTimelineDigest(digest) } }),
+    };
 
     this.enqueueWrite(workspaceId, async () => {
       // The key is registered before this runs so concurrent records dedupe against each other.
@@ -141,7 +144,6 @@ export class TimelineService implements TimelineRecorder {
           v: 1,
           seq,
           id: randomUUID(),
-          ts: draft.ts ?? Date.now(),
         });
         const filePath = this.getFilePath(workspaceId);
         await fs.mkdir(path.dirname(filePath), { recursive: true });

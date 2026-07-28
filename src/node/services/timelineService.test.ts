@@ -171,6 +171,27 @@ describe("TimelineService", () => {
     expect(page.events.map((event) => event.data?.description)).toEqual(["Landed the slice"]);
   });
 
+  test("stamps a draft without a timestamp at record time, not when its write drains", async () => {
+    const realAppendFile = fs.appendFile;
+    const stallMs = 60;
+    const appendFile = spyOn(fs, "appendFile").mockImplementationOnce(
+      async (file, data, options) => {
+        await new Promise((resolve) => setTimeout(resolve, stallMs));
+        await realAppendFile(file, data, options);
+      }
+    );
+
+    service.record(WORKSPACE_ID, draft("first"));
+    service.record(WORKSPACE_ID, draft("second"));
+    const recordedAt = Date.now();
+    await service.flush();
+    appendFile.mockRestore();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    const second = page.events.find((event) => event.data?.description === "second");
+    expect(second?.ts).toBeLessThanOrEqual(recordedAt);
+  });
+
   test("keeps rows whose source and anchor carry values from a newer build", async () => {
     const forwardCompatible = {
       v: 1,
