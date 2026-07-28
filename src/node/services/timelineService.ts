@@ -135,8 +135,11 @@ export class TimelineService implements TimelineRecorder {
       });
       const filePath = this.getFilePath(workspaceId);
       await fs.mkdir(path.dirname(filePath), { recursive: true });
+      // An interrupted write can leave the last record unterminated. Appending straight onto it
+      // would merge the two into one unparseable line, losing this event as well as the fragment.
+      const separator = (await this.hasUnterminatedTail(filePath)) ? "\n" : "";
       try {
-        await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf-8");
+        await fs.appendFile(filePath, `${separator}${JSON.stringify(event)}\n`, "utf-8");
       } catch (error) {
         // The key is registered before the append so concurrent records dedupe against each other.
         // Once the write fails, keeping it would suppress a later retry of the same event forever.
@@ -348,6 +351,30 @@ export class TimelineService implements TimelineRecorder {
       }
     });
     return sequence;
+  }
+
+  private async hasUnterminatedTail(filePath: string): Promise<boolean> {
+    let fileSize: number;
+    try {
+      fileSize = (await fs.stat(filePath)).size;
+    } catch (error) {
+      if (isErrnoWithCode(error, "ENOENT")) {
+        return false;
+      }
+      throw error;
+    }
+    if (fileSize === 0) {
+      return false;
+    }
+
+    const file = await fs.open(filePath, "r");
+    try {
+      const tail = Buffer.alloc(1);
+      await file.read(tail, 0, 1, fileSize - 1);
+      return tail[0] !== 0x0a;
+    } finally {
+      await file.close();
+    }
   }
 
   private async readLinesBackward(

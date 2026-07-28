@@ -246,6 +246,19 @@ describe("TimelineService", () => {
     expect(page.events.map((event) => event.source.key)).toEqual(["retryable"]);
   });
 
+  test("keeps a new event readable after an interrupted write left an unterminated line", async () => {
+    service.record(WORKSPACE_ID, draft("first"));
+    await service.flush();
+    // Simulate a crash mid-append: a partial record with no trailing newline.
+    await fs.appendFile(timelinePath(), '{"v":1,"seq":2,"id":"partial"', "utf-8");
+
+    service.record(WORKSPACE_ID, draft("after-crash"));
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.source.key)).toEqual(["after-crash", "first"]);
+  });
+
   test("bounds an unbounded digest before it reaches the append-only log", async () => {
     service.record(WORKSPACE_ID, {
       kind: "task.reported",
