@@ -1704,18 +1704,6 @@ export class WorkspaceStore {
 
     (async () => {
       try {
-        const initialPage = await client.workspace.timeline.list({ workspaceId });
-        if (signal.aborted) return;
-        this.workspaceTimelines.set(workspaceId, {
-          events: initialPage.events,
-          nextCursor: initialPage.nextCursor,
-          hasOlder: initialPage.hasOlder,
-          initialized: true,
-          loadingOlder: false,
-          loadError: null,
-        });
-        this.timelineStore.bump(workspaceId);
-
         const subscribedIterator = await client.workspace.timeline.subscribe(
           { workspaceId },
           { signal }
@@ -1729,8 +1717,24 @@ export class WorkspaceStore {
         for await (const update of subscribedIterator) {
           if (signal.aborted) break;
           queueMicrotask(() => {
-            if (signal.aborted || update.events.length === 0) return;
+            if (signal.aborted) return;
 
+            // The snapshot is the initial page: it establishes pagination, and an empty one still
+            // has to mark the timeline initialized so the panel can render its empty state.
+            if (update.type === "snapshot") {
+              this.workspaceTimelines.set(workspaceId, {
+                events: update.events,
+                nextCursor: update.nextCursor,
+                hasOlder: update.hasOlder,
+                initialized: true,
+                loadingOlder: false,
+                loadError: null,
+              });
+              this.timelineStore.bump(workspaceId);
+              return;
+            }
+
+            if (update.events.length === 0) return;
             const current = this.workspaceTimelines.get(workspaceId) ?? EMPTY_TIMELINE_SNAPSHOT;
             const events = mergeTimelineEvents(update.events, current.events);
             this.workspaceTimelines.set(workspaceId, { ...current, events, initialized: true });

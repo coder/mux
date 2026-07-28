@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { TIMELINE_FILE_NAME } from "@/common/constants/paths";
-import type { TimelineEvent, TimelineEventDraft } from "@/common/orpc/schemas/timeline";
+import {
+  TIMELINE_DIGEST_MAX_LENGTH,
+  type TimelineEvent,
+  type TimelineEventDraft,
+} from "@/common/orpc/schemas/timeline";
 import type { MuxMessage } from "@/common/types/message";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
 import { TimelineService } from "./timelineService";
@@ -223,6 +227,37 @@ describe("TimelineService", () => {
 
     const page = await service.list(WORKSPACE_ID, {});
     expect(page.events).toHaveLength(1);
+  });
+
+  test("releases a source key when its append fails so the event can be recorded again", async () => {
+    const appendFile = spyOn(fs, "appendFile").mockImplementationOnce(() => {
+      throw new Error("disk full");
+    });
+
+    service.record(WORKSPACE_ID, draft("retryable"));
+    await service.flush();
+    expect(appendFile).toHaveBeenCalledTimes(1);
+
+    service.record(WORKSPACE_ID, draft("retryable"));
+    await service.flush();
+    appendFile.mockRestore();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    expect(page.events.map((event) => event.source.key)).toEqual(["retryable"]);
+  });
+
+  test("bounds an unbounded digest before it reaches the append-only log", async () => {
+    service.record(WORKSPACE_ID, {
+      kind: "task.reported",
+      source: { system: "task", key: "huge-report" },
+      data: { digest: "x".repeat(5000) },
+    });
+    await service.flush();
+
+    const page = await service.list(WORKSPACE_ID, {});
+    const digest = page.events[0].data?.digest ?? "";
+    expect(digest).toHaveLength(TIMELINE_DIGEST_MAX_LENGTH);
+    expect(digest.endsWith("...")).toBe(true);
   });
 
   test("does not scan history for anchors without transcript targets", async () => {

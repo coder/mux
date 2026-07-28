@@ -67,6 +67,19 @@ export const TimelineStatusSchema = z.enum([
   "skipped",
 ]);
 
+/**
+ * Digests are previews rendered in a sidebar row, but some sources (a sub-agent's full report) are
+ * unbounded. Bound them before they reach the append-only log, which is never rewritten.
+ */
+export const TIMELINE_DIGEST_MAX_LENGTH = 600;
+
+export function truncateTimelineDigest(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= TIMELINE_DIGEST_MAX_LENGTH
+    ? normalized
+    : `${normalized.slice(0, TIMELINE_DIGEST_MAX_LENGTH - 3)}...`;
+}
+
 const timelineEventDataShape = {
   model: z.string().optional(),
   mode: z.string().optional(),
@@ -106,7 +119,7 @@ export const TimelineEventSchema = z.object(timelineEventShape).strict();
 
 // Reads tolerate payload keys this build does not declare, because a newer build may add fields
 // and retired kinds carry fields that were removed. Writes stay strict so we only persist known
-// facts; dropping a row on read instead would hide it and break sequence recovery.
+// facts; dropping such a row on read instead would hide it from the feed entirely.
 export const TimelineStoredEventSchema = z.object({
   ...timelineEventShape,
   data: z.object(timelineEventDataShape).optional(),
@@ -140,7 +153,17 @@ export const TimelinePageSchema = z
   .strict();
 
 export const TimelineSubscriptionEventSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("snapshot"), events: z.array(TimelineEventSchema) }).strict(),
+  // The snapshot is the newest page, so it carries the same pagination metadata as `list`. Clients
+  // page older events from this cursor instead of issuing their own initial `list`, which could
+  // otherwise race appends and leave a permanent gap between the two pages.
+  z
+    .object({
+      type: z.literal("snapshot"),
+      events: z.array(TimelineEventSchema),
+      nextCursor: z.number().int().positive().nullable(),
+      hasOlder: z.boolean(),
+    })
+    .strict(),
   z.object({ type: z.literal("appended"), events: z.array(TimelineEventSchema) }).strict(),
 ]);
 

@@ -5,6 +5,7 @@ import type { AgentSession } from "./agentSession";
 import { askUserQuestionManager } from "./askUserQuestionManager";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
+import { existsSync } from "fs";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
@@ -7931,6 +7932,27 @@ describe("WorkspaceService remove desktop session cleanup", () => {
     expect(result.success).toBe(true);
     expect(close).toHaveBeenCalledTimes(1);
     expect(close).toHaveBeenCalledWith(workspaceId);
+  });
+
+  test("remove() flushes the timeline before deleting the session directory", async () => {
+    const sessionDir = path.join(tempRoot, "sessions", workspaceId);
+    await fsPromises.mkdir(sessionDir, { recursive: true });
+    const order: string[] = [];
+    workspaceService.setTimelineRecorder({
+      record: () => undefined,
+      flush: () => {
+        // A queued append recreates the session directory, so the flush is only useful while the
+        // directory still exists.
+        order.push(existsSync(sessionDir) ? "flush-before-delete" : "flush-after-delete");
+        return Promise.resolve();
+      },
+    });
+
+    const result = await workspaceService.remove(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(order).toEqual(["flush-before-delete"]);
+    expect(existsSync(sessionDir)).toBe(false);
   });
 
   test("remove() continues when desktop session cleanup fails", async () => {

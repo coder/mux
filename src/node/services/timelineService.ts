@@ -10,6 +10,7 @@ import {
   TimelineEventSchema,
   TimelineSequenceEnvelopeSchema,
   TimelineStoredEventSchema,
+  truncateTimelineDigest,
   type TimelineAnchor,
   type TimelineEvent,
   type TimelineEventData,
@@ -110,10 +111,19 @@ export class TimelineService implements TimelineRecorder {
       this.rememberSourceKey(workspaceId, sourceKey);
     }
 
+    const digest = validated.data.data?.digest;
+    const bounded =
+      digest == null
+        ? validated.data
+        : {
+            ...validated.data,
+            data: { ...validated.data.data, digest: truncateTimelineDigest(digest) },
+          };
+
     this.enqueueWrite(workspaceId, async () => {
       const seq = await this.takeNextSequence(workspaceId);
       const event = TimelineEventSchema.parse({
-        ...validated.data,
+        ...bounded,
         v: 1,
         seq,
         id: randomUUID(),
@@ -121,7 +131,16 @@ export class TimelineService implements TimelineRecorder {
       });
       const filePath = this.getFilePath(workspaceId);
       await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf-8");
+      try {
+        await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, "utf-8");
+      } catch (error) {
+        // The key is registered before the append so concurrent records dedupe against each other.
+        // Once the write fails, keeping it would suppress a later retry of the same event forever.
+        if (sourceKey != null) {
+          this.forgetSourceKey(workspaceId, sourceKey);
+        }
+        throw error;
+      }
       this.events.emit("appended", { workspaceId, events: [event] });
     });
   }
@@ -276,15 +295,9 @@ export class TimelineService implements TimelineRecorder {
       if (event.metadata !== null) {
         return;
       }
-      const cleanup = this.flush(event.workspaceId).then(() =>
-        this.clearWorkspaceCaches(event.workspaceId)
-      );
-      cleanup.catch((error: unknown) => {
-        log.warn("Failed to clear timeline workspace caches", {
-          workspaceId: event.workspaceId,
-          error,
-        });
-      });
+      // Removal already flushed pending appends before deleting the session directory, so this only
+      // drops in-memory state. Flushing here would be too late to keep writes inside that window.
+      this.clearWorkspaceCaches(event.workspaceId);
     };
     workspaceService.on("chat", chatListener);
     workspaceService.on("metadata", metadataListener);
@@ -462,6 +475,10 @@ export class TimelineService implements TimelineRecorder {
 
   private hasRecentSourceKey(workspaceId: string, sourceKey: string): boolean {
     return this.recentSourceKeys.get(workspaceId)?.has(sourceKey) === true;
+  }
+
+  private forgetSourceKey(workspaceId: string, sourceKey: string): void {
+    this.recentSourceKeys.get(workspaceId)?.delete(sourceKey);
   }
 
   private rememberSourceKey(workspaceId: string, sourceKey: string): void {

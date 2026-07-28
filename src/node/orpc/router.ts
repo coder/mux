@@ -4097,7 +4097,6 @@ export const router = (authToken?: string) => {
                 input.workspaceId
               );
               snapshotSequence = snapshotMaxSequence;
-              // Keep subscription pagination metadata consistent with the initial list page.
               const snapshot = await context.timelineService.list(input.workspaceId, {
                 cursor: snapshotMaxSequence + 1,
                 limit: TIMELINE_DEFAULT_PAGE_LIMIT,
@@ -4106,7 +4105,12 @@ export const router = (authToken?: string) => {
               if (appended.length > 0) {
                 queue.push({ type: "appended", events: appended });
               }
-              yield { type: "snapshot" as const, events: snapshot.events };
+              yield {
+                type: "snapshot" as const,
+                events: snapshot.events,
+                nextCursor: snapshot.nextCursor,
+                hasOlder: snapshot.hasOlder,
+              };
               yield* queue.iterate();
             } finally {
               queue.end();

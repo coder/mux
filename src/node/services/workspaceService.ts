@@ -4800,6 +4800,20 @@ export class WorkspaceService extends EventEmitter {
       // Intentionally deferred until we're committed to removal: if runtime deletion fails with
       // force=false we return early and keep init state intact so init-end can refresh metadata.
       this.initStateManager.clearInMemoryState(workspaceId);
+
+      // Dispose the session before deleting its directory: disposal aborts the active stream, and
+      // the resulting stream-abort event would otherwise be recorded on the timeline after the
+      // delete, recreating the session directory for a workspace the user removed.
+      this.disposeSession(workspaceId);
+      try {
+        await this.timelineRecorder.flush(workspaceId);
+      } catch (error: unknown) {
+        log.warn("Failed to flush timeline before workspace removal", {
+          workspaceId,
+          error: getErrorMessage(error),
+        });
+      }
+
       // Remove session data
       try {
         const sessionDir = this.config.getSessionDir(workspaceId);
@@ -4844,9 +4858,6 @@ export class WorkspaceService extends EventEmitter {
       if (this.mcpServerManager) {
         await this.mcpServerManager.stopServers(workspaceId);
       }
-
-      // Dispose session
-      this.disposeSession(workspaceId);
 
       // Close any terminal sessions for this workspace
       this.terminalService?.closeWorkspaceSessions(workspaceId);

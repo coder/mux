@@ -1459,6 +1459,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
       timeline: {
         list: () => Promise.resolve({ events: [], nextCursor: null, hasOlder: false }),
+        subscribe: () =>
+          Promise.resolve(
+            (function* () {
+              yield { type: "snapshot" as const, events: [], nextCursor: null, hasOlder: false };
+            })()
+          ),
         preview: () => Promise.resolve(null),
       },
       // Goal board (multi-goal queue) endpoints. Stories that want the
