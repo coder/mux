@@ -2289,15 +2289,7 @@ export class WorkspaceGoalService {
     }
 
     if (input.objective != null) {
-      this.timelineRecorder.record(input.workspaceId, {
-        kind: "goal.set",
-        source: {
-          system: "goal",
-          key: `goal-set:${result.data.goalId}:${result.data.updatedAtMs}`,
-        },
-        status: "completed",
-        data: { digest: result.data.objective },
-      });
+      this.recordGoalSet(input.workspaceId, result.data);
     }
     if (input.status === "complete" && result.data.status === "complete") {
       this.timelineRecorder.record(input.workspaceId, {
@@ -2408,6 +2400,17 @@ export class WorkspaceGoalService {
     } catch (error: unknown) {
       log.warn("Failed to request kickoff goal continuation dispatch", { workspaceId, error });
     }
+  }
+
+  // Promotions write goal.json directly instead of going through `setGoal`, so they must record the
+  // new objective themselves: otherwise the workspace's active goal changes with no timeline row.
+  private recordGoalSet(workspaceId: string, goal: GoalRecordV1): void {
+    this.timelineRecorder.record(workspaceId, {
+      kind: "goal.set",
+      source: { system: "goal", key: `goal-set:${goal.goalId}:${goal.updatedAtMs}` },
+      status: "completed",
+      data: { digest: goal.objective },
+    });
   }
 
   private armContinuationForPromotedGoal(workspaceId: string, goal: GoalRecordV1): void {
@@ -3504,6 +3507,7 @@ export class WorkspaceGoalService {
       return activated;
     });
     if (promotedGoal) {
+      this.recordGoalSet(workspaceId, promotedGoal);
       this.armContinuationForPromotedGoal(workspaceId, promotedGoal);
     }
     return promotedGoal;
@@ -3647,6 +3651,7 @@ export class WorkspaceGoalService {
       hasBudget: activated.budgetCents != null,
       hasTurnCap: activated.turnCap != null,
     });
+    this.recordGoalSet(workspaceId, activated);
     this.armContinuationForPromotedGoal(workspaceId, activated);
     return activated;
   }

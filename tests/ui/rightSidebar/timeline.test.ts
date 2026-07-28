@@ -188,6 +188,23 @@ describe("TimelinePanel", () => {
     expect(visibleRows.every((row) => row.dataset.timelineSource === "agent")).toBe(true);
   });
 
+  test("keeps machine-dispatched turns out of the prompts filter", () => {
+    const events = [makeEvent("human", "turn.user", 1), makeEvent("wakeup", "turn.synthetic", 2)];
+
+    const view = renderTimeline({ events });
+    const promptsFilter = Array.from(view.container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Prompts"
+    );
+    if (!promptsFilter) throw new Error("Expected the prompts filter control");
+
+    fireEvent.click(promptsFilter);
+
+    const visible = Array.from(
+      view.container.querySelectorAll<HTMLElement>("[data-timeline-event-id]")
+    ).map((row) => row.dataset.timelineEventId);
+    expect(visible).toEqual(["human"]);
+  });
+
   test("collapses three consecutive same-kind rows and expands the run", () => {
     const events = [
       makeEvent("heartbeat-1", "heartbeat.dispatched", 1, { source: { system: "heartbeat" } }),

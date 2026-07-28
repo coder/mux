@@ -52,7 +52,9 @@ interface TimelinePresentation {
 
 const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   "turn.user": { label: "User prompt", icon: MessageSquare, category: "prompts" },
-  "turn.synthetic": { label: "Synthetic prompt", icon: WandSparkles, category: "prompts" },
+  // Mux dispatches these on the agent's behalf, so they stay out of Prompts: that filter is a record
+  // of what the human asked for.
+  "turn.synthetic": { label: "Synthetic prompt", icon: WandSparkles, category: "agent" },
   "turn.completed": { label: "Turn completed", icon: CheckCircle2, category: "prompts" },
   "turn.interrupted": { label: "Turn interrupted", icon: CirclePause, category: "prompts" },
   "turn.failed": { label: "Turn failed", icon: CircleX, category: "errors" },

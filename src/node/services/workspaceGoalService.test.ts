@@ -3461,6 +3461,26 @@ describe("WorkspaceGoalService", () => {
       expect(upcomingIds[0]).toBe(active.goalId);
     });
 
+    test("records a timeline row for both the manual and automatic promotion paths", async () => {
+      const recorded: Array<{ kind: string; digest: string | undefined }> = [];
+      service.setTimelineRecorder({
+        record: (_workspaceId, draft) =>
+          recorded.push({ kind: draft.kind, digest: draft.data?.digest }),
+        closeWorkspace: () => Promise.resolve(),
+      });
+
+      await setGoalOk(service, { workspaceId, objective: "First objective" });
+      const queued = await service.addUpcomingGoal({ workspaceId, objective: "Second objective" });
+      await service.promoteUpcomingGoal(workspaceId, queued.goalId);
+
+      // Promoting demoted the first objective to the head of upcoming, so completing the second
+      // auto-promotes it back and that re-activation must be recorded too.
+      await setGoalOk(service, { workspaceId, status: "complete", completionSummary: "done" });
+
+      const goalsSet = recorded.filter((row) => row.kind === "goal.set").map((row) => row.digest);
+      expect(goalsSet).toEqual(["First objective", "Second objective", "First objective"]);
+    });
+
     test("promoteUpcomingGoal starts the promoted goal and clears stale stop gates", async () => {
       const active = await setGoalOk(service, { workspaceId, objective: "Stopped active" });
       const queued = await service.addUpcomingGoal({
