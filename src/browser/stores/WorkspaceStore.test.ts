@@ -2960,6 +2960,7 @@ describe("WorkspaceStore", () => {
         streaming: true,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: "high",
+        pendingBackgroundWake: true,
         activeWorkflowRunCount: 1,
         todoStatus: { emoji: "🔄", message: "Run checks" },
         hasTodos: true,
@@ -2985,6 +2986,7 @@ describe("WorkspaceStore", () => {
       expect(state.canInterrupt).toBe(true);
       expect(state.currentModel).toBe(activitySnapshot.lastModel);
       expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
+      expect(state.pendingBackgroundWake).toBe(true);
       expect(state.activeWorkflowRunCount).toBe(1);
       expect(store.getWorkspaceSidebarState(workspaceId).activeWorkflowRunCount).toBe(1);
       expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);

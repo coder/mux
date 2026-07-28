@@ -2278,6 +2278,9 @@ export class TaskService {
     const pendingTerminalAttentionOwnerWorkspaceIds =
       await this.terminalAttentionStore.listPendingOwnerWorkspaceIds();
     for (const ownerWorkspaceId of pendingTerminalAttentionOwnerWorkspaceIds) {
+      // Persisted terminal attention survives restarts, so seed the live activity handoff before
+      // any drain-triggered metadata emit can otherwise report the workspace as idle.
+      this.workspaceService.setPendingBackgroundWake(ownerWorkspaceId);
       this.scheduleTerminalAttentionDrain(ownerWorkspaceId);
     }
     const terminalAttentionDrainMs = Date.now() - terminalAttentionDrainStartedAt;
@@ -4793,6 +4796,7 @@ export class TaskService {
             terminalOutcome: workflowRunTerminalOutcome(run.status),
           });
           if (created != null) {
+            this.workspaceService.setPendingBackgroundWake(workspace.id);
             this.scheduleTerminalAttentionDrain(workspace.id);
             recoveredCount += 1;
           }
@@ -4890,6 +4894,7 @@ export class TaskService {
       params.ownerWorkspaceId,
       TerminalAttentionStore.notificationId("workflow_run", params.runId)
     );
+    await this.workspaceService.refreshPendingBackgroundWake(params.ownerWorkspaceId);
   }
 
   async markWorkflowRunTerminalAttentionConsumed(params: {
@@ -4916,6 +4921,7 @@ export class TaskService {
       params.ownerWorkspaceId,
       TerminalAttentionStore.notificationId("workflow_run", params.runId)
     );
+    await this.workspaceService.refreshPendingBackgroundWake(params.ownerWorkspaceId);
   }
 
   async markWorkspaceTurnTerminalAttentionConsumed(params: {
@@ -4945,6 +4951,7 @@ export class TaskService {
       params.ownerWorkspaceId,
       TerminalAttentionStore.notificationId("workspace_turn", params.handleId)
     );
+    await this.workspaceService.refreshPendingBackgroundWake(params.ownerWorkspaceId);
   }
 
   private async enqueueTerminalAttention(params: {
@@ -4959,7 +4966,14 @@ export class TaskService {
     if (created == null) {
       return;
     }
+    // Publish the durable handoff before the terminal source disappears from activity counts.
+    // The workspace clears this only after streaming starts or the wake is canceled/superseded.
+    this.workspaceService.setPendingBackgroundWake(params.ownerWorkspaceId);
     this.scheduleTerminalAttentionDrain(params.ownerWorkspaceId);
+  }
+
+  async hasPendingTerminalAttention(ownerWorkspaceId: string): Promise<boolean> {
+    return (await this.terminalAttentionStore.listPending(ownerWorkspaceId)).length > 0;
   }
 
   private scheduleTerminalAttentionDrain(ownerWorkspaceId: string): void {
@@ -5055,6 +5069,7 @@ export class TaskService {
       for (const notification of pending) {
         await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
       }
+      await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
       return;
     }
 
@@ -5111,11 +5126,13 @@ export class TaskService {
       );
       if (workflowPrompt == null) {
         await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
+        await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
         continue;
       }
       promptSections.push(workflowPrompt);
     }
     if (promptSections.length === 0) {
+      await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
       return;
     }
     const prompt = promptSections.join("\n\n");
@@ -5124,12 +5141,14 @@ export class TaskService {
       for (const notification of pending) {
         await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
       }
+      await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
     };
 
     const markPendingForRetry = async () => {
       for (const notification of pending) {
         await this.terminalAttentionStore.markPending(ownerWorkspaceId, notification.id);
       }
+      await this.workspaceService.refreshPendingBackgroundWake(ownerWorkspaceId);
     };
 
     const resumeOptions = await this.resolveParentAutoResumeOptions(
