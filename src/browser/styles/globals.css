@@ -65,9 +65,9 @@
     --color-ask-mode-light: hsl(246 100% 85%);
     --color-ask-mode-alpha: hsla(246 100% 68% / 0.1);
 
-    --color-exec-mode: hsl(268.56 94.04% 55.19%);
-    --color-exec-mode-hover: hsl(268.56 94.04% 67%);
-    --color-exec-mode-light: hsl(268.56 94.04% 78%);
+    --color-exec-mode: hsl(187.7 75% 79.6%);
+    --color-exec-mode-hover: hsl(187.7 75% 88%);
+    --color-exec-mode-light: hsl(187.7 75% 93%);
 
     /* Edit mode: amber/gold for editing warnings and barriers */
     --color-edit-mode: hsl(38 80% 45%);
@@ -370,9 +370,10 @@
   --color-ask-mode-light: hsl(246 100% 85%);
   --color-ask-mode-alpha: hsla(246 100% 68% / 0.08);
 
-  --color-exec-mode: hsl(268.56 94.04% 55.19%);
-  --color-exec-mode-hover: hsl(268.56 94.04% 67%);
-  --color-exec-mode-light: hsl(268.56 94.04% 78%);
+  /* Same hue as the dark-theme teal, darkened: that pale value fails contrast on white. */
+  --color-exec-mode: hsl(187.7 75% 30%);
+  --color-exec-mode-hover: hsl(187.7 75% 38%);
+  --color-exec-mode-light: hsl(187.7 75% 48%);
 
   --color-pending: hsl(30 100% 64%);
 
@@ -615,12 +616,14 @@
   --color-plan-mode-light: color-mix(in srgb, var(--color-plan-mode), white 42%);
   --color-plan-mode-alpha: hsl(from var(--color-plan-mode) h s l / 0.08);
 
-  --color-ask-mode: color-mix(in srgb, var(--color-exec-mode) 62%, var(--color-plan-mode)); /* Blend between plan and exec */
+  /* Literal purple rather than var(--color-exec-mode): keeps Ask distinct from plan blue. */
+  --color-ask-mode: color-mix(in srgb, #5e409d 62%, var(--color-plan-mode)); /* Flexoki purple-600 */
   --color-ask-mode-hover: color-mix(in srgb, var(--color-ask-mode), white 18%);
   --color-ask-mode-light: color-mix(in srgb, var(--color-ask-mode), white 42%);
   --color-ask-mode-alpha: hsl(from var(--color-ask-mode) h s l / 0.08);
 
-  --color-exec-mode: #5e409d; /* Flexoki purple-600 */
+  /* Not the canonical cyan-600 for light themes: --color-task-mode already uses that step. */
+  --color-exec-mode: #164f4a; /* Flexoki cyan-800 */
   --color-exec-mode-hover: color-mix(in srgb, var(--color-exec-mode), white 18%);
   --color-exec-mode-light: color-mix(in srgb, var(--color-exec-mode), white 42%);
 
@@ -848,12 +851,14 @@
   --color-plan-mode-light: color-mix(in srgb, var(--color-plan-mode), white 22%);
   --color-plan-mode-alpha: hsl(from var(--color-plan-mode) h s l / 0.12);
 
-  --color-ask-mode: color-mix(in srgb, var(--color-exec-mode) 62%, var(--color-plan-mode)); /* Blend between plan and exec */
+  /* Literal purple rather than var(--color-exec-mode): keeps Ask distinct from plan blue. */
+  --color-ask-mode: color-mix(in srgb, #8b7ec8 62%, var(--color-plan-mode)); /* Flexoki purple-400 */
   --color-ask-mode-hover: color-mix(in srgb, var(--color-ask-mode), white 10%);
   --color-ask-mode-light: color-mix(in srgb, var(--color-ask-mode), white 22%);
   --color-ask-mode-alpha: hsl(from var(--color-ask-mode) h s l / 0.12);
 
-  --color-exec-mode: #8b7ec8; /* Flexoki purple-400 */
+  /* Not the canonical cyan-400 for dark themes: --color-task-mode already uses that step. */
+  --color-exec-mode: #a2dece; /* Flexoki cyan-150 */
   --color-exec-mode-hover: color-mix(in srgb, var(--color-exec-mode), white 10%);
   --color-exec-mode-light: color-mix(in srgb, var(--color-exec-mode), white 22%);
 
