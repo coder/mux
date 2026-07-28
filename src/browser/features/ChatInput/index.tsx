@@ -3353,7 +3353,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 />
               ) : (
                 <>
-                  {/* Give the input more vertical room so the shortcut hints sit above the footer. */}
                   <VimTextArea
                     ref={inputRef}
                     data-escape-interrupts-stream="true"
@@ -3400,8 +3399,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       (showSkillSuggestions && skillSuggestions.length > 0) ||
                       (showSymbolSuggestions && symbolSuggestions.length > 0)
                     }
-                    // Creation favors prompt space; workspaces preserve transcript space.
-                    className={variant === "creation" ? "min-h-36" : "min-h-22"}
+                    // Creation favors prompt space; workspaces preserve transcript space. Mobile
+                    // hides the shortcut hints the workspace floor exists for, so that room is
+                    // dead space on a screen that has none to spare.
+                    className={
+                      variant === "creation" ? "min-h-36" : isMobileTouch ? "min-h-9" : "min-h-22"
+                    }
                   />
                   {/* Keep shortcuts visible in both creation + workspace without bloating the footer or crowding it. */}
                   {input.trim() === "" && !editingMessageForUi && (
