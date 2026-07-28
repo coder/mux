@@ -48,9 +48,17 @@ function streamKey(workspaceId: string, messageId: string): string {
   return eventKey(workspaceId, messageId);
 }
 
+// A digest is a single-line row title in the sidebar, so the mapper bounds it far tighter than the
+// schema-level TIMELINE_TEXT_MAX_LENGTH safety net that `boundTimelineTextFields` applies later.
+// The slice is derived from the ellipsis so a truncated digest still totals DIGEST_MAX_LENGTH.
+const DIGEST_MAX_LENGTH = 120;
+const DIGEST_ELLIPSIS = "...";
+
 function truncateDigest(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length <= 120 ? normalized : `${normalized.slice(0, 117)}...`;
+  return normalized.length <= DIGEST_MAX_LENGTH
+    ? normalized
+    : `${normalized.slice(0, DIGEST_MAX_LENGTH - DIGEST_ELLIPSIS.length)}${DIGEST_ELLIPSIS}`;
 }
 
 function messageTimestamp(
