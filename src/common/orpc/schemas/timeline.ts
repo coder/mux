@@ -87,6 +87,12 @@ export function truncateTimelineDigest(value: string): string {
     : `${normalized.slice(0, TIMELINE_TEXT_MAX_LENGTH - 3)}...`;
 }
 
+// A completed sub-agent report is recorded by TaskService and is also injected into parent history,
+// which the mapper turns into a row too. Both sides key on the task so one report yields one row.
+export function subagentReportSourceKey(taskId: string): string {
+  return `task-report:${taskId}`;
+}
+
 // Free-text payload fields, as opposed to identifiers and enums that are bounded by their producer.
 export const TIMELINE_TEXT_DATA_FIELDS = ["digest", "description", "reason", "title"] as const;
 

@@ -1,11 +1,8 @@
 import type { TimelineEventKind } from "@/common/orpc/schemas/timeline";
 import { WORKFLOW_RESULT_MESSAGE_OPENING } from "@/common/utils/workflowRunMessages";
 
-/**
- * Openings of the machine-authored user turns that carry no metadata discriminator, so the timeline
- * can name a wake-up instead of filing it as an unlabeled synthetic prompt. The senders build their
- * prompts from these constants: recognition breaks silently if the wording drifts apart.
- */
+// Fallback openings used when specific muxMetadata is absent or only a persisted digest remains.
+// Prompt producers and timeline classification share them so their wording cannot drift.
 export const BASH_MONITOR_WAKE_HEADINGS = {
   matched: "A background bash monitor matched output.",
   lost: "Mux restarted and background bash monitors were lost.",

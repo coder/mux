@@ -180,7 +180,7 @@ export function isWorkflowRunCardDisplayMessage(message: MuxMessage): boolean {
   return message.metadata?.muxMetadata?.type === WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE;
 }
 
-export function isWorkflowResultMessage(message: MuxMessage): boolean {
+export function isWorkflowResultMessage(message: Pick<MuxMessage, "metadata">): boolean {
   return message.metadata?.muxMetadata?.type === WORKFLOW_RESULT_METADATA_TYPE;
 }
 

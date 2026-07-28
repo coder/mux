@@ -89,7 +89,7 @@ import { GitPatchArtifactService } from "@/node/services/gitPatchArtifactService
 import { getWorkspaceProjectRepos } from "@/node/services/workspaceProjectRepos";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
-import { subagentReportSourceKey } from "@/node/services/timelineMapper";
+import { subagentReportSourceKey } from "@/common/orpc/schemas/timeline";
 import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "@/node/services/timelineRecorder";
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import {

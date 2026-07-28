@@ -1,19 +1,25 @@
+import { subagentReportSourceKey } from "@/common/orpc/schemas/timeline";
 import type {
   TimelineAnchor,
   TimelineEventData,
   TimelineEventDraft,
+  TimelineEventKind,
   TimelineSource,
   TimelineStatus,
 } from "@/common/orpc/schemas/timeline";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
+import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { classifyMachineTurnPromptKind } from "@/common/utils/machineTurnPrompts";
 import { getContextBoundaryKind } from "@/common/utils/messages/compactionBoundary";
 import {
   SUBAGENT_FAILURE_ENVELOPE_TAG,
   parseSubagentReportEnvelope,
 } from "@/common/utils/subagentReportEnvelope";
-import { WORKFLOW_RESULT_METADATA_TYPE } from "@/common/utils/workflowRunMessages";
+import {
+  WORKFLOW_RESULT_METADATA_TYPE,
+  isWorkflowResultMessage,
+} from "@/common/utils/workflowRunMessages";
 
 interface OpenStream {
   workspaceId: string;
@@ -75,9 +81,8 @@ function messageEventKey(prefix: string, messageId: string): string | undefined 
   return messageId === "" ? undefined : eventKey(prefix, messageId);
 }
 
-// Mux dispatches several user-role turns on the agent's behalf. They belong on the timeline, but as
-// machine-authored turns, so the prompts filter stays a record of what the human actually asked for.
-// A workflow trigger row is deliberately absent: it carries the slash command the human typed.
+// Machine-authored turns stay out of the prompts filter. Workflow trigger messages stay in the
+// user-prompt path because they carry the slash command the human typed.
 const MACHINE_AUTHORED_TURN_TYPES = new Set([
   "heartbeat-request",
   "bash-monitor-wake",
@@ -108,16 +113,10 @@ function isMachineAuthoredTurn(
   return muxType != null && MACHINE_AUTHORED_TURN_TYPES.has(muxType);
 }
 
-/**
- * Machine-authored turns that must not become rows: skill and @file snapshots only carry context
- * into the next request and are hidden from the transcript, while heartbeats, goal continuations and
- * goal pauses are recorded by the service that dispatched them, with the reason and goal id the
- * prompt text cannot supply.
- *
- * Only a wholly synthetic turn qualifies. The message queue coalesces a pending dispatch with a
- * prompt the human typed, keeping the dispatch's metadata but dropping the synthetic flag, and that
- * merged turn carries a real request that must stay on the feed.
- */
+// Skipped because they add no row of their own: snapshots only carry context into the next request,
+// and heartbeat and goal turns are already recorded by the service that dispatched them, with the
+// reason and goal id the prompt text cannot supply. A turn the message queue coalesced with a human
+// prompt loses its synthetic marker and so stays on the feed.
 function isUnloggedMachineTurn(
   metadata: Extract<WorkspaceChatMessage, { type: "message" }>["metadata"]
 ): boolean {
@@ -127,7 +126,7 @@ function isUnloggedMachineTurn(
   if (metadata.agentSkillSnapshot != null || metadata.fileAtMentionSnapshot != null) {
     return true;
   }
-  if (metadata.kind === "goal_continuation" || metadata.kind === "goal_budget_limit") {
+  if (metadata.kind === GOAL_CONTINUATION_KIND || metadata.kind === GOAL_BUDGET_LIMIT_KIND) {
     return true;
   }
   const muxType = readMuxMetadataField(metadata, "type");
@@ -165,16 +164,12 @@ function readFailedTaskId(text: string): string | undefined {
 }
 
 interface MachineTurnRow {
-  kind: string;
+  kind: TimelineEventKind;
   system?: TimelineSource["system"];
   key?: string;
   status?: TimelineStatus;
   data?: TimelineEventData;
   anchor?: TimelineAnchor;
-}
-
-export function subagentReportSourceKey(taskId: string): string {
-  return eventKey("task-report", taskId);
 }
 
 function classifyMachineTurn(
@@ -189,7 +184,7 @@ function classifyMachineTurn(
       ...(processes != null ? { data: { title: processes } } : {}),
     };
   }
-  if (muxType === WORKFLOW_RESULT_METADATA_TYPE) {
+  if (isWorkflowResultMessage(event)) {
     const runId = readMuxMetadataField(event.metadata, "runId");
     return {
       kind: "workflow.result",
@@ -256,13 +251,18 @@ function mapMessage(
       ];
     }
 
+    const machineAuthored = isMachineAuthoredTurn(event.metadata);
+    if (machineAuthored && isUnloggedMachineTurn(event.metadata)) {
+      return [];
+    }
+
     const text = event.parts
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join("\n");
-    const digest = truncateDigest(text);
 
-    if (!isMachineAuthoredTurn(event.metadata)) {
+    if (!machineAuthored) {
+      const digest = truncateDigest(text);
       return [
         {
           ts,
@@ -275,17 +275,11 @@ function mapMessage(
       ];
     }
 
-    if (isUnloggedMachineTurn(event.metadata)) {
-      return [];
-    }
-
-    // An unrecognized machine turn still belongs on the feed: its digest is the only record of what
+    // An unrecognized machine turn still belongs on the feed: its prompt is the only record of what
     // was dispatched on the agent's behalf.
     const row = classifyMachineTurn(event, text) ?? { kind: "turn.synthetic" };
-    const data: TimelineEventData = {
-      ...(digest !== "" ? { digest } : {}),
-      ...row.data,
-    };
+    const digest = row.data?.digest ?? truncateDigest(text);
+    const data: TimelineEventData = { ...row.data, ...(digest !== "" ? { digest } : {}) };
     return [
       {
         ts,

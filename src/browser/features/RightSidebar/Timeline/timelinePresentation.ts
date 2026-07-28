@@ -58,10 +58,8 @@ interface TimelinePresentation {
 
 const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   "turn.user": { label: "User prompt", icon: MessageSquare, category: "prompts" },
-  // Only `turn.user` belongs to Prompts: that filter is a record of what the human asked for.
-  // Synthetic turns are dispatched on the agent's behalf, and a turn's outcome is the agent's work
-  // rather than a request, so both are agent activity. Terminal events carry no provenance, so
-  // leaving them in Prompts would file every heartbeat and continuation outcome as a human request.
+  // Only human-authored turns belong to Prompts. Synthetic turns and turn outcomes are agent
+  // activity, including terminal events that carry no provenance.
   "turn.synthetic": { label: "Synthetic prompt", icon: WandSparkles, category: "agent" },
   "turn.monitor_wake": { label: "Monitor wake", icon: Radar, category: "agent" },
   "turn.background_wake": { label: "Background work wake", icon: Inbox, category: "subagents" },

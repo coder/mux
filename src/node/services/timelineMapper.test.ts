@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { WorkspaceChatMessageSchema } from "@/common/orpc/schemas/stream";
-import { TimelineEventDraftSchema } from "@/common/orpc/schemas/timeline";
+import { TimelineEventDraftSchema, subagentReportSourceKey } from "@/common/orpc/schemas/timeline";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   BACKGROUND_WORK_WAKE_OPENINGS,
@@ -13,7 +13,6 @@ import {
 import {
   createTimelineMapperState,
   mapChatEventToTimeline,
-  subagentReportSourceKey,
   type TimelineMapperState,
 } from "./timelineMapper";
 
@@ -393,7 +392,6 @@ describe("mapChatEventToTimeline", () => {
     expect(reported.drafts[0]).toMatchObject({
       kind: "task.reported",
       status: "completed",
-      // Shared with TaskService's own row so one report cannot produce two.
       source: { system: "task", key: subagentReportSourceKey("child-1") },
       anchor: { messageId: "user-report", childWorkspaceId: "child-1" },
     });

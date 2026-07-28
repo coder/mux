@@ -9,7 +9,6 @@ export interface SubagentReportEnvelope {
   structuredOutput?: unknown;
 }
 
-/** Opening tag of the terminal-failure envelope, whose body is plain XML rather than JSON. */
 export const SUBAGENT_FAILURE_ENVELOPE_TAG = "<mux_subagent_failure>";
 
 const ROOT_OPEN = "<mux_subagent_report>";

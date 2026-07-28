@@ -72,8 +72,8 @@ const BOUNDARY_KINDS = new Set([
   "history.cleared",
 ]);
 
-// A completed turn is a boundary between two stretches of work rather than an event of its own, so
-// it renders as a rule. Interruptions and failures keep the full row: they need to stand out.
+// A completed turn renders as a boundary rule between stretches of work. Interruptions and failures
+// keep the full row so they stand out.
 const TURN_END_KIND = "turn.completed";
 
 // Rule rows are already a single line, so collapsing a run of them would hide more than it saves.
@@ -237,8 +237,7 @@ function TimelineRuleRow(props: {
     );
   }
 
-  // A boundary anchors at its own summary message, which may exist only in archived history, so it
-  // stays selectable: rendering it as a plain separator would discard the only path to that message.
+  // An anchored rule may point into archived history, so keep it selectable as a reveal path.
   return (
     <button
       type="button"
