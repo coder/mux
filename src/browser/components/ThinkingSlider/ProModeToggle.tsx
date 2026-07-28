@@ -5,9 +5,11 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { useRouting } from "@/browser/hooks/useRouting";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { cn } from "@/common/lib/utils";
 
 interface ProModeToggleProps {
   modelString: string;
+  className?: string;
 }
 
 /**
@@ -44,11 +46,13 @@ export const ProModeToggle: React.FC<ProModeToggleProps> = (props) => {
         <button
           type="button"
           data-component="ProModeToggle"
-          data-pro-mode-toggle
           aria-pressed={isActive}
           aria-label={`Pro reasoning mode: ${isActive ? "on" : "off"}. Click to toggle.`}
           onClick={() => setReasoningMode(isActive ? "standard" : "pro")}
-          className="hover:bg-hover shrink-0 rounded-sm bg-transparent px-1 text-center text-[11px] transition-all duration-200 select-none"
+          className={cn(
+            "hover:bg-hover shrink-0 rounded-sm bg-transparent px-1 text-center text-[11px] transition-all duration-200 select-none",
+            props.className
+          )}
           style={
             isActive
               ? { color: "var(--color-thinking-mode)", fontWeight: 700 }

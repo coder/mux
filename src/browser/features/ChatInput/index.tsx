@@ -220,7 +220,11 @@ import { normalizeAgentId } from "@/common/utils/agentIds";
 import { isGoalRunning } from "@/common/types/goal";
 import { appendStagedAttachmentNotice, getStagedAttachments } from "./stagedAttachments";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
-import { COMPOSER_CONTROL_HEIGHT_CLASS, CREATION_COLUMN_MAX_WIDTH_CLASS } from "@/constants/layout";
+import {
+  COMPOSER_CONTROL_HEIGHT_CLASS,
+  COMPOSER_ICON_ONLY_HIDE_CLASS,
+  CREATION_COLUMN_MAX_WIDTH_CLASS,
+} from "@/constants/layout";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -3490,14 +3494,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                     <span className="bg-border-light h-3.5 w-px shrink-0" aria-hidden="true" />
 
-                    {/* Hide the PRO chip below 420px to prevent overflow; the command palette
-                      still provides access to pro mode. */}
+                    {/* The PRO chip drops out with the row's other icon-only collapses; the command
+                      palette still provides access to pro mode. */}
                     <div
-                      className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-pro-mode-toggle]]:hidden"
+                      className="flex shrink-0 items-center"
                       data-component="ThinkingSliderGroup"
                     >
                       <ThinkingSliderComponent modelString={baseModel} />
-                      <ProModeToggle modelString={baseModel} />
+                      <ProModeToggle
+                        modelString={baseModel}
+                        className={COMPOSER_ICON_ONLY_HIDE_CLASS}
+                      />
                     </div>
                   </div>
 
