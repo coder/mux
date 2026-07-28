@@ -195,8 +195,10 @@ import {
   HEARTBEAT_MAX_INTERVAL_MS,
   HEARTBEAT_MIN_INTERVAL_MS,
   HEARTBEAT_QUEUE_DEDUPE_KEY,
+  HEARTBEAT_REMOVED_SUMMARY,
   HEARTBEAT_RESET_BOUNDARY_MESSAGE,
   formatHeartbeatInterval,
+  summarizeHeartbeatSettings,
   isHeartbeatTrigger,
   isHeartbeatWhenBusy,
   isValidHeartbeatScheduleUpdatedAt,
@@ -5138,6 +5140,12 @@ export class WorkspaceService extends EventEmitter {
       const interactionTimestamp = Date.now();
       await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      this.timelineRecorder.record(normalizedWorkspaceId, {
+        kind: "heartbeat.configured",
+        source: { system: "heartbeat" },
+        status: "completed",
+        data: { digest: HEARTBEAT_REMOVED_SUMMARY },
+      });
 
       return Ok(undefined);
     } catch (error) {
@@ -5300,6 +5308,13 @@ export class WorkspaceService extends EventEmitter {
       // instead of rebuilding from an older completed turn.
       await this.updateRecencyTimestamp(normalizedWorkspaceId, interactionTimestamp);
       await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      // Recorded here rather than in the heartbeat tool so sidebar edits are on the record too.
+      this.timelineRecorder.record(normalizedWorkspaceId, {
+        kind: "heartbeat.configured",
+        source: { system: "heartbeat" },
+        status: "completed",
+        data: { digest: summarizeHeartbeatSettings(mergeResult.data.settings) },
+      });
 
       return Ok(mergeResult.data.settings);
     } catch (error) {

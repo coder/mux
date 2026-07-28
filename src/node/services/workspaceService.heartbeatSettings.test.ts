@@ -121,6 +121,27 @@ describe("WorkspaceService heartbeat settings", () => {
     expect(typeof recencyUpdateCall?.[1]).toBe("number");
   });
 
+  test("records a timeline row for user-driven heartbeat changes, but not for no-ops", async () => {
+    const record = mock<(workspaceId: string, draft: { kind: string }) => void>(() => undefined);
+    service.setTimelineRecorder({ record, closeWorkspace: () => Promise.resolve() });
+
+    await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+    });
+    expect(record.mock.calls.map((call) => call[1].kind)).toEqual(["heartbeat.configured"]);
+
+    // Re-applying the same settings changes nothing, so it must not add a row.
+    await service.setHeartbeatSettings(TEST_WORKSPACE_ID, {
+      enabled: true,
+      intervalMs: 45 * 60 * 1000,
+    });
+    expect(record).toHaveBeenCalledTimes(1);
+
+    await service.unsetHeartbeatSettings(TEST_WORKSPACE_ID);
+    expect(record).toHaveBeenCalledTimes(2);
+  });
+
   test("does not update workspace recency when heartbeat settings do not change", async () => {
     const updateRecencyTimestamp = mock<(workspaceId: string, timestamp?: number) => Promise<void>>(
       () => Promise.resolve()

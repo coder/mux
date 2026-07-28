@@ -7,7 +7,7 @@ import type {
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { HeartbeatToolArgs, HeartbeatToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
-import { formatHeartbeatInterval, resolveHeartbeatSchedulePolicy } from "@/constants/heartbeat";
+import { HEARTBEAT_REMOVED_SUMMARY, summarizeHeartbeatSettings } from "@/constants/heartbeat";
 import { requireWorkspaceId } from "./toolUtils";
 
 function hasProvided<K extends keyof HeartbeatToolArgs>(
@@ -20,20 +20,9 @@ function hasProvided<K extends keyof HeartbeatToolArgs>(
 function summarize(
   result: Pick<HeartbeatToolResult & { success: true }, "action" | "settings">
 ): string {
-  if (result.action === "unset") {
-    return "Heartbeat settings removed for this workspace.";
-  }
-
-  const settings = result.settings;
-  if (!settings) {
-    return "No heartbeat settings are configured for this workspace.";
-  }
-
-  const status = settings.enabled ? "enabled" : "disabled";
-  // Mention the schedule shape only when it deviates from the default idle trigger.
-  const scheduleSuffix =
-    resolveHeartbeatSchedulePolicy(settings).trigger === "interval" ? " (fixed schedule)" : "";
-  return `Heartbeat is ${status} for this workspace at ${formatHeartbeatInterval(settings.intervalMs)}${scheduleSuffix}.`;
+  return result.action === "unset"
+    ? HEARTBEAT_REMOVED_SUMMARY
+    : summarizeHeartbeatSettings(result.settings);
 }
 
 // Build the shared success payload for every heartbeat action so the get/set/unset branches
@@ -65,16 +54,6 @@ export const createHeartbeatTool: ToolFactory = (config) =>
           return { success: false, error: "Heartbeat service is unavailable" };
         }
 
-        const recordConfigured = (result: HeartbeatToolResult & { success: true }) => {
-          config.timelineService?.record(workspaceId, {
-            kind: "heartbeat.configured",
-            source: { system: "heartbeat" },
-            status: "completed",
-            data: { digest: result.summary },
-          });
-          return result;
-        };
-
         if (args.action === "get") {
           const settings = heartbeatService.getHeartbeatSettings(workspaceId);
           return buildSuccessResult(args.action, settings);
@@ -85,7 +64,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
           if (!unsetResult.success) {
             return { success: false, error: unsetResult.error };
           }
-          return recordConfigured(buildSuccessResult(args.action, null));
+          return buildSuccessResult(args.action, null);
         }
 
         const settingsUpdate: WorkspaceHeartbeatSettingsUpdate = {};
@@ -117,7 +96,7 @@ export const createHeartbeatTool: ToolFactory = (config) =>
         }
 
         const settings = setResult.data;
-        return recordConfigured(buildSuccessResult(args.action, settings));
+        return buildSuccessResult(args.action, settings);
       } catch (error) {
         return { success: false, error: getErrorMessage(error) };
       }

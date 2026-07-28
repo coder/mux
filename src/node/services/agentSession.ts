@@ -4305,6 +4305,14 @@ export class AgentSession {
       return false;
     }
 
+    // This clear bypasses WorkspaceService.replaceHistory, so announce it on the chat funnel the
+    // timeline already consumes: a log that cannot explain missing history defeats its purpose.
+    this.emitChatEvent({
+      type: "history-cleared",
+      workspaceId: this.workspaceId,
+      reason: "exec sub-agent hard restart",
+    });
+
     const deletedSequences = clearResult.data;
     if (deletedSequences.length > 0) {
       const deleteMessage: DeleteMessage = {
