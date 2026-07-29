@@ -13,7 +13,7 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
+import { ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 
 import { COMPOSER_PICKER_PANEL_CLASS, composerPickerOptionClass } from "../composerPickerStyles";
 import { ProviderIcon } from "../ProviderIcon/ProviderIcon";
@@ -405,15 +405,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       role="option"
                       aria-selected={value === model}
                     >
-                      <Check
-                        className={cn(
-                          "h-3 w-3 shrink-0",
-                          value === model ? "opacity-100" : "opacity-0"
-                        )}
-                      />
                       <ProviderIcon
                         provider={modelProvider}
-                        className="text-muted h-3 w-3 shrink-0"
+                        className={cn(
+                          "h-3 w-3 shrink-0",
+                          value === model ? "text-accent" : "text-muted"
+                        )}
                       />
                       <span className="flex min-w-0 flex-1 items-baseline gap-1">
                         <span className={cn("min-w-0 truncate", value === model && "text-accent")}>
