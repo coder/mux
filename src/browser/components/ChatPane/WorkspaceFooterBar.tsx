@@ -280,10 +280,9 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
     : null;
 
   return (
-    // At narrow widths the app root drops its bottom inset so this bar reaches the screen edge, and
-    // this row owns the inset instead: a small clearance for the home indicator rather than the full
-    // inset, which is the band of empty space we are reclaiming. Wider viewports still get their
-    // clearance from the root.
+    // Narrow layouts drop the app root's bottom inset, so this row owns it: a capped clearance for
+    // the home indicator instead of the full inset, whose reserved band is the empty space we are
+    // reclaiming. Wider layouts still take their clearance from the root.
     <footer
       data-testid="workspace-footer-bar"
       className="bg-sidebar border-border-light shrink-0 border-t [@media(max-width:768px)]:pb-[min(env(safe-area-inset-bottom,0px),8px)]"
@@ -298,8 +297,7 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
           workspaceName={props.workspaceName}
           tooltipSide="top"
         />
-        {/* User request: on narrow viewports the PR badge moves to the workspace header, where it
-            cannot scroll out of view with this row. */}
+        {/* Narrow layouts show it in the header, where it cannot scroll out of view with this row. */}
         <WorkspaceLinks
           workspaceId={props.workspaceId}
           className="[@media(max-width:768px)]:hidden"

@@ -1,7 +1,3 @@
-/**
- * PR link badge component for displaying GitHub PR status in header.
- */
-
 import {
   ExternalLink,
   GitPullRequest,

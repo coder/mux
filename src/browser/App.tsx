@@ -1251,10 +1251,10 @@ function AppInner() {
 
   return (
     <>
-      {/* Narrow viewports hand the bottom inset to the chat column's last row instead: this box
-          clips overflow, so reserving the inset here strands dead space under the workspace footer
-          bar that no child can paint into. Safe because the sidebar is position: fixed with its own
-          inset at these widths and the right sidebar is hidden. */}
+      {/* Narrow layouts let the main column run to the screen edge and leave the bottom inset to
+          whichever row holds controls there (WorkspaceFooterBar): this box clips overflow, so a
+          child cannot paint into its padding, and the reserved band reads as dead space. The
+          sidebar is position: fixed with its own inset at these widths. */}
       <div className="bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)] [@media(max-width:768px)]:pb-0">
         <LeftSidebar
           collapsed={sidebarCollapsed}
