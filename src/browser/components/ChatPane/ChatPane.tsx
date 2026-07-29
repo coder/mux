@@ -92,6 +92,7 @@ import {
   ChatDockSurface,
   useChatDockColumnWidthClass,
 } from "./chatDockColumn";
+import { resolveComposerControlFocusTarget } from "./composerControlFocus";
 import { useTranscriptDensity } from "@/browser/hooks/useTranscriptDensity";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "../ReviewsBanner/ReviewsBanner";
@@ -862,6 +863,21 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     },
     [clearActiveSideQuestionScrollHold, handleScrollContainerMouseDown, isComposerDockEvent]
   );
+
+  const handleComposerDockMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.button !== 0) {
+      return;
+    }
+    const control = resolveComposerControlFocusTarget(event.target, composerDockRef.current);
+    if (!control) {
+      return;
+    }
+    // Suppressing the default keeps WebKit from walking focus up to the scrollport
+    // (see composerControlFocus); the control then takes focus the way it already
+    // does on Chromium.
+    event.preventDefault();
+    control.focus({ preventScroll: true });
+  }, []);
 
   const handleTranscriptTouchMove = useCallback(() => {
     clearActiveSideQuestionScrollHold();
@@ -1765,6 +1781,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
               <ChatDockColumnProvider value={chatTranscriptFullWidth}>
                 <div
                   ref={composerDockRef}
+                  onMouseDown={handleComposerDockMouseDown}
                   data-testid="chat-composer-dock"
                   className="bg-surface-primary sticky bottom-0 z-10 mx-[-15px] break-normal whitespace-normal"
                   style={COMPOSER_DOCK_STYLE}
