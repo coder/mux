@@ -104,6 +104,7 @@ import {
   useBackgroundBashError,
 } from "@/browser/contexts/BackgroundBashContext";
 import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
+import { isPrimaryMouseButton } from "@/browser/utils/events";
 import {
   buildEditingStateFromDisplayed,
   canEditDisplayedUserMessage,
@@ -728,7 +729,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   );
 
   const handleComposerDockMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || event.button !== 0) {
+    if (event.defaultPrevented || !isPrimaryMouseButton(event)) {
       return;
     }
     const control = resolveComposerControlFocusTarget(event.target, composerDockRef.current);
