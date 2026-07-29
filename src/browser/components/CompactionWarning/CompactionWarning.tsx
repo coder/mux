@@ -44,7 +44,7 @@ export const CompactionWarning: React.FC<{
 
   return (
     <div
-      className={`mx-4 text-right text-[10px] ${
+      className={`text-right text-[10px] ${
         isUrgent ? "text-plan-mode font-semibold" : "text-muted"
       }`}
     >

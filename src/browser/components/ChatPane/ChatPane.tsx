@@ -86,10 +86,12 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useAPI } from "@/browser/contexts/API";
 import { useChatTranscriptFullWidth } from "@/browser/hooks/useChatTranscriptFullWidth";
+import { CHAT_DOCK_GUTTER_CLASS } from "@/constants/layout";
 import {
-  CHAT_DOCK_GUTTER_CLASS,
+  ChatDockColumnProvider,
+  ChatDockSurface,
   useChatDockColumnWidthClass,
-} from "@/browser/hooks/useChatDockColumn";
+} from "./chatDockColumn";
 import { useTranscriptDensity } from "@/browser/hooks/useTranscriptDensity";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "../ReviewsBanner/ReviewsBanner";
@@ -1760,73 +1762,75 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                   of the scrollport never changes with dock height (send-flash
                   invariant). `bg-surface-primary` keeps transcript content from
                   showing through gaps between decoration banners. */}
-              <div
-                ref={composerDockRef}
-                data-testid="chat-composer-dock"
-                className="bg-surface-primary sticky bottom-0 z-10 mx-[-15px] break-normal whitespace-normal"
-                style={COMPOSER_DOCK_STYLE}
-              >
-                {!autoScroll && (
-                  <button
-                    onClick={handleJumpToBottom}
-                    type="button"
-                    // Sit just above the composer dock (8px gap), tracking its live
-                    // height through normal layout instead of a measured offset.
-                    className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-transform duration-200 hover:scale-105 active:scale-95"
-                  >
-                    Jump to bottom{" "}
-                    <span className="mobile-hide-shortcut-hints">
-                      ({formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)})
-                    </span>
-                  </button>
-                )}
-                {transcriptOnly ? (
-                  // Transcript-only workspaces keep their historical transcript, but the whole
-                  // composer surface is replaced with a single read-only notice.
-                  <TranscriptOnlyNoticePane />
-                ) : (
-                  <ChatInputPane
-                    kind={meta?.kind}
-                    workspaceId={workspaceId}
-                    projectName={projectName}
-                    workspaceName={workspaceName}
-                    revealDecorations={revealDecorations}
-                    isStreamStarting={isStreamStarting}
-                    isTranscriptCaughtUp={isTranscriptCaughtUp}
-                    runtimeConfig={runtimeConfig}
-                    isPreStreamAgentTask={isPreStreamAgentTask}
-                    preStreamAgentTaskStatus={
-                      meta?.taskStatus === "starting" ? "starting" : "queued"
-                    }
-                    isCompacting={isCompacting}
-                    shouldShowPinnedTodoList={shouldShowPinnedTodoList}
-                    shouldShowReviewsBanner={shouldShowReviewsBanner}
-                    concurrentLocalStreamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
-                    canInterrupt={canInterrupt}
-                    autoCompactionResult={autoCompactionResult}
-                    shouldShowCompactionWarning={shouldShowCompactionWarning}
-                    contextSwitchWarning={contextSwitchWarning}
-                    onContextSwitchCompact={handleContextSwitchCompact}
-                    onContextSwitchDismiss={handleContextSwitchDismiss}
-                    onModelChange={handleModelChange}
-                    onMessageSendStarted={handleMessageSendStarted}
-                    onMessageSent={handleMessageSent}
-                    onResetContext={handleResetContext}
-                    onTruncateHistory={handleClearHistory}
-                    editingMessage={editingMessage}
-                    onCancelEdit={handleCancelEdit}
-                    onEditLastUserMessage={handleEditLastUserMessageClick}
-                    onChatInputReady={handleChatInputReady}
-                    queuedMessage={workspaceState?.queuedMessage ?? null}
-                    onEditQueuedMessage={() => void handleEditQueuedMessage()}
-                    onSendQueuedImmediately={
-                      workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
-                    }
-                    reviews={reviews}
-                    onCheckReviews={handleCheckReviews}
-                  />
-                )}
-              </div>
+              <ChatDockColumnProvider value={chatTranscriptFullWidth}>
+                <div
+                  ref={composerDockRef}
+                  data-testid="chat-composer-dock"
+                  className="bg-surface-primary sticky bottom-0 z-10 mx-[-15px] break-normal whitespace-normal"
+                  style={COMPOSER_DOCK_STYLE}
+                >
+                  {!autoScroll && (
+                    <button
+                      onClick={handleJumpToBottom}
+                      type="button"
+                      // Sit just above the composer dock (8px gap), tracking its live
+                      // height through normal layout instead of a measured offset.
+                      className="assistant-chip font-primary text-foreground hover:assistant-chip-hover absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 cursor-pointer rounded-[20px] px-2 py-1 text-xs font-medium shadow-[0_4px_12px_rgba(0,0,0,0.3)] backdrop-blur-[1px] transition-transform duration-200 hover:scale-105 active:scale-95"
+                    >
+                      Jump to bottom{" "}
+                      <span className="mobile-hide-shortcut-hints">
+                        ({formatKeybind(KEYBINDS.JUMP_TO_BOTTOM)})
+                      </span>
+                    </button>
+                  )}
+                  {transcriptOnly ? (
+                    // Transcript-only workspaces keep their historical transcript, but the whole
+                    // composer surface is replaced with a single read-only notice.
+                    <TranscriptOnlyNoticePane />
+                  ) : (
+                    <ChatInputPane
+                      kind={meta?.kind}
+                      workspaceId={workspaceId}
+                      projectName={projectName}
+                      workspaceName={workspaceName}
+                      revealDecorations={revealDecorations}
+                      isStreamStarting={isStreamStarting}
+                      isTranscriptCaughtUp={isTranscriptCaughtUp}
+                      runtimeConfig={runtimeConfig}
+                      isPreStreamAgentTask={isPreStreamAgentTask}
+                      preStreamAgentTaskStatus={
+                        meta?.taskStatus === "starting" ? "starting" : "queued"
+                      }
+                      isCompacting={isCompacting}
+                      shouldShowPinnedTodoList={shouldShowPinnedTodoList}
+                      shouldShowReviewsBanner={shouldShowReviewsBanner}
+                      concurrentLocalStreamingWorkspaceName={concurrentLocalStreamingWorkspaceName}
+                      canInterrupt={canInterrupt}
+                      autoCompactionResult={autoCompactionResult}
+                      shouldShowCompactionWarning={shouldShowCompactionWarning}
+                      contextSwitchWarning={contextSwitchWarning}
+                      onContextSwitchCompact={handleContextSwitchCompact}
+                      onContextSwitchDismiss={handleContextSwitchDismiss}
+                      onModelChange={handleModelChange}
+                      onMessageSendStarted={handleMessageSendStarted}
+                      onMessageSent={handleMessageSent}
+                      onResetContext={handleResetContext}
+                      onTruncateHistory={handleClearHistory}
+                      editingMessage={editingMessage}
+                      onCancelEdit={handleCancelEdit}
+                      onEditLastUserMessage={handleEditLastUserMessageClick}
+                      onChatInputReady={handleChatInputReady}
+                      queuedMessage={workspaceState?.queuedMessage ?? null}
+                      onEditQueuedMessage={() => void handleEditQueuedMessage()}
+                      onSendQueuedImmediately={
+                        workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
+                      }
+                      reviews={reviews}
+                      onCheckReviews={handleCheckReviews}
+                    />
+                  )}
+                </div>
+              </ChatDockColumnProvider>
             </PerfRenderMarker>
           </div>
           {transcriptContextMenu.menu}
@@ -1909,11 +1913,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     addDecorationEntry({
       key: "compaction-warning",
       node: (
-        <CompactionWarning
-          usagePercentage={props.autoCompactionResult.usagePercentage}
-          thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
-          isStreaming={props.canInterrupt}
-        />
+        <ChatDockSurface>
+          <CompactionWarning
+            usagePercentage={props.autoCompactionResult.usagePercentage}
+            thresholdPercentage={props.autoCompactionResult.thresholdPercentage}
+            isStreaming={props.canInterrupt}
+          />
+        </ChatDockSurface>
       ),
     });
   }
@@ -1921,11 +1927,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     addDecorationEntry({
       key: "context-switch-warning",
       node: (
-        <ContextSwitchWarningBanner
-          warning={props.contextSwitchWarning}
-          onCompact={props.onContextSwitchCompact}
-          onDismiss={props.onContextSwitchDismiss}
-        />
+        <ChatDockSurface>
+          <ContextSwitchWarningBanner
+            warning={props.contextSwitchWarning}
+            onCompact={props.onContextSwitchCompact}
+            onDismiss={props.onContextSwitchDismiss}
+          />
+        </ChatDockSurface>
       ),
     });
   }
@@ -1983,11 +1991,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     addDecorationEntry({
       key: "pre-stream-agent-task",
       node: (
-        <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
-          {props.preStreamAgentTaskStatus === "starting"
-            ? "This agent task is starting and will become editable after launch accepts the initial prompt."
-            : "This agent task is queued and will start automatically when a parallel slot is available."}
-        </div>
+        <ChatDockSurface>
+          <div className="border-border-medium bg-background-secondary text-muted rounded-md border px-3 py-2 text-xs">
+            {props.preStreamAgentTaskStatus === "starting"
+              ? "This agent task is starting and will become editable after launch accepts the initial prompt."
+              : "This agent task is queued and will start automatically when a parallel slot is available."}
+          </div>
+        </ChatDockSurface>
       ),
     });
   }

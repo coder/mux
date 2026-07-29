@@ -13,8 +13,8 @@ import {
 } from "@/browser/stories/storyPlayHelpers.js";
 import { within, userEvent, waitFor } from "@storybook/test";
 
-// Tailwind's `max-w-4xl`, which the centered transcript and composer columns both cap at.
-const CENTERED_TRANSCRIPT_MAX_WIDTH_PX = 896;
+// Tailwind's `max-w-4xl` in px, the cap the centered transcript and composer columns share.
+const CENTERED_COLUMN_MAX_WIDTH_PX = 896;
 
 const meta = { ...appMeta, title: "App/Chat/Input" };
 export default meta;
@@ -342,31 +342,104 @@ export const EditingMessage: AppStory = {
   },
 };
 
+const DOCK_ALIGNMENT_MESSAGES = [
+  createUserMessage("msg-1", "Widen the transcript and check the composer edges", {
+    historySequence: 1,
+  }),
+  createAssistantMessage("msg-2", "The composer should span the same column.", {
+    historySequence: 2,
+    // 64% of the default model's 1M window: past the auto-compaction warning point (threshold 70
+    // minus a 10 point advance) without reaching force-compaction. The warning is one of the
+    // surfaces wrapped in ChatDockSurface rather than in a decoration of its own.
+    contextUsage: { inputTokens: 640_000, outputTokens: 4_000 },
+  }),
+];
+
+// Renders a ChatInputDecoration, so the assertions cover a decoration and not only the composer.
+const DOCK_ALIGNMENT_BACKGROUND_PROCESS = {
+  id: "bash_1",
+  pid: 4242,
+  script: "npm run dev",
+  displayName: "Dev Server",
+  startTime: STABLE_TIMESTAMP,
+  status: "running" as const,
+};
+
+function setupDockAlignmentStory(fullWidth: boolean) {
+  collapseLeftSidebar();
+  return setupSimpleChatStory({
+    workspaceId: fullWidth ? "ws-dock-align-full" : "ws-dock-align-centered",
+    messages: DOCK_ALIGNMENT_MESSAGES,
+    backgroundProcesses: [DOCK_ALIGNMENT_BACKGROUND_PROCESS],
+    chatTranscriptFullWidth: fullWidth,
+  });
+}
+
 /**
- * The composer dock cancels the transcript scrollport's gutter, so every docked surface has to
- * re-apply it and follow the transcript's width mode to line up. Full width is the mode where a
- * mismatch is visible, since centered mode hides it by sharing a center line.
+ * Asserts every surface in the composer dock shares the transcript column's left and right edges.
+ * The dock cancels the transcript scrollport's gutter to paint full-bleed, so each surface inside it
+ * has to re-apply that gutter and follow the transcript's width mode.
  */
+async function assertDockSurfacesMatchTranscript(
+  storyRoot: HTMLElement,
+  expectation: "capped" | "full-width"
+) {
+  const transcript = storyRoot.querySelector<HTMLElement>('[aria-label="Conversation transcript"]');
+  if (!transcript) throw new Error("Transcript column not rendered");
+  const scrollport = transcript.parentElement;
+  if (!scrollport) throw new Error("Transcript scrollport not rendered");
+
+  const surfaces: Array<[string, HTMLElement]> = [];
+  const addSurface = (label: string, selector: string) => {
+    const element = storyRoot.querySelector<HTMLElement>(selector);
+    if (!element) throw new Error(`Docked ${label} not rendered`);
+    surfaces.push([label, element]);
+  };
+  addSurface("composer", '[data-component="ChatInputSurface"]');
+  addSurface("decoration", '[data-component="ChatInputDecorationStack"] button');
+  const wrapped = storyRoot.querySelectorAll<HTMLElement>('[data-component="ChatDockSurface"]');
+  if (wrapped.length === 0) throw new Error("No ChatDockSurface-wrapped entry rendered");
+  wrapped.forEach((element, index) => surfaces.push([`wrapped surface ${index}`, element]));
+
+  await waitFor(() => {
+    const column = transcript.getBoundingClientRect();
+    const available = scrollport.clientWidth;
+    if (expectation === "full-width") {
+      // Docked surfaces used to hardcode the same 4xl cap the centered column uses, so below that
+      // width they line up regardless and the regression would pass unnoticed.
+      if (column.width <= CENTERED_COLUMN_MAX_WIDTH_PX) {
+        throw new Error(
+          `Transcript is ${Math.round(column.width)}px wide, so this story is not in full-width mode`
+        );
+      }
+    } else {
+      if (available <= CENTERED_COLUMN_MAX_WIDTH_PX) {
+        throw new Error(
+          `Scrollport is only ${available}px wide, so the centered cap is not what limits the column`
+        );
+      }
+      if (Math.round(column.width) !== CENTERED_COLUMN_MAX_WIDTH_PX) {
+        throw new Error(
+          `Centered transcript should stop at the cap, measured ${Math.round(column.width)}px`
+        );
+      }
+    }
+
+    for (const [label, element] of surfaces) {
+      const bounds = element.getBoundingClientRect();
+      const leftGap = Math.round(bounds.left - column.left);
+      const rightGap = Math.round(column.right - bounds.right);
+      if (leftGap !== 0 || rightGap !== 0) {
+        throw new Error(
+          `Docked ${label} is inset from the transcript column by ${leftGap}px left and ${rightGap}px right`
+        );
+      }
+    }
+  });
+}
+
 export const FullWidthTranscriptAlignment: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        collapseLeftSidebar();
-        return setupSimpleChatStory({
-          workspaceId: "ws-full-width-alignment",
-          chatTranscriptFullWidth: true,
-          messages: [
-            createUserMessage("msg-1", "Widen the transcript and check the composer edges", {
-              historySequence: 1,
-            }),
-            createAssistantMessage("msg-2", "The composer should span the same column.", {
-              historySequence: 2,
-            }),
-          ],
-        });
-      }}
-    />
-  ),
+  render: () => <AppWithMocks setup={() => setupDockAlignmentStory(true)} />,
   parameters: {
     ...appMeta.parameters,
     pixel: PIXEL_DISABLED,
@@ -376,31 +449,21 @@ export const FullWidthTranscriptAlignment: AppStory = {
     await waitForChatInputAutofocusDone(storyRoot);
     blurActiveElement();
 
-    const transcript = storyRoot.querySelector<HTMLElement>(
-      '[aria-label="Conversation transcript"]'
-    );
-    if (!transcript) throw new Error("Transcript column not rendered");
-    const surface = storyRoot.querySelector<HTMLElement>('[data-component="ChatInputSurface"]');
-    if (!surface) throw new Error("Composer surface not rendered");
+    await assertDockSurfacesMatchTranscript(storyRoot, "full-width");
+  },
+};
 
-    await waitFor(() => {
-      const column = transcript.getBoundingClientRect();
-      // Without this the story would still pass while centered, where both columns share a center
-      // line and the widths agree by accident.
-      if (column.width <= CENTERED_TRANSCRIPT_MAX_WIDTH_PX) {
-        throw new Error(
-          `Transcript is ${Math.round(column.width)}px wide, so this story is not in full-width mode`
-        );
-      }
+export const CenteredTranscriptAlignment: AppStory = {
+  render: () => <AppWithMocks setup={() => setupDockAlignmentStory(false)} />,
+  parameters: {
+    ...appMeta.parameters,
+    pixel: PIXEL_DISABLED,
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatInputAutofocusDone(storyRoot);
+    blurActiveElement();
 
-      const composer = surface.getBoundingClientRect();
-      const leftGap = Math.round(composer.left - column.left);
-      const rightGap = Math.round(column.right - composer.right);
-      if (leftGap !== 0 || rightGap !== 0) {
-        throw new Error(
-          `Composer is inset from the transcript column by ${leftGap}px left and ${rightGap}px right`
-        );
-      }
-    });
+    await assertDockSurfacesMatchTranscript(storyRoot, "capped");
   },
 };

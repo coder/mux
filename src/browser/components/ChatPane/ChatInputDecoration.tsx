@@ -1,10 +1,8 @@
 import type { ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/common/lib/utils";
-import {
-  CHAT_DOCK_GUTTER_CLASS,
-  useChatDockColumnWidthClass,
-} from "@/browser/hooks/useChatDockColumn";
+import { CHAT_DOCK_GUTTER_CLASS } from "@/constants/layout";
+import { useChatDockColumnWidthClass } from "./chatDockColumn";
 
 interface ChatInputDecorationProps {
   expanded: boolean;

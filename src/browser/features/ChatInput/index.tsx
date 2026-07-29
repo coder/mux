@@ -225,12 +225,10 @@ import {
   COMPOSER_ICON_ONLY_HIDE_CLASS,
   COMPOSER_PRO_HIDE_CLASS,
   COMPOSER_WORKSPACE_ICON_ONLY_HIDE_CLASS,
+  CHAT_DOCK_GUTTER_CLASS,
   CREATION_COLUMN_MAX_WIDTH_CLASS,
 } from "@/constants/layout";
-import {
-  CHAT_DOCK_GUTTER_CLASS,
-  useChatDockColumnWidthClass,
-} from "@/browser/hooks/useChatDockColumn";
+import { useChatDockColumnWidthClass } from "@/browser/components/ChatPane/chatDockColumn";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.

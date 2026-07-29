@@ -88,7 +88,7 @@ export interface SimpleChatSetupOptions {
   }>;
   /** Mock clearLogs result */
   clearLogsResult?: { success: boolean; error?: string | null };
-  /** Backend-synced full-width transcript preference, which overrides any locally persisted value. */
+  /** Full-width transcript preference returned by the mock config API. */
   chatTranscriptFullWidth?: boolean;
 }
 

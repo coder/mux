@@ -2,10 +2,8 @@ import React, { useMemo, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import {
-  CHAT_DOCK_GUTTER_CLASS,
-  useChatDockColumnWidthClass,
-} from "@/browser/hooks/useChatDockColumn";
+import { CHAT_DOCK_GUTTER_CLASS } from "@/constants/layout";
+import { useChatDockColumnWidthClass } from "@/browser/components/ChatPane/chatDockColumn";
 import { cn } from "@/common/lib/utils";
 import { isLocalProjectRuntime } from "@/common/types/runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
