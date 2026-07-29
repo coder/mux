@@ -290,17 +290,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                 {isNonGitRepo && (
                   <GitInitBanner projectPath={projectPath} onSuccess={handleGitInitSuccess} />
                 )}
-                {/* Keep the heading outside the provider branch to prevent layout shifts during setup. */}
-                <h1
-                  className={cn(
-                    "text-foreground px-1 text-[32px] leading-10 font-semibold",
-                    // Narrow screens have no vertical room to spend on a decorative headline, but it
-                    // is the page's only h1, so keep it for assistive tech instead of removing it.
-                    "[@media(max-width:768px)]:sr-only"
-                  )}
-                >
-                  Let&rsquo;s get building.
-                </h1>
                 {/* Show configure prompt when no providers, otherwise show ChatInput */}
                 {!providersLoading && !hasProviders ? (
                   <ConfigureProvidersPrompt />

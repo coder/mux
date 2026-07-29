@@ -86,6 +86,10 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useAPI } from "@/browser/contexts/API";
 import { useChatTranscriptFullWidth } from "@/browser/hooks/useChatTranscriptFullWidth";
+import {
+  CHAT_DOCK_GUTTER_CLASS,
+  useChatDockColumnWidthClass,
+} from "@/browser/hooks/useChatDockColumn";
 import { useTranscriptDensity } from "@/browser/hooks/useTranscriptDensity";
 import { useReviews } from "@/browser/hooks/useReviews";
 import { ReviewsBanner } from "../ReviewsBanner/ReviewsBanner";
@@ -1833,9 +1837,13 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 };
 
 const TranscriptOnlyNoticePane: React.FC = () => {
+  const columnWidthClass = useChatDockColumnWidthClass();
+
   return (
-    <div className="bg-surface-primary border-border-light border-t px-4 pb-2">
-      <div className="mx-auto max-w-4xl py-4">
+    <div
+      className={cn("bg-surface-primary border-border-light border-t pb-2", CHAT_DOCK_GUTTER_CLASS)}
+    >
+      <div className={cn("py-4", columnWidthClass)}>
         <p role="note" className="text-muted text-sm leading-6">
           {TRANSCRIPT_ONLY_NOTICE}
         </p>

@@ -88,6 +88,8 @@ export interface SimpleChatSetupOptions {
   }>;
   /** Mock clearLogs result */
   clearLogsResult?: { success: boolean; error?: string | null };
+  /** Backend-synced full-width transcript preference, which overrides any locally persisted value. */
+  chatTranscriptFullWidth?: boolean;
 }
 
 /**
@@ -177,6 +179,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     invalidAgentSkills: opts.invalidAgentSkills,
     logEntries: opts.logEntries,
     clearLogsResult: opts.clearLogsResult,
+    chatTranscriptFullWidth: opts.chatTranscriptFullWidth,
   });
 }
 

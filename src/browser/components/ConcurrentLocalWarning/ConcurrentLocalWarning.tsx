@@ -2,6 +2,10 @@ import React, { useMemo, useSyncExternalStore } from "react";
 import { AlertTriangle } from "lucide-react";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import {
+  CHAT_DOCK_GUTTER_CLASS,
+  useChatDockColumnWidthClass,
+} from "@/browser/hooks/useChatDockColumn";
 import { cn } from "@/common/lib/utils";
 import { isLocalProjectRuntime } from "@/common/types/runtime";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -85,11 +89,13 @@ export const ConcurrentLocalWarningView: React.FC<ConcurrentLocalWarningViewProp
 export const ConcurrentLocalWarningDecoration: React.FC<ConcurrentLocalWarningViewProps> = (
   props
 ) => {
+  const columnWidthClass = useChatDockColumnWidthClass();
+
   return (
-    <div className="bg-surface-primary px-4 py-1.5">
+    <div className={cn("bg-surface-primary py-1.5", CHAT_DOCK_GUTTER_CLASS)}>
       <ConcurrentLocalWarningView
         streamingWorkspaceName={props.streamingWorkspaceName}
-        className={cn("mx-auto max-w-4xl", props.className)}
+        className={cn(columnWidthClass, props.className)}
       />
     </div>
   );

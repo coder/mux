@@ -227,6 +227,10 @@ import {
   COMPOSER_WORKSPACE_ICON_ONLY_HIDE_CLASS,
   CREATION_COLUMN_MAX_WIDTH_CLASS,
 } from "@/constants/layout";
+import {
+  CHAT_DOCK_GUTTER_CLASS,
+  useChatDockColumnWidthClass,
+} from "@/browser/hooks/useChatDockColumn";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -1261,6 +1265,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [agentAiDefaults, agentId, creationParentProjectPath, defaultModel, variant]);
+
+  const chatDockColumnWidthClass = useChatDockColumnWidthClass();
 
   // Expose ChatInput auto-focus completion for Storybook/tests.
   const chatInputSectionRef = useRef<HTMLDivElement | null>(null);
@@ -3234,12 +3240,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           variant === "creation"
             ? `w-full ${CREATION_COLUMN_MAX_WIDTH_CLASS}`
             : // WorkspaceFooterBar owns the bottom safe-area inset.
-              "bg-surface-primary px-4 pb-2"
+              `bg-surface-primary pb-2 ${CHAT_DOCK_GUTTER_CLASS}`
         )}
         data-component="ChatInputSection"
         data-autofocus-state="done"
       >
-        <div className={cn("w-full", variant !== "creation" && "mx-auto max-w-4xl")}>
+        <div className={cn(variant === "creation" ? "w-full" : chatDockColumnWidthClass)}>
           {/* Toasts (overlay) */}
           <div className="pointer-events-none absolute right-[15px] bottom-full left-[15px] z-[1000] mb-2 flex flex-col gap-2 [&>*]:pointer-events-auto">
             <ConnectionStatusToast wrap={false} />
