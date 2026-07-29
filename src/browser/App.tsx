@@ -1251,7 +1251,11 @@ function AppInner() {
 
   return (
     <>
-      <div className="bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
+      {/* Narrow viewports hand the bottom inset to the chat column's last row instead: this box
+          clips overflow, so reserving the inset here strands dead space under the workspace footer
+          bar that no child can paint into. Safe because the sidebar is position: fixed with its own
+          inset at these widths and the right sidebar is hidden. */}
+      <div className="bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)] [@media(max-width:768px)]:pb-0">
         <LeftSidebar
           collapsed={sidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}

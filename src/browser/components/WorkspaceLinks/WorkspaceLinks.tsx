@@ -8,14 +8,16 @@ import { PRLinkBadge } from "../PRLinkBadge/PRLinkBadge";
 
 interface WorkspaceLinksProps {
   workspaceId: string;
+  /** Applied to the badge itself so callers can hide it without leaving an empty flex item. */
+  className?: string;
 }
 
-export function WorkspaceLinks({ workspaceId }: WorkspaceLinksProps) {
+export function WorkspaceLinks({ workspaceId, className }: WorkspaceLinksProps) {
   const workspacePR = useWorkspacePR(workspaceId);
 
   if (!workspacePR) {
     return null;
   }
 
-  return <PRLinkBadge prLink={workspacePR} />;
+  return <PRLinkBadge prLink={workspacePR} className={className} />;
 }

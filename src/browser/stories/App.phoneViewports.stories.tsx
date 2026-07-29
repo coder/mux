@@ -12,7 +12,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
-import { MOBILE_TOUCH_TARGET_PX } from "@/constants/layout";
+import { MOBILE_TOUCH_TARGET_PX, NARROW_VIEWPORT_MAX_WIDTH_PX } from "@/constants/layout";
 
 import { appMeta, AppWithMocks, PIXEL_DISABLED, type AppStory } from "./meta.js";
 import { createAssistantMessage, createUserMessage } from "./mocks/messages";
@@ -103,6 +103,28 @@ index 1111111..2222222 100644
 `;
 const TOUCH_REVIEW_IMMERSIVE_NUMSTAT = "2\t0\tsrc/mobile/review.tsx";
 
+const PR_LINK_URL = "https://github.com/coder/mux/pull/3753";
+const PR_DETECTION_JSON = JSON.stringify({
+  number: 3753,
+  url: PR_LINK_URL,
+  state: "OPEN",
+  mergeable: "MERGEABLE",
+  mergeStateStatus: "CLEAN",
+  title: "Redesign the workspace chrome",
+  isDraft: false,
+  headRefName: "feature/mobile-chrome",
+  baseRefName: "main",
+  statusCheckRollup: [],
+});
+
+function countVisiblePRLinks(containerTestId: string): number {
+  return [
+    ...document.querySelectorAll<HTMLElement>(
+      `[data-testid="${containerTestId}"] a[href="${PR_LINK_URL}"]`
+    ),
+  ].filter((link) => link.getBoundingClientRect().width > 0).length;
+}
+
 export default {
   ...appMeta,
   title: "App/PhoneViewports",
@@ -137,6 +159,61 @@ export const IPhone16e: AppStory = {
   },
   play: async ({ canvasElement }) => {
     await stabilizePhoneViewportStory(canvasElement);
+  },
+};
+
+/**
+ * The PR badge lives in the footer info bar on wide viewports and in the workspace header on narrow
+ * ones. Pixel captures the narrow placement; the play assertion covers whichever side the ambient
+ * viewport selects, so the test-runner exercises the wide placement.
+ */
+export const IPhone16ePRLinkPlacement: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-iphone-16e-pr-link",
+          workspaceName: "mobile-pr",
+          projectName: "mux",
+          messages: [...MESSAGES],
+          executeBash: (_workspaceId, script) =>
+            Promise.resolve({
+              success: true as const,
+              // Empty output for anything else falls through to the git status executor.
+              output: script.includes("gh pr view") ? PR_DETECTION_JSON : "",
+              exitCode: 0,
+              wall_duration_ms: 5,
+            }),
+        })
+      }
+    />
+  ),
+  decorators: [IPhone16eDecorator],
+  parameters: {
+    ...appMeta.parameters,
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await stabilizePhoneViewportStory(canvasElement);
+
+    const narrow = window.matchMedia(`(max-width: ${NARROW_VIEWPORT_MAX_WIDTH_PX}px)`).matches;
+    await waitFor(
+      () => {
+        const inHeader = countVisiblePRLinks("workspace-menu-bar");
+        const inFooter = countVisiblePRLinks("workspace-footer-bar");
+        const [expectedHeader, expectedFooter] = narrow ? [1, 0] : [0, 1];
+        if (inHeader !== expectedHeader || inFooter !== expectedFooter) {
+          throw new Error(
+            `At ${window.innerWidth}px the PR link belongs ${
+              narrow ? "in the header" : "in the footer"
+            }, but ${inHeader} were visible in the header and ${inFooter} in the footer`
+          );
+        }
+      },
+      { timeout: 10_000 }
+    );
   },
 };
 

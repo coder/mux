@@ -20,6 +20,7 @@ import { cn } from "@/common/lib/utils";
 interface PRLinkBadgeProps {
   prLink: GitHubPRLinkWithStatus;
   onRefresh?: () => void;
+  className?: string;
 }
 
 /**
@@ -180,7 +181,7 @@ export function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
   return lines.join("\n");
 }
 
-export function PRLinkBadge({ prLink }: PRLinkBadgeProps) {
+export function PRLinkBadge({ prLink, className }: PRLinkBadgeProps) {
   const colorClass = getStatusColorClass(prLink);
   // Show pulse effect when refreshing with cached status (optimistic UI)
   const isRefreshing = prLink.loading && prLink.status != null;
@@ -192,9 +193,12 @@ export function PRLinkBadge({ prLink }: PRLinkBadgeProps) {
           variant="ghost"
           size="sm"
           className={cn(
-            "h-6 gap-1 px-2 text-xs font-medium",
+            // shrink-0 because the mobile touch-target rule puts an explicit `min-width` on links,
+            // replacing the flex min-content floor and letting the label spill over its neighbour.
+            "h-6 shrink-0 gap-1 px-2 text-xs font-medium",
             colorClass,
-            isRefreshing && "animate-pulse"
+            isRefreshing && "animate-pulse",
+            className
           )}
           asChild
         >

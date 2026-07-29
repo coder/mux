@@ -37,6 +37,7 @@ import { WorkspaceActionsMenuContent } from "../WorkspaceActionsMenuContent/Work
 import { WorkspaceTerminalIcon } from "../icons/WorkspaceTerminalIcon/WorkspaceTerminalIcon";
 
 import { SkillIndicator } from "../SkillIndicator/SkillIndicator";
+import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 import { useAPI } from "@/browser/contexts/API";
 import { useAgent } from "@/browser/contexts/AgentContext";
 
@@ -556,6 +557,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         </Popover>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
+        {/* The footer info bar hides its PR badge at this width, so the header carries it there. */}
+        <WorkspaceLinks
+          workspaceId={workspaceId}
+          className="hidden [@media(max-width:768px)]:inline-flex"
+        />
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
           <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
             <TooltipTrigger asChild>
