@@ -29,6 +29,7 @@ ESLINT_PATTERNS=(
   'src/**/*.{ts,tsx}'
   'src/node/builtinSkills/**/*.js'
   'src/node/workflowRuntime/*.js'
+  'scripts/lib/*.js'
 )
 
 get_default_eslint_concurrency() {
@@ -48,7 +49,7 @@ get_default_eslint_concurrency() {
     && [[ "$concurrency" =~ ^[0-9]+$ ]] && [ "$concurrency" -gt 0 ]; then
     echo "$concurrency"
   else
-    echo 2
+    echo 1
   fi
 }
 

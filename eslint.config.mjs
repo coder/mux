@@ -737,14 +737,15 @@ export default defineConfig([
     },
   },
   {
-    // Workflow/action/runtime sources are plain JS evaluated outside the TS
-    // program (QuickJS, skill assets, or generated child-process wrappers), so
-    // type-aware rules cannot apply. Lint them with core untyped rules so typos
-    // and dead helpers fail loudly instead of becoming silent sandbox globals.
+    // Workflow/action/runtime and script helper sources are plain JS evaluated outside the TS
+    // program (QuickJS, skill assets, generated child-process wrappers, or local tooling), so
+    // type-aware rules cannot apply. Lint them with core untyped rules so typos and dead helpers
+    // fail loudly instead of becoming silent globals.
     files: [
       "src/node/builtinSkills/**/*.js",
       "src/node/builtinWorkflowActions/**/*.js",
       "src/node/workflowRuntime/*.js",
+      "scripts/lib/*.js",
     ],
     extends: [tseslint.configs.disableTypeChecked],
     languageOptions: {

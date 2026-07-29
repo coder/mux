@@ -396,8 +396,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                           isHighlighted: index === highlightedIndex,
                           isSelected: value === model,
                         },
-                        // Less padding than the agent picker's rows: the h-5 action buttons here
-                        // already carry the row to the same height.
                         "py-1",
                         hiddenSet.has(model) && "opacity-50"
                       )}

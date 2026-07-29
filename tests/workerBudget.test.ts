@@ -71,6 +71,19 @@ describe("worker budget cgroup resolution", () => {
     expect(workerBudget.resolveMemoryConstraint(fake).limitBytes).toBe(8 * GIB);
   });
 
+  it("uses the broadest usage scope when equal caps constrain multiple levels", () => {
+    const fake = writeFakeCgroup(tmpRoot, "/parent/leaf", {
+      "/": { "memory.max": `${64 * GIB}` },
+      "/parent": { "memory.max": `${8 * GIB}` },
+      "/parent/leaf": { "memory.max": `${8 * GIB}` },
+    });
+
+    const constraint = workerBudget.resolveMemoryConstraint(fake);
+
+    expect(constraint.limitBytes).toBe(8 * GIB);
+    expect(constraint.dir).toBe(path.join(fake.cgroupRoot, "parent"));
+  });
+
   it("ignores saturated integers that stand in for 'unlimited'", () => {
     const fake = writeFakeCgroup(tmpRoot, "/leaf", {
       "/": { "memory.max": "9223372036854771712" },

@@ -95,7 +95,7 @@ function tightestConstraint(dirs, limitFile) {
   let constraint = null;
   for (const dir of dirs) {
     const limitBytes = parseLimitBytes(readFileOrNull(path.join(dir, limitFile)));
-    if (limitBytes != null && (constraint == null || limitBytes < constraint.limitBytes)) {
+    if (limitBytes != null && (constraint == null || limitBytes <= constraint.limitBytes)) {
       constraint = { dir, limitBytes };
     }
   }

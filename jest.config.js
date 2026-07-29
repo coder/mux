@@ -44,7 +44,6 @@ module.exports = {
     "node_modules/(?!\\.pnpm)(?!.*)",
   ],
   maxWorkers,
-  workerIdleMemoryLimit: "4GB",
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
   // 10 minute timeout for integration tests, 10s for unit tests
