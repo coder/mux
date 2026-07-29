@@ -389,7 +389,6 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             COMPOSER_PICKER_PANEL_CLASS
           )}
         >
-          {/* Agent list — scrollable for long lists */}
           <div className="max-h-64 overflow-y-auto py-1">
             {!loaded && options.length === 0 ? (
               <div className="text-muted-light px-2.5 py-2 text-[11px]">Loading agents…</div>
@@ -411,7 +410,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     tabIndex={-1}
                     data-agent-id={opt.id}
                     data-testid="agent-option"
-                    className={composerPickerOptionClass({ isHighlighted, isSelected })}
+                    className={composerPickerOptionClass({ isHighlighted, isSelected }, "py-1.5")}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >

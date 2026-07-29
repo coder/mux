@@ -44,8 +44,6 @@ module.exports = {
     "node_modules/(?!\\.pnpm)(?!.*)",
   ],
   maxWorkers,
-  // Second line of defence behind maxWorkers: recycle a worker that is still holding most of its
-  // budget between suites instead of letting it grow into the cgroup's headroom.
   workerIdleMemoryLimit: "4GB",
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,

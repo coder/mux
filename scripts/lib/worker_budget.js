@@ -1,13 +1,7 @@
 "use strict";
 
-// Worker-pool sizing for tools that fan out across cores (ESLint, Jest).
-//
-// Agent containers can expose 96 CPUs and a 128 GiB host while capping the workspace far lower
-// through cgroup v2 (32 GiB here), and that cap can sit on an ANCESTOR cgroup while the leaf reports
-// "max". Node's process.constrainedMemory() only reads the leaf, so it answers 2^64 ("unlimited")
-// and any pool sized from it collapses to a plain CPU count. Dozens of multi-GiB workers then get
-// the whole run SIGKILLed. Hence: resolve the cap across the cgroup chain and size pools against
-// memory rather than cores.
+// Size tool worker pools against the tightest cgroup memory cap, including ancestor caps that
+// Node's leaf-only constrainedMemory() check can miss.
 
 const fs = require("node:fs");
 const os = require("node:os");
@@ -21,9 +15,6 @@ const DEFAULT_PROC_SELF_CGROUP = "/proc/self/cgroup";
 // caps as absent instead of trusting them.
 const UNLIMITED_BYTES_FLOOR = 2n ** 62n;
 
-// Peak resident set measured per worker on this repo: ESLint runs its --concurrency lanes as worker
-// threads sharing one heap (~2.8 GiB each), Jest forks processes that reach ~4.7 GiB rendering the
-// full app. Both are rounded up to absorb the parent process and growth.
 const PROFILES = {
   eslint: { memoryPerWorkerGib: 4, maxWorkers: 4 },
   jest: { memoryPerWorkerGib: 6, maxWorkers: 4 },
@@ -67,45 +58,65 @@ function parseLimitBytes(raw) {
   return Number(value);
 }
 
-/** Cgroup v2 directories from the leaf the process lives in up to the mount root. */
-function cgroupDirChain(options) {
-  const cgroupRoot = options.cgroupRoot ?? DEFAULT_CGROUP_ROOT;
-  const raw = readFileOrNull(options.procSelfCgroup ?? DEFAULT_PROC_SELF_CGROUP);
-  const v2Line = raw
-    ?.split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.startsWith("0::"));
-  const segments = (v2Line?.slice("0::".length) ?? "").split("/").filter(Boolean);
-
+function dirChain(root, cgroupPath) {
+  const segments = cgroupPath.split("/").filter(Boolean);
   const chain = [];
   for (let depth = segments.length; depth >= 0; depth--) {
-    chain.push(path.join(cgroupRoot, ...segments.slice(0, depth)));
+    chain.push(path.join(root, ...segments.slice(0, depth)));
   }
   return chain;
 }
 
-/**
- * The most restrictive memory cap that applies to this process, plus the directory that imposes it.
- * Usage has to be read from that same directory: sibling workspaces sharing an ancestor cgroup are
- * invisible from the leaf.
- */
-function resolveMemoryConstraint(options = {}) {
-  let constraint = null;
+function cgroupMembership(options) {
+  const raw = readFileOrNull(options.procSelfCgroup ?? DEFAULT_PROC_SELF_CGROUP);
+  let v2Path = null;
+  let v1MemoryPath = null;
 
-  for (const dir of cgroupDirChain(options)) {
-    const limitBytes = parseLimitBytes(readFileOrNull(path.join(dir, "memory.max")));
+  for (const line of raw?.split("\n") ?? []) {
+    const match = line.trim().match(/^\d+:([^:]*):(.*)$/);
+    if (match == null) {
+      continue;
+    }
+    const controllers = match[1].split(",");
+    if (controllers.length === 1 && controllers[0] === "") {
+      v2Path = match[2];
+    } else if (controllers.includes("memory")) {
+      v1MemoryPath = match[2];
+    }
+  }
+
+  return { v2Path, v1MemoryPath };
+}
+
+// Keep the constraining directory so its ancestor-level co-tenant usage can be subtracted.
+function tightestConstraint(dirs, limitFile) {
+  let constraint = null;
+  for (const dir of dirs) {
+    const limitBytes = parseLimitBytes(readFileOrNull(path.join(dir, limitFile)));
     if (limitBytes != null && (constraint == null || limitBytes < constraint.limitBytes)) {
       constraint = { dir, limitBytes };
     }
   }
-  if (constraint != null) {
-    return constraint;
+  return constraint;
+}
+
+function resolveMemoryConstraint(options = {}) {
+  const cgroupRoot = options.cgroupRoot ?? DEFAULT_CGROUP_ROOT;
+  const membership = cgroupMembership(options);
+  if (membership.v2Path != null) {
+    const constraint = tightestConstraint(dirChain(cgroupRoot, membership.v2Path), "memory.max");
+    if (constraint != null) {
+      return constraint;
+    }
   }
 
-  const cgroupRoot = options.cgroupRoot ?? DEFAULT_CGROUP_ROOT;
-  const v1Dir = path.join(cgroupRoot, "memory");
-  const v1Limit = parseLimitBytes(readFileOrNull(path.join(v1Dir, "memory.limit_in_bytes")));
-  return v1Limit == null ? null : { dir: v1Dir, limitBytes: v1Limit };
+  if (membership.v1MemoryPath == null) {
+    return null;
+  }
+  return tightestConstraint(
+    dirChain(path.join(cgroupRoot, "memory"), membership.v1MemoryPath),
+    "memory.limit_in_bytes"
+  );
 }
 
 function parseMemoryStat(dir) {
@@ -125,33 +136,34 @@ function parseMemoryStat(dir) {
   return values;
 }
 
-/**
- * Memory in the cgroup that a new worker cannot claim. memory.current is unusable on its own because
- * it counts page cache the kernel drops on demand; anon + kernel + shmem is the floor that cannot be
- * reclaimed, so take whichever estimate is larger.
- */
+// Discount inactive file cache, but use the v2 resident-memory fields as a floor when available.
 function readCgroupUsageBytes(dir) {
   const stat = parseMemoryStat(dir);
-  if (stat == null) {
+  const current = parseBytes(readFileOrNull(path.join(dir, "memory.current")));
+  if (current != null) {
+    if (stat == null) {
+      return Number(current);
+    }
+    const resident =
+      (stat.get("anon") ?? 0) +
+      (stat.get("kernel") ?? stat.get("slab") ?? 0) +
+      (stat.get("shmem") ?? 0);
+    const inactiveFile = stat.get("inactive_file");
+    return inactiveFile == null ? resident : Math.max(resident, Number(current) - inactiveFile);
+  }
+
+  const usage = parseBytes(readFileOrNull(path.join(dir, "memory.usage_in_bytes")));
+  if (usage == null) {
     return null;
   }
-
-  const unreclaimable =
-    (stat.get("anon") ?? 0) + (stat.get("kernel") ?? stat.get("slab") ?? 0) + (stat.get("shmem") ?? 0);
-
-  const current = parseBytes(readFileOrNull(path.join(dir, "memory.current")));
-  const inactiveFile = stat.get("inactive_file");
-  if (current != null && inactiveFile != null) {
-    return Math.max(unreclaimable, Number(current) - inactiveFile);
-  }
-  return unreclaimable;
+  const inactiveFile = stat?.get("total_inactive_file") ?? stat?.get("inactive_file");
+  return inactiveFile == null ? Number(usage) : Math.max(0, Number(usage) - inactiveFile);
 }
 
 function computeWorkers(input) {
   const cpuWorkers = Math.max(1, Math.floor(input.cpuCount * CPU_FRACTION));
 
-  // Leaves room for everything the pool does not account for: the tool's own parent process, page
-  // cache it is actively reading through, and sibling workspaces starting work mid-run.
+  // Preserve headroom for the parent process, active file cache, and co-tenants growing mid-run.
   const reserveBytes = Math.max(2 * BYTES_PER_GIB, input.limitBytes * 0.15);
   const usableBytes = Math.max(0, input.limitBytes - input.inUseBytes - reserveBytes);
   const memoryWorkers = Math.floor(usableBytes / (input.memoryPerWorkerGib * BYTES_PER_GIB));
@@ -168,8 +180,8 @@ function resolveWorkerBudget(profileName, options = {}) {
   }
 
   const constraint = resolveMemoryConstraint(options);
-  // Without a cgroup cap (macOS, CI VMs) there are no co-tenants to account for, and subtracting
-  // free-memory swings would make a busy laptop silently serialize its own test run.
+  // Without a cgroup cap there is no bounded co-tenant usage signal. Host free-memory swings would
+  // make a busy laptop silently serialize its own test run.
   const limitBytes = constraint?.limitBytes ?? os.totalmem();
   const inUseBytes = constraint == null ? 0 : (readCgroupUsageBytes(constraint.dir) ?? 0);
 
@@ -203,13 +215,9 @@ function workerBudgetFor(profileName) {
 }
 
 module.exports = {
-  BYTES_PER_GIB,
-  PROFILES,
   computeWorkers,
-  formatWorkerBudget,
   readCgroupUsageBytes,
   resolveMemoryConstraint,
-  resolveWorkerBudget,
   workerBudgetFor,
 };
 

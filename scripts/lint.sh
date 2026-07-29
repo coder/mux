@@ -41,11 +41,8 @@ get_default_eslint_concurrency() {
     return
   fi
 
-  # ESLint's --concurrency lanes are worker threads sharing one heap, so a cold
-  # type-aware run scales memory, not just CPU. Size it against the cgroup's
-  # actual headroom rather than the visible core count.
-  # stderr is left attached so MUX_WORKER_BUDGET_DEBUG output and any real breakage stay visible;
-  # the fallback below only covers the helper failing outright.
+  # Cold type-aware runs scale memory with concurrency, so use cgroup headroom instead of visible
+  # core count. Keep stderr attached for diagnostics, and fall back only if the helper fails.
   local concurrency
   if concurrency="$(node "$SCRIPT_DIR/lib/worker_budget.js" eslint)" \
     && [[ "$concurrency" =~ ^[0-9]+$ ]] && [ "$concurrency" -gt 0 ]; then

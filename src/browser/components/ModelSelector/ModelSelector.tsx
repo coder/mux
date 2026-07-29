@@ -15,11 +15,7 @@ import React, {
 import { cn } from "@/common/lib/utils";
 import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 
-import {
-  COMPOSER_PICKER_DIVIDER_CLASS,
-  COMPOSER_PICKER_PANEL_CLASS,
-  composerPickerOptionClass,
-} from "../composerPickerStyles";
+import { COMPOSER_PICKER_PANEL_CLASS, composerPickerOptionClass } from "../composerPickerStyles";
 import { ProviderIcon } from "../ProviderIcon/ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -366,7 +362,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             )}
           >
             {/* Search input */}
-            <div className={cn("border-b px-2.5 py-1.5", COMPOSER_PICKER_DIVIDER_CLASS)}>
+            <div className="border-border-light border-b px-2.5 py-1.5">
               <input
                 ref={inputRef}
                 type="text"
@@ -395,13 +391,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       key={model}
                       data-highlighted={index === highlightedIndex}
                       onMouseEnter={() => setHighlightedIndex(index)}
-                      className={cn(
-                        composerPickerOptionClass({
+                      className={composerPickerOptionClass(
+                        {
                           isHighlighted: index === highlightedIndex,
                           isSelected: value === model,
-                        }),
-                        // The h-5 action buttons already set this row's inner height, so it lands on
-                        // the agent picker's row height with less vertical padding.
+                        },
                         "py-1",
                         hiddenSet.has(model) && "opacity-50"
                       )}
@@ -528,9 +522,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
             {/* Footer actions (last row in dropdown) */}
             {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div
-                className={cn("flex flex-col gap-1 border-t py-1", COMPOSER_PICKER_DIVIDER_CLASS)}
-              >
+              <div className="border-border-light flex flex-col gap-1 border-t py-1">
                 {hiddenModels.length > 0 && (
                   <button
                     type="button"

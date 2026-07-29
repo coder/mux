@@ -12,14 +12,11 @@ interface FakeCgroup {
   procSelfCgroup: string;
 }
 
-/**
- * Builds a cgroup v2 tree on disk. `dirs` maps a cgroup path ("/" for the mount root) to the files
- * that cgroup exposes, so a test can put the memory cap on an ancestor while the leaf reports "max".
- */
 function writeFakeCgroup(
   root: string,
   leafPath: string,
-  dirs: Record<string, Record<string, string>>
+  dirs: Record<string, Record<string, string>>,
+  procLine = `0::${leafPath}`
 ): FakeCgroup {
   const cgroupRoot = path.join(root, "cgroup");
   for (const [cgroupPath, files] of Object.entries(dirs)) {
@@ -31,7 +28,7 @@ function writeFakeCgroup(
   }
 
   const procSelfCgroup = path.join(root, "proc-self-cgroup");
-  fs.writeFileSync(procSelfCgroup, `0::${leafPath}\n`);
+  fs.writeFileSync(procSelfCgroup, `${procLine}\n`);
   return { cgroupRoot, procSelfCgroup };
 }
 
@@ -83,12 +80,22 @@ describe("worker budget cgroup resolution", () => {
     expect(workerBudget.resolveMemoryConstraint(fake)).toBeNull();
   });
 
-  it("falls back to the cgroup v1 layout", () => {
-    const fake = writeFakeCgroup(tmpRoot, "/", {
-      "/memory": { "memory.limit_in_bytes": `${4 * GIB}` },
-    });
+  it("resolves a nested cgroup v1 memory limit", () => {
+    const fake = writeFakeCgroup(
+      tmpRoot,
+      "/docker/leaf",
+      {
+        "/memory": { "memory.limit_in_bytes": `${16 * GIB}` },
+        "/memory/docker": { "memory.limit_in_bytes": `${8 * GIB}` },
+        "/memory/docker/leaf": { "memory.limit_in_bytes": `${4 * GIB}` },
+      },
+      "5:cpu,memory:/docker/leaf"
+    );
 
-    expect(workerBudget.resolveMemoryConstraint(fake).limitBytes).toBe(4 * GIB);
+    const constraint = workerBudget.resolveMemoryConstraint(fake);
+
+    expect(constraint.limitBytes).toBe(4 * GIB);
+    expect(constraint.dir).toBe(path.join(fake.cgroupRoot, "memory/docker/leaf"));
   });
 
   it("reports no constraint when the host has no cgroup files", () => {
@@ -118,7 +125,6 @@ describe("worker budget usage accounting", () => {
       memoryStat({ anon: 4 * GIB, kernel: GIB, shmem: 0, inactive_file: 15 * GIB })
     );
 
-    // memory.current says 20 GiB, but 15 GiB of that is page cache the kernel drops on demand.
     expect(workerBudget.readCgroupUsageBytes(dir)).toBe(5 * GIB);
   });
 
@@ -132,6 +138,15 @@ describe("worker budget usage accounting", () => {
     );
 
     expect(workerBudget.readCgroupUsageBytes(dir)).toBe(18 * GIB);
+  });
+
+  it("subtracts reclaimable cache from cgroup v1 usage", () => {
+    const dir = path.join(tmpRoot, "cg-v1");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "memory.usage_in_bytes"), `${20 * GIB}`);
+    fs.writeFileSync(path.join(dir, "memory.stat"), memoryStat({ total_inactive_file: 15 * GIB }));
+
+    expect(workerBudget.readCgroupUsageBytes(dir)).toBe(5 * GIB);
   });
 });
 
