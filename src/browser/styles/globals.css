@@ -1127,16 +1127,23 @@ body,
   background-color: var(--color-surface-primary);
 }
 
-/* Mobile improvements - only apply to touch devices */
-@media (max-width: 768px) and (pointer: coarse) {
-  html {
-    -webkit-text-size-adjust: 100%;
-    touch-action: manipulation;
+@layer base {
+  /* Controls are not prose, so pressing one must never start a text selection.
+     Reported on iPadOS: clicking a composer pill selected the whole chat pane. */
+  button,
+  [role="button"],
+  [role="option"],
+  [role="tab"] {
+    -webkit-user-select: none;
+    user-select: none;
   }
+}
 
+/* User request: prevent accidental text highlighting while tapping/scrolling on touch
+   devices. Deliberately not width-gated like the phone rules below: iPadOS reports
+   pointer: coarse even with a trackpad attached, and tablets are wider than 768px. */
+@media (pointer: coarse) {
   body {
-    font-size: 15px;
-    /* User request: prevent accidental text highlighting while tapping/scrolling on touch devices. */
     -webkit-user-select: none;
     user-select: none;
   }
@@ -1148,6 +1155,18 @@ body,
   [contenteditable="plaintext-only"] {
     -webkit-user-select: text;
     user-select: text;
+  }
+}
+
+/* Mobile improvements - only apply to touch devices */
+@media (max-width: 768px) and (pointer: coarse) {
+  html {
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+  }
+
+  body {
+    font-size: 15px;
   }
 
   .mobile-hide-shortcut-hints {
