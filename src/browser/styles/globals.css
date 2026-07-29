@@ -1203,6 +1203,14 @@ body,
     padding-left: 0 !important;
   }
 
+  /* Hand the bottom inset to a column that reserves its own clearance (see ChatPane and
+     WorkspaceFooterBar). This box clips overflow, so a child can never paint into its padding, and
+     the reserved band reads as dead space under the footer bar. Surfaces without such a column
+     (immersive review, settings, creation, loading shells) keep the inset here. */
+  .mobile-bottom-inset-host:has([data-bottom-inset-owner]) {
+    padding-bottom: 0 !important;
+  }
+
   .mobile-overlay {
     display: block !important;
   }

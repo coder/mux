@@ -2,7 +2,6 @@ import { useEffect, useCallback, useRef, useState } from "react";
 import { useRouter } from "./contexts/RouterContext";
 import { useLocation, useNavigate } from "react-router-dom";
 import "./styles/globals.css";
-import { cn } from "@/common/lib/utils";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
 import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar/ProjectSidebar";
@@ -1238,13 +1237,6 @@ function AppInner() {
     };
   }, [setSelectedWorkspace, workspaceStore]);
 
-  // Non-null only while the workspace view is the visible route, which is also the only route whose
-  // last row (WorkspaceFooterBar) can own the bottom safe-area inset.
-  const activeWorkspaceMetadata =
-    !isAnalyticsOpen && !currentSettingsSection && selectedWorkspace
-      ? workspaceMetadata.get(selectedWorkspace.workspaceId)
-      : undefined;
-
   // Show auth modal if authentication is required
   if (status === "auth_required") {
     return (
@@ -1259,17 +1251,10 @@ function AppInner() {
 
   return (
     <>
-      {/* On a narrow workspace view the footer bar takes over the bottom inset: this box clips
-          overflow, so nothing can paint into its padding and the reserved band reads as dead space
-          under the bar. Every other route keeps the inset here because none of them ends in a
-          control row that could reserve its own. The sidebar is position: fixed with its own inset
-          at these widths. */}
-      <div
-        className={cn(
-          "bg-surface-primary mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]",
-          activeWorkspaceMetadata && "[@media(max-width:768px)]:pb-0"
-        )}
-      >
+      {/* mobile-bottom-inset-host: narrow layouts give this box's bottom inset up to a column that
+          reserves its own clearance, keyed off the column rather than the route so surfaces without
+          one still get it here. The sidebar is position: fixed with its own inset at these widths. */}
+      <div className="bg-surface-primary mobile-layout mobile-bottom-inset-host flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[min(env(safe-area-inset-bottom,0px),40px)] pl-[env(safe-area-inset-left)]">
         <LeftSidebar
           collapsed={sidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}
@@ -1296,7 +1281,7 @@ function AppInner() {
               />
             ) : selectedWorkspace ? (
               (() => {
-                const currentMetadata = activeWorkspaceMetadata;
+                const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
                 // Guard: Don't render AIView if workspace metadata not found.
                 // This can happen when selectedWorkspace (from localStorage) refers to a
                 // deleted workspace, or during a race condition on reload before the
