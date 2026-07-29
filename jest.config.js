@@ -1,18 +1,6 @@
-const os = require("node:os");
+const { workerBudgetFor } = require("./scripts/lib/worker_budget.js");
 
-// Use cgroup-aware memory when available (containers), fall back to host RAM.
-// process.constrainedMemory() returns the cgroup v2 limit (Node 19.6+),
-// or 0/undefined outside a cgroup.
-const totalMemoryBytes =
-  (typeof process.constrainedMemory === "function" &&
-    process.constrainedMemory()) ||
-  os.totalmem();
-
-const cpuWorkerCap = Math.max(1, Math.floor(os.cpus().length * 0.5));
-const memoryWorkerCap = Math.floor(
-  totalMemoryBytes / (1024 * 1024 * 1024) / 1.5,
-);
-const maxWorkers = Math.max(1, Math.min(cpuWorkerCap, memoryWorkerCap));
+const maxWorkers = workerBudgetFor("jest");
 
 /** @type {import('jest').Config} */
 module.exports = {
@@ -55,10 +43,10 @@ module.exports = {
     // This is slower but ensures compatibility
     "node_modules/(?!\\.pnpm)(?!.*)",
   ],
-  // High core-count containers with limited cgroup memory (for example 96 cores /
-  // 32 GB) can OOM if Jest uses CPU-only parallelism, so keep roughly 1.5 GB
-  // per worker.
   maxWorkers,
+  // Second line of defence behind maxWorkers: recycle a worker that is still holding most of its
+  // budget between suites instead of letting it grow into the cgroup's headroom.
+  workerIdleMemoryLimit: "4GB",
   // Force exit after tests complete to avoid hanging on lingering handles
   forceExit: true,
   // 10 minute timeout for integration tests, 10s for unit tests
