@@ -108,9 +108,11 @@ const STORIES: StoryDef[] = [
       await dialog.waitFor({ timeout: 10_000 });
       await dialog.getByRole("radio", { name: "Show commit divergence" }).click();
 
-      // Wait for divergence indicators to appear after mode switching.
-      await page.getByText("↑3").waitFor({ timeout: 5_000 });
-      await page.getByText("↓2").waitFor({ timeout: 5_000 });
+      // Wait for divergence indicators to appear after mode switching. Exact matching is
+      // required: the footer bar renders its own drift counts, and a loose "↓2" also
+      // matches its "↓26".
+      await page.getByText("↑3", { exact: true }).waitFor({ timeout: 5_000 });
+      await page.getByText("↓2", { exact: true }).waitFor({ timeout: 5_000 });
     },
   },
   {
