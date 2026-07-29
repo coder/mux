@@ -168,6 +168,11 @@ export const IPhone16e: AppStory = {
  * viewport selects, so the test-runner exercises the wide placement.
  */
 export const IPhone16ePRLinkPlacement: AppStory = {
+  // Mirrors the Pixel phone variant: the fixed-width decorator does not move `window.innerWidth`, so
+  // without this a local reviewer would see the wide placement in a story framed as a phone.
+  globals: {
+    viewport: { value: "mobile2", isRotated: false },
+  },
   render: () => (
     <AppWithMocks
       setup={() =>
