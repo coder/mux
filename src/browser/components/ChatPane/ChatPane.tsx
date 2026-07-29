@@ -864,7 +864,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     [clearActiveSideQuestionScrollHold, handleScrollContainerMouseDown, isComposerDockEvent]
   );
 
-  const handleComposerDockMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+  const handleComposerDockMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.button !== 0) {
       return;
     }
@@ -877,7 +877,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     // does on Chromium.
     event.preventDefault();
     control.focus({ preventScroll: true });
-  }, []);
+  };
 
   const handleTranscriptTouchMove = useCallback(() => {
     clearActiveSideQuestionScrollHold();
