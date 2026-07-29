@@ -15,6 +15,11 @@ import React, {
 import { cn } from "@/common/lib/utils";
 import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 
+import {
+  COMPOSER_PICKER_DIVIDER_CLASS,
+  COMPOSER_PICKER_PANEL_CLASS,
+  composerPickerOptionClass,
+} from "../composerPickerStyles";
 import { ProviderIcon } from "../ProviderIcon/ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -306,7 +311,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               type="button"
               className={cn(
                 triggerClassName,
-                "text-foreground hover:bg-hover flex cursor-pointer items-center justify-between gap-1 px-1.5 py-0.5 transition-colors duration-300"
+                "text-foreground hover:bg-hover flex cursor-pointer items-center justify-between gap-1 px-1.5 py-0.5 transition-[background-color] duration-150"
               )}
               role="combobox"
               aria-expanded={isOpen}
@@ -323,7 +328,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                 )}
                 <span className="min-w-0 truncate">{displayValue}</span>
               </span>
-              <ChevronDown className="text-muted h-3 w-3 shrink-0" />
+              <ChevronDown
+                className={cn(
+                  "text-muted h-3 w-3 shrink-0 transition-transform duration-150",
+                  isOpen && "rotate-180"
+                )}
+              />
             </Button>
           </TooltipTrigger>
           <TooltipContent
@@ -349,9 +359,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
         {/* Dropdown content - rendered inline for testability */}
         {isOpen && (
-          <div className="bg-dark border-border absolute bottom-full left-0 z-[1020] mb-1 w-82 overflow-hidden rounded-md border shadow-md">
+          <div
+            className={cn(
+              "absolute bottom-full left-0 z-[1020] mb-1 w-82",
+              COMPOSER_PICKER_PANEL_CLASS
+            )}
+          >
             {/* Search input */}
-            <div className="border-border border-b px-2 py-1">
+            <div className={cn("border-b px-2.5 py-1.5", COMPOSER_PICKER_DIVIDER_CLASS)}>
               <input
                 ref={inputRef}
                 type="text"
@@ -365,7 +380,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             </div>
 
             {/* Scrollable list */}
-            <div ref={listRef} className="max-h-[280px] overflow-y-auto p-1">
+            <div ref={listRef} className="max-h-[280px] overflow-y-auto py-1">
               {filteredModels.length === 0 ? (
                 <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
               ) : (
@@ -381,8 +396,13 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       data-highlighted={index === highlightedIndex}
                       onMouseEnter={() => setHighlightedIndex(index)}
                       className={cn(
-                        "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
-                        index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
+                        composerPickerOptionClass({
+                          isHighlighted: index === highlightedIndex,
+                          isSelected: value === model,
+                        }),
+                        // The h-5 action buttons already set this row's inner height, so it lands on
+                        // the agent picker's row height with less vertical padding.
+                        "py-1",
                         hiddenSet.has(model) && "opacity-50"
                       )}
                       onClick={() => handleSelectModel(model)}
@@ -400,7 +420,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         className="text-muted h-3 w-3 shrink-0"
                       />
                       <span className="flex min-w-0 flex-1 items-baseline gap-1">
-                        <span className="min-w-0 truncate">
+                        <span className={cn("min-w-0 truncate", value === model && "text-accent")}>
                           {formatModelDisplayName(modelName)}
                         </span>
                         {showProviderLabel && (
@@ -508,7 +528,9 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
             {/* Footer actions (last row in dropdown) */}
             {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div className="border-border flex flex-col gap-1 border-t px-2 py-1">
+              <div
+                className={cn("flex flex-col gap-1 border-t py-1", COMPOSER_PICKER_DIVIDER_CLASS)}
+              >
                 {hiddenModels.length > 0 && (
                   <button
                     type="button"
@@ -520,14 +542,14 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       setInputValue("");
                       setHighlightedIndex(0);
                     }}
-                    className="text-muted hover:text-foreground text-[10px] transition-colors"
+                    className="text-muted hover:text-foreground px-2.5 text-left text-[10px] transition-colors"
                   >
                     {showAllModels ? "Show fewer models" : "Show all models…"}
                   </button>
                 )}
 
                 {policyEnforced && (
-                  <div className="text-muted flex items-center gap-1 text-[10px]">
+                  <div className="text-muted flex items-center gap-1 px-2.5 text-[10px]">
                     <ShieldCheck className="h-3 w-3" aria-hidden />
                     <span>Your settings are controlled by a policy.</span>
                   </div>
@@ -543,7 +565,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       onOpenSettings();
                       handleCancel();
                     }}
-                    className="text-muted hover:bg-hover hover:text-foreground flex w-full items-center justify-start gap-1.5 rounded-sm px-2 py-1 text-[11px] transition-colors"
+                    className="text-muted hover:bg-hover hover:text-foreground flex w-full items-center justify-start gap-2.5 px-2.5 py-1 text-[11px] font-medium transition-colors"
                   >
                     <Settings className="h-3 w-3 shrink-0" />
                     Model settings

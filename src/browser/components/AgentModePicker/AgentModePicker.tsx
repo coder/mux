@@ -7,6 +7,10 @@ import { CUSTOM_EVENTS } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { normalizeAgentId as normalizeStoredAgentId } from "@/common/utils/agentIds";
 import { cn } from "@/common/lib/utils";
+import {
+  COMPOSER_PICKER_PANEL_CLASS,
+  composerPickerOptionClass,
+} from "@/browser/components/composerPickerStyles";
 import { DocsLink } from "@/browser/components/DocsLink/DocsLink";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/Tooltip/Tooltip";
 import { Button } from "@/browser/components/Button/Button";
@@ -380,7 +384,10 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           tabIndex={-1}
           onKeyDown={handleDropdownKeyDown}
           // Left alignment prevents the menu from opening beyond the viewport.
-          className="bg-surface-primary border-border-light absolute bottom-full left-0 z-[1020] mb-1 min-w-52 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)] outline-none"
+          className={cn(
+            "absolute bottom-full left-0 z-[1020] mb-1 min-w-52",
+            COMPOSER_PICKER_PANEL_CLASS
+          )}
         >
           {/* Agent list — scrollable for long lists */}
           <div className="max-h-64 overflow-y-auto py-1">
@@ -404,11 +411,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     tabIndex={-1}
                     data-agent-id={opt.id}
                     data-testid="agent-option"
-                    className={cn(
-                      "flex cursor-pointer items-center gap-2.5 px-2.5 py-1.5 transition-colors duration-100",
-                      isHighlighted ? "bg-hover text-foreground" : "bg-transparent hover:bg-hover",
-                      isSelected ? "text-foreground" : "text-light hover:text-foreground"
-                    )}
+                    className={composerPickerOptionClass({ isHighlighted, isSelected })}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >
@@ -418,10 +421,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     />
                     <span
                       data-testid="agent-name"
-                      className={cn(
-                        "min-w-0 flex-1 truncate text-[11px] font-medium",
-                        isSelected && "text-accent"
-                      )}
+                      className={cn("min-w-0 flex-1 truncate", isSelected && "text-accent")}
                     >
                       {opt.name}
                     </span>
