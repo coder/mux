@@ -15,6 +15,8 @@ const DEFAULT_PROC_SELF_CGROUP = "/proc/self/cgroup";
 // caps as absent instead of trusting them.
 const UNLIMITED_BYTES_FLOOR = 2n ** 62n;
 
+// Peak RSS measured per worker in this repo, rounded up for growth: ESLint's --concurrency lanes are
+// worker threads sharing one heap (~2.8GiB each), Jest forks processes reaching ~4.7GiB.
 const PROFILES = {
   eslint: { memoryPerWorkerGib: 4, maxWorkers: 4 },
   jest: { memoryPerWorkerGib: 6, maxWorkers: 4 },
