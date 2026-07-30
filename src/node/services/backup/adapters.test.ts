@@ -131,6 +131,32 @@ describe("backup adapters", () => {
     expect(preview.changes).toEqual([]);
   });
 
+  it("reports preferences as changed only when the merge would change them", async () => {
+    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+
+    config.state = {
+      projects: new Map(),
+      userPreferences: { appearance: { theme: "dark", vimEnabled: true } },
+    };
+    const unchanged = await payload.previewRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+    expect(unchanged.changes).toEqual([]);
+
+    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "light" } } };
+    const changed = await payload.previewRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+    expect(changed.changes).toEqual([{ status: "M", path: "preferences.json" }]);
+  });
+
   it("refuses to write through a symlinked managed-path ancestor", async () => {
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });

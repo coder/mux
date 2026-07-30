@@ -16,6 +16,7 @@ import {
   resolveRestoredContent,
   collectAllowlistedFiles,
   createBackupPayload,
+  mergeBackupPreferences,
   projectBackupPreferences,
   readBackupPayload,
   restoreBackupPayload,
@@ -170,12 +171,21 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       const payload = await readBackupPayload(sourceDir);
       const changes: BackupFileChange[] = [];
       for (const file of payload.files) {
-        // Preferences live in config rather than on disk, so compare against the
-        // projection an export would produce right now.
-        const existing =
-          file.path === "preferences.json"
-            ? serializeBackupPreferences(currentPreferences())
-            : local.get(file.path)?.content;
+        // Preferences live in config, and restore merges them rather than replacing the
+        // file, so compare the merge result. A backup that only repeats values the local
+        // config already holds changes nothing.
+        if (file.path === "preferences.json") {
+          const current = currentPreferences();
+          const merged = mergeBackupPreferences(
+            current,
+            JSON.parse(file.content.toString("utf-8"))
+          );
+          if (!serializeBackupPreferences(current).equals(serializeBackupPreferences(merged))) {
+            changes.push({ status: "M", path: file.path });
+          }
+          continue;
+        }
+        const existing = local.get(file.path)?.content;
         if (!existing) {
           changes.push({ status: "A", path: file.path });
           continue;
