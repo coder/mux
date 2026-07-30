@@ -90,6 +90,40 @@ describe("backup adapters", () => {
     expect(await gitRepo.getPushChanges(second, settings.path)).toEqual([]);
   });
 
+  it("pushes payload files the target repository would otherwise ignore", async () => {
+    const seed = path.join(tempDir, "seed");
+    await git(["clone", originPath, seed]);
+    await fs.writeFile(path.join(seed, ".gitignore"), "preferences.json\n", "utf-8");
+    await git(["-C", seed, "add", "."]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=mux@example.com",
+      "-c",
+      "user.name=Mux",
+      "commit",
+      "-m",
+      "seed ignore rules",
+    ]);
+    await git(["-C", seed, "push", "origin", "main"]);
+
+    await writeMuxFile("AGENTS.md", "global instructions\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+    await gitRepo.commitAndPush(repository, {
+      managedPath: settings.path,
+      message: "Back up Mux settings",
+      expectedRemoteCommit: repository.remoteCommit,
+    });
+
+    const tracked = await git(["--git-dir", originPath, "ls-tree", "-r", "--name-only", "main"]);
+    expect(tracked.split("\n")).toContain("mux/preferences.json");
+  });
+
   it("reports no restore changes when the backup matches local state", async () => {
     await writeMuxFile("AGENTS.md", "unchanged\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

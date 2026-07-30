@@ -224,7 +224,9 @@ export class BackupRepoCache {
 
   async stageAndCommit(managedPath: string, message: string): Promise<string | null> {
     assertSafeRelativePath(managedPath);
-    await this.localGit(["add", "-A", "--", managedPath]);
+    // -f because the target may be a dotfiles repo whose ignore rules match payload
+    // names. Skipping one file would push a manifest that references missing content.
+    await this.localGit(["add", "-A", "-f", "--", managedPath]);
     const status = await this.porcelainStatus(managedPath);
     if (!status) return null;
 
