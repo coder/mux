@@ -4,6 +4,7 @@ import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import { isValidBackupPath } from "@/common/orpc/schemas/backup";
 import type {
   BackupCredentialKind,
   BackupFileChange,
@@ -128,6 +129,14 @@ export class BackupService {
     settings: SettingsBackupInput
   ): Promise<Result<SettingsBackup, BackupOperationError>> {
     try {
+      // The ORPC schema also refines this, but the service owns the invariant because
+      // the managed path scopes every write and every `git clean`.
+      if (!isValidBackupPath(settings.path)) {
+        throw new BackupServiceError(
+          "INVALID_BACKUP",
+          "Enter a subdirectory inside the repository"
+        );
+      }
       const saved = await this.persistSettings(settings);
       return Ok(saved);
     } catch (error) {

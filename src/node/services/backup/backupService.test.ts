@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { Config } from "@/node/config";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
+import { BackupNonFastForwardError } from "./gitRepo";
 import {
   BackupService,
   BackupServiceError,
@@ -202,6 +203,35 @@ describe("BackupService", () => {
     expect(result.error.code).toBe("SECRET_DETECTED");
     expect(result.error.files).toEqual(["skills/private/SKILL.md"]);
     expect(commitAttempted).toBe(false);
+  });
+
+  test("maps a real non-fast-forward failure to repository drift", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        commitAndPush: () => Promise.reject(new BackupNonFastForwardError()),
+      }),
+      payload: createPayload(),
+    });
+
+    const result = await service.push(SETTINGS);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the drifted remote to block the push");
+    expect(result.error.code).toBe("REPOSITORY_CHANGED");
+    expect(result.error.message).toBe("The backup changed since you last read it");
+  });
+
+  test("rejects a managed path that targets the git directory", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload(),
+    });
+
+    const result = await service.saveSettings({ ...SETTINGS, path: ".git" });
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the .git path to be rejected");
+    expect(result.error.code).toBe("INVALID_BACKUP");
   });
 
   test("serializes operations for the same repository", async () => {

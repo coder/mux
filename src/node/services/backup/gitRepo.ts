@@ -17,7 +17,11 @@ const GIT_IDENTITY_ARGS = [
   "commit.gpgsign=false",
 ] as const;
 
+// `code` is what BackupService.toOperationError maps onto the typed result, so these
+// must carry one or they degrade to IO_ERROR and the UI loses the actionable message.
 export class BackupOriginMismatchError extends Error {
+  readonly code = "GIT_ERROR";
+
   constructor(actual: string, expected: string) {
     super(`Backup cache origin is '${actual}', expected '${expected}'`);
     this.name = "BackupOriginMismatchError";
@@ -25,6 +29,8 @@ export class BackupOriginMismatchError extends Error {
 }
 
 export class BackupNonFastForwardError extends Error {
+  readonly code = "REPOSITORY_CHANGED";
+
   constructor() {
     super("The backup changed since you last read it");
     this.name = "BackupNonFastForwardError";
@@ -54,7 +60,9 @@ function assertSafeRelativePath(relativePath: string): void {
     !relativePath ||
     path.isAbsolute(relativePath) ||
     segments.length === 0 ||
-    segments.some((segment) => segment === "." || segment === "..")
+    segments.some(
+      (segment) => segment === "." || segment === ".." || segment.toLowerCase() === ".git"
+    )
   ) {
     throw new Error(`Expected a safe relative path, got '${relativePath}'`);
   }

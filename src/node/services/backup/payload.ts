@@ -109,6 +109,33 @@ function assertAllowedPayloadPath(relativePath: string): void {
   }
 }
 
+async function lstatOrNull(target: string) {
+  try {
+    return await fs.lstat(target);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Joins a posix relative path onto a root, rejecting any component that is a symlink.
+ * Git stores symlinks (mode 120000), so a backup repository can contain one; reading or
+ * writing through it would escape the directory this feature is allowed to touch.
+ */
+export async function resolveContainedPath(root: string, relativePath: string): Promise<string> {
+  let current = root;
+  for (const segment of relativePath.split("/")) {
+    if (!segment || segment === "." || segment === "..") {
+      throw new Error(`Backup contains disallowed path '${relativePath}'`);
+    }
+    current = path.join(current, segment);
+    if ((await lstatOrNull(current))?.isSymbolicLink()) {
+      throw new Error(`Refusing to follow symlink '${relativePath}'`);
+    }
+  }
+  return current;
+}
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     return (await fs.stat(filePath)).isFile();
@@ -437,7 +464,7 @@ export async function writeBackupPayload(
   await fs.rm(destinationDir, { recursive: true, force: true });
   await fs.mkdir(destinationDir, { recursive: true });
   for (const file of payload.files) {
-    const destination = path.join(destinationDir, ...file.path.split("/"));
+    const destination = await resolveContainedPath(destinationDir, file.path);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.writeFile(destination, file.content);
   }
@@ -489,11 +516,21 @@ export async function readBackupPayload(sourceDir: string): Promise<BackupPayloa
     if (seen.has(manifestFile.path))
       throw new Error(`Duplicate backup path '${manifestFile.path}'`);
     seen.add(manifestFile.path);
-    const content = await fs.readFile(path.join(sourceDir, ...manifestFile.path.split("/")));
+    const content = await fs.readFile(await resolveContainedPath(sourceDir, manifestFile.path));
     if (sha256(content) !== manifestFile.sha256) {
       throw new Error(`Backup checksum mismatch for '${manifestFile.path}'`);
     }
     files.push({ path: manifestFile.path, content });
+  }
+  // Parse every structured entry here so a malformed backup is rejected before restore
+  // writes anything. Otherwise a later parse failure leaves a half-restored install.
+  for (const file of files) {
+    if (file.path === "preferences.json") {
+      projectBackupPreferences(JSON.parse(file.content.toString("utf-8")));
+    }
+    if (file.path === "mcp.jsonc") {
+      parseJsoncObject(file.content.toString("utf-8"), "backup mcp.jsonc");
+    }
   }
   const mcpFile = files.find((file) => file.path === "mcp.jsonc");
   return { manifest, files, redactions: mcpFile ? findMcpRedactions(mcpFile.content) : [] };
@@ -573,7 +610,7 @@ export async function restoreBackupPayload(
       );
       continue;
     }
-    const destination = path.join(options.muxRoot, ...file.path.split("/"));
+    const destination = await resolveContainedPath(options.muxRoot, file.path);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     const content =
       file.path === "mcp.jsonc"

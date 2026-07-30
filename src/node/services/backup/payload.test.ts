@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -231,6 +232,87 @@ describe("backup payload", () => {
       reportSecrets: true,
     });
     expect(scanBackupFilesForSecrets(payload.files)).toContain("AGENTS.md");
+  });
+
+  it("refuses to read a payload entry through a symlink", async () => {
+    await write(muxRoot, "AGENTS.md", "real\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "symlinked");
+    await writeBackupPayload(destination, payload);
+
+    const secret = path.join(tempDir, "outside-secret.txt");
+    await fs.writeFile(secret, "outside content\n", "utf-8");
+    await fs.rm(path.join(destination, "AGENTS.md"));
+    await fs.symlink(secret, path.join(destination, "AGENTS.md"));
+
+    try {
+      await readBackupPayload(destination);
+      throw new Error("Expected the symlinked entry to be refused");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("symlink");
+    }
+  });
+
+  it("refuses to restore through a symlinked directory in the mux root", async () => {
+    await write(muxRoot, "skills/demo/SKILL.md", "skill\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "symlink-root");
+    const outside = path.join(tempDir, "outside-dir");
+    await fs.mkdir(restoreRoot, { recursive: true });
+    await fs.mkdir(outside, { recursive: true });
+    await fs.symlink(outside, path.join(restoreRoot, "skills"));
+
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+      throw new Error("Expected the symlinked directory to be refused");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("symlink");
+    }
+    expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("rejects a corrupt preferences payload before restoring any file", async () => {
+    await write(muxRoot, "AGENTS.md", "backed up\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "corrupt");
+    await writeBackupPayload(destination, payload);
+
+    const corrupt = Buffer.from('{"appearance":{"theme":123}}\n', "utf-8");
+    await fs.writeFile(path.join(destination, "preferences.json"), corrupt);
+    const manifestPath = path.join(destination, "manifest.json");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8")) as {
+      files: Array<{ path: string; sha256: string }>;
+    };
+    const entry = manifest.files.find((file) => file.path === "preferences.json");
+    if (!entry) throw new Error("Expected a preferences entry");
+    entry.sha256 = createHash("sha256").update(corrupt).digest("hex");
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
+
+    const restoreRoot = path.join(tempDir, "corrupt-target");
+    await fs.mkdir(restoreRoot, { recursive: true });
+    try {
+      await readBackupPayload(destination);
+      throw new Error("Expected the corrupt payload to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).not.toContain("Expected the corrupt payload");
+    }
+    expect(await fs.readdir(restoreRoot)).toEqual([]);
   });
 
   it("writes and verifies manifest hashes", async () => {

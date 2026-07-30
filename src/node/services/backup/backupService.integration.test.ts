@@ -243,6 +243,11 @@ describe("BackupService against a real repository", () => {
     expect(restored.error.message).not.toContain("ENOENT");
   });
 
+  it("rejects a managed path that targets the git directory", async () => {
+    const saved = await service.saveSettings({ ...settings, path: ".git" });
+    expect(saved.success).toBe(false);
+  });
+
   it("surfaces an unreachable remote as an expected error", async () => {
     const missing = { ...settings, repoUrl: path.join(tempDir, "does-not-exist.git") };
     const validated = await service.validate(missing);

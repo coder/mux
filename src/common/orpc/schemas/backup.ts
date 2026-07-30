@@ -12,7 +12,13 @@ export function isValidBackupPath(value: string): boolean {
     segments.length > 0 &&
     !value.startsWith("/") &&
     !value.includes("\\") &&
-    !segments.some((segment) => segment === "." || segment === "..")
+    !segments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        // Writing into the cache clone's own git directory could install hooks.
+        segment.toLowerCase() === ".git"
+    )
   );
 }
 
