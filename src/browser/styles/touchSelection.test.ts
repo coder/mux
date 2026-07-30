@@ -38,8 +38,6 @@ const EDITABLE_SELECTORS = [
   '[contenteditable="plaintext-only"]',
 ];
 
-const MODELLED_SELECTORS = ["body", "button", '[role="button"]', ...EDITABLE_SELECTORS];
-
 interface Viewport {
   widthPx: number;
   coarse: boolean;
@@ -69,26 +67,6 @@ function collectMediaParams(node: ChildNode | Container): string[] {
     params.push(current.params);
   }
   return params;
-}
-
-/**
- * True when a selector could beat the plain `body`/`button`/editable rules modelled
- * below on specificity, either by qualifying one of them or by adding an ancestor.
- * Resolving those needs a real cascade, so they throw instead of being ignored.
- */
-function outSpecifiesModel(selector: string): boolean {
-  const compounds = selector.split(/[\s>+~]+/).filter(Boolean);
-  const subject = compounds.at(-1) ?? "";
-  return MODELLED_SELECTORS.some((modelled) => {
-    if (!subject.startsWith(modelled)) {
-      return false;
-    }
-    const qualifier = subject.slice(modelled.length);
-    if (qualifier.length > 0) {
-      return /^[.#[:]/.test(qualifier);
-    }
-    return compounds.length > 1;
-  });
 }
 
 let selectionRules: SelectionRule[] = [];
@@ -123,9 +101,6 @@ beforeAll(async () => {
     if (decl.important) {
       throw new Error(`Unsupported !important selection declaration: ${decl.parent.selector}`);
     }
-    if (decl.parent.selectors.some(outSpecifiesModel)) {
-      throw new Error(`Selection rule out-specifies this contract: ${decl.parent.selector}`);
-    }
     selectionRules.push({
       selectors: decl.parent.selectors,
       property: decl.prop,
@@ -137,39 +112,31 @@ beforeAll(async () => {
 });
 
 /**
- * Evaluates the media features these selection rules use. Anything outside a plain
- * `(feature: value)` conjunction throws: silently ignoring an operator such as `not`
- * would invert the result while still satisfying every assertion below.
+ * Media queries this contract can evaluate, matched exactly rather than parsed.
+ *
+ * Parsing the grammar by hand kept accepting queries a browser rejects, first
+ * `(pointer: coarse: fine)` and then `(min-width: 0 px)`. Each of those silently disabled
+ * the guard in production while every assertion here still passed, because the parser read
+ * a valid prefix and ignored the rest. Exact keys cannot drift from the grammar that way:
+ * an unlisted query throws, and extending this map is a deliberate edit.
  */
-function mediaQueryApplies(params: string, viewport: Viewport): boolean {
-  const shape = params.replace(/\([^)]*\)/g, "()").trim();
-  if (!/^\(\)(\s+and\s+\(\))*$/.test(shape)) {
-    throw new Error(`Unsupported media query syntax in selection rule: ${params}`);
-  }
+const MEDIA_QUERIES: Record<string, (viewport: Viewport) => boolean> = {
+  "(pointer: coarse)": (viewport) => viewport.coarse,
+  "(pointer: fine)": (viewport) => !viewport.coarse,
+  "(max-width: 768px) and (pointer: coarse)": (viewport) =>
+    viewport.widthPx <= 768 && viewport.coarse,
+  "(max-width: 1200px) and (pointer: coarse)": (viewport) =>
+    viewport.widthPx <= 1200 && viewport.coarse,
+  "(pointer: coarse) and (min-width: 1200px)": (viewport) =>
+    viewport.coarse && viewport.widthPx >= 1200,
+};
 
-  let applies = true;
-  for (const condition of params.matchAll(/\(([^)]*)\)/g)) {
-    const parts = condition[1].split(":").map((part) => part.trim());
-    if (parts.length !== 2) {
-      throw new Error(`Unsupported media condition in selection rule: ${params}`);
-    }
-    const [feature, rawValue] = parts;
-    if (feature === "max-width" || feature === "min-width") {
-      const boundaryPx = Number(rawValue.replace("px", ""));
-      if (!rawValue.endsWith("px") || Number.isNaN(boundaryPx)) {
-        throw new Error(`Unsupported width value in media query: ${params}`);
-      }
-      applies &&=
-        feature === "max-width" ? viewport.widthPx <= boundaryPx : viewport.widthPx >= boundaryPx;
-      continue;
-    }
-    if (feature === "pointer") {
-      applies &&= rawValue === (viewport.coarse ? "coarse" : "fine");
-      continue;
-    }
-    throw new Error(`Unsupported media feature in selection rule: ${params}`);
+function mediaQueryApplies(params: string, viewport: Viewport): boolean {
+  const applies = MEDIA_QUERIES[params.trim()];
+  if (!applies) {
+    throw new Error(`Unrecognised media query around a selection rule: ${params}`);
   }
-  return applies;
+  return applies(viewport);
 }
 
 /**
@@ -206,26 +173,12 @@ const FINE_VIEWPORTS: Viewport[] = [PHONE_WIDTH_PX, DESKTOP_WIDTH_PX].map((width
 }));
 
 /**
- * True when the selector's subject positively requires a class or id, so the rule opts
- * specific components out of selection rather than reaching content generally.
- *
- * Functional pseudo-class arguments are emptied first, because a class inside one does not
- * narrow what the selector matches: `:not(.allow-selection)` matches almost everything.
- * Strict beyond that, so `.sidebar div` and a bare `:is(.a)` are both rejected: widening
- * this to any anchored or class-mentioning selector would also admit `body.theme *`.
+ * A selector consisting of exactly one class or id token, which can therefore only match
+ * elements carrying it. Earlier revisions asked whether a selector merely contained a class,
+ * which admitted `body *` and then `:not(.allow-selection)`; both suppress selection across
+ * the app. Requiring the whole selector to be one token needs no selector engine to defend.
  */
-function isComponentScoped(selector: string): boolean {
-  let subject =
-    selector
-      .split(/[\s>+~]+/)
-      .filter(Boolean)
-      .at(-1) ?? "";
-  for (let emptied = ""; emptied !== subject; ) {
-    emptied = subject;
-    subject = subject.replace(/\([^()]*\)/g, "()");
-  }
-  return /[.#]/.test(subject);
-}
+const SINGLE_COMPONENT_SELECTOR = /^[.#][A-Za-z0-9_-]+$/;
 
 function applicableSelectors(viewport: Viewport, value: (candidate: string) => boolean) {
   return selectionRules
@@ -272,28 +225,29 @@ describe("touch text-selection guard", () => {
   });
 
   /**
-   * The same inheritance argument in reverse: a `none` declaration reaching content
-   * generally would suppress desktop selection, which the fine-pointer lookups below
-   * cannot see because they only probe `body` and the two control selectors.
+   * The same inheritance argument in reverse, and viewport-independent because a rule that
+   * can reach content is wrong at every width: only the guard on `body` may suppress
+   * selection broadly, and everything else must name a single component.
    */
-  it("suppresses selection on a fine pointer only through component-scoped rules", () => {
-    const appWide = FINE_VIEWPORTS.flatMap((viewport) =>
-      applicableSelectors(viewport, (value) => value === "none").filter(
-        (selector) => !isComponentScoped(selector)
-      )
-    );
-    expect([...new Set(appWide)]).toEqual([]);
+  it("suppresses selection only through the body guard or one component class", () => {
+    const offenders = selectionRules
+      .filter((rule) => rule.value === "none")
+      .flatMap((rule) => rule.selectors)
+      .filter(
+        (selector) => selector !== "body" && !SINGLE_COMPONENT_SELECTOR.test(selector.trim())
+      );
+    expect([...new Set(offenders)]).toEqual([]);
   });
 
   it("leaves content selectable for fine pointers", () => {
     // Controls are not exempted here: `button` and `[role="button"]` both wrap
     // selectable content in this codebase (skill descriptions, diff hunks, copyable
     // IDs), so suppressing them app-wide would break copying on desktop.
-    for (const selector of ["body", "button", '[role="button"]']) {
-      for (const property of SELECTION_PROPERTIES) {
-        expect(
-          effectiveValue(selector, property, { widthPx: DESKTOP_WIDTH_PX, coarse: false })
-        ).not.toBe("none");
+    for (const viewport of FINE_VIEWPORTS) {
+      for (const selector of ["body", "button", '[role="button"]']) {
+        for (const property of SELECTION_PROPERTIES) {
+          expect(effectiveValue(selector, property, viewport)).not.toBe("none");
+        }
       }
     }
   });
