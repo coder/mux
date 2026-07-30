@@ -426,7 +426,7 @@ export async function createBackupPayload(
     manifest: {
       schemaVersion: BACKUP_SCHEMA_VERSION,
       exportedAt: options.exportedAt ?? new Date().toISOString(),
-      muxVersion: options.muxVersion,
+      muxVersion: normalizeMuxVersion(options.muxVersion),
       sourceLabel: options.sourceLabel,
       files: files.map((file) => ({ path: file.path, sha256: sha256(file.content) })),
     },
@@ -442,12 +442,19 @@ function sameManifestContent(a: BackupManifest, b: BackupManifest): boolean {
   );
 }
 
-async function readManifestIfPresent(destinationDir: string): Promise<BackupManifest | null> {
+async function readManifestIfPresent(
+  destinationDir: string
+): Promise<{ manifest: BackupManifest; raw: string } | null> {
   try {
-    return parseManifest(await fs.readFile(path.join(destinationDir, "manifest.json"), "utf-8"));
+    const raw = await fs.readFile(path.join(destinationDir, "manifest.json"), "utf-8");
+    return { manifest: parseManifest(raw), raw };
   } catch {
     return null;
   }
+}
+
+function normalizeMuxVersion(value: string | undefined): string {
+  return typeof value === "string" && value.length > 0 ? value : "unknown";
 }
 
 export async function writeBackupPayload(
@@ -458,8 +465,8 @@ export async function writeBackupPayload(
   // Reuse the previous manifest when content hashes match. Otherwise changing
   // export metadata would produce a commit with no settings changes.
   const previous = await readManifestIfPresent(destinationDir);
-  const manifest =
-    previous && sameManifestContent(previous, payload.manifest) ? previous : payload.manifest;
+  const reusable = previous && sameManifestContent(previous.manifest, payload.manifest);
+  const manifestJson = reusable ? previous.raw : `${JSON.stringify(payload.manifest, null, 2)}\n`;
 
   await fs.rm(destinationDir, { recursive: true, force: true });
   await fs.mkdir(destinationDir, { recursive: true });
@@ -468,11 +475,7 @@ export async function writeBackupPayload(
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.writeFile(destination, file.content);
   }
-  await fs.writeFile(
-    path.join(destinationDir, "manifest.json"),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf-8"
-  );
+  await fs.writeFile(path.join(destinationDir, "manifest.json"), manifestJson, "utf-8");
 }
 
 function parseManifest(raw: string): BackupManifest {
@@ -484,7 +487,6 @@ function parseManifest(raw: string): BackupManifest {
   if (
     manifest.schemaVersion !== BACKUP_SCHEMA_VERSION ||
     typeof manifest.exportedAt !== "string" ||
-    typeof manifest.muxVersion !== "string" ||
     typeof manifest.sourceLabel !== "string" ||
     !Array.isArray(manifest.files)
   ) {

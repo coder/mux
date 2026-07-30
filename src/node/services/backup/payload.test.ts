@@ -315,6 +315,45 @@ describe("backup payload", () => {
     expect(await fs.readdir(restoreRoot)).toEqual([]);
   });
 
+  it("keeps a backup readable when the build stamp is missing", async () => {
+    await write(muxRoot, "AGENTS.md", "instructions\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      // A build whose version metadata is unavailable must not produce a manifest that
+      // this same code then rejects, which would make the backup unrestorable.
+      muxVersion: undefined as unknown as string,
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "no-version");
+    await writeBackupPayload(destination, payload);
+
+    const reread = await readBackupPayload(destination);
+    expect(reread.files.some((file) => file.path === "AGENTS.md")).toBe(true);
+  });
+
+  it("reuses the manifest across identical exports so a backup is a no-op", async () => {
+    await write(muxRoot, "AGENTS.md", "instructions\n");
+    const destination = path.join(tempDir, "stable");
+
+    const first = await createBackupPayload({
+      muxRoot,
+      muxVersion: undefined as unknown as string,
+      sourceLabel: "test-host",
+    });
+    await writeBackupPayload(destination, first);
+    const firstBytes = await fs.readFile(path.join(destination, "manifest.json"));
+
+    const second = await createBackupPayload({
+      muxRoot,
+      muxVersion: undefined as unknown as string,
+      sourceLabel: "test-host",
+      exportedAt: "2099-01-01T00:00:00.000Z",
+    });
+    await writeBackupPayload(destination, second);
+
+    expect(await fs.readFile(path.join(destination, "manifest.json"))).toEqual(firstBytes);
+  });
+
   it("writes and verifies manifest hashes", async () => {
     await write(muxRoot, "AGENTS.md", "instructions\n");
     const payload = await createBackupPayload({

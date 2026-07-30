@@ -89,6 +89,15 @@ export function createBackupGitRepo(options: { cacheRoot: string }): BackupGitRe
 }
 
 /**
+ * `muxVersion` is provenance only, but writing it as undefined drops the key from the
+ * manifest and makes the backup unreadable, so never let a missing build stamp through.
+ */
+function resolveMuxVersion(): string {
+  const describe: unknown = VERSION.git_describe;
+  return typeof describe === "string" && describe.length > 0 ? describe : "unknown";
+}
+
+/**
  * Bridges payload collection to the service-level contract. Preferences are read
  * from and written through `Config` rather than the config file so restores reuse
  * schema validation and reach open windows through the existing change stream.
@@ -112,7 +121,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     return await createBackupPayload({
       muxRoot,
       preferences: currentPreferences(),
-      muxVersion: VERSION.git_describe,
+      muxVersion: resolveMuxVersion(),
       sourceLabel: path.basename(muxRoot),
       // The service owns the user-facing override, so report rather than throw.
       reportSecrets: true,
