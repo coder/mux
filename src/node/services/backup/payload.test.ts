@@ -8,6 +8,7 @@ import {
   createBackupPayload,
   readBackupPayload,
   restoreBackupPayload,
+  scanBackupFilesForSecrets,
   writeBackupPayload,
 } from "./payload";
 
@@ -174,6 +175,62 @@ describe("backup payload", () => {
       expect(error.message).toContain("disallowed path");
     }
     expect(await fs.readFile(path.join(destination, "keep.txt"), "utf-8")).toBe("existing\n");
+  });
+
+  it("rejects payload paths that escape the destination on Windows", async () => {
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    payload.files.push({
+      path: "skills/..\\..\\escaped.md",
+      content: Buffer.from("escaped\n", "utf-8"),
+    });
+
+    try {
+      await writeBackupPayload(path.join(tempDir, "escaped"), payload);
+      throw new Error("Expected the traversal path to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("disallowed path");
+    }
+  });
+
+  it("redacts a bare key query parameter and detects a Google API key", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          google: {
+            url: "https://example.com/mcp?key=AIzaSyA12345678901234567890123456789012&mode=fast",
+          },
+        },
+      })
+    );
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      reportSecrets: true,
+    });
+    const mcp = payloadFileText(payload, "mcp.jsonc");
+    expect(mcp).not.toContain("AIzaSyA12345678901234567890123456789012");
+    expect(mcp).toContain(REDACTED_BACKUP_VALUE);
+    expect(mcp).toContain("mode=fast");
+  });
+
+  it("flags a Google API key left in a free-form file", async () => {
+    await write(muxRoot, "AGENTS.md", "key AIzaSyA12345678901234567890123456789012\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      reportSecrets: true,
+    });
+    expect(scanBackupFilesForSecrets(payload.files)).toContain("AGENTS.md");
   });
 
   it("writes and verifies manifest hashes", async () => {

@@ -90,6 +90,23 @@ describe("BackupRepoCache", () => {
     expect(await repo.porcelainStatus("mux")).toContain("mux/AGENTS.md");
   });
 
+  it("refuses managed paths that are not a real subdirectory", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    for (const unsafe of [".", "./", "..", "mux/../..", "/mux", "mux\\..\\.."]) {
+      try {
+        await repo.cleanManagedPath(unsafe);
+        throw new Error(`Expected '${unsafe}' to be rejected`);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        expect(error.message).toContain("safe relative path");
+      }
+    }
+  });
+
   it("rejects a push when the remote branch moved after reset", async () => {
     const repo = createRepo();
     await repo.ensureCache();

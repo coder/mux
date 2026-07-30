@@ -1,10 +1,29 @@
 import { z } from "zod";
 import { ResultSchema } from "./result";
 
+/**
+ * The managed subdirectory scopes every write and every `git clean`, so it must be a
+ * real subdirectory. `.`, `..`, absolute paths, and backslashes would let a backup
+ * reach outside the directory Mux is allowed to own.
+ */
+export function isValidBackupPath(value: string): boolean {
+  const segments = value.split("/").filter((segment) => segment !== "");
+  return (
+    segments.length > 0 &&
+    !value.startsWith("/") &&
+    !value.includes("\\") &&
+    !segments.some((segment) => segment === "." || segment === "..")
+  );
+}
+
 export const SettingsBackupSchema = z.object({
   repoUrl: z.string().trim().min(1),
   branch: z.string().trim().min(1),
-  path: z.string().trim().min(1),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(isValidBackupPath, { message: "Enter a subdirectory inside the repository" }),
   lastPushedCommit: z.string().optional(),
   lastRestoredCommit: z.string().optional(),
 });

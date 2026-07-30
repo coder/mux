@@ -43,11 +43,18 @@ export interface RemoteRefs {
   refs: ReadonlyMap<string, string>;
 }
 
+/**
+ * The managed path is user-supplied and is passed to `git clean -fd --` and
+ * `git commit --`, so it has to stay a strict subdirectory. `.` would widen those
+ * commands to the whole cache clone, which must never happen.
+ */
 function assertSafeRelativePath(relativePath: string): void {
+  const segments = relativePath.split(/[\\/]/).filter((segment) => segment !== "");
   if (
     !relativePath ||
     path.isAbsolute(relativePath) ||
-    relativePath.split(/[\\/]/).includes("..")
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
   ) {
     throw new Error(`Expected a safe relative path, got '${relativePath}'`);
   }

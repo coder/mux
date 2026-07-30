@@ -25,6 +25,7 @@ const SECRET_PATTERNS = [
   /\bghp_[A-Za-z0-9]{20,}\b/,
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/,
   /\bAKIA[0-9A-Z]{16}\b/,
+  /\bAIza[A-Za-z0-9_-]{35,}/,
   /\bxoxb-[A-Za-z0-9-]{10,}\b/,
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
 ] as const;
@@ -97,6 +98,10 @@ function assertAllowedPayloadPath(relativePath: string): void {
   if (
     !isAllowedPayloadPath(relativePath) ||
     path.isAbsolute(relativePath) ||
+    // Payload paths are always posix. A backslash is an ordinary filename character
+    // here but a separator on Windows, so `skills/..\..\evil` would escape the
+    // destination once path.join runs there.
+    relativePath.includes("\\") ||
     relativePath.split("/").includes("..") ||
     FORBIDDEN_BASENAMES.has(path.posix.basename(relativePath))
   ) {
@@ -230,6 +235,14 @@ function isPortableReference(value: unknown): boolean {
   );
 }
 
+/**
+ * Matches a bare `key` too, because Google-style MCP endpoints carry the credential
+ * as `?key=...` rather than a name containing "token" or "api_key".
+ */
+function isSensitiveParamName(name: string): boolean {
+  return /(?:^|[_-])(?:key|token|secret|password|auth|credential|apikey)(?:$|[_-])/i.test(name);
+}
+
 function decodeUrlComponent(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -256,11 +269,7 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
     redacted = true;
   }
   for (const [name, value] of url.searchParams) {
-    if (
-      /(?:token|api[_-]?key|secret|password|auth|credential)/i.test(name) &&
-      value &&
-      !isPortableReference(value)
-    ) {
+    if (isSensitiveParamName(name) && value && !isPortableReference(value)) {
       url.searchParams.set(name, REDACTED_BACKUP_VALUE);
       redacted = true;
     }
