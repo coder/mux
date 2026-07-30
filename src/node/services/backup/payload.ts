@@ -217,16 +217,12 @@ export function mergeBackupPreferences(
   });
 }
 
+/**
+ * Only the object forms count as portable. `MCPHeaderValue` is `string | { secret }`
+ * (src/common/types/mcp.ts), so Mux never interpolates a plain string: anything else
+ * is sent to the server verbatim and must be treated as a literal credential.
+ */
 function isPortableReference(value: unknown): boolean {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return (
-      trimmed.startsWith("op://") ||
-      /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(trimmed) ||
-      /^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed) ||
-      /^env(?::|:\/\/)[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)
-    );
-  }
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return (
@@ -282,9 +278,30 @@ function parseJsoncObject(raw: string, fileName: string): Record<string, unknown
   return parsed as Record<string, unknown>;
 }
 
+const JSONC_EDIT_OPTIONS: jsonc.ModificationOptions = {
+  formattingOptions: { tabSize: 2, insertSpaces: true },
+};
+
+/**
+ * Rewrites values in place with jsonc edits. mcp.jsonc is a commented format, so
+ * reserializing it through JSON.stringify would silently delete the user's comments.
+ */
+function applyJsoncEdits(text: string, edits: Array<{ path: jsonc.JSONPath; value: unknown }>) {
+  let result = text;
+  for (const edit of edits) {
+    result = jsonc.applyEdits(
+      result,
+      jsonc.modify(result, edit.path, edit.value, JSONC_EDIT_OPTIONS)
+    );
+  }
+  return result;
+}
+
 function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string[] } {
-  const root = parseJsoncObject(content.toString("utf-8"), "mcp.jsonc");
+  const text = content.toString("utf-8");
+  const root = parseJsoncObject(text, "mcp.jsonc");
   const redactions: string[] = [];
+  const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
   const servers = root.servers;
   if (servers && typeof servers === "object" && !Array.isArray(servers)) {
     for (const [serverName, rawServer] of Object.entries(servers as Record<string, unknown>)) {
@@ -294,7 +311,10 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
       if (headers && typeof headers === "object" && !Array.isArray(headers)) {
         for (const [headerName, value] of Object.entries(headers as Record<string, unknown>)) {
           if (!isPortableReference(value)) {
-            (headers as Record<string, unknown>)[headerName] = REDACTED_BACKUP_VALUE;
+            edits.push({
+              path: ["servers", serverName, "headers", headerName],
+              value: REDACTED_BACKUP_VALUE,
+            });
             redactions.push(`servers.${serverName}.headers.${headerName}`);
           }
         }
@@ -302,16 +322,13 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
       if (typeof server.url === "string") {
         const redactedUrl = redactInlineUrl(server.url);
         if (redactedUrl.redacted) {
-          server.url = redactedUrl.value;
+          edits.push({ path: ["servers", serverName, "url"], value: redactedUrl.value });
           redactions.push(`servers.${serverName}.url`);
         }
       }
     }
   }
-  return {
-    content: Buffer.from(`${JSON.stringify(root, null, 2)}\n`, "utf-8"),
-    redactions,
-  };
+  return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
 }
 
 function findMcpRedactions(content: Buffer): string[] {
@@ -478,37 +495,49 @@ function containsRedaction(value: string): boolean {
   );
 }
 
-function restoreRedactedValues(backup: unknown, local: unknown): unknown {
+/**
+ * Collects the edits that put locally-held values back where the backup carries a
+ * redaction marker, so re-reading a backup never destroys a working credential.
+ */
+function collectRedactionRestoreEdits(
+  backup: unknown,
+  local: unknown,
+  currentPath: jsonc.JSONPath,
+  edits: Array<{ path: jsonc.JSONPath; value: unknown }>
+): void {
   if (typeof backup === "string" && containsRedaction(backup)) {
-    return local === undefined ? backup : local;
+    if (local !== undefined) edits.push({ path: currentPath, value: local });
+    return;
   }
   if (Array.isArray(backup)) {
     const localArray = Array.isArray(local) ? local : [];
-    return backup.map((value, index) => restoreRedactedValues(value, localArray[index]));
+    backup.forEach((value, index) =>
+      collectRedactionRestoreEdits(value, localArray[index], [...currentPath, index], edits)
+    );
+    return;
   }
   if (backup && typeof backup === "object") {
     const localRecord =
       local && typeof local === "object" && !Array.isArray(local)
         ? (local as Record<string, unknown>)
         : {};
-    return Object.fromEntries(
-      Object.entries(backup as Record<string, unknown>).map(([key, value]) => [
-        key,
-        restoreRedactedValues(value, localRecord[key]),
-      ])
-    );
+    for (const [key, value] of Object.entries(backup as Record<string, unknown>)) {
+      collectRedactionRestoreEdits(value, localRecord[key], [...currentPath, key], edits);
+    }
   }
-  return backup;
 }
 
 async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {
-  const backup = parseJsoncObject(content.toString("utf-8"), "backup mcp.jsonc");
+  const backupText = content.toString("utf-8");
+  const backup = parseJsoncObject(backupText, "backup mcp.jsonc");
   const localPath = path.join(muxRoot, "mcp.jsonc");
   let local: Record<string, unknown> = {};
   if (await fileExists(localPath)) {
     local = parseJsoncObject(await fs.readFile(localPath, "utf-8"), "local mcp.jsonc");
   }
-  return Buffer.from(`${JSON.stringify(restoreRedactedValues(backup, local), null, 2)}\n`, "utf-8");
+  const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
+  collectRedactionRestoreEdits(backup, local, [], edits);
+  return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
 }
 
 export async function restoreBackupPayload(

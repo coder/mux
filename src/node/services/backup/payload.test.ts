@@ -111,23 +111,23 @@ describe("backup payload", () => {
     await write(
       muxRoot,
       "mcp.jsonc",
-      JSON.stringify({
-        servers: {
-          api: {
-            url: "https://user:password@example.com/mcp?token=literal&mode=fast",
-            headers: {
-              Authorization: "Bearer literal",
-              Env: "${MCP_TOKEN}",
-              Op: "op://Vault/Item/token",
-              Secret: { secret: "MCP_SECRET" },
-              OpObject: { op: "op://Vault/Item/token" },
-            },
-          },
-          portableUrl: {
-            url: "https://${MCP_USER}:${MCP_PASSWORD}@example.com/mcp?token=${MCP_TOKEN}",
-          },
-        },
-      })
+      `{
+  // Keep this comment: mcp.jsonc is a commented format.
+  "servers": {
+    "api": {
+      "url": "https://user:password@example.com/mcp?token=literal&mode=fast",
+      "headers": {
+        "Authorization": "Bearer literal",
+        "Secret": { "secret": "MCP_SECRET" },
+        "OpObject": { "op": "op://Vault/Item/token" }
+      }
+    },
+    "plain": {
+      "url": "https://example.com/mcp?mode=fast"
+    }
+  }
+}
+`
     );
 
     const payload = await createBackupPayload({
@@ -138,21 +138,18 @@ describe("backup payload", () => {
     const mcp = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
       servers: {
         api: { url: string; headers: Record<string, unknown> };
-        portableUrl: { url: string };
+        plain: { url: string };
       };
     };
 
     expect(mcp.servers.api.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
-    expect(mcp.servers.api.headers.Env).toBe("${MCP_TOKEN}");
-    expect(mcp.servers.api.headers.Op).toBe("op://Vault/Item/token");
     expect(mcp.servers.api.headers.Secret).toEqual({ secret: "MCP_SECRET" });
     expect(mcp.servers.api.headers.OpObject).toEqual({ op: "op://Vault/Item/token" });
     expect(mcp.servers.api.url).not.toContain("password");
     expect(mcp.servers.api.url).not.toContain("token=literal");
     expect(mcp.servers.api.url).toContain("mode=fast");
-    expect(mcp.servers.portableUrl.url).toBe(
-      "https://${MCP_USER}:${MCP_PASSWORD}@example.com/mcp?token=${MCP_TOKEN}"
-    );
+    expect(mcp.servers.plain.url).toBe("https://example.com/mcp?mode=fast");
+    expect(payloadFileText(payload, "mcp.jsonc")).toContain("// Keep this comment");
     const destination = path.join(tempDir, "redacted-payload");
     await writeBackupPayload(destination, payload);
     expect((await readBackupPayload(destination)).redactions).toEqual(payload.redactions);
@@ -227,7 +224,7 @@ describe("backup payload", () => {
             url: "https://backup-token@example.com/mcp?token=backup-token",
             headers: {
               Authorization: "Bearer backup-token",
-              Portable: "${PORTABLE_TOKEN}",
+              Portable: { secret: "PORTABLE_TOKEN" },
             },
           },
         },
@@ -256,7 +253,7 @@ describe("backup payload", () => {
             url: "https://local-token@example.com/mcp?token=local-token",
             headers: {
               Authorization: "Bearer local-token",
-              Portable: "${OLD_TOKEN}",
+              Portable: { secret: "OLD_TOKEN" },
             },
           },
         },
@@ -301,6 +298,6 @@ describe("backup payload", () => {
       "https://local-token@example.com/mcp?token=local-token"
     );
     expect(restoredMcp.servers.api.headers.Authorization).toBe("Bearer local-token");
-    expect(restoredMcp.servers.api.headers.Portable).toBe("${PORTABLE_TOKEN}");
+    expect(restoredMcp.servers.api.headers.Portable).toEqual({ secret: "PORTABLE_TOKEN" });
   });
 });

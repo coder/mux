@@ -112,9 +112,13 @@ describe("backup adapters", () => {
       credential: "ssh",
       remoteCommit: null,
     } as const;
-    await expect(gitRepo.getPushChanges(repository, settings.path)).rejects.toThrow(
-      "was not prepared"
-    );
+    try {
+      await gitRepo.getPushChanges(repository, settings.path);
+      throw new Error("Expected the unprepared repository to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("was not prepared");
+    }
   });
 
   it("previews restore changes against local files and keeps local-only files", async () => {
