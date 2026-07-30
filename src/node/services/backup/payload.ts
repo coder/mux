@@ -487,6 +487,7 @@ function parseManifest(raw: string): BackupManifest {
   if (
     manifest.schemaVersion !== BACKUP_SCHEMA_VERSION ||
     typeof manifest.exportedAt !== "string" ||
+    typeof manifest.muxVersion !== "string" ||
     typeof manifest.sourceLabel !== "string" ||
     !Array.isArray(manifest.files)
   ) {
