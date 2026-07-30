@@ -122,6 +122,50 @@ describe("BackupSection", () => {
     await canvas.findByText(/Restored 1 file/i);
   });
 
+  test("exposes the override after a secret-scan block without running a preview first", async () => {
+    const { client, view } = renderBackupSection();
+    const canvas = within(view.container);
+    await canvas.findByText("Settings backup");
+
+    expect(canvas.queryByRole("checkbox", { name: "Override secret scan" })).toBeNull();
+
+    jest.spyOn(client.backup, "push").mockResolvedValueOnce({
+      success: false,
+      error: {
+        code: "SECRET_DETECTED",
+        message: "Potential secrets were found in the backup payload: AGENTS.md",
+        files: ["AGENTS.md"],
+      },
+    });
+
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+
+    await canvas.findByText(/Potential secrets were found/i);
+    expect(canvas.getByRole("checkbox", { name: "Override secret scan" })).toBeTruthy();
+  });
+
+  test("reports a preferences-only restore as changing no files", async () => {
+    const { client, view } = renderBackupSection();
+    const canvas = within(view.container);
+    await canvas.findByText("Settings backup");
+
+    jest.spyOn(client.backup, "restore").mockResolvedValueOnce({
+      success: true,
+      data: {
+        commit: "abc1234",
+        snapshotPath: "/tmp/mux-backup-snapshot",
+        changedFiles: [],
+        localOnlyFiles: [],
+      },
+    });
+
+    fireEvent.click(canvas.getByRole("button", { name: "Restore" }));
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Restore settings/i }));
+
+    await canvas.findByText(/no files changed/i);
+  });
+
   test("renders save failures beside the explicit save action", async () => {
     const { client, view } = renderBackupSection();
     const canvas = within(view.container);

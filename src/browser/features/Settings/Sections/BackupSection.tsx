@@ -75,6 +75,15 @@ function getCredentialLabel(credential: BackupValidation["credential"]): string 
   }
 }
 
+/**
+ * Preferences restore through config rather than a file, so a run that only changed
+ * preferences reports zero files. Saying "no files changed" avoids reading as a no-op.
+ */
+function describeRestoredFiles(count: number): string {
+  if (count === 0) return "settings; no files changed";
+  return `${count} file${count === 1 ? "" : "s"}`;
+}
+
 function ChangeList(props: {
   title: string;
   emptyLabel: string;
@@ -114,6 +123,7 @@ export function BackupSection() {
   const [validation, setValidation] = useState<BackupValidation | null>(null);
   const [preview, setPreview] = useState<BackupPreview | null>(null);
   const [overrideSecretScan, setOverrideSecretScan] = useState(false);
+  const [secretScanBlocked, setSecretScanBlocked] = useState(false);
   const [restoreConfirmationOpen, setRestoreConfirmationOpen] = useState(false);
 
   const isDirty =
@@ -205,6 +215,7 @@ export function BackupSection() {
       setValidation(null);
       setPreview(null);
       setOverrideSecretScan(false);
+      setSecretScanBlocked(false);
       setStatusMessage("Backup settings saved.");
     } catch (error) {
       setSaveError(getErrorMessage(error));
@@ -265,6 +276,7 @@ export function BackupSection() {
       }
       setPreview(result.data);
       setOverrideSecretScan(false);
+      setSecretScanBlocked(false);
       setStatusMessage("Preview refreshed.");
     } catch (error) {
       setActionError(getErrorMessage(error));
@@ -286,10 +298,12 @@ export function BackupSection() {
       });
       if (!result.success) {
         setActionError(getOperationErrorMessage(result.error));
+        setSecretScanBlocked(result.error.code === "SECRET_DETECTED");
         return;
       }
       setPreview(null);
       setOverrideSecretScan(false);
+      setSecretScanBlocked(false);
       setStatusMessage(
         `Backed up settings at ${result.data.commit} using ${getCredentialLabel(result.data.credential)}.`
       );
@@ -315,8 +329,9 @@ export function BackupSection() {
       }
       setPreview(null);
       setOverrideSecretScan(false);
+      setSecretScanBlocked(false);
       setStatusMessage(
-        `Restored ${result.data.changedFiles.length} file${result.data.changedFiles.length === 1 ? "" : "s"}. Safety snapshot: ${result.data.snapshotPath}`
+        `Restored ${describeRestoredFiles(result.data.changedFiles.length)}. Safety snapshot: ${result.data.snapshotPath}`
       );
       setRestoreConfirmationOpen(false);
     } catch (error) {
@@ -543,30 +558,6 @@ export function BackupSection() {
                 </ul>
               )}
             </div>
-
-            <div className="border-border-light rounded-md border p-3">
-              <label className="flex items-start gap-2">
-                <Checkbox
-                  checked={overrideSecretScan}
-                  onCheckedChange={(checked) => setOverrideSecretScan(checked === true)}
-                  disabled={busy}
-                  aria-label="Override secret scan"
-                />
-                <span className="min-w-0">
-                  <span className="text-foreground block text-xs font-medium">
-                    Override secret scan
-                  </span>
-                  <span className="text-muted mt-0.5 block text-xs">
-                    Allow the next backup if the secret scan blocks it. The blocked file list
-                    appears as an error before anything is pushed.
-                  </span>
-                </span>
-              </label>
-              <p className="text-muted mt-2 text-xs">
-                Leave this off unless you have reviewed a secret-scan error and intend to back up
-                those files.
-              </p>
-            </div>
           </div>
         ) : (
           <div className="border-border-light text-muted rounded-md border border-dashed p-4 text-xs">
@@ -574,6 +565,32 @@ export function BackupSection() {
           </div>
         )}
       </section>
+
+      {preview || secretScanBlocked ? (
+        <div className="border-border-light rounded-md border p-3">
+          <label className="flex items-start gap-2">
+            <Checkbox
+              checked={overrideSecretScan}
+              onCheckedChange={(checked) => setOverrideSecretScan(checked === true)}
+              disabled={busy}
+              aria-label="Override secret scan"
+            />
+            <span className="min-w-0">
+              <span className="text-foreground block text-xs font-medium">
+                Override secret scan
+              </span>
+              <span className="text-muted mt-0.5 block text-xs">
+                Allow the next backup if the secret scan blocks it. The blocked file list appears as
+                an error before anything is pushed.
+              </span>
+            </span>
+          </label>
+          <p className="text-muted mt-2 text-xs">
+            Leave this off unless you have reviewed a secret-scan error and intend to back up those
+            files.
+          </p>
+        </div>
+      ) : null}
 
       {actionError ? <div className="text-error text-xs">{actionError}</div> : null}
       {statusMessage ? <div className="text-success text-xs">{statusMessage}</div> : null}
