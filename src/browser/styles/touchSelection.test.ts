@@ -116,7 +116,11 @@ function mediaQueryApplies(params: string, viewport: Viewport): boolean {
 
   let applies = true;
   for (const condition of params.matchAll(/\(([^)]*)\)/g)) {
-    const [feature, rawValue] = condition[1].split(":").map((part) => part.trim());
+    const parts = condition[1].split(":").map((part) => part.trim());
+    if (parts.length !== 2) {
+      throw new Error(`Unsupported media condition in selection rule: ${params}`);
+    }
+    const [feature, rawValue] = parts;
     if (feature === "max-width" || feature === "min-width") {
       const boundaryPx = Number(rawValue.replace("px", ""));
       if (!rawValue.endsWith("px") || Number.isNaN(boundaryPx)) {
