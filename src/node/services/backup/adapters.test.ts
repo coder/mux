@@ -105,6 +105,52 @@ describe("backup adapters", () => {
     expect(preview.changes).toEqual([]);
   });
 
+  it("does not report a value the backup redacted as a restore change", async () => {
+    await writeMuxFile(
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "api": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer local-secret" }
+    }
+  }
+}
+`
+    );
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+
+    const preview = await payload.previewRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+    expect(preview.changes).toEqual([]);
+  });
+
+  it("refuses to write through a symlinked managed-path ancestor", async () => {
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+    const repository = await gitRepo.prepare(settings);
+
+    const outside = path.join(tempDir, "outside");
+    await fs.mkdir(path.join(outside, "mux"), { recursive: true });
+    await fs.writeFile(path.join(outside, "mux", "keep.txt"), "keep me\n", "utf-8");
+    await fs.symlink(outside, path.join(repository.rootDir, "linked"));
+
+    try {
+      await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: "linked/mux" });
+      throw new Error("Expected the symlinked ancestor to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("symlink");
+    }
+    expect(await fs.readFile(path.join(outside, "mux", "keep.txt"), "utf-8")).toBe("keep me\n");
+  });
+
   it("passes a configured token to the credential ladder", async () => {
     const tokens: Array<string | null> = [];
     const gitRepo = createBackupGitRepo({

@@ -19,6 +19,10 @@ async function write(root: string, relativePath: string, content: string): Promi
   await fs.writeFile(filePath, content, "utf-8");
 }
 
+async function isExecutable(filePath: string): Promise<boolean> {
+  return ((await fs.stat(filePath)).mode & 0o111) !== 0;
+}
+
 function payloadFileText(
   payload: Awaited<ReturnType<typeof createBackupPayload>>,
   relativePath: string
@@ -156,6 +160,85 @@ describe("backup payload", () => {
     await writeBackupPayload(destination, payload);
     expect((await readBackupPayload(destination)).redactions).toEqual(payload.redactions);
     expect(payload.redactions).toEqual(["servers.api.headers.Authorization", "servers.api.url"]);
+  });
+
+  it("redacts credentials in stdio MCP commands but keeps shell env references", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "object": { "command": "npx server --api-key sk-live-object --port 3000" },
+    "bare": "npx server --token literal-token",
+    "assignment": { "command": "API_KEY=sk-live-env npx server" },
+    "reference": { "command": "npx server --api-key $MCP_API_KEY" }
+  }
+}
+`
+    );
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const mcp = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
+      servers: {
+        object: { command: string };
+        bare: string;
+        assignment: { command: string };
+        reference: { command: string };
+      };
+    };
+
+    expect(mcp.servers.object.command).toBe(
+      `npx server --api-key ${REDACTED_BACKUP_VALUE} --port 3000`
+    );
+    expect(mcp.servers.bare).toBe(`npx server --token ${REDACTED_BACKUP_VALUE}`);
+    expect(mcp.servers.assignment.command).toBe(`API_KEY=${REDACTED_BACKUP_VALUE} npx server`);
+    expect(mcp.servers.reference.command).toBe("npx server --api-key $MCP_API_KEY");
+    expect(payload.redactions).toEqual([
+      "servers.object.command",
+      "servers.bare",
+      "servers.assignment.command",
+    ]);
+
+    const destination = path.join(tempDir, "command-payload");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+    expect(readBack.redactions).toEqual(payload.redactions);
+
+    await restoreBackupPayload({ muxRoot, payload: readBack });
+    const restored = jsonc.parse(
+      await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")
+    ) as typeof mcp;
+    expect(restored.servers.object.command).toBe("npx server --api-key sk-live-object --port 3000");
+    expect(restored.servers.bare).toBe("npx server --token literal-token");
+  });
+
+  it("preserves the execute bit through export and restore", async () => {
+    await write(muxRoot, "skills/demo/run.sh", "#!/bin/sh\necho demo\n");
+    await write(muxRoot, "skills/demo/SKILL.md", "demo skill\n");
+    await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o755);
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "executable-payload");
+    await writeBackupPayload(destination, payload);
+    expect(await isExecutable(path.join(destination, "skills/demo/run.sh"))).toBe(true);
+    expect(await isExecutable(path.join(destination, "skills/demo/SKILL.md"))).toBe(false);
+
+    const restoreRoot = path.join(tempDir, "executable-restore");
+    await fs.mkdir(restoreRoot);
+    await restoreBackupPayload({
+      muxRoot: restoreRoot,
+      payload: await readBackupPayload(destination),
+    });
+    expect(await isExecutable(path.join(restoreRoot, "skills/demo/run.sh"))).toBe(true);
+    expect(await isExecutable(path.join(restoreRoot, "skills/demo/SKILL.md"))).toBe(false);
   });
 
   it("validates every path before replacing an existing payload", async () => {

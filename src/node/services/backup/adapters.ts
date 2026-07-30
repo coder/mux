@@ -12,6 +12,8 @@ import {
 import { BackupRepoCache } from "./gitRepo";
 import {
   backupPayloadExists,
+  resolveContainedPath,
+  resolveRestoredContent,
   collectAllowlistedFiles,
   createBackupPayload,
   projectBackupPreferences,
@@ -117,8 +119,11 @@ function resolveMuxVersion(): string {
 export function createBackupPayloadStore(options: { config: Config }): BackupPayload {
   const muxRoot = options.config.rootDir;
 
-  function managedDir(repositoryRoot: string, managedPath: string): string {
-    return path.join(repositoryRoot, ...managedPath.split("/"));
+  // Walks the chain so a symlinked ancestor is rejected before writeBackupPayload's
+  // recursive removal could follow it out of the cache clone.
+  async function managedDir(repositoryRoot: string, managedPath: string): Promise<string> {
+    const segments = managedPath.split("/").filter((segment) => segment !== "");
+    return await resolveContainedPath(repositoryRoot, segments.join("/"));
   }
 
   function currentPreferences() {
@@ -144,7 +149,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     async exportTo(exportOptions) {
       const payload = await buildPayload();
       await writeBackupPayload(
-        managedDir(exportOptions.repositoryRoot, exportOptions.managedPath),
+        await managedDir(exportOptions.repositoryRoot, exportOptions.managedPath),
         payload
       );
       return {
@@ -154,7 +159,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     },
 
     async previewRestore(previewOptions) {
-      const sourceDir = managedDir(previewOptions.repositoryRoot, previewOptions.managedPath);
+      const sourceDir = await managedDir(previewOptions.repositoryRoot, previewOptions.managedPath);
       const local = await localFilesByPath();
       // A repository with no backup yet is a normal first-run state, not an error:
       // nothing would be restored, and every local file is local-only.
@@ -173,7 +178,11 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
             : local.get(file.path)?.content;
         if (!existing) {
           changes.push({ status: "A", path: file.path });
-        } else if (!existing.equals(file.content)) {
+          continue;
+        }
+        // Restore puts locally-held values back where the backup carries a redaction
+        // marker, so compare what restore would write or every redaction reads as a change.
+        if (!existing.equals(await resolveRestoredContent(muxRoot, file))) {
           changes.push({ status: "M", path: file.path });
         }
       }
@@ -185,7 +194,10 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     },
 
     async validateRestore(validateOptions) {
-      const sourceDir = managedDir(validateOptions.repositoryRoot, validateOptions.managedPath);
+      const sourceDir = await managedDir(
+        validateOptions.repositoryRoot,
+        validateOptions.managedPath
+      );
       if (!(await backupPayloadExists(sourceDir))) {
         throw new BackupServiceError(
           "INVALID_BACKUP",
@@ -201,7 +213,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
 
     async restore(restoreOptions) {
       const payload = await readBackupPayload(
-        managedDir(restoreOptions.repositoryRoot, restoreOptions.managedPath)
+        await managedDir(restoreOptions.repositoryRoot, restoreOptions.managedPath)
       );
       const before = await localFilesByPath();
       const result = await restoreBackupPayload({

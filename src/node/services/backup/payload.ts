@@ -33,11 +33,14 @@ const SECRET_PATTERNS = [
 export interface BackupFile {
   path: string;
   content: Buffer;
+  /** Skills ship runnable scripts, so losing the execute bit breaks them on restore. */
+  executable?: boolean;
 }
 
 export interface BackupManifestFile {
   path: string;
   sha256: string;
+  executable?: boolean;
 }
 
 export interface BackupManifest {
@@ -164,9 +167,12 @@ async function collectDirectory(
     if (entry.isDirectory()) {
       await collectDirectory(root, relativePath, filter, output);
     } else if (entry.isFile() && !FORBIDDEN_BASENAMES.has(entry.name)) {
+      const absolutePath = path.join(root, ...relativePath.split("/"));
+      const stat = await fs.stat(absolutePath);
       output.push({
         path: relativePath,
-        content: await fs.readFile(path.join(root, ...relativePath.split("/"))),
+        content: await fs.readFile(absolutePath),
+        executable: (stat.mode & 0o111) !== 0,
       });
     }
   }
@@ -304,6 +310,31 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
   return { value: redacted ? url.toString() : rawUrl, redacted };
 }
 
+const CREDENTIAL_ARGUMENT_PATTERNS = [
+  // --api-key sk-live-1, --api-key=sk-live-1
+  /(--?[\w-]*(?:key|token|secret|password|auth|credential)[\w-]*[= ])(\S+)/gi,
+  // API_KEY=sk-live-1 npx server
+  /(\b\w+(?:key|token|secret|password|auth|credential)\w*=)(\S+)/gi,
+];
+
+/**
+ * A stdio MCP server carries its credential in the command line, so redact the value
+ * after a credential-bearing flag. `$VAR` survives because the command is run through
+ * a shell, which expands it on whichever machine restores the backup.
+ */
+function redactCommandCredentials(command: string): { value: string; redacted: boolean } {
+  let redacted = false;
+  let value = command;
+  for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
+    value = value.replace(pattern, (match, flag: string, secret: string) => {
+      if (/^["']?\$/.test(secret) || secret === REDACTED_BACKUP_VALUE) return match;
+      redacted = true;
+      return `${flag}${REDACTED_BACKUP_VALUE}`;
+    });
+  }
+  return { value, redacted };
+}
+
 function parseJsoncObject(raw: string, fileName: string): Record<string, unknown> {
   const errors: jsonc.ParseError[] = [];
   const parsed: unknown = jsonc.parse(raw, errors);
@@ -340,6 +371,15 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
   const servers = root.servers;
   if (servers && typeof servers === "object" && !Array.isArray(servers)) {
     for (const [serverName, rawServer] of Object.entries(servers as Record<string, unknown>)) {
+      // A bare string entry is the stdio command itself (mcpConfigService.normalizeEntry).
+      if (typeof rawServer === "string") {
+        const redactedEntry = redactCommandCredentials(rawServer);
+        if (redactedEntry.redacted) {
+          edits.push({ path: ["servers", serverName], value: redactedEntry.value });
+          redactions.push(`servers.${serverName}`);
+        }
+        continue;
+      }
       if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
       const server = rawServer as Record<string, unknown>;
       const headers = server.headers;
@@ -361,6 +401,13 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
           redactions.push(`servers.${serverName}.url`);
         }
       }
+      if (typeof server.command === "string") {
+        const redactedCommand = redactCommandCredentials(server.command);
+        if (redactedCommand.redacted) {
+          edits.push({ path: ["servers", serverName, "command"], value: redactedCommand.value });
+          redactions.push(`servers.${serverName}.command`);
+        }
+      }
     }
   }
   return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
@@ -373,6 +420,10 @@ function findMcpRedactions(content: Buffer): string[] {
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) return redactions;
 
   for (const [serverName, rawServer] of Object.entries(servers as Record<string, unknown>)) {
+    if (typeof rawServer === "string") {
+      if (containsRedaction(rawServer)) redactions.push(`servers.${serverName}`);
+      continue;
+    }
     if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
     const server = rawServer as Record<string, unknown>;
     const headers = server.headers;
@@ -385,6 +436,9 @@ function findMcpRedactions(content: Buffer): string[] {
     }
     if (typeof server.url === "string" && containsRedaction(server.url)) {
       redactions.push(`servers.${serverName}.url`);
+    }
+    if (typeof server.command === "string" && containsRedaction(server.command)) {
+      redactions.push(`servers.${serverName}.command`);
     }
   }
   return redactions;
@@ -428,7 +482,11 @@ export async function createBackupPayload(
       exportedAt: options.exportedAt ?? new Date().toISOString(),
       muxVersion: normalizeMuxVersion(options.muxVersion),
       sourceLabel: options.sourceLabel,
-      files: files.map((file) => ({ path: file.path, sha256: sha256(file.content) })),
+      files: files.map((file) => ({
+        path: file.path,
+        sha256: sha256(file.content),
+        ...(file.executable === true ? { executable: true } : {}),
+      })),
     },
     files,
     redactions,
@@ -438,7 +496,10 @@ export async function createBackupPayload(
 function sameManifestContent(a: BackupManifest, b: BackupManifest): boolean {
   if (a.files.length !== b.files.length) return false;
   return a.files.every(
-    (file, index) => file.path === b.files[index]?.path && file.sha256 === b.files[index]?.sha256
+    (file, index) =>
+      file.path === b.files[index]?.path &&
+      file.sha256 === b.files[index]?.sha256 &&
+      (file.executable === true) === (b.files[index]?.executable === true)
   );
 }
 
@@ -455,6 +516,12 @@ async function readManifestIfPresent(
 
 function normalizeMuxVersion(value: string | undefined): string {
   return typeof value === "string" && value.length > 0 ? value : "unknown";
+}
+
+/** Mirrors `chmod +x`: execute follows read, so a private file stays private. */
+async function addExecuteBit(filePath: string): Promise<void> {
+  const { mode } = await fs.stat(filePath);
+  await fs.chmod(filePath, mode | ((mode & 0o444) >> 2));
 }
 
 export async function writeBackupPayload(
@@ -474,6 +541,7 @@ export async function writeBackupPayload(
     const destination = await resolveContainedPath(destinationDir, file.path);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.writeFile(destination, file.content);
+    if (file.executable === true) await addExecuteBit(destination);
   }
   await fs.writeFile(path.join(destinationDir, "manifest.json"), manifestJson, "utf-8");
 }
@@ -498,7 +566,8 @@ function parseManifest(raw: string): BackupManifest {
       !file ||
       typeof file.path !== "string" ||
       typeof file.sha256 !== "string" ||
-      !/^[0-9a-f]{64}$/.test(file.sha256)
+      !/^[0-9a-f]{64}$/.test(file.sha256) ||
+      (file.executable !== undefined && typeof file.executable !== "boolean")
     ) {
       throw new Error("Invalid backup manifest file entry");
     }
@@ -523,7 +592,11 @@ export async function readBackupPayload(sourceDir: string): Promise<BackupPayloa
     if (sha256(content) !== manifestFile.sha256) {
       throw new Error(`Backup checksum mismatch for '${manifestFile.path}'`);
     }
-    files.push({ path: manifestFile.path, content });
+    files.push({
+      path: manifestFile.path,
+      content,
+      ...(manifestFile.executable === true ? { executable: true } : {}),
+    });
   }
   // Parse every structured entry here so a malformed backup is rejected before restore
   // writes anything. Otherwise a later parse failure leaves a half-restored install.
@@ -578,6 +651,11 @@ function collectRedactionRestoreEdits(
   }
 }
 
+/** Content restore would write for this entry, after putting local values back. */
+export async function resolveRestoredContent(muxRoot: string, file: BackupFile): Promise<Buffer> {
+  return file.path === "mcp.jsonc" ? await restoreMcpFile(muxRoot, file.content) : file.content;
+}
+
 async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {
   const backupText = content.toString("utf-8");
   const backup = parseJsoncObject(backupText, "backup mcp.jsonc");
@@ -615,11 +693,9 @@ export async function restoreBackupPayload(
     }
     const destination = await resolveContainedPath(options.muxRoot, file.path);
     await fs.mkdir(path.dirname(destination), { recursive: true });
-    const content =
-      file.path === "mcp.jsonc"
-        ? await restoreMcpFile(options.muxRoot, file.content)
-        : file.content;
+    const content = await resolveRestoredContent(options.muxRoot, file);
     await fs.writeFile(destination, content);
+    if (file.executable === true) await addExecuteBit(destination);
   }
 
   return {
