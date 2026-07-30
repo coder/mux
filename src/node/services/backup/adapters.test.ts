@@ -131,6 +131,31 @@ describe("backup adapters", () => {
     expect(preview.changes).toEqual([]);
   });
 
+  it("previews and restores a mode-only difference", async () => {
+    await writeMuxFile("skills/demo/run.sh", "#!/bin/sh\necho demo\n");
+    await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o755);
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+
+    await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o644);
+    const preview = await payload.previewRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+    expect(preview.changes).toEqual([{ status: "M", path: "skills/demo/run.sh" }]);
+
+    const restored = await payload.restore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+    expect(restored.changedFiles).toEqual(["skills/demo/run.sh"]);
+    const mode = (await fs.stat(path.join(muxRoot, "skills/demo/run.sh"))).mode;
+    expect(mode & 0o111).not.toBe(0);
+  });
+
   it("reports preferences as changed only when the merge would change them", async () => {
     config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
     const gitRepo = createBackupGitRepo({ cacheRoot });
@@ -243,7 +268,13 @@ describe("backup adapters", () => {
 
     await writeMuxFile("AGENTS.md", "locally edited\n");
     await writeMuxFile("agents/local-only.md", "local only\n");
-    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "light" } } };
+    config.state = {
+      projects: new Map(),
+      userPreferences: {
+        appearance: { theme: "light" },
+        navigation: { projectOrder: ["/keep/me"] },
+      },
+    };
 
     const restored = await payload.restore({
       repositoryRoot: repository.rootDir,
@@ -254,6 +285,9 @@ describe("backup adapters", () => {
     expect(restored.changedFiles).toEqual(["AGENTS.md"]);
     expect(restored.localOnlyFiles).toEqual(["agents/local-only.md"]);
     expect(config.state.userPreferences?.appearance?.theme).toBe("dark");
+    // Machine-local keys are excluded from the backup, so a restore must leave them alone
+    // rather than replacing the stored preferences with the portable subset.
+    expect(config.state.userPreferences?.navigation?.projectOrder).toEqual(["/keep/me"]);
     expect(await fs.readFile(path.join(muxRoot, "agents/local-only.md"), "utf-8")).toBe(
       "local only\n"
     );

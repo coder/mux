@@ -131,8 +131,13 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     return await resolveContainedPath(repositoryRoot, segments.join("/"));
   }
 
-  function currentPreferences() {
-    return projectBackupPreferences(options.config.loadConfigOrDefault().userPreferences ?? {});
+  function localPreferences() {
+    return options.config.loadConfigOrDefault().userPreferences;
+  }
+
+  /** The portable subset an export writes. Machine-local keys are excluded by design. */
+  function exportablePreferences() {
+    return projectBackupPreferences(localPreferences() ?? {});
   }
 
   async function localFilesByPath(): Promise<Map<string, BackupFile>> {
@@ -142,7 +147,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
   async function buildPayload() {
     return await createBackupPayload({
       muxRoot,
-      preferences: currentPreferences(),
+      preferences: exportablePreferences(),
       muxVersion: resolveMuxVersion(),
       sourceLabel: path.basename(muxRoot),
       // The service owns the user-facing override, so report rather than throw.
@@ -179,12 +184,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
         // file, so compare the merge result. A backup that only repeats values the local
         // config already holds changes nothing.
         if (file.path === "preferences.json") {
-          const current = currentPreferences();
-          const merged = mergeBackupPreferences(
-            current,
-            JSON.parse(file.content.toString("utf-8"))
-          );
-          if (!serializeBackupPreferences(current).equals(serializeBackupPreferences(merged))) {
+          const local = localPreferences();
+          const merged = mergeBackupPreferences(local, JSON.parse(file.content.toString("utf-8")));
+          if (!serializeBackupPreferences(local).equals(serializeBackupPreferences(merged))) {
             changes.push({ status: "M", path: file.path });
           }
           continue;
@@ -234,7 +236,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       const result = await restoreBackupPayload({
         muxRoot,
         payload,
-        currentPreferences: currentPreferences(),
+        // The full local preferences, not the exportable projection: the merge result
+        // replaces the stored object, so a projection here would drop machine-local keys.
+        currentPreferences: localPreferences(),
       });
       await options.config.editConfig((current) => ({
         ...current,

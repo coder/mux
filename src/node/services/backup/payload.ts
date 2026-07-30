@@ -518,7 +518,10 @@ async function readManifestIfPresent(
   destinationDir: string
 ): Promise<{ manifest: BackupManifest; raw: string } | null> {
   try {
-    const raw = await fs.readFile(path.join(destinationDir, "manifest.json"), "utf-8");
+    const raw = await fs.readFile(
+      await resolveContainedPath(destinationDir, "manifest.json"),
+      "utf-8"
+    );
     return { manifest: parseManifest(raw), raw };
   } catch {
     return null;
@@ -596,7 +599,8 @@ export async function backupPayloadExists(sourceDir: string): Promise<boolean> {
 }
 
 export async function readBackupPayload(sourceDir: string): Promise<BackupPayload> {
-  const manifest = parseManifest(await fs.readFile(path.join(sourceDir, "manifest.json"), "utf-8"));
+  const manifestPath = await resolveContainedPath(sourceDir, "manifest.json");
+  const manifest = parseManifest(await fs.readFile(manifestPath, "utf-8"));
   const files: BackupFile[] = [];
   const seen = new Set<string>();
   for (const manifestFile of manifest.files) {
@@ -702,8 +706,8 @@ export async function restoreBackupPayload(
   );
   let preferences = options.currentPreferences ?? {};
 
+  for (const file of options.payload.files) assertAllowedPayloadPath(file.path);
   for (const file of options.payload.files) {
-    assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
       preferences = mergeBackupPreferences(
         options.currentPreferences,

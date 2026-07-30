@@ -250,6 +250,20 @@ describe("backup payload", () => {
     expect(await isExecutable(path.join(destination, "skills/demo/run.sh"))).toBe(true);
     expect(await isExecutable(path.join(destination, "skills/demo/SKILL.md"))).toBe(false);
 
+    // A mode-only change must invalidate the reusable manifest, or the manifest would
+    // still claim the file is executable and a later restore would put the bit back.
+    await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o644);
+    await writeBackupPayload(
+      destination,
+      await createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+    );
+    expect((await readBackupPayload(destination)).files).toContainEqual({
+      path: "skills/demo/run.sh",
+      content: Buffer.from("#!/bin/sh\necho demo\n"),
+    });
+    await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o755);
+    await writeBackupPayload(destination, payload);
+
     const restoreRoot = path.join(tempDir, "executable-restore");
     // A local copy with the opposite mode on each file proves restore sets the bit both ways.
     await write(restoreRoot, "skills/demo/run.sh", "stale\n");
