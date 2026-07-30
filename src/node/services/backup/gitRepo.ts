@@ -219,7 +219,9 @@ export class BackupRepoCache {
 
   async cleanManagedPath(managedPath: string): Promise<void> {
     assertSafeRelativePath(managedPath);
-    await this.localGit(["clean", "-fd", "--", managedPath]);
+    // -x so an ignored leftover from a preview or a blocked push cannot survive the
+    // reset and be read back as if it were the remote's backup. Mux owns this path.
+    await this.localGit(["clean", "-fdx", "--", managedPath]);
   }
 
   async stageAndCommit(managedPath: string, message: string): Promise<string | null> {

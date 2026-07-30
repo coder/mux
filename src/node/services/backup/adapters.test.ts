@@ -124,6 +124,41 @@ describe("backup adapters", () => {
     expect(tracked.split("\n")).toContain("mux/preferences.json");
   });
 
+  it("discards an ignored payload left in the cache by an earlier preview", async () => {
+    const seed = path.join(tempDir, "seed");
+    await git(["clone", originPath, seed]);
+    await fs.writeFile(path.join(seed, ".gitignore"), "mux/\n", "utf-8");
+    await git(["-C", seed, "add", "."]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=mux@example.com",
+      "-c",
+      "user.name=Mux",
+      "commit",
+      "-m",
+      "ignore the managed path",
+    ]);
+    await git(["-C", seed, "push", "origin", "main"]);
+
+    await writeMuxFile("AGENTS.md", "never pushed\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    // A preview writes the payload into the cache but never pushes it.
+    const first = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
+
+    const second = await gitRepo.prepare(settings);
+    const preview = await payload.previewRestore({
+      repositoryRoot: second.rootDir,
+      managedPath: settings.path,
+    });
+    expect(preview.changes).toEqual([]);
+    expect(preview.localOnlyFiles).toContain("AGENTS.md");
+  });
+
   it("reports no restore changes when the backup matches local state", async () => {
     await writeMuxFile("AGENTS.md", "unchanged\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

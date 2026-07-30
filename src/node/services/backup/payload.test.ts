@@ -408,6 +408,9 @@ describe("backup payload", () => {
   });
 
   it("refuses to restore through a symlinked directory in the mux root", async () => {
+    // AGENTS.md sorts before skills/, so a rejection there also proves nothing was
+    // written before the whole payload's destinations were resolved.
+    await write(muxRoot, "AGENTS.md", "from backup\n");
     await write(muxRoot, "skills/demo/SKILL.md", "skill\n");
     const payload = await createBackupPayload({
       muxRoot,
@@ -419,6 +422,7 @@ describe("backup payload", () => {
     const outside = path.join(tempDir, "outside-dir");
     await fs.mkdir(restoreRoot, { recursive: true });
     await fs.mkdir(outside, { recursive: true });
+    await write(restoreRoot, "AGENTS.md", "local\n");
     await fs.symlink(outside, path.join(restoreRoot, "skills"));
 
     try {
@@ -429,6 +433,7 @@ describe("backup payload", () => {
       expect(error.message).toContain("symlink");
     }
     expect(await fs.readdir(outside)).toEqual([]);
+    expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
   });
 
   it("rejects a corrupt preferences payload before restoring any file", async () => {

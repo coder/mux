@@ -706,8 +706,11 @@ export async function restoreBackupPayload(
   );
   let preferences = options.currentPreferences ?? {};
 
-  for (const file of options.payload.files) assertAllowedPayloadPath(file.path);
+  // Resolve every destination and its content before the first write, so a path
+  // rejected late cannot leave a half-restored install behind.
+  const writes: Array<{ destination: string; content: Buffer; executable: boolean }> = [];
   for (const file of options.payload.files) {
+    assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
       preferences = mergeBackupPreferences(
         options.currentPreferences,
@@ -715,11 +718,17 @@ export async function restoreBackupPayload(
       );
       continue;
     }
-    const destination = await resolveContainedPath(options.muxRoot, file.path);
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    const content = await resolveRestoredContent(options.muxRoot, file);
-    await fs.writeFile(destination, content);
-    await applyExecuteBit(destination, file.executable === true);
+    writes.push({
+      destination: await resolveContainedPath(options.muxRoot, file.path),
+      content: await resolveRestoredContent(options.muxRoot, file),
+      executable: file.executable === true,
+    });
+  }
+
+  for (const write of writes) {
+    await fs.mkdir(path.dirname(write.destination), { recursive: true });
+    await fs.writeFile(write.destination, write.content);
+    await applyExecuteBit(write.destination, write.executable);
   }
 
   return {
