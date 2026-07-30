@@ -13,8 +13,7 @@ import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
 import { BackupService } from "@/node/services/backup/backupService";
-import { createBackupGitRepo } from "@/node/services/backup/gitRepo";
-import { createBackupPayload } from "@/node/services/backup/payload";
+import { createBackupGitRepo, createBackupPayloadStore } from "@/node/services/backup/adapters";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
@@ -160,7 +159,7 @@ export class ServiceContainer {
     });
     this.backupService = new BackupService(config, {
       gitRepo: createBackupGitRepo({ cacheRoot: path.join(config.rootDir, "backup-cache") }),
-      payload: createBackupPayload({ config }),
+      payload: createBackupPayloadStore({ config }),
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);

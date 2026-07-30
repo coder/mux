@@ -78,7 +78,7 @@ function getCredentialLabel(credential: BackupValidation["credential"]): string 
 function ChangeList(props: {
   title: string;
   emptyLabel: string;
-  changes: BackupPreview["pushChanges"] | BackupPreview["restoreChanges"];
+  changes: BackupPreview["pushChanges"];
 }) {
   return (
     <div className="border-border-light min-w-0 rounded-md border p-3">

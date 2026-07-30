@@ -3,20 +3,24 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync } from "@/node/utils/disposableExec";
-import { BackupGitRepo, BackupNonFastForwardError, BackupOriginMismatchError } from "./gitRepo";
+import { BackupRepoCache, BackupNonFastForwardError, BackupOriginMismatchError } from "./gitRepo";
 
 async function git(args: string[]): Promise<string> {
   using process = execFileAsync("git", args);
   return (await process.result).stdout.trim();
 }
 
-async function writeManagedFile(repo: BackupGitRepo, name: string, content: string): Promise<void> {
+async function writeManagedFile(
+  repo: BackupRepoCache,
+  name: string,
+  content: string
+): Promise<void> {
   const filePath = path.join(repo.cachePath, "mux", name);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, content, "utf-8");
 }
 
-describe("BackupGitRepo", () => {
+describe("BackupRepoCache", () => {
   let tempDir: string;
   let originPath: string;
   let cacheRoot: string;
@@ -32,8 +36,8 @@ describe("BackupGitRepo", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  function createRepo(): BackupGitRepo {
-    return new BackupGitRepo({ repoUrl: originPath, branch: "main", cacheRoot });
+  function createRepo(): BackupRepoCache {
+    return new BackupRepoCache({ repoUrl: originPath, branch: "main", cacheRoot });
   }
 
   it("bootstraps an empty repo, commits the managed path, and pushes", async () => {

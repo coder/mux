@@ -135,7 +135,7 @@ async function collectDirectory(
   }
 }
 
-async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
+export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
   const files: BackupFile[] = [];
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
     const absolutePath = path.join(muxRoot, relativePath);

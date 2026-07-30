@@ -40,7 +40,10 @@ function renderBackupSection() {
       React.createElement(
         TooltipProvider,
         null,
-        React.createElement(APIProvider, { client }, React.createElement(BackupSection))
+        React.createElement(APIProvider, {
+          client,
+          children: React.createElement(BackupSection),
+        })
       )
     )
   );

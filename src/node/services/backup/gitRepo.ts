@@ -31,7 +31,7 @@ export class BackupNonFastForwardError extends Error {
   }
 }
 
-export interface BackupGitRepoOptions extends Omit<GitCredentialOptions, "repoUrl"> {
+export interface BackupRepoCacheOptions extends Omit<GitCredentialOptions, "repoUrl"> {
   repoUrl: string;
   branch: string;
   cacheRoot: string;
@@ -83,12 +83,18 @@ export function backupCachePath(cacheRoot: string, repoUrl: string, branch: stri
   return path.join(cacheRoot, key);
 }
 
-export class BackupGitRepo {
+export class BackupRepoCache {
   readonly cachePath: string;
   private baseRemoteCommit: string | null | undefined;
+  private usedCredential: BackupCredential | undefined;
 
-  constructor(private readonly options: BackupGitRepoOptions) {
+  constructor(private readonly options: BackupRepoCacheOptions) {
     this.cachePath = backupCachePath(options.cacheRoot, options.repoUrl, options.branch);
+  }
+
+  /** Credential that authenticated the most recent network operation. */
+  get credential(): BackupCredential | undefined {
+    return this.usedCredential;
   }
 
   private credentialOptions(): GitCredentialOptions {
@@ -103,7 +109,9 @@ export class BackupGitRepo {
   }
 
   private async networkGit(args: string[]) {
-    return await runGitWithCredentialLadder(args, this.credentialOptions());
+    const result = await runGitWithCredentialLadder(args, this.credentialOptions());
+    this.usedCredential = result.credential;
+    return result;
   }
 
   private async localGit(args: string[]) {

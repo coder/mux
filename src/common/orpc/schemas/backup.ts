@@ -5,8 +5,8 @@ export const SettingsBackupSchema = z.object({
   repoUrl: z.string().trim().min(1),
   branch: z.string().trim().min(1),
   path: z.string().trim().min(1),
-  lastPushedCommit: z.string().nullish(),
-  lastRestoredCommit: z.string().nullish(),
+  lastPushedCommit: z.string().optional(),
+  lastRestoredCommit: z.string().optional(),
 });
 
 export const BackupOperationErrorSchema = z.object({
