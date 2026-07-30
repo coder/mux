@@ -5,9 +5,15 @@
  * never matches in a snapshot or play test (AGENTS.md, Storybook responsive/Pixel
  * validation). This asserts the rules against the stylesheet instead, resolving the
  * declaration that wins for a viewport rather than matching literal source.
+ *
+ * Selection reaches an element from two places, so both are checked: rules written in
+ * globals.css, and Tailwind utilities named in TSX, which globals.css only pulls in
+ * through its `@import "tailwindcss"` and which therefore never appear in this parse.
  */
+import { Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import postcss, { type ChildNode, type Container, type Declaration } from "postcss";
 
 const IPAD_WIDTH_PX = 834;
@@ -30,6 +36,34 @@ const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/;
 
 /** Tailwind's selection utilities, including variants such as `hover:select-text`. */
 const APPLIED_SELECTION_UTILITY = /^(?:[\w[\]./-]+:)*select-(?:none|text|all|auto)$/;
+
+const SOURCE_DIR = new URL("../../", import.meta.url).pathname;
+
+/** The same utilities where they appear as class names, in any variant. */
+const SELECTION_OPT_IN_CLASS = /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b/;
+
+/**
+ * Components that opt content back into selection with a Tailwind class.
+ *
+ * Such a class compiles to a `user-select` declaration on the element itself, which beats
+ * the guard inherited from `body`, so each entry is content that stays selectable on touch.
+ * Every current one is a short value a user copies: a commit SHA, an SSH fingerprint, review
+ * metadata, or a rename input. Enumerated rather than inferred because whether an element is
+ * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
+ * new entry is a decision for review.
+ *
+ * Suppression utilities (`select-none`, 35 uses) are deliberately not tracked here: turning
+ * selection off on a control is the ordinary use of that utility, whereas turning it back on
+ * is the exception to this guard. Broad suppression written as CSS is still caught below.
+ */
+const SELECTION_OPT_IN_FILES = [
+  "src/browser/components/AgentListItem/AgentListItem.tsx",
+  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx",
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx",
+  "src/browser/components/SectionHeader/SectionHeader.tsx",
+  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx",
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx",
+];
 
 const EDITABLE_SELECTORS = [
   "input",
@@ -237,6 +271,21 @@ describe("touch text-selection guard", () => {
         (selector) => selector !== "body" && !SINGLE_COMPONENT_SELECTOR.test(selector.trim())
       );
     expect([...new Set(offenders)]).toEqual([]);
+  });
+
+  it("opts content back into selection only in reviewed components", async () => {
+    const optIns: string[] = [];
+    // Test files are skipped: they ship no UI, and this file names the utilities it matches.
+    for await (const relative of new Glob("**/*.{ts,tsx}").scan({ cwd: SOURCE_DIR })) {
+      if (/\.test\.tsx?$/.test(relative)) {
+        continue;
+      }
+      const source = await readFile(join(SOURCE_DIR, relative), "utf8");
+      if (SELECTION_OPT_IN_CLASS.test(source)) {
+        optIns.push(`src/${relative.replaceAll("\\", "/")}`);
+      }
+    }
+    expect(optIns.sort()).toEqual([...SELECTION_OPT_IN_FILES].sort());
   });
 
   it("leaves content selectable for fine pointers", () => {
