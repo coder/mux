@@ -40,7 +40,7 @@ const APPLIED_SELECTION_UTILITY = /^(?:[\w[\]./-]+:)*select-(?:none|text|all|aut
 const SOURCE_DIR = new URL("../../", import.meta.url).pathname;
 
 /** The same utilities where they appear as class names, in any variant. */
-const SELECTION_OPT_IN_CLASS = /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b/;
+const SELECTION_OPT_IN_CLASS = /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b/g;
 
 /**
  * Components that opt content back into selection with a Tailwind class.
@@ -52,18 +52,23 @@ const SELECTION_OPT_IN_CLASS = /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b
  * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
  * new entry is a decision for review.
  *
+ * Counted per file rather than listed per file, because a second opt-in added to a file that
+ * already appears here would otherwise go unreviewed: `ReviewPanel.tsx` legitimately marks
+ * four metadata values selectable, and a fifth class on a transcript-wide container in that
+ * same file would suppress nothing and change no file name.
+ *
  * Suppression utilities (`select-none`, 35 uses) are deliberately not tracked here: turning
  * selection off on a control is the ordinary use of that utility, whereas turning it back on
  * is the exception to this guard. Broad suppression written as CSS is still caught below.
  */
-const SELECTION_OPT_IN_FILES = [
-  "src/browser/components/AgentListItem/AgentListItem.tsx",
-  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx",
-  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx",
-  "src/browser/components/SectionHeader/SectionHeader.tsx",
-  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx",
-  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx",
-];
+const SELECTION_OPT_INS: Record<string, number> = {
+  "src/browser/components/AgentListItem/AgentListItem.tsx": 1,
+  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx": 1,
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": 1,
+  "src/browser/components/SectionHeader/SectionHeader.tsx": 2,
+  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx": 1,
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": 4,
+};
 
 const EDITABLE_SELECTORS = [
   "input",
@@ -274,18 +279,19 @@ describe("touch text-selection guard", () => {
   });
 
   it("opts content back into selection only in reviewed components", async () => {
-    const optIns: string[] = [];
+    const optIns: Record<string, number> = {};
     // Test files are skipped: they ship no UI, and this file names the utilities it matches.
     for await (const relative of new Glob("**/*.{ts,tsx}").scan({ cwd: SOURCE_DIR })) {
       if (/\.test\.tsx?$/.test(relative)) {
         continue;
       }
       const source = await readFile(join(SOURCE_DIR, relative), "utf8");
-      if (SELECTION_OPT_IN_CLASS.test(source)) {
-        optIns.push(`src/${relative.replaceAll("\\", "/")}`);
+      const matches = source.match(SELECTION_OPT_IN_CLASS);
+      if (matches) {
+        optIns[`src/${relative.replaceAll("\\", "/")}`] = matches.length;
       }
     }
-    expect(optIns.sort()).toEqual([...SELECTION_OPT_IN_FILES].sort());
+    expect(optIns).toEqual(SELECTION_OPT_INS);
   });
 
   it("leaves content selectable for fine pointers", () => {
