@@ -27,8 +27,15 @@ interface Viewport {
   coarse: boolean;
 }
 
+/**
+ * Both spellings are asserted: WebKit is the engine this guard exists for, and older
+ * iPadOS honours only the prefixed property, so dropping either one regresses it.
+ */
+const SELECTION_PROPERTIES = ["user-select", "-webkit-user-select"];
+
 interface SelectionRule {
   selectors: string[];
+  property: string;
   value: string;
   mediaParams: string[];
 }
@@ -52,11 +59,12 @@ beforeAll(async () => {
 
   selectionRules = [];
   stylesheet.walkDecls((decl: Declaration) => {
-    if (decl.prop !== "user-select" || decl.parent?.type !== "rule") {
+    if (!SELECTION_PROPERTIES.includes(decl.prop) || decl.parent?.type !== "rule") {
       return;
     }
     selectionRules.push({
       selectors: decl.parent.selectors,
+      property: decl.prop,
       value: decl.value,
       mediaParams: collectMediaParams(decl),
     });
@@ -64,10 +72,16 @@ beforeAll(async () => {
 });
 
 /**
- * Evaluates the media features these selection rules use. Throws on anything else
- * so a future rule cannot silently pass every assertion below.
+ * Evaluates the media features these selection rules use. Anything outside a plain
+ * `(feature: value)` conjunction throws: silently ignoring an operator such as `not`
+ * would invert the result while still satisfying every assertion below.
  */
 function mediaQueryApplies(params: string, viewport: Viewport): boolean {
+  const shape = params.replace(/\([^)]*\)/g, "()").trim();
+  if (!/^\(\)(\s+and\s+\(\))*$/.test(shape)) {
+    throw new Error(`Unsupported media query syntax in selection rule: ${params}`);
+  }
+
   let applies = true;
   for (const condition of params.matchAll(/\(([^)]*)\)/g)) {
     const [feature, rawValue] = condition[1].split(":").map((part) => part.trim());
@@ -89,11 +103,12 @@ function mediaQueryApplies(params: string, viewport: Viewport): boolean {
   return applies;
 }
 
-function valuesFor(selector: string, viewport: Viewport): string[] {
+function valuesFor(selector: string, property: string, viewport: Viewport): string[] {
   return selectionRules
     .filter(
       (rule) =>
         rule.selectors.includes(selector) &&
+        rule.property === property &&
         rule.mediaParams.every((params) => mediaQueryApplies(params, viewport))
     )
     .map((rule) => rule.value);
@@ -103,14 +118,18 @@ describe("touch text-selection guard", () => {
   it.each([IPAD_WIDTH_PX, IPAD_LANDSCAPE_WIDTH_PX, DESKTOP_WIDTH_PX])(
     "suppresses body selection on a coarse pointer at %ipx",
     (widthPx) => {
-      expect(valuesFor("body", { widthPx, coarse: true })).toContain("none");
+      for (const property of SELECTION_PROPERTIES) {
+        expect(valuesFor("body", property, { widthPx, coarse: true })).toContain("none");
+      }
     }
   );
 
   it("keeps editable controls selectable wherever body selection is suppressed", () => {
     for (const widthPx of [PHONE_WIDTH_PX, IPAD_WIDTH_PX, IPAD_LANDSCAPE_WIDTH_PX]) {
       for (const selector of EDITABLE_SELECTORS) {
-        expect(valuesFor(selector, { widthPx, coarse: true })).toContain("text");
+        for (const property of SELECTION_PROPERTIES) {
+          expect(valuesFor(selector, property, { widthPx, coarse: true })).toContain("text");
+        }
       }
     }
   });
@@ -120,9 +139,11 @@ describe("touch text-selection guard", () => {
     // selectable content in this codebase (skill descriptions, diff hunks, copyable
     // IDs), so suppressing them app-wide would break copying on desktop.
     for (const selector of ["body", "button", '[role="button"]']) {
-      expect(valuesFor(selector, { widthPx: DESKTOP_WIDTH_PX, coarse: false })).not.toContain(
-        "none"
-      );
+      for (const property of SELECTION_PROPERTIES) {
+        expect(
+          valuesFor(selector, property, { widthPx: DESKTOP_WIDTH_PX, coarse: false })
+        ).not.toContain("none");
+      }
     }
   });
 });
