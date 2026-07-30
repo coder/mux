@@ -193,6 +193,8 @@ export {
   MCPTestResultSchema,
 } from "./schemas/mcp";
 
+export { backup } from "./schemas/backup";
+
 // 1Password schemas
 export { onePassword } from "./schemas/onePassword";
 

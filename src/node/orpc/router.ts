@@ -6248,6 +6248,34 @@ export const router = (authToken?: string) => {
           return context.analyticsService.rebuildAll();
         }),
     },
+    backup: {
+      getSettings: t
+        .output(schemas.backup.getSettings.output)
+        .handler(({ context }) => context.backupService.getSettings()),
+      saveSettings: t
+        .input(schemas.backup.saveSettings.input)
+        .output(schemas.backup.saveSettings.output)
+        .handler(({ context, input }) => context.backupService.saveSettings(input)),
+      validate: t
+        .input(schemas.backup.validate.input)
+        .output(schemas.backup.validate.output)
+        .handler(({ context, input }) => context.backupService.validate(input)),
+      preview: t
+        .input(schemas.backup.preview.input)
+        .output(schemas.backup.preview.output)
+        .handler(({ context, input }) => context.backupService.preview(input)),
+      push: t
+        .input(schemas.backup.push.input)
+        .output(schemas.backup.push.output)
+        .handler(({ context, input }) => {
+          const { allowSecrets, ...settings } = input;
+          return context.backupService.push(settings, { allowSecrets: allowSecrets ?? undefined });
+        }),
+      restore: t
+        .input(schemas.backup.restore.input)
+        .output(schemas.backup.restore.output)
+        .handler(({ context, input }) => context.backupService.restore(input)),
+    },
     onePassword: {
       isAvailable: t
         .output(schemas.onePassword.isAvailable.output)
