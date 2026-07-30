@@ -174,6 +174,35 @@ const COARSE_VIEWPORTS: Viewport[] = [
   DESKTOP_WIDTH_PX,
 ].map((widthPx) => ({ widthPx, coarse: true }));
 
+const FINE_VIEWPORTS: Viewport[] = [PHONE_WIDTH_PX, DESKTOP_WIDTH_PX].map((widthPx) => ({
+  widthPx,
+  coarse: false,
+}));
+
+/**
+ * True when the selector's subject is class- or id-qualified, so the rule opts specific
+ * components out of selection rather than reaching content generally. Deliberately strict:
+ * `.sidebar div` is rejected even though it is scoped, because widening that to any
+ * anchored selector would also admit `body.theme *`.
+ */
+function isComponentScoped(selector: string): boolean {
+  const subject =
+    selector
+      .split(/[\s>+~]+/)
+      .filter(Boolean)
+      .at(-1) ?? "";
+  return /[.#]/.test(subject);
+}
+
+function applicableSelectors(viewport: Viewport, value: (candidate: string) => boolean) {
+  return selectionRules
+    .filter(
+      (rule) =>
+        value(rule.value) && rule.mediaParams.every((params) => mediaQueryApplies(params, viewport))
+    )
+    .flatMap((rule) => rule.selectors);
+}
+
 describe("touch text-selection guard", () => {
   it.each([IPAD_WIDTH_PX, IPAD_LANDSCAPE_WIDTH_PX, DESKTOP_WIDTH_PX])(
     "suppresses body selection on a coarse pointer at %ipx",
@@ -202,16 +231,25 @@ describe("touch text-selection guard", () => {
    */
   it("re-enables selection only for the editable opt-in on a coarse pointer", () => {
     const reEnabling = COARSE_VIEWPORTS.flatMap((viewport) =>
-      selectionRules
-        .filter(
-          (rule) =>
-            rule.value !== "none" &&
-            rule.mediaParams.every((params) => mediaQueryApplies(params, viewport))
-        )
-        .flatMap((rule) => rule.selectors)
-        .filter((selector) => !EDITABLE_SELECTORS.includes(selector))
+      applicableSelectors(viewport, (value) => value !== "none").filter(
+        (selector) => !EDITABLE_SELECTORS.includes(selector)
+      )
     );
     expect([...new Set(reEnabling)]).toEqual([]);
+  });
+
+  /**
+   * The same inheritance argument in reverse: a `none` declaration reaching content
+   * generally would suppress desktop selection, which the fine-pointer lookups below
+   * cannot see because they only probe `body` and the two control selectors.
+   */
+  it("suppresses selection on a fine pointer only through component-scoped rules", () => {
+    const appWide = FINE_VIEWPORTS.flatMap((viewport) =>
+      applicableSelectors(viewport, (value) => value === "none").filter(
+        (selector) => !isComponentScoped(selector)
+      )
+    );
+    expect([...new Set(appWide)]).toEqual([]);
   });
 
   it("leaves content selectable for fine pointers", () => {
