@@ -171,6 +171,9 @@ describe("backup payload", () => {
     "object": { "command": "npx server --api-key sk-live-object --port 3000" },
     "bare": "env ACME_PASSWORD=hunter2 acme-mcp",
     "header": { "command": "acme-mcp --header 'Authorization: Bearer sk-live-header'" },
+    "leading": { "command": "PASSWORD=sk-live-leading acme-mcp" },
+    "quoted": { "command": "acme-mcp --api-key \\"two word secret\\"" },
+    "singleQuoted": { "command": "acme-mcp --api-key '$NOT_EXPANDED'" },
     "reference": { "command": "npx server --api-key $MCP_API_KEY" }
   }
 }
@@ -187,6 +190,9 @@ describe("backup payload", () => {
         object: { command: string };
         bare: string;
         header: { command: string };
+        leading: { command: string };
+        quoted: { command: string };
+        singleQuoted: { command: string };
         reference: { command: string };
       };
     };
@@ -198,13 +204,23 @@ describe("backup payload", () => {
     expect(mcp.servers.header.command).toBe(
       `acme-mcp --header 'Authorization: Bearer ${REDACTED_BACKUP_VALUE}'`
     );
+    expect(mcp.servers.leading.command).toBe(`PASSWORD=${REDACTED_BACKUP_VALUE} acme-mcp`);
+    expect(mcp.servers.quoted.command).toBe(`acme-mcp --api-key ${REDACTED_BACKUP_VALUE}`);
+    // Single quotes suppress shell expansion, so this is a literal, not a reference.
+    expect(mcp.servers.singleQuoted.command).toBe(`acme-mcp --api-key ${REDACTED_BACKUP_VALUE}`);
     expect(mcp.servers.reference.command).toBe("npx server --api-key $MCP_API_KEY");
     expect(payload.redactions).toEqual([
       "servers.object.command",
       "servers.bare",
       "servers.header.command",
+      "servers.leading.command",
+      "servers.quoted.command",
+      "servers.singleQuoted.command",
     ]);
-    expect(payloadFileText(payload, "mcp.jsonc")).not.toContain("hunter2");
+    const exported = payloadFileText(payload, "mcp.jsonc");
+    for (const secret of ["hunter2", "sk-live-object", "sk-live-header", "two word secret"]) {
+      expect(exported).not.toContain(secret);
+    }
 
     const destination = path.join(tempDir, "command-payload");
     await writeBackupPayload(destination, payload);
@@ -235,13 +251,46 @@ describe("backup payload", () => {
     expect(await isExecutable(path.join(destination, "skills/demo/SKILL.md"))).toBe(false);
 
     const restoreRoot = path.join(tempDir, "executable-restore");
-    await fs.mkdir(restoreRoot);
+    // A local copy with the opposite mode on each file proves restore sets the bit both ways.
+    await write(restoreRoot, "skills/demo/run.sh", "stale\n");
+    await write(restoreRoot, "skills/demo/SKILL.md", "stale\n");
+    await fs.chmod(path.join(restoreRoot, "skills/demo/run.sh"), 0o644);
+    await fs.chmod(path.join(restoreRoot, "skills/demo/SKILL.md"), 0o755);
+
     await restoreBackupPayload({
       muxRoot: restoreRoot,
       payload: await readBackupPayload(destination),
     });
     expect(await isExecutable(path.join(restoreRoot, "skills/demo/run.sh"))).toBe(true);
     expect(await isExecutable(path.join(restoreRoot, "skills/demo/SKILL.md"))).toBe(false);
+  });
+
+  it("treats a redacted value as locally owned for the whole string", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{"servers": {"api": {"command": "acme-mcp --api-key backup-secret --port 3000"}}}`
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "policy-restore");
+    await write(
+      restoreRoot,
+      "mcp.jsonc",
+      `{"servers": {"api": {"command": "acme-mcp --api-key local-secret --port 2000"}}}`
+    );
+    await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+
+    const restored = jsonc.parse(
+      await fs.readFile(path.join(restoreRoot, "mcp.jsonc"), "utf-8")
+    ) as { servers: { api: { command: string } } };
+    // The backup's --port 3000 is intentionally dropped: splicing the local credential
+    // into backup-controlled text would let a tampered backup redirect that credential.
+    expect(restored.servers.api.command).toBe("acme-mcp --api-key local-secret --port 2000");
   });
 
   it("validates every path before replacing an existing payload", async () => {

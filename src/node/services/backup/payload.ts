@@ -33,7 +33,6 @@ const SECRET_PATTERNS = [
 export interface BackupFile {
   path: string;
   content: Buffer;
-  /** Skills ship runnable scripts, so losing the execute bit breaks them on restore. */
   executable?: boolean;
 }
 
@@ -139,6 +138,16 @@ export async function resolveContainedPath(root: string, relativePath: string): 
   return current;
 }
 
+async function readBackupFile(root: string, relativePath: string): Promise<BackupFile> {
+  const absolutePath = path.join(root, ...relativePath.split("/"));
+  const stat = await fs.stat(absolutePath);
+  return {
+    path: relativePath,
+    content: await fs.readFile(absolutePath),
+    executable: (stat.mode & 0o111) !== 0,
+  };
+}
+
 async function fileExists(filePath: string): Promise<boolean> {
   try {
     return (await fs.stat(filePath)).isFile();
@@ -167,13 +176,7 @@ async function collectDirectory(
     if (entry.isDirectory()) {
       await collectDirectory(root, relativePath, filter, output);
     } else if (entry.isFile() && !FORBIDDEN_BASENAMES.has(entry.name)) {
-      const absolutePath = path.join(root, ...relativePath.split("/"));
-      const stat = await fs.stat(absolutePath);
-      output.push({
-        path: relativePath,
-        content: await fs.readFile(absolutePath),
-        executable: (stat.mode & 0o111) !== 0,
-      });
+      output.push(await readBackupFile(root, relativePath));
     }
   }
 }
@@ -181,9 +184,8 @@ async function collectDirectory(
 export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
   const files: BackupFile[] = [];
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
-    const absolutePath = path.join(muxRoot, relativePath);
-    if (await fileExists(absolutePath)) {
-      files.push({ path: relativePath, content: await fs.readFile(absolutePath) });
+    if (await fileExists(path.join(muxRoot, relativePath))) {
+      files.push(await readBackupFile(muxRoot, relativePath));
     }
   }
 
@@ -310,26 +312,33 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
   return { value: redacted ? url.toString() : rawUrl, redacted };
 }
 
+const CREDENTIAL_NAME = String.raw`[\w-]*(?:key|token|secret|password|auth|credential)[\w-]*`;
+const CREDENTIAL_VALUE = String.raw`"[^"]*"|'[^']*'|\S+`;
 const CREDENTIAL_ARGUMENT_PATTERNS = [
-  // --api-key sk-live-1, --api-key=sk-live-1
-  /(--?[\w-]*(?:key|token|secret|password|auth|credential)[\w-]*[= ])(\S+)/gi,
-  // API_KEY=sk-live-1 npx server
-  /(\b\w+(?:key|token|secret|password|auth|credential)\w*=)(\S+)/gi,
-  // --header "Authorization: Bearer sk-live-1"
+  // --api-key sk-1, --api-key=sk-1, --api-key "sk 1"
+  new RegExp(String.raw`(--?${CREDENTIAL_NAME}[= ])(${CREDENTIAL_VALUE})`, "gi"),
+  // API_KEY=sk-1 npx server
+  new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=)(${CREDENTIAL_VALUE})`, "gi"),
+  // --header "Authorization: Bearer sk-1"
   /(\bBearer\s+)([^\s"']+)/gi,
 ];
 
 /**
- * A stdio MCP server carries its credential in the command line, so redact the value
- * after a credential-bearing flag. `$VAR` survives because the command is run through
- * a shell, which expands it on whichever machine restores the backup.
+ * `bash -c` runs the command (LocalBaseRuntime.exec), so an unquoted or double-quoted
+ * `$VAR` is a reference the restoring machine resolves for itself. Single quotes
+ * suppress expansion, so `'$VAR'` is a literal and gets redacted like any other value.
  */
+function isShellReference(value: string): boolean {
+  return /^"?\$/.test(value);
+}
+
+/** A stdio MCP server carries its credential in the command line rather than a header. */
 function redactCommandCredentials(command: string): { value: string; redacted: boolean } {
   let redacted = false;
   let value = command;
   for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
     value = value.replace(pattern, (match, flag: string, secret: string) => {
-      if (/^["']?\$/.test(secret) || secret === REDACTED_BACKUP_VALUE) return match;
+      if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
       redacted = true;
       return `${flag}${REDACTED_BACKUP_VALUE}`;
     });
@@ -520,10 +529,14 @@ function normalizeMuxVersion(value: string | undefined): string {
   return typeof value === "string" && value.length > 0 ? value : "unknown";
 }
 
-/** Mirrors `chmod +x`: execute follows read, so a private file stays private. */
-async function addExecuteBit(filePath: string): Promise<void> {
+/**
+ * Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the
+ * read and write bits to the local umask rather than inventing a source mode.
+ */
+async function applyExecuteBit(filePath: string, executable: boolean): Promise<void> {
   const { mode } = await fs.stat(filePath);
-  await fs.chmod(filePath, mode | ((mode & 0o444) >> 2));
+  const next = executable ? mode | ((mode & 0o444) >> 2) : mode & ~0o111;
+  if (next !== mode) await fs.chmod(filePath, next);
 }
 
 export async function writeBackupPayload(
@@ -543,7 +556,7 @@ export async function writeBackupPayload(
     const destination = await resolveContainedPath(destinationDir, file.path);
     await fs.mkdir(path.dirname(destination), { recursive: true });
     await fs.writeFile(destination, file.content);
-    if (file.executable === true) await addExecuteBit(destination);
+    await applyExecuteBit(destination, file.executable === true);
   }
   await fs.writeFile(path.join(destinationDir, "manifest.json"), manifestJson, "utf-8");
 }
@@ -624,6 +637,11 @@ function containsRedaction(value: string): boolean {
 /**
  * Collects the edits that put locally-held values back where the backup carries a
  * redaction marker, so re-reading a backup never destroys a working credential.
+ *
+ * A marker makes the WHOLE scalar locally owned, so a non-secret change the backup
+ * made inside that same string is deliberately not restored. Splicing the local
+ * credential into backup-controlled text would let a tampered backup move the local
+ * secret to a different host or binary.
  */
 function collectRedactionRestoreEdits(
   backup: unknown,
@@ -653,7 +671,7 @@ function collectRedactionRestoreEdits(
   }
 }
 
-/** Content restore would write for this entry, after putting local values back. */
+/** Shared by preview and restore so the preview cannot promise a different result. */
 export async function resolveRestoredContent(muxRoot: string, file: BackupFile): Promise<Buffer> {
   return file.path === "mcp.jsonc" ? await restoreMcpFile(muxRoot, file.content) : file.content;
 }
@@ -697,7 +715,7 @@ export async function restoreBackupPayload(
     await fs.mkdir(path.dirname(destination), { recursive: true });
     const content = await resolveRestoredContent(options.muxRoot, file);
     await fs.writeFile(destination, content);
-    if (file.executable === true) await addExecuteBit(destination);
+    await applyExecuteBit(destination, file.executable === true);
   }
 
   return {

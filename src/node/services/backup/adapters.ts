@@ -117,6 +117,10 @@ function resolveMuxVersion(): string {
  * from and written through `Config` rather than the config file so restores reuse
  * schema validation and reach open windows through the existing change stream.
  */
+function sameMode(a: BackupFile, b: BackupFile): boolean {
+  return (a.executable === true) === (b.executable === true);
+}
+
 export function createBackupPayloadStore(options: { config: Config }): BackupPayload {
   const muxRoot = options.config.rootDir;
 
@@ -185,15 +189,15 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
           }
           continue;
         }
-        const existing = local.get(file.path)?.content;
+        const existing = local.get(file.path);
         if (!existing) {
           changes.push({ status: "A", path: file.path });
           continue;
         }
-        // Restore puts locally-held values back where the backup carries a redaction
-        // marker, so diff what restore would write. Raw content marks every redaction
-        // as a change.
-        if (!existing.equals(await resolveRestoredContent(muxRoot, file))) {
+        // Diff what restore would write, not the raw backup: rehydrated redactions
+        // would otherwise read as a change on every preview.
+        const restored = await resolveRestoredContent(muxRoot, file);
+        if (!existing.content.equals(restored) || !sameMode(existing, file)) {
           changes.push({ status: "M", path: file.path });
         }
       }
@@ -239,7 +243,10 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
 
       const after = await localFilesByPath();
       const changedFiles = [...after.entries()]
-        .filter(([file, current]) => !before.get(file)?.content.equals(current.content))
+        .filter(([file, current]) => {
+          const previous = before.get(file);
+          return !previous?.content.equals(current.content) || !sameMode(previous, current);
+        })
         .map(([file]) => file)
         .sort();
       return { changedFiles, localOnlyFiles: result.localOnlyFiles };
