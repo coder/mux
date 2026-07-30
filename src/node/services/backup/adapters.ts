@@ -12,6 +12,7 @@ import {
   readBackupPayload,
   restoreBackupPayload,
   scanBackupFilesForSecrets,
+  serializeBackupPreferences,
   writeBackupPayload,
   type BackupFile,
 } from "./payload";
@@ -108,6 +109,8 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       preferences: currentPreferences(),
       muxVersion: VERSION.git_describe,
       sourceLabel: path.basename(muxRoot),
+      // The service owns the user-facing override, so report rather than throw.
+      reportSecrets: true,
     });
   }
 
@@ -131,10 +134,15 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       const local = await localFilesByPath();
       const changes: BackupFileChange[] = [];
       for (const file of payload.files) {
-        const existing = local.get(file.path);
+        // Preferences live in config rather than on disk, so compare against the
+        // projection an export would produce right now.
+        const existing =
+          file.path === "preferences.json"
+            ? serializeBackupPreferences(currentPreferences())
+            : local.get(file.path)?.content;
         if (!existing) {
           changes.push({ status: "A", path: file.path });
-        } else if (!existing.content.equals(file.content)) {
+        } else if (!existing.equals(file.content)) {
           changes.push({ status: "M", path: file.path });
         }
       }

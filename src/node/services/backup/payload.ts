@@ -59,6 +59,11 @@ export interface CreateBackupPayloadOptions {
   muxVersion: string;
   sourceLabel: string;
   exportedAt?: string;
+  /**
+   * Return detected secrets in the payload instead of throwing, so a caller that
+   * owns the user-facing override can decide whether to proceed.
+   */
+  reportSecrets?: boolean;
 }
 
 export interface RestoreBackupPayloadOptions {
@@ -157,6 +162,13 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
 
 function copyJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function serializeBackupPreferences(preferences: unknown): Buffer {
+  return Buffer.from(
+    `${JSON.stringify(projectBackupPreferences(preferences), null, 2)}\n`,
+    "utf-8"
+  );
 }
 
 export function projectBackupPreferences(value: unknown): UserPreferences {
@@ -349,15 +361,12 @@ export async function createBackupPayload(
   }
   files.push({
     path: "preferences.json",
-    content: Buffer.from(
-      `${JSON.stringify(projectBackupPreferences(options.preferences), null, 2)}\n`,
-      "utf-8"
-    ),
+    content: serializeBackupPreferences(options.preferences),
   });
   files.sort((a, b) => a.path.localeCompare(b.path));
 
   const secretFiles = scanBackupFilesForSecrets(files);
-  if (secretFiles.length > 0) {
+  if (secretFiles.length > 0 && options.reportSecrets !== true) {
     throw new Error(`Backup contains possible secrets in: ${secretFiles.join(", ")}`);
   }
 
@@ -374,11 +383,33 @@ export async function createBackupPayload(
   };
 }
 
+function sameManifestContent(a: BackupManifest, b: BackupManifest): boolean {
+  if (a.files.length !== b.files.length) return false;
+  return a.files.every(
+    (file, index) => file.path === b.files[index]?.path && file.sha256 === b.files[index]?.sha256
+  );
+}
+
+async function readManifestIfPresent(destinationDir: string): Promise<BackupManifest | null> {
+  try {
+    return parseManifest(await fs.readFile(path.join(destinationDir, "manifest.json"), "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
 export async function writeBackupPayload(
   destinationDir: string,
   payload: BackupPayload
 ): Promise<void> {
   for (const file of payload.files) assertAllowedPayloadPath(file.path);
+  // Reuse the previous manifest when the content hashes match. `exportedAt` and
+  // `muxVersion` would otherwise differ on every export, so an unchanged backup
+  // would produce a commit that only churns the timestamp.
+  const previous = await readManifestIfPresent(destinationDir);
+  const manifest =
+    previous && sameManifestContent(previous, payload.manifest) ? previous : payload.manifest;
+
   await fs.rm(destinationDir, { recursive: true, force: true });
   await fs.mkdir(destinationDir, { recursive: true });
   for (const file of payload.files) {
@@ -388,7 +419,7 @@ export async function writeBackupPayload(
   }
   await fs.writeFile(
     path.join(destinationDir, "manifest.json"),
-    `${JSON.stringify(payload.manifest, null, 2)}\n`,
+    `${JSON.stringify(manifest, null, 2)}\n`,
     "utf-8"
   );
 }
