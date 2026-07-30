@@ -181,7 +181,8 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
           continue;
         }
         // Restore puts locally-held values back where the backup carries a redaction
-        // marker, so compare what restore would write or every redaction reads as a change.
+        // marker, so diff what restore would write. Raw content marks every redaction
+        // as a change.
         if (!existing.equals(await resolveRestoredContent(muxRoot, file))) {
           changes.push({ status: "M", path: file.path });
         }

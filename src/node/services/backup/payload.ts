@@ -315,6 +315,8 @@ const CREDENTIAL_ARGUMENT_PATTERNS = [
   /(--?[\w-]*(?:key|token|secret|password|auth|credential)[\w-]*[= ])(\S+)/gi,
   // API_KEY=sk-live-1 npx server
   /(\b\w+(?:key|token|secret|password|auth|credential)\w*=)(\S+)/gi,
+  // --header "Authorization: Bearer sk-live-1"
+  /(\bBearer\s+)([^\s"']+)/gi,
 ];
 
 /**

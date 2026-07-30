@@ -169,8 +169,8 @@ describe("backup payload", () => {
       `{
   "servers": {
     "object": { "command": "npx server --api-key sk-live-object --port 3000" },
-    "bare": "npx server --token literal-token",
-    "assignment": { "command": "API_KEY=sk-live-env npx server" },
+    "bare": "env ACME_PASSWORD=hunter2 acme-mcp",
+    "header": { "command": "acme-mcp --header 'Authorization: Bearer sk-live-header'" },
     "reference": { "command": "npx server --api-key $MCP_API_KEY" }
   }
 }
@@ -186,7 +186,7 @@ describe("backup payload", () => {
       servers: {
         object: { command: string };
         bare: string;
-        assignment: { command: string };
+        header: { command: string };
         reference: { command: string };
       };
     };
@@ -194,14 +194,17 @@ describe("backup payload", () => {
     expect(mcp.servers.object.command).toBe(
       `npx server --api-key ${REDACTED_BACKUP_VALUE} --port 3000`
     );
-    expect(mcp.servers.bare).toBe(`npx server --token ${REDACTED_BACKUP_VALUE}`);
-    expect(mcp.servers.assignment.command).toBe(`API_KEY=${REDACTED_BACKUP_VALUE} npx server`);
+    expect(mcp.servers.bare).toBe(`env ACME_PASSWORD=${REDACTED_BACKUP_VALUE} acme-mcp`);
+    expect(mcp.servers.header.command).toBe(
+      `acme-mcp --header 'Authorization: Bearer ${REDACTED_BACKUP_VALUE}'`
+    );
     expect(mcp.servers.reference.command).toBe("npx server --api-key $MCP_API_KEY");
     expect(payload.redactions).toEqual([
       "servers.object.command",
       "servers.bare",
-      "servers.assignment.command",
+      "servers.header.command",
     ]);
+    expect(payloadFileText(payload, "mcp.jsonc")).not.toContain("hunter2");
 
     const destination = path.join(tempDir, "command-payload");
     await writeBackupPayload(destination, payload);
@@ -213,7 +216,7 @@ describe("backup payload", () => {
       await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")
     ) as typeof mcp;
     expect(restored.servers.object.command).toBe("npx server --api-key sk-live-object --port 3000");
-    expect(restored.servers.bare).toBe("npx server --token literal-token");
+    expect(restored.servers.bare).toBe("env ACME_PASSWORD=hunter2 acme-mcp");
   });
 
   it("preserves the execute bit through export and restore", async () => {
