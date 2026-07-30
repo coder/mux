@@ -75,6 +75,12 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_DRIFT_MODE: "Toggle git drift lines/commits",
   SHOW_WORKSPACE_DETAILS: "Show workspace details",
   SHOW_LAST_PROMPT: "Show last prompt",
+  SETTINGS_BACKUP_SAVE: "Save backup settings",
+  SETTINGS_BACKUP_VALIDATE: "Validate backup repository",
+  SETTINGS_BACKUP_PREVIEW: "Preview settings backup",
+  SETTINGS_BACKUP_PUSH: "Back up settings",
+  SETTINGS_BACKUP_RESTORE: "Restore settings backup",
+  SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN: "Toggle secret scan override",
   // Modal-only keybinds; intentionally omitted from KEYBIND_GROUPS.
   CONFIRM_DIALOG_YES: "Confirm dialog action",
   CONFIRM_DIALOG_NO: "Cancel dialog action",
@@ -97,7 +103,11 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
 };
 
 /** Groups for organizing keybinds in the UI */
-const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> }> = [
+const KEYBIND_GROUPS: Array<{
+  label: string;
+  experiment?: keyof typeof EXPERIMENT_IDS;
+  keys: Array<keyof typeof KEYBINDS>;
+}> = [
   {
     label: "General",
     keys: [
@@ -201,6 +211,18 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     ],
   },
   {
+    label: "Settings backup",
+    experiment: "SETTINGS_BACKUP",
+    keys: [
+      "SETTINGS_BACKUP_SAVE",
+      "SETTINGS_BACKUP_VALIDATE",
+      "SETTINGS_BACKUP_PREVIEW",
+      "SETTINGS_BACKUP_PUSH",
+      "SETTINGS_BACKUP_RESTORE",
+      "SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN",
+    ],
+  },
+  {
     label: "External",
     keys: ["OPEN_TERMINAL", "OPEN_IN_EDITOR"],
   },
@@ -215,15 +237,20 @@ const KEYBIND_DISPLAY_ALTERNATES: Partial<
 
 export function KeybindsSection() {
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
-  const visibleKeybindGroups = KEYBIND_GROUPS.map((group) => ({
-    ...group,
-    // Hide deprecated keybinds from the generated reference, plus experiment-gated rows.
-    keys: group.keys.filter(
-      (key) =>
-        !isKeybindDeprecated(KEYBINDS[key]) &&
-        (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled)
-    ),
-  })).filter((group) => group.keys.length > 0);
+  const settingsBackupEnabled = useExperimentValue(EXPERIMENT_IDS.SETTINGS_BACKUP);
+  const visibleKeybindGroups = KEYBIND_GROUPS.filter(
+    (group) => group.experiment !== "SETTINGS_BACKUP" || settingsBackupEnabled
+  )
+    .map((group) => ({
+      ...group,
+      // Hide deprecated keybinds from the generated reference, plus experiment-gated rows.
+      keys: group.keys.filter(
+        (key) =>
+          !isKeybindDeprecated(KEYBINDS[key]) &&
+          (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled)
+      ),
+    }))
+    .filter((group) => group.keys.length > 0);
 
   return (
     <div className="space-y-6">

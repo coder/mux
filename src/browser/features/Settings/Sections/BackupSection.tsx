@@ -1,0 +1,615 @@
+import { useEffect, useRef, useState } from "react";
+import { ArchiveRestore, CheckCircle2, CloudUpload, RefreshCw } from "lucide-react";
+import { Button } from "@/browser/components/Button/Button";
+import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
+import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
+import { Input } from "@/browser/components/Input/Input";
+import { useAPI, type APIClient } from "@/browser/contexts/API";
+import {
+  formatKeybind,
+  isDialogOpen,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
+import { getErrorMessage } from "@/common/utils/errors";
+
+type BackupRoute = keyof APIClient["backup"];
+type BackupRouteOutput<Route extends BackupRoute> = Awaited<ReturnType<APIClient["backup"][Route]>>;
+type BackupSuccessData<Route extends Exclude<BackupRoute, "getSettings">> = Extract<
+  BackupRouteOutput<Route>,
+  { success: true }
+>["data"];
+type BackupValidation = BackupSuccessData<"validate">;
+type BackupPreview = BackupSuccessData<"preview">;
+type BackupOperationError = Extract<BackupRouteOutput<"push">, { success: false }>["error"];
+
+const BACKUP_SHORTCUTS = [
+  ["save", KEYBINDS.SETTINGS_BACKUP_SAVE],
+  ["validate", KEYBINDS.SETTINGS_BACKUP_VALIDATE],
+  ["preview", KEYBINDS.SETTINGS_BACKUP_PREVIEW],
+  ["push", KEYBINDS.SETTINGS_BACKUP_PUSH],
+  ["restore", KEYBINDS.SETTINGS_BACKUP_RESTORE],
+  ["toggleOverride", KEYBINDS.SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN],
+] as const;
+
+type BackupShortcutAction = (typeof BACKUP_SHORTCUTS)[number][0];
+type BackupShortcutHandlers = Record<BackupShortcutAction, () => void | Promise<void>>;
+
+const INCLUDED_SETTINGS = [
+  "Global instructions",
+  "Agent definitions",
+  "Agent skills",
+  "Global memory",
+  "MCP server configuration",
+  "Portable preferences",
+] as const;
+
+interface BackupDraft {
+  repoUrl: string;
+  branch: string;
+  path: string;
+}
+
+const DEFAULT_DRAFT: BackupDraft = {
+  repoUrl: "",
+  branch: "main",
+  path: "mux/",
+};
+
+function getOperationErrorMessage(error: BackupOperationError): string {
+  if (!error.files?.length) return error.message;
+  return `${error.message}: ${error.files.join(", ")}`;
+}
+
+function getCredentialLabel(credential: BackupValidation["credential"]): string {
+  switch (credential) {
+    case "ssh":
+      return "SSH key or agent";
+    case "gh":
+      return "GitHub CLI";
+    case "token":
+      return "configured token";
+    case "ambient":
+      return "system git credentials";
+  }
+}
+
+function ChangeList(props: {
+  title: string;
+  emptyLabel: string;
+  changes: BackupPreview["pushChanges"] | BackupPreview["restoreChanges"];
+}) {
+  return (
+    <div className="border-border-light min-w-0 rounded-md border p-3">
+      <h4 className="text-foreground text-xs font-medium">{props.title}</h4>
+      {props.changes.length === 0 ? (
+        <p className="text-muted mt-2 text-xs">{props.emptyLabel}</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {props.changes.map((change) => (
+            <li key={`${change.status}:${change.path}`} className="flex min-w-0 gap-2 text-xs">
+              <span className="text-accent w-5 shrink-0 font-mono">{change.status}</span>
+              <span className="text-muted min-w-0 break-all">{change.path}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function BackupSection() {
+  const { api } = useAPI();
+  const [draft, setDraft] = useState<BackupDraft>(DEFAULT_DRAFT);
+  const [savedDraft, setSavedDraft] = useState<BackupDraft>(DEFAULT_DRAFT);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [activeAction, setActiveAction] = useState<
+    "validate" | "preview" | "push" | "restore" | null
+  >(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [validation, setValidation] = useState<BackupValidation | null>(null);
+  const [preview, setPreview] = useState<BackupPreview | null>(null);
+  const [overrideSecretScan, setOverrideSecretScan] = useState(false);
+  const [restoreConfirmationOpen, setRestoreConfirmationOpen] = useState(false);
+
+  const isDirty =
+    draft.repoUrl !== savedDraft.repoUrl ||
+    draft.branch !== savedDraft.branch ||
+    draft.path !== savedDraft.path;
+  const configured = savedDraft.repoUrl.trim() !== "";
+  const busy = saving || activeAction !== null;
+
+  useEffect(() => {
+    if (!api) {
+      setLoading(false);
+      setSaveError("Backup settings are unavailable while disconnected.");
+      return;
+    }
+
+    let ignore = false;
+    setLoading(true);
+    setSaveError(null);
+
+    void api.backup
+      .getSettings()
+      .then((settings) => {
+        if (ignore || !settings) return;
+
+        const nextDraft = {
+          repoUrl: settings.repoUrl,
+          branch: settings.branch,
+          path: settings.path,
+        };
+        setDraft(nextDraft);
+        setSavedDraft(nextDraft);
+      })
+      .catch((error: unknown) => {
+        if (!ignore) {
+          setSaveError(getErrorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!ignore) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [api]);
+
+  async function handleSave() {
+    if (!api || saving || activeAction !== null) return;
+    if (draft.repoUrl.trim() === "") {
+      setSaveError("Repository URL is required.");
+      return;
+    }
+    if (draft.branch.trim() === "") {
+      setSaveError("Branch is required.");
+      return;
+    }
+    if (draft.path.trim() === "") {
+      setSaveError("Subdirectory is required.");
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    setActionError(null);
+    setStatusMessage(null);
+
+    try {
+      const result = await api.backup.saveSettings({
+        repoUrl: draft.repoUrl.trim(),
+        branch: draft.branch.trim(),
+        path: draft.path.trim(),
+      });
+      if (!result.success) {
+        setSaveError(getOperationErrorMessage(result.error));
+        return;
+      }
+
+      const settings = result.data;
+      const nextDraft = {
+        repoUrl: settings.repoUrl,
+        branch: settings.branch,
+        path: settings.path,
+      };
+      setDraft(nextDraft);
+      setSavedDraft(nextDraft);
+      setValidation(null);
+      setPreview(null);
+      setOverrideSecretScan(false);
+      setStatusMessage("Backup settings saved.");
+    } catch (error) {
+      setSaveError(getErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function requireSavedSettings(): boolean {
+    if (!configured) {
+      setActionError("Save a repository before using backup actions.");
+      return false;
+    }
+    if (isDirty) {
+      setActionError("Save your changes before using backup actions.");
+      return false;
+    }
+    return true;
+  }
+
+  async function handleValidate() {
+    if (!api || busy || !requireSavedSettings()) return;
+    setActiveAction("validate");
+    setActionError(null);
+    setStatusMessage(null);
+    setValidation(null);
+
+    try {
+      const result = await api.backup.validate(savedDraft);
+      if (!result.success) {
+        setActionError(getOperationErrorMessage(result.error));
+        return;
+      }
+      setValidation(result.data);
+      setStatusMessage(
+        result.data.empty ? "Repository is reachable and empty." : "Repository is reachable."
+      );
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handlePreview() {
+    if (!api || busy || !requireSavedSettings()) return;
+    setActiveAction("preview");
+    setActionError(null);
+    setStatusMessage(null);
+    setPreview(null);
+    setOverrideSecretScan(false);
+
+    try {
+      const result = await api.backup.preview(savedDraft);
+      if (!result.success) {
+        setActionError(getOperationErrorMessage(result.error));
+        return;
+      }
+      setPreview(result.data);
+      setOverrideSecretScan(false);
+      setStatusMessage("Preview refreshed.");
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handlePush() {
+    if (!api || busy || !requireSavedSettings()) return;
+    setActiveAction("push");
+    setActionError(null);
+    setStatusMessage(null);
+
+    try {
+      const result = await api.backup.push({
+        ...savedDraft,
+        allowSecrets: overrideSecretScan,
+      });
+      if (!result.success) {
+        setActionError(getOperationErrorMessage(result.error));
+        return;
+      }
+      setPreview(null);
+      setOverrideSecretScan(false);
+      setStatusMessage(
+        `Backed up settings at ${result.data.commit} using ${getCredentialLabel(result.data.credential)}.`
+      );
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  async function handleRestore() {
+    if (!api || busy || !requireSavedSettings()) return;
+    setActiveAction("restore");
+    setActionError(null);
+    setStatusMessage(null);
+
+    try {
+      const result = await api.backup.restore(savedDraft);
+      if (!result.success) {
+        setActionError(getOperationErrorMessage(result.error));
+        setRestoreConfirmationOpen(false);
+        return;
+      }
+      setPreview(null);
+      setOverrideSecretScan(false);
+      setStatusMessage(
+        `Restored ${result.data.changedFiles.length} file${result.data.changedFiles.length === 1 ? "" : "s"}. Safety snapshot: ${result.data.snapshotPath}`
+      );
+      setRestoreConfirmationOpen(false);
+    } catch (error) {
+      setActionError(getErrorMessage(error));
+      setRestoreConfirmationOpen(false);
+    } finally {
+      setActiveAction(null);
+    }
+  }
+
+  function openRestoreConfirmation() {
+    if (busy || !requireSavedSettings()) return;
+    setRestoreConfirmationOpen(true);
+  }
+
+  const actionsRef = useRef<BackupShortcutHandlers | null>(null);
+  actionsRef.current = {
+    save: handleSave,
+    validate: handleValidate,
+    preview: handlePreview,
+    push: handlePush,
+    restore: openRestoreConfirmation,
+    toggleOverride: () => {
+      if (!busy && preview) {
+        setOverrideSecretScan((current) => !current);
+      }
+    },
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isDialogOpen() || isEditableElement(event.target)) return;
+
+      const shortcut = BACKUP_SHORTCUTS.find(([, keybind]) => matchesKeybind(event, keybind));
+      const action = shortcut && actionsRef.current?.[shortcut[0]];
+      if (!action) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      void action();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  if (loading) {
+    return <div className="text-muted text-sm">Loading backup settings...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-foreground text-sm font-medium">Settings backup</h3>
+        <p className="text-muted mt-1 text-xs">
+          Back up portable Mux settings to a git repository using credentials already available on
+          this machine.
+        </p>
+      </div>
+
+      <section className="border-border-light space-y-4 rounded-md border p-4">
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+          <label className="min-w-0 space-y-1.5 sm:col-span-2">
+            <span className="text-foreground text-xs font-medium">Repository URL</span>
+            <Input
+              value={draft.repoUrl}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, repoUrl: event.target.value }))
+              }
+              placeholder="git@github.com:you/dotfiles.git"
+              disabled={busy}
+            />
+          </label>
+          <label className="min-w-0 space-y-1.5">
+            <span className="text-foreground text-xs font-medium">Branch</span>
+            <Input
+              value={draft.branch}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, branch: event.target.value }))
+              }
+              placeholder="main"
+              disabled={busy}
+            />
+          </label>
+          <label className="min-w-0 space-y-1.5">
+            <span className="text-foreground text-xs font-medium">Subdirectory</span>
+            <Input
+              value={draft.path}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, path: event.target.value }))
+              }
+              placeholder="mux/"
+              disabled={busy}
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Button
+            size="sm"
+            onClick={() => void handleSave()}
+            disabled={busy || !isDirty}
+            title={`Save settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_SAVE)})`}
+            className="w-full sm:w-auto"
+          >
+            {saving ? "Saving..." : "Save settings"}
+          </Button>
+          {isDirty ? <span className="text-warning text-xs">Unsaved changes</span> : null}
+        </div>
+        {saveError ? <p className="text-error text-xs">{saveError}</p> : null}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-foreground text-sm font-medium">Included</h3>
+          <p className="text-muted mt-1 text-xs">Only portable, allowlisted settings are copied.</p>
+        </div>
+        <ul className="grid gap-2 sm:grid-cols-2">
+          {INCLUDED_SETTINGS.map((item) => (
+            <li key={item} className="text-muted flex items-center gap-2 text-xs">
+              <CheckCircle2 className="text-success h-3.5 w-3.5 shrink-0" />
+              {item}
+            </li>
+          ))}
+        </ul>
+        <p className="text-foreground text-xs font-medium">
+          API keys and secrets are never included.
+        </p>
+      </section>
+
+      <section className="border-border-light space-y-3 rounded-md border p-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-foreground text-sm font-medium">Repository access</h3>
+            <p className="text-muted mt-1 text-xs">
+              Mux tries SSH, GitHub CLI credentials, configured tokens, then system git credentials.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleValidate()}
+            disabled={busy || isDirty || !configured}
+            title={`Validate repository (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_VALIDATE)})`}
+            className="w-full shrink-0 sm:w-auto"
+          >
+            <RefreshCw className={activeAction === "validate" ? "animate-spin" : ""} />
+            Validate
+          </Button>
+        </div>
+        {validation ? (
+          <div className="bg-background-secondary rounded-md px-3 py-2 text-xs">
+            <div className="text-foreground">
+              Credential used: {getCredentialLabel(validation.credential)}
+            </div>
+            <div className="text-muted mt-1">
+              {validation.empty
+                ? "Empty repository, ready for the first backup."
+                : "Repository is reachable."}
+            </div>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h3 className="text-foreground text-sm font-medium">Preview</h3>
+            <p className="text-muted mt-1 text-xs">
+              Review what a backup would write and what a restore would change locally.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handlePreview()}
+            disabled={busy || isDirty || !configured}
+            title={`Preview changes (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PREVIEW)})`}
+            className="w-full shrink-0 sm:w-auto"
+          >
+            Preview changes
+          </Button>
+        </div>
+
+        {preview ? (
+          <div className="space-y-3">
+            <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+              <ChangeList
+                title="Backup to repository"
+                emptyLabel="No repository changes."
+                changes={preview.pushChanges}
+              />
+              <ChangeList
+                title="Restore to this device"
+                emptyLabel="No local changes."
+                changes={preview.restoreChanges}
+              />
+            </div>
+
+            {preview.localOnlyFiles.length > 0 ? (
+              <div className="border-border-light rounded-md border p-3">
+                <h4 className="text-foreground text-xs font-medium">Kept local-only files</h4>
+                <ul className="text-muted mt-2 space-y-1 text-xs">
+                  {preview.localOnlyFiles.map((file) => (
+                    <li key={file} className="break-all">
+                      {file}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="border-border-light rounded-md border p-3">
+              <h4 className="text-foreground text-xs font-medium">Redactions</h4>
+              {preview.redactions.length === 0 ? (
+                <p className="text-muted mt-2 text-xs">No MCP header values need redaction.</p>
+              ) : (
+                <ul className="text-muted mt-2 space-y-1 text-xs">
+                  {preview.redactions.map((redaction) => (
+                    <li key={redaction} className="break-all">
+                      {redaction}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="border-border-light rounded-md border p-3">
+              <label className="flex items-start gap-2">
+                <Checkbox
+                  checked={overrideSecretScan}
+                  onCheckedChange={(checked) => setOverrideSecretScan(checked === true)}
+                  disabled={busy}
+                  aria-label="Override secret scan"
+                />
+                <span className="min-w-0">
+                  <span className="text-foreground block text-xs font-medium">
+                    Override secret scan
+                  </span>
+                  <span className="text-muted mt-0.5 block text-xs">
+                    Allow the next backup if the secret scan blocks it. The blocked file list
+                    appears as an error before anything is pushed.
+                  </span>
+                </span>
+              </label>
+              <p className="text-muted mt-2 text-xs">
+                Leave this off unless you have reviewed a secret-scan error and intend to back up
+                those files.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="border-border-light text-muted rounded-md border border-dashed p-4 text-xs">
+            Run a preview to compare both directions and inspect redactions.
+          </div>
+        )}
+      </section>
+
+      {actionError ? <div className="text-error text-xs">{actionError}</div> : null}
+      {statusMessage ? <div className="text-success text-xs">{statusMessage}</div> : null}
+
+      <section className="border-border-light flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center">
+        <Button
+          onClick={() => void handlePush()}
+          disabled={busy || isDirty || !configured}
+          title={`Back up settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PUSH)})`}
+          className="w-full sm:w-auto"
+        >
+          <CloudUpload />
+          {activeAction === "push" ? "Backing up..." : "Back up now"}
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={openRestoreConfirmation}
+          disabled={busy || isDirty || !configured}
+          title={`Restore settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_RESTORE)})`}
+          className="w-full sm:w-auto"
+        >
+          <ArchiveRestore />
+          Restore
+        </Button>
+      </section>
+
+      <ConfirmationModal
+        isOpen={restoreConfirmationOpen}
+        title="Restore settings backup?"
+        description="This overwrites local files and portable preferences that are present in the backup. Local-only files are kept."
+        warning="Mux will create a safety snapshot first, but restoring can immediately change settings in open windows."
+        confirmLabel={activeAction === "restore" ? "Restoring..." : "Restore settings"}
+        confirmVariant="destructive"
+        onConfirm={handleRestore}
+        onCancel={() => setRestoreConfirmationOpen(false)}
+      />
+    </div>
+  );
+}

@@ -1,6 +1,7 @@
 import { appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { waitFor, within, userEvent } from "@storybook/test";
 import { setupSettingsStory } from "./Sections/settingsStoryUtils.js";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 export default {
   ...appMeta,
@@ -20,6 +21,7 @@ const BASE_SECTION_LABELS = [
   "Runtimes",
   "Experiments",
   "Keybinds",
+  "Backup",
 ] as const;
 
 type BaseSectionLabel = (typeof BASE_SECTION_LABELS)[number];
@@ -38,6 +40,7 @@ const SECTION_CONTENT_MATCHERS: Record<BaseSectionLabel, RegExp> = {
   Runtimes: /Default runtime/i,
   Experiments: /Experimental features that are still in development/i,
   Keybinds: /Open agent picker/i,
+  Backup: /Settings backup/i,
 };
 
 async function openSettings(canvasElement: HTMLElement): Promise<void> {
@@ -83,7 +86,15 @@ async function assertSectionBodyRendered(
 }
 
 export const SectionsSmoke: AppStory = {
-  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          experiments: { [EXPERIMENT_IDS.SETTINGS_BACKUP]: true },
+        })
+      }
+    />
+  ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettings(canvasElement);
 

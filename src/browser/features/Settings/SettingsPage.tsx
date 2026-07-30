@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Server,
   Lock,
+  ArchiveRestore,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -37,6 +38,7 @@ import { ExperimentsSection } from "./Sections/ExperimentsSection";
 import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
+import { BackupSection } from "./Sections/BackupSection";
 import type { SettingsSection } from "./types";
 
 const LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS = new Set(["goals", "heartbeat"]);
@@ -123,7 +125,8 @@ interface SettingsSectionRedirect {
 
 export function getSettingsSections(
   governorEnabled: boolean,
-  memoryEnabled: boolean
+  memoryEnabled: boolean,
+  settingsBackupEnabled: boolean
 ): SettingsSection[] {
   const sections = [...BASE_SECTIONS];
   if (memoryEnabled) {
@@ -132,6 +135,14 @@ export function getSettingsSections(
       label: "Memory",
       icon: <Brain className="h-4 w-4" />,
       component: MemorySection,
+    });
+  }
+  if (settingsBackupEnabled) {
+    sections.push({
+      id: "backup",
+      label: "Backup",
+      icon: <ArchiveRestore className="h-4 w-4" />,
+      component: BackupSection,
     });
   }
   if (governorEnabled) {
@@ -148,13 +159,18 @@ export function getSettingsSections(
 export function getSettingsSectionRedirect(
   activeSection: string,
   governorEnabled: boolean,
-  memoryEnabled: boolean
+  memoryEnabled: boolean,
+  settingsBackupEnabled: boolean
 ): SettingsSectionRedirect | null {
   if (LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS.has(activeSection)) {
     return { section: "experiments", replace: true };
   }
 
   if (!governorEnabled && activeSection === "governor") {
+    return { section: BASE_SECTIONS[0]?.id ?? "general" };
+  }
+
+  if (!settingsBackupEnabled && activeSection === "backup") {
     return { section: BASE_SECTIONS[0]?.id ?? "general" };
   }
 
@@ -175,10 +191,16 @@ export function SettingsPage(props: SettingsPageProps) {
   const onboardingPause = useOnboardingPause();
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
   const memoryEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
+  const settingsBackupEnabled = useExperimentValue(EXPERIMENT_IDS.SETTINGS_BACKUP);
 
   // Keep routing on a valid section when experiment-owned settings move or disappear.
   useEffect(() => {
-    const redirect = getSettingsSectionRedirect(activeSection, governorEnabled, memoryEnabled);
+    const redirect = getSettingsSectionRedirect(
+      activeSection,
+      governorEnabled,
+      memoryEnabled,
+      settingsBackupEnabled
+    );
     if (!redirect) {
       return;
     }
@@ -189,7 +211,7 @@ export function SettingsPage(props: SettingsPageProps) {
     }
 
     setActiveSection(redirect.section);
-  }, [activeSection, setActiveSection, governorEnabled, memoryEnabled]);
+  }, [activeSection, setActiveSection, governorEnabled, memoryEnabled, settingsBackupEnabled]);
 
   // Close settings on Escape. Uses bubble phase so inner surfaces (Select dropdowns,
   // Popover, Dialog) that call stopPropagation/preventDefault on Escape get first
@@ -208,7 +230,7 @@ export function SettingsPage(props: SettingsPageProps) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [close]);
-  const sections = getSettingsSections(governorEnabled, memoryEnabled);
+  const sections = getSettingsSections(governorEnabled, memoryEnabled, settingsBackupEnabled);
   const currentSection = sections.find((section) => section.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;
 
