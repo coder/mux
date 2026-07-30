@@ -21,6 +21,16 @@ const PHONE_WIDTH_PX = 390;
  */
 const SELECTION_PROPERTIES = ["user-select", "-webkit-user-select"];
 
+/**
+ * Collection recognises every vendor spelling, not just the two asserted above: a rule
+ * setting only `-moz-user-select` still changes selection in that engine, so ignoring it
+ * would let a descendant override slip past the whole-stylesheet checks below.
+ */
+const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/;
+
+/** Tailwind's selection utilities, including variants such as `hover:select-text`. */
+const APPLIED_SELECTION_UTILITY = /^(?:[\w[\]./-]+:)*select-(?:none|text|all|auto)$/;
+
 const EDITABLE_SELECTORS = [
   "input",
   "textarea",
@@ -88,11 +98,27 @@ beforeAll(async () => {
     await readFile(new URL("./globals.css", import.meta.url), "utf8")
   );
 
+  // `@apply select-text` sets selection without a `user-select` declaration to find, and
+  // resolving what a utility expands to needs Tailwind's variant and layer handling, so
+  // the honest response is to refuse rather than report a guard this cannot see.
+  stylesheet.walkAtRules("apply", (atRule) => {
+    if (atRule.params.split(/\s+/).some((token) => APPLIED_SELECTION_UTILITY.test(token))) {
+      throw new Error(`Selection set via @apply cannot be modelled: @apply ${atRule.params}`);
+    }
+  });
+
   selectionRules = [];
   let order = 0;
   stylesheet.walkDecls((decl: Declaration) => {
-    if (!SELECTION_PROPERTIES.includes(decl.prop) || decl.parent?.type !== "rule") {
+    if (!SELECTION_PROPERTY_PATTERN.test(decl.prop)) {
       return;
+    }
+    // A declaration outside a plain rule (`@utility`, `@keyframes`) has no selector to
+    // reason about, and its application sites live in TSX this contract cannot read.
+    if (decl.parent?.type !== "rule") {
+      throw new Error(
+        `Selection declaration outside a rule: ${decl.parent?.type ?? "detached"} ${decl.prop}`
+      );
     }
     if (decl.important) {
       throw new Error(`Unsupported !important selection declaration: ${decl.parent.selector}`);
@@ -180,17 +206,24 @@ const FINE_VIEWPORTS: Viewport[] = [PHONE_WIDTH_PX, DESKTOP_WIDTH_PX].map((width
 }));
 
 /**
- * True when the selector's subject is class- or id-qualified, so the rule opts specific
- * components out of selection rather than reaching content generally. Deliberately strict:
- * `.sidebar div` is rejected even though it is scoped, because widening that to any
- * anchored selector would also admit `body.theme *`.
+ * True when the selector's subject positively requires a class or id, so the rule opts
+ * specific components out of selection rather than reaching content generally.
+ *
+ * Functional pseudo-class arguments are emptied first, because a class inside one does not
+ * narrow what the selector matches: `:not(.allow-selection)` matches almost everything.
+ * Strict beyond that, so `.sidebar div` and a bare `:is(.a)` are both rejected: widening
+ * this to any anchored or class-mentioning selector would also admit `body.theme *`.
  */
 function isComponentScoped(selector: string): boolean {
-  const subject =
+  let subject =
     selector
       .split(/[\s>+~]+/)
       .filter(Boolean)
       .at(-1) ?? "";
+  for (let emptied = ""; emptied !== subject; ) {
+    emptied = subject;
+    subject = subject.replace(/\([^()]*\)/g, "()");
+  }
   return /[.#]/.test(subject);
 }
 
@@ -214,10 +247,10 @@ describe("touch text-selection guard", () => {
   );
 
   it("keeps editable controls selectable wherever body selection is suppressed", () => {
-    for (const widthPx of [PHONE_WIDTH_PX, IPAD_WIDTH_PX, IPAD_LANDSCAPE_WIDTH_PX]) {
+    for (const viewport of COARSE_VIEWPORTS) {
       for (const selector of EDITABLE_SELECTORS) {
         for (const property of SELECTION_PROPERTIES) {
-          expect(effectiveValue(selector, property, { widthPx, coarse: true })).toBe("text");
+          expect(effectiveValue(selector, property, viewport)).toBe("text");
         }
       }
     }
