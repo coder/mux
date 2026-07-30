@@ -47,9 +47,16 @@ interface SelectionRule {
 function collectMediaParams(node: ChildNode | Container): string[] {
   const params: string[] = [];
   for (let current = node.parent; current; current = current.parent) {
-    if ("name" in current && current.name === "media" && typeof current.params === "string") {
-      params.push(current.params);
+    if (!("name" in current) || typeof current.params !== "string") {
+      continue;
     }
+    // Only `@media` is modelled. `@supports` and `@container` also appear in this
+    // stylesheet, and dropping their conditions would treat a conditional rule as
+    // unconditional, so they have to be rejected rather than ignored.
+    if (current.name !== "media") {
+      throw new Error(`Unsupported at-rule around selection rule: @${current.name}`);
+    }
+    params.push(current.params);
   }
   return params;
 }
@@ -160,6 +167,13 @@ function effectiveValue(
     .at(-1)?.value;
 }
 
+const COARSE_VIEWPORTS: Viewport[] = [
+  PHONE_WIDTH_PX,
+  IPAD_WIDTH_PX,
+  IPAD_LANDSCAPE_WIDTH_PX,
+  DESKTOP_WIDTH_PX,
+].map((widthPx) => ({ widthPx, coarse: true }));
+
 describe("touch text-selection guard", () => {
   it.each([IPAD_WIDTH_PX, IPAD_LANDSCAPE_WIDTH_PX, DESKTOP_WIDTH_PX])(
     "suppresses body selection on a coarse pointer at %ipx",
@@ -178,6 +192,26 @@ describe("touch text-selection guard", () => {
         }
       }
     }
+  });
+
+  /**
+   * `user-select` inherits, so the `body` rule reaches transcript content only by
+   * inheritance, and inheritance loses to any declaration that matches a descendant
+   * directly, whatever its specificity. The guard therefore holds only while nothing
+   * else re-enables selection, which the per-selector assertions above cannot see.
+   */
+  it("re-enables selection only for the editable opt-in on a coarse pointer", () => {
+    const reEnabling = COARSE_VIEWPORTS.flatMap((viewport) =>
+      selectionRules
+        .filter(
+          (rule) =>
+            rule.value !== "none" &&
+            rule.mediaParams.every((params) => mediaQueryApplies(params, viewport))
+        )
+        .flatMap((rule) => rule.selectors)
+        .filter((selector) => !EDITABLE_SELECTORS.includes(selector))
+    );
+    expect([...new Set(reEnabling)]).toEqual([]);
   });
 
   it("leaves content selectable for fine pointers", () => {
