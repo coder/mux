@@ -1129,11 +1129,11 @@ body,
 
 @layer base {
   /* Controls are not prose, so pressing one must never start a text selection.
-     Reported on iPadOS: clicking a composer pill selected the whole chat pane. */
-  button,
-  [role="button"],
-  [role="option"],
-  [role="tab"] {
+     Reported on iPadOS: clicking a composer pill selected the whole chat pane.
+     Scoped to native buttons on purpose: `[role="button"]` here is often a rich
+     container wrapping selectable content (diff hunks, review notes), whereas a
+     `<button>` always wraps a label. */
+  button {
     -webkit-user-select: none;
     user-select: none;
   }
