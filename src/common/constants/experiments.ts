@@ -24,6 +24,7 @@ export const EXPERIMENT_IDS = {
   CLAUDE_SKILLS_COMPAT: "claude-skills-compat",
   AGENT_PLUGINS: "agent-plugins",
   SKILL_DYNAMIC_CONTEXT: "skill-dynamic-context",
+  SETTINGS_BACKUP: "settings-backup",
   TIMELINE: "timeline",
 } as const;
 
@@ -52,6 +53,13 @@ export interface ExperimentDefinition {
  * Use Record<ExperimentId, ExperimentDefinition> to ensure exhaustive coverage.
  */
 export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
+  [EXPERIMENT_IDS.SETTINGS_BACKUP]: {
+    id: EXPERIMENT_IDS.SETTINGS_BACKUP,
+    name: "Settings backup",
+    description: "Back up and restore portable Mux settings through a git repository",
+    enabledByDefault: false,
+    showInSettings: true,
+  },
   [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: {
     id: EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
     name: "Programmatic Tool Calling",

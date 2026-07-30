@@ -201,6 +201,15 @@ export interface ProjectsConfig {
    */
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
 
+  /** Manual git-backed settings backup configuration. */
+  settingsBackup?: {
+    repoUrl: string;
+    branch: string;
+    path: string;
+    lastPushedCommit?: string;
+    lastRestoredCommit?: string;
+  };
+
   /** Optional 1Password account name used for desktop SDK account selection. */
   onePasswordAccountName?: string;
 }

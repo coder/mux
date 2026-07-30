@@ -154,6 +154,15 @@ export const AppConfigOnDiskSchema = z
     updateChannel: UpdateChannelSchema.optional(),
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
+    settingsBackup: z
+      .object({
+        repoUrl: z.string(),
+        branch: z.string(),
+        path: z.string(),
+        lastPushedCommit: z.string().optional(),
+        lastRestoredCommit: z.string().optional(),
+      })
+      .optional(),
     onePasswordAccountName: z.string().optional(),
   })
   .passthrough();
