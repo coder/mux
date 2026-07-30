@@ -1127,28 +1127,16 @@ body,
   background-color: var(--color-surface-primary);
 }
 
-@layer base {
-  /* Controls are not prose, so pressing one must never start a text selection.
-     Reported on iPadOS: clicking a composer pill selected the whole chat pane.
-     Scoped to native buttons on purpose: `[role="button"]` here is often a rich
-     container wrapping selectable content (diff hunks, review notes), whereas a
-     `<button>` always wraps a label. */
-  button {
-    -webkit-user-select: none;
-    user-select: none;
-  }
-}
-
 /* User request: prevent accidental text highlighting while tapping/scrolling on touch
    devices. Deliberately not width-gated like the phone rules below: iPadOS reports
-   pointer: coarse even with a trackpad attached, and tablets are wider than 768px. */
+   pointer: coarse even with a trackpad attached, at widths above the phone breakpoint. */
 @media (pointer: coarse) {
   body {
     -webkit-user-select: none;
     user-select: none;
   }
 
-  /* Keep selection/caret behavior in editable controls on touch devices. */
+  /* Body selection is suppressed above, so editable controls must opt back in. */
   input,
   textarea,
   [contenteditable="true"],
