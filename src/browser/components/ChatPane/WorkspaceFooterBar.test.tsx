@@ -84,6 +84,21 @@ const repoMetadata: FrontendWorkspaceMetadata = {
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 
+function mockDetectedPR() {
+  spyOn(PRStatusStoreModule, "useWorkspacePR").mockImplementation(
+    () =>
+      ({
+        type: "github-pr",
+        url: "https://github.com/acme/widgets/pull/7",
+        owner: "acme",
+        repo: "widgets",
+        number: 7,
+        detectedAt: 0,
+        occurrenceCount: 1,
+      }) as unknown as ReturnType<typeof PRStatusStoreModule.useWorkspacePR>
+  );
+}
+
 function renderFooter(overrides?: Partial<ComponentProps<typeof WorkspaceFooterBarComponent>>) {
   return render(
     <TooltipProvider delayDuration={0}>
@@ -200,23 +215,23 @@ describe("WorkspaceFooterBar repository controls", () => {
 
   it("shows the GitHub slug instead of the project label once a PR is detected", () => {
     workspaceMetadata.set(workspaceId, repoMetadata);
-    spyOn(PRStatusStoreModule, "useWorkspacePR").mockImplementation(
-      () =>
-        ({
-          type: "github-pr",
-          url: "https://github.com/acme/widgets/pull/7",
-          owner: "acme",
-          repo: "widgets",
-          number: 7,
-          detectedAt: 0,
-          occurrenceCount: 1,
-        }) as unknown as ReturnType<typeof PRStatusStoreModule.useWorkspacePR>
-    );
+    mockDetectedPR();
 
     const { container } = renderFooter();
 
     expect(container.textContent).toContain("acme/widgets");
     expect(container.textContent).not.toContain("demo");
+  });
+
+  it("links the GitHub slug to the repository page", () => {
+    workspaceMetadata.set(workspaceId, repoMetadata);
+    mockDetectedPR();
+
+    const { getByTestId } = renderFooter();
+
+    expect(getByTestId("workspace-footer-repository").getAttribute("href")).toBe(
+      "https://github.com/acme/widgets"
+    );
   });
 
   it("falls back to the project label when no PR is detected", () => {

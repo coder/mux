@@ -150,13 +150,25 @@ function FooterRepositoryLabel(props: { workspaceId: string; projectLabel: strin
     return <FooterProjectLabel projectLabel={props.projectLabel} />;
   }
 
+  // The slug comes from a parsed github.com PR URL, so the repo page is always this host.
+  const slug = `${workspacePR.owner}/${workspacePR.repo}`;
+
   return (
-    <span className="text-muted flex shrink-0 items-center gap-1">
-      <Github className="h-3 w-3 shrink-0" aria-hidden="true" />
-      <span className="font-mono">
-        {workspacePR.owner}/{workspacePR.repo}
-      </span>
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <a
+          href={`https://github.com/${slug}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="workspace-footer-repository"
+          className="text-muted hover:bg-hover hover:text-foreground focus-visible:ring-accent flex h-5 shrink-0 items-center gap-1 rounded-md px-1.5 transition-colors focus-visible:ring-1"
+        >
+          <Github className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <span className="font-mono">{slug}</span>
+        </a>
+      </TooltipTrigger>
+      <TooltipContent side="top">Open on GitHub</TooltipContent>
+    </Tooltip>
   );
 }
 
