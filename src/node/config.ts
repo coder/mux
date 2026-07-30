@@ -1204,6 +1204,7 @@ export class Config {
           updateChannel,
           defaultRuntime,
           runtimeEnablement,
+          settingsBackup: parsed.settingsBackup,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       }
@@ -1489,6 +1490,10 @@ export class Config {
       const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
       if (defaultRuntime !== undefined) {
         data.defaultRuntime = defaultRuntime;
+      }
+
+      if (config.settingsBackup) {
+        data.settingsBackup = config.settingsBackup;
       }
 
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
