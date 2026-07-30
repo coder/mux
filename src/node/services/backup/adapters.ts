@@ -3,9 +3,15 @@ import { VERSION } from "@/version";
 import type { Config } from "@/node/config";
 import type { BackupFileChange } from "@/common/orpc/schemas/backup";
 import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
-import type { BackupGitRepo, BackupPayload, PreparedBackupRepository } from "./backupService";
+import {
+  BackupServiceError,
+  type BackupGitRepo,
+  type BackupPayload,
+  type PreparedBackupRepository,
+} from "./backupService";
 import { BackupRepoCache } from "./gitRepo";
 import {
+  backupPayloadExists,
   collectAllowlistedFiles,
   createBackupPayload,
   projectBackupPreferences,
@@ -128,10 +134,15 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     },
 
     async previewRestore(previewOptions) {
-      const payload = await readBackupPayload(
-        managedDir(previewOptions.repositoryRoot, previewOptions.managedPath)
-      );
+      const sourceDir = managedDir(previewOptions.repositoryRoot, previewOptions.managedPath);
       const local = await localFilesByPath();
+      // A repository with no backup yet is a normal first-run state, not an error:
+      // nothing would be restored, and every local file is local-only.
+      if (!(await backupPayloadExists(sourceDir))) {
+        return { changes: [], localOnlyFiles: [...local.keys()].sort() };
+      }
+
+      const payload = await readBackupPayload(sourceDir);
       const changes: BackupFileChange[] = [];
       for (const file of payload.files) {
         // Preferences live in config rather than on disk, so compare against the
@@ -154,9 +165,14 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     },
 
     async validateRestore(validateOptions) {
-      await readBackupPayload(
-        managedDir(validateOptions.repositoryRoot, validateOptions.managedPath)
-      );
+      const sourceDir = managedDir(validateOptions.repositoryRoot, validateOptions.managedPath);
+      if (!(await backupPayloadExists(sourceDir))) {
+        throw new BackupServiceError(
+          "INVALID_BACKUP",
+          `No Mux backup found in '${validateOptions.managedPath}' on this branch`
+        );
+      }
+      await readBackupPayload(sourceDir);
     },
 
     async writeSafetySnapshot(snapshotRoot) {

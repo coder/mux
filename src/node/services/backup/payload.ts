@@ -470,6 +470,11 @@ function parseManifest(raw: string): BackupManifest {
   return manifest as BackupManifest;
 }
 
+/** True when the directory holds a backup this build can read. */
+export async function backupPayloadExists(sourceDir: string): Promise<boolean> {
+  return await fileExists(path.join(sourceDir, "manifest.json"));
+}
+
 export async function readBackupPayload(sourceDir: string): Promise<BackupPayload> {
   const manifest = parseManifest(await fs.readFile(path.join(sourceDir, "manifest.json"), "utf-8"));
   const files: BackupFile[] = [];

@@ -204,6 +204,45 @@ describe("BackupService against a real repository", () => {
     );
   });
 
+  it("previews an empty repository without erroring and refuses to restore from it", async () => {
+    const preview = await service.preview(settings);
+    if (!preview.success) throw new Error(preview.error.message);
+    expect(preview.data.restoreChanges).toEqual([]);
+    expect(preview.data.pushChanges.length).toBeGreaterThan(0);
+
+    const restored = await service.restore(settings);
+    expect(restored.success).toBe(false);
+    if (restored.success) throw new Error("Expected an empty repository to block restore");
+    expect(restored.error.code).toBe("INVALID_BACKUP");
+    expect(restored.error.message).not.toContain("ENOENT");
+  });
+
+  it("refuses to restore when the branch has commits but no backup payload", async () => {
+    const clone = path.join(tempDir, "seed");
+    await git(["clone", "--quiet", originPath, clone]);
+    await fs.writeFile(path.join(clone, "README.md"), "unrelated repository\n", "utf-8");
+    await git(["-C", clone, "add", "README.md"]);
+    await git([
+      "-C",
+      clone,
+      "-c",
+      "user.email=uat@example.com",
+      "-c",
+      "user.name=UAT",
+      "commit",
+      "--quiet",
+      "-m",
+      "unrelated",
+    ]);
+    await git(["-C", clone, "push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+
+    const restored = await service.restore(settings);
+    expect(restored.success).toBe(false);
+    if (restored.success) throw new Error("Expected a missing payload to block restore");
+    expect(restored.error.code).toBe("INVALID_BACKUP");
+    expect(restored.error.message).not.toContain("ENOENT");
+  });
+
   it("surfaces an unreachable remote as an expected error", async () => {
     const missing = { ...settings, repoUrl: path.join(tempDir, "does-not-exist.git") };
     const validated = await service.validate(missing);
