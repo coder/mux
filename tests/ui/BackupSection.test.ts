@@ -144,7 +144,11 @@ describe("BackupSection", () => {
     fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
 
     await canvas.findByText(/Potential secrets were found/i);
-    expect(canvas.getByRole("checkbox", { name: "Override secret scan" })).toBeTruthy();
+    const override = canvas.getByRole("checkbox", { name: "Override secret scan" });
+    expect(override.getAttribute("data-state")).toBe("unchecked");
+
+    fireEvent.keyDown(window, { key: "o", code: "KeyO", ctrlKey: true, altKey: true });
+    await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
   });
 
   test("reports a preferences-only restore as changing no files", async () => {

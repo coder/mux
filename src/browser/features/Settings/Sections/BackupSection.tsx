@@ -354,7 +354,9 @@ export function BackupSection() {
     push: handlePush,
     restore: openRestoreConfirmation,
     toggleOverride: () => {
-      if (!busy && preview) {
+      // Mirrors the checkbox's own render condition so the shortcut is never advertised
+      // while the control is hidden, and never inert while it is visible.
+      if (!busy && (preview || secretScanBlocked)) {
         setOverrideSecretScan((current) => !current);
       }
     },

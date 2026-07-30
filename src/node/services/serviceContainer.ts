@@ -13,6 +13,7 @@ import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
 import { BackupService } from "@/node/services/backup/backupService";
+import { resolveGhToken } from "@/node/runtime/credentialForwarding";
 import { createBackupGitRepo, createBackupPayloadStore } from "@/node/services/backup/adapters";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
@@ -158,7 +159,10 @@ export class ServiceContainer {
       muxHome: config.rootDir,
     });
     this.backupService = new BackupService(config, {
-      gitRepo: createBackupGitRepo({ cacheRoot: path.join(config.rootDir, "backup-cache") }),
+      gitRepo: createBackupGitRepo({
+        cacheRoot: path.join(config.rootDir, "backup-cache"),
+        getToken: () => resolveGhToken(),
+      }),
       payload: createBackupPayloadStore({ config }),
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);

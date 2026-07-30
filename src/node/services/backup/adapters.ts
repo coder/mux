@@ -42,8 +42,20 @@ function parsePorcelainStatus(output: string): BackupFileChange[] {
  * BackupService prepares the cache before push-related calls. Retaining that instance
  * preserves the fetched base commit used by the push guard.
  */
-export function createBackupGitRepo(options: { cacheRoot: string }): BackupGitRepo {
+export function createBackupGitRepo(options: {
+  cacheRoot: string;
+  /** Resolved per call so a token added after startup is picked up without a restart. */
+  getToken?: () => string | null;
+}): BackupGitRepo {
   const prepared = new WeakMap<PreparedBackupRepository, BackupRepoCache>();
+
+  function newCache(settings: { repoUrl: string; branch: string }): BackupRepoCache {
+    return new BackupRepoCache({
+      ...settings,
+      cacheRoot: options.cacheRoot,
+      token: options.getToken?.() ?? undefined,
+    });
+  }
 
   function cacheFor(repository: PreparedBackupRepository): BackupRepoCache {
     const cache = prepared.get(repository);
@@ -53,13 +65,13 @@ export function createBackupGitRepo(options: { cacheRoot: string }): BackupGitRe
 
   return {
     async validate(settings) {
-      const cache = new BackupRepoCache({ ...settings, cacheRoot: options.cacheRoot });
+      const cache = newCache(settings);
       const refs = await cache.lsRemote();
       return { credential: refs.credential, empty: refs.refs.size === 0 };
     },
 
     async prepare(settings) {
-      const cache = new BackupRepoCache({ ...settings, cacheRoot: options.cacheRoot });
+      const cache = newCache(settings);
       await cache.ensureCache();
       await cache.fetch();
       const remoteCommit = await cache.resetHardToRemote();

@@ -105,6 +105,21 @@ describe("backup adapters", () => {
     expect(preview.changes).toEqual([]);
   });
 
+  it("passes a configured token to the credential ladder", async () => {
+    const tokens: Array<string | null> = [];
+    const gitRepo = createBackupGitRepo({
+      cacheRoot,
+      getToken: () => {
+        tokens.push("configured-token");
+        return "configured-token";
+      },
+    });
+
+    await gitRepo.validate(settings);
+
+    expect(tokens).toEqual(["configured-token"]);
+  });
+
   it("refuses to operate on a repository that was never prepared", async () => {
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const repository = {
