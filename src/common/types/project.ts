@@ -201,7 +201,6 @@ export interface ProjectsConfig {
    */
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
 
-  /** Manual git-backed settings backup configuration. */
   settingsBackup?: {
     repoUrl: string;
     branch: string;

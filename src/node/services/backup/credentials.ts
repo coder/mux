@@ -1,3 +1,4 @@
+import type { BackupCredentialKind } from "@/common/orpc/schemas/backup";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 
 const NON_INTERACTIVE_ENV = {
@@ -8,7 +9,7 @@ const NON_INTERACTIVE_ENV = {
 const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
 const TOKEN_HELPER = '!f(){ echo username=x-access-token; echo "password=$MUX_BACKUP_TOKEN"; };f';
 
-export type BackupCredential = "ssh" | "gh" | "token" | "ambient";
+export type BackupCredential = BackupCredentialKind;
 
 export interface GitCredentialOptions extends ExecFileAsyncOptions {
   repoUrl: string;

@@ -218,9 +218,8 @@ export function mergeBackupPreferences(
 }
 
 /**
- * Only the object forms count as portable. `MCPHeaderValue` is `string | { secret }`
- * (src/common/types/mcp.ts), so Mux never interpolates a plain string: anything else
- * is sent to the server verbatim and must be treated as a literal credential.
+ * `MCPHeaderValue` is `string | { secret }` (src/common/types/mcp.ts), so Mux sends a
+ * plain string verbatim and never interpolates it. Only the object forms are portable.
  */
 function isPortableReference(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -420,9 +419,8 @@ export async function writeBackupPayload(
   payload: BackupPayload
 ): Promise<void> {
   for (const file of payload.files) assertAllowedPayloadPath(file.path);
-  // Reuse the previous manifest when the content hashes match. `exportedAt` and
-  // `muxVersion` would otherwise differ on every export, so an unchanged backup
-  // would produce a commit that only churns the timestamp.
+  // Reuse the previous manifest when content hashes match. Otherwise changing
+  // export metadata would produce a commit with no settings changes.
   const previous = await readManifestIfPresent(destinationDir);
   const manifest =
     previous && sameManifestContent(previous, payload.manifest) ? previous : payload.manifest;
@@ -470,7 +468,6 @@ function parseManifest(raw: string): BackupManifest {
   return manifest as BackupManifest;
 }
 
-/** True when the directory holds a backup this build can read. */
 export async function backupPayloadExists(sourceDir: string): Promise<boolean> {
   return await fileExists(path.join(sourceDir, "manifest.json"));
 }

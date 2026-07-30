@@ -1,7 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Config } from "@/node/config";
-import type { ProjectsConfig } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
@@ -60,8 +59,6 @@ export interface BackupServiceDependencies {
   gitRepo: BackupGitRepo;
   payload: BackupPayload;
 }
-
-type ConfigWithSettingsBackup = ProjectsConfig & { settingsBackup?: SettingsBackup };
 
 type BackupErrorCode = BackupOperationError["code"];
 
@@ -124,7 +121,7 @@ export class BackupService {
   ) {}
 
   getSettings(): SettingsBackup | null {
-    return (this.config.loadConfigOrDefault() as ConfigWithSettingsBackup).settingsBackup ?? null;
+    return this.config.loadConfigOrDefault().settingsBackup ?? null;
   }
 
   async saveSettings(
@@ -282,8 +279,7 @@ export class BackupService {
   ): Promise<SettingsBackup> {
     let saved: SettingsBackup | undefined;
     await this.config.editConfig((current) => {
-      const currentWithBackup = current as ConfigWithSettingsBackup;
-      const previous = currentWithBackup.settingsBackup;
+      const previous = current.settingsBackup;
       const sameRepository =
         previous?.repoUrl === settings.repoUrl &&
         previous.branch === settings.branch &&
@@ -298,8 +294,7 @@ export class BackupService {
           : {}),
         ...commitUpdate,
       };
-      const next: ConfigWithSettingsBackup = { ...current, settingsBackup: saved };
-      return next;
+      return { ...current, settingsBackup: saved };
     });
 
     if (saved == null) {

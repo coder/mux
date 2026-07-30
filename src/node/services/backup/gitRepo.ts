@@ -92,7 +92,6 @@ export class BackupRepoCache {
     this.cachePath = backupCachePath(options.cacheRoot, options.repoUrl, options.branch);
   }
 
-  /** Credential that authenticated the most recent network operation. */
   get credential(): BackupCredential | undefined {
     return this.usedCredential;
   }
@@ -250,13 +249,6 @@ export class BackupRepoCache {
   async porcelainStatus(managedPath?: string): Promise<string> {
     if (managedPath) assertSafeRelativePath(managedPath);
     const args = ["status", "--porcelain", "--untracked-files=all"];
-    if (managedPath) args.push("--", managedPath);
-    return (await this.localGit(args)).stdout.trim();
-  }
-
-  async diffNameStatus(ref: string, managedPath?: string): Promise<string> {
-    if (managedPath) assertSafeRelativePath(managedPath);
-    const args = ["diff", "--name-status", ref];
     if (managedPath) args.push("--", managedPath);
     return (await this.localGit(args)).stdout.trim();
   }

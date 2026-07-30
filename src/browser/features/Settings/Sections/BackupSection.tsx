@@ -275,7 +275,6 @@ export function BackupSection() {
         return;
       }
       setPreview(result.data);
-      setOverrideSecretScan(false);
       setSecretScanBlocked(false);
       setStatusMessage("Preview refreshed.");
     } catch (error) {

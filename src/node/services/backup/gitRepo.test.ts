@@ -77,7 +77,7 @@ describe("BackupRepoCache", () => {
     }
   });
 
-  it("reports cache status and name-status diffs", async () => {
+  it("reports cache status", async () => {
     const repo = createRepo();
     await repo.ensureCache();
     await repo.fetch();
@@ -88,7 +88,6 @@ describe("BackupRepoCache", () => {
 
     await writeManagedFile(repo, "AGENTS.md", "second\n");
     expect(await repo.porcelainStatus("mux")).toContain("mux/AGENTS.md");
-    expect(await repo.diffNameStatus(commit, "mux")).toBe("M\tmux/AGENTS.md");
   });
 
   it("rejects a push when the remote branch moved after reset", async () => {

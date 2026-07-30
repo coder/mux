@@ -167,7 +167,6 @@ describe("backup adapters", () => {
     expect(restored.changedFiles).toEqual(["AGENTS.md"]);
     expect(restored.localOnlyFiles).toEqual(["agents/local-only.md"]);
     expect(config.state.userPreferences?.appearance?.theme).toBe("dark");
-    // Restore must not delete files the backup does not carry.
     expect(await fs.readFile(path.join(muxRoot, "agents/local-only.md"), "utf-8")).toBe(
       "local only\n"
     );

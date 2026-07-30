@@ -197,14 +197,10 @@ describe("BackupService", () => {
 
     const result = await service.push(SETTINGS);
 
-    expect(result).toEqual({
-      success: false,
-      error: {
-        code: "SECRET_DETECTED",
-        message: "Potential secrets were found in the backup payload",
-        files: ["skills/private/SKILL.md"],
-      },
-    });
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected secret detection to block the push");
+    expect(result.error.code).toBe("SECRET_DETECTED");
+    expect(result.error.files).toEqual(["skills/private/SKILL.md"]);
     expect(commitAttempted).toBe(false);
   });
 

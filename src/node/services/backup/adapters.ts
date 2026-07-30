@@ -39,16 +39,14 @@ function parsePorcelainStatus(output: string): BackupFileChange[] {
 }
 
 /**
- * Bridges the persistent cache clone to the service-level contract. `prepare` is
- * always called before the other methods under the service's per-repo lock, so the
- * prepared cache is retained by root directory: the same instance must service the
- * later calls because it holds the fetched base commit that guards the push.
+ * BackupService prepares the cache before push-related calls. Retaining that instance
+ * preserves the fetched base commit used by the push guard.
  */
 export function createBackupGitRepo(options: { cacheRoot: string }): BackupGitRepo {
-  const prepared = new Map<string, BackupRepoCache>();
+  const prepared = new WeakMap<PreparedBackupRepository, BackupRepoCache>();
 
   function cacheFor(repository: PreparedBackupRepository): BackupRepoCache {
-    const cache = prepared.get(repository.rootDir);
+    const cache = prepared.get(repository);
     if (!cache) throw new Error("Backup repository was not prepared");
     return cache;
   }
@@ -66,12 +64,13 @@ export function createBackupGitRepo(options: { cacheRoot: string }): BackupGitRe
       await cache.fetch();
       const remoteCommit = await cache.resetHardToRemote();
       await cache.cleanManagedPath(settings.path);
-      prepared.set(cache.cachePath, cache);
-      return {
+      const repository = {
         rootDir: cache.cachePath,
         credential: cache.credential ?? "ambient",
         remoteCommit,
       };
+      prepared.set(repository, cache);
+      return repository;
     },
 
     async getPushChanges(repository, managedPath) {

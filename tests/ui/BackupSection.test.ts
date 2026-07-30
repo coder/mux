@@ -78,7 +78,6 @@ describe("BackupSection", () => {
 
     await canvas.findByText("Settings backup");
     const repoInput = canvas.getByLabelText("Repository URL");
-    fireEvent.keyDown(repoInput, { key: "o", code: "KeyO", ctrlKey: true, altKey: true });
     fireEvent.change(repoInput, { target: { value: "git@github.com:example/new.git" } });
 
     const saveSettings = jest.spyOn(client.backup, "saveSettings");
@@ -89,7 +88,11 @@ describe("BackupSection", () => {
 
     fireEvent.keyDown(window, { key: "s", code: "KeyS", ctrlKey: true, altKey: true });
     await waitFor(() => expect(saveSettings).toHaveBeenCalledTimes(1));
-    await canvas.findByText("Backup settings saved.");
+    await waitFor(() =>
+      expect(canvas.getByRole("button", { name: "Save settings" }).hasAttribute("disabled")).toBe(
+        true
+      )
+    );
 
     fireEvent.keyDown(window, { key: "v", code: "KeyV", ctrlKey: true, altKey: true });
     await waitFor(() => expect(validate).toHaveBeenCalledTimes(1));

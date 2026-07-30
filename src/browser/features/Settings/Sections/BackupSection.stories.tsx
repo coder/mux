@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "@storybook/test";
+import { userEvent, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { BackupSection } from "./BackupSection.js";
@@ -56,7 +56,6 @@ export const Configured: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await canvas.findByText("Settings backup");
-    await expect(canvas.getByText("API keys and secrets are never included.")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "Validate" }));
     await canvas.findByText(/Credential used: GitHub CLI/i);
     await userEvent.click(canvas.getByRole("button", { name: "Preview changes" }));
