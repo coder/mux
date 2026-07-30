@@ -42,8 +42,8 @@ describe("getModelStats", () => {
   test.each([
     // [model, input, output, cacheRead, cacheCreation]
     ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625],
-    ["openai:gpt-5.6-terra", 0.0000025, 0.000015, 0.00000025, 0.000003125],
-    ["openai:gpt-5.6-luna", 0.000001, 0.000006, 0.0000001, 0.00000125],
+    ["openai:gpt-5.6-terra", 0.000002, 0.000012, 0.0000002, 0.0000025],
+    ["openai:gpt-5.6-luna", 0.0000002, 0.0000012, 0.00000002, 0.00000025],
   ] as const)(
     "resolves %s with the GA pricing and limits",
     (model, input, output, cacheRead, cacheCreation) => {

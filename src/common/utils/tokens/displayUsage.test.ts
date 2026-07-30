@@ -243,12 +243,13 @@ describe("createDisplayUsage", () => {
     expect(result!.input.tokens).toBe(500);
     expect(result!.cached.tokens).toBe(100000);
     expect(result!.cacheCreate.tokens).toBe(5000);
-    // Luna base rates: $1/M input, $0.10/M cache read (0.1x), $1.25/M cache
-    // write (1.25x), $6/M output.
-    expect(result!.input.cost_usd).toBeCloseTo(0.0005);
-    expect(result!.cached.cost_usd).toBeCloseTo(0.01);
-    expect(result!.cacheCreate.cost_usd).toBeCloseTo(0.00625);
-    expect(result!.output.cost_usd).toBeCloseTo(0.006);
+    // Luna base rates: $0.20/M input, $0.02/M cache read (0.1x), $0.25/M cache
+    // write (1.25x), $1.20/M output. These land near 1e-3, so the default
+    // toBeCloseTo precision of 2 would accept any of them; pin it explicitly.
+    expect(result!.input.cost_usd).toBeCloseTo(0.0001, 10);
+    expect(result!.cached.cost_usd).toBeCloseTo(0.002, 10);
+    expect(result!.cacheCreate.cost_usd).toBeCloseTo(0.00125, 10);
+    expect(result!.output.cost_usd).toBeCloseTo(0.0012, 10);
   });
 
   describe("tiered long-context pricing", () => {
