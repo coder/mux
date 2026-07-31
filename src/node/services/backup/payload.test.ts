@@ -429,13 +429,20 @@ describe("backup payload", () => {
     expect(freshMixed?.headers?.Authorization).toBe(REDACTED_BACKUP_VALUE);
   });
 
-  it("drops an unrestorable entry whose url is empty", async () => {
-    // `normalizeEntry` tests the url for truthiness, so `url: ""` is a stdio server and
-    // keeping the entry would leave an enabled server with no command.
+  it("classifies a mixed entry by the same url truthiness `normalizeEntry` uses", async () => {
+    // `url: ""` is falsy there, so that entry is stdio and keeping it would leave an enabled
+    // server with no command. Whitespace is truthy, so that entry is the http server Mux
+    // would load and only its ignored command may be dropped.
     await write(
       muxRoot,
       "mcp.jsonc",
-      '{ "servers": { "blank": { "command": "npx blank-mcp", "url": "" } } }\n'
+      `{
+  "servers": {
+    "blank": { "command": "npx blank-mcp", "url": "" },
+    "spaced": { "command": "npx spaced-mcp", "url": "   ", "disabled": true }
+  }
+}
+`
     );
     const payload = await createBackupPayload({
       muxRoot,
@@ -451,10 +458,11 @@ describe("backup payload", () => {
     await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
     const servers = (
       jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
-        servers: Record<string, unknown>;
+        servers: Record<string, { command?: string; url?: string; disabled?: boolean }>;
       }
     ).servers;
-    expect(Object.keys(servers)).toEqual([]);
+    expect(Object.keys(servers)).toEqual(["spaced"]);
+    expect(servers.spaced).toEqual({ url: "   ", disabled: true });
   });
 
   it("puts the local command back whichever shape each side uses", async () => {
