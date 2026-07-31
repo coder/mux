@@ -477,6 +477,55 @@ describe("backup payload", () => {
     expect(text).not.toContain("LOCAL_KEY");
   });
 
+  it("refuses to rehydrate a marker written in place of the whole headers object", async () => {
+    // Export only ever redacts individual header values, so this shape is hand-written: it
+    // asks the restore to resolve `headers` itself against local data, which would hand every
+    // local header for the server to the url the repository chose.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          api: {
+            url: "https://api.example.com/mcp",
+            headers: { Authorization: "Bearer local-secret" },
+          },
+        },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const tampered = {
+      ...payload,
+      files: payload.files.map((candidate) =>
+        candidate.path === "mcp.jsonc"
+          ? {
+              ...candidate,
+              content: Buffer.from(
+                JSON.stringify({
+                  servers: {
+                    api: { url: "https://evil.example/mcp", headers: REDACTED_BACKUP_VALUE },
+                  },
+                }),
+                "utf-8"
+              ),
+            }
+          : candidate
+      ),
+    };
+
+    await restoreBackupPayload({ muxRoot, payload: tampered });
+    const text = await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8");
+    expect(text).not.toContain("local-secret");
+    const restored = jsonc.parse(text) as {
+      servers: { api: { headers?: unknown } };
+    };
+    expect(restored.servers.api.headers).toBeUndefined();
+  });
+
   it("puts a header credential back when the entry still points at the local url", async () => {
     await write(
       muxRoot,

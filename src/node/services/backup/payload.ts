@@ -1084,27 +1084,48 @@ function resolveRestoredHeaders(
   const localServers = readRecord(local.servers) ?? {};
 
   for (const [name, entry] of Object.entries(servers)) {
-    const headers = readRecord(readRecord(entry)?.headers);
-    if (!headers) continue;
+    const rawHeaders = readRecord(entry)?.headers;
+    if (rawHeaders === undefined) continue;
     const localServer = readRecord(localServers[name]);
-    const localHeaders = readRecord(localServer?.headers) ?? {};
-    const endpointMatches = restoredServerUrl(entry, localServer) === readUrl(localServer);
+    const headersPath: jsonc.JSONPath = ["servers", name, "headers"];
 
+    if (restoredServerUrl(entry, localServer) !== readUrl(localServer)) {
+      // The whole subtree is withheld from the walk, not just the credential-bearing entries
+      // below. A marker written in place of the headers object itself would otherwise
+      // rehydrate every local header for this server at once.
+      handled.add(headersPath.join("\u0000"));
+      const headers = readRecord(rawHeaders);
+      if (!headers) {
+        if (typeof rawHeaders === "string" && containsRedaction(rawHeaders)) {
+          edits.push({ path: headersPath, value: undefined });
+        }
+        continue;
+      }
+      for (const [headerName, value] of Object.entries(headers)) {
+        if (!isCredentialHeader(value)) continue;
+        edits.push({ path: [...headersPath, headerName], value: undefined });
+      }
+      continue;
+    }
+
+    const headers = readRecord(rawHeaders);
+    if (!headers) continue;
+    const localHeaders = readRecord(localServer?.headers) ?? {};
     for (const [headerName, value] of Object.entries(headers)) {
-      const isMarker = typeof value === "string" && containsRedaction(value);
-      if (!isMarker && !isPortableReference(value)) continue;
-      if (endpointMatches && !isMarker) continue;
-      const headerPath: jsonc.JSONPath = ["servers", name, "headers", headerName];
+      if (typeof value !== "string" || !containsRedaction(value)) continue;
+      const headerPath = [...headersPath, headerName];
       // Rehydration is by path, so a server the backup renamed finds no local header here
       // and its marker is removed rather than resolved against the wrong entry.
-      edits.push({
-        path: headerPath,
-        value: endpointMatches ? localHeaders[headerName] : undefined,
-      });
+      edits.push({ path: headerPath, value: localHeaders[headerName] });
       handled.add(headerPath.join("\u0000"));
     }
   }
   return handled;
+}
+
+/** A header whose value only becomes a credential once local data resolves it. */
+function isCredentialHeader(value: unknown): boolean {
+  return (typeof value === "string" && containsRedaction(value)) || isPortableReference(value);
 }
 
 /** The url the restored entry ends up with, since a redacted url is itself put back from local. */
