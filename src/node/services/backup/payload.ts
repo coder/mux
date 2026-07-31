@@ -631,9 +631,8 @@ function isRecursivelyCollected(filePath: string): boolean {
 }
 
 /**
- * Files a push must not publish until the user confirms this exact payload. Named for the
- * question it answers ("has a human looked at these?") rather than asserting the contents
- * are secret, since the structural cases are suspicion rather than detection.
+ * Files a push must not publish until the user approves this exact payload. Not all of them
+ * hold a secret: the structural cases are suspicion rather than detection.
  */
 export function scanBackupFilesForSecrets(files: readonly BackupFile[]): string[] {
   return files

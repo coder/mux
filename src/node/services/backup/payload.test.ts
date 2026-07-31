@@ -1526,8 +1526,6 @@ describe("backup payload", () => {
   });
 
   it("holds back recursive files that are not documentation, whatever they contain", async () => {
-    // `{"password":"hunter2"}` has no shape a content scanner can recognise, so publishing
-    // depends on the file's role rather than a guess about its bytes.
     await write(muxRoot, "skills/demo/SKILL.md", "a normal skill\n");
     await write(muxRoot, "memory/global/notes.md", "a normal note\n");
     await write(muxRoot, "skills/demo/credentials.json", '{"password":"hunter2"}\n');
