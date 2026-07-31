@@ -127,11 +127,26 @@ async function controlledCredential(
   return null;
 }
 
+/**
+ * Push denials count, not just fetch denials: `ls-remote` only proves read access, so a
+ * read-only credential first shows up as a rejected push. Matching those here also lets
+ * the ladder retry with the ambient helper, which may hold a writable credential.
+ */
+const AUTH_FAILURE_PATTERN =
+  /authentication failed|could not read (?:username|password)|permission denied|permission to [^\n]*denied|publickey|access denied|repository not found|terminal prompts disabled|invalid username or (?:password|token)|returned error: 40[13]|authentication is required/i;
+
+/**
+ * Local object-store failures also say "Permission denied", so they are excluded first.
+ * Without this, a full or read-only disk would be reported as an expired credential and
+ * would waste an ambient retry.
+ */
+const LOCAL_FILESYSTEM_FAILURE_PATTERN =
+  /unable to write|insufficient permission for adding an object|no space left on device|read-only file system/i;
+
 function isAuthenticationFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /authentication failed|could not read username|permission denied|publickey|access denied|repository not found|terminal prompts disabled/i.test(
-    message
-  );
+  if (LOCAL_FILESYSTEM_FAILURE_PATTERN.test(message)) return false;
+  return AUTH_FAILURE_PATTERN.test(message);
 }
 
 export async function runGitWithCredentialLadder(

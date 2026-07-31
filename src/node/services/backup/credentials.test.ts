@@ -166,6 +166,40 @@ exit 128
     expect((caught as BackupAuthFailedError).code).toBe("AUTH_FAILED");
   });
 
+  it("treats a push denied by write permissions as an authentication failure", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' '---' >> "$GIT_LOG"
+printf '%s\\n' "$@" >> "$GIT_LOG"
+echo 'remote: Permission to owner/repo.git denied to someone.' >&2
+echo "fatal: unable to access 'https://example.com/repo.git/': The requested URL returned error: 403" >&2
+exit 128
+`
+    );
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["push", "origin", "HEAD:refs/heads/main"], {
+          repoUrl: "https://example.com/repo.git",
+          token: "test-token",
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BackupAuthFailedError);
+    // A read-only credential passes validate and only fails here, so the ambient helper
+    // still deserves a turn in case it is the one with write access.
+    const attempts = (await fs.readFile(logPath, "utf-8")).split("---\n").filter(Boolean);
+    expect(attempts).toHaveLength(2);
+  });
+
   it("leaves a non-authentication ambient failure unclassified", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
@@ -175,7 +209,7 @@ exit 128
 case "$*" in
   *credential.helper*) echo 'Authentication failed' >&2; exit 1 ;;
 esac
-echo 'fatal: unable to write file' >&2
+echo 'error: unable to write sha1 filename .git/objects/ab/cdef: Permission denied' >&2
 exit 128
 `
     );
@@ -193,8 +227,10 @@ exit 128
       caught = error;
     }
 
+    // A local object-store write failure also says "Permission denied", so matching on
+    // that phrase alone would blame the credential for a full or read-only disk.
     expect(caught).not.toBeInstanceOf(BackupAuthFailedError);
-    expect((caught as Error).message).toContain("unable to write file");
+    expect((caught as Error).message).toContain("unable to write sha1 filename");
   });
 
   it("makes SSH controlled attempts non-interactive", async () => {
