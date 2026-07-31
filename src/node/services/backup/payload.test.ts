@@ -449,6 +449,28 @@ describe("backup payload", () => {
     }
   });
 
+  it("refuses to export two local files that differ only in case", async () => {
+    await write(muxRoot, "skills/demo/README.md", "upper\n");
+    await write(muxRoot, "skills/demo/readme.md", "lower\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "case-sensitive-host",
+    });
+    // A case-sensitive source can collect both, but publishing them would make the
+    // backup unreadable, so the write is what has to refuse.
+    expect(payload.files.map((file) => file.path)).toContain("skills/demo/readme.md");
+
+    const destination = path.join(tempDir, "case-export");
+    try {
+      await writeBackupPayload(destination, payload);
+      throw new Error("Expected the case collision to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("Duplicate backup path");
+    }
+  });
+
   it("refuses to restore two manifest paths that differ only in case", async () => {
     const payload = {
       manifest: {

@@ -159,6 +159,62 @@ describe("backup adapters", () => {
     expect(preview.localOnlyFiles).toContain("AGENTS.md");
   });
 
+  it("reads the remote backup after a preview modified the cache", async () => {
+    await writeMuxFile("AGENTS.md", "pushed state\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const first = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
+    await gitRepo.commitAndPush(first, {
+      managedPath: settings.path,
+      message: "Back up Mux settings",
+      expectedRemoteCommit: first.remoteCommit,
+    });
+
+    // A preview rewrites the tracked payload in the cache without pushing it.
+    await writeMuxFile("AGENTS.md", "local only\n");
+    const second = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
+
+    const third = await gitRepo.prepare(settings);
+    const preview = await payload.previewRestore({
+      repositoryRoot: third.rootDir,
+      managedPath: settings.path,
+    });
+    expect(preview.changes).toEqual([{ status: "M", path: "AGENTS.md" }]);
+  });
+
+  it("does not recreate deleted history when the remote branch is gone", async () => {
+    await writeMuxFile("AGENTS.md", "first\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const first = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
+    await gitRepo.commitAndPush(first, {
+      managedPath: settings.path,
+      message: "Back up Mux settings",
+      expectedRemoteCommit: first.remoteCommit,
+    });
+
+    // The user deletes the branch remotely, e.g. to purge something they regret pushing.
+    await git(["--git-dir", originPath, "update-ref", "-d", "refs/heads/main"]);
+
+    await writeMuxFile("AGENTS.md", "second\n");
+    const second = await gitRepo.prepare(settings);
+    expect(second.remoteCommit).toBeNull();
+    await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
+    await gitRepo.commitAndPush(second, {
+      managedPath: settings.path,
+      message: "Back up Mux settings",
+      expectedRemoteCommit: second.remoteCommit,
+    });
+
+    const history = await git(["--git-dir", originPath, "rev-list", "--count", "main"]);
+    expect(history).toBe("1");
+  });
+
   it("reports no restore changes when the backup matches local state", async () => {
     await writeMuxFile("AGENTS.md", "unchanged\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

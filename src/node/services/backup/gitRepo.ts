@@ -195,26 +195,39 @@ export class BackupRepoCache {
   async resetHardToRemote(): Promise<string | null> {
     const remoteCommit = await this.remoteBranchCommit();
     if (remoteCommit) {
+      // -f because a previous preview leaves modified tracked files in this cache. Without
+      // it the checkout keeps them and the next preview reads the local export as if it
+      // were the remote's backup.
       await this.localGit([
         "checkout",
+        "-f",
         "-B",
         this.options.branch,
         `refs/remotes/origin/${this.options.branch}`,
       ]);
     } else {
-      let currentBranch: string | null = null;
-      try {
-        currentBranch = (await this.localGit(["symbolic-ref", "--short", "HEAD"])).stdout.trim();
-      } catch {
-        currentBranch = null;
-      }
-      if (currentBranch !== this.options.branch) {
-        await this.localGit(["checkout", "--orphan", this.options.branch]);
-      }
-      await this.localGit(["rm", "-rf", "--ignore-unmatch", "."]);
+      await this.resetToUnbornBranch();
     }
     this.baseRemoteCommit = remoteCommit;
     return remoteCommit;
+  }
+
+  /**
+   * The remote branch does not exist, so the next commit must be a root commit. Deleting
+   * the local ref matters when this cache still holds the branch from before it was
+   * deleted remotely: keeping it would make the push recreate the deleted history,
+   * including files the user may have removed deliberately.
+   */
+  private async resetToUnbornBranch(): Promise<void> {
+    const ref = `refs/heads/${this.options.branch}`;
+    await this.localGit(["symbolic-ref", "HEAD", ref]);
+    try {
+      await this.localGit(["update-ref", "-d", ref]);
+    } catch {
+      // The ref is already absent, which is the state this method is establishing.
+    }
+    await this.localGit(["read-tree", "--empty"]);
+    await this.localGit(["clean", "-fdx"]);
   }
 
   async cleanManagedPath(managedPath: string): Promise<void> {

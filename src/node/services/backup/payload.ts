@@ -680,7 +680,15 @@ export async function writeBackupPayload(
   destinationDir: string,
   payload: BackupPayload
 ): Promise<void> {
-  for (const file of payload.files) assertAllowedPayloadPath(file.path);
+  const claimed = new Set<string>();
+  for (const file of payload.files) {
+    assertAllowedPayloadPath(file.path);
+    // Case-folded: a collision only a case-sensitive source can produce would make the
+    // published backup unreadable everywhere, including here.
+    const claim = file.path.toLowerCase();
+    if (claimed.has(claim)) throw new Error(`Duplicate backup path '${file.path}'`);
+    claimed.add(claim);
+  }
   // Reuse the previous manifest when content hashes match. Otherwise changing
   // export metadata would produce a commit with no settings changes.
   const previous = await readManifestIfPresent(destinationDir);
