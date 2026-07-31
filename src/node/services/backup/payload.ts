@@ -872,18 +872,25 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
   return file.path === "mcp.jsonc" ? await restoreMcpFile(muxRoot, file.content) : file.content;
 }
 
+interface ServerCommand {
+  command: string;
+  enabled: boolean;
+}
+
 /**
  * Mirrors `McpConfigService.normalizeEntry`: a stdio server is either a bare command
- * string or an object carrying `command`, and only an enabled one is ever started. An
- * empty command cannot run anything, so it is not a runnable entry.
+ * string or an object carrying `command`. An empty command cannot run anything, so it is
+ * not tracked. A disabled entry IS tracked, because `MCPServerManager.applyServerOverrides`
+ * lets a workspace `enabledServers` override start a project-disabled server.
  */
-function readRunnableCommand(value: unknown): string | undefined {
-  if (typeof value === "string") return value.trim() === "" ? undefined : value;
+function readServerCommand(value: unknown): ServerCommand | undefined {
+  const raw = typeof value === "string" ? value : undefined;
+  if (raw !== undefined) return raw.trim() === "" ? undefined : { command: raw, enabled: true };
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
-  if (record.disabled === true) return undefined;
   const command = record.command;
-  return typeof command === "string" && command.trim() !== "" ? command : undefined;
+  if (typeof command !== "string" || command.trim() === "") return undefined;
+  return { command, enabled: record.disabled !== true };
 }
 
 /**
@@ -891,21 +898,21 @@ function readRunnableCommand(value: unknown): string | undefined {
  * every incoming one is therefore new. The backup's own copy must never be read this way:
  * treating an unparseable payload as "no commands" would let it skip the approval gate.
  */
-function readLocalRunnableCommands(content: string): Map<string, string> {
+function readLocalServerCommands(content: string): Map<string, ServerCommand> {
   try {
-    return readRunnableCommands(content);
+    return readServerCommands(content);
   } catch {
     return new Map();
   }
 }
 
-function readRunnableCommands(content: string): Map<string, string> {
-  const commands = new Map<string, string>();
+function readServerCommands(content: string): Map<string, ServerCommand> {
+  const commands = new Map<string, ServerCommand>();
   const servers = parseJsoncObject(content, "mcp.jsonc").servers;
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) return commands;
   for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
-    const command = readRunnableCommand(server);
-    if (command !== undefined) commands.set(name, command);
+    const entry = readServerCommand(server);
+    if (entry !== undefined) commands.set(name, entry);
   }
   return commands;
 }
@@ -916,13 +923,12 @@ export function backupCommandApprovalToken(serverPath: string, command: string):
 }
 
 /**
- * MCP commands a restore would make runnable. Those strings reach `runtime.exec()` when
- * the server next starts, so a repository the user does not fully control must not be able
- * to change them without the user reading the exact text first. Only commands that are
- * already runnable locally with identical text produce no entry, which covers both an
- * unchanged command and one whose whole scalar the redaction rehydration kept locally
- * authoritative. Re-enabling a locally disabled command therefore still needs approval,
- * because a disabled entry is never started.
+ * MCP commands a restore would make runnable, or newly runnable. Those strings reach
+ * `runtime.exec()` when the server next starts, so a repository the user does not fully
+ * control must not be able to change them without the user reading the exact text first.
+ * A command is exempt only when the local config already holds identical text and the
+ * restore does not enable it, which covers both an unchanged command and one whose whole
+ * scalar the redaction rehydration kept locally authoritative.
  */
 export async function collectMcpCommandApprovals(
   muxRoot: string,
@@ -932,20 +938,22 @@ export async function collectMcpCommandApprovals(
   if (!file) return [];
 
   const restored = await resolveRestoredContent(muxRoot, file);
-  const incoming = readRunnableCommands(restored.toString("utf-8"));
+  const incoming = readServerCommands(restored.toString("utf-8"));
   const localPath = path.join(muxRoot, "mcp.jsonc");
   const local = (await fileExists(localPath))
-    ? readLocalRunnableCommands(await fs.readFile(localPath, "utf-8"))
-    : new Map<string, string>();
+    ? readLocalServerCommands(await fs.readFile(localPath, "utf-8"))
+    : new Map<string, ServerCommand>();
 
   const approvals: BackupCommandApproval[] = [];
-  for (const [name, command] of incoming) {
-    if (local.get(name) === command) continue;
+  for (const [name, entry] of incoming) {
+    const current = local.get(name);
+    const enablesIt = entry.enabled && current?.enabled === false;
+    if (current?.command === entry.command && !enablesIt) continue;
     const serverPath = `servers.${name}.command`;
     approvals.push({
       path: serverPath,
-      command,
-      token: backupCommandApprovalToken(serverPath, command),
+      command: entry.command,
+      token: backupCommandApprovalToken(serverPath, entry.command),
     });
   }
   return approvals;
