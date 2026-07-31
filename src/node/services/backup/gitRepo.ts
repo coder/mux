@@ -101,6 +101,20 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
+/**
+ * A cache directory holds the local allowlisted payload, which includes files still awaiting the
+ * user's approval, so it must be a real directory under the Mux root rather than a link out of
+ * it. `mkdir` with `recursive` succeeds on a symlink to an existing directory, and a
+ * pre-created per-repository link passes the origin check when its target is a valid clone, so
+ * both the root and the path below it are checked.
+ */
+export async function assertNotSymlink(target: string): Promise<void> {
+  const existing = await fs.lstat(target).catch(() => null);
+  if (existing?.isSymbolicLink() === true) {
+    throw new Error(`Refusing to use '${target}': it is a symlink`);
+  }
+}
+
 function errorText(error: unknown): string {
   if (error && typeof error === "object" && "stderr" in error) {
     const stderr = (error as { stderr?: unknown }).stderr;
@@ -163,7 +177,9 @@ export class BackupRepoCache {
   }
 
   async ensureCache(): Promise<void> {
+    await assertNotSymlink(this.options.cacheRoot);
     await fs.mkdir(this.options.cacheRoot, { recursive: true });
+    await assertNotSymlink(this.cachePath);
     const gitDir = path.join(this.cachePath, ".git");
     if (!(await exists(gitDir))) {
       if (await exists(this.cachePath)) {

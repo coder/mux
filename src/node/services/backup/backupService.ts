@@ -12,6 +12,7 @@ import type {
   SettingsBackupInput,
 } from "@/common/orpc/schemas/backup";
 import { isValidBackupPath, type SettingsBackup } from "@/common/config/schemas/settingsBackup";
+import { assertNotSymlink } from "./gitRepo";
 
 export interface PreparedBackupRepository {
   rootDir: string;
@@ -354,16 +355,9 @@ export class BackupService {
 
   private async createSnapshotPath(): Promise<string> {
     const cacheRoot = path.join(this.config.rootDir, "backup-cache");
-    // The snapshot holds the local settings unredacted, so it must not be written through a
-    // symlink: `mkdir` with `recursive` succeeds on a link to an existing directory, which
-    // would put the copy wherever the link points (a world-readable /tmp, say).
-    const existing = await fs.lstat(cacheRoot).catch(() => null);
-    if (existing?.isSymbolicLink() === true) {
-      throw new BackupServiceError(
-        "IO_ERROR",
-        `Refusing to write a safety snapshot: '${cacheRoot}' is a symlink`
-      );
-    }
+    // The snapshot holds the local settings unredacted, so a link here would put the copy
+    // wherever it points (a world-readable /tmp, say).
+    await assertNotSymlink(cacheRoot);
     await fs.mkdir(cacheRoot, { recursive: true });
     return fs.mkdtemp(path.join(cacheRoot, "restore-"));
   }

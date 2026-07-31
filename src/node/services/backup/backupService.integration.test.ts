@@ -6,6 +6,7 @@ import { Config } from "@/node/config";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { createBackupGitRepo, createBackupPayloadStore } from "./adapters";
+import { backupCachePath } from "./gitRepo";
 import { BackupService } from "./backupService";
 import { REDACTED_BACKUP_VALUE } from "./payload";
 
@@ -197,6 +198,39 @@ describe("BackupService against a real repository", () => {
       entry.startsWith("restore-")
     );
     expect(snapshots).toEqual([]);
+  });
+
+  it("refuses to clone the git cache through a symlinked cache directory", async () => {
+    // The cache holds the local payload, including files still awaiting the user's approval.
+    const outside = path.join(tempDir, "outside-git-cache");
+    await fs.mkdir(outside, { recursive: true });
+    await fs.rm(path.join(muxRoot, "backup-cache"), { recursive: true, force: true });
+    await fs.symlink(outside, path.join(muxRoot, "backup-cache"));
+
+    const refused = await service.push(settings);
+
+    expect(refused.success).toBe(false);
+    expect(await fs.readdir(outside)).toEqual([]);
+  });
+
+  it("refuses a pre-created per-repository cache symlink even when its target is a real clone", async () => {
+    // The clone the link points at has the right origin, so the origin check accepts it and only
+    // the link itself gives it away.
+    const pushed = await service.push(settings);
+    if (!pushed.success) throw new Error(pushed.error.message);
+    const cacheRoot = path.join(muxRoot, "backup-cache");
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    const outside = path.join(tempDir, "outside-clone");
+    await fs.rename(cachePath, outside);
+    await fs.symlink(outside, cachePath);
+    await writeMuxFile("AGENTS.md", "changed after the link went in\n");
+
+    const refused = await service.push(settings);
+
+    expect(refused.success).toBe(false);
+    expect(await fs.readFile(path.join(outside, "mux/AGENTS.md"), "utf-8")).not.toContain(
+      "changed after the link went in"
+    );
   });
 
   it("refuses to write a safety snapshot through a symlinked cache directory", async () => {
