@@ -426,7 +426,114 @@ describe("backup payload", () => {
     ).servers.mixed;
     expect(freshMixed?.command).toBeUndefined();
     expect(freshMixed?.url).toContain("host.example/mcp");
-    expect(freshMixed?.headers?.Authorization).toBe(REDACTED_BACKUP_VALUE);
+    expect(freshMixed?.headers?.Authorization).toBeUndefined();
+  });
+
+  it("refuses to send a rehydrated header credential to a url the backup changed", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          api: {
+            url: "https://api.example.com/mcp",
+            headers: { Authorization: "Bearer local-secret", Ref: { secret: "LOCAL_KEY" } },
+          },
+        },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "moved-endpoint");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+
+    // A repository writer repoints the entry while leaving the header markers untouched.
+    const file = readBack.files.find((candidate) => candidate.path === "mcp.jsonc");
+    if (!file) throw new Error("expected mcp.jsonc in the payload");
+    const moved = file.content
+      .toString("utf-8")
+      .replace("https://api.example.com/mcp", "https://evil.example/mcp");
+    const tampered = {
+      ...readBack,
+      files: readBack.files.map((candidate) =>
+        candidate.path === "mcp.jsonc"
+          ? { ...candidate, content: Buffer.from(moved, "utf-8") }
+          : candidate
+      ),
+    };
+
+    await restoreBackupPayload({ muxRoot, payload: tampered });
+    const restored = jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")) as {
+      servers: { api: { url: string; headers?: Record<string, unknown> } };
+    };
+    expect(restored.servers.api.url).toBe("https://evil.example/mcp");
+    expect(restored.servers.api.headers ?? {}).toEqual({});
+    const text = await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8");
+    expect(text).not.toContain("local-secret");
+    expect(text).not.toContain("LOCAL_KEY");
+  });
+
+  it("puts a header credential back when the entry still points at the local url", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          api: {
+            url: "https://api.example.com/mcp",
+            headers: { Authorization: "Bearer local-secret", Ref: { secret: "LOCAL_KEY" } },
+          },
+        },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "same-endpoint");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+
+    await restoreBackupPayload({ muxRoot, payload: readBack });
+    const restored = jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")) as {
+      servers: { api: { headers: Record<string, unknown> } };
+    };
+    expect(restored.servers.api.headers).toEqual({
+      Authorization: "Bearer local-secret",
+      Ref: { secret: "LOCAL_KEY" },
+    });
+  });
+
+  it("drops a header credential a fresh machine has no local value for", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: { api: { url: "https://api.example.com/mcp", headers: { Authorization: "t" } } },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "fresh-headers");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+
+    const fresh = path.join(tempDir, "fresh-headers-root");
+    await fs.mkdir(fresh, { recursive: true });
+    await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
+    const restored = jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
+      servers: { api: { url: string; headers?: Record<string, unknown> } };
+    };
+    expect(restored.servers.api.url).toBe("https://api.example.com/mcp");
+    expect(restored.servers.api.headers ?? {}).toEqual({});
   });
 
   it("classifies a mixed entry by the same url truthiness `normalizeEntry` uses", async () => {
@@ -981,11 +1088,11 @@ describe("backup payload", () => {
     await write(restoreRoot, "mcp.jsonc", "{ this is not valid jsonc");
     await restoreBackupPayload({ muxRoot: restoreRoot, payload });
 
-    // Nothing to rehydrate from a corrupt file, so the marker stays and the file parses.
+    // Nothing to rehydrate from a corrupt file, so the header goes and the file parses.
     const restored = jsonc.parse(
       await fs.readFile(path.join(restoreRoot, "mcp.jsonc"), "utf-8")
-    ) as { servers: { api: { headers: Record<string, unknown> } } };
-    expect(restored.servers.api.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
+    ) as { servers: { api: { headers?: Record<string, unknown> } } };
+    expect(restored.servers.api.headers ?? {}).toEqual({});
   });
 
   it("keeps provider options the backup excludes when restoring", () => {

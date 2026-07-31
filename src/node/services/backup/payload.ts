@@ -1004,8 +1004,9 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
     }
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
-  const resolvedServers = resolveRestoredCommands(backup, local, edits);
-  collectRedactionRestoreEdits(backup, local, [], edits, resolvedServers);
+  const resolved = resolveRestoredCommands(backup, local, edits);
+  for (const path of resolveRestoredHeaders(backup, local, edits)) resolved.add(path);
+  collectRedactionRestoreEdits(backup, local, [], edits, resolved);
   return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
 }
 
@@ -1028,21 +1029,13 @@ function resolveRestoredCommands(
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>
 ): Set<string> {
   const handled = new Set<string>();
-  const servers = backup.servers;
-  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return handled;
-  const localServers =
-    local.servers && typeof local.servers === "object" && !Array.isArray(local.servers)
-      ? (local.servers as Record<string, unknown>)
-      : {};
+  const servers = readRecord(backup.servers);
+  if (!servers) return handled;
+  const localServers = readRecord(local.servers) ?? {};
 
-  for (const [name, entry] of Object.entries(servers as Record<string, unknown>)) {
+  for (const [name, entry] of Object.entries(servers)) {
     const isBareMarker = entry === REDACTED_BACKUP_VALUE;
-    const isObjectMarker =
-      !isBareMarker &&
-      !!entry &&
-      typeof entry === "object" &&
-      !Array.isArray(entry) &&
-      (entry as Record<string, unknown>).command === REDACTED_BACKUP_VALUE;
+    const isObjectMarker = !isBareMarker && readRecord(entry)?.command === REDACTED_BACKUP_VALUE;
     if (!isBareMarker && !isObjectMarker) continue;
 
     const localCommand = readAnyServerCommand(localServers[name]);
@@ -1052,8 +1045,8 @@ function resolveRestoredCommands(
       // headers, disabled state, and allowlist that do restore. `normalizeEntry` tests the
       // url for truthiness, so mirror that exactly: only `url: ""` is still stdio, while
       // whitespace is truthy there and would load as an http entry.
-      const url = isObjectMarker ? (entry as Record<string, unknown>).url : undefined;
-      const hasUrl = typeof url === "string" && url !== "";
+      const url = isObjectMarker ? readUrl(readRecord(entry)) : undefined;
+      const hasUrl = url !== undefined && url !== "";
       const removed: jsonc.JSONPath = hasUrl ? ["servers", name, "command"] : ["servers", name];
       edits.push({ path: removed, value: undefined });
       handled.add(removed.join("\u0000"));
@@ -1064,6 +1057,78 @@ function resolveRestoredCommands(
     handled.add(commandPath.join("\u0000"));
   }
   return handled;
+}
+
+/**
+ * A credential-bearing header only survives when the restored entry still points at the
+ * endpoint the local config already sends it to. `MCPServerManager.resolveHeaders` resolves
+ * both a literal header and a `{secret: NAME}` reference against local data and sends the
+ * result to whatever `url` the entry carries, so a repository writer who repoints the url,
+ * or adds a server naming a secret this machine holds, would otherwise receive it.
+ *
+ * On a matching endpoint a marker is put back from the local file and a reference is left
+ * exactly as written, which keeps the file's own formatting. Otherwise the header is
+ * removed, leaving an entry that cannot authenticate rather than one that authenticates
+ * somewhere the user never approved.
+ *
+ * Returns the paths written here so the generic redaction walk leaves them alone.
+ */
+function resolveRestoredHeaders(
+  backup: Record<string, unknown>,
+  local: Record<string, unknown>,
+  edits: Array<{ path: jsonc.JSONPath; value: unknown }>
+): Set<string> {
+  const handled = new Set<string>();
+  const servers = readRecord(backup.servers);
+  if (!servers) return handled;
+  const localServers = readRecord(local.servers) ?? {};
+
+  for (const [name, entry] of Object.entries(servers)) {
+    const headers = readRecord(readRecord(entry)?.headers);
+    if (!headers) continue;
+    const localServer = readRecord(localServers[name]);
+    const localHeaders = readRecord(localServer?.headers) ?? {};
+    const endpointMatches = restoredServerUrl(entry, localServer) === readUrl(localServer);
+
+    for (const [headerName, value] of Object.entries(headers)) {
+      const isMarker = typeof value === "string" && containsRedaction(value);
+      if (!isMarker && !isPortableReference(value)) continue;
+      if (endpointMatches && !isMarker) continue;
+      const headerPath: jsonc.JSONPath = ["servers", name, "headers", headerName];
+      // Rehydration is by path, so a server the backup renamed finds no local header here
+      // and its marker is removed rather than resolved against the wrong entry.
+      edits.push({
+        path: headerPath,
+        value: endpointMatches ? localHeaders[headerName] : undefined,
+      });
+      handled.add(headerPath.join("\u0000"));
+    }
+  }
+  return handled;
+}
+
+/** The url the restored entry ends up with, since a redacted url is itself put back from local. */
+function restoredServerUrl(
+  backupEntry: unknown,
+  localServer: Record<string, unknown> | undefined
+): string | undefined {
+  const backupUrl = readUrl(readRecord(backupEntry));
+  const localUrl = readUrl(localServer);
+  if (backupUrl !== undefined && containsRedaction(backupUrl) && localUrl !== undefined) {
+    return localUrl;
+  }
+  return backupUrl;
+}
+
+function readUrl(server: Record<string, unknown> | undefined): string | undefined {
+  const url = server?.url;
+  return typeof url === "string" ? url : undefined;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 /** The command text of either supported shape, enabled or not, ignoring the marker. */
