@@ -7,6 +7,8 @@ import * as jsonc from "jsonc-parser";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import {
   BackupCommandApprovalRequiredError,
+  MAX_BACKUP_FILE_BYTES,
+  MAX_BACKUP_TOTAL_BYTES,
   REDACTED_BACKUP_VALUE,
   backupCommandApprovalToken,
   backupSecretApprovalDigest,
@@ -158,7 +160,7 @@ describe("backup payload", () => {
   // Keep this comment: mcp.jsonc is a commented format.
   "servers": {
     "api": {
-      "url": "https://user:password@example.com/mcp?token=literal&accessToken=camel&clientSecret=camel2&tokenCount=7&mode=fast",
+      "url": "https://user:password@example.com/mcp?token=literal&clientSecret=camel2&X-Amz-Signature=deadbeefcafe&mode=fast",
       "headers": {
         "Authorization": "Bearer literal",
         "Secret": { "secret": "MCP_SECRET" },
@@ -188,19 +190,22 @@ describe("backup payload", () => {
     expect(mcp.servers.api.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
     expect(mcp.servers.api.headers.Secret).toEqual({ secret: "MCP_SECRET" });
     expect(mcp.servers.api.headers.OpObject).toEqual({ op: "op://Vault/Item/token" });
-    expect(mcp.servers.api.url).not.toContain("password");
-    expect(mcp.servers.api.url).not.toContain("token=literal");
-    // Low-entropy values verify camelCase names are redacted without scanner help.
-    expect(mcp.servers.api.url).not.toContain("camel");
-    // `tokenCount` verifies that the matcher deliberately fails closed.
-    expect(mcp.servers.api.url).not.toContain("tokenCount=7");
-    expect(mcp.servers.api.url).toContain("mode=fast");
-    expect(mcp.servers.plain.url).toBe("https://example.com/mcp?mode=fast");
+    // No query value survives, whatever the parameter is called: a signed-URL signature and
+    // an ordinary-looking `mode` are both gone, while the names still describe the endpoint.
+    for (const value of ["password", "literal", "camel2", "deadbeefcafe", "fast"]) {
+      expect(mcp.servers.api.url).not.toContain(value);
+    }
+    expect(mcp.servers.api.url).toContain("X-Amz-Signature=");
+    expect(mcp.servers.plain.url).toBe(`https://example.com/mcp?mode=${REDACTED_BACKUP_VALUE}`);
     expect(payloadFileText(payload, "mcp.jsonc")).toContain("// Keep this comment");
     const destination = path.join(tempDir, "redacted-payload");
     await writeBackupPayload(destination, payload);
     expect((await readBackupPayload(destination)).redactions).toEqual(payload.redactions);
-    expect(payload.redactions).toEqual(["servers.api.headers.Authorization", "servers.api.url"]);
+    expect(payload.redactions).toEqual([
+      "servers.api.headers.Authorization",
+      "servers.api.url",
+      "servers.plain.url",
+    ]);
   });
 
   it("never exports through a symlink, a nested .git, or an open provider record", async () => {
@@ -273,6 +278,47 @@ describe("backup payload", () => {
     expect(merged.appearance?.theme).toBe("dark");
     expect(merged.appearance?.vimEnabled).toBe(true);
     expect(merged.appearance?.editorConfig).toEqual({ editor: "vscode" });
+  });
+
+  it("refuses an oversized file and an oversized payload on both sides", async () => {
+    // Sparse, so the size is real to stat while nothing is ever read or written.
+    async function sparseFile(root: string, relativePath: string, size: number): Promise<void> {
+      const absolutePath = path.join(root, ...relativePath.split("/"));
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(absolutePath, "");
+      await fs.truncate(absolutePath, size);
+    }
+
+    await write(muxRoot, "AGENTS.md", "small\n");
+    await sparseFile(muxRoot, "skills/big/asset.bin", MAX_BACKUP_FILE_BYTES + 1);
+    const oversizedFile = await rejection(
+      createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+    );
+    expect((oversizedFile as Error).message).toContain("larger than the 8 MB limit");
+
+    await fs.rm(path.join(muxRoot, "skills/big"), { recursive: true });
+    const fileCount = Math.ceil(MAX_BACKUP_TOTAL_BYTES / MAX_BACKUP_FILE_BYTES) + 1;
+    for (let index = 0; index < fileCount; index++) {
+      await sparseFile(muxRoot, `skills/big/part-${index}.bin`, MAX_BACKUP_FILE_BYTES);
+    }
+    const oversizedTotal = await rejection(
+      createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+    );
+    expect((oversizedTotal as Error).message).toContain("total limit");
+
+    // A repository can list an entry of any size, so the read side has to bound it before
+    // buffering rather than trust the payload it is previewing.
+    await fs.rm(path.join(muxRoot, "skills/big"), { recursive: true });
+    await write(muxRoot, "skills/demo/SKILL.md", "skill\n");
+    const destination = path.join(tempDir, "oversized-payload");
+    await writeBackupPayload(
+      destination,
+      await createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+    );
+    await sparseFile(destination, "skills/demo/SKILL.md", MAX_BACKUP_FILE_BYTES + 1);
+    const rejected = await rejection(readBackupPayload(destination));
+    expect((rejected as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((rejected as Error).message).toContain("larger than the 8 MB limit");
   });
 
   it("reports a corrupt backup as an invalid backup rather than an IO failure", async () => {
@@ -1337,8 +1383,7 @@ describe("backup payload", () => {
     });
     const mcp = payloadFileText(payload, "mcp.jsonc");
     expect(mcp).not.toContain("AIzaSyA12345678901234567890123456789012");
-    expect(mcp).toContain(REDACTED_BACKUP_VALUE);
-    expect(mcp).toContain("mode=fast");
+    expect(mcp).toContain(`key=${REDACTED_BACKUP_VALUE}`);
   });
 
   it("flags a Google API key left in a free-form file", async () => {

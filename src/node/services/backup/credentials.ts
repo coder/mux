@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { BackupCredentialKind } from "@/common/orpc/schemas/backup";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 
@@ -9,20 +10,23 @@ const NON_INTERACTIVE_ENV = {
 const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
 
 /**
- * `BatchMode=yes` is what keeps ssh from asking for a password, a key passphrase, or host
- * key confirmation (`ssh_config(5)`), which a backup running behind a UI button can never
- * answer: it would just hang Validate, Preview, or Push forever. A command line `-o` beats
- * ssh_config, and whichever command git would have run is extended rather than replaced, so
- * a custom wrapper, key, or proxy keeps working.
+ * A prompt for a password, a key passphrase, or host key confirmation is unanswerable behind
+ * a UI button, so the ssh client is asked to fail instead of asking. The client's own command
+ * line is the only place to say so, and whichever command git would have run is extended
+ * rather than replaced, so a custom wrapper, key, or proxy keeps working.
  *
  * git resolves that command from four places and no more, in this precedence order (git(1),
  * confirmed against 2.54): `GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH`, plain `ssh`. Any
  * source left unread is a source silently discarded, so all of them are read here.
+ *
+ * Returns null when no flag can be added safely, leaving every variable exactly as git found
+ * it. Guessing an option a client does not accept would break a working configuration, and
+ * `BACKUP_GIT_TIMEOUT_MS` still bounds a client that decides to prompt.
  */
 async function nonInteractiveSshCommand(
   args: readonly string[],
   options: GitCredentialOptions
-): Promise<string> {
+): Promise<string | null> {
   const program = ambientValue(options, "GIT_SSH");
   const base =
     ambientValue(options, "GIT_SSH_COMMAND") ??
@@ -30,7 +34,35 @@ async function nonInteractiveSshCommand(
     // Unlike the other two, GIT_SSH names a program git executes directly, so a path with
     // spaces only survives becoming part of a shell command line if it is quoted.
     (program !== null ? shellQuote(program) : "ssh");
-  return `${base} -o BatchMode=yes`;
+  const flag = nonInteractiveFlag(base, options);
+  return flag === null ? null : `${base} ${flag}`;
+}
+
+/**
+ * Git's own variant list (`GIT_SSH_VARIANT`): only OpenSSH takes `-o BatchMode=yes`, while the
+ * PuTTY family spells it `-batch`, and git passes no options at all to anything else. Nothing
+ * is appended for an unrecognised client for the same reason.
+ */
+function nonInteractiveFlag(command: string, options: GitCredentialOptions): string | null {
+  switch (options.env?.GIT_SSH_VARIANT ?? process.env.GIT_SSH_VARIANT ?? sshVariant(command)) {
+    case "ssh":
+      return "-o BatchMode=yes";
+    case "plink":
+    case "putty":
+    case "tortoiseplink":
+      return "-batch";
+    default:
+      return null;
+  }
+}
+
+function sshVariant(command: string): string {
+  const program = /^\s*'((?:[^']|'\\'')*)'|^\s*(\S+)/.exec(command);
+  const executable = (program?.[1] ?? program?.[2] ?? "").replaceAll(`'\\''`, "'");
+  return path
+    .basename(executable)
+    .toLowerCase()
+    .replace(/\.exe$/, "");
 }
 
 function ambientValue(
@@ -43,6 +75,14 @@ function ambientValue(
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+async function sshEnvOverrides(
+  args: readonly string[],
+  options: GitCredentialOptions
+): Promise<Record<string, string | undefined>> {
+  const command = await nonInteractiveSshCommand(args, options);
+  return command === null ? {} : { GIT_SSH_COMMAND: command };
 }
 
 /** Reads through the caller's own `-C`, so the value git would apply is the one extended. */
@@ -171,7 +211,7 @@ async function controlledCredentials(
       {
         credential: "ssh",
         argsPrefix: [],
-        env: { GIT_SSH_COMMAND: await nonInteractiveSshCommand(args, options) },
+        env: await sshEnvOverrides(args, options),
       },
     ];
   }
@@ -282,7 +322,7 @@ export async function runGitWithCredentialLadder(
       env: {
         ...options.env,
         ...NON_INTERACTIVE_ENV,
-        GIT_SSH_COMMAND: await nonInteractiveSshCommand(args, options),
+        ...(await sshEnvOverrides(args, options)),
       },
     });
     return { credential: "ambient", ...result };

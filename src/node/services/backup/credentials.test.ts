@@ -479,6 +479,44 @@ exit 128
     );
   });
 
+  it("uses the flag the configured ssh client accepts, or none at all", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "config" ]; then',
+        "  exit 1",
+        "fi",
+        `printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"`,
+        "",
+      ].join("\n")
+    );
+
+    async function commandFor(env: Record<string, string>): Promise<string> {
+      await fs.rm(logPath, { force: true });
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+          repoUrl: "git@example.com:owner/repo.git",
+          env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "", ...env },
+        })
+      );
+      return (await fs.readFile(logPath, "utf-8")).trim();
+    }
+
+    // PuTTY spells the option differently, and appending OpenSSH's would make plink reject
+    // its own arguments.
+    expect(await commandFor({ GIT_SSH: "/c/PuTTY/plink.exe" })).toBe("'/c/PuTTY/plink.exe' -batch");
+    expect(await commandFor({ GIT_SSH_VARIANT: "tortoiseplink", GIT_SSH: "/c/tp" })).toBe(
+      "'/c/tp' -batch"
+    );
+    // An unrecognised client takes no option: git passes it none either, and a wrong one
+    // would break a wrapper that works today. The command is left exactly as configured.
+    expect(await commandFor({ GIT_SSH_COMMAND: "/opt/coder/coder gitssh --" })).toBe(
+      "/opt/coder/coder gitssh --"
+    );
+  });
+
   it("makes SSH attempts non-interactive without discarding an ssh wrapper", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(

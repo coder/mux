@@ -11,6 +11,13 @@ import { isWindowsUnusableSegment } from "@/common/config/schemas/settingsBackup
 import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
+/**
+ * A payload is read wholly into memory on both sides, and the repository side is written by
+ * whoever can push to the branch, so an oversized entry would crash the main process during
+ * a plain Preview. Settings are text, so these bounds are far above any real backup.
+ */
+export const MAX_BACKUP_FILE_BYTES = 8 * 1024 * 1024;
+export const MAX_BACKUP_TOTAL_BYTES = 64 * 1024 * 1024;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
 
 const FORBIDDEN_BASENAMES = new Set(
@@ -211,9 +218,36 @@ export async function resolveContainedPath(root: string, relativePath: string): 
   return current;
 }
 
-async function readBackupFile(root: string, relativePath: string): Promise<BackupFile> {
+function megabytes(bytes: number): string {
+  return `${Math.floor(bytes / (1024 * 1024))} MB`;
+}
+
+/** Checked before each read, so an oversized entry is never buffered. */
+function createByteBudget() {
+  let used = 0;
+  return function take(relativePath: string, size: number): void {
+    if (size > MAX_BACKUP_FILE_BYTES) {
+      throw new Error(
+        `'${relativePath}' is larger than the ${megabytes(MAX_BACKUP_FILE_BYTES)} limit for one backup file`
+      );
+    }
+    used += size;
+    if (used > MAX_BACKUP_TOTAL_BYTES) {
+      throw new Error(`Backup is larger than the ${megabytes(MAX_BACKUP_TOTAL_BYTES)} total limit`);
+    }
+  };
+}
+
+type ByteBudget = ReturnType<typeof createByteBudget>;
+
+async function readBackupFile(
+  root: string,
+  relativePath: string,
+  budget: ByteBudget
+): Promise<BackupFile> {
   const absolutePath = path.join(root, ...relativePath.split("/"));
   const stat = await fs.stat(absolutePath);
+  budget(relativePath, stat.size);
   return {
     path: relativePath,
     content: await fs.readFile(absolutePath),
@@ -241,7 +275,8 @@ async function collectDirectory(
   root: string,
   relativeRoot: string,
   filter: (relativePath: string, entry: Dirent) => boolean,
-  output: BackupFile[]
+  output: BackupFile[],
+  budget: ByteBudget
 ): Promise<void> {
   const absoluteRoot = path.join(root, ...relativeRoot.split("/"));
   // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
@@ -261,18 +296,19 @@ async function collectDirectory(
     const relativePath = toPosixPath(relativeRoot, entry.name);
     if (!filter(relativePath, entry)) continue;
     if (entry.isDirectory()) {
-      await collectDirectory(root, relativePath, filter, output);
+      await collectDirectory(root, relativePath, filter, output, budget);
     } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
-      output.push(await readBackupFile(root, relativePath));
+      output.push(await readBackupFile(root, relativePath, budget));
     }
   }
 }
 
 export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
   const files: BackupFile[] = [];
+  const budget = createByteBudget();
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
     if (await isRegularFile(path.join(muxRoot, relativePath))) {
-      files.push(await readBackupFile(muxRoot, relativePath));
+      files.push(await readBackupFile(muxRoot, relativePath, budget));
     }
   }
 
@@ -280,10 +316,11 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
     muxRoot,
     "agents",
     (relativePath, entry) => entry.isDirectory() || /^agents\/[^/]+\.md$/.test(relativePath),
-    files
+    files,
+    budget
   );
-  await collectDirectory(muxRoot, "skills", () => true, files);
-  await collectDirectory(muxRoot, "memory/global", () => true, files);
+  await collectDirectory(muxRoot, "skills", () => true, files, budget);
+  await collectDirectory(muxRoot, "memory/global", () => true, files, budget);
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -421,25 +458,13 @@ function isPortableReference(value: unknown): boolean {
 }
 
 /**
- * Matches bare `key` for Google-style endpoints and splits camelCase credential names.
- * It deliberately over-matches names like `tokenCount`: failing closed is safer because
- * low-entropy credentials may evade the secret scanner.
+ * No query value leaves the device, whatever it is called. Deciding which parameter names
+ * hold a credential meant guessing at every provider's spelling (`token`, `accessToken`,
+ * `sig`, `X-Amz-Signature`), and each miss published a live credential that the secret
+ * scanner cannot recognise either, since a signature is just hex. Names are kept so the
+ * endpoint stays readable, and restore puts the local value back for a server that already
+ * exists here, exactly as it does for a header.
  */
-function isSensitiveParamName(name: string): boolean {
-  const separated = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
-  return /(?:^|[_-])(?:key|token|secret|password|auth|credential|apikey)(?:$|[_-])/i.test(
-    separated
-  );
-}
-
-function decodeUrlComponent(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
   let url: URL;
   try {
@@ -449,16 +474,14 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
   }
 
   let redacted = false;
-  if (url.username && !isPortableReference(decodeUrlComponent(url.username))) {
-    url.username = REDACTED_BACKUP_VALUE;
-    redacted = true;
+  for (const field of ["username", "password"] as const) {
+    if (url[field]) {
+      url[field] = REDACTED_BACKUP_VALUE;
+      redacted = true;
+    }
   }
-  if (url.password && !isPortableReference(decodeUrlComponent(url.password))) {
-    url.password = REDACTED_BACKUP_VALUE;
-    redacted = true;
-  }
-  for (const [name, value] of url.searchParams) {
-    if (isSensitiveParamName(name) && value && !isPortableReference(value)) {
+  for (const [name, value] of [...url.searchParams]) {
+    if (value) {
       url.searchParams.set(name, REDACTED_BACKUP_VALUE);
       redacted = true;
     }
@@ -838,9 +861,15 @@ export async function readBackupPayload(sourceDir: string): Promise<BackupPayloa
  * which is a corrupt backup rather than a local disk problem. Any other errno still belongs
  * to the local filesystem and keeps its own error.
  */
-async function readManifestEntry(sourceDir: string, relativePath: string): Promise<Buffer> {
+async function readManifestEntry(
+  sourceDir: string,
+  relativePath: string,
+  budget: ByteBudget
+): Promise<Buffer> {
   try {
-    return await fs.readFile(await resolveContainedPath(sourceDir, relativePath));
+    const absolutePath = await resolveContainedPath(sourceDir, relativePath);
+    budget(relativePath, (await fs.stat(absolutePath)).size);
+    return await fs.readFile(absolutePath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(`Backup is missing '${relativePath}'`);
@@ -854,13 +883,14 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
   const manifest = parseManifest(await fs.readFile(manifestPath, "utf-8"));
   const files: BackupFile[] = [];
   const seen = new Set<string>();
+  const budget = createByteBudget();
   for (const manifestFile of manifest.files) {
     // Case-folded, because two entries differing only in case resolve to one file on a
     // case-insensitive filesystem and the second would silently overwrite the first.
     const key = manifestFile.path.toLowerCase();
     if (seen.has(key)) throw new Error(`Duplicate backup path '${manifestFile.path}'`);
     seen.add(key);
-    const content = await readManifestEntry(sourceDir, manifestFile.path);
+    const content = await readManifestEntry(sourceDir, manifestFile.path, budget);
     if (sha256(content) !== manifestFile.sha256) {
       throw new Error(`Backup checksum mismatch for '${manifestFile.path}'`);
     }
