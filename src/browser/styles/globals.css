@@ -2439,7 +2439,15 @@ input[type="checkbox"] {
 /* Electron does not throttle animations merely because its window lost focus.
    Pause persistent status animations while mux is backgrounded to avoid idle CPU burn. */
 html[data-renderer-inactive]
-  :where(.animate-spin, .animate-pulse, .workspace-status-dot-active) {
+  :where(
+    .animate-spin,
+    .animate-pulse,
+    .workspace-status-dot-active,
+    .heartbeat-dot,
+    .heartbeat-trace,
+    .subagent-connector-active::before,
+    .subagent-connector-elbow-active
+  ) {
   animation-play-state: paused !important;
 }
 
