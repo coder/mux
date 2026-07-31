@@ -565,6 +565,17 @@ function applyJsoncEdits(text: string, edits: Array<{ path: jsonc.JSONPath; valu
  * Restore puts the local value back at that exact path, so a field only Mux ignores is not
  * lost from a machine that already has it.
  */
+/**
+ * `McpConfigService.readConfigFile` enumerates `servers` with `Object.entries`, so an array or
+ * a string there becomes runnable servers named by index rather than being ignored. A document
+ * like that cannot be projected field by field, so an export redacts the whole map and a
+ * restore refuses the backup instead of passing a shape the runtime accepts through unexamined.
+ * A falsy value is not this case: the runtime returns no servers at all for it.
+ */
+function isUnsupportedServerMap(value: unknown): boolean {
+  return Boolean(value) && (typeof value !== "object" || Array.isArray(value));
+}
+
 const PORTABLE_SERVER_FIELDS: Record<string, (value: unknown) => boolean> = {
   transport: (value) =>
     value === "stdio" || value === "http" || value === "sse" || value === "auto",
@@ -591,6 +602,7 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
   }
 
   const servers = readOwn(root, "servers");
+  if (isUnsupportedServerMap(servers)) redact(["servers"]);
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
     return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
   }
@@ -779,10 +791,11 @@ async function readManifestIfPresent(
   destinationDir: string
 ): Promise<{ manifest: BackupManifest; raw: string } | null> {
   try {
-    const raw = await fs.readFile(
-      await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE),
-      "utf-8"
-    );
+    const manifestPath = await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE);
+    // Reading this only avoids a no-op commit, so an oversized one is ignored rather than
+    // buffered: the push replaces it either way.
+    if ((await fs.stat(manifestPath)).size > MAX_BACKUP_FILE_BYTES) return null;
+    const raw = await fs.readFile(manifestPath, "utf-8");
     return { manifest: parseManifest(raw), raw };
   } catch {
     return null;
@@ -808,8 +821,11 @@ async function applyExecuteBit(filePath: string, executable: boolean): Promise<v
  * same set: `preferences.json` is generated after collection, and redaction rewrites content.
  * Without it a push could commit a payload that every later Preview rejects as oversized.
  */
-function assertPayloadWithinLimits(files: readonly BackupFile[]): void {
+function assertPayloadWithinLimits(files: readonly BackupFile[], manifestJson: string): void {
+  // Manifest first, matching the order the reader charges them, so a payload that writes
+  // cannot be one that every later read rejects.
   const budget = createByteBudget();
+  budget(BACKUP_MANIFEST_FILE, Buffer.byteLength(manifestJson, "utf-8"));
   for (const file of files) budget(file.path, file.content.length);
 }
 
@@ -819,7 +835,6 @@ export async function writeBackupPayload(
   options: { portable?: boolean } = {}
 ): Promise<void> {
   const portable = options.portable !== false;
-  assertPayloadWithinLimits(payload.files);
   const claimed = new Set<string>();
   for (const file of payload.files) {
     assertAllowedPayloadPath(file.path, { portable });
@@ -834,6 +849,7 @@ export async function writeBackupPayload(
   const previous = await readManifestIfPresent(destinationDir);
   const reusable = previous && sameManifestContent(previous.manifest, payload.manifest);
   const manifestJson = reusable ? previous.raw : `${JSON.stringify(payload.manifest, null, 2)}\n`;
+  assertPayloadWithinLimits(payload.files, manifestJson);
 
   await fs.rm(destinationDir, { recursive: true, force: true });
   await fs.mkdir(destinationDir, { recursive: true });
@@ -1085,6 +1101,13 @@ function readLocalServerCommands(content: string): Map<string, ServerCommand> {
 function readServerCommands(content: string): Map<string, ServerCommand> {
   const commands = new Map<string, ServerCommand>();
   const servers = parseJsoncObject(content, "mcp.jsonc").servers;
+  if (isUnsupportedServerMap(servers)) {
+    throw new BackupInvalidPayloadError(
+      new Error(
+        "Cannot restore: the backup's mcp.jsonc lists servers as something other than an object"
+      )
+    );
+  }
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) return commands;
   for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
     const entry = readServerCommand(server);

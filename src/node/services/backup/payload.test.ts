@@ -323,6 +323,48 @@ describe("backup payload", () => {
     expect(((await rejection(readBackupPayload(destination))) as Error).message).toContain(
       "manifest.json' is larger"
     );
+
+    // A push reads the manifest already in the repository to decide whether the commit would
+    // be a no-op, which is another read of a file the repository controls. An oversized one is
+    // ignored rather than buffered, so the reuse it exists for simply does not happen.
+    const reuseDir = path.join(tempDir, "manifest-reuse");
+    const reusePayload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    await writeBackupPayload(reuseDir, reusePayload);
+    const reuseManifest = path.join(reuseDir, "manifest.json");
+    // Trailing whitespace keeps it valid and content-identical, so reuse would keep it as is.
+    await fs.appendFile(reuseManifest, " ".repeat(MAX_BACKUP_FILE_BYTES));
+    await writeBackupPayload(reuseDir, reusePayload);
+    expect((await fs.stat(reuseManifest)).size).toBeLessThan(MAX_BACKUP_FILE_BYTES);
+  });
+
+  it("counts the manifest against the publish budget the reader charges it to", async () => {
+    await write(muxRoot, "AGENTS.md", "small\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    // Only the manifest is oversized here, and a read charges it before any entry, so a write
+    // that ignored it could publish a payload every later Preview rejects.
+    const padded = {
+      ...payload,
+      manifest: {
+        ...payload.manifest,
+        files: [
+          ...payload.manifest.files,
+          { path: `skills/${"a".repeat(MAX_BACKUP_FILE_BYTES)}.md`, sha256: "0".repeat(64) },
+        ],
+      },
+    };
+
+    const rejected = await rejection(
+      writeBackupPayload(path.join(tempDir, "padded-manifest"), padded)
+    );
+    expect((rejected as Error).message).toContain("'manifest.json' is larger");
   });
 
   it("refuses to publish generated content that exceeds the limits", async () => {
@@ -398,6 +440,36 @@ describe("backup payload", () => {
     expect(jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8"))).toEqual(
       jsonc.parse(localMcp)
     );
+  });
+
+  it("redacts a servers map that is not an object, and refuses to restore one", async () => {
+    // `McpConfigService.readConfigFile` calls `Object.entries` on this, so an array element
+    // is a runnable stdio command named `0` rather than a value the runtime ignores.
+    await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: ["npx tool --token hunter2"] }));
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    expect(payloadFileText(payload, "mcp.jsonc")).not.toContain("hunter2");
+    expect(payload.redactions).toEqual(["servers"]);
+
+    const tampered: typeof payload = {
+      ...payload,
+      files: payload.files.map((file) =>
+        file.path === "mcp.jsonc"
+          ? {
+              ...file,
+              content: Buffer.from(JSON.stringify({ servers: ["npx malicious"] }), "utf-8"),
+            }
+          : file
+      ),
+    };
+    const refused = await rejection(restoreBackupPayload({ muxRoot, payload: tampered }));
+    expect((refused as { code?: string }).code).toBe("INVALID_BACKUP");
+    // The refusal has to come before any write, or the command reaches disk anyway.
+    expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).not.toContain("malicious");
   });
 
   it("reports a corrupt backup as an invalid backup rather than an IO failure", async () => {
