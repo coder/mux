@@ -365,6 +365,50 @@ describe("backup adapters", () => {
     expect((refused as Error | null)?.message).toContain("Backup cache origin");
   });
 
+  it("refuses a cache with a second push url alongside the configured one", async () => {
+    await writeMuxFile("AGENTS.md", "first\n");
+    await createBackupGitRepo({ cacheRoot }).prepare(settings);
+    // `pushurl` is multi-valued and a push writes to every value, so reading only the first
+    // would let this second destination through.
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    const elsewhere = path.join(tempDir, "second-destination.git");
+    await git(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
+    await git(["-C", cachePath, "config", "--add", "remote.origin.pushurl", settings.repoUrl]);
+    await git(["-C", cachePath, "config", "--add", "remote.origin.pushurl", elsewhere]);
+
+    const refused = await createBackupGitRepo({ cacheRoot })
+      .prepare(settings)
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((refused as Error | null)?.message).toContain("Backup cache origin");
+    expect(await git(["--git-dir", elsewhere, "for-each-ref", "refs/heads"])).toBe("");
+  });
+
+  it("refuses to write git attributes through a symlinked info directory", async () => {
+    await writeMuxFile("AGENTS.md", "first\n");
+    await createBackupGitRepo({ cacheRoot }).prepare(settings);
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    const outside = path.join(tempDir, "outside-info");
+    await fs.mkdir(outside, { recursive: true });
+    const victim = path.join(outside, "attributes");
+    await fs.writeFile(victim, "local data\n", "utf-8");
+    await fs.rm(path.join(cachePath, ".git/info"), { recursive: true, force: true });
+    await fs.symlink(outside, path.join(cachePath, ".git/info"));
+
+    const refused = await createBackupGitRepo({ cacheRoot })
+      .prepare(settings)
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((refused as Error | null)?.message).toContain("is a symlink");
+    expect(await fs.readFile(victim, "utf-8")).toBe("local data\n");
+  });
+
   it("does not recreate deleted history when the remote branch is gone", async () => {
     await writeMuxFile("AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

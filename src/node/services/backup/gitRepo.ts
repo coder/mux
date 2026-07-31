@@ -207,9 +207,29 @@ export class BackupRepoCache {
     for (const [key, value] of VERBATIM_CONTENT_CONFIG) {
       await this.localGit(["config", key, value]);
     }
-    const infoDir = path.join(this.cachePath, ".git", "info");
+    // Every component is checked, and the file is opened without following a final link,
+    // because this writes to a fixed path inside a directory that other processes can reach:
+    // a link left at `.git`, `.git/info`, or the file itself would otherwise redirect the
+    // write and truncate something outside the cache.
+    const gitDir = path.join(this.cachePath, ".git");
+    await assertNotSymlink(gitDir);
+    const infoDir = path.join(gitDir, "info");
+    await assertNotSymlink(infoDir);
     await fs.mkdir(infoDir, { recursive: true });
-    await fs.writeFile(path.join(infoDir, "attributes"), VERBATIM_ATTRIBUTES, "utf-8");
+    const attributesPath = path.join(infoDir, "attributes");
+    await assertNotSymlink(attributesPath);
+    const handle = await fs.open(
+      attributesPath,
+      fs.constants.O_WRONLY |
+        fs.constants.O_CREAT |
+        fs.constants.O_TRUNC |
+        (fs.constants.O_NOFOLLOW ?? 0)
+    );
+    try {
+      await handle.writeFile(VERBATIM_ATTRIBUTES, "utf-8");
+    } finally {
+      await handle.close();
+    }
   }
 
   private async hasOriginRemote(): Promise<boolean> {
@@ -297,13 +317,20 @@ export class BackupRepoCache {
       throw new BackupOriginMismatchError(actualOrigin, this.options.repoUrl);
     }
     // `remote.origin.pushurl` overrides the url for pushes only, so the url just checked is not
-    // necessarily where a backup lands. Checking both means the settings a user confirmed name
-    // the repository this cache reads from and the one it writes to.
-    const pushOrigin = (
-      await this.localGit(["remote", "get-url", "--push", "origin"])
-    ).stdout.trim();
-    if (pushOrigin !== this.options.repoUrl) {
-      throw new BackupOriginMismatchError(pushOrigin, this.options.repoUrl);
+    // necessarily where a backup lands. `--all` because the key is multi-valued and a push
+    // writes to every value, so reading one would let a second destination through.
+    const pushUrls = (
+      await this.localGit(["remote", "get-url", "--push", "--all", "origin"])
+    ).stdout
+      .split(/\r?\n/)
+      .map((url) => url.trim())
+      .filter(Boolean);
+    const unexpected = pushUrls.find((url) => url !== this.options.repoUrl);
+    if (unexpected !== undefined) {
+      throw new BackupOriginMismatchError(unexpected, this.options.repoUrl);
+    }
+    if (pushUrls.length !== 1) {
+      throw new BackupOriginMismatchError(pushUrls.join(", "), this.options.repoUrl);
     }
   }
 
