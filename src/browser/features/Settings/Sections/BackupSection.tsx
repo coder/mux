@@ -22,6 +22,7 @@ type BackupSuccessData<Route extends Exclude<BackupRoute, "getSettings">> = Extr
 >["data"];
 type BackupValidation = BackupSuccessData<"validate">;
 type BackupPreview = BackupSuccessData<"preview">;
+type BackupCommandApproval = BackupPreview["commandApprovals"][number];
 type BackupOperationError = Extract<BackupRouteOutput<"push">, { success: false }>["error"];
 
 const BACKUP_SHORTCUTS = [
@@ -124,6 +125,8 @@ export function BackupSection() {
   const [preview, setPreview] = useState<BackupPreview | null>(null);
   const [overrideSecretScan, setOverrideSecretScan] = useState(false);
   const [secretScanBlocked, setSecretScanBlocked] = useState(false);
+  const [commandApprovals, setCommandApprovals] = useState<BackupCommandApproval[]>([]);
+  const [approveCommands, setApproveCommands] = useState(false);
   const [restoreConfirmationOpen, setRestoreConfirmationOpen] = useState(false);
 
   const isDirty =
@@ -276,6 +279,14 @@ export function BackupSection() {
       }
       setPreview(result.data);
       setSecretScanBlocked(false);
+      const nextApprovals = result.data.commandApprovals;
+      // An approval only covers the exact command text the user read, so a changed list
+      // has to be read again.
+      const sameCommands =
+        nextApprovals.length === commandApprovals.length &&
+        nextApprovals.every((approval, index) => commandApprovals[index]?.token === approval.token);
+      setCommandApprovals(nextApprovals);
+      if (!sameCommands) setApproveCommands(false);
       setStatusMessage("Preview refreshed.");
     } catch (error) {
       setActionError(getErrorMessage(error));
@@ -320,15 +331,23 @@ export function BackupSection() {
     setStatusMessage(null);
 
     try {
-      const result = await api.backup.restore(savedDraft);
+      const result = await api.backup.restore({
+        ...savedDraft,
+        approvedCommandTokens: approveCommands ? commandApprovals.map((item) => item.token) : [],
+      });
       if (!result.success) {
         setActionError(getOperationErrorMessage(result.error));
         setRestoreConfirmationOpen(false);
+        // The backup changed its commands since the preview, so the approval no longer
+        // covers what would be written and the user has to read the new text.
+        if (result.error.code === "COMMAND_APPROVAL_REQUIRED") setApproveCommands(false);
         return;
       }
       setPreview(null);
       setOverrideSecretScan(false);
       setSecretScanBlocked(false);
+      setCommandApprovals([]);
+      setApproveCommands(false);
       setStatusMessage(
         `Restored ${describeRestoredFiles(result.data.changedFiles.length)}. Safety snapshot: ${result.data.snapshotPath}`
       );
@@ -356,7 +375,7 @@ export function BackupSection() {
     toggleOverride: () => {
       // Mirrors the checkbox's own render condition so the shortcut is never advertised
       // while the control is hidden, and never inert while it is visible.
-      if (!busy && (preview || secretScanBlocked)) {
+      if (!busy && secretScanBlocked) {
         setOverrideSecretScan((current) => !current);
       }
     },
@@ -567,7 +586,7 @@ export function BackupSection() {
         )}
       </section>
 
-      {preview || secretScanBlocked ? (
+      {secretScanBlocked ? (
         <div className="border-border-light rounded-md border p-3">
           <label className="flex items-start gap-2">
             <Checkbox
@@ -617,6 +636,36 @@ export function BackupSection() {
           Restore
         </Button>
       </section>
+
+      {commandApprovals.length > 0 ? (
+        <div className="border-border-light rounded-md border p-3">
+          <label className="flex items-start gap-2">
+            <Checkbox
+              checked={approveCommands}
+              onCheckedChange={(checked) => setApproveCommands(checked === true)}
+              disabled={busy}
+              aria-label="Approve MCP command changes"
+            />
+            <span className="min-w-0">
+              <span className="text-foreground block text-xs font-medium">
+                Approve the listed executable MCP command changes
+              </span>
+              <span className="text-muted mt-0.5 block text-xs">
+                Restoring writes these commands, and Mux runs them when the server starts. Restore
+                is blocked until you approve them.
+              </span>
+              <ul className="mt-2 space-y-1.5">
+                {commandApprovals.map((approval) => (
+                  <li key={approval.token} className="min-w-0 text-xs">
+                    <span className="text-muted block break-all">{approval.path}</span>
+                    <code className="text-foreground block break-all">{approval.command}</code>
+                  </li>
+                ))}
+              </ul>
+            </span>
+          </label>
+        </div>
+      ) : null}
 
       <ConfirmationModal
         isOpen={restoreConfirmationOpen}

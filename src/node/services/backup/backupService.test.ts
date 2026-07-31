@@ -61,7 +61,8 @@ function createGitRepo(overrides: Partial<BackupGitRepo> = {}): BackupGitRepo {
 function createPayload(overrides: Partial<BackupPayload> = {}): BackupPayload {
   return {
     exportTo: () => Promise.resolve({ redactions: [], secretFiles: [] }),
-    previewRestore: () => Promise.resolve({ changes: [], localOnlyFiles: [] }),
+    previewRestore: () =>
+      Promise.resolve({ changes: [], localOnlyFiles: [], commandApprovals: [] }),
     validateRestore: () => Promise.resolve(),
     writeSafetySnapshot: () => Promise.resolve(),
     restore: () => Promise.resolve({ changedFiles: [], localOnlyFiles: [] }),
@@ -137,6 +138,7 @@ describe("BackupService", () => {
           return Promise.resolve({
             changes: [{ path: "preferences.json", status: "M" }],
             localOnlyFiles: [],
+            commandApprovals: [],
           });
         },
         exportTo: () => {

@@ -13,6 +13,8 @@ import { BackupRepoCache } from "./gitRepo";
 import {
   backupPayloadExists,
   resolveContainedPath,
+  assertBackupCommandsApproved,
+  collectMcpCommandApprovals,
   resolveRestoredContent,
   collectAllowlistedFiles,
   createBackupPayload,
@@ -179,7 +181,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       // A repository with no backup yet is a normal first-run state, not an error:
       // nothing would be restored, and every local file is local-only.
       if (!(await backupPayloadExists(sourceDir))) {
-        return { changes: [], localOnlyFiles: [...local.keys()].sort() };
+        return { changes: [], localOnlyFiles: [...local.keys()].sort(), commandApprovals: [] };
       }
 
       const payload = await readBackupPayload(sourceDir);
@@ -212,6 +214,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       return {
         changes: changes.sort((a, b) => a.path.localeCompare(b.path)),
         localOnlyFiles: [...local.keys()].filter((file) => !backedUp.has(file)).sort(),
+        commandApprovals: await collectMcpCommandApprovals(muxRoot, payload.files),
       };
     },
 
@@ -226,7 +229,11 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
           `No Mux backup found in '${validateOptions.managedPath}' on this branch`
         );
       }
-      await readBackupPayload(sourceDir);
+      const payload = await readBackupPayload(sourceDir);
+      assertBackupCommandsApproved(
+        await collectMcpCommandApprovals(muxRoot, payload.files),
+        validateOptions.approvedCommandTokens
+      );
     },
 
     async writeSafetySnapshot(snapshotRoot) {
@@ -246,6 +253,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
         // The full local preferences, not the exportable projection: the merge result
         // replaces the stored object, so a projection here would drop machine-local keys.
         currentPreferences: localPreferences(),
+        approvedCommandTokens: restoreOptions.approvedCommandTokens,
       });
       await options.config.editConfig((current) => ({
         ...current,

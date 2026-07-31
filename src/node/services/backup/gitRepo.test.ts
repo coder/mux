@@ -149,4 +149,39 @@ describe("BackupRepoCache", () => {
       expect(error).toBeInstanceOf(BackupNonFastForwardError);
     }
   });
+
+  it("rejects a push when the remote branch disappears after the drift check", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "initial\n");
+    if ((await repo.stageAndCommit("mux", "Initial backup")) === null) {
+      throw new Error("Expected the initial commit");
+    }
+    await repo.push();
+
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "local update\n");
+    if ((await repo.stageAndCommit("mux", "Local update")) === null) {
+      throw new Error("Expected the local update commit");
+    }
+
+    // Deleting the branch only after the drift check passes leaves the exact window the
+    // lease closes: an ordinary push would recreate the branch with the deleted history.
+    const originalAssert = repo.assertRemoteUnchanged.bind(repo);
+    repo.assertRemoteUnchanged = async () => {
+      await originalAssert();
+      await git(["-C", originPath, "update-ref", "-d", "refs/heads/main"]);
+    };
+
+    try {
+      await repo.push();
+      throw new Error("Expected the lease to reject the push");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BackupNonFastForwardError);
+    }
+    expect(await git(["-C", originPath, "for-each-ref", "refs/heads/main"])).toBe("");
+  });
 });

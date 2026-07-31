@@ -7,6 +7,7 @@ import {
   UserPreferencesSchema,
   type UserPreferences,
 } from "@/common/config/schemas/userPreferences";
+import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
@@ -87,6 +88,23 @@ export interface RestoreBackupPayloadOptions {
   muxRoot: string;
   payload: BackupPayload;
   currentPreferences?: UserPreferences;
+  approvedCommandTokens?: readonly string[];
+}
+
+export class BackupCommandApprovalRequiredError extends Error {
+  readonly code = "COMMAND_APPROVAL_REQUIRED";
+
+  constructor(readonly approvals: readonly BackupCommandApproval[]) {
+    super(
+      "This backup would replace executable MCP commands. Review and approve them before restoring."
+    );
+    this.name = "BackupCommandApprovalRequiredError";
+  }
+
+  /** The paths the UI lists, matching how `SECRET_DETECTED` reports blocked files. */
+  get files(): string[] {
+    return this.approvals.map((approval) => `${approval.path}: ${approval.command}`);
+  }
 }
 
 export interface RestoreBackupPayloadResult {
@@ -854,6 +872,82 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
   return file.path === "mcp.jsonc" ? await restoreMcpFile(muxRoot, file.content) : file.content;
 }
 
+/**
+ * A stdio server is either a bare command string or an object carrying `command`
+ * (src/common/types/mcp.ts), and both forms are executed.
+ */
+function readServerCommand(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const command = (value as Record<string, unknown>).command;
+  return typeof command === "string" ? command : undefined;
+}
+
+function readServerCommands(content: string): Map<string, string> {
+  const commands = new Map<string, string>();
+  let servers: unknown;
+  try {
+    servers = parseJsoncObject(content, "mcp.jsonc").servers;
+  } catch {
+    // A malformed file yields no commands, so every incoming one counts as new.
+    return commands;
+  }
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return commands;
+  for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
+    const command = readServerCommand(server);
+    if (command !== undefined) commands.set(name, command);
+  }
+  return commands;
+}
+
+/** Binds an approval to the exact command text the user read. */
+export function backupCommandApprovalToken(serverPath: string, command: string): string {
+  return sha256(Buffer.from(`${serverPath}\0${command}`, "utf-8"));
+}
+
+/**
+ * MCP commands a restore would introduce or change. Those strings reach `runtime.exec()`
+ * when the server next starts, so a repository the user does not fully control must not
+ * be able to change them without the user reading the exact text first. Commands that are
+ * unchanged, or whose whole scalar the redaction rehydration kept locally authoritative,
+ * produce no entry because they are already equal to the local value here.
+ */
+export async function collectMcpCommandApprovals(
+  muxRoot: string,
+  files: readonly BackupFile[]
+): Promise<BackupCommandApproval[]> {
+  const file = files.find((candidate) => candidate.path === "mcp.jsonc");
+  if (!file) return [];
+
+  const restored = await resolveRestoredContent(muxRoot, file);
+  const incoming = readServerCommands(restored.toString("utf-8"));
+  const localPath = path.join(muxRoot, "mcp.jsonc");
+  const local = (await fileExists(localPath))
+    ? readServerCommands(await fs.readFile(localPath, "utf-8"))
+    : new Map<string, string>();
+
+  const approvals: BackupCommandApproval[] = [];
+  for (const [name, command] of incoming) {
+    if (local.get(name) === command) continue;
+    const serverPath = `servers.${name}.command`;
+    approvals.push({
+      path: serverPath,
+      command,
+      token: backupCommandApprovalToken(serverPath, command),
+    });
+  }
+  return approvals;
+}
+
+export function assertBackupCommandsApproved(
+  approvals: readonly BackupCommandApproval[],
+  approvedTokens: readonly string[] | null | undefined
+): void {
+  const approved = new Set(approvedTokens ?? []);
+  const unapproved = approvals.filter((approval) => !approved.has(approval.token));
+  if (unapproved.length > 0) throw new BackupCommandApprovalRequiredError(unapproved);
+}
+
 async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {
   const backupText = content.toString("utf-8");
   // Without a marker there is nothing to rehydrate, so the local file is not consulted.
@@ -888,6 +982,13 @@ export async function restoreBackupPayload(
       .map((file) => file.path)
   );
   let preferences = options.currentPreferences ?? {};
+
+  // Recomputed here rather than trusted from the preview, so an approval cannot authorize
+  // a command the repository changed between the preview and this restore.
+  assertBackupCommandsApproved(
+    await collectMcpCommandApprovals(options.muxRoot, options.payload.files),
+    options.approvedCommandTokens
+  );
 
   // Resolve every destination and its content before the first write, so a path
   // rejected late cannot leave a half-restored install behind.

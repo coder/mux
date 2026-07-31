@@ -268,6 +268,11 @@ export class BackupRepoCache {
         "-C",
         this.cachePath,
         "push",
+        // The lease makes the expectation atomic with the update. assertRemoteUnchanged
+        // alone leaves a window where another client can delete the branch, which an
+        // ordinary push would silently recreate with the history that client discarded.
+        // An empty expected value means the ref must not exist yet.
+        `--force-with-lease=refs/heads/${this.options.branch}:${this.baseRemoteCommit ?? ""}`,
         "origin",
         `HEAD:refs/heads/${this.options.branch}`,
       ]);

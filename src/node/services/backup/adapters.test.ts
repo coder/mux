@@ -430,6 +430,38 @@ describe("backup adapters", () => {
     expect(preview.localOnlyFiles).toEqual(["agents/local-only.md"]);
   });
 
+  it("surfaces MCP command approvals in the preview and blocks validation without them", async () => {
+    await writeMuxFile("mcp.jsonc", '{ "servers": { "notes": { "command": "npx notes-mcp" } } }\n');
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+    await writeMuxFile("mcp.jsonc", '{ "servers": { "notes": { "command": "npx other" } } }\n');
+
+    const preview = await payload.previewRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+    expect(preview.commandApprovals.map((approval) => approval.command)).toEqual(["npx notes-mcp"]);
+
+    try {
+      await payload.validateRestore({
+        repositoryRoot: repository.rootDir,
+        managedPath: settings.path,
+      });
+      throw new Error("Expected the missing command approval to block validation");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toMatch(/approve/i);
+    }
+    await payload.validateRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+      approvedCommandTokens: preview.commandApprovals.map((approval) => approval.token),
+    });
+  });
+
   it("restores files and persists merged preferences through config", async () => {
     config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
     await writeMuxFile("AGENTS.md", "backed up\n");

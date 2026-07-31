@@ -6,6 +6,7 @@ import { Err, Ok } from "@/common/types/result";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { isValidBackupPath } from "@/common/orpc/schemas/backup";
 import type {
+  BackupCommandApproval,
   BackupCredentialKind,
   BackupFileChange,
   BackupOperationError,
@@ -44,15 +45,21 @@ export interface BackupPayload {
     repositoryRoot: string;
     managedPath: string;
   }): Promise<{ redactions: string[]; secretFiles: string[] }>;
-  previewRestore(options: {
+  previewRestore(options: { repositoryRoot: string; managedPath: string }): Promise<{
+    changes: BackupFileChange[];
+    localOnlyFiles: string[];
+    commandApprovals: BackupCommandApproval[];
+  }>;
+  validateRestore(options: {
     repositoryRoot: string;
     managedPath: string;
-  }): Promise<{ changes: BackupFileChange[]; localOnlyFiles: string[] }>;
-  validateRestore(options: { repositoryRoot: string; managedPath: string }): Promise<void>;
+    approvedCommandTokens?: readonly string[];
+  }): Promise<void>;
   writeSafetySnapshot(snapshotRoot: string): Promise<void>;
   restore(options: {
     repositoryRoot: string;
     managedPath: string;
+    approvedCommandTokens?: readonly string[];
   }): Promise<{ changedFiles: string[]; localOnlyFiles: string[] }>;
 }
 
@@ -69,6 +76,7 @@ const BACKUP_ERROR_CODES = new Set<BackupErrorCode>([
   "REPOSITORY_CHANGED",
   "INVALID_BACKUP",
   "SECRET_DETECTED",
+  "COMMAND_APPROVAL_REQUIRED",
   "IO_ERROR",
   "GIT_ERROR",
 ]);
@@ -167,6 +175,7 @@ export class BackupService {
         restoreChanges: BackupFileChange[];
         localOnlyFiles: string[];
         redactions: string[];
+        commandApprovals: BackupCommandApproval[];
       },
       BackupOperationError
     >
@@ -191,6 +200,7 @@ export class BackupService {
           restoreChanges: restorePreview.changes,
           localOnlyFiles: restorePreview.localOnlyFiles,
           redactions: exported.redactions,
+          commandApprovals: restorePreview.commandApprovals,
         });
       } catch (error) {
         return Err(toOperationError(error));
@@ -245,7 +255,8 @@ export class BackupService {
   }
 
   async restore(
-    settings: SettingsBackupInput
+    settings: SettingsBackupInput,
+    options: { approvedCommandTokens?: readonly string[] } = {}
   ): Promise<
     Result<
       { commit: string; snapshotPath: string; changedFiles: string[]; localOnlyFiles: string[] },
@@ -259,15 +270,19 @@ export class BackupService {
           throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
         }
 
+        // Before the snapshot, so a restore blocked on command approval does not leave an
+        // unredacted copy of the local settings on disk.
         await this.dependencies.payload.validateRestore({
           repositoryRoot: repository.rootDir,
           managedPath: settings.path,
+          approvedCommandTokens: options.approvedCommandTokens,
         });
         const snapshotPath = await this.createSnapshotPath();
         await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
         const restored = await this.dependencies.payload.restore({
           repositoryRoot: repository.rootDir,
           managedPath: settings.path,
+          approvedCommandTokens: options.approvedCommandTokens,
         });
         await this.persistSettings(settings, { lastRestoredCommit: repository.remoteCommit });
         return Ok({

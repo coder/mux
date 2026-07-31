@@ -41,11 +41,23 @@ export const BackupOperationErrorSchema = z.object({
     "REPOSITORY_CHANGED",
     "INVALID_BACKUP",
     "SECRET_DETECTED",
+    "COMMAND_APPROVAL_REQUIRED",
     "IO_ERROR",
     "GIT_ERROR",
   ]),
   message: z.string(),
   files: z.array(z.string()).nullish(),
+});
+
+/**
+ * An MCP command a restore would introduce or change. `token` binds the approval to this
+ * exact command text, so an approval cannot carry over to a command the repository
+ * changed after the user read it.
+ */
+export const BackupCommandApprovalSchema = z.object({
+  path: z.string(),
+  command: z.string(),
+  token: z.string(),
 });
 
 export const BackupFileChangeSchema = z.object({
@@ -89,6 +101,7 @@ export const backup = {
         restoreChanges: z.array(BackupFileChangeSchema),
         localOnlyFiles: z.array(z.string()),
         redactions: z.array(z.string()),
+        commandApprovals: z.array(BackupCommandApprovalSchema),
       })
     ),
   },
@@ -106,7 +119,9 @@ export const backup = {
     ),
   },
   restore: {
-    input: SettingsBackupInputSchema,
+    input: SettingsBackupInputSchema.extend({
+      approvedCommandTokens: z.array(z.string()).nullish(),
+    }),
     output: BackupResult(
       z.object({
         commit: z.string(),
@@ -122,4 +137,5 @@ export type SettingsBackup = z.infer<typeof SettingsBackupSchema>;
 export type SettingsBackupInput = z.infer<typeof SettingsBackupInputSchema>;
 export type BackupOperationError = z.infer<typeof BackupOperationErrorSchema>;
 export type BackupFileChange = z.infer<typeof BackupFileChangeSchema>;
+export type BackupCommandApproval = z.infer<typeof BackupCommandApprovalSchema>;
 export type BackupCredentialKind = z.infer<typeof BackupCredentialKindSchema>;

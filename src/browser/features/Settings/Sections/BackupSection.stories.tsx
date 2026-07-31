@@ -40,6 +40,13 @@ function renderBackupSection() {
             ],
             localOnlyFiles: ["agents/local-only.md"],
             redactions: ["mcp.jsonc: github.headers.Authorization"],
+            commandApprovals: [
+              {
+                path: "servers.notes.command",
+                command: "npx -y @modelcontextprotocol/server-filesystem /home/dev/notes",
+                token: "8d2e4787fcc88a36cbd9067997213f1a791ec3999af6e9bf2259f6f3a1a0337e",
+              },
+            ],
           },
         })
       }

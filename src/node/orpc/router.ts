@@ -6274,7 +6274,12 @@ export const router = (authToken?: string) => {
       restore: t
         .input(schemas.backup.restore.input)
         .output(schemas.backup.restore.output)
-        .handler(({ context, input }) => context.backupService.restore(input)),
+        .handler(({ context, input }) => {
+          const { approvedCommandTokens, ...settings } = input;
+          return context.backupService.restore(settings, {
+            approvedCommandTokens: approvedCommandTokens ?? undefined,
+          });
+        }),
     },
     onePassword: {
       isAvailable: t
