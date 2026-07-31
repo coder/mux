@@ -468,7 +468,7 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
  * so a duplicated header would leave the second credential in the exported file. Redaction
  * cannot be guaranteed complete for such a file, so refuse it instead.
  */
-function assertNoDuplicateKeys(raw: string, fileName: string): void {
+function assertNoDuplicateKeys(tree: jsonc.Node, fileName: string): void {
   const visit = (node: jsonc.Node): void => {
     if (node.type === "object") {
       const names = new Set<string>();
@@ -482,18 +482,31 @@ function assertNoDuplicateKeys(raw: string, fileName: string): void {
     }
     for (const child of node.children ?? []) visit(child);
   };
+  visit(tree);
+}
+
+function parseJsoncObjectWithTree(
+  raw: string,
+  fileName: string
+): { parsed: Record<string, unknown>; tree: jsonc.Node } {
+  const errors: jsonc.ParseError[] = [];
+  const parsed: unknown = jsonc.parse(raw, errors);
   const tree = jsonc.parseTree(raw);
-  if (tree) visit(tree);
+  if (
+    errors.length > 0 ||
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    tree?.type !== "object"
+  ) {
+    throw new Error(`Invalid ${fileName}`);
+  }
+  assertNoDuplicateKeys(tree, fileName);
+  return { parsed: parsed as Record<string, unknown>, tree };
 }
 
 function parseJsoncObject(raw: string, fileName: string): Record<string, unknown> {
-  const errors: jsonc.ParseError[] = [];
-  const parsed: unknown = jsonc.parse(raw, errors);
-  if (errors.length > 0 || !parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Invalid ${fileName}`);
-  }
-  assertNoDuplicateKeys(raw, fileName);
-  return parsed as Record<string, unknown>;
+  return parseJsoncObjectWithTree(raw, fileName).parsed;
 }
 
 const JSONC_EDIT_OPTIONS: jsonc.ModificationOptions = {
@@ -848,9 +861,9 @@ function collectRedactionRestoreEdits(
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
   resolvedServers: ReadonlySet<string> = new Set()
 ): void {
-  // Only the exact paths `resolveRestoredCommands` already wrote, so a mixed entry carrying
-  // both a command and a redacted url or header still rehydrates the rest. A dropped entry
-  // is skipped wholesale, since a nested edit would resurrect what it removed.
+  // Only the paths handled by command or header resolution are skipped, so a mixed entry
+  // can still rehydrate its other redacted values. A dropped entry is skipped wholesale,
+  // since a nested edit would resurrect what it removed.
   if (resolvedServers.has(currentPath.join("\u0000"))) return;
   if (typeof backup === "string" && containsRedaction(backup)) {
     if (local !== undefined) edits.push({ path: currentPath, value: local });
@@ -998,7 +1011,10 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
   // Deliberately not gated on a marker being present: `resolveRestoredHeaders` has to inspect
   // a marker-free backup too, since a bare `{secret: NAME}` header carries no marker yet
   // still resolves against local data.
-  const backup = parseJsoncObject(backupText, "backup mcp.jsonc");
+  const { parsed: backup, tree: backupTree } = parseJsoncObjectWithTree(
+    backupText,
+    "backup mcp.jsonc"
+  );
   const localPath = path.join(muxRoot, "mcp.jsonc");
   let local: Record<string, unknown> = {};
   if (await fileExists(localPath)) {
@@ -1012,7 +1028,7 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
   const resolved = resolveRestoredCommands(backup, local, edits);
-  for (const path of resolveRestoredHeaders(backup, local, backupText, edits)) resolved.add(path);
+  for (const path of resolveRestoredHeaders(backup, local, backupTree, edits)) resolved.add(path);
   collectRedactionRestoreEdits(backup, local, [], edits, resolved);
   return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
 }
@@ -1027,7 +1043,7 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
  * `MCPServerManager` then tries to execute, so the command is removed. That takes the whole
  * entry with it unless the entry is also an HTTP server, which restores on its own.
  *
- * Returns the exact paths written here so the generic redaction walk skips them, leaving a
+ * Returns the exact paths handled here so the generic redaction walk skips them, leaving a
  * mixed entry's other redactions to rehydrate normally.
  */
 function resolveRestoredCommands(
@@ -1083,19 +1099,18 @@ function resolveRestoredCommands(
  * approved. Only header names the backup itself lists are considered, so a restore never
  * introduces a local header the backup did not have.
  *
- * Returns the paths written here so the generic redaction walk leaves them alone.
+ * Returns the paths handled here so the generic redaction walk leaves them alone.
  */
 function resolveRestoredHeaders(
   backup: Record<string, unknown>,
   local: Record<string, unknown>,
-  backupText: string,
+  backupTree: jsonc.Node,
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>
 ): Set<string> {
   const handled = new Set<string>();
   const servers = readRecord(backup.servers);
   if (!servers) return handled;
   const localServers = readRecord(local.servers) ?? {};
-  const tree = jsonc.parseTree(backupText);
 
   for (const [name, entry] of Object.entries(servers)) {
     const rawHeaders = readRecord(entry)?.headers;
@@ -1117,7 +1132,7 @@ function resolveRestoredHeaders(
     // Names come from the document, not the parsed object, because `jsonc.parse` drops a
     // `__proto__` key while the text keeps it. Enumerating the parse result would leave that
     // header, and its marker, untouched in the restored file.
-    const names = headerNamesInText(tree, name);
+    const names = headerNamesInText(backupTree, name);
     const restored: Record<string, unknown> = {};
     for (const headerName of names) {
       if (!hasOwn(localHeaders, headerName)) continue;
