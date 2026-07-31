@@ -236,13 +236,14 @@ export class BackupRepoCache {
    * Drops a remote-tracking ref the remote no longer has, which `--prune` did while the fetch
    * used a wildcard. Without it a cache that still holds the branch from before it was deleted
    * remotely would push that history back, recreating files the user deleted deliberately.
+   * Deleting an absent ref is a no-op, so this runs whether or not the ref is there.
    */
   private async pruneMissingRemoteBranch(): Promise<void> {
-    try {
-      await this.localGit(["update-ref", "-d", `refs/remotes/origin/${this.options.branch}`]);
-    } catch {
-      // Already absent, which is the state this establishes.
-    }
+    // Not caught: `update-ref -d` already succeeds when the ref is absent, so a failure here is
+    // a real one, such as a competing lock. Swallowing it would report the branch as unborn
+    // while `resetHardToRemote` still reads the stale tracking ref and works on the backup the
+    // user deleted.
+    await this.localGit(["update-ref", "-d", `refs/remotes/origin/${this.options.branch}`]);
   }
 
   private async remoteBranchCommit(): Promise<string | null> {
@@ -374,9 +375,16 @@ export class BackupRepoCache {
     return head;
   }
 
+  /**
+   * `-z` because the default porcelain output C-quotes any pathname that is not plain ASCII, so
+   * a skill named `café.md` would be reported to the user with escapes in it, and a filename
+   * containing a literal ` -> ` would be indistinguishable from a rename. With `-z` pathnames
+   * are verbatim and a rename is two NUL-separated fields instead. Not trimmed: a trailing NUL
+   * is the record terminator, and a pathname may legitimately end in whitespace.
+   */
   async porcelainStatus(managedPath?: string): Promise<string> {
-    const args = ["status", "--porcelain", "--untracked-files=all"];
+    const args = ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
     if (managedPath) args.push("--", safeRelativePath(managedPath));
-    return (await this.localGit(args)).stdout.trim();
+    return (await this.localGit(args)).stdout;
   }
 }

@@ -32,19 +32,21 @@ import {
   type BackupFile,
 } from "./payload";
 
+/**
+ * Parses `git status --porcelain=v1 -z`, whose records are NUL-terminated with verbatim
+ * pathnames. A rename or copy spends a second record on its source path, which is consumed
+ * here rather than reported: the destination is what a push writes.
+ */
 function parsePorcelainStatus(output: string): BackupFileChange[] {
-  if (!output) return [];
-  return output
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => {
-      const status = line.slice(0, 2).trim() || "?";
-      const rest = line.slice(3);
-      // Renames are reported as "old -> new"; the destination is what a push writes.
-      const arrow = rest.lastIndexOf(" -> ");
-      return { status, path: arrow === -1 ? rest : rest.slice(arrow + 4) };
-    })
-    .sort((a, b) => a.path.localeCompare(b.path));
+  const records = output.split("\0").filter(Boolean);
+  const changes: BackupFileChange[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? "";
+    const status = record.slice(0, 2).trim() || "?";
+    changes.push({ status, path: record.slice(3) });
+    if (status.startsWith("R") || status.startsWith("C")) index += 1;
+  }
+  return changes.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /**

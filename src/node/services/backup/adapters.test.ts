@@ -682,4 +682,21 @@ describe("backup adapters", () => {
     expect(changes.map((change) => change.path)).toContain("mux/agents/second.md");
     expect(changes.every((change) => !change.path.includes(" -> "))).toBe(true);
   });
+
+  it("reports a non-ASCII path as it is named on disk", async () => {
+    // Git C-quotes this in its default porcelain output, so the preview would show the user
+    // `caf\303\251.md` rather than the file they have.
+    await writeMuxFile("skills/café/SKILL.md", "accented\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+
+    const paths = (await gitRepo.getPushChanges(repository, settings.path)).map(
+      (change) => change.path
+    );
+
+    expect(paths).toContain("mux/skills/café/SKILL.md");
+  });
 });
