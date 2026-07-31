@@ -185,7 +185,7 @@
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.44.1",
     "@typescript-eslint/parser": "^8.44.1",
-    "@typescript/native-preview": "^7.0.0-dev.20251014.1",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "@vitejs/plugin-react": "^4.0.0",
     "autoprefixer": "^10.4.21",
     "babel-jest": "^30.2.0",

@@ -2436,6 +2436,13 @@ input[type="checkbox"] {
   animation: tutorial-pulse 1.5s ease-in-out infinite;
 }
 
+/* Electron does not throttle animations merely because its window lost focus.
+   Pause persistent status animations while mux is backgrounded to avoid idle CPU burn. */
+html[data-renderer-inactive]
+  :where(.animate-spin, .animate-pulse, .workspace-status-dot-active) {
+  animation-play-state: paused !important;
+}
+
 /* Active workspace status dot pulse (animate-pulse style, slightly stronger) */
 .workspace-status-dot-active {
   animation: workspace-status-dot-pulse 1.8s cubic-bezier(0.5, 0, 0.6, 1) infinite;

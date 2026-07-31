@@ -71,7 +71,8 @@ describe("WorkspaceStatusIndicator", () => {
 
     const icon = view.container.querySelector("svg");
     expect(icon).toBeTruthy();
-    expect(icon?.getAttribute("class") ?? "").toContain("animate-spin");
+    expect(icon?.getAttribute("class") ?? "").not.toContain("animate-spin");
+    expect(icon?.parentElement?.classList.contains("animate-spin")).toBe(true);
   });
 
   test("keeps the steady streaming layout free of the transient handoff slot", () => {

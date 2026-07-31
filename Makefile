@@ -78,8 +78,8 @@ include fmt.mk
 .PHONY: ensure-deps rebuild-native mux
 .PHONY: check-eager-imports check-bundle-size check-startup
 
-# Build tools
-TSGO := bun run node_modules/@typescript/native-preview/bin/tsgo.js
+# Use the package binary instead of its internal path so native-preview can change wrappers safely.
+TSGO := bun run tsgo
 
 # Node.js version check
 REQUIRED_NODE_VERSION := 20

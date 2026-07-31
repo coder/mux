@@ -1051,10 +1051,11 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       return null;
     }
 
-    return (
-      (selectedHunkId ? (hunks.find((hunk) => hunk.id === selectedHunkId) ?? null) : null) ??
-      hunks[0]
-    );
+    if (!selectedHunkId) {
+      return hunks[0];
+    }
+
+    return hunks.find((hunk) => hunk.id === selectedHunkId) ?? hunks[0];
   }, [hunks, selectedHunkId]);
 
   useEffect(() => {

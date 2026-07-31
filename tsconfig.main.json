@@ -23,6 +23,9 @@
     "src/common/**/*"
   ],
   "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.testHarness.ts",
     "src/browser/**/*",
     "src/cli/debug/**/*",
     "src/node/builtinWorkflowActions/**/*",

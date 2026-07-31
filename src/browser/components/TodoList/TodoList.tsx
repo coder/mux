@@ -82,7 +82,13 @@ function getStatusIcon(status: TodoItem["status"]): React.ReactNode {
     case "completed":
       return <Check aria-hidden="true" className="h-3 w-3" />;
     case "in_progress":
-      return <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />;
+      return (
+        // Chromium composites transforms on this HTML wrapper; animating the SVG
+        // itself keeps the renderer main thread busy even while mux is otherwise idle.
+        <span className="inline-flex animate-spin">
+          <Loader2 aria-hidden="true" className="h-3 w-3" />
+        </span>
+      );
     case "pending":
     default:
       return <Circle aria-hidden="true" className="h-3 w-3" />;

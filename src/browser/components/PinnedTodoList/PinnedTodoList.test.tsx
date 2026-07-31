@@ -135,6 +135,18 @@ describe("PinnedTodoList", () => {
     expect(renderResult.getByText("Add tests")).toBeTruthy();
   });
 
+  test("spins the HTML wrapper instead of the in-progress SVG", () => {
+    seedWorkspaceState("ws-composited-spinner", { todos: defaultTodos });
+
+    const renderResult = renderPinnedTodoList("ws-composited-spinner");
+    const spinner = renderResult.container.querySelector(".animate-spin");
+    const icon = spinner?.querySelector("svg");
+
+    expect(spinner?.tagName).toBe("SPAN");
+    expect(icon).toBeTruthy();
+    expect(icon?.classList.contains("animate-spin")).toBe(false);
+  });
+
   test("renders nothing when there are no todos", () => {
     seedWorkspaceState("ws-empty", { todos: [] });
 
