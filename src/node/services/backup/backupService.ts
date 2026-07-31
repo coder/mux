@@ -37,7 +37,7 @@ export interface BackupGitRepo {
       message: string;
       expectedRemoteCommit: string | null;
     }
-  ): Promise<{ commit: string; changed: boolean }>;
+  ): Promise<{ commit: string; changed: boolean; credential: BackupCredentialKind }>;
 }
 
 export interface BackupPayload {
@@ -243,9 +243,10 @@ export class BackupService {
           expectedRemoteCommit: repository.remoteCommit,
         });
         await this.persistSettings(settings, { lastPushedCommit: pushed.commit });
+        // The pushing credential, not the one prepare() used: the ladder can fall through
+        // to a later rung when the earlier one can read but not write.
         return Ok({
           ...pushed,
-          credential: repository.credential,
           redactions: exported.redactions,
         });
       } catch (error) {

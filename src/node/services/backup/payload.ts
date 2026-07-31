@@ -1049,8 +1049,10 @@ function resolveRestoredCommands(
     if (localCommand === undefined) {
       // `normalizeEntry` gives a url precedence over a command, so a mixed object is an HTTP
       // server whose command is already ignored. Drop only the command and keep the url,
-      // headers, disabled state, and allowlist that do restore.
-      const hasUrl = isObjectMarker && typeof (entry as Record<string, unknown>).url === "string";
+      // headers, disabled state, and allowlist that do restore. The url must be non-empty
+      // because `normalizeEntry` tests it for truthiness, so `url: ""` is still stdio.
+      const url = isObjectMarker ? (entry as Record<string, unknown>).url : undefined;
+      const hasUrl = typeof url === "string" && url.trim() !== "";
       const removed: jsonc.JSONPath = hasUrl ? ["servers", name, "command"] : ["servers", name];
       edits.push({ path: removed, value: undefined });
       handled.add(removed.join("\u0000"));

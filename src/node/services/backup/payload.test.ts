@@ -429,6 +429,34 @@ describe("backup payload", () => {
     expect(freshMixed?.headers?.Authorization).toBe(REDACTED_BACKUP_VALUE);
   });
 
+  it("drops an unrestorable entry whose url is empty", async () => {
+    // `normalizeEntry` tests the url for truthiness, so `url: ""` is a stdio server and
+    // keeping the entry would leave an enabled server with no command.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      '{ "servers": { "blank": { "command": "npx blank-mcp", "url": "" } } }\n'
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "empty-url");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+
+    const fresh = path.join(tempDir, "empty-url-fresh");
+    await fs.mkdir(fresh, { recursive: true });
+    await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
+    const servers = (
+      jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
+        servers: Record<string, unknown>;
+      }
+    ).servers;
+    expect(Object.keys(servers)).toEqual([]);
+  });
+
   it("puts the local command back whichever shape each side uses", async () => {
     await write(
       muxRoot,

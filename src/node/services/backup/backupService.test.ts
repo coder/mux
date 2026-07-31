@@ -53,7 +53,8 @@ function createGitRepo(overrides: Partial<BackupGitRepo> = {}): BackupGitRepo {
     validate: () => Promise.resolve({ credential: "ssh", empty: false }),
     prepare: () => Promise.resolve(createRepository()),
     getPushChanges: () => Promise.resolve([]),
-    commitAndPush: () => Promise.resolve({ commit: "pushed-commit", changed: true }),
+    commitAndPush: () =>
+      Promise.resolve({ commit: "pushed-commit", changed: true, credential: "gh" as const }),
     ...overrides,
   };
 }
@@ -186,7 +187,11 @@ describe("BackupService", () => {
       gitRepo: createGitRepo({
         commitAndPush: () => {
           commitAttempted = true;
-          return Promise.resolve({ commit: "unexpected", changed: true });
+          return Promise.resolve({
+            commit: "unexpected",
+            changed: true,
+            credential: "gh" as const,
+          });
         },
       }),
       payload: createPayload({

@@ -102,9 +102,18 @@ export function createBackupGitRepo(options: {
         // "unchanged" without checking would persist a commit that no longer describes
         // the repository, and this path never reaches the check inside push().
         await cache.assertRemoteUnchanged();
-        return { commit: commitOptions.expectedRemoteCommit ?? "", changed: false };
+        return {
+          commit: commitOptions.expectedRemoteCommit ?? "",
+          changed: false,
+          credential: cache.credential ?? repository.credential,
+        };
       }
-      return { commit: await cache.push(), changed: true };
+      const commitSha = await cache.push();
+      return {
+        commit: commitSha,
+        changed: true,
+        credential: cache.credential ?? repository.credential,
+      };
     },
   };
 }
