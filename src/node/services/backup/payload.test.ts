@@ -368,14 +368,61 @@ describe("backup payload", () => {
     expect(restored).toContain("npx server --api-key sk-live-object");
     expect(restored).toContain("env ACME_PASSWORD=hunter2 acme-mcp");
 
-    // On a machine with no local command there is nothing to run and nothing to approve.
+    // With no local command there is nothing to put back, and leaving the marker would make
+    // `normalizeEntry` treat it as an enabled command that MCPServerManager then executes,
+    // so those entries are dropped rather than left inert-looking.
     const fresh = path.join(tempDir, "fresh-no-command");
     await fs.mkdir(fresh, { recursive: true });
     expect(await collectMcpCommandApprovals(fresh, readBack.files)).toEqual([]);
     await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
-    expect(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")).toContain(
-      REDACTED_BACKUP_VALUE
+    const freshText = await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8");
+    const freshMcp = jsonc.parse(freshText) as { servers: Record<string, unknown> };
+    expect(Object.keys(freshMcp.servers)).toEqual(["remote"]);
+  });
+
+  it("puts the local command back whichever shape each side uses", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "objectHere": { "command": "npx object-mcp" },
+    "stringHere": "npx string-mcp"
+  }
+}
+`
     );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "shape-swap");
+    await writeBackupPayload(destination, payload);
+
+    // The same servers, with the shapes swapped relative to the backup.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "objectHere": "npx object-mcp",
+    "stringHere": { "command": "npx string-mcp" }
+  }
+}
+`
+    );
+
+    const readBack = await readBackupPayload(destination);
+    // Rehydration resolves to the local text, so nothing is a repository-authored change.
+    expect(await collectMcpCommandApprovals(muxRoot, readBack.files)).toEqual([]);
+    await restoreBackupPayload({ muxRoot, payload: readBack });
+
+    const restored = jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")) as {
+      servers: { objectHere: { command: string }; stringHere: string };
+    };
+    expect(restored.servers.objectHere.command).toBe("npx object-mcp");
+    expect(restored.servers.stringHere).toBe("npx string-mcp");
   });
 
   it("blocks a restore that would change an executable MCP command until it is approved", async () => {

@@ -838,8 +838,15 @@ function collectRedactionRestoreEdits(
   backup: unknown,
   local: unknown,
   currentPath: jsonc.JSONPath,
-  edits: Array<{ path: jsonc.JSONPath; value: unknown }>
+  edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
+  resolvedServers: ReadonlySet<string> = new Set()
 ): void {
+  // `resolveRestoredCommands` already emitted an edit for this server, and for a dropped
+  // one a nested edit would resurrect the entry it removed.
+  if (currentPath.length === 2 && currentPath[0] === "servers") {
+    const name = currentPath[1];
+    if (typeof name === "string" && resolvedServers.has(name)) return;
+  }
   if (typeof backup === "string" && containsRedaction(backup)) {
     if (local !== undefined) edits.push({ path: currentPath, value: local });
     return;
@@ -847,7 +854,13 @@ function collectRedactionRestoreEdits(
   if (Array.isArray(backup)) {
     const localArray = Array.isArray(local) ? local : [];
     backup.forEach((value, index) =>
-      collectRedactionRestoreEdits(value, localArray[index], [...currentPath, index], edits)
+      collectRedactionRestoreEdits(
+        value,
+        localArray[index],
+        [...currentPath, index],
+        edits,
+        resolvedServers
+      )
     );
     return;
   }
@@ -857,7 +870,13 @@ function collectRedactionRestoreEdits(
         ? (local as Record<string, unknown>)
         : {};
     for (const [key, value] of Object.entries(backup as Record<string, unknown>)) {
-      collectRedactionRestoreEdits(value, localRecord[key], [...currentPath, key], edits);
+      collectRedactionRestoreEdits(
+        value,
+        localRecord[key],
+        [...currentPath, key],
+        edits,
+        resolvedServers
+      );
     }
   }
 }
@@ -987,8 +1006,69 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
     }
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
-  collectRedactionRestoreEdits(backup, local, [], edits);
+  const resolvedServers = resolveRestoredCommands(backup, local, edits);
+  collectRedactionRestoreEdits(backup, local, [], edits, resolvedServers);
   return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
+}
+
+/**
+ * A command is never exported, so every stdio entry in a backup holds the marker. The local
+ * command is put back regardless of which supported shape either side uses, since a server
+ * stored as an object here can be a bare string there and vice versa.
+ *
+ * With no local command there is nothing to put back, and leaving the marker would make
+ * `McpConfigService.normalizeEntry` treat it as an enabled command that
+ * `MCPServerManager` then tries to execute, so the entry is dropped instead.
+ *
+ * Returns the server names handled here, so the generic redaction walk skips them.
+ */
+function resolveRestoredCommands(
+  backup: Record<string, unknown>,
+  local: Record<string, unknown>,
+  edits: Array<{ path: jsonc.JSONPath; value: unknown }>
+): Set<string> {
+  const handled = new Set<string>();
+  const servers = backup.servers;
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return handled;
+  const localServers =
+    local.servers && typeof local.servers === "object" && !Array.isArray(local.servers)
+      ? (local.servers as Record<string, unknown>)
+      : {};
+
+  for (const [name, entry] of Object.entries(servers as Record<string, unknown>)) {
+    const isBareMarker = entry === REDACTED_BACKUP_VALUE;
+    const isObjectMarker =
+      !isBareMarker &&
+      !!entry &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      (entry as Record<string, unknown>).command === REDACTED_BACKUP_VALUE;
+    if (!isBareMarker && !isObjectMarker) continue;
+
+    handled.add(name);
+    const localCommand = readAnyServerCommand(localServers[name]);
+    if (localCommand === undefined) {
+      edits.push({ path: ["servers", name], value: undefined });
+      continue;
+    }
+    edits.push({
+      path: isBareMarker ? ["servers", name] : ["servers", name, "command"],
+      value: localCommand,
+    });
+  }
+  return handled;
+}
+
+/** The command text of either supported shape, enabled or not, ignoring the marker. */
+function readAnyServerCommand(value: unknown): string | undefined {
+  const command =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>).command
+        : undefined;
+  if (typeof command !== "string" || command === REDACTED_BACKUP_VALUE) return undefined;
+  return command.trim() === "" ? undefined : command;
 }
 
 export async function restoreBackupPayload(
