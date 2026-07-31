@@ -6,7 +6,7 @@ import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { APIContext } from "@/browser/contexts/API";
 import { TimelinePanel } from "@/browser/features/RightSidebar/Timeline/TimelinePanel";
 import {
-  showAllMessages,
+  pinTimelineRevealTarget,
   useWorkspaceStoreRaw,
   useWorkspaceTimeline,
   type WorkspaceTimelineSnapshot,
@@ -18,7 +18,7 @@ import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts
 import { installDom } from "../dom";
 
 jest.mock("@/browser/stores/WorkspaceStore", () => ({
-  showAllMessages: jest.fn(),
+  pinTimelineRevealTarget: jest.fn(),
   useWorkspaceStoreRaw: jest.fn(),
   useWorkspaceTimeline: jest.fn(),
 }));
@@ -26,7 +26,7 @@ jest.mock("@/browser/stores/WorkspaceStore", () => ({
 const WORKSPACE_ID = "timeline-test-workspace";
 const BASE_TIMESTAMP = Date.UTC(2026, 6, 27, 12, 0, 0);
 
-const mockShowAllMessages = jest.mocked(showAllMessages);
+const mockPinTimelineRevealTarget = jest.mocked(pinTimelineRevealTarget);
 const mockUseWorkspaceStoreRaw = jest.mocked(useWorkspaceStoreRaw);
 const mockUseWorkspaceTimeline = jest.mocked(useWorkspaceTimeline);
 
@@ -118,7 +118,7 @@ describe("TimelinePanel", () => {
   beforeEach(() => {
     cleanupDom = installDom();
     localStorage.clear();
-    mockShowAllMessages.mockReset();
+    mockPinTimelineRevealTarget.mockReset();
     mockUseWorkspaceStoreRaw.mockReset();
     mockUseWorkspaceTimeline.mockReset();
   });
@@ -325,16 +325,19 @@ describe("TimelinePanel", () => {
 
     expect(loadOlderHistory).toHaveBeenCalledTimes(10);
     expect(loadOlderHistory).toHaveBeenCalledWith(WORKSPACE_ID);
-    expect(mockShowAllMessages).toHaveBeenCalledWith(WORKSPACE_ID);
+    expect(mockPinTimelineRevealTarget).toHaveBeenCalledWith(WORKSPACE_ID, {
+      messageId: "missing-message",
+      toolCallId: undefined,
+    });
   });
 
-  test("reveals a target that expanding the display cap makes renderable", async () => {
+  test("reveals a target that pinning into the capped projection makes renderable", async () => {
     const event = makeEvent("anchored", "turn.completed", 1, {
       anchor: { messageId: "capped-message" },
     });
-    // No older history to page, so the only way to reach the target is the cap expansion.
+    // No older history to page, so the only way to reach the target is the pinned projection.
     const view = renderTimeline({ events: [event], hasOlderHistory: false });
-    mockShowAllMessages.mockImplementation(() => {
+    mockPinTimelineRevealTarget.mockImplementation(() => {
       view.workspaceState.messages = [{ historyId: "capped-message" }];
     });
     const revealed: unknown[] = [];
@@ -350,6 +353,41 @@ describe("TimelinePanel", () => {
         if (revealed.length === 0) throw new Error("Reveal was not dispatched");
       });
       expect(view.queryByTestId("timeline-reveal-not-found")).toBeNull();
+    } finally {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+    }
+  });
+
+  test("pages sequence-only anchors before pinning their resolved message", async () => {
+    const loadOlderHistory = jest.fn<Promise<"loaded">, [string]>().mockResolvedValue("loaded");
+    const event = makeEvent("sequence-anchor", "turn.completed", 1, {
+      anchor: { historySequence: 42 },
+    });
+    const view = renderTimeline({ events: [event], loadOlderHistory });
+    loadOlderHistory.mockImplementation(async () => {
+      view.workspaceState.muxMessages = [
+        { id: "resolved-message", metadata: { historySequence: 42 } },
+      ];
+      view.workspaceState.messages = [{ historyId: "resolved-message" }];
+      return "loaded";
+    });
+    const revealed: unknown[] = [];
+    const listener = (revealEvent: Event) => revealed.push(revealEvent);
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+
+    try {
+      fireEvent.click(view.container.querySelector('[data-timeline-event-id="sequence-anchor"]')!);
+      const revealButton = await waitFor(() => view.getByTestId("timeline-reveal"));
+      fireEvent.click(revealButton);
+
+      await waitFor(() => {
+        if (revealed.length === 0) throw new Error("Reveal was not dispatched");
+      });
+      expect(loadOlderHistory).toHaveBeenCalledTimes(1);
+      expect(mockPinTimelineRevealTarget).toHaveBeenCalledWith(WORKSPACE_ID, {
+        messageId: "resolved-message",
+        toolCallId: undefined,
+      });
     } finally {
       window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
     }

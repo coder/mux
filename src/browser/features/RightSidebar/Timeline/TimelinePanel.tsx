@@ -496,9 +496,11 @@ function TimelinePreviewCard(props: {
         return;
       }
 
-      // Keep only the reveal target outside the normal transcript window. Disabling the cap here
-      // would leave every historical row mounted for the rest of the workspace session.
-      pinTimelineRevealTarget(props.workspaceId, target);
+      // Keep only a resolved reveal target outside the normal transcript window. A sequence-only
+      // anchor may need history paging before it has an ID, so do not reject it before that loop.
+      if (target.messageId != null || target.toolCallId != null) {
+        pinTimelineRevealTarget(props.workspaceId, target);
+      }
       target = resolveRevealTarget(anchor);
       if (isRevealTargetLoaded(target)) {
         dispatchReveal(target);
@@ -522,6 +524,9 @@ function TimelinePreviewCard(props: {
         }
 
         target = resolveRevealTarget(anchor);
+        if (target.messageId != null || target.toolCallId != null) {
+          pinTimelineRevealTarget(props.workspaceId, target);
+        }
         if (isRevealTargetLoaded(target)) {
           dispatchReveal(target);
           setRevealState("idle");
