@@ -178,11 +178,7 @@ const AUTH_FAILURE_PATTERN =
 const LOCAL_FILESYSTEM_FAILURE_PATTERN =
   /unable to write|insufficient permission for adding an object|no space left on device|read-only file system|cannot open '[^']*(?:FETCH_HEAD|HEAD|index|config|packed-refs)'|unable to (?:create|open)|error: cannot (?:lock|create) ref/i;
 
-/**
- * Reaching the remote fails through curl, ssh, or git's own resolver depending on the
- * transport, so the wording varies. Only checked once a failure is known not to be an
- * authentication problem, which keeps credential classification unchanged.
- */
+/** Remote failures vary across curl, ssh, and Git resolver diagnostics. */
 const REMOTE_UNREACHABLE_PATTERN =
   /could not resolve (?:host|hostname|proxy)|name or service not known|temporary failure in name resolution|connection (?:refused|timed out|reset)|network is (?:unreachable|down)|no route to host|failed to connect to|couldn't connect to server|operation timed out|returned error: 5\d\d|service unavailable|bad gateway|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i;
 
@@ -195,9 +191,7 @@ function isAuthenticationFailure(error: unknown): boolean {
 function isRemoteUnreachable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (LOCAL_FILESYSTEM_FAILURE_PATTERN.test(message)) return false;
-  // A blackholed remote produces no diagnostic at all: the timeout kills git, so the only
-  // evidence is the signal. Local git calls are fast and fail with their own message, so a
-  // killed network command is a stalled remote rather than a local problem.
+  // A blackholed remote may emit no diagnostic before timeout kills Git, so key on `signal`.
   if (isSignalTermination(error)) return true;
   return REMOTE_UNREACHABLE_PATTERN.test(message);
 }
@@ -227,8 +221,8 @@ export async function runGitWithCredentialLadder(
       return { credential: controlled.credential, ...result };
     } catch (error) {
       if (!isAuthenticationFailure(error)) {
-        // A remote we cannot reach will not become reachable on the next rung, so this both
-        // classifies the failure and stops the ladder early.
+        // Thrown from inside the loop on purpose: another credential cannot make an
+        // unreachable remote reachable, so trying the rest only delays the error.
         if (isRemoteUnreachable(error)) throw new BackupRemoteUnreachableError(error);
         throw error;
       }

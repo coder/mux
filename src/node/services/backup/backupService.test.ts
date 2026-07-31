@@ -230,8 +230,6 @@ describe("BackupService", () => {
   });
 
   test("surfaces an unreachable remote to the client as REMOTE_UNREACHABLE", async () => {
-    // The ladder throws this, but only `toOperationError` decides what a client sees, and
-    // its fallback is IO_ERROR, which cannot be told apart from a local disk failure.
     const service = new BackupService(createTestConfig(tempDir), {
       gitRepo: createGitRepo({
         validate: () => Promise.reject(new BackupRemoteUnreachableError(new Error("no dns"))),
@@ -267,7 +265,6 @@ describe("BackupService", () => {
     });
     await service.saveSettings(SETTINGS);
 
-    // Another window repoints the backup while the push above is still in flight.
     const other = { ...SETTINGS, repoUrl: "https://example.com/other.git" };
     await service.saveSettings(other);
     await service.push(SETTINGS);
@@ -277,8 +274,6 @@ describe("BackupService", () => {
   });
 
   test("rejects a managed path Git for Windows could not check out", async () => {
-    // Payload validation only covers paths inside the managed directory, so a reserved or
-    // invalid prefix chosen here would make every otherwise-valid file unusable on Windows.
     const service = new BackupService(createTestConfig(tempDir), {
       gitRepo: createGitRepo(),
       payload: createPayload(),

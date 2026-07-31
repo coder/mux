@@ -153,9 +153,8 @@ export class BackupRepoCache {
       if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
       }
-      // `--no-checkout`: `resetHardToRemote` checks out the configured branch straight after,
-      // so materialising the remote's default branch is wasted work that can also fail on a
-      // path or filter problem the selected branch does not have.
+      // `resetHardToRemote` checks out the configured branch next. `--no-checkout` avoids
+      // materializing an unused default branch that might fail on unrelated paths or filters.
       await this.networkGit([
         "clone",
         "--no-checkout",

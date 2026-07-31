@@ -143,10 +143,9 @@ function isAllowedPayloadPath(relativePath: string): boolean {
 }
 
 /**
- * `portable: false` is only for the local safety snapshot. That copy never leaves the machine,
- * so rejecting a name this filesystem accepts would abort a restore over a file it is trying
- * to protect. Every containment and allowlist rule still applies; only the cross-platform
- * portability check is relaxed.
+ * Local safety snapshots use `portable: false` so cross-platform filename checks cannot block
+ * a restore while protecting a file valid on the current filesystem. Containment and allowlist
+ * checks still apply.
  */
 function assertAllowedPayloadPath(
   relativePath: string,
@@ -416,15 +415,9 @@ function isPortableReference(value: unknown): boolean {
 }
 
 /**
- * Matches a bare `key` too, because Google-style MCP endpoints carry the credential
- * as `?key=...` rather than a name containing "token" or "api_key".
- *
- * camelCase is split into the same separated words first, so `accessToken` and `clientSecret`
- * are recognised. That deliberately over-matches: a name like `tokenCount` is redacted too.
- * Distinguishing it would mean guessing which credential-word placements are innocent, and
- * the trade is lopsided, since a redacted count only costs one non-portable query parameter
- * while a published credential cannot be taken back. The secret scanner is no backstop here
- * either, because a value like `hunter2` matches none of its patterns.
+ * Matches bare `key` for Google-style endpoints and splits camelCase credential names.
+ * It deliberately over-matches names like `tokenCount`: failing closed is safer because
+ * low-entropy credentials may evade the secret scanner.
  */
 function isSensitiveParamName(name: string): boolean {
   const separated = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
@@ -913,11 +906,7 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
 interface ServerCommand {
   command: string;
   enabled: boolean;
-  /**
-   * False when a url shadows the command. `normalizeEntry` gives a url precedence, so the
-   * command is inert until the url goes away, and a restore that removes only the url turns
-   * a dormant command into a running one.
-   */
+  /** False when `normalizeEntry` gives a non-empty URL precedence over this command. */
   runnable: boolean;
 }
 
@@ -1002,8 +991,7 @@ export async function collectMcpCommandApprovals(
   const approvals: BackupCommandApproval[] = [];
   for (const [name, entry] of incoming) {
     const current = local.get(name);
-    // Approval is also required when the restore only changes whether an identical command
-    // can run: enabling a disabled entry, or removing the url that was shadowing it.
+    // Identical text still needs approval if the restore makes a dormant command runnable.
     const makesItRun =
       entry.enabled &&
       entry.runnable &&

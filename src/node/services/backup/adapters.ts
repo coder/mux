@@ -61,8 +61,6 @@ export function createBackupGitRepo(options: {
       ...settings,
       cacheRoot: options.cacheRoot,
       token: options.getToken?.(settings.repoUrl) ?? undefined,
-      // Without this every git call runs unbounded, so a stalled remote leaves the operation
-      // busy forever instead of failing.
       timeoutMs: options.timeoutMs ?? BACKUP_GIT_TIMEOUT_MS,
     });
   }

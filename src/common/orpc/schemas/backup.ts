@@ -2,10 +2,8 @@ import { z } from "zod";
 import { ResultSchema } from "./result";
 
 /**
- * Reserved device names, characters Windows forbids, and trailing dots or spaces. A backup
- * exists to be checked out on another machine, so a path Git for Windows cannot create makes
- * the whole payload unusable there. Shared with payload validation so the managed directory
- * the user chooses is held to the same standard as the paths written inside it.
+ * Backup paths must be portable to Git for Windows. This rejects reserved device names,
+ * forbidden characters, and trailing dots or spaces for both managed and payload paths.
  */
 const WINDOWS_RESERVED_NAMES =
   /^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/i;

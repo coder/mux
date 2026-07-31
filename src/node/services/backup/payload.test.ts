@@ -189,11 +189,9 @@ describe("backup payload", () => {
     expect(mcp.servers.api.headers.OpObject).toEqual({ op: "op://Vault/Item/token" });
     expect(mcp.servers.api.url).not.toContain("password");
     expect(mcp.servers.api.url).not.toContain("token=literal");
-    // camelCase credential names are the common spelling and their values are too
-    // low-entropy for the secret scanner to catch as a backstop.
+    // Low-entropy values verify camelCase names are redacted without scanner help.
     expect(mcp.servers.api.url).not.toContain("camel");
-    // Deliberately fail closed: `tokenCount` is redacted too rather than guessing which
-    // credential-word placements are innocent.
+    // `tokenCount` verifies that the matcher deliberately fails closed.
     expect(mcp.servers.api.url).not.toContain("tokenCount=7");
     expect(mcp.servers.api.url).toContain("mode=fast");
     expect(mcp.servers.plain.url).toBe("https://example.com/mcp?mode=fast");
@@ -844,9 +842,6 @@ describe("backup payload", () => {
   });
 
   it("requires approval when a restore removes the url shadowing a local command", async () => {
-    // `normalizeEntry` gives a url precedence, so this command is dormant locally. Dropping
-    // only the url turns the entry into stdio and makes that command executable, even though
-    // its text is unchanged and the local file already contained it.
     await write(
       muxRoot,
       "mcp.jsonc",
