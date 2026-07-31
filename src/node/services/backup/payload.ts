@@ -456,12 +456,36 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
   return { value, redacted };
 }
 
+/**
+ * `jsonc.parse` collapses duplicate keys but `jsonc.modify` rewrites only one occurrence,
+ * so a duplicated header would leave the second credential in the exported file. Redaction
+ * cannot be guaranteed complete for such a file, so refuse it instead.
+ */
+function assertNoDuplicateKeys(raw: string, fileName: string): void {
+  const visit = (node: jsonc.Node): void => {
+    if (node.type === "object") {
+      const names = new Set<string>();
+      for (const property of node.children ?? []) {
+        const name: unknown = property.children?.[0]?.value;
+        if (typeof name === "string") {
+          if (names.has(name)) throw new Error(`Invalid ${fileName}: duplicate key '${name}'`);
+          names.add(name);
+        }
+      }
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  const tree = jsonc.parseTree(raw);
+  if (tree) visit(tree);
+}
+
 function parseJsoncObject(raw: string, fileName: string): Record<string, unknown> {
   const errors: jsonc.ParseError[] = [];
   const parsed: unknown = jsonc.parse(raw, errors);
   if (errors.length > 0 || !parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error(`Invalid ${fileName}`);
   }
+  assertNoDuplicateKeys(raw, fileName);
   return parsed as Record<string, unknown>;
 }
 
@@ -714,9 +738,11 @@ export async function readBackupPayload(sourceDir: string): Promise<BackupPayloa
   const files: BackupFile[] = [];
   const seen = new Set<string>();
   for (const manifestFile of manifest.files) {
-    if (seen.has(manifestFile.path))
-      throw new Error(`Duplicate backup path '${manifestFile.path}'`);
-    seen.add(manifestFile.path);
+    // Case-folded, because two entries differing only in case resolve to one file on a
+    // case-insensitive filesystem and the second would silently overwrite the first.
+    const key = manifestFile.path.toLowerCase();
+    if (seen.has(key)) throw new Error(`Duplicate backup path '${manifestFile.path}'`);
+    seen.add(key);
     const content = await fs.readFile(await resolveContainedPath(sourceDir, manifestFile.path));
     if (sha256(content) !== manifestFile.sha256) {
       throw new Error(`Backup checksum mismatch for '${manifestFile.path}'`);
@@ -828,6 +854,7 @@ export async function restoreBackupPayload(
   // Resolve every destination and its content before the first write, so a path
   // rejected late cannot leave a half-restored install behind.
   const writes: Array<{ destination: string; content: Buffer; executable: boolean }> = [];
+  const claimed = new Set<string>();
   for (const file of options.payload.files) {
     assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
@@ -841,6 +868,12 @@ export async function restoreBackupPayload(
     if ((await lstatOrNull(destination))?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
     }
+    // Case-folded: two entries differing only in case are one file on Windows and macOS.
+    const claim = destination.toLowerCase();
+    if (claimed.has(claim)) {
+      throw new Error(`Cannot restore '${file.path}': another entry resolves to the same file`);
+    }
+    claimed.add(claim);
     writes.push({
       destination,
       content: await resolveRestoredContent(options.muxRoot, file),

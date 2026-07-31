@@ -423,6 +423,63 @@ describe("backup payload", () => {
     }
   });
 
+  it("refuses to export an MCP config with duplicate keys", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "api": {
+      "headers": {
+        "Authorization": "Bearer first-secret",
+        "Authorization": "Bearer second-secret"
+      }
+    }
+  }
+}
+`
+    );
+
+    try {
+      await createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" });
+      throw new Error("Expected the duplicate key to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("duplicate key 'Authorization'");
+    }
+  });
+
+  it("refuses to restore two manifest paths that differ only in case", async () => {
+    const payload = {
+      manifest: {
+        schemaVersion: 1 as const,
+        exportedAt: "2026-01-01T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "case-sensitive-host",
+        files: [
+          { path: "skills/demo/README.md", sha256: "0".repeat(64) },
+          { path: "skills/demo/readme.md", sha256: "0".repeat(64) },
+        ],
+      },
+      files: [
+        { path: "skills/demo/README.md", content: Buffer.from("upper\n") },
+        { path: "skills/demo/readme.md", content: Buffer.from("lower\n") },
+      ],
+      redactions: [],
+    };
+
+    const restoreRoot = path.join(tempDir, "case-collision");
+    await fs.mkdir(restoreRoot, { recursive: true });
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+      throw new Error("Expected the case collision to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("resolves to the same file");
+    }
+    expect(await fs.readdir(restoreRoot)).toEqual([]);
+  });
+
   it("restores over a malformed local MCP config", async () => {
     await write(
       muxRoot,
