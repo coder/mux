@@ -6268,8 +6268,10 @@ export const router = (authToken?: string) => {
         .input(schemas.backup.push.input)
         .output(schemas.backup.push.output)
         .handler(({ context, input }) => {
-          const { allowSecrets, ...settings } = input;
-          return context.backupService.push(settings, { allowSecrets: allowSecrets ?? undefined });
+          const { approvedSecretDigest, ...settings } = input;
+          return context.backupService.push(settings, {
+            approvedSecretDigest: approvedSecretDigest ?? undefined,
+          });
         }),
       restore: t
         .input(schemas.backup.restore.input)

@@ -44,7 +44,7 @@ export interface BackupPayload {
   exportTo(options: {
     repositoryRoot: string;
     managedPath: string;
-  }): Promise<{ redactions: string[]; secretFiles: string[] }>;
+  }): Promise<{ redactions: string[]; secretFiles: string[]; secretApproval: string }>;
   previewRestore(options: { repositoryRoot: string; managedPath: string }): Promise<{
     changes: BackupFileChange[];
     localOnlyFiles: string[];
@@ -85,7 +85,8 @@ export class BackupServiceError extends Error {
   constructor(
     public readonly code: BackupErrorCode,
     message: string,
-    public readonly files?: string[]
+    public readonly files?: string[],
+    public readonly secretApproval?: string
   ) {
     super(message);
     this.name = "BackupServiceError";
@@ -94,7 +95,12 @@ export class BackupServiceError extends Error {
 
 function toOperationError(error: unknown): BackupOperationError {
   if (error instanceof BackupServiceError) {
-    return { code: error.code, message: error.message, files: error.files };
+    return {
+      code: error.code,
+      message: error.message,
+      files: error.files,
+      secretApproval: error.secretApproval,
+    };
   }
 
   if (error instanceof Error) {
@@ -210,7 +216,7 @@ export class BackupService {
 
   async push(
     settings: SettingsBackupInput,
-    options: { allowSecrets?: boolean } = {}
+    options: { approvedSecretDigest?: string } = {}
   ): Promise<
     Result<
       {
@@ -229,11 +235,17 @@ export class BackupService {
           repositoryRoot: repository.rootDir,
           managedPath: settings.path,
         });
-        if (exported.secretFiles.length > 0 && options.allowSecrets !== true) {
+        // Approval is bound to the exact flagged bytes, so an override the user granted for
+        // one payload cannot publish a different one another window wrote in between.
+        if (
+          exported.secretFiles.length > 0 &&
+          options.approvedSecretDigest !== exported.secretApproval
+        ) {
           throw new BackupServiceError(
             "SECRET_DETECTED",
             "Potential secrets were found in the backup payload",
-            exported.secretFiles
+            exported.secretFiles,
+            exported.secretApproval
           );
         }
 

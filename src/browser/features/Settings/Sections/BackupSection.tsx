@@ -125,6 +125,7 @@ export function BackupSection() {
   const [preview, setPreview] = useState<BackupPreview | null>(null);
   const [overrideSecretScan, setOverrideSecretScan] = useState(false);
   const [secretScanBlocked, setSecretScanBlocked] = useState(false);
+  const [secretScanApproval, setSecretScanApproval] = useState<string | null>(null);
   const [commandApprovals, setCommandApprovals] = useState<BackupCommandApproval[]>([]);
   const [approveCommands, setApproveCommands] = useState(false);
   const [restoreConfirmationOpen, setRestoreConfirmationOpen] = useState(false);
@@ -304,20 +305,26 @@ export function BackupSection() {
     try {
       const result = await api.backup.push({
         ...savedDraft,
-        // Only while the control is visible. Anything else would let an override the user
-        // can no longer see authorize a later push.
-        allowSecrets: overrideSecretScan && secretScanBlocked,
+        // The digest from the block the user is looking at, so approval cannot carry over to
+        // a payload another window changed in between. Sent only while the control is visible.
+        approvedSecretDigest:
+          overrideSecretScan && secretScanBlocked ? (secretScanApproval ?? undefined) : undefined,
       });
       if (!result.success) {
         setActionError(getOperationErrorMessage(result.error));
         const blocked = result.error.code === "SECRET_DETECTED";
         setSecretScanBlocked(blocked);
+        // A new digest means new bytes, so a previous approval no longer describes them.
+        const nextApproval = blocked ? (result.error.secretApproval ?? null) : null;
+        if (nextApproval !== secretScanApproval) setOverrideSecretScan(false);
+        setSecretScanApproval(nextApproval);
         if (!blocked) setOverrideSecretScan(false);
         return;
       }
       setPreview(null);
       setOverrideSecretScan(false);
       setSecretScanBlocked(false);
+      setSecretScanApproval(null);
       setStatusMessage(
         `Backed up settings at ${result.data.commit} using ${getCredentialLabel(result.data.credential)}.`
       );
@@ -482,9 +489,9 @@ export function BackupSection() {
           ))}
         </ul>
         <p className="text-foreground text-xs font-medium">
-          Provider keys and secret files have no export path at all. MCP credentials and executable
-          commands stay on this device, and a scan blocks a backup that still looks like it holds a
-          secret unless you override it.
+          Provider keys and secret files have no export path at all, and MCP credentials and
+          executable commands stay on this device. Inside skills and memory, only documentation is
+          published automatically; any other file waits for you to review it.
         </p>
       </section>
 
@@ -606,14 +613,13 @@ export function BackupSection() {
                 Override secret scan
               </span>
               <span className="text-muted mt-0.5 block text-xs">
-                Allow the next backup if the secret scan blocks it. The blocked file list appears as
-                an error before anything is pushed.
+                Publish the exact files listed in the error above. If they change before you back
+                up, this resets so you can read the new list.
               </span>
             </span>
           </label>
           <p className="text-muted mt-2 text-xs">
-            Leave this off unless you have reviewed a secret-scan error and intend to back up those
-            files.
+            Leave this off unless you have read the listed files and intend to publish them.
           </p>
         </div>
       ) : null}

@@ -9,6 +9,7 @@ import {
   BackupCommandApprovalRequiredError,
   REDACTED_BACKUP_VALUE,
   backupCommandApprovalToken,
+  backupSecretApprovalDigest,
   collectMcpCommandApprovals,
   createBackupPayload,
   mergeBackupPreferences,
@@ -1022,6 +1023,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "executable-payload");
     await writeBackupPayload(destination, payload);
@@ -1033,7 +1035,12 @@ describe("backup payload", () => {
     await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o644);
     await writeBackupPayload(
       destination,
-      await createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+      await createBackupPayload({
+        muxRoot,
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        reportSecrets: true,
+      })
     );
     expect((await readBackupPayload(destination)).files).toContainEqual({
       path: "skills/demo/run.sh",
@@ -1405,6 +1412,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
 
     const restoreRoot = path.join(tempDir, "type-clash");
@@ -1515,6 +1523,51 @@ describe("backup payload", () => {
       if (!(error instanceof Error)) throw error;
       expect(error.message).toContain("checksum mismatch");
     }
+  });
+
+  it("holds back recursive files that are not documentation, whatever they contain", async () => {
+    // `{"password":"hunter2"}` has no shape a content scanner can recognise, so publishing
+    // depends on the file's role rather than a guess about its bytes.
+    await write(muxRoot, "skills/demo/SKILL.md", "a normal skill\n");
+    await write(muxRoot, "memory/global/notes.md", "a normal note\n");
+    await write(muxRoot, "skills/demo/credentials.json", '{"password":"hunter2"}\n');
+    await write(muxRoot, "skills/demo/config.yaml", "api_key: abc123\n");
+    await write(muxRoot, "memory/global/passwords.md", "bank: correct-horse\n");
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      reportSecrets: true,
+    });
+
+    expect(scanBackupFilesForSecrets(payload.files)).toEqual([
+      "memory/global/passwords.md",
+      "skills/demo/config.yaml",
+      "skills/demo/credentials.json",
+    ]);
+  });
+
+  it("binds a secret override to the exact bytes it was shown for", async () => {
+    await write(muxRoot, "skills/demo/config.yaml", "api_key: abc123\n");
+    const first = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      reportSecrets: true,
+    });
+    const flagged = scanBackupFilesForSecrets(first.files);
+    const firstDigest = backupSecretApprovalDigest(first.files, flagged);
+
+    await write(muxRoot, "skills/demo/config.yaml", "api_key: a-different-secret\n");
+    const second = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      reportSecrets: true,
+    });
+
+    expect(backupSecretApprovalDigest(second.files, flagged)).not.toBe(firstDigest);
   });
 
   it("blocks high-confidence secrets in free-form files", async () => {

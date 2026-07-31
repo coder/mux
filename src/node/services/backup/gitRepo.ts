@@ -41,6 +41,8 @@ export interface BackupRepoCacheOptions extends Omit<GitCredentialOptions, "repo
   repoUrl: string;
   branch: string;
   cacheRoot: string;
+  /** Scopes the sparse checkout, so nothing outside it is ever materialized. */
+  managedPath: string;
 }
 
 export interface RemoteRefs {
@@ -201,7 +203,19 @@ export class BackupRepoCache {
     }
   }
 
+  /**
+   * Only the managed directory is materialized. Mux reads and writes nothing else, and a
+   * checkout of the whole branch fails on any path elsewhere in the repository that this
+   * platform cannot create, which would block a backup whose own payload is fine.
+   * `--no-cone` because the managed path is a single literal directory, not a cone pattern set.
+   */
+  private async applySparseCheckout(): Promise<void> {
+    assertSafeRelativePath(this.options.managedPath);
+    await this.localGit(["sparse-checkout", "set", "--no-cone", `/${this.options.managedPath}/*`]);
+  }
+
   async resetHardToRemote(): Promise<string | null> {
+    await this.applySparseCheckout();
     const remoteCommit = await this.remoteBranchCommit();
     if (remoteCommit) {
       // -f because a previous preview leaves modified tracked files in this cache. Without

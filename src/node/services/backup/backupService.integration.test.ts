@@ -164,7 +164,10 @@ describe("BackupService against a real repository", () => {
     expect(blocked.error.files).toContain("AGENTS.md");
     expect(await git(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
 
-    const allowed = await service.push(settings, { allowSecrets: true });
+    // Approving the digest the block reported is what authorizes exactly this payload.
+    const allowed = await service.push(settings, {
+      approvedSecretDigest: blocked.error.secretApproval ?? undefined,
+    });
     expect(allowed.success).toBe(true);
   });
 

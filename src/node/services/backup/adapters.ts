@@ -23,6 +23,7 @@ import {
   projectBackupPreferences,
   readBackupPayload,
   restoreBackupPayload,
+  backupSecretApprovalDigest,
   scanBackupFilesForSecrets,
   serializeBackupPreferences,
   writeBackupPayload,
@@ -56,9 +57,10 @@ export function createBackupGitRepo(options: {
 }): BackupGitRepo {
   const prepared = new WeakMap<PreparedBackupRepository, BackupRepoCache>();
 
-  function newCache(settings: { repoUrl: string; branch: string }): BackupRepoCache {
+  function newCache(settings: { repoUrl: string; branch: string; path: string }): BackupRepoCache {
     return new BackupRepoCache({
       ...settings,
+      managedPath: settings.path,
       cacheRoot: options.cacheRoot,
       token: options.getToken?.(settings.repoUrl) ?? undefined,
       timeoutMs: options.timeoutMs ?? BACKUP_GIT_TIMEOUT_MS,
@@ -181,9 +183,11 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
         await managedDir(exportOptions.repositoryRoot, exportOptions.managedPath),
         payload
       );
+      const secretFiles = scanBackupFilesForSecrets(payload.files);
       return {
         redactions: payload.redactions,
-        secretFiles: scanBackupFilesForSecrets(payload.files),
+        secretFiles,
+        secretApproval: backupSecretApprovalDigest(payload.files, secretFiles),
       };
     },
 

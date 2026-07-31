@@ -114,7 +114,7 @@ describe("BackupSection", () => {
         repoUrl: "git@github.com:example/new.git",
         branch: "main",
         path: "mux/",
-        allowSecrets: false,
+        approvedSecretDigest: undefined,
       })
     );
 
@@ -152,6 +152,58 @@ describe("BackupSection", () => {
     await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
   });
 
+  test("sends the approved digest and resets when the blocked payload changes", async () => {
+    const { client, view } = renderBackupSection();
+    const canvas = within(view.container);
+    await canvas.findByText("Settings backup");
+
+    const push = jest.spyOn(client.backup, "push").mockResolvedValueOnce({
+      success: false,
+      error: {
+        code: "SECRET_DETECTED",
+        message: "Potential secrets",
+        files: ["skills/demo/config.yaml"],
+        secretApproval: "digest-a",
+      },
+    });
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+
+    const override = await canvas.findByRole("checkbox", { name: "Override secret scan" });
+    fireEvent.click(override);
+    await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
+
+    // A different digest means the flagged bytes changed, so the approval must not carry over.
+    push.mockResolvedValueOnce({
+      success: false,
+      error: {
+        code: "SECRET_DETECTED",
+        message: "Potential secrets",
+        files: ["skills/demo/config.yaml"],
+        secretApproval: "digest-b",
+      },
+    });
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+    await waitFor(() =>
+      expect(push).toHaveBeenLastCalledWith(
+        expect.objectContaining({ approvedSecretDigest: "digest-a" })
+      )
+    );
+    await waitFor(() => expect(override.getAttribute("data-state")).toBe("unchecked"));
+
+    fireEvent.click(override);
+    await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
+    push.mockResolvedValueOnce({
+      success: true,
+      data: { commit: "abc1234", changed: true, credential: "ssh", redactions: [] },
+    });
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+    await waitFor(() =>
+      expect(push).toHaveBeenLastCalledWith(
+        expect.objectContaining({ approvedSecretDigest: "digest-b" })
+      )
+    );
+  });
+
   test("stops sending a secret override once a non-secret failure hides it", async () => {
     const { client, view } = renderBackupSection();
     const canvas = within(view.container);
@@ -178,7 +230,9 @@ describe("BackupSection", () => {
     expect(canvas.queryByRole("checkbox", { name: "Override secret scan" })).toBeNull();
     fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
     await waitFor(() =>
-      expect(push).toHaveBeenLastCalledWith(expect.objectContaining({ allowSecrets: false }))
+      expect(push).toHaveBeenLastCalledWith(
+        expect.objectContaining({ approvedSecretDigest: undefined })
+      )
     );
   });
 

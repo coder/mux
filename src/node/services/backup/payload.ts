@@ -156,8 +156,9 @@ function assertAllowedPayloadPath(
     path.isAbsolute(relativePath) ||
     // Payload paths are always posix. A backslash is an ordinary filename character
     // here but a separator on Windows, so `skills/..\..\evil` would escape the
-    // destination once path.join runs there.
-    relativePath.includes("\\") ||
+    // destination once path.join runs there. A local snapshot never travels, and the
+    // containment check below resolves the real path either way.
+    (options.portable && relativePath.includes("\\")) ||
     relativePath
       .split("/")
       .some(
@@ -605,14 +606,57 @@ function findMcpRedactions(content: Buffer): string[] {
   return redactions;
 }
 
+/**
+ * Documentation is the only thing a recursive collection publishes without asking. `skills/`
+ * and `memory/global/` hold whatever the user put there, and no content scanner can decide
+ * whether an arbitrary file is a credential: `{"password":"hunter2"}` has no distinguishing
+ * shape. So the gate is structural rather than pattern-based, and anything outside the
+ * documented set is surfaced for review instead of being published or silently dropped.
+ */
+const AUTO_PUBLISHED_RECURSIVE_FILE = /\.(?:md|mdx|markdown|txt)$/i;
+
+/**
+ * A name promising credentials is worth review even as documentation, because notes named
+ * this way usually contain the thing they are named after.
+ */
+const CREDENTIAL_PATH_HINT =
+  /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|apikey|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
+
+function isRecursivelyCollected(filePath: string): boolean {
+  return filePath.startsWith("skills/") || filePath.startsWith("memory/global/");
+}
+
+/**
+ * Files a push must not publish until the user confirms this exact payload. Named for the
+ * question it answers ("has a human looked at these?") rather than asserting the contents
+ * are secret, since the structural cases are suspicion rather than detection.
+ */
 export function scanBackupFilesForSecrets(files: readonly BackupFile[]): string[] {
   return files
     .filter((file) => {
       const content = file.content.toString("utf-8");
-      return SECRET_PATTERNS.some((pattern) => pattern.test(content));
+      if (SECRET_PATTERNS.some((pattern) => pattern.test(content))) return true;
+      if (!isRecursivelyCollected(file.path)) return false;
+      return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path) || CREDENTIAL_PATH_HINT.test(file.path);
     })
     .map((file) => file.path)
     .sort();
+}
+
+/**
+ * Binds an override to the exact bytes it was shown for. A bare boolean would let approval of
+ * one blocked set authorize a later push whose payload another window changed in between.
+ */
+export function backupSecretApprovalDigest(
+  files: readonly BackupFile[],
+  flaggedPaths: readonly string[]
+): string {
+  const flagged = new Set(flaggedPaths);
+  const parts = files
+    .filter((file) => flagged.has(file.path))
+    .map((file) => `${file.path}\0${sha256(file.content)}`)
+    .sort();
+  return sha256(Buffer.from(parts.join("\n"), "utf-8"));
 }
 
 export async function createBackupPayload(

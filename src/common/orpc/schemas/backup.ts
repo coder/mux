@@ -64,6 +64,8 @@ export const BackupOperationErrorSchema = z.object({
   ]),
   message: z.string(),
   files: z.array(z.string()).nullish(),
+  /** Echo back on the next push to approve exactly the payload that was blocked. */
+  secretApproval: z.string().nullish(),
 });
 
 /**
@@ -124,7 +126,7 @@ export const backup = {
   },
   push: {
     input: SettingsBackupInputSchema.extend({
-      allowSecrets: z.boolean().nullish(),
+      approvedSecretDigest: z.string().nullish(),
     }),
     output: BackupResult(
       z.object({

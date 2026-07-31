@@ -5,6 +5,15 @@ import * as path from "node:path";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { BackupRepoCache, BackupNonFastForwardError, BackupOriginMismatchError } from "./gitRepo";
 
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function git(args: string[]): Promise<string> {
   using process = execFileAsync("git", args);
   return (await process.result).stdout.trim();
@@ -37,7 +46,12 @@ describe("BackupRepoCache", () => {
   });
 
   function createRepo(): BackupRepoCache {
-    return new BackupRepoCache({ repoUrl: originPath, branch: "main", cacheRoot });
+    return new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+    });
   }
 
   it("bootstraps an empty repo, commits the managed path, and pushes", async () => {
@@ -55,6 +69,45 @@ describe("BackupRepoCache", () => {
     expect(commit).toMatch(/^[0-9a-f]{40}$/);
     expect(await repo.push()).toBe(commit);
     expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
+  });
+
+  it("materializes only the managed path and preserves the rest of the branch", async () => {
+    // A path elsewhere in the repository must never reach the filesystem: on Windows a name
+    // like `linux/CON` cannot be created and would fail the checkout before Mux reads its own
+    // directory. Committing scoped to the managed path must still leave that file in the tree.
+    const seed = path.join(tempDir, "seed");
+    await fs.mkdir(path.join(seed, "outside"), { recursive: true });
+    await fs.writeFile(path.join(seed, "outside", "keep.txt"), "outside\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "outside content",
+    ]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await pathExists(path.join(repo.cachePath, "outside"))).toBe(false);
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+    await repo.push();
+
+    const tracked = await git(["--git-dir", originPath, "ls-tree", "-r", "--name-only", "main"]);
+    expect(tracked.split("\n")).toContain("outside/keep.txt");
+    expect(tracked.split("\n")).toContain("mux/AGENTS.md");
   });
 
   it("reuses the cache and rejects an origin mismatch", async () => {

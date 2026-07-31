@@ -62,7 +62,7 @@ function createGitRepo(overrides: Partial<BackupGitRepo> = {}): BackupGitRepo {
 
 function createPayload(overrides: Partial<BackupPayload> = {}): BackupPayload {
   return {
-    exportTo: () => Promise.resolve({ redactions: [], secretFiles: [] }),
+    exportTo: () => Promise.resolve({ redactions: [], secretFiles: [], secretApproval: "" }),
     previewRestore: () =>
       Promise.resolve({ changes: [], localOnlyFiles: [], commandApprovals: [] }),
     validateRestore: () => Promise.resolve(),
@@ -145,7 +145,7 @@ describe("BackupService", () => {
         },
         exportTo: () => {
           events.push("export");
-          return Promise.resolve({ redactions: [], secretFiles: [] });
+          return Promise.resolve({ redactions: [], secretFiles: [], secretApproval: "" });
         },
       }),
     });
@@ -200,6 +200,7 @@ describe("BackupService", () => {
           Promise.resolve({
             redactions: [],
             secretFiles: ["skills/private/SKILL.md"],
+            secretApproval: "digest-v1",
           }),
       }),
     });
@@ -211,6 +212,30 @@ describe("BackupService", () => {
     expect(result.error.code).toBe("SECRET_DETECTED");
     expect(result.error.files).toEqual(["skills/private/SKILL.md"]);
     expect(commitAttempted).toBe(false);
+    // The client needs the digest back to approve exactly this payload.
+    expect(result.error.secretApproval).toBe("digest-v1");
+  });
+
+  test("rejects an override issued for a payload that has since changed", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        exportTo: () =>
+          Promise.resolve({
+            redactions: [],
+            secretFiles: ["skills/private/SKILL.md"],
+            secretApproval: "digest-v2",
+          }),
+      }),
+    });
+
+    const stale = await service.push(SETTINGS, { approvedSecretDigest: "digest-v1" });
+    expect(stale.success).toBe(false);
+    if (stale.success) throw new Error("Expected the stale override to be refused");
+    expect(stale.error.code).toBe("SECRET_DETECTED");
+
+    const current = await service.push(SETTINGS, { approvedSecretDigest: "digest-v2" });
+    expect(current.success).toBe(true);
   });
 
   test("maps a real non-fast-forward failure to repository drift", async () => {
