@@ -309,19 +309,54 @@ function collisionKey(value: string): string {
   return value.normalize("NFC").toLowerCase();
 }
 
+/**
+ * Reads a file through one handle, so the size that was checked is the size that is read.
+ * Reopening the path after a `stat` lets a file that grew in between defeat the byte budget,
+ * and lets a symlink installed in between be followed after the checks said there was none.
+ * The window is ordinary rather than adversarial here: agents write under this root while a
+ * Preview or Push is running. `O_NOFOLLOW` is absent on Windows, where a junction cannot be
+ * swapped in for a file this way.
+ */
+async function readCheckedFile(
+  absolutePath: string,
+  charge: (size: number) => void
+): Promise<{ content: Buffer; mode: number }> {
+  const handle = await fs.open(
+    absolutePath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+  );
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error(`Refusing to read '${absolutePath}': not a regular file`);
+    charge(stat.size);
+    const content = Buffer.alloc(stat.size);
+    let filled = 0;
+    while (filled < stat.size) {
+      const { bytesRead } = await handle.read(content, filled, stat.size - filled, filled);
+      // A file truncated while being read yields short, which is the bound holding rather
+      // than an error: the caller's checksum decides whether the result is usable.
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    return {
+      content: filled === stat.size ? content : content.subarray(0, filled),
+      mode: stat.mode,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readBackupFile(
   root: string,
   relativePath: string,
   budget: ByteBudget
 ): Promise<BackupFile> {
   const absolutePath = path.join(root, ...relativePath.split("/"));
-  const stat = await fs.stat(absolutePath);
-  budget(relativePath, stat.size);
-  return {
-    path: relativePath,
-    content: await fs.readFile(absolutePath),
-    executable: (stat.mode & 0o111) !== 0,
-  };
+  const { content, mode } = await readCheckedFile(absolutePath, (size) =>
+    budget(relativePath, size)
+  );
+  return { path: relativePath, content, executable: (mode & 0o111) !== 0 };
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -830,8 +865,13 @@ async function readManifestIfPresent(
     const manifestPath = await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE);
     // Reading this only avoids a no-op commit, so an oversized one is ignored rather than
     // buffered: the push replaces it either way.
-    if ((await fs.stat(manifestPath)).size > MAX_BACKUP_FILE_BYTES) return null;
-    const raw = await fs.readFile(manifestPath, "utf-8");
+    const raw = (
+      await readCheckedFile(manifestPath, (size) => {
+        if (size > MAX_BACKUP_FILE_BYTES) {
+          throw new Error(`'${BACKUP_MANIFEST_FILE}' is larger than the reuse limit`);
+        }
+      })
+    ).content.toString("utf-8");
     return { manifest: parseManifest(raw), raw };
   } catch {
     return null;
@@ -975,8 +1015,11 @@ async function readManifestEntry(
 ): Promise<Buffer> {
   try {
     const absolutePath = await resolveContainedPath(sourceDir, relativePath);
-    budget(relativePath, (await fs.stat(absolutePath)).size);
-    return await fs.readFile(absolutePath);
+    return (
+      await readCheckedFile(absolutePath, (size) => {
+        budget(relativePath, size);
+      })
+    ).content;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(`Backup is missing '${relativePath}'`);
@@ -990,8 +1033,10 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
   const manifestPath = await resolveContainedPath(sourceDir, BACKUP_MANIFEST_FILE);
   // The manifest is the first thing read from a repository anyone with write access can
   // change, so it is charged to the same budget before it is parsed.
-  budget(BACKUP_MANIFEST_FILE, (await fs.stat(manifestPath)).size);
-  const manifest = parseManifest(await fs.readFile(manifestPath, "utf-8"));
+  const manifestRaw = await readCheckedFile(manifestPath, (size) => {
+    budget(BACKUP_MANIFEST_FILE, size);
+  });
+  const manifest = parseManifest(manifestRaw.content.toString("utf-8"));
   const files: BackupFile[] = [];
   const seen = new Set<string>();
   for (const manifestFile of manifest.files) {
