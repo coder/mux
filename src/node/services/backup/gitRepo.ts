@@ -249,7 +249,8 @@ export class BackupRepoCache {
     return (await this.localGit(["rev-parse", "HEAD"])).stdout.trim();
   }
 
-  async push(): Promise<string> {
+  /** Callers that report on the remote must confirm it still matches the fetched commit. */
+  async assertRemoteUnchanged(): Promise<void> {
     if (this.baseRemoteCommit === undefined) {
       throw new Error("Fetch and reset the backup cache before pushing");
     }
@@ -257,6 +258,10 @@ export class BackupRepoCache {
     if (currentRemote !== this.baseRemoteCommit) {
       throw new BackupNonFastForwardError();
     }
+  }
+
+  async push(): Promise<string> {
+    await this.assertRemoteUnchanged();
 
     try {
       await this.networkGit([

@@ -7,6 +7,7 @@ import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { createBackupGitRepo, createBackupPayloadStore } from "./adapters";
+import { BackupNonFastForwardError } from "./gitRepo";
 
 async function git(args: string[]): Promise<string> {
   using process = execFileAsync("git", args);
@@ -157,6 +158,53 @@ describe("backup adapters", () => {
     });
     expect(preview.changes).toEqual([]);
     expect(preview.localOnlyFiles).toContain("AGENTS.md");
+  });
+
+  it("reports drift when the remote moves before an unchanged push", async () => {
+    await writeMuxFile("AGENTS.md", "shared state\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const first = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
+    await gitRepo.commitAndPush(first, {
+      managedPath: settings.path,
+      message: "Back up Mux settings",
+      expectedRemoteCommit: first.remoteCommit,
+    });
+
+    const second = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
+    expect(await gitRepo.getPushChanges(second, settings.path)).toEqual([]);
+
+    // Another client advances the branch after this cache fetched it.
+    const other = path.join(tempDir, "other-client");
+    await git(["clone", originPath, other]);
+    await fs.writeFile(path.join(other, "unrelated.txt"), "from another client\n", "utf-8");
+    await git(["-C", other, "add", "."]);
+    await git([
+      "-C",
+      other,
+      "-c",
+      "user.email=other@example.com",
+      "-c",
+      "user.name=Other",
+      "commit",
+      "-m",
+      "other client",
+    ]);
+    await git(["-C", other, "push", "origin", "main"]);
+
+    try {
+      await gitRepo.commitAndPush(second, {
+        managedPath: settings.path,
+        message: "Back up Mux settings",
+        expectedRemoteCommit: second.remoteCommit,
+      });
+      throw new Error("Expected the moved remote to be reported");
+    } catch (error) {
+      expect(error).toBeInstanceOf(BackupNonFastForwardError);
+    }
   });
 
   it("reads the remote backup after a preview modified the cache", async () => {
