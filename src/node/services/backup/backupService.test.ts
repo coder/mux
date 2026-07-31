@@ -6,6 +6,7 @@ import { Config } from "@/node/config";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 import { BackupNonFastForwardError } from "./gitRepo";
+import { BackupRemoteUnreachableError } from "./credentials";
 import {
   BackupService,
   BackupServiceError,
@@ -226,6 +227,23 @@ describe("BackupService", () => {
     if (result.success) throw new Error("Expected the drifted remote to block the push");
     expect(result.error.code).toBe("REPOSITORY_CHANGED");
     expect(result.error.message).toBe("The backup changed since you last read it");
+  });
+
+  test("surfaces an unreachable remote to the client as REMOTE_UNREACHABLE", async () => {
+    // The ladder throws this, but only `toOperationError` decides what a client sees, and
+    // its fallback is IO_ERROR, which cannot be told apart from a local disk failure.
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        validate: () => Promise.reject(new BackupRemoteUnreachableError(new Error("no dns"))),
+      }),
+      payload: createPayload(),
+    });
+
+    const result = await service.validate(SETTINGS);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the unreachable remote to fail validation");
+    expect(result.error.code).toBe("REMOTE_UNREACHABLE");
   });
 
   test("rejects a managed path that targets the git directory", async () => {
