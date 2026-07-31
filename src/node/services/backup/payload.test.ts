@@ -380,6 +380,42 @@ describe("backup payload", () => {
     expect(Object.keys(freshMcp.servers)).toEqual(["remote"]);
   });
 
+  it("rehydrates the url and headers of an entry that also carries a command", async () => {
+    // `normalizeEntry` treats this as an HTTP server because the url wins, but export still
+    // redacts the command, so skipping the whole entry on restore would strand the markers.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "mixed": {
+      "command": "npx local-proxy",
+      "url": "https://host.example/mcp?api_key=urlsecret",
+      "headers": { "Authorization": "Bearer sk-live-mixed" }
+    }
+  }
+}
+`
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "mixed-entry");
+    await writeBackupPayload(destination, payload);
+
+    const readBack = await readBackupPayload(destination);
+    await restoreBackupPayload({ muxRoot, payload: readBack });
+    const restored = jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")) as {
+      servers: { mixed: { command: string; url: string; headers: Record<string, string> } };
+    };
+
+    expect(restored.servers.mixed.command).toBe("npx local-proxy");
+    expect(restored.servers.mixed.url).toBe("https://host.example/mcp?api_key=urlsecret");
+    expect(restored.servers.mixed.headers.Authorization).toBe("Bearer sk-live-mixed");
+  });
+
   it("puts the local command back whichever shape each side uses", async () => {
     await write(
       muxRoot,

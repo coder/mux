@@ -841,12 +841,10 @@ function collectRedactionRestoreEdits(
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
   resolvedServers: ReadonlySet<string> = new Set()
 ): void {
-  // `resolveRestoredCommands` already emitted an edit for this server, and for a dropped
-  // one a nested edit would resurrect the entry it removed.
-  if (currentPath.length === 2 && currentPath[0] === "servers") {
-    const name = currentPath[1];
-    if (typeof name === "string" && resolvedServers.has(name)) return;
-  }
+  // Only the exact paths `resolveRestoredCommands` already wrote, so a mixed entry carrying
+  // both a command and a redacted url or header still rehydrates the rest. A dropped entry
+  // is skipped wholesale, since a nested edit would resurrect what it removed.
+  if (resolvedServers.has(currentPath.join("\u0000"))) return;
   if (typeof backup === "string" && containsRedaction(backup)) {
     if (local !== undefined) edits.push({ path: currentPath, value: local });
     return;
@@ -1020,7 +1018,8 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
  * `McpConfigService.normalizeEntry` treat it as an enabled command that
  * `MCPServerManager` then tries to execute, so the entry is dropped instead.
  *
- * Returns the server names handled here, so the generic redaction walk skips them.
+ * Returns the exact paths written here so the generic redaction walk skips them, leaving a
+ * mixed entry's other redactions to rehydrate normally.
  */
 function resolveRestoredCommands(
   backup: Record<string, unknown>,
@@ -1045,16 +1044,15 @@ function resolveRestoredCommands(
       (entry as Record<string, unknown>).command === REDACTED_BACKUP_VALUE;
     if (!isBareMarker && !isObjectMarker) continue;
 
-    handled.add(name);
     const localCommand = readAnyServerCommand(localServers[name]);
     if (localCommand === undefined) {
       edits.push({ path: ["servers", name], value: undefined });
+      handled.add(["servers", name].join("\u0000"));
       continue;
     }
-    edits.push({
-      path: isBareMarker ? ["servers", name] : ["servers", name, "command"],
-      value: localCommand,
-    });
+    const commandPath = isBareMarker ? ["servers", name] : ["servers", name, "command"];
+    edits.push({ path: commandPath, value: localCommand });
+    handled.add(commandPath.join("\u0000"));
   }
   return handled;
 }

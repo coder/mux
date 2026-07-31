@@ -482,7 +482,9 @@ export function BackupSection() {
           ))}
         </ul>
         <p className="text-foreground text-xs font-medium">
-          API keys and secrets are never included.
+          Provider keys and secret files have no export path at all. MCP credentials and executable
+          commands stay on this device, and a scan blocks a backup that still looks like it holds a
+          secret unless you override it.
         </p>
       </section>
 
