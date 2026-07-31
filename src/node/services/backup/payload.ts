@@ -988,9 +988,9 @@ export function assertBackupCommandsApproved(
 
 async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {
   const backupText = content.toString("utf-8");
-  // Without a marker there is nothing to rehydrate, so the local file is not consulted.
-  if (!containsRedaction(backupText)) return content;
-
+  // Deliberately not gated on a marker being present: `resolveRestoredHeaders` has to inspect
+  // a marker-free backup too, since a bare `{secret: NAME}` header carries no marker yet
+  // still resolves against local data.
   const backup = parseJsoncObject(backupText, "backup mcp.jsonc");
   const localPath = path.join(muxRoot, "mcp.jsonc");
   let local: Record<string, unknown> = {};
@@ -1060,16 +1060,21 @@ function resolveRestoredCommands(
 }
 
 /**
- * A credential-bearing header only survives when the restored entry still points at the
- * endpoint the local config already sends it to. `MCPServerManager.resolveHeaders` resolves
- * both a literal header and a `{secret: NAME}` reference against local data and sends the
- * result to whatever `url` the entry carries, so a repository writer who repoints the url,
- * or adds a server naming a secret this machine holds, would otherwise receive it.
+ * A restored header value is only ever the local value at that exact path, or nothing.
  *
- * On a matching endpoint a marker is put back from the local file and a reference is left
- * exactly as written, which keeps the file's own formatting. Otherwise the header is
- * removed, leaving an entry that cannot authenticate rather than one that authenticates
- * somewhere the user never approved.
+ * `MCPServerManager.resolveHeaders` resolves both a literal header and a `{secret: NAME}`
+ * reference against local data, then sends the result to whatever `url` the entry carries.
+ * Deciding per value shape which ones are safe to carry over from a backup does not work:
+ * a marker, a marker standing in for the whole `headers` object, a bare reference in a
+ * marker-free file, and a reference the backup adds next to a url it chose are all the same
+ * defect. So nothing the backup writes under `headers` survives unless the local file
+ * already holds it at the same path, which makes the shape irrelevant.
+ *
+ * A local value is only put back when the restored entry still points at the endpoint the
+ * local config already sends that header to. Otherwise the header is dropped, leaving an
+ * entry that cannot authenticate rather than one that authenticates somewhere the user never
+ * approved. Only header names the backup itself lists are considered, so a restore never
+ * introduces a local header the backup did not have.
  *
  * Returns the paths written here so the generic redaction walk leaves them alone.
  */
@@ -1088,44 +1093,27 @@ function resolveRestoredHeaders(
     if (rawHeaders === undefined) continue;
     const localServer = readRecord(localServers[name]);
     const headersPath: jsonc.JSONPath = ["servers", name, "headers"];
+    // The whole subtree is withheld from the generic walk, so no header can be rehydrated
+    // by a path this function did not decide on.
+    handled.add(headersPath.join("\u0000"));
 
-    if (restoredServerUrl(entry, localServer) !== readUrl(localServer)) {
-      // The whole subtree is withheld from the walk, not just the credential-bearing entries
-      // below. A marker written in place of the headers object itself would otherwise
-      // rehydrate every local header for this server at once.
-      handled.add(headersPath.join("\u0000"));
-      const headers = readRecord(rawHeaders);
-      if (!headers) {
-        if (typeof rawHeaders === "string" && containsRedaction(rawHeaders)) {
-          edits.push({ path: headersPath, value: undefined });
-        }
-        continue;
-      }
-      for (const [headerName, value] of Object.entries(headers)) {
-        if (!isCredentialHeader(value)) continue;
-        edits.push({ path: [...headersPath, headerName], value: undefined });
-      }
+    const headers = readRecord(rawHeaders);
+    const endpointMatches = restoredServerUrl(entry, localServer) === readUrl(localServer);
+    if (!headers || !endpointMatches) {
+      edits.push({ path: headersPath, value: undefined });
       continue;
     }
 
-    const headers = readRecord(rawHeaders);
-    if (!headers) continue;
     const localHeaders = readRecord(localServer?.headers) ?? {};
     for (const [headerName, value] of Object.entries(headers)) {
-      if (typeof value !== "string" || !containsRedaction(value)) continue;
-      const headerPath = [...headersPath, headerName];
-      // Rehydration is by path, so a server the backup renamed finds no local header here
-      // and its marker is removed rather than resolved against the wrong entry.
-      edits.push({ path: headerPath, value: localHeaders[headerName] });
-      handled.add(headerPath.join("\u0000"));
+      const localValue = localHeaders[headerName];
+      // Skipping an already-identical value keeps `jsonc.modify` from reformatting a header
+      // the restore would not have changed.
+      if (JSON.stringify(localValue) === JSON.stringify(value)) continue;
+      edits.push({ path: [...headersPath, headerName], value: localValue });
     }
   }
   return handled;
-}
-
-/** A header whose value only becomes a credential once local data resolves it. */
-function isCredentialHeader(value: unknown): boolean {
-  return (typeof value === "string" && containsRedaction(value)) || isPortableReference(value);
 }
 
 /** The url the restored entry ends up with, since a redacted url is itself put back from local. */
