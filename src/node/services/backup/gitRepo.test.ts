@@ -115,6 +115,29 @@ describe("BackupRepoCache", () => {
     expect(tracked.split("\n")).toContain("mux/AGENTS.md");
   });
 
+  it("does not report a server-side push denial as remote drift", async () => {
+    // A protected branch or policy hook. Telling the user the backup changed would send them to
+    // re-read a backup that is not stale, and the push would be refused again.
+    const hook = path.join(originPath, "hooks", "pre-receive");
+    await fs.writeFile(hook, "#!/bin/sh\necho 'policy: review required' >&2\nexit 1\n", "utf-8");
+    await fs.chmod(hook, 0o755);
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+
+    const rejected = await repo.push().then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect(rejected).not.toBeInstanceOf(BackupNonFastForwardError);
+    expect((rejected as Error | null)?.message).toContain("pre-receive hook declined");
+  });
+
   it("keeps payload bytes verbatim when git is asked to convert line endings", async () => {
     const seed = path.join(tempDir, "crlf-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });

@@ -15,6 +15,23 @@ import {
 const BLOB_FILTER = "blob:none";
 
 /**
+ * True only for the rejections that mean the remote branch moved, which is what the user can fix
+ * by reading the backup again. git distinguishes these by status token: `[rejected]` is the ref
+ * update git itself declined, while `[remote rejected]` is the server declining, so a protected
+ * branch or a pre-receive hook must not be reported as drift. Matching the whole line rather
+ * than the word `rejected` keeps a hook's own message out of it too.
+ */
+function isRemoteMovedRejection(text: string): boolean {
+  return text
+    .split(/\r?\n/)
+    .some(
+      (line) =>
+        /^\s*!\s*\[rejected\]/.test(line) &&
+        /\((stale info|fetch first|non-fast-forward)\)/.test(line)
+    );
+}
+
+/**
  * The payload is bytes, not text: the manifest records a SHA-256 per file and a restore writes
  * what it reads. Any end-of-line conversion in the cache worktree therefore breaks the checksum
  * and would put the rewritten bytes on the user's disk. `core.autocrlf=true` is an ordinary
@@ -491,7 +508,7 @@ export class BackupRepoCache {
         `HEAD:refs/heads/${this.options.branch}`,
       ]);
     } catch (error) {
-      if (/non-fast-forward|fetch first|rejected/i.test(errorText(error))) {
+      if (isRemoteMovedRejection(errorText(error))) {
         throw new BackupNonFastForwardError();
       }
       throw error;
