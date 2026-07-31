@@ -1016,7 +1016,8 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
  *
  * With no local command there is nothing to put back, and leaving the marker would make
  * `McpConfigService.normalizeEntry` treat it as an enabled command that
- * `MCPServerManager` then tries to execute, so the entry is dropped instead.
+ * `MCPServerManager` then tries to execute, so the command is removed. That takes the whole
+ * entry with it unless the entry is also an HTTP server, which restores on its own.
  *
  * Returns the exact paths written here so the generic redaction walk skips them, leaving a
  * mixed entry's other redactions to rehydrate normally.
@@ -1046,8 +1047,13 @@ function resolveRestoredCommands(
 
     const localCommand = readAnyServerCommand(localServers[name]);
     if (localCommand === undefined) {
-      edits.push({ path: ["servers", name], value: undefined });
-      handled.add(["servers", name].join("\u0000"));
+      // `normalizeEntry` gives a url precedence over a command, so a mixed object is an HTTP
+      // server whose command is already ignored. Drop only the command and keep the url,
+      // headers, disabled state, and allowlist that do restore.
+      const hasUrl = isObjectMarker && typeof (entry as Record<string, unknown>).url === "string";
+      const removed: jsonc.JSONPath = hasUrl ? ["servers", name, "command"] : ["servers", name];
+      edits.push({ path: removed, value: undefined });
+      handled.add(removed.join("\u0000"));
       continue;
     }
     const commandPath = isBareMarker ? ["servers", name] : ["servers", name, "command"];

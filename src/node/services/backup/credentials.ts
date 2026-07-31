@@ -89,28 +89,39 @@ async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): 
   }
 }
 
-async function controlledCredential(
+/**
+ * Every controlled rung worth trying, in order. `gh` comes before an explicit token because
+ * it needs no configuration, but both are kept: the logged-in `gh` account may simply lack
+ * access to this repository, and falling straight through to ambient credentials would make
+ * a perfectly good configured token unusable just because someone else is logged into `gh`.
+ */
+async function controlledCredentials(
   options: GitCredentialOptions
-): Promise<ControlledCredential | null> {
+): Promise<ControlledCredential[]> {
   if (isSshRepoUrl(options.repoUrl)) {
-    return {
-      credential: "ssh",
-      argsPrefix: [],
-      env: { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" },
-    };
+    return [
+      {
+        credential: "ssh",
+        argsPrefix: [],
+        env: { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" },
+      },
+    ];
   }
 
   const host = repoHost(options.repoUrl);
-  if (host && (await hasAuthenticatedGh(host, options))) {
-    return {
+  if (!host) return [];
+  const rungs: ControlledCredential[] = [];
+
+  if (await hasAuthenticatedGh(host, options)) {
+    rungs.push({
       credential: "gh",
       argsPrefix: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
       env: {},
-    };
+    });
   }
 
-  if (options.token && host) {
-    return {
+  if (options.token) {
+    rungs.push({
       credential: "token",
       // Scope the helper to the repository's own origin so a redirect or a submodule
       // on another host cannot make git offer this token to it.
@@ -121,10 +132,10 @@ async function controlledCredential(
         `credential.${new URL(options.repoUrl).origin}.helper=${TOKEN_HELPER}`,
       ],
       env: { [BACKUP_TOKEN_ENV]: options.token },
-    };
+    });
   }
 
-  return null;
+  return rungs;
 }
 
 /**
@@ -153,14 +164,13 @@ export async function runGitWithCredentialLadder(
   args: string[],
   options: GitCredentialOptions
 ): Promise<GitCredentialResult> {
-  const controlled = await controlledCredential(options);
   const baseOptions: ExecFileAsyncOptions = {
     timeoutMs: options.timeoutMs,
     signal: options.signal,
     onStderrData: options.onStderrData,
   };
 
-  if (controlled) {
+  for (const controlled of await controlledCredentials(options)) {
     try {
       const result = await run("git", [...controlled.argsPrefix, ...args], {
         ...baseOptions,

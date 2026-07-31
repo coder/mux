@@ -414,6 +414,19 @@ describe("backup payload", () => {
     expect(restored.servers.mixed.command).toBe("npx local-proxy");
     expect(restored.servers.mixed.url).toBe("https://host.example/mcp?api_key=urlsecret");
     expect(restored.servers.mixed.headers.Authorization).toBe("Bearer sk-live-mixed");
+
+    // With no local command the entry is still an HTTP server, so only the command goes.
+    const fresh = path.join(tempDir, "mixed-fresh");
+    await fs.mkdir(fresh, { recursive: true });
+    await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
+    const freshMixed = (
+      jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
+        servers: { mixed?: { command?: string; url?: string; headers?: Record<string, string> } };
+      }
+    ).servers.mixed;
+    expect(freshMixed?.command).toBeUndefined();
+    expect(freshMixed?.url).toContain("host.example/mcp");
+    expect(freshMixed?.headers?.Authorization).toBe(REDACTED_BACKUP_VALUE);
   });
 
   it("puts the local command back whichever shape each side uses", async () => {

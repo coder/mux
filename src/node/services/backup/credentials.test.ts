@@ -136,6 +136,37 @@ esac
     expect(second).toBe("fetch\norigin\n");
   });
 
+  it("tries the configured token when the gh account lacks access", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' '---' >> "$GIT_LOG"
+printf '%s\\n' "$@" >> "$GIT_LOG"
+case "$*" in
+  *gh\\ auth\\ git-credential*) echo 'remote: Permission to owner/repo.git denied' >&2; exit 128 ;;
+esac
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["fetch", "origin"], {
+        repoUrl: "https://github.com/owner/repo.git",
+        token: "test-token",
+        env: { GIT_LOG: logPath },
+      })
+    );
+
+    // A logged-in gh account that cannot reach this repository must not make a configured
+    // token unusable, so the token rung runs before ambient credentials.
+    expect(result.credential).toBe("token");
+    const attempts = (await fs.readFile(logPath, "utf-8")).split("---\n").filter(Boolean);
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toContain("gh auth git-credential");
+    expect(attempts[1]).toContain("credential.https://github.com.helper=");
+  });
+
   it("reports an exhausted credential ladder as an authentication failure", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
