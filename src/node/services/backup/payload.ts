@@ -67,6 +67,12 @@ export interface CreateBackupPayloadOptions {
    * owns the user-facing override can decide whether to proceed.
    */
   reportSecrets?: boolean;
+  /**
+   * Keep MCP credentials verbatim. Only for the local safety snapshot: a redacted
+   * snapshot cannot restore a credential whose server the restore removed, and the
+   * snapshot never leaves this machine.
+   */
+  keepLocalSecrets?: boolean;
 }
 
 export interface RestoreBackupPayloadOptions {
@@ -125,14 +131,20 @@ async function lstatOrNull(target: string) {
  * writing through it would escape the directory this feature is allowed to touch.
  */
 export async function resolveContainedPath(root: string, relativePath: string): Promise<string> {
+  const segments = relativePath.split("/");
   let current = root;
-  for (const segment of relativePath.split("/")) {
+  for (const [index, segment] of segments.entries()) {
     if (!segment || segment === "." || segment === "..") {
       throw new Error(`Backup contains disallowed path '${relativePath}'`);
     }
     current = path.join(current, segment);
-    if ((await lstatOrNull(current))?.isSymbolicLink()) {
+    const existing = await lstatOrNull(current);
+    if (existing?.isSymbolicLink()) {
       throw new Error(`Refusing to follow symlink '${relativePath}'`);
+    }
+    // A non-directory in the middle of the path would make mkdir fail mid-write.
+    if (index < segments.length - 1 && existing !== null && !existing.isDirectory()) {
+      throw new Error(`Cannot use '${relativePath}': a parent path is not a directory`);
     }
   }
   return current;
@@ -335,7 +347,13 @@ function isShellReference(value: string): boolean {
 /** A stdio MCP server carries its credential in the command line rather than a header. */
 function redactCommandCredentials(command: string): { value: string; redacted: boolean } {
   let redacted = false;
-  let value = command;
+  // A command can embed the credential in a URL argument (`npx mcp-remote
+  // https://host/mcp?api_key=...`), so reuse the URL rules before the flag rules.
+  let value = command.replace(/https?:\/\/[^\s"'`]+/gi, (match) => {
+    const redactedUrl = redactInlineUrl(match);
+    if (redactedUrl.redacted) redacted = true;
+    return redactedUrl.value;
+  });
   for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
     value = value.replace(pattern, (match, flag: string, secret: string) => {
       if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
@@ -471,7 +489,7 @@ export async function createBackupPayload(
   const files = await collectAllowlistedFiles(options.muxRoot);
   const redactions: string[] = [];
   const mcpFile = files.find((file) => file.path === "mcp.jsonc");
-  if (mcpFile) {
+  if (mcpFile && options.keepLocalSecrets !== true) {
     const redacted = redactMcpConfig(mcpFile.content);
     mcpFile.content = redacted.content;
     redactions.push(...redacted.redactions);
@@ -718,8 +736,12 @@ export async function restoreBackupPayload(
       );
       continue;
     }
+    const destination = await resolveContainedPath(options.muxRoot, file.path);
+    if ((await lstatOrNull(destination))?.isDirectory() === true) {
+      throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
+    }
     writes.push({
-      destination: await resolveContainedPath(options.muxRoot, file.path),
+      destination,
       content: await resolveRestoredContent(options.muxRoot, file),
       executable: file.executable === true,
     });

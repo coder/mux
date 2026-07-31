@@ -364,6 +364,10 @@ describe("backup adapters", () => {
 
   it("writes a safety snapshot of the current local files", async () => {
     await writeMuxFile("AGENTS.md", "before restore\n");
+    await writeMuxFile(
+      "mcp.jsonc",
+      `{"servers": {"local": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer local-only-secret"}}}}`
+    );
     const payload = createBackupPayloadStore({ config });
     const snapshotRoot = path.join(tempDir, "snapshot");
 
@@ -374,6 +378,11 @@ describe("backup adapters", () => {
     );
     expect(await fs.readFile(path.join(snapshotRoot, "manifest.json"), "utf-8")).toContain(
       "AGENTS.md"
+    );
+    // The snapshot stays local, so it must keep credentials a restore could delete.
+    // A redacted snapshot cannot rehydrate a server the restore removed entirely.
+    expect(await fs.readFile(path.join(snapshotRoot, "mcp.jsonc"), "utf-8")).toContain(
+      "local-only-secret"
     );
   });
 

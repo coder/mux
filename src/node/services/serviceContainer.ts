@@ -14,6 +14,7 @@ import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
 import { BackupService } from "@/node/services/backup/backupService";
 import { resolveGhToken } from "@/node/runtime/credentialForwarding";
+import { isGitHubRepoUrl } from "@/node/services/backup/credentials";
 import { createBackupGitRepo, createBackupPayloadStore } from "@/node/services/backup/adapters";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
@@ -161,7 +162,9 @@ export class ServiceContainer {
     this.backupService = new BackupService(config, {
       gitRepo: createBackupGitRepo({
         cacheRoot: path.join(config.rootDir, "backup-cache"),
-        getToken: () => resolveGhToken(),
+        // GH_TOKEN is a GitHub credential, so it must never be offered to an
+        // arbitrary host the user typed into the backup repository field.
+        getToken: (repoUrl) => (isGitHubRepoUrl(repoUrl) ? resolveGhToken() : null),
       }),
       payload: createBackupPayloadStore({ config }),
     });

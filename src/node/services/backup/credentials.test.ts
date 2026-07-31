@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { runGitWithCredentialLadder } from "./credentials";
+import { isGitHubRepoUrl, runGitWithCredentialLadder } from "./credentials";
 
 async function withPath<T>(binDir: string, run: () => Promise<T>): Promise<T> {
   const originalPath = process.env.PATH;
@@ -66,6 +66,14 @@ printf 'prompt=%s,%s,%s\n' "$GIT_TERMINAL_PROMPT" "$GH_PROMPT_DISABLED" "$GCM_IN
     expect(log).toContain("prompt=0,1,never");
   });
 
+  it("recognizes only GitHub hosts as eligible for a GitHub token", () => {
+    expect(isGitHubRepoUrl("https://github.com/o/r.git")).toBe(true);
+    expect(isGitHubRepoUrl("git@github.com:o/r.git")).toBe(true);
+    expect(isGitHubRepoUrl("https://evil.example/o/r.git")).toBe(false);
+    // A lookalike host must not match by suffix.
+    expect(isGitHubRepoUrl("https://github.com.evil.example/o/r.git")).toBe(false);
+  });
+
   it("passes an explicit token through env and never argv", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
@@ -92,6 +100,8 @@ printf 'token=%s\n' "$MUX_BACKUP_TOKEN" >> "$GIT_LOG"
     expect(argv).toContain("password=$MUX_BACKUP_TOKEN");
     expect(argv).not.toContain(token);
     expect(envLine.trim()).toBe(token);
+    // Scoped to the repository's origin, so git cannot offer the token to another host.
+    expect(argv).toContain("credential.https://example.com.helper=");
   });
 
   it("retries authentication failures without controlled credential overrides", async () => {

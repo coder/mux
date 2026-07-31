@@ -48,7 +48,7 @@ function parsePorcelainStatus(output: string): BackupFileChange[] {
 export function createBackupGitRepo(options: {
   cacheRoot: string;
   /** Resolved per call so a token added after startup is picked up without a restart. */
-  getToken?: () => string | null;
+  getToken?: (repoUrl: string) => string | null;
 }): BackupGitRepo {
   const prepared = new WeakMap<PreparedBackupRepository, BackupRepoCache>();
 
@@ -56,7 +56,7 @@ export function createBackupGitRepo(options: {
     return new BackupRepoCache({
       ...settings,
       cacheRoot: options.cacheRoot,
-      token: options.getToken?.() ?? undefined,
+      token: options.getToken?.(settings.repoUrl) ?? undefined,
     });
   }
 
@@ -144,7 +144,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     return new Map((await collectAllowlistedFiles(muxRoot)).map((file) => [file.path, file]));
   }
 
-  async function buildPayload() {
+  async function buildPayload(overrides?: { keepLocalSecrets: true }) {
     return await createBackupPayload({
       muxRoot,
       preferences: exportablePreferences(),
@@ -152,6 +152,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       sourceLabel: path.basename(muxRoot),
       // The service owns the user-facing override, so report rather than throw.
       reportSecrets: true,
+      ...overrides,
     });
   }
 
@@ -225,7 +226,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     },
 
     async writeSafetySnapshot(snapshotRoot) {
-      await writeBackupPayload(snapshotRoot, await buildPayload());
+      // Unredacted: this copy never leaves the machine, and a redacted snapshot could
+      // not restore a credential whose MCP server the restore removed.
+      await writeBackupPayload(snapshotRoot, await buildPayload({ keepLocalSecrets: true }));
     },
 
     async restore(restoreOptions) {

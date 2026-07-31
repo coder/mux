@@ -172,6 +172,7 @@ describe("backup payload", () => {
     "bare": "env ACME_PASSWORD=hunter2 acme-mcp",
     "header": { "command": "acme-mcp --header 'Authorization: Bearer sk-live-header'" },
     "leading": { "command": "PASSWORD=sk-live-leading acme-mcp" },
+    "url": { "command": "npx mcp-remote https://host.example/mcp?api_key=hunter2&mode=fast" },
     "quoted": { "command": "acme-mcp --api-key \\"two word secret\\"" },
     "singleQuoted": { "command": "acme-mcp --api-key '$NOT_EXPANDED'" },
     "reference": { "command": "npx server --api-key $MCP_API_KEY" }
@@ -191,6 +192,7 @@ describe("backup payload", () => {
         bare: string;
         header: { command: string };
         leading: { command: string };
+        url: { command: string };
         quoted: { command: string };
         singleQuoted: { command: string };
         reference: { command: string };
@@ -205,6 +207,8 @@ describe("backup payload", () => {
       `acme-mcp --header 'Authorization: Bearer ${REDACTED_BACKUP_VALUE}'`
     );
     expect(mcp.servers.leading.command).toBe(`PASSWORD=${REDACTED_BACKUP_VALUE} acme-mcp`);
+    expect(mcp.servers.url.command).toContain("mode=fast");
+    expect(mcp.servers.url.command).not.toContain("hunter2");
     expect(mcp.servers.quoted.command).toBe(`acme-mcp --api-key ${REDACTED_BACKUP_VALUE}`);
     // Single quotes suppress shell expansion, so this is a literal, not a reference.
     expect(mcp.servers.singleQuoted.command).toBe(`acme-mcp --api-key ${REDACTED_BACKUP_VALUE}`);
@@ -214,6 +218,7 @@ describe("backup payload", () => {
       "servers.bare",
       "servers.header.command",
       "servers.leading.command",
+      "servers.url.command",
       "servers.quoted.command",
       "servers.singleQuoted.command",
     ]);
@@ -433,6 +438,29 @@ describe("backup payload", () => {
       expect(error.message).toContain("symlink");
     }
     expect(await fs.readdir(outside)).toEqual([]);
+    expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
+  });
+
+  it("refuses to restore a file onto an existing directory", async () => {
+    await write(muxRoot, "AGENTS.md", "from backup\n");
+    await write(muxRoot, "skills/demo", "a file, not a directory\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "type-clash");
+    await write(restoreRoot, "AGENTS.md", "local\n");
+    await fs.mkdir(path.join(restoreRoot, "skills/demo"), { recursive: true });
+
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+      throw new Error("Expected the directory clash to be refused");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("directory");
+    }
     expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
   });
 

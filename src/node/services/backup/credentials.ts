@@ -37,6 +37,18 @@ function repoHost(repoUrl: string): string | null {
   }
 }
 
+/** GH_TOKEN authenticates GitHub, so only a GitHub host may be offered it. */
+export function isGitHubRepoUrl(repoUrl: string): boolean {
+  const host = repoHost(repoUrl)?.toLowerCase();
+  if (!host) return false;
+  const enterpriseHost = process.env.GH_HOST?.toLowerCase();
+  return (
+    host === "github.com" ||
+    host.endsWith(".github.com") ||
+    (enterpriseHost !== undefined && host === enterpriseHost)
+  );
+}
+
 function isSshRepoUrl(repoUrl: string): boolean {
   return (
     repoUrl.startsWith("ssh://") ||
@@ -85,10 +97,17 @@ async function controlledCredential(
     };
   }
 
-  if (options.token) {
+  if (options.token && host) {
     return {
       credential: "token",
-      argsPrefix: ["-c", "credential.helper=", "-c", `credential.helper=${TOKEN_HELPER}`],
+      // Scope the helper to the repository's own origin so a redirect or a submodule
+      // on another host cannot make git offer this token to it.
+      argsPrefix: [
+        "-c",
+        "credential.helper=",
+        "-c",
+        `credential.${new URL(options.repoUrl).origin}.helper=${TOKEN_HELPER}`,
+      ],
       env: { [BACKUP_TOKEN_ENV]: options.token },
     };
   }
