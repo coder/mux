@@ -577,6 +577,31 @@ describe("backup adapters", () => {
     );
   });
 
+  it("does not promise to keep a local file the restore writes under another name", async () => {
+    // A hard link is two names for one file on every filesystem, which is what a
+    // case-insensitive or normalizing volume makes of `Note.md` and `note.md`. The backup
+    // carries one spelling, so restoring it changes the other name's contents too and neither
+    // can be reported as kept.
+    await writeMuxFile("skills/demo/note.md", "shared\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+    await fs.link(
+      path.join(muxRoot, "skills/demo/note.md"),
+      path.join(muxRoot, "skills/demo/Note.md")
+    );
+    await fs.writeFile(path.join(muxRoot, "skills/demo/note.md"), "edited locally\n", "utf-8");
+
+    const preview = await payload.previewRestore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+
+    expect(preview.localOnlyFiles).toEqual([]);
+    expect(preview.changes.map((change) => change.path)).toEqual(["skills/demo/note.md"]);
+  });
+
   it("snapshots case-distinct local files that no published backup could carry", async () => {
     // Both names coexist on a case-sensitive filesystem and both are collected, so folding
     // them here would refuse the snapshot and block the restore that depends on it.

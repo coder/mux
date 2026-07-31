@@ -195,6 +195,60 @@ async function lstatOrNull(target: string) {
 }
 
 /**
+ * The collected local file each payload path would write over, absent when the payload path
+ * names nothing collected, which is the ordinary case of a file the restore creates.
+ *
+ * Comparing the spellings cannot answer this. On a case-insensitive or normalization-folding
+ * volume `skills/demo/Foo.md` and `skills/demo/foo.md` are one file, and on a case-sensitive
+ * one they are two, so folding is wrong on the second and a literal match is wrong on the
+ * first. Only the filesystem knows which it is, so ask it: two paths name one file when it
+ * reports one identity for them.
+ */
+async function localFilesOverwrittenByPayload(
+  muxRoot: string,
+  localPaths: Iterable<string>,
+  payloadPaths: Iterable<string>
+): Promise<Map<string, string>> {
+  const byIdentity = new Map<string, string>();
+  for (const localPath of localPaths) {
+    const identity = await fileIdentity(muxRoot, localPath);
+    if (identity !== null) byIdentity.set(identity, localPath);
+  }
+  const overwritten = new Map<string, string>();
+  for (const payloadPath of payloadPaths) {
+    const identity = await fileIdentity(muxRoot, payloadPath);
+    const localPath = identity === null ? undefined : byIdentity.get(identity);
+    if (localPath !== undefined) overwritten.set(payloadPath, localPath);
+  }
+  return overwritten;
+}
+
+async function fileIdentity(muxRoot: string, relativePath: string): Promise<string | null> {
+  const stat = await lstatOrNull(path.join(muxRoot, ...relativePath.split("/")));
+  return stat === null ? null : `${stat.dev}:${stat.ino}`;
+}
+
+/**
+ * Local files a restore of this payload would leave untouched: the ones that share no name
+ * with a restored path and are not the same file as one under another spelling.
+ */
+export async function localOnlyPayloadFiles(
+  muxRoot: string,
+  localPaths: Iterable<string>,
+  restoredPaths: ReadonlySet<string>
+): Promise<{ localOnly: string[]; overwritten: Map<string, string> }> {
+  const locals = [...localPaths];
+  const overwritten = await localFilesOverwrittenByPayload(muxRoot, locals, restoredPaths);
+  const overwrittenLocals = new Set(overwritten.values());
+  return {
+    localOnly: locals
+      .filter((file) => !restoredPaths.has(file) && !overwrittenLocals.has(file))
+      .sort(),
+    overwritten,
+  };
+}
+
+/**
  * Joins a posix relative path onto a root, rejecting any component that is a symlink.
  * Git stores symlinks (mode 120000), so a backup repository can contain one; reading or
  * writing through it would escape the directory this feature is allowed to touch.
@@ -1428,6 +1482,7 @@ export async function restoreBackupPayload(
 
   return {
     backupPreferences,
-    localOnlyFiles: [...localPaths].filter((file) => !restoredPaths.has(file)).sort(),
+    localOnlyFiles: (await localOnlyPayloadFiles(options.muxRoot, localPaths, restoredPaths))
+      .localOnly,
   };
 }

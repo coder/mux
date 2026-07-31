@@ -21,6 +21,7 @@ import {
   createBackupPayload,
   mergeBackupPreferences,
   projectBackupPreferences,
+  localOnlyPayloadFiles,
   readBackupPayload,
   restoreBackupPayload,
   backupSecretApprovalDigest,
@@ -201,6 +202,14 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       }
 
       const payload = await readBackupPayload(sourceDir);
+      const restoredPaths = new Set(
+        payload.files.filter((file) => file.path !== "preferences.json").map((file) => file.path)
+      );
+      const { localOnly, overwritten } = await localOnlyPayloadFiles(
+        muxRoot,
+        local.keys(),
+        restoredPaths
+      );
       const changes: BackupFileChange[] = [];
       for (const file of payload.files) {
         // Preferences live in config, and restore merges them rather than replacing the
@@ -214,7 +223,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
           }
           continue;
         }
-        const existing = local.get(file.path);
+        // Under the spelling the filesystem actually resolves this path to, so a restore
+        // that overwrites a differently-cased local file reads as a change to it.
+        const existing = local.get(overwritten.get(file.path) ?? file.path);
         if (!existing) {
           changes.push({ status: "A", path: file.path });
           continue;
@@ -226,10 +237,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
           changes.push({ status: "M", path: file.path });
         }
       }
-      const backedUp = new Set(payload.files.map((file) => file.path));
       return {
         changes: changes.sort((a, b) => a.path.localeCompare(b.path)),
-        localOnlyFiles: [...local.keys()].filter((file) => !backedUp.has(file)).sort(),
+        localOnlyFiles: localOnly,
         commandApprovals: await collectMcpCommandApprovals(muxRoot, payload.files),
       };
     },

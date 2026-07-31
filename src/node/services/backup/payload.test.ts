@@ -1605,6 +1605,30 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain(command);
   });
 
+  it("reports a local file the restore writes under another name as restored", async () => {
+    // Two names for one file, as a case-insensitive or normalizing volume makes of `Note.md`
+    // and `note.md`. Restoring the backup's spelling rewrites both, so neither is local-only.
+    await write(muxRoot, "skills/demo/note.md", "shared\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "linked-name");
+    await writeBackupPayload(destination, payload);
+    await fs.link(
+      path.join(muxRoot, "skills/demo/note.md"),
+      path.join(muxRoot, "skills/demo/Note.md")
+    );
+
+    const result = await restoreBackupPayload({
+      muxRoot,
+      payload: await readBackupPayload(destination),
+    });
+
+    expect(result.localOnlyFiles).toEqual([]);
+  });
+
   it("rejects manifest paths that differ only in Unicode normalization", async () => {
     const destination = path.join(tempDir, "normalization-payload");
     // Same name, composed and decomposed. macOS normalizes, so both entries resolve to one
