@@ -388,6 +388,94 @@ describe("backup payload", () => {
     }
   });
 
+  it("redacts a paired user:password credential but keeps non-credential pairs", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "user": { "command": "curl -u alice:hunter2 https://host.example/mcp" },
+    "longUser": { "command": "curl --user alice:hunter2 https://host.example" },
+    "proxy": { "command": "curl -U puser:ppass https://host.example" },
+    "longProxy": { "command": "curl --proxy-user puser:ppass https://host.example" },
+    "passphrase": { "command": "curl --pass topsecretphrase https://host.example" },
+    "cert": { "command": "curl -E /certs/client.pem:certpass https://host.example" },
+    "quotedUser": { "command": "curl -u \\"alice:two word\\" https://host.example" },
+    "bareUser": { "command": "curl -u alice https://host.example" },
+    "plainCert": { "command": "curl -E /certs/client.pem https://host.example" },
+    "uidGid": { "command": "docker run -u 1000:1000 image" },
+    "reference": { "command": "curl -u alice:$MCP_PASSWORD https://host.example" }
+  }
+}
+`
+    );
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const mcp = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
+      servers: Record<string, { command: string }>;
+    };
+
+    // The user half stays so a fresh restore keeps a working command shape.
+    expect(mcp.servers.user?.command).toBe(
+      `curl -u alice:${REDACTED_BACKUP_VALUE} https://host.example/mcp`
+    );
+    expect(mcp.servers.longUser?.command).toBe(
+      `curl --user alice:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.proxy?.command).toBe(
+      `curl -U puser:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.longProxy?.command).toBe(
+      `curl --proxy-user puser:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.passphrase?.command).toBe(
+      `curl --pass ${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.cert?.command).toBe(
+      `curl -E /certs/client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.quotedUser?.command).toBe(
+      `curl -u "alice:${REDACTED_BACKUP_VALUE}" https://host.example`
+    );
+    // No credential to remove, so these keep working on a machine with no local value.
+    expect(mcp.servers.bareUser?.command).toBe("curl -u alice https://host.example");
+    expect(mcp.servers.plainCert?.command).toBe("curl -E /certs/client.pem https://host.example");
+    expect(mcp.servers.uidGid?.command).toBe("docker run -u 1000:1000 image");
+    expect(mcp.servers.reference?.command).toBe("curl -u alice:$MCP_PASSWORD https://host.example");
+
+    const exported = payloadFileText(payload, "mcp.jsonc");
+    for (const secret of ["hunter2", "ppass", "topsecretphrase", "certpass", "two word"]) {
+      expect(exported).not.toContain(secret);
+    }
+  });
+
+  it("reports a corrupt backup as an invalid backup rather than an IO failure", async () => {
+    await write(muxRoot, "AGENTS.md", "backed up\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "corrupt-payload");
+    await writeBackupPayload(destination, payload);
+
+    await fs.writeFile(path.join(destination, "AGENTS.md"), "tampered\n", "utf-8");
+    const mismatch = await rejection(readBackupPayload(destination));
+    expect((mismatch as { code?: string }).code).toBe("INVALID_BACKUP");
+
+    await fs.writeFile(path.join(destination, "manifest.json"), "{ not json", "utf-8");
+    const malformed = await rejection(readBackupPayload(destination));
+    expect((malformed as { code?: string }).code).toBe("INVALID_BACKUP");
+
+    // A missing directory is a filesystem failure, so it must not be blamed on the backup.
+    const missing = await rejection(readBackupPayload(path.join(tempDir, "absent")));
+    expect((missing as { code?: string }).code).toBe("ENOENT");
+  });
+
   it("blocks a restore that would change an executable MCP command until it is approved", async () => {
     await write(
       muxRoot,

@@ -444,6 +444,24 @@ const CREDENTIAL_ARGUMENT_PATTERNS = [
   new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=[ \t]*)(${CREDENTIAL_VALUE})`, "gi"),
 ];
 
+/**
+ * Flags whose value is a credential even though the flag name contains no credential word.
+ * `curl --help all` documents `-u, --user <user:password>` and `-U, --proxy-user
+ * <user:password>`; `--pass` is the private key passphrase and `-E, --cert` takes
+ * `<certificate[:password]>`. Matched with a `:` requirement so a bare username or a plain
+ * certificate path survives and only the `user:password` form is rewritten.
+ */
+const PAIRED_CREDENTIAL_FLAG = String.raw`(?:-[uUE]|--user|--proxy-user|--cert)`;
+const PAIRED_CREDENTIAL_PATTERN = new RegExp(
+  String.raw`(-{1,2}[\w-]+${FLAG_SEPARATOR})(?:"([^"]*:[^"]*)"|'([^']*:[^']*)'|(\S+:\S*))`,
+  "g"
+);
+/** `--pass <phrase>` carries the whole value, with no user prefix to preserve. */
+const WHOLE_VALUE_CREDENTIAL_PATTERN = new RegExp(
+  String.raw`(--pass${FLAG_SEPARATOR})(${CREDENTIAL_VALUE})`,
+  "g"
+);
+
 const HEADER_FLAG = String.raw`(?:--header|--head|-H)${FLAG_SEPARATOR}`;
 /**
  * Quote-aware so an unquoted value stops at whitespace. A greedy value would swallow the
@@ -494,6 +512,30 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
       return `${flag}${header}${REDACTED_BACKUP_VALUE}`;
     });
   }
+  value = value.replace(
+    PAIRED_CREDENTIAL_PATTERN,
+    (match, flag: string, doubled?: string, singled?: string, bare?: string) => {
+      if (!new RegExp(`^${PAIRED_CREDENTIAL_FLAG}$`).test(flag.replace(/[=\s]+$/, "")))
+        return match;
+      const pair = doubled ?? singled ?? bare;
+      if (pair === undefined) return match;
+      const separator = pair.indexOf(":");
+      const user = pair.slice(0, separator);
+      const password = pair.slice(separator + 1);
+      if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;
+      // `docker run -u 1000:1000` is a uid:gid pair, not a credential, and redacting it
+      // would break the command on a machine with no local value to put back.
+      if (/^\d+$/.test(user) && /^\d+$/.test(password)) return match;
+      redacted = true;
+      const quote = doubled !== undefined ? '"' : singled !== undefined ? "'" : "";
+      return `${flag}${quote}${user}:${REDACTED_BACKUP_VALUE}${quote}`;
+    }
+  );
+  value = value.replace(WHOLE_VALUE_CREDENTIAL_PATTERN, (match, flag: string, secret: string) => {
+    if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
+    redacted = true;
+    return `${flag}${REDACTED_BACKUP_VALUE}`;
+  });
   for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
     value = value.replace(pattern, (match, flag: string, secret: string) => {
       if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
@@ -788,7 +830,35 @@ export async function backupPayloadExists(sourceDir: string): Promise<boolean> {
   return await fileExists(path.join(sourceDir, "manifest.json"));
 }
 
+export class BackupInvalidPayloadError extends Error {
+  readonly code = "INVALID_BACKUP";
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "BackupInvalidPayloadError";
+  }
+}
+
+/** An fs failure carries an errno string; a validation failure does not. */
+function isFilesystemError(error: unknown): boolean {
+  return error instanceof Error && typeof (error as NodeJS.ErrnoException).code === "string";
+}
+
+/**
+ * Wraps validation failures so the service reports repository corruption as
+ * `INVALID_BACKUP` rather than the `IO_ERROR` fallback. A genuine filesystem failure keeps
+ * its own error, so a local disk problem is not blamed on the repository.
+ */
 export async function readBackupPayload(sourceDir: string): Promise<BackupPayload> {
+  try {
+    return await readBackupPayloadUnchecked(sourceDir);
+  } catch (error) {
+    if (isFilesystemError(error)) throw error;
+    throw new BackupInvalidPayloadError(error);
+  }
+}
+
+async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
   const manifestPath = await resolveContainedPath(sourceDir, "manifest.json");
   const manifest = parseManifest(await fs.readFile(manifestPath, "utf-8"));
   const files: BackupFile[] = [];
