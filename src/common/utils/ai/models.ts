@@ -4,7 +4,7 @@
 
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
-import { formatModelDisplayName } from "./modelDisplay";
+import { formatCompactModelDisplayName, formatModelDisplayName } from "./modelDisplay";
 
 export const defaultModel = DEFAULT_MODEL;
 
@@ -135,6 +135,10 @@ export function getModelName(modelString: string): string {
  */
 export function formatModelStringForDisplay(modelString: string): string {
   return formatModelDisplayName(getModelName(modelString));
+}
+
+export function formatCompactModelStringForDisplay(modelString: string): string {
+  return formatCompactModelDisplayName(getModelName(modelString));
 }
 
 /**

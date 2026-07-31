@@ -3532,7 +3532,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 </div>
 
                 <div
-                  className="flex shrink-0 items-center justify-end gap-1.5"
+                  className="flex shrink-0 items-center justify-end gap-1"
                   data-component="ModelControls"
                 >
                   {/* Attach and voice sit below the textarea rather than in an absolute overlay so
@@ -3580,7 +3580,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                           size="xs"
                           variant="ghost"
                           className={cn(
-                            "inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
+                            // Keep the filled action compact so it reads as an icon button, not a
+                            // second bordered control competing with the picker groups.
+                            "inline-flex h-7 w-7 items-center justify-center rounded-full p-0 font-medium transition-colors duration-200",
                             // Pin text colors because the ghost variant otherwise overrides the glyph.
                             canSend
                               ? "bg-composer-send hover:bg-composer-send text-composer-send-foreground hover:text-composer-send-foreground hover:opacity-90"
@@ -3588,7 +3590,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                             "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-9 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
                           )}
                         >
-                          <SendHorizontal className="h-4 w-4" strokeWidth={2.5} />
+                          <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent align="start" className="max-w-80 whitespace-normal">

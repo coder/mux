@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { formatModelDisplayName } from "./modelDisplay";
+import { formatCompactModelDisplayName, formatModelDisplayName } from "./modelDisplay";
+
+describe("formatCompactModelDisplayName", () => {
+  test("keeps the distinguishing GPT-5.6 tier in constrained labels", () => {
+    expect(formatCompactModelDisplayName("gpt-5.6-sol")).toBe("Sol");
+    expect(formatCompactModelDisplayName("gpt-5.6-terra-20260709")).toBe("Terra");
+    expect(formatCompactModelDisplayName("gpt-5.6-luna-2026-07-09")).toBe("Luna");
+  });
+
+  test("falls back to the full display name when no shorter label is clearer", () => {
+    expect(formatCompactModelDisplayName("claude-opus-5")).toBe("Opus 5");
+    expect(formatCompactModelDisplayName("gpt-5.3-codex-spark")).toBe("Spark 5.3");
+  });
+});
 
 describe("formatModelDisplayName", () => {
   describe("Claude models", () => {

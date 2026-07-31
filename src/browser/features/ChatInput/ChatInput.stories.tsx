@@ -165,6 +165,25 @@ export const NarrowControlRowCollapse: AppStory = {
       }
     };
 
+    const fullModelLabel = storyRoot.querySelector<HTMLElement>('[data-model-label="full"]');
+    const compactModelLabel = storyRoot.querySelector<HTMLElement>('[data-model-label="compact"]');
+    if (!fullModelLabel || !compactModelLabel) {
+      throw new Error("Responsive model labels not rendered");
+    }
+    const assertCompactModelLabel = () => {
+      if (fullModelLabel.getBoundingClientRect().width > 0) {
+        throw new Error("Full GPT family label should hide on a constrained composer row");
+      }
+      if (compactModelLabel.getBoundingClientRect().width === 0) {
+        throw new Error("Compact model tier should be visible on a constrained composer row");
+      }
+      if (compactModelLabel.innerText.trim() !== "Sol") {
+        throw new Error(
+          `Expected constrained GPT tier label "Sol", got "${compactModelLabel.innerText}"`
+        );
+      }
+    };
+
     await resizeRowInto(400, 300, 341);
     await waitFor(() => {
       if (agentTrigger.innerText.trim() !== "") {
@@ -177,6 +196,7 @@ export const NarrowControlRowCollapse: AppStory = {
       }
       if (meterVisible()) throw new Error("Context meter should be hidden on an icon-only row");
       if (proVisible()) throw new Error("PRO chip should be hidden on the tightest row");
+      assertCompactModelLabel();
       assertNoOverflow("tightest");
     });
 
@@ -188,6 +208,7 @@ export const NarrowControlRowCollapse: AppStory = {
         );
       }
       if (!proVisible()) throw new Error("PRO chip should return once the row clears 340px");
+      assertCompactModelLabel();
       assertNoOverflow("pro-returns");
     });
 
@@ -201,6 +222,7 @@ export const NarrowControlRowCollapse: AppStory = {
         );
       }
       assertNoOverflow("phone-width");
+      assertCompactModelLabel();
 
       const modelName = storyRoot.querySelector<HTMLElement>(
         '[data-component="ModelSelectorGroup"] button span'
@@ -225,18 +247,25 @@ export const NarrowControlRowCollapse: AppStory = {
       }
       if (meterVisible()) throw new Error("Context meter should stay hidden at or below 500px");
       if (!proVisible()) throw new Error("PRO chip should stay visible above 340px");
+      assertCompactModelLabel();
       assertNoOverflow("agent-label-returns");
     });
 
     await resizeRowInto(640, 505, 1200);
     await waitFor(() => {
-      if (!contextTrigger.innerText.includes("Context")) {
+      if (!/^\d+%$/.test(contextTrigger.innerText.trim())) {
         throw new Error(
-          `Context pill should regain its label above 500px, showing "${contextTrigger.innerText}"`
+          `Context control should keep its concise percentage label, showing "${contextTrigger.innerText}"`
         );
       }
       if (!meterVisible()) throw new Error("Context meter should be visible above 500px");
       assertNoOverflow("full-detail");
+      if (fullModelLabel.getBoundingClientRect().width === 0) {
+        throw new Error("Full model label should return once the composer row clears 500px");
+      }
+      if (compactModelLabel.getBoundingClientRect().width > 0) {
+        throw new Error("Compact model label should hide once the full label has room");
+      }
 
       // Checked here rather than on a narrow row because a narrow row is under flex-shrink pressure,
       // which trims a fixed width down to roughly its content width and hides the difference. With

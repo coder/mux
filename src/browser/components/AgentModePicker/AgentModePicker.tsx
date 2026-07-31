@@ -333,12 +333,13 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "text-foreground border-border-light hover:bg-hover flex items-center gap-1.5 rounded-md border px-1.5 text-[11px] font-medium transition-[background-color] duration-150",
+              "text-foreground border-border-light hover:bg-hover flex items-center gap-1.5 rounded-md border px-1.5 text-[11px] font-medium transition-[background-color] duration-150 [&_svg]:size-2.5!",
               COMPOSER_CONTROL_HEIGHT_CLASS,
               activeClassName
             )}
           >
-            <TriggerIcon className="h-3 w-3 shrink-0" />
+            {/* Keep the mode glyph at the label's visual cap height so Exec reads as one aligned unit. */}
+            <TriggerIcon className="shrink-0" />
             {/* shrink-0 leaves iconOnlyHideClassName as the only thing that hides this label. Without
               it a tight row shrinks the label to a letter and an ellipsis instead. */}
             <span

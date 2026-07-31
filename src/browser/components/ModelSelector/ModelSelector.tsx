@@ -27,6 +27,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { formatProviderDisplayName } from "@/common/utils/providers/customProviders";
 import {
+  formatCompactModelStringForDisplay,
   formatModelStringForDisplay,
   getExplicitGatewayPrefix,
   getModelName,
@@ -287,6 +288,9 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const displayValue = hasValue
       ? formatModelStringForDisplay(canonicalValue)
       : (emptyLabel ?? "");
+    const compactDisplayValue = hasValue
+      ? formatCompactModelStringForDisplay(canonicalValue)
+      : displayValue;
 
     // Explicit gateway selections short-circuit route resolution: the user
     // intentionally pinned a gateway, so display that gateway directly instead
@@ -322,7 +326,24 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     className="h-3 w-3 shrink-0 opacity-70"
                   />
                 )}
-                <span className="min-w-0 truncate">{displayValue}</span>
+                {compactDisplayValue === displayValue ? (
+                  <span className="min-w-0 truncate">{displayValue}</span>
+                ) : (
+                  <>
+                    <span
+                      data-model-label="full"
+                      className="min-w-0 truncate [@container(max-width:500px)]:hidden"
+                    >
+                      {displayValue}
+                    </span>
+                    <span
+                      data-model-label="compact"
+                      className="hidden min-w-0 truncate [@container(max-width:500px)]:block"
+                    >
+                      {compactDisplayValue}
+                    </span>
+                  </>
+                )}
               </span>
               <ChevronDown
                 className={cn(
