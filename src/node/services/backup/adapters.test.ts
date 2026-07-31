@@ -387,6 +387,28 @@ describe("backup adapters", () => {
     expect(await git(["--git-dir", elsewhere, "for-each-ref", "refs/heads"])).toBe("");
   });
 
+  it("adds no remote to another repository behind a symlinked .git", async () => {
+    // No origin in the outside repository, which is what sends `ensureCache` down its repair
+    // path, where a `remote add` and two `config` writes happen before the attributes write.
+    const outside = path.join(tempDir, "outside-no-origin");
+    await fs.mkdir(outside, { recursive: true });
+    await git(["init", "--quiet", "--initial-branch=main", outside]);
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    await fs.mkdir(cachePath, { recursive: true });
+    await fs.symlink(path.join(outside, ".git"), path.join(cachePath, ".git"));
+    await writeMuxFile("AGENTS.md", "first\n");
+
+    const refused = await createBackupGitRepo({ cacheRoot })
+      .prepare(settings)
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((refused as Error | null)?.message).toContain("is a symlink");
+    expect(await git(["-C", outside, "remote"])).toBe("");
+  });
+
   it("changes no config in another repository behind a symlinked .git", async () => {
     const outside = path.join(tempDir, "outside-repo");
     await fs.mkdir(outside, { recursive: true });

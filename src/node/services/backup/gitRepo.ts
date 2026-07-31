@@ -208,7 +208,8 @@ export class BackupRepoCache {
     // without following a final link, because this writes to fixed paths inside a directory
     // other processes can reach. A link at `.git` redirects `git config` into whatever
     // repository it points at, and one at `.git/info` or the file itself redirects the write
-    // below, so the checks come first and `git config` is not run until `.git` is known good.
+    // below. `.git` is re-checked here rather than trusting the caller, so this method is safe
+    // on its own terms.
     const gitDir = path.join(this.cachePath, ".git");
     await assertNotSymlink(gitDir);
     for (const [key, value] of VERBATIM_CONTENT_CONFIG) {
@@ -272,6 +273,10 @@ export class BackupRepoCache {
     await fs.mkdir(this.options.cacheRoot, { recursive: true });
     await assertNotSymlink(this.cachePath);
     const gitDir = path.join(this.cachePath, ".git");
+    // Before any branch below, because each one writes: a `.git` symlinked to another
+    // repository would otherwise take this cache's `remote add` and `config` with it. Checked
+    // here rather than only in `pinVerbatimContent` so the repair path is covered too.
+    await assertNotSymlink(gitDir);
     if (!(await exists(gitDir))) {
       if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
