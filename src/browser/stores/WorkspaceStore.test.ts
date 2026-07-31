@@ -26,7 +26,7 @@ import {
 } from "@/common/constants/storage";
 import type { TodoItem } from "@/common/types/tools";
 import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
-import { WorkspaceStore } from "./WorkspaceStore";
+import { mergeTimelineEvents, WorkspaceStore } from "./WorkspaceStore";
 import type { ResponseCompleteEvent } from "@/browser/utils/messages/responseCompletionMetadata";
 
 interface LoadMoreResponse {
@@ -5789,6 +5789,39 @@ describe("WorkspaceStore", () => {
     });
   });
 
+  describe("mergeTimelineEvents", () => {
+    const event = (seq: number) => ({
+      v: 1 as const,
+      seq,
+      id: `event-${seq}`,
+      ts: seq,
+      kind: "turn.completed",
+      source: { system: "workspace" as const },
+    });
+
+    it("prepends newer live batches without reordering retained history", () => {
+      const newest = [event(6), event(5)];
+      const retained = [event(4), event(3), event(2)];
+
+      expect(mergeTimelineEvents(newest, retained).map((item) => item.seq)).toEqual([
+        6, 5, 4, 3, 2,
+      ]);
+    });
+
+    it("appends older pages without reordering retained history", () => {
+      const retained = [event(6), event(5), event(4)];
+      const older = [event(3), event(2)];
+
+      expect(mergeTimelineEvents(retained, older).map((item) => item.seq)).toEqual([6, 5, 4, 3, 2]);
+    });
+
+    it("falls back to dedupe and ordering for overlapping batches", () => {
+      expect(
+        mergeTimelineEvents([event(5), event(3)], [event(4), event(3)]).map((item) => item.seq)
+      ).toEqual([5, 4, 3]);
+    });
+  });
+
   describe("getWorkspaceLastUserPrompt", () => {
     const seedUserMessages = (workspaceId: string, rows: Array<{ id: string; text: string }>) => {
       const rawStore = getInternal<{
@@ -5858,6 +5891,39 @@ describe("WorkspaceStore", () => {
       seedUserMessages(workspaceId, [{ id: "u1", text: "" }]);
 
       expect(store.getWorkspaceLastUserPrompt(workspaceId)).toBeNull();
+    });
+
+    it("does not invalidate the footer prompt projection for assistant stream deltas", () => {
+      const workspaceId = "last-prompt-stream-deltas";
+      createAndAddWorkspace(store, workspaceId);
+      seedUserMessages(workspaceId, [{ id: "u1", text: "first prompt" }]);
+      const listener = mock(() => undefined);
+      const unsubscribe = store.subscribeLastUserPrompt(workspaceId, listener);
+      const snapshot = store.getWorkspaceLastUserPromptSnapshot(workspaceId);
+
+      const rawStore = getInternal<{
+        handleChatMessage: (workspaceId: string, data: WorkspaceChatMessage) => void;
+      }>(store);
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-start",
+        workspaceId,
+        messageId: "assistant-1",
+        model: "claude-haiku-3.5",
+        historySequence: 2,
+        startTime: 2_000,
+      });
+      rawStore.handleChatMessage(workspaceId, {
+        type: "stream-delta",
+        workspaceId,
+        messageId: "assistant-1",
+        delta: "working",
+        tokens: 2,
+        timestamp: 2_100,
+      });
+
+      expect(listener).not.toHaveBeenCalled();
+      expect(store.getWorkspaceLastUserPromptSnapshot(workspaceId)).toBe(snapshot);
+      unsubscribe();
     });
 
     it("holds the history epoch steady while messages stream in", () => {

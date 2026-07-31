@@ -732,6 +732,15 @@ describe("StreamingMessageAggregator", () => {
       expect(assistantMessages.length).toBeLessThan(100);
       expect(assistantMessages.length).toBeGreaterThan(0);
 
+      // A Timeline reveal may pin one old row, but must not disable the transcript cap.
+      aggregator.setTranscriptRevealTarget({ messageId: "a0" });
+      const withRevealTarget = aggregator.getDisplayedMessages();
+      expect(
+        withRevealTarget.some((message) => "historyId" in message && message.historyId === "a0")
+      ).toBe(true);
+      expect(withRevealTarget.some((message) => message.type === "history-hidden")).toBe(true);
+      expect(withRevealTarget.length).toBeLessThan(400);
+
       // Enable showAllMessages to see full history
       aggregator.setShowAllMessages(true);
 

@@ -97,14 +97,36 @@ import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessage
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
 
-function mergeTimelineEvents(
+export function mergeTimelineEvents(
   preferred: TimelineEvent[],
   fallback: TimelineEvent[]
 ): TimelineEvent[] {
+  if (preferred.length === 0) return fallback;
+  if (fallback.length === 0) return preferred;
+
+  // Timeline pages and live batches are already newest-first. Keep the common non-overlapping paths
+  // linear and allocation-light instead of rebuilding an ID set and sorting the whole retained feed.
+  const preferredOldest = preferred[preferred.length - 1];
+  const fallbackNewest = fallback[0];
+  if (preferredOldest && fallbackNewest && preferredOldest.seq > fallbackNewest.seq) {
+    return [...preferred, ...fallback];
+  }
+  const fallbackOldest = fallback[fallback.length - 1];
+  const preferredNewest = preferred[0];
+  if (fallbackOldest && preferredNewest && fallbackOldest.seq > preferredNewest.seq) {
+    return [...fallback, ...preferred];
+  }
+
   const preferredIds = new Set(preferred.map((event) => event.id));
   return [...preferred, ...fallback.filter((event) => !preferredIds.has(event.id))].toSorted(
     (a, b) => b.seq - a.seq
   );
+}
+
+interface WorkspaceLastUserPromptSnapshot {
+  displayed: string | null;
+  historyEpoch: number;
+  isCaughtUp: boolean;
 }
 
 export interface WorkspaceTimelineSnapshot {
@@ -656,6 +678,9 @@ export class WorkspaceStore {
 
   // Derived aggregate state (computed from multiple workspaces)
   private derived = new MapStore<string, DerivedState>();
+
+  // The footer's last-prompt projection changes only on transcript/history mutations, not deltas.
+  private lastUserPromptStore = new MapStore<string, WorkspaceLastUserPromptSnapshot>();
 
   // Usage and consumer stores (two-store approach for CostsTab optimization)
   private usageStore = new MapStore<string, WorkspaceUsageState>();
@@ -1455,6 +1480,7 @@ export class WorkspaceStore {
     transient.replayingHistory = false;
     transient.historicalMessages.length = 0;
     transient.pendingStreamEvents.length = 0;
+    this.lastUserPromptStore.bump(workspaceId);
   }
 
   private ensureActiveOnChatSubscription(): void {
@@ -1629,6 +1655,11 @@ export class WorkspaceStore {
       const charsPerSec = tps * APPROX_CHARS_PER_TOKEN;
       return { tokenCount, tps, charsPerSec };
     });
+  }
+
+  getWorkspaceRoundedStreamingTps(workspaceId: string): number | null {
+    const stats = this.getWorkspaceStreamingStats(workspaceId);
+    return stats != null && stats.tps > 0 ? Math.round(stats.tps) : null;
   }
 
   subscribeStreamingStats(workspaceId: string, listener: () => void): () => void {
@@ -2472,6 +2503,9 @@ export class WorkspaceStore {
         hasOlder: result.hasOlder,
         loading: false,
       });
+      if (historicalMessages.length > 0) {
+        this.lastUserPromptStore.bump(workspaceId);
+      }
       return "loaded";
     } catch (error) {
       console.error(`[WorkspaceStore] Failed to load older history for ${workspaceId}:`, error);
@@ -2574,6 +2608,18 @@ export class WorkspaceStore {
     }
 
     return null;
+  }
+
+  getWorkspaceLastUserPromptSnapshot(workspaceId: string): WorkspaceLastUserPromptSnapshot {
+    return this.lastUserPromptStore.get(workspaceId, () => ({
+      displayed: this.getWorkspaceLastUserPrompt(workspaceId),
+      historyEpoch: this.getWorkspaceHistoryEpoch(workspaceId),
+      isCaughtUp: this.isWorkspaceTranscriptCaughtUp(workspaceId),
+    }));
+  }
+
+  subscribeLastUserPrompt(workspaceId: string, listener: () => void): () => void {
+    return this.lastUserPromptStore.subscribeKey(workspaceId, listener);
   }
 
   async fetchLastUserPromptFromHistory(workspaceId: string): Promise<string | null> {
@@ -3688,6 +3734,7 @@ export class WorkspaceStore {
 
     this.historyPagination.set(workspaceId, createInitialHistoryPaginationState());
 
+    this.lastUserPromptStore.bump(workspaceId);
     this.states.bump(workspaceId);
     this.checkAndBumpRecencyIfChanged();
   }
@@ -4078,6 +4125,8 @@ export class WorkspaceStore {
     this.cancelPendingIdleBump(workspaceId);
     this.cancelPendingStreamingBump(workspaceId);
     this.streamingStatsStore.delete(workspaceId);
+    this.lastUserPromptStore.bump(workspaceId);
+    this.lastUserPromptStore.delete(workspaceId);
 
     if (this.activeWorkspaceId === workspaceId) {
       this.activeWorkspaceId = null;
@@ -4469,6 +4518,7 @@ export class WorkspaceStore {
       // Mark as caught up
       transient.caughtUp = true;
       transient.isHydratingTranscript = false;
+      this.lastUserPromptStore.bump(workspaceId);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged(); // Messages loaded, update recency
 
@@ -4585,6 +4635,7 @@ export class WorkspaceStore {
     if (isDeleteMessage(data)) {
       applyWorkspaceChatEventToAggregator(aggregator, data);
       this.cleanupStaleLiveToolState(workspaceId, aggregator);
+      this.lastUserPromptStore.bump(workspaceId);
       this.states.bump(workspaceId);
       this.checkAndBumpRecencyIfChanged();
       this.usageStore.bump(workspaceId);
@@ -4726,6 +4777,8 @@ export class WorkspaceStore {
           this.historyPagination.set(workspaceId, this.deriveHistoryPaginationState(aggregator));
         }
 
+        // Whole messages can change the last human prompt; token/tool deltas cannot.
+        this.lastUserPromptStore.bump(workspaceId);
         this.states.bump(workspaceId);
         this.usageStore.bump(workspaceId);
         this.checkAndBumpRecencyIfChanged();
@@ -4869,20 +4922,9 @@ export function useActiveGoalCount(): number {
 
 export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   const store = getStoreInstance();
-
-  const displayed = useSyncExternalStore(
-    (listener) => store.subscribeKey(workspaceId, listener),
-    () => store.getWorkspaceLastUserPrompt(workspaceId)
-  );
-  // The fallback scans full history, so streaming deltas must not invalidate it.
-  const historyEpoch = useSyncExternalStore(
-    (listener) => store.subscribeKey(workspaceId, listener),
-    () => store.getWorkspaceHistoryEpoch(workspaceId)
-  );
-  // Wait for catch-up because empty replay state is not yet authoritative.
-  const isCaughtUp = useSyncExternalStore(
-    (listener) => store.subscribeKey(workspaceId, listener),
-    () => store.isWorkspaceTranscriptCaughtUp(workspaceId)
+  const { displayed, historyEpoch, isCaughtUp } = useSyncExternalStore(
+    (listener) => store.subscribeLastUserPrompt(workspaceId, listener),
+    () => store.getWorkspaceLastUserPromptSnapshot(workspaceId)
   );
 
   // Compaction can hide the latest user prompt behind the replay boundary.
@@ -5093,6 +5135,19 @@ export function useWorkspaceAggregator(
   return store.getAggregator(workspaceId);
 }
 
+/** Keep a Timeline reveal target renderable while preserving transcript DOM capping. */
+export function pinTimelineRevealTarget(
+  workspaceId: string,
+  target: { messageId?: string; toolCallId?: string }
+): void {
+  const store = getStoreInstance();
+  const aggregator = store.getAggregator(workspaceId);
+  if (aggregator) {
+    aggregator.setTranscriptRevealTarget(target);
+    store.bumpState(workspaceId);
+  }
+}
+
 /**
  * Disable the displayed message cap for a workspace and trigger a re-render.
  * Used by HistoryHiddenMessage “Load all”.
@@ -5172,15 +5227,25 @@ export function useWorkspaceActivityHydrated(): boolean {
   return useSyncExternalStore(store.subscribeActivityHydrated, store.isActivityHydrated);
 }
 
+/** Rounded chrome value: identical raw-stat updates keep the snapshot primitive stable. */
+export function useWorkspaceRoundedStreamingTps(workspaceId: string): number | null {
+  const store = getStoreInstance();
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeStreamingStats(workspaceId, listener),
+    [store, workspaceId]
+  );
+  const getSnapshot = useCallback(
+    () => store.getWorkspaceRoundedStreamingTps(workspaceId),
+    [store, workspaceId]
+  );
+  return useSyncExternalStore(subscribe, getSnapshot);
+}
+
 /**
- * Hook for the live token-count / TPS pill during streaming.
+ * Hook for full-resolution live token-count / TPS stats during streaming.
  *
- * Subscribed as a separate leaf so the streaming pill can update on every
- * coalesced stream-delta WITHOUT cascading a re-render through the entire
- * chat subtree. Returns null when no stream is active.
- *
- * This is the cure for the "TPS makes WorkspaceState unstable" jitter source —
- * see {@link WorkspaceStreamingStats}.
+ * Subscribed as a separate leaf so smoothing-sensitive consumers can update on every
+ * coalesced stream-delta WITHOUT cascading a re-render through the entire chat subtree.
  */
 export function useWorkspaceStreamingStats(workspaceId: string): WorkspaceStreamingStats | null {
   const store = getStoreInstance();

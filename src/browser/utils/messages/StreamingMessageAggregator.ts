@@ -452,6 +452,11 @@ interface SideQuestionInterrupt {
   sideQuestionAnswerMsg?: MuxMessage;
 }
 
+export interface TranscriptRevealTarget {
+  messageId?: string;
+  toolCallId?: string;
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -532,6 +537,9 @@ export class StreamingMessageAggregator {
 
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
+
+  // Keep the most recently revealed Timeline row renderable without disabling transcript capping.
+  private transcriptRevealTarget: TranscriptRevealTarget | null = null;
 
   // Whether to disable DOM message capping for this workspace.
   // Controlled via the HistoryHiddenMessage “Load all” button.
@@ -672,6 +680,23 @@ export class StreamingMessageAggregator {
   setUnarchivedAt(unarchivedAt: string | undefined): void {
     this.unarchivedAt = unarchivedAt;
     this.updateRecency();
+  }
+
+  /** Pin one Timeline target into the capped transcript projection. */
+  setTranscriptRevealTarget(target: TranscriptRevealTarget): void {
+    assert(
+      typeof target.messageId === "string" || typeof target.toolCallId === "string",
+      "setTranscriptRevealTarget requires a messageId or toolCallId"
+    );
+    const currentTarget = this.transcriptRevealTarget;
+    if (
+      currentTarget?.messageId === target.messageId &&
+      currentTarget?.toolCallId === target.toolCallId
+    ) {
+      return;
+    }
+    this.transcriptRevealTarget = target;
+    this.invalidateCache();
   }
 
   /**
@@ -3663,10 +3688,20 @@ export class StreamingMessageAggregator {
       // and materialize omission runs as explicit history-hidden marker rows.
       // Full history is still maintained internally for token counting.
       if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
+        const revealTarget = this.transcriptRevealTarget;
         const truncationPlan = buildTranscriptTruncationPlan({
           displayedMessages,
           maxDisplayedMessages: MAX_DISPLAYED_MESSAGES,
           alwaysKeepMessageTypes: ALWAYS_KEEP_MESSAGE_TYPES,
+          shouldAlwaysKeepMessage: revealTarget
+            ? (message) =>
+                (revealTarget.toolCallId != null &&
+                  message.type === "tool" &&
+                  message.toolCallId === revealTarget.toolCallId) ||
+                (revealTarget.messageId != null &&
+                  "historyId" in message &&
+                  message.historyId === revealTarget.messageId)
+            : undefined,
         });
 
         resultMessages =

@@ -23,14 +23,19 @@ describe("useWorkspaceLastUserPrompt", () => {
     const storeHook = renderHook(() => useWorkspaceStoreRaw());
     const store = storeHook.result.current;
     let caughtUp = options.caughtUp;
+    let snapshot = { displayed: null, historyEpoch: 1, isCaughtUp: caughtUp };
 
-    spyOn(store, "getWorkspaceLastUserPrompt").mockReturnValue(null);
-    spyOn(store, "getWorkspaceHistoryEpoch").mockReturnValue(1);
-    spyOn(store, "isWorkspaceTranscriptCaughtUp").mockImplementation(() => caughtUp);
+    spyOn(store, "getWorkspaceLastUserPromptSnapshot").mockImplementation(() => snapshot);
     const fetchPrompt = mock(() => Promise.resolve("prompt from disk"));
     spyOn(store, "fetchLastUserPromptFromHistory").mockImplementation(fetchPrompt);
 
-    return { fetchPrompt, setCaughtUp: (value: boolean) => (caughtUp = value) };
+    return {
+      fetchPrompt,
+      setCaughtUp: (value: boolean) => {
+        caughtUp = value;
+        snapshot = { ...snapshot, isCaughtUp: caughtUp };
+      },
+    };
   }
 
   it("does not scan history while the transcript is still hydrating", () => {

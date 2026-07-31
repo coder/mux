@@ -8,7 +8,7 @@ import {
 } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
-  showAllMessages,
+  pinTimelineRevealTarget,
   useWorkspaceStoreRaw,
   useWorkspaceTimeline,
   type HistoryLoadResult,
@@ -496,9 +496,9 @@ function TimelinePreviewCard(props: {
         return;
       }
 
-      // Expanding the display cap can make an already-loaded target renderable, so re-resolve before
-      // paging history: otherwise a target hidden only by the cap reports "Too far back".
-      showAllMessages(props.workspaceId);
+      // Keep only the reveal target outside the normal transcript window. Disabling the cap here
+      // would leave every historical row mounted for the rest of the workspace session.
+      pinTimelineRevealTarget(props.workspaceId, target);
       target = resolveRevealTarget(anchor);
       if (isRevealTargetLoaded(target)) {
         dispatchReveal(target);

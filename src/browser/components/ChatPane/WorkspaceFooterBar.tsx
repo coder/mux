@@ -13,8 +13,8 @@ import { isMultiProject } from "@/common/utils/multiProject";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import {
   useWorkspaceLastUserPrompt,
+  useWorkspaceRoundedStreamingTps,
   useWorkspaceSidebarState,
-  useWorkspaceStreamingStats,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -182,10 +182,10 @@ function FooterProjectLabel(props: { projectLabel: string }) {
 /** Subscribe at the leaf so streaming deltas do not re-render the transcript subtree. */
 function FooterUsageStats(props: { workspaceId: string }) {
   const usage = useWorkspaceUsage(props.workspaceId);
-  const streamingStats = useWorkspaceStreamingStats(props.workspaceId);
+  // Chrome only paints a rounded value; keep identical provider chunks from committing/layouting it.
+  const roundedTps = useWorkspaceRoundedStreamingTps(props.workspaceId);
 
-  const showTps = streamingStats !== null && streamingStats.tps > 0;
-  if (usage.totalTokens <= 0 && !showTps) {
+  if (usage.totalTokens <= 0 && roundedTps === null) {
     return null;
   }
 
@@ -194,9 +194,9 @@ function FooterUsageStats(props: { workspaceId: string }) {
       <span className="text-foreground counter-nums">
         {formatTokens(usage.totalTokens)} <span className="text-muted">tok</span>
       </span>
-      {showTps && (
+      {roundedTps !== null && (
         <span className="text-foreground counter-nums">
-          {Math.round(streamingStats.tps)} <span className="text-muted">t/s</span>
+          {roundedTps} <span className="text-muted">t/s</span>
         </span>
       )}
     </span>
