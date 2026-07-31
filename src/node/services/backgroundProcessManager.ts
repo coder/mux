@@ -104,6 +104,8 @@ export interface MonitorArmedPayload {
 /** Emitted when a monitor retires normally (not during shutdown); deletes its registry record. */
 export interface MonitorStoppedPayload {
   processId: string;
+  /** Explicit cancellation discards pending matches; missing/normal retirement preserves them. */
+  reason?: "completed" | "canceled";
 }
 
 export interface BackgroundProcessMonitorState extends BackgroundProcessMonitorConfig {
@@ -381,7 +383,11 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     this.shuttingDown = true;
   }
 
-  private stopMonitor(proc: BackgroundProcess, flushPending: boolean): void {
+  private stopMonitor(
+    proc: BackgroundProcess,
+    flushPending: boolean,
+    reason: NonNullable<MonitorStoppedPayload["reason"]> = "completed"
+  ): void {
     const monitor = proc.monitor;
     if (!monitor || monitor.stopped) return;
 
@@ -392,17 +398,38 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     }
     if (flushPending) {
       this.emitMonitorMatch(proc, monitor);
+    } else {
+      // Explicit cancellation means the caller no longer wants this condition to produce a wake.
+      // Drop coalesced matches rather than letting monitor teardown create the late wake itself.
+      monitor.pendingLines = [];
+      monitor.droppedLines = 0;
     }
     // A monitor retiring while the app is alive means the agent no longer wants wakes for
     // this process, so its armed-registry record must go. During shutdown the record must
     // survive so the next startup can deliver the "monitor lost" notice.
     if (!this.shuttingDown) {
-      this.emit("monitor:stopped", proc.workspaceId, { processId: proc.id });
+      this.emit("monitor:stopped", proc.workspaceId, { processId: proc.id, reason });
     }
     // Armed -> stopped is workspace-visible state (sidebar "watching" indicator), and not
     // every stop path also changes process status or flushes a match (e.g. maxEvents
     // reached with the wake suppressed), so always notify subscribers.
     this.emitChange(proc.workspaceId);
+  }
+
+  private cancelMonitor(proc: BackgroundProcess): void {
+    const monitor = proc.monitor;
+    if (!monitor) return;
+    if (!monitor.stopped) {
+      this.stopMonitor(proc, false, "canceled");
+      return;
+    }
+
+    // A match may already have retired the monitor and queued a synthetic wake. Explicit process
+    // cancellation must still retract that undelivered wake, so emit a cancellation notification
+    // even though the in-memory monitor has no remaining timer or pending lines to clear.
+    if (!this.shuttingDown) {
+      this.emit("monitor:stopped", proc.workspaceId, { processId: proc.id, reason: "canceled" });
+    }
   }
 
   private scheduleMonitorFlush(
@@ -784,7 +811,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     const timeoutSecs = config.timeoutSecs;
     if (!config.isForeground && timeoutSecs !== undefined && timeoutSecs > 0) {
       setTimeout(() => {
-        void this.terminate(processId).then((result) => {
+        void this.terminate(processId, { monitorDisposition: "flush" }).then((result) => {
           if (result.success) {
             log.debug(`Process ${processId} auto-terminated after ${timeoutSecs}s timeout`);
           }
@@ -1458,9 +1485,11 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
    * Terminate a background process
    */
   async terminate(
-    processId: string
+    processId: string,
+    options?: { monitorDisposition?: "discard" | "flush" }
   ): Promise<{ success: true } | { success: false; error: string }> {
     log.debug(`BackgroundProcessManager.terminate(${processId}) called`);
+    const shouldFlushMonitor = options?.monitorDisposition === "flush";
 
     // Get process from Map
     const proc = this.processes.get(processId);
@@ -1468,15 +1497,23 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       return { success: false, error: `Process not found: ${processId}` };
     }
 
-    // If already terminated, return success (idempotent) after clearing any pending monitor flush.
+    // If already terminated, return success (idempotent) after resolving any pending monitor flush.
     if (proc.status === "exited" || proc.status === "killed" || proc.status === "failed") {
-      this.stopMonitor(proc, false);
+      if (shouldFlushMonitor) {
+        this.stopMonitor(proc, true);
+      } else {
+        this.cancelMonitor(proc);
+      }
       log.debug(`Process ${processId} already terminated with status: ${proc.status}`);
       return { success: true };
     }
 
     try {
-      this.stopMonitor(proc, true);
+      if (shouldFlushMonitor) {
+        this.stopMonitor(proc, true);
+      } else {
+        this.cancelMonitor(proc);
+      }
 
       await proc.handle.terminate();
 
@@ -1523,7 +1560,9 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     // skipped beginShutdown(), so retiring monitors keep their registry records.
     this.shuttingDown = true;
     const allProcesses = Array.from(this.processes.values());
-    await Promise.all(allProcesses.map((p) => this.terminate(p.id)));
+    await Promise.all(
+      allProcesses.map((p) => this.terminate(p.id, { monitorDisposition: "flush" }))
+    );
     this.processes.clear();
     log.debug(`Terminated ${allProcesses.length} background process(es)`);
   }

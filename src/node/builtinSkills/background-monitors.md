@@ -101,6 +101,15 @@ Each monitor should have a distinct title and idempotency key. Do not make the p
 
 Use a workflow when monitoring must be reusable, resumable, or composed with other phases. A workflow can run in the background and own multiple bounded monitor steps. Workflow-owned child agents report through the workflow journal; the parent wakes when the workflow reaches a terminal result.
 
+## Before finishing a response
+
+A monitor is workspace-lifetime, not turn-lifetime: it can wake the agent after the current response is complete. Before sending a final response, review monitored tasks you started:
+
+- Leave a monitor running only when a later wake-up is still useful and intentional.
+- Terminate irrelevant monitors with `task_terminate` using their `bash:<processId>` task IDs.
+- Explicit termination is cancellation: pending coalesced matches and undelivered synthetic wakes for that monitor are discarded. Natural process exit and timeout still deliver pending matches.
+- Do not terminate unrelated long-running background processes merely because the current turn is ending; only clean up work whose future output no longer matters.
+
 ## Heartbeat fallback
 
 Heartbeat is still useful as a coarse fallback reminder, but it should not replace a condition-driven monitor:

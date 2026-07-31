@@ -388,7 +388,10 @@ describe("BackgroundProcessManager", () => {
         expect(terminated.success).toBe(true);
         if (!terminated.success) return;
         await manager.terminate(terminated.processId);
-        expect(events.stopped.map((e) => e.payload.processId)).toContain(terminated.processId);
+        expect(events.stopped).toContainEqual({
+          workspaceId: testWorkspaceId,
+          payload: { processId: terminated.processId, reason: "canceled" },
+        });
       });
 
       it("suppresses monitor:stopped after beginShutdown so registry records survive restarts", async () => {
@@ -440,6 +443,43 @@ describe("BackgroundProcessManager", () => {
       expect(terminateResult.success).toBe(true);
       expect(proc?.monitor?.stopped).toBe(true);
       expect(proc?.monitor?.flushTimer).toBeUndefined();
+    });
+
+    it("discards deferred monitor matches on explicit termination", async () => {
+      const matches: MonitorMatchPayload[] = [];
+      manager.on("monitor:match", (_workspaceId, payload) => matches.push(payload));
+
+      const result = await manager.spawn(
+        runtime,
+        testWorkspaceId,
+        "printf 'FAILED pending\\n'; sleep 5",
+        {
+          cwd: process.cwd(),
+          displayName: "monitor-canceled-match",
+          monitor: {
+            filter: "FAILED",
+            pattern: /FAILED/,
+            exclude: false,
+            cooldownMs: 10_000,
+          },
+        }
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      let proc = await manager.getProcess(result.processId);
+      for (let attempt = 0; attempt < 60; attempt++) {
+        proc = await manager.getProcess(result.processId);
+        if ((proc?.monitor?.pendingLines.length ?? 0) > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(proc?.monitor?.pendingLines).toEqual(["FAILED pending"]);
+
+      await manager.terminate(result.processId);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(matches).toHaveLength(0);
+      expect(proc?.monitor?.pendingLines).toEqual([]);
     });
 
     it("does not consume the task_await output cursor", async () => {
@@ -652,20 +692,16 @@ describe("BackgroundProcessManager", () => {
       expect(proc?.monitor?.lastReadOffset).toBe(16);
     });
 
-    it("still wakes when a filtered read advanced past but did not show the matched line", async () => {
+    it("still wakes on natural exit when a filtered read did not show the matched line", async () => {
       // A filtered task_await / bash_output read advances outputBytesRead past every complete line
       // but returns only lines matching its own filter. A pending monitor match for "ERR" must still
-      // wake after the agent reads with filter="DONE": the error line was never shown to the agent.
-      let matchCount = 0;
-      const handler = () => {
-        matchCount++;
-      };
-      manager.on("monitor:match", handler);
+      // wake on natural exit: the error line was never shown to the agent.
+      const eventPromise = waitForMonitorMatch(manager);
 
       const result = await manager.spawn(
         runtime,
         testWorkspaceId,
-        "printf 'ERR boom\\nDONE\\n'; sleep 5",
+        "printf 'ERR boom\\nDONE\\n'; sleep 0.5",
         {
           cwd: process.cwd(),
           displayName: "monitor-filtered-read",
@@ -700,11 +736,9 @@ describe("BackgroundProcessManager", () => {
       proc = await manager.getProcess(result.processId);
       expect(proc?.shownThroughOffset ?? -1).toBe(0);
 
-      // Force the deferred flush. The error was never shown, so it must still wake.
-      await manager.terminate(result.processId);
-      expect(matchCount).toBe(1);
-
-      manager.off("monitor:match", handler);
+      // Natural exit flushes the deferred match because the error was never shown.
+      const event = await eventPromise;
+      expect(event.payload.lines).toEqual(["ERR boom"]);
     });
 
     it("does not advance the shown frontier across lines a prior filtered read consumed", async () => {

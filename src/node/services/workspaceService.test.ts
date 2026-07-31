@@ -369,6 +369,135 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("explicit monitor cancellation supersedes a match racing persistence", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-cancel-race";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: BashMonitorWakeStore;
+        }
+      ).bashMonitorWakeStore;
+      const markSupersededSpy = spyOn(wakeStore, "markSuperseded");
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-canceled",
+        taskId: "bash:proc-canceled",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED stale"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 12,
+      });
+      backgroundProcessManager.emit("monitor:stopped", workspaceId, {
+        processId: "proc-canceled",
+        reason: "canceled",
+      });
+
+      await waitForCondition(() => markSupersededSpy.mock.calls.length > 0);
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+      expect(sendSpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("explicit monitor cancellation retracts an already queued synthetic wake", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-cancel-queued";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => true) }),
+      });
+      spyOn(workspaceService, "isBusyForMessage").mockReturnValue(true);
+      spyOn(workspaceService, "hasPendingQueuedOrPreparingTurn").mockReturnValue(false);
+      type SendInternal = NonNullable<Parameters<WorkspaceService["sendMessage"]>[3]>;
+      let onCanceled: SendInternal["onCanceled"] | undefined;
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          onCanceled = args[3]?.onCanceled;
+          return Promise.resolve(Ok(undefined));
+        }
+      );
+      const removeQueuedSpy = spyOn(
+        workspaceService,
+        "removeQueuedMessagesByDedupeKeyPrefix"
+      ).mockImplementation((_ownerWorkspaceId, _prefix, options) => {
+        void onCanceled?.(options?.cancelReason ?? "canceled");
+        return Ok(1);
+      });
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-queued",
+        taskId: "bash:proc-queued",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED queued"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 13,
+      });
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][3]).toMatchObject({
+        removableQueueDedupeKey: true,
+      });
+
+      backgroundProcessManager.emit("monitor:stopped", workspaceId, {
+        processId: "proc-queued",
+        reason: "canceled",
+      });
+
+      await waitForCondition(() => removeQueuedSpy.mock.calls.length === 1);
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: BashMonitorWakeStore;
+        }
+      ).bashMonitorWakeStore;
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+      expect(removeQueuedSpy.mock.calls[0][1]).toStartWith("bash-monitor-wake:");
+      expect(sendSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("converts stale armed-monitor registry records into monitor-lost wakes at startup", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
