@@ -128,6 +128,24 @@ function isAllowedPayloadPath(relativePath: string): boolean {
   return /^memory\/global\/.+/.test(relativePath);
 }
 
+/**
+ * Reserved device names, characters Windows forbids, and trailing dots or spaces. A backup
+ * exists to be checked out on another machine, so a path Git for Windows cannot create makes
+ * the whole payload unusable there. Rejected on export for the same reason case collisions
+ * are: publishing it produces a backup that cannot be restored.
+ */
+const WINDOWS_RESERVED_NAMES =
+  /^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/i;
+const WINDOWS_INVALID_CHARACTERS = new Set([...'<>:"|?*']);
+
+function isWindowsUnusableSegment(segment: string): boolean {
+  if (WINDOWS_RESERVED_NAMES.test(segment) || /[. ]$/.test(segment)) return true;
+  return [...segment].some(
+    (character) =>
+      WINDOWS_INVALID_CHARACTERS.has(character) || (character.codePointAt(0) ?? 0) < 0x20
+  );
+}
+
 function assertAllowedPayloadPath(relativePath: string): void {
   if (
     !isAllowedPayloadPath(relativePath) ||
@@ -142,7 +160,12 @@ function assertAllowedPayloadPath(relativePath: string): void {
     // case-insensitive filesystem, which is the default on Windows and macOS.
     relativePath
       .split("/")
-      .some((segment) => segment === ".." || segment.toLowerCase() === GIT_DIRECTORY) ||
+      .some(
+        (segment) =>
+          segment === ".." ||
+          segment.toLowerCase() === GIT_DIRECTORY ||
+          isWindowsUnusableSegment(segment)
+      ) ||
     isForbiddenBasename(path.posix.basename(relativePath))
   ) {
     throw new Error(`Backup contains disallowed path '${relativePath}'`);

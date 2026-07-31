@@ -46,6 +46,10 @@ async function tamperPayloadFile(
   await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
 }
 
+function sha256Hex(content: string): string {
+  return createHash("sha256").update(Buffer.from(content, "utf-8")).digest("hex");
+}
+
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
@@ -732,6 +736,48 @@ describe("backup payload", () => {
       if (!(error instanceof Error)) throw error;
       expect(error.message).toContain("duplicate key 'Authorization'");
     }
+  });
+
+  it("refuses to publish a path Windows cannot check out", async () => {
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "windows-unusable");
+
+    for (const unusable of [
+      "skills/demo/CON",
+      "skills/demo/con.md",
+      "skills/demo/LPT1.txt",
+      "skills/demo/re:port.md",
+      "skills/demo/what?.md",
+      "skills/trailing./SKILL.md",
+      "skills/demo/name.md ",
+    ]) {
+      const rejected = await rejection(
+        writeBackupPayload(destination, {
+          ...payload,
+          files: [{ path: unusable, content: Buffer.from("x", "utf-8") }],
+          manifest: {
+            ...payload.manifest,
+            files: [{ path: unusable, sha256: sha256Hex("x") }],
+          },
+        })
+      );
+      expect((rejected as Error).message).toContain("disallowed path");
+    }
+
+    // Windows strips only trailing dots and spaces, so an interior space is fine.
+    await writeBackupPayload(destination, {
+      ...payload,
+      files: [{ path: "skills/demo/con sole.md", content: Buffer.from("x", "utf-8") }],
+      manifest: {
+        ...payload.manifest,
+        files: [{ path: "skills/demo/con sole.md", sha256: sha256Hex("x") }],
+      },
+    });
+    expect(await readBackupPayload(destination)).toBeTruthy();
   });
 
   it("refuses to export two local files that differ only in case", async () => {
