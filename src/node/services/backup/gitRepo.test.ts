@@ -78,6 +78,8 @@ describe("BackupRepoCache", () => {
     const seed = path.join(tempDir, "seed");
     await fs.mkdir(path.join(seed, "outside"), { recursive: true });
     await fs.writeFile(path.join(seed, "outside", "keep.txt"), "outside\n", "utf-8");
+    await fs.mkdir(path.join(seed, "mux", "skills", "demo"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "skills", "demo", "SKILL.md"), "skill\n", "utf-8");
     await git(["-C", seed, "init", "-q"]);
     await git(["-C", seed, "add", "-A"]);
     await git([
@@ -100,6 +102,9 @@ describe("BackupRepoCache", () => {
     await repo.resetHardToRemote();
 
     expect(await pathExists(path.join(repo.cachePath, "outside"))).toBe(false);
+    // A restore reads nested payload files out of this checkout, so the pattern must reach
+    // below the managed directory rather than only its direct children.
+    expect(await pathExists(path.join(repo.cachePath, "mux/skills/demo/SKILL.md"))).toBe(true);
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
     const commit = await repo.stageAndCommit("mux", "Back up settings");
     if (commit === null) throw new Error("Expected a commit");
