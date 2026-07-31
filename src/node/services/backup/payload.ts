@@ -11,15 +11,23 @@ import {
 export const BACKUP_SCHEMA_VERSION = 1;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
 
-const FORBIDDEN_BASENAMES = new Set([
-  "providers.jsonc",
-  "secrets.json",
-  "mcp-oauth.json",
-  "server.lock",
-  "serverAuthSessions.json",
-  "AGENTS.local.md",
-  "memory-meta.json",
-]);
+const GIT_DIRECTORY = ".git";
+const FORBIDDEN_BASENAMES = new Set(
+  [
+    "providers.jsonc",
+    "secrets.json",
+    "mcp-oauth.json",
+    "server.lock",
+    "serverAuthSessions.json",
+    "AGENTS.local.md",
+    "memory-meta.json",
+  ].map((name) => name.toLowerCase())
+);
+
+/** Case-insensitive: a differently-cased name resolves to the same file on Windows and macOS. */
+function isForbiddenBasename(name: string): boolean {
+  return FORBIDDEN_BASENAMES.has(name.toLowerCase());
+}
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/,
   /\bghp_[A-Za-z0-9]{20,}\b/,
@@ -112,8 +120,12 @@ function assertAllowedPayloadPath(relativePath: string): void {
     relativePath.includes("\\") ||
     // A skill installed by cloning carries a .git directory holding an object
     // database and remote URLs with credentials. It is never part of a settings backup.
-    relativePath.split("/").some((segment) => segment === ".." || segment === ".git") ||
-    FORBIDDEN_BASENAMES.has(path.posix.basename(relativePath))
+    // Compared case-insensitively because `.GIT` resolves to `.git` on a
+    // case-insensitive filesystem, which is the default on Windows and macOS.
+    relativePath
+      .split("/")
+      .some((segment) => segment === ".." || segment.toLowerCase() === GIT_DIRECTORY) ||
+    isForbiddenBasename(path.posix.basename(relativePath))
   ) {
     throw new Error(`Backup contains disallowed path '${relativePath}'`);
   }
@@ -198,12 +210,12 @@ async function collectDirectory(
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name === ".git") continue;
+    if (entry.name.toLowerCase() === GIT_DIRECTORY) continue;
     const relativePath = toPosixPath(relativeRoot, entry.name);
     if (!filter(relativePath, entry)) continue;
     if (entry.isDirectory()) {
       await collectDirectory(root, relativePath, filter, output);
-    } else if (entry.isFile() && !FORBIDDEN_BASENAMES.has(entry.name)) {
+    } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
       output.push(await readBackupFile(root, relativePath));
     }
   }
@@ -287,6 +299,21 @@ export function projectBackupPreferences(value: unknown): UserPreferences {
   return projected;
 }
 
+type AiPreferences = NonNullable<UserPreferences["ai"]>;
+
+/**
+ * Provider options merge per provider rather than wholesale, because the record-typed
+ * providers are deliberately excluded from a backup. Replacing the object would delete
+ * settings the backup never had the chance to carry.
+ */
+function mergeAiPreferences(current: AiPreferences | undefined, projected: AiPreferences) {
+  const merged: AiPreferences = { ...current, ...projected };
+  if (projected.providerOptions !== undefined) {
+    merged.providerOptions = { ...current?.providerOptions, ...projected.providerOptions };
+  }
+  return merged;
+}
+
 export function mergeBackupPreferences(
   current: UserPreferences | undefined,
   backup: unknown
@@ -300,7 +327,7 @@ export function mergeBackupPreferences(
     ...(projected.navigation
       ? { navigation: { ...current?.navigation, ...projected.navigation } }
       : {}),
-    ...(projected.ai ? { ai: { ...current?.ai, ...projected.ai } } : {}),
+    ...(projected.ai ? { ai: mergeAiPreferences(current?.ai, projected.ai) } : {}),
     ...(projected.review ? { review: { ...current?.review, ...projected.review } } : {}),
   });
 }
@@ -369,8 +396,17 @@ const CREDENTIAL_ARGUMENT_PATTERNS = [
   new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=)(${CREDENTIAL_VALUE})`, "gi"),
 ];
 
-/** `--header 'Authorization: Basic ...'`, `-H "X-API-Key: ..."` */
-const HEADER_ARGUMENT_PATTERN = /((?:--header|--head|-H)[= ]\s*["']?)([\w-]+)(\s*:\s*)([^"'\n]*)/gi;
+const HEADER_FLAG = String.raw`(?:--header|--head|-H)[= ]\s*`;
+/**
+ * Quote-aware so an unquoted value stops at whitespace. A greedy value would swallow the
+ * following arguments, and a restore onto a fresh machine has no local value to put back.
+ */
+const HEADER_ARGUMENT_PATTERNS = [
+  // --header 'Authorization: Basic x', -H "X-API-Key: y"
+  new RegExp(String.raw`(${HEADER_FLAG}['"])([\w-]+\s*:\s*)([^'"]*)`, "gi"),
+  // -H X-API-Key:y
+  new RegExp(String.raw`(${HEADER_FLAG})([\w-]+:)(\S*)`, "gi"),
+];
 
 /**
  * `Authorization` does not match `isSensitiveParamName`, whose word boundaries suit
@@ -399,14 +435,17 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
     if (redactedUrl.redacted) redacted = true;
     return redactedUrl.value;
   });
-  value = value.replace(
-    HEADER_ARGUMENT_PATTERN,
-    (match, flag: string, name: string, separator: string, headerValue: string) => {
-      if (!isSensitiveHeaderName(name) || isShellReference(headerValue.trim())) return match;
+  for (const pattern of HEADER_ARGUMENT_PATTERNS) {
+    value = value.replace(pattern, (match, flag: string, header: string, headerValue: string) => {
+      const name = header.replace(/[\s:]+$/, "");
+      const trimmed = headerValue.trim();
+      if (trimmed.length === 0 || !isSensitiveHeaderName(name) || isShellReference(trimmed)) {
+        return match;
+      }
       redacted = true;
-      return `${flag}${name}${separator}${REDACTED_BACKUP_VALUE}`;
-    }
-  );
+      return `${flag}${header}${REDACTED_BACKUP_VALUE}`;
+    });
+  }
   for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
     value = value.replace(pattern, (match, flag: string, secret: string) => {
       if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;

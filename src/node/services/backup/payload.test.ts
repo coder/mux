@@ -8,6 +8,7 @@ import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import {
   REDACTED_BACKUP_VALUE,
   createBackupPayload,
+  mergeBackupPreferences,
   serializeBackupPreferences,
   readBackupPayload,
   restoreBackupPayload,
@@ -217,6 +218,7 @@ describe("backup payload", () => {
     "basic": { "command": "mcp-proxy --header 'Authorization: Basic dXNlcjpwYXNz'" },
     "apiKeyHeader": { "command": "mcp-proxy --header 'X-API-Key: hunter2'" },
     "plainHeader": { "command": "mcp-proxy --header 'Accept: application/json'" },
+    "bareHeader": { "command": "mcp-proxy -H X-API-Key:hunter2 --transport stdio" },
     "leading": { "command": "PASSWORD=sk-live-leading acme-mcp" },
     "url": { "command": "npx mcp-remote https://host.example/mcp?api_key=hunter2&mode=fast" },
     "quoted": { "command": "acme-mcp --api-key \\"two word secret\\"" },
@@ -240,6 +242,7 @@ describe("backup payload", () => {
         basic: { command: string };
         apiKeyHeader: { command: string };
         plainHeader: { command: string };
+        bareHeader: { command: string };
         leading: { command: string };
         url: { command: string };
         quoted: { command: string };
@@ -264,6 +267,10 @@ describe("backup payload", () => {
     );
     // A non-credential header stays intact so a fresh restore keeps working.
     expect(mcp.servers.plainHeader.command).toBe("mcp-proxy --header 'Accept: application/json'");
+    // An unquoted header value must stop at whitespace, keeping the later flags.
+    expect(mcp.servers.bareHeader.command).toBe(
+      `mcp-proxy -H X-API-Key:${REDACTED_BACKUP_VALUE} --transport stdio`
+    );
     expect(mcp.servers.leading.command).toBe(`PASSWORD=${REDACTED_BACKUP_VALUE} acme-mcp`);
     expect(mcp.servers.url.command).toContain("mode=fast");
     expect(mcp.servers.url.command).not.toContain("hunter2");
@@ -277,6 +284,7 @@ describe("backup payload", () => {
       "servers.header.command",
       "servers.basic.command",
       "servers.apiKeyHeader.command",
+      "servers.bareHeader.command",
       "servers.leading.command",
       "servers.url.command",
       "servers.quoted.command",
@@ -390,6 +398,46 @@ describe("backup payload", () => {
       expect(error.message).toContain("disallowed path");
     }
     expect(await fs.readFile(path.join(destination, "keep.txt"), "utf-8")).toBe("existing\n");
+  });
+
+  it("rejects a differently-cased .git or forbidden basename in a manifest path", async () => {
+    const destination = path.join(tempDir, "case-payload");
+    for (const relativePath of ["skills/demo/.GIT/config", "skills/Providers.JSONC"]) {
+      try {
+        await writeBackupPayload(destination, {
+          manifest: {
+            schemaVersion: 1,
+            exportedAt: "2026-01-01T00:00:00.000Z",
+            muxVersion: "1.2.3",
+            sourceLabel: "attacker",
+            files: [{ path: relativePath, sha256: "0".repeat(64) }],
+          },
+          files: [{ path: relativePath, content: Buffer.from("x") }],
+          redactions: [],
+        });
+        throw new Error(`Expected '${relativePath}' to be rejected`);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        expect(error.message).toContain("disallowed path");
+      }
+    }
+  });
+
+  it("keeps provider options the backup excludes when restoring", () => {
+    const merged = mergeBackupPreferences(
+      {
+        ai: {
+          providerOptions: {
+            google: { apiKey: "local-only" },
+            anthropic: { use1MContext: false },
+          },
+        },
+      },
+      { ai: { providerOptions: { anthropic: { use1MContext: true } } } }
+    );
+
+    expect(merged.ai?.providerOptions?.anthropic).toEqual({ use1MContext: true });
+    expect(merged.ai?.providerOptions?.google).toEqual({ apiKey: "local-only" });
   });
 
   it("rejects payload paths that escape the destination on Windows", async () => {
