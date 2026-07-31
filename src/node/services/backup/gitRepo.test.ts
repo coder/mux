@@ -115,6 +115,48 @@ describe("BackupRepoCache", () => {
     expect(tracked.split("\n")).toContain("mux/AGENTS.md");
   });
 
+  it("materializes the managed path when the configured value has a trailing separator", async () => {
+    const seed = path.join(tempDir, "slash-seed");
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "managed content",
+    ]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    // The settings default is `mux/`, and an unnormalized `/mux//*` sparse pattern selects
+    // nothing, so the backup reads as absent and a push lands outside the sparse definition.
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux/",
+    });
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await pathExists(path.join(repo.cachePath, "mux/AGENTS.md"))).toBe(true);
+
+    await fs.writeFile(path.join(repo.cachePath, "mux", "AGENTS.md"), "updated\n", "utf-8");
+    expect(await repo.porcelainStatus("mux/")).toContain("mux/AGENTS.md");
+    const commit = await repo.stageAndCommit("mux/", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+    await repo.push();
+    expect(await git(["--git-dir", originPath, "show", "main:mux/AGENTS.md"])).toBe("updated");
+  });
+
   it("treats a managed path containing glob characters literally", async () => {
     const seed = path.join(tempDir, "glob-seed");
     await fs.mkdir(path.join(seed, "mux[1]"), { recursive: true });

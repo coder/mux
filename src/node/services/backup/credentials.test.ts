@@ -420,6 +420,36 @@ exit 128
     ]);
   });
 
+  it("extends a wrapper configured in core.sshCommand rather than replacing it", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "config" ]; then',
+        "  printf '/opt/wrapper/ssh -i /keys/id\\n'",
+        "  exit 0",
+        "fi",
+        `printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"`,
+        "",
+      ].join("\n")
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // Empty rather than absent: this host exports its own GIT_SSH_COMMAND, and the
+        // wrapper under test has to come from git config instead.
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "" },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      "/opt/wrapper/ssh -i /keys/id -o BatchMode=yes"
+    );
+  });
+
   it("makes SSH attempts non-interactive without discarding an ssh wrapper", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(

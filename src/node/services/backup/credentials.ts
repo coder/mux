@@ -12,13 +12,40 @@ const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
  * `BatchMode=yes` is what keeps ssh from asking for a password, a key passphrase, or host
  * key confirmation (`ssh_config(5)`), which a backup running behind a UI button can never
  * answer: it would just hang Validate, Preview, or Push forever. A command line `-o` beats
- * ssh_config, and an ambient `GIT_SSH_COMMAND` is extended rather than replaced so a custom
- * ssh wrapper still gets used.
+ * ssh_config, and an existing ssh command is extended rather than replaced so a custom
+ * wrapper still gets used. `core.sshCommand` counts as existing: git treats the environment
+ * variable as overriding it, so setting one unconditionally would silently discard the
+ * wrapper, key, or proxy a user configured there.
  */
-function nonInteractiveSshCommand(env: Record<string, string | undefined> | undefined): string {
-  const ambient = env?.GIT_SSH_COMMAND ?? process.env.GIT_SSH_COMMAND;
-  const base = ambient !== undefined && ambient.trim() !== "" ? ambient : "ssh";
+async function nonInteractiveSshCommand(
+  args: readonly string[],
+  options: GitCredentialOptions
+): Promise<string> {
+  const ambient = options.env?.GIT_SSH_COMMAND ?? process.env.GIT_SSH_COMMAND;
+  const base =
+    ambient !== undefined && ambient.trim() !== ""
+      ? ambient
+      : ((await configuredSshCommand(args, options)) ?? "ssh");
   return `${base} -o BatchMode=yes`;
+}
+
+/** Reads through the caller's own `-C`, so the value git would apply is the one extended. */
+async function configuredSshCommand(
+  args: readonly string[],
+  options: GitCredentialOptions
+): Promise<string | null> {
+  const repository = args[0] === "-C" && args[1] !== undefined ? ["-C", args[1]] : [];
+  try {
+    const result = await run("git", [...repository, "config", "--get", "core.sshCommand"], {
+      timeoutMs: options.timeoutMs,
+      signal: options.signal,
+      env: { ...options.env, ...NON_INTERACTIVE_ENV },
+    });
+    return result.stdout.trim() || null;
+  } catch {
+    // git exits non-zero when the key is unset, which is the common case.
+    return null;
+  }
 }
 const TOKEN_HELPER = '!f(){ echo username=x-access-token; echo "password=$MUX_BACKUP_TOKEN"; };f';
 
@@ -120,6 +147,7 @@ async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): 
  * a perfectly good configured token unusable just because someone else is logged into `gh`.
  */
 async function controlledCredentials(
+  args: readonly string[],
   options: GitCredentialOptions
 ): Promise<ControlledCredential[]> {
   if (isSshRepoUrl(options.repoUrl)) {
@@ -127,7 +155,7 @@ async function controlledCredentials(
       {
         credential: "ssh",
         argsPrefix: [],
-        env: { GIT_SSH_COMMAND: nonInteractiveSshCommand(options.env) },
+        env: { GIT_SSH_COMMAND: await nonInteractiveSshCommand(args, options) },
       },
     ];
   }
@@ -212,7 +240,7 @@ export async function runGitWithCredentialLadder(
     onStderrData: options.onStderrData,
   };
 
-  for (const controlled of await controlledCredentials(options)) {
+  for (const controlled of await controlledCredentials(args, options)) {
     try {
       const result = await run("git", [...controlled.argsPrefix, ...args], {
         ...baseOptions,
@@ -238,7 +266,7 @@ export async function runGitWithCredentialLadder(
       env: {
         ...options.env,
         ...NON_INTERACTIVE_ENV,
-        GIT_SSH_COMMAND: nonInteractiveSshCommand(options.env),
+        GIT_SSH_COMMAND: await nonInteractiveSshCommand(args, options),
       },
     });
     return { credential: "ambient", ...result };

@@ -64,8 +64,12 @@ function escapeSparsePattern(relativePath: string): string {
  * The managed path is user-supplied and is passed to `git clean -fd --` and
  * `git commit --`, so it has to stay a strict subdirectory. `.` would widen those
  * commands to the whole cache clone, which must never happen.
+ *
+ * Returns the joined segments so every git call uses one normalized form. The settings
+ * default is `mux/`, and as a gitignore-style sparse pattern `/mux//*` matches nothing
+ * while the payload is still written to `mux`, leaving the backup invisible.
  */
-function assertSafeRelativePath(relativePath: string): void {
+function safeRelativePath(relativePath: string): string {
   const segments = relativePath.split(/[\\/]/).filter((segment) => segment !== "");
   if (
     !relativePath ||
@@ -77,6 +81,7 @@ function assertSafeRelativePath(relativePath: string): void {
   ) {
     throw new Error(`Expected a safe relative path, got '${relativePath}'`);
   }
+  return segments.join("/");
 }
 
 async function runLocalGit(
@@ -219,12 +224,11 @@ export class BackupRepoCache {
    * `--no-cone` because the managed path is a single literal directory, not a cone pattern set.
    */
   private async applySparseCheckout(): Promise<void> {
-    assertSafeRelativePath(this.options.managedPath);
     await this.localGit([
       "sparse-checkout",
       "set",
       "--no-cone",
-      `/${escapeSparsePattern(this.options.managedPath)}/*`,
+      `/${escapeSparsePattern(safeRelativePath(this.options.managedPath))}/*`,
     ]);
   }
 
@@ -268,21 +272,20 @@ export class BackupRepoCache {
   }
 
   async cleanManagedPath(managedPath: string): Promise<void> {
-    assertSafeRelativePath(managedPath);
     // -x so an ignored leftover from a preview or a blocked push cannot survive the
     // reset and be read back as if it were the remote's backup. Mux owns this path.
-    await this.localGit(["clean", "-fdx", "--", managedPath]);
+    await this.localGit(["clean", "-fdx", "--", safeRelativePath(managedPath)]);
   }
 
   async stageAndCommit(managedPath: string, message: string): Promise<string | null> {
-    assertSafeRelativePath(managedPath);
+    const target = safeRelativePath(managedPath);
     // -f because the target may be a dotfiles repo whose ignore rules match payload
     // names. Skipping one file would push a manifest that references missing content.
-    await this.localGit(["add", "-A", "-f", "--", managedPath]);
-    const status = await this.porcelainStatus(managedPath);
+    await this.localGit(["add", "-A", "-f", "--", target]);
+    const status = await this.porcelainStatus(target);
     if (!status) return null;
 
-    await this.localGit([...GIT_IDENTITY_ARGS, "commit", "-m", message, "--", managedPath]);
+    await this.localGit([...GIT_IDENTITY_ARGS, "commit", "-m", message, "--", target]);
     return (await this.localGit(["rev-parse", "HEAD"])).stdout.trim();
   }
 
@@ -326,9 +329,8 @@ export class BackupRepoCache {
   }
 
   async porcelainStatus(managedPath?: string): Promise<string> {
-    if (managedPath) assertSafeRelativePath(managedPath);
     const args = ["status", "--porcelain", "--untracked-files=all"];
-    if (managedPath) args.push("--", managedPath);
+    if (managedPath) args.push("--", safeRelativePath(managedPath));
     return (await this.localGit(args)).stdout.trim();
   }
 }
