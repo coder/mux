@@ -2437,17 +2437,11 @@ input[type="checkbox"] {
 }
 
 /* Electron does not throttle animations merely because its window lost focus.
-   Pause persistent status animations while mux is backgrounded to avoid idle CPU burn. */
-html[data-renderer-inactive]
-  :where(
-    .animate-spin,
-    .animate-pulse,
-    .workspace-status-dot-active,
-    .heartbeat-dot,
-    .heartbeat-trace,
-    .subagent-connector-elbow-active
-  ),
-html[data-renderer-inactive] .subagent-connector-active::before {
+   Pause every animation timeline while mux is backgrounded so new persistent
+   status effects cannot silently reintroduce idle CPU burn. */
+html[data-renderer-inactive] *,
+html[data-renderer-inactive] *::before,
+html[data-renderer-inactive] *::after {
   animation-play-state: paused !important;
 }
 
