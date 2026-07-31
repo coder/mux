@@ -259,6 +259,22 @@ describe("BackupService", () => {
     expect(result.error.code).toBe("INVALID_BACKUP");
   });
 
+  test("rejects a managed path Git for Windows could not check out", async () => {
+    // Payload validation only covers paths inside the managed directory, so a reserved or
+    // invalid prefix chosen here would make every otherwise-valid file unusable on Windows.
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload(),
+    });
+
+    for (const managedPath of ["CON/mux", "foo:bar/mux", "mux ", "mux."]) {
+      const result = await service.saveSettings({ ...SETTINGS, path: managedPath });
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error(`Expected '${managedPath}' to be rejected`);
+      expect(result.error.code).toBe("INVALID_BACKUP");
+    }
+  });
+
   test("serializes operations for the same repository", async () => {
     const firstCanFinish = Promise.withResolvers<void>();
     const starts: string[] = [];

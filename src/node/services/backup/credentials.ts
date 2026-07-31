@@ -176,7 +176,7 @@ const AUTH_FAILURE_PATTERN =
  * would waste an ambient retry.
  */
 const LOCAL_FILESYSTEM_FAILURE_PATTERN =
-  /unable to write|insufficient permission for adding an object|no space left on device|read-only file system/i;
+  /unable to write|insufficient permission for adding an object|no space left on device|read-only file system|cannot open '[^']*(?:FETCH_HEAD|HEAD|index|config|packed-refs)'|unable to (?:create|open)|error: cannot (?:lock|create) ref/i;
 
 /**
  * Reaching the remote fails through curl, ssh, or git's own resolver depending on the

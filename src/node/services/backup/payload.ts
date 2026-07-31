@@ -7,7 +7,7 @@ import {
   UserPreferencesSchema,
   type UserPreferences,
 } from "@/common/config/schemas/userPreferences";
-import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
+import { isWindowsUnusableSegment, type BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
@@ -140,24 +140,6 @@ function isAllowedPayloadPath(relativePath: string): boolean {
   if (/^agents\/[^/]+\.md$/.test(relativePath)) return true;
   if (/^skills\/.+/.test(relativePath)) return true;
   return /^memory\/global\/.+/.test(relativePath);
-}
-
-/**
- * Reserved device names, characters Windows forbids, and trailing dots or spaces. A backup
- * exists to be checked out on another machine, so a path Git for Windows cannot create makes
- * the whole payload unusable there. Rejected on export for the same reason case collisions
- * are: publishing it produces a backup that cannot be restored.
- */
-const WINDOWS_RESERVED_NAMES =
-  /^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/i;
-const WINDOWS_INVALID_CHARACTERS = new Set([...'<>:"|?*']);
-
-function isWindowsUnusableSegment(segment: string): boolean {
-  if (WINDOWS_RESERVED_NAMES.test(segment) || /[. ]$/.test(segment)) return true;
-  return [...segment].some(
-    (character) =>
-      WINDOWS_INVALID_CHARACTERS.has(character) || (character.codePointAt(0) ?? 0) < 0x20
-  );
 }
 
 function assertAllowedPayloadPath(relativePath: string): void {
@@ -424,9 +406,19 @@ function isPortableReference(value: unknown): boolean {
 /**
  * Matches a bare `key` too, because Google-style MCP endpoints carry the credential
  * as `?key=...` rather than a name containing "token" or "api_key".
+ *
+ * camelCase is split into the same separated words first, so `accessToken` and `clientSecret`
+ * are recognised. That deliberately over-matches: a name like `tokenCount` is redacted too.
+ * Distinguishing it would mean guessing which credential-word placements are innocent, and
+ * the trade is lopsided, since a redacted count only costs one non-portable query parameter
+ * while a published credential cannot be taken back. The secret scanner is no backstop here
+ * either, because a value like `hunter2` matches none of its patterns.
  */
 function isSensitiveParamName(name: string): boolean {
-  return /(?:^|[_-])(?:key|token|secret|password|auth|credential|apikey)(?:$|[_-])/i.test(name);
+  const separated = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2");
+  return /(?:^|[_-])(?:key|token|secret|password|auth|credential|apikey)(?:$|[_-])/i.test(
+    separated
+  );
 }
 
 function decodeUrlComponent(value: string): string {
@@ -907,6 +899,12 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
 interface ServerCommand {
   command: string;
   enabled: boolean;
+  /**
+   * False when a url shadows the command. `normalizeEntry` gives a url precedence, so the
+   * command is inert until the url goes away, and a restore that removes only the url turns
+   * a dormant command into a running one.
+   */
+  runnable: boolean;
 }
 
 /**
@@ -919,7 +917,7 @@ function readServerCommand(value: unknown): ServerCommand | undefined {
   const raw = typeof value === "string" ? value : undefined;
   if (raw !== undefined) {
     if (raw.trim() === "" || raw === REDACTED_BACKUP_VALUE) return undefined;
-    return { command: raw, enabled: true };
+    return { command: raw, enabled: true, runnable: true };
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -928,7 +926,12 @@ function readServerCommand(value: unknown): ServerCommand | undefined {
   // The marker is a placeholder rather than command text: it either rehydrates to the local
   // value or stays unrunnable, so there is nothing for the user to read and approve.
   if (command === REDACTED_BACKUP_VALUE) return undefined;
-  return { command, enabled: record.disabled !== true };
+  const url = record.url;
+  return {
+    command,
+    enabled: record.disabled !== true,
+    runnable: !(typeof url === "string" && url !== ""),
+  };
 }
 
 /**
@@ -985,8 +988,13 @@ export async function collectMcpCommandApprovals(
   const approvals: BackupCommandApproval[] = [];
   for (const [name, entry] of incoming) {
     const current = local.get(name);
-    const enablesIt = entry.enabled && current?.enabled === false;
-    if (current?.command === entry.command && !enablesIt) continue;
+    // Approval is also required when the restore only changes whether an identical command
+    // can run: enabling a disabled entry, or removing the url that was shadowing it.
+    const makesItRun =
+      entry.enabled &&
+      entry.runnable &&
+      (current?.enabled === false || current?.runnable === false);
+    if (current?.command === entry.command && !makesItRun) continue;
     const serverPath = `servers.${name}.command`;
     approvals.push({
       path: serverPath,

@@ -2,6 +2,24 @@ import { z } from "zod";
 import { ResultSchema } from "./result";
 
 /**
+ * Reserved device names, characters Windows forbids, and trailing dots or spaces. A backup
+ * exists to be checked out on another machine, so a path Git for Windows cannot create makes
+ * the whole payload unusable there. Shared with payload validation so the managed directory
+ * the user chooses is held to the same standard as the paths written inside it.
+ */
+const WINDOWS_RESERVED_NAMES =
+  /^(?:con|prn|aux|nul|com[1-9\u00b9\u00b2\u00b3]|lpt[1-9\u00b9\u00b2\u00b3])(?:\.|$)/i;
+const WINDOWS_INVALID_CHARACTERS = new Set([...'<>:"|?*']);
+
+export function isWindowsUnusableSegment(segment: string): boolean {
+  if (WINDOWS_RESERVED_NAMES.test(segment) || /[. ]$/.test(segment)) return true;
+  return [...segment].some(
+    (character) =>
+      WINDOWS_INVALID_CHARACTERS.has(character) || (character.codePointAt(0) ?? 0) < 0x20
+  );
+}
+
+/**
  * The managed subdirectory scopes every write and every `git clean`, so it must be a
  * real subdirectory. `.`, `..`, absolute paths, and backslashes would let a backup
  * reach outside the directory Mux is allowed to own.
@@ -17,7 +35,8 @@ export function isValidBackupPath(value: string): boolean {
         segment === "." ||
         segment === ".." ||
         // Writing into the cache clone's own git directory could install hooks.
-        segment.toLowerCase() === ".git"
+        segment.toLowerCase() === ".git" ||
+        isWindowsUnusableSegment(segment)
     )
   );
 }

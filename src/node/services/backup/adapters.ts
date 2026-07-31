@@ -9,6 +9,7 @@ import {
   type BackupPayload,
   type PreparedBackupRepository,
 } from "./backupService";
+import { BACKUP_GIT_TIMEOUT_MS } from "@/constants/terminationTimeouts";
 import { BackupRepoCache } from "./gitRepo";
 import {
   backupPayloadExists,
@@ -51,6 +52,7 @@ export function createBackupGitRepo(options: {
   cacheRoot: string;
   /** Resolved per call so a token added after startup is picked up without a restart. */
   getToken?: (repoUrl: string) => string | null;
+  timeoutMs?: number;
 }): BackupGitRepo {
   const prepared = new WeakMap<PreparedBackupRepository, BackupRepoCache>();
 
@@ -59,6 +61,9 @@ export function createBackupGitRepo(options: {
       ...settings,
       cacheRoot: options.cacheRoot,
       token: options.getToken?.(settings.repoUrl) ?? undefined,
+      // Without this every git call runs unbounded, so a stalled remote leaves the operation
+      // busy forever instead of failing.
+      timeoutMs: options.timeoutMs ?? BACKUP_GIT_TIMEOUT_MS,
     });
   }
 

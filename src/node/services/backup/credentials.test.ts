@@ -302,6 +302,41 @@ exit 128
     expect((await fs.readFile(logPath, "utf-8")).trim().split("\n")).toHaveLength(1);
   });
 
+  it("blames the local cache when git cannot write FETCH_HEAD", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    // Git says "Permission denied" for a cache file it cannot write, which reads exactly like
+    // a rejected credential. Retrying every rung and then telling the user to fix their
+    // credentials sends them after the wrong problem.
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'printf "attempt\\n" >> "$GIT_LOG"',
+        "echo \"error: cannot open '.git/FETCH_HEAD': Permission denied\" >&2",
+        "exit 128",
+        "",
+      ].join("\n")
+    );
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["fetch", "origin"], {
+          repoUrl: "https://example.com/repo.git",
+          token: "test-token",
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBeInstanceOf(BackupAuthFailedError);
+    expect((caught as Error).message).toContain("FETCH_HEAD");
+    expect((await fs.readFile(logPath, "utf-8")).trim().split("\n")).toHaveLength(1);
+  });
+
   it("blames a full disk rather than the network when a fetch reports both", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");

@@ -157,7 +157,7 @@ describe("backup payload", () => {
   // Keep this comment: mcp.jsonc is a commented format.
   "servers": {
     "api": {
-      "url": "https://user:password@example.com/mcp?token=literal&mode=fast",
+      "url": "https://user:password@example.com/mcp?token=literal&accessToken=camel&clientSecret=camel2&tokenCount=7&mode=fast",
       "headers": {
         "Authorization": "Bearer literal",
         "Secret": { "secret": "MCP_SECRET" },
@@ -189,6 +189,12 @@ describe("backup payload", () => {
     expect(mcp.servers.api.headers.OpObject).toEqual({ op: "op://Vault/Item/token" });
     expect(mcp.servers.api.url).not.toContain("password");
     expect(mcp.servers.api.url).not.toContain("token=literal");
+    // camelCase credential names are the common spelling and their values are too
+    // low-entropy for the secret scanner to catch as a backstop.
+    expect(mcp.servers.api.url).not.toContain("camel");
+    // Deliberately fail closed: `tokenCount` is redacted too rather than guessing which
+    // credential-word placements are innocent.
+    expect(mcp.servers.api.url).not.toContain("tokenCount=7");
     expect(mcp.servers.api.url).toContain("mode=fast");
     expect(mcp.servers.plain.url).toBe("https://example.com/mcp?mode=fast");
     expect(payloadFileText(payload, "mcp.jsonc")).toContain("// Keep this comment");
@@ -835,6 +841,40 @@ describe("backup payload", () => {
     expect(await collectMcpCommandApprovals(muxRoot, payload.files)).toEqual([]);
     await restoreBackupPayload({ muxRoot, payload });
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain("sk-live-bare");
+  });
+
+  it("requires approval when a restore removes the url shadowing a local command", async () => {
+    // `normalizeEntry` gives a url precedence, so this command is dormant locally. Dropping
+    // only the url turns the entry into stdio and makes that command executable, even though
+    // its text is unchanged and the local file already contained it.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: { mixed: { url: "https://api.example.com/mcp", command: "npx dormant-tool" } },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "url-shadowed-command");
+    await writeBackupPayload(destination, payload);
+    await tamperPayloadFile(
+      destination,
+      "mcp.jsonc",
+      `{"servers":{"mixed":{"command":${JSON.stringify(REDACTED_BACKUP_VALUE)}}}}`
+    );
+    const readBack = await readBackupPayload(destination);
+
+    const approvals = await collectMcpCommandApprovals(muxRoot, readBack.files);
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0]?.command).toBe("npx dormant-tool");
+
+    expect(await rejection(restoreBackupPayload({ muxRoot, payload: readBack }))).toBeInstanceOf(
+      BackupCommandApprovalRequiredError
+    );
   });
 
   it("requires approval when a restore re-enables a locally disabled command", async () => {
