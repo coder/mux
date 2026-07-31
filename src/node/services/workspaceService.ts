@@ -280,9 +280,14 @@ import {
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 import {
   getSubagentGitPatchMboxPath,
+  getSubagentGitPatchProjectDir,
+  getSubagentGitPatchWorktreePatchPath,
   readSubagentGitPatchArtifactsFile,
+  SUBAGENT_GIT_PATCH_MBOX_FILE_NAME,
+  SUBAGENT_GIT_PATCH_WORKTREE_FILE_NAME,
   updateSubagentGitPatchArtifactsFile,
 } from "@/node/services/subagentGitPatchArtifacts";
+import type { SubagentGitPatchArtifact } from "@/common/utils/tools/toolDefinitions";
 import {
   getSubagentReportArtifactPath,
   readSubagentReportArtifactsFile,
@@ -1121,6 +1126,51 @@ async function copyDirIfMissingBestEffort(params: {
   }
 }
 
+/**
+ * Merge-copies srcDir into destDir: existing destination files are kept
+ * (force: false), missing ones are copied. Unlike copyDirIfMissingBestEffort,
+ * an existing destDir does not skip the copy, so several source dirs can
+ * contribute files to one destination. Returns false on a real copy failure;
+ * a missing source dir is not one.
+ */
+async function mergeDirBestEffort(params: {
+  srcDir: string;
+  destDir: string;
+  /** Top-level basenames in srcDir to skip (renamed reserved patch files). */
+  excludeBasenames?: ReadonlySet<string>;
+  logContext: Record<string, unknown>;
+}): Promise<boolean> {
+  const excludeBasenames = params.excludeBasenames;
+  try {
+    await fsPromises.mkdir(path.dirname(params.destDir), { recursive: true });
+    await fsPromises.cp(params.srcDir, params.destDir, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+      ...(excludeBasenames != null && excludeBasenames.size > 0
+        ? {
+            filter: (source: string) =>
+              path.dirname(source) !== params.srcDir ||
+              !excludeBasenames.has(path.basename(source)),
+          }
+        : {}),
+    });
+    return true;
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return true;
+    }
+
+    log.error("Failed to copy session artifact directory", {
+      ...params.logContext,
+      srcDir: params.srcDir,
+      destDir: params.destDir,
+      error: getErrorMessage(error),
+    });
+    return false;
+  }
+}
+
 function coerceUpdatedAtMs(entry: { createdAtMs?: number; updatedAtMs?: number }): number {
   if (typeof entry.updatedAtMs === "number" && Number.isFinite(entry.updatedAtMs)) {
     return entry.updatedAtMs;
@@ -1168,7 +1218,7 @@ async function collectReferencedStagedAttachmentPaths(sessionDir: string): Promi
   return [...paths];
 }
 
-async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
+export async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
   parentWorkspaceId: string;
   parentSessionDir: string;
   childWorkspaceId: string;
@@ -1177,18 +1227,28 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
   childTaskModelString?: string;
   /** Task-level thinking/reasoning level for the child workspace (optional; persists into transcript artifacts). */
   childTaskThinkingLevel?: ThinkingLevel;
-}): Promise<void> {
+}): Promise<{
+  /**
+   * False when patch artifact replication into the parent failed: parent
+   * metadata was not repointed at the missing files, and the caller must
+   * preserve the child session dir (the only remaining copy) instead of
+   * deleting it.
+   */
+  patchArtifactsReplicated: boolean;
+}> {
   if (params.parentWorkspaceId.length === 0) {
-    return;
+    return { patchArtifactsReplicated: true };
   }
 
   if (params.childWorkspaceId.length === 0) {
-    return;
+    return { patchArtifactsReplicated: true };
   }
 
   if (params.parentSessionDir.length === 0 || params.childSessionDir.length === 0) {
-    return;
+    return { patchArtifactsReplicated: true };
   }
+
+  let patchArtifactsReplicated = true;
 
   // 1) Archive the child session transcript (chat.jsonl + partial.json) into the parent session dir
   // BEFORE deleting ~/.mux/sessions/<childWorkspaceId>.
@@ -1314,92 +1374,458 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
 
   // --- subagent-patches.json + subagent-patches/<taskId>/...
   try {
-    const childArtifacts = await readSubagentGitPatchArtifactsFile(params.childSessionDir);
+    // An unreadable or malformed child index must not read as empty here:
+    // the catch below would never fire, patchArtifactsReplicated would stay
+    // true, and removal would delete the only copies of the child's patch
+    // files. Propagated errors land in that catch and preserve the child.
+    const childArtifacts = await readSubagentGitPatchArtifactsFile(params.childSessionDir, {
+      propagateReadErrors: true,
+    });
     const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
 
-    for (const [taskId, childEntry] of childEntries) {
-      if (!taskId) continue;
-
-      for (const projectArtifact of childEntry.projectArtifacts) {
-        if (!projectArtifact.mboxPath) {
-          continue;
+    // Both metadata-referenced patch kinds roll up into one destination dir.
+    // When their planned basenames collide (two different safe sources
+    // sharing a basename, or one source named like the other kind's
+    // canonical fallback), the overwriting copies would merge two formats
+    // into one file and the rewritten metadata would point both fields at
+    // it, losing an artifact once child cleanup deletes the sources. A
+    // colliding safe source gets a kind-prefixed destination name instead;
+    // canonical fallbacks keep their fixed names because the always-merged
+    // canonical dir provides them.
+    const planRolledUpPatchCopy = (
+      projectArtifact: { mboxPath?: string; worktreePatchPath?: string },
+      kind: "mbox" | "worktree"
+    ): { srcPath: string; srcInsideChild: boolean; destBasename: string } | undefined => {
+      const plan = (k: "mbox" | "worktree") => {
+        const srcPath = k === "mbox" ? projectArtifact.mboxPath : projectArtifact.worktreePatchPath;
+        if (!srcPath) {
+          return undefined;
         }
-
-        const srcDir = path.dirname(projectArtifact.mboxPath);
-        const destDir = path.dirname(
-          getSubagentGitPatchMboxPath(params.parentSessionDir, taskId, projectArtifact.storageKey)
-        );
-
-        if (!isPathInsideDir(params.childSessionDir, srcDir)) {
-          log.error("Refusing to roll up patch artifact outside child session dir", {
-            parentWorkspaceId: params.parentWorkspaceId,
-            childWorkspaceId: params.childWorkspaceId,
-            taskId,
-            childSessionDir: params.childSessionDir,
-            srcDir,
-          });
-          continue;
-        }
-
-        if (!isPathInsideDir(params.parentSessionDir, destDir)) {
-          log.error("Refusing to roll up patch artifact outside parent session dir", {
-            parentWorkspaceId: params.parentWorkspaceId,
-            childWorkspaceId: params.childWorkspaceId,
-            taskId,
-            parentSessionDir: params.parentSessionDir,
-            destDir,
-          });
-          continue;
-        }
-
-        await copyDirIfMissingBestEffort({
-          srcDir,
-          destDir,
-          logContext: {
-            parentWorkspaceId: params.parentWorkspaceId,
-            childWorkspaceId: params.childWorkspaceId,
-            artifact: "subagent-patches",
-            taskId,
-            projectPath: projectArtifact.projectPath,
-          },
-        });
+        const srcInsideChild = isPathInsideDir(params.childSessionDir, srcPath);
+        const canonicalName =
+          k === "mbox" ? SUBAGENT_GIT_PATCH_MBOX_FILE_NAME : SUBAGENT_GIT_PATCH_WORKTREE_FILE_NAME;
+        return {
+          srcPath,
+          srcInsideChild,
+          destBasename: srcInsideChild ? path.basename(srcPath) : canonicalName,
+        };
+      };
+      const own = plan(kind);
+      if (own == null) {
+        return undefined;
       }
+      const other = plan(kind === "mbox" ? "worktree" : "mbox");
+      // The other kind's canonical basename stays reserved even when its
+      // metadata field is absent: the always-merged canonical dir may hold
+      // that file, and the forced copy would overwrite it before the
+      // fill-missing merge runs.
+      const otherCanonicalName =
+        kind === "mbox" ? SUBAGENT_GIT_PATCH_WORKTREE_FILE_NAME : SUBAGENT_GIT_PATCH_MBOX_FILE_NAME;
+      if (
+        own.srcInsideChild &&
+        (own.destBasename === otherCanonicalName ||
+          (other != null &&
+            other.destBasename === own.destBasename &&
+            other.srcPath !== own.srcPath))
+      ) {
+        return { ...own, destBasename: `${kind}-${own.destBasename}` };
+      }
+      return own;
+    };
+
+    // Returns false when any patch file copy actually failed: metadata must
+    // not be rewritten to point at files that were never replicated, and the
+    // caller must preserve the child session dir as the retryable source.
+    // Every copy lands in a staging dir first and is swapped into place only
+    // after all of them succeed: copying straight into the destination would
+    // mutate the files the retained old metadata points at before a later
+    // copy could fail (e.g. ENOSPC partway through a multi-project artifact).
+    // Returns false when any entry failed to restore: the caller must then
+    // preserve the staging root, which still holds the un-restored backups
+    // the surviving old metadata points at.
+    const restoreSwappedPatchDirs = async (
+      swapped: Array<{ destDir: string; backupDir: string | null }>,
+      logContext: Record<string, unknown>
+    ): Promise<boolean> => {
+      let allRestored = true;
+      for (const { destDir, backupDir } of [...swapped].reverse()) {
+        try {
+          await fsPromises.rm(destDir, { recursive: true, force: true });
+          if (backupDir != null) {
+            await fsPromises.rename(backupDir, destDir);
+          }
+        } catch (restoreError: unknown) {
+          allRestored = false;
+          log.error("Failed to restore patch artifact dir after swap failure", {
+            ...logContext,
+            destDir,
+            backupDir,
+            error: getErrorMessage(restoreError),
+          });
+        }
+      }
+      return allRestored;
+    };
+
+    interface TaskReplication {
+      taskId: string;
+      stagingRoot: string | null;
+      swapped: Array<{ destDir: string; backupDir: string | null }>;
     }
 
+    const replicateTaskPatchFiles = async (
+      taskId: string,
+      childEntry: SubagentGitPatchArtifact
+    ): Promise<{ ok: false } | ({ ok: true } & Omit<TaskReplication, "taskId">)> => {
+      const logContext = {
+        parentWorkspaceId: params.parentWorkspaceId,
+        childWorkspaceId: params.childWorkspaceId,
+        taskId,
+      };
+      // Keyed by destDir so two project artifacts sharing a storage key keep
+      // the sequential merge semantics of a single destination.
+      const stagingByDestDir = new Map<string, string>();
+      let stagingRoot: string | null = null;
+      let succeeded = false;
+      let preserveStagingRootForRecovery = false;
+      try {
+        for (const projectArtifact of childEntry.projectArtifacts) {
+          // The canonical project dir is always a copy source, independent of
+          // recorded patch paths: metadata may be missing, sanitized, or point
+          // at a safe-but-noncanonical location while the canonical dir holds
+          // the real worktree.patch that apply-side probing discovers, and
+          // skipping it loses that file once the child session dir is removed.
+          // Each safe metadata dir is merged in as its own source: the mbox and
+          // the worktree patch can live in two different legacy locations.
+          const canonicalSrcDir = getSubagentGitPatchProjectDir(
+            params.childSessionDir,
+            taskId,
+            projectArtifact.storageKey
+          );
+          const srcDirs = [canonicalSrcDir];
+          for (const patchFilePath of [
+            projectArtifact.mboxPath,
+            projectArtifact.worktreePatchPath,
+          ]) {
+            if (patchFilePath == null) {
+              continue;
+            }
+            const metadataDir = path.dirname(patchFilePath);
+            if (srcDirs.includes(metadataDir)) {
+              continue;
+            }
+            if (isPathInsideDir(params.childSessionDir, metadataDir)) {
+              srcDirs.push(metadataDir);
+            } else {
+              log.error("Refusing to roll up patch artifact outside child session dir", {
+                parentWorkspaceId: params.parentWorkspaceId,
+                childWorkspaceId: params.childWorkspaceId,
+                taskId,
+                childSessionDir: params.childSessionDir,
+                srcDir: metadataDir,
+              });
+            }
+          }
+          const destDir = getSubagentGitPatchProjectDir(
+            params.parentSessionDir,
+            taskId,
+            projectArtifact.storageKey
+          );
+
+          if (!isPathInsideDir(params.parentSessionDir, destDir)) {
+            log.error("Refusing to roll up patch artifact outside parent session dir", {
+              parentWorkspaceId: params.parentWorkspaceId,
+              childWorkspaceId: params.childWorkspaceId,
+              taskId,
+              parentSessionDir: params.parentSessionDir,
+              destDir,
+            });
+            continue;
+          }
+
+          let stagingDir = stagingByDestDir.get(destDir);
+          if (stagingDir == null) {
+            if (stagingRoot == null) {
+              // Same filesystem as every destDir (all share the task dir),
+              // so the final swap is a rename.
+              await fsPromises.mkdir(path.dirname(destDir), { recursive: true });
+              stagingRoot = await fsPromises.mkdtemp(
+                path.join(path.dirname(destDir), ".rollup-staging-")
+              );
+            }
+            stagingDir = path.join(stagingRoot, String(stagingByDestDir.size));
+            // Seed from the existing destination so the fill-missing merges
+            // below behave exactly as they would against the real dest.
+            try {
+              await fsPromises.cp(destDir, stagingDir, { recursive: true, force: true });
+            } catch (error: unknown) {
+              if (!isErrnoWithCode(error, "ENOENT")) {
+                throw error;
+              }
+              await fsPromises.mkdir(stagingDir, { recursive: true });
+            }
+            // Seeded canonical-kind files are always superseded: the child
+            // entry being replicated is strictly newer (stale children were
+            // skipped above), and the apply resolver probes canonical
+            // filenames even without metadata, so a retained older canonical
+            // patch from a previous roll-up would be applied alongside the
+            // newer artifact (e.g. stale uncommitted changes after a rerun
+            // whose tree was clean). The copies below re-add every kind the
+            // child actually provides.
+            for (const canonicalFileName of [
+              SUBAGENT_GIT_PATCH_MBOX_FILE_NAME,
+              SUBAGENT_GIT_PATCH_WORKTREE_FILE_NAME,
+            ]) {
+              await fsPromises.rm(path.join(stagingDir, canonicalFileName), { force: true });
+            }
+            stagingByDestDir.set(destDir, stagingDir);
+          }
+
+          // The apply resolver prefers the metadata-referenced file over the
+          // canonical one, so those exact files are copied first WITH
+          // overwrite: the directory merges below never replace existing
+          // destination files, which would let a canonical file with the same
+          // basename mask the referenced patch once child cleanup deletes its
+          // source.
+          // A collision-renamed copy must also keep its original basename
+          // out of that source directory's merge below: the merged copy
+          // would land under the reserved canonical name and apply-side
+          // canonical probing would treat it as the other kind (e.g. a
+          // legacy mbox named worktree.patch reapplied as the
+          // uncommitted-changes patch after git am).
+          const mergeExclusionsBySrcDir = new Map<string, Set<string>>();
+          for (const kind of ["mbox", "worktree"] as const) {
+            const copyPlan = planRolledUpPatchCopy(projectArtifact, kind);
+            if (!copyPlan?.srcInsideChild) {
+              continue;
+            }
+            const srcBasename = path.basename(copyPlan.srcPath);
+            if (srcBasename !== copyPlan.destBasename) {
+              const srcDir = path.dirname(copyPlan.srcPath);
+              const exclusions = mergeExclusionsBySrcDir.get(srcDir) ?? new Set<string>();
+              exclusions.add(srcBasename);
+              mergeExclusionsBySrcDir.set(srcDir, exclusions);
+            }
+            try {
+              await fsPromises.cp(copyPlan.srcPath, path.join(stagingDir, copyPlan.destBasename), {
+                force: true,
+              });
+            } catch (error: unknown) {
+              if (!isErrnoWithCode(error, "ENOENT")) {
+                log.error("Failed to copy metadata-referenced patch file", {
+                  ...logContext,
+                  projectPath: projectArtifact.projectPath,
+                  patchFilePath: copyPlan.srcPath,
+                  error: getErrorMessage(error),
+                });
+                return { ok: false };
+              }
+            }
+          }
+
+          for (const srcDir of srcDirs) {
+            const merged = await mergeDirBestEffort({
+              srcDir,
+              destDir: stagingDir,
+              excludeBasenames: mergeExclusionsBySrcDir.get(srcDir),
+              logContext: {
+                ...logContext,
+                artifact: "subagent-patches",
+                projectPath: projectArtifact.projectPath,
+              },
+            });
+            if (!merged) {
+              return { ok: false };
+            }
+          }
+        }
+
+        // All copies staged; swap into place. Completed swaps are restored
+        // from backups when a later one fails, so the retained old metadata
+        // never points at partially replaced files.
+        const swapped: Array<{ destDir: string; backupDir: string | null }> = [];
+        try {
+          for (const [destDir, stagingDir] of stagingByDestDir) {
+            const backupDir = path.join(stagingRoot ?? "", `backup-${swapped.length}`);
+            let hadDest = true;
+            try {
+              await fsPromises.rename(destDir, backupDir);
+            } catch (error: unknown) {
+              if (!isErrnoWithCode(error, "ENOENT")) {
+                throw error;
+              }
+              hadDest = false;
+            }
+            swapped.push({ destDir, backupDir: hadDest ? backupDir : null });
+            await fsPromises.rename(stagingDir, destDir);
+          }
+        } catch (error: unknown) {
+          log.error("Failed to swap staged patch artifacts into place", {
+            ...logContext,
+            error: getErrorMessage(error),
+          });
+          const restored = await restoreSwappedPatchDirs(swapped, logContext);
+          if (!restored) {
+            preserveStagingRootForRecovery = true;
+            log.error("Preserving staging root: it holds backups a failed restore left behind", {
+              ...logContext,
+              stagingRoot,
+            });
+          }
+          return { ok: false };
+        }
+        // The staging root (holding the swap backups) survives a successful
+        // return: the metadata for these files is not persisted yet, and a
+        // failed persistence must restore the swapped dirs from backup or
+        // the surviving old metadata would point at replaced bytes.
+        succeeded = true;
+        return { ok: true, stagingRoot, swapped };
+      } catch (error: unknown) {
+        log.error("Failed to replicate patch artifacts into parent", {
+          ...logContext,
+          error: getErrorMessage(error),
+        });
+        return { ok: false };
+      } finally {
+        if (!succeeded && !preserveStagingRootForRecovery && stagingRoot != null) {
+          await fsPromises.rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+        }
+      }
+    };
+
     if (childEntries.length > 0) {
-      await updateSubagentGitPatchArtifactsFile({
-        workspaceId: params.parentWorkspaceId,
-        workspaceSessionDir: params.parentSessionDir,
-        update: (parentFile) => {
-          for (const [taskId, childEntry] of childEntries) {
-            if (!taskId) continue;
-            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
+      // The explicit copies above place safe metadata files under their
+      // planned (possibly collision-renamed) basenames, so the rewritten
+      // path must follow the same plan or a noncanonical copy (e.g.
+      // legacy/dirty.diff) becomes unreachable after child cleanup. Unsafe
+      // (refused) paths fall back to the canonical filename, which the
+      // always-merged canonical dir may provide.
+      const rewriteRolledUpPatchPath = (
+        projectArtifact: { mboxPath?: string; worktreePatchPath?: string },
+        kind: "mbox" | "worktree",
+        canonicalPath: string
+      ): string | undefined => {
+        const copyPlan = planRolledUpPatchCopy(projectArtifact, kind);
+        if (copyPlan == null) {
+          return undefined;
+        }
+        if (!copyPlan.srcInsideChild) {
+          return canonicalPath;
+        }
+        return path.join(path.dirname(canonicalPath), copyPlan.destBasename);
+      };
+      // Freshness decision, file replication, and metadata replacement all
+      // run under the parent's artifact-file lock: deciding from a pre-read
+      // outside the lock would let a newer parent artifact written in
+      // between end up backed by a stale child's forced file copies. A
+      // stale child (not newer than the parent's entry) is skipped
+      // entirely: copying its files would overwrite the newer content the
+      // retained metadata points at, and fill-missing merges could surface
+      // stale canonical files to apply-side probing.
+      const completedReplications: TaskReplication[] = [];
+      try {
+        await updateSubagentGitPatchArtifactsFile({
+          workspaceId: params.parentWorkspaceId,
+          workspaceSessionDir: params.parentSessionDir,
+          // A silently unpersisted metadata write would report the roll-up
+          // as replicated: cleanup would then delete the child session
+          // while the parent has no entry pointing at the copied files,
+          // making them unreachable by artifact lookup.
+          propagateWriteErrors: true,
+          // A malformed parent index (or one malformed entry) must fail the
+          // roll-up, not self-heal: the healed read drops the malformed
+          // state, and persisting the reduced map would orphan previously
+          // retained sibling/descendant patches.
+          propagateReadErrors: true,
+          update: async (parentFile) => {
+            for (const [taskId, childEntry] of childEntries) {
+              if (!taskId) continue;
+              const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
 
-            const childUpdated = coerceUpdatedAtMs(childEntry);
-            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
+              const childUpdated = coerceUpdatedAtMs(childEntry);
+              const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
+              if (existing && childUpdated <= existingUpdated) {
+                continue;
+              }
 
-            if (!existing || childUpdated > existingUpdated) {
+              // Metadata may only be replaced when this run also replicated
+              // the files, or the entry would point at content that was
+              // never copied; the failed task keeps its previous metadata
+              // and the caller preserves the child session dir for retry.
+              const replication = await replicateTaskPatchFiles(taskId, childEntry);
+              if (!replication.ok) {
+                patchArtifactsReplicated = false;
+                continue;
+              }
+              completedReplications.push({
+                taskId,
+                stagingRoot: replication.stagingRoot,
+                swapped: replication.swapped,
+              });
+
               parentFile.artifactsByChildTaskId[taskId] = {
                 ...childEntry,
                 childTaskId: taskId,
                 parentWorkspaceId: params.parentWorkspaceId,
                 projectArtifacts: childEntry.projectArtifacts.map((projectArtifact) => ({
                   ...projectArtifact,
-                  mboxPath: projectArtifact.mboxPath
-                    ? getSubagentGitPatchMboxPath(
-                        params.parentSessionDir,
-                        taskId,
-                        projectArtifact.storageKey
-                      )
-                    : undefined,
+                  mboxPath: rewriteRolledUpPatchPath(
+                    projectArtifact,
+                    "mbox",
+                    getSubagentGitPatchMboxPath(
+                      params.parentSessionDir,
+                      taskId,
+                      projectArtifact.storageKey
+                    )
+                  ),
+                  worktreePatchPath: rewriteRolledUpPatchPath(
+                    projectArtifact,
+                    "worktree",
+                    getSubagentGitPatchWorktreePatchPath(
+                      params.parentSessionDir,
+                      taskId,
+                      projectArtifact.storageKey
+                    )
+                  ),
                 })),
               };
             }
+          },
+        });
+      } catch (error: unknown) {
+        // Metadata persistence failed after the swaps: the surviving old
+        // metadata would point at replaced bytes, so restore every
+        // completed swap from its still-alive backups before rethrowing.
+        for (const replication of [...completedReplications].reverse()) {
+          const restoreLogContext = {
+            parentWorkspaceId: params.parentWorkspaceId,
+            childWorkspaceId: params.childWorkspaceId,
+            taskId: replication.taskId,
+          };
+          const restored = await restoreSwappedPatchDirs(replication.swapped, restoreLogContext);
+          if (!restored) {
+            // Nulling stagingRoot keeps the finally below from deleting the
+            // backups the failed restore left behind.
+            log.error("Preserving staging root: it holds backups a failed restore left behind", {
+              ...restoreLogContext,
+              stagingRoot: replication.stagingRoot,
+            });
+            replication.stagingRoot = null;
           }
-        },
-      });
+        }
+        throw error;
+      } finally {
+        for (const { stagingRoot } of completedReplications) {
+          if (stagingRoot != null) {
+            await fsPromises
+              .rm(stagingRoot, { recursive: true, force: true })
+              .catch(() => undefined);
+          }
+        }
+      }
     }
   } catch (error: unknown) {
+    patchArtifactsReplicated = false;
     log.error("Failed to roll up subagent patch artifacts into parent", {
       parentWorkspaceId: params.parentWorkspaceId,
       childWorkspaceId: params.childWorkspaceId,
@@ -1569,6 +1995,8 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
       error: getErrorMessage(error),
     });
   }
+
+  return { patchArtifactsReplicated };
 }
 
 async function forEachWithConcurrencyLimit<T>(
@@ -4880,29 +5308,52 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Remove session data
-      try {
-        const sessionDir = this.config.getSessionDir(workspaceId);
-
-        if (parentWorkspaceId) {
-          try {
-            const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
-            await archiveChildSessionArtifactsIntoParentSessionDir({
-              parentWorkspaceId,
-              parentSessionDir,
-              childWorkspaceId: workspaceId,
-              childSessionDir: sessionDir,
-              childTaskModelString,
-              childTaskThinkingLevel,
-            });
-          } catch (error: unknown) {
-            log.error("Failed to roll up child session artifacts into parent", {
-              workspaceId,
-              parentWorkspaceId,
-              error: getErrorMessage(error),
-            });
-          }
+      const sessionDir = this.config.getSessionDir(workspaceId);
+      if (parentWorkspaceId) {
+        let patchArtifactsReplicated = true;
+        try {
+          const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
+          const archiveResult = await archiveChildSessionArtifactsIntoParentSessionDir({
+            parentWorkspaceId,
+            parentSessionDir,
+            childWorkspaceId: workspaceId,
+            childSessionDir: sessionDir,
+            childTaskModelString,
+            childTaskThinkingLevel,
+          });
+          patchArtifactsReplicated = archiveResult.patchArtifactsReplicated;
+        } catch (error: unknown) {
+          patchArtifactsReplicated = false;
+          log.error("Failed to roll up child session artifacts into parent", {
+            workspaceId,
+            parentWorkspaceId,
+            error: getErrorMessage(error),
+          });
         }
 
+        if (!patchArtifactsReplicated) {
+          // The child session dir holds the only copy of patch artifacts that
+          // failed to replicate into the parent, and it is only reachable
+          // through this workspace's config entry (artifact lookup follows
+          // workspace lineage from config). Abort removal, even when forced,
+          // so a retried removal re-runs the roll-up instead of orphaning the
+          // child's commit series or uncommitted work; the roll-ups above are
+          // idempotent and runtime deletion tolerates the already-deleted
+          // worktree on retry.
+          log.error("Aborting workspace removal: patch artifact roll-up failed", {
+            workspaceId,
+            parentWorkspaceId,
+            sessionDir,
+          });
+          if (timelineClosed) {
+            this.timelineRecorder.reopenWorkspace(workspaceId);
+          }
+          return Err(
+            `Failed to roll up the child's patch artifacts into the parent (session dir: ${sessionDir}). The workspace was kept so removal can be retried without losing the child's work.`
+          );
+        }
+      }
+      try {
         await fsPromises.rm(sessionDir, { recursive: true, force: true });
       } catch (error) {
         log.error(`Failed to remove session directory for ${workspaceId}:`, error);

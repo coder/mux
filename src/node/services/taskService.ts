@@ -11478,6 +11478,55 @@ export class TaskService {
       });
       return { ok: false, reason: "patch_pending" };
     }
+    if (patchArtifact == null) {
+      // A patch-eligible task with no artifact means the pending-marker
+      // write failed (or a corrupt artifacts file self-healed to empty):
+      // deleting the workspace would destroy commits and uncommitted work
+      // nothing records. Fail closed; generation is retried on startup.
+      let patchEligible: boolean;
+      try {
+        patchEligible = await this.gitPatchArtifactService.shouldGeneratePatchForTask(
+          parentWorkspaceId,
+          workspaceId
+        );
+      } catch (error: unknown) {
+        log.error("cleanupReportedLeafTask: patch eligibility check failed; deferring", {
+          workspaceId,
+          parentWorkspaceId,
+          error,
+        });
+        patchEligible = true;
+      }
+      if (patchEligible) {
+        log.debug("cleanupReportedLeafTask: deferring auto-delete; patch artifact missing", {
+          workspaceId,
+          parentWorkspaceId,
+        });
+        return { ok: false, reason: "patch_artifact_missing" };
+      }
+    }
+    // Uncaptured uncommitted changes (size-bound skip, failed probe, dirty
+    // submodule) exist ONLY in the child worktree; deleting it would destroy
+    // the sole copy. Applying such an artifact requires
+    // acknowledge_uncaptured_changes, which stamps appliedAtMs, so an applied
+    // project means the user accepted (or manually recovered) the omission.
+    // Never-appliable artifacts keep the workspace until it is removed
+    // manually.
+    if (patchArtifact != null) {
+      const hasUnrecoveredUncapturedChanges = patchArtifact.projectArtifacts.some(
+        (projectArtifact) =>
+          projectArtifact.hadUncommittedChanges === true &&
+          projectArtifact.worktreePatchSkippedReason != null &&
+          !projectArtifact.appliedAtMs
+      );
+      if (hasUnrecoveredUncapturedChanges) {
+        log.debug("cleanupReportedLeafTask: deferring auto-delete; uncaptured changes", {
+          workspaceId,
+          parentWorkspaceId,
+        });
+        return { ok: false, reason: "uncaptured_changes_unrecovered" };
+      }
+    }
 
     // Workflow task results are persisted in the workflow run/report artifacts before cleanup,
     // so the user-level "preserve subagents until archive" setting should not keep those

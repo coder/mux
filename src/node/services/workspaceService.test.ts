@@ -1,5 +1,10 @@
 import { describe, expect, test, mock, beforeEach, afterEach, spyOn, type Mock } from "bun:test";
-import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
+import {
+  WorkspaceService,
+  archiveChildSessionArtifactsIntoParentSessionDir,
+  generateForkBranchName,
+  generateForkTitle,
+} from "./workspaceService";
 import type { IdleCompactionOutcome } from "./idleCompactionService";
 import type { AgentSession } from "./agentSession";
 import { askUserQuestionManager } from "./askUserQuestionManager";
@@ -10,6 +15,7 @@ import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { Err, Ok, type Result } from "@/common/types/result";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { SendMessageError } from "@/common/types/errors";
@@ -8369,6 +8375,139 @@ describe("WorkspaceService remove timing rollup", () => {
   });
 });
 
+describe("WorkspaceService remove patch artifact roll-up", () => {
+  let historyService: HistoryService;
+  let cleanupHistory: () => Promise<void>;
+
+  beforeEach(async () => {
+    ({ historyService, cleanup: cleanupHistory } = await createTestHistoryService());
+  });
+
+  afterEach(async () => {
+    await cleanupHistory();
+  });
+
+  test("aborts removal when the roll-up fails so a retry can replicate the preserved artifacts", async () => {
+    const workspaceId = "child-ws";
+    const parentWorkspaceId = "parent-ws";
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-remove-rollup-"));
+    try {
+      const sessionRoot = path.join(tempRoot, "sessions");
+      const childSessionDir = path.join(sessionRoot, workspaceId);
+      const parentSessionDir = path.join(sessionRoot, parentWorkspaceId);
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_o", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const childPatchPath = path.join(childCanonicalDir, "worktree.patch");
+      const patchBytes = "grandchild bytes\n";
+      await fsPromises.writeFile(childPatchPath, patchBytes);
+      const childIndexPath = path.join(childSessionDir, "subagent-patches.json");
+      await fsPromises.writeFile(
+        childIndexPath,
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_o: {
+              childTaskId: "task_o",
+              parentWorkspaceId: workspaceId,
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath: childPatchPath,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+      // A directory at the parent's artifacts-file path makes the roll-up's
+      // metadata write fail, so replication reports failure.
+      const parentIndexPath = path.join(parentSessionDir, "subagent-patches.json");
+      await fsPromises.mkdir(parentIndexPath);
+
+      const aiService = {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve(Ok(undefined))),
+        getWorkspaceMetadata: mock(() =>
+          Promise.resolve({
+            success: true as const,
+            data: {
+              id: workspaceId,
+              name: "child",
+              projectPath: "/tmp/proj",
+              runtimeConfig: { type: "local" },
+              parentWorkspaceId,
+            },
+          })
+        ),
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService;
+
+      const removeWorkspaceMock = mock(() => Promise.resolve());
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/src",
+        getSessionDir: mock((id: string) => path.join(sessionRoot, id)),
+        removeWorkspace: removeWorkspaceMock,
+        findWorkspace: mock(() => null),
+        loadConfigOrDefault: mock(() => ({ projects: new Map() })),
+      };
+
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        historyService,
+        aiService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      // Even a forced removal must abort: the preserved dir is only
+      // reachable through this workspace's config entry.
+      const removeResult = await workspaceService.remove(workspaceId, true);
+      expect(removeResult.success).toBe(false);
+      if (removeResult.success) return;
+      expect(removeResult.error).toContain("roll up");
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
+      expect(await fsPromises.readFile(childPatchPath, "utf-8")).toBe(patchBytes);
+
+      // Clearing the failure and retrying completes the removal and
+      // replicates the artifacts into the parent.
+      await fsPromises.rmdir(parentIndexPath);
+      const retryResult = await workspaceService.remove(workspaceId, true);
+      expect(retryResult.success).toBe(true);
+      expect(removeWorkspaceMock).toHaveBeenCalledWith(workspaceId);
+      expect(
+        await fsPromises.readFile(
+          path.join(parentSessionDir, "subagent-patches", "task_o", "repo", "worktree.patch"),
+          "utf-8"
+        )
+      ).toBe(patchBytes);
+      expect(
+        await fsPromises
+          .stat(childSessionDir)
+          .then(() => true)
+          .catch(() => false)
+      ).toBe(false);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("WorkspaceService remove shared-workspace guard", () => {
   const projectPath = "/tmp/proj-shared";
   const workspaceId = "child-shared";
@@ -13934,5 +14073,1512 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     });
 
     expect(prompt).toBe("newest prompt");
+  });
+});
+
+describe("archiveChildSessionArtifactsIntoParentSessionDir", () => {
+  test("rolls up a canonical worktree patch when patch-path metadata is missing", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-canonical-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const canonicalDir = path.join(childSessionDir, "subagent-patches", "task_g", "repo");
+      await fsPromises.mkdir(canonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const patchBody = "diff --git a/dirty.txt b/dirty.txt\n";
+      await fsPromises.writeFile(path.join(canonicalDir, "worktree.patch"), patchBody, "utf-8");
+      // Dirty-only artifact whose worktreePatchPath was sanitized away: the
+      // canonical worktree.patch above is the only surviving copy of the
+      // child's uncommitted work.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_g: {
+              childTaskId: "task_g",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const rolledUpPatch = path.join(
+        parentSessionDir,
+        "subagent-patches",
+        "task_g",
+        "repo",
+        "worktree.patch"
+      );
+      expect(await fsPromises.readFile(rolledUpPatch, "utf-8")).toBe(patchBody);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("restores swapped files when the parent metadata write fails", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-metawrite-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_w", "repo");
+      const parentCanonicalDir = path.join(parentSessionDir, "subagent-patches", "task_w", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentCanonicalDir, { recursive: true });
+      const oldBytes = "old parent bytes\n";
+      const newBytes = "new child bytes\n";
+      const childPatchPath = path.join(childCanonicalDir, "worktree.patch");
+      await fsPromises.writeFile(childPatchPath, newBytes);
+      await fsPromises.writeFile(path.join(parentCanonicalDir, "worktree.patch"), oldBytes);
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_w: {
+              childTaskId: "task_w",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath: childPatchPath,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      // A read-only parent session dir: the (strict) index read finds no
+      // file, replication succeeds inside the pre-created writable
+      // subagent-patches subtree (the forced metadata-referenced copy
+      // replaces the old bytes), and only the metadata write fails (its
+      // temp file cannot be created). Whatever metadata survives the
+      // failed write describes the OLD files, so the swapped dirs must be
+      // restored from their backups; without propagation the roll-up would
+      // also report success and cleanup would delete the child.
+      await fsPromises.chmod(parentSessionDir, 0o555);
+      let result: { patchArtifactsReplicated: boolean };
+      try {
+        result = await archiveChildSessionArtifactsIntoParentSessionDir({
+          parentWorkspaceId: "parent_ws",
+          parentSessionDir,
+          childWorkspaceId: "child_ws",
+          childSessionDir,
+        });
+      } finally {
+        await fsPromises.chmod(parentSessionDir, 0o755);
+      }
+
+      expect(result.patchArtifactsReplicated).toBe(false);
+      // The swap happened before the metadata write failed, so the backup
+      // restore must have brought the old bytes back.
+      expect(
+        await fsPromises.readFile(path.join(parentCanonicalDir, "worktree.patch"), "utf-8")
+      ).toBe(oldBytes);
+      // No staging or backup dirs linger next to the destination.
+      const taskDirEntries = await fsPromises.readdir(
+        path.join(parentSessionDir, "subagent-patches", "task_w")
+      );
+      expect(taskDirEntries).toEqual(["repo"]);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("reports replication failure when the child patch index is unreadable", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-badindex-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      // The child's patch dir holds real bytes; only the index is corrupt.
+      const childPatchDir = path.join(childSessionDir, "subagent-patches", "task_x", "repo");
+      await fsPromises.mkdir(childPatchDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      await fsPromises.writeFile(path.join(childPatchDir, "worktree.patch"), "child bytes\n");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        '{"version":2,"artifactsByChildTaskId":{',
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      // An unreadable index read as empty would report the roll-up complete
+      // and let removal delete the only copies of the referenced patches.
+      expect(result.patchArtifactsReplicated).toBe(false);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("reports replication failure when a child patch index entry is malformed", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-badentry-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childPatchDir = path.join(childSessionDir, "subagent-patches", "task_m", "repo");
+      await fsPromises.mkdir(childPatchDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      await fsPromises.writeFile(path.join(childPatchDir, "worktree.patch"), "child bytes\n");
+      // Parseable file, malformed entry: the lenient read would drop the
+      // entry and report the roll-up complete with nothing replicated.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_m: {
+              childTaskId: "task_m",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: "corrupt",
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      expect(result.patchArtifactsReplicated).toBe(false);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("reports replication failure when the parent patch index is malformed", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-badparent-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childPatchDir = path.join(childSessionDir, "subagent-patches", "task_p", "repo");
+      await fsPromises.mkdir(childPatchDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const childPatchPath = path.join(childPatchDir, "worktree.patch");
+      await fsPromises.writeFile(childPatchPath, "child bytes\n");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_p: {
+              childTaskId: "task_p",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath: childPatchPath,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+      // The parent index holds a sibling entry with malformed contents. The
+      // default self-healing read would drop it; persisting that reduced map
+      // during the roll-up would orphan the sibling's patches.
+      const parentIndexPath = path.join(parentSessionDir, "subagent-patches.json");
+      const malformedParentIndex = JSON.stringify({
+        version: 2,
+        artifactsByChildTaskId: {
+          task_sibling: {
+            childTaskId: "task_sibling",
+            parentWorkspaceId: "parent_ws",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: "corrupt",
+          },
+        },
+      });
+      await fsPromises.writeFile(parentIndexPath, malformedParentIndex, "utf-8");
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      expect(result.patchArtifactsReplicated).toBe(false);
+      // The malformed parent index survives untouched for manual recovery.
+      expect(await fsPromises.readFile(parentIndexPath, "utf-8")).toBe(malformedParentIndex);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves swap backups when the post-metadata-failure restore also fails", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-restorefail-"));
+    const realRename = fsPromises.rename.bind(fsPromises);
+    const renameSpy = spyOn(fsPromises, "rename").mockImplementation(async (src, dest) => {
+      // Fail only the restore rename (backup -> destination); forward-path
+      // renames never have a backup dir as their source.
+      if (String(src).includes(`${path.sep}backup-`)) {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      }
+      return realRename(src, dest);
+    });
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_b", "repo");
+      const parentCanonicalDir = path.join(parentSessionDir, "subagent-patches", "task_b", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentCanonicalDir, { recursive: true });
+      const oldBytes = "old parent bytes\n";
+      const childPatchPath = path.join(childCanonicalDir, "worktree.patch");
+      await fsPromises.writeFile(childPatchPath, "new child bytes\n");
+      await fsPromises.writeFile(path.join(parentCanonicalDir, "worktree.patch"), oldBytes);
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_b: {
+              childTaskId: "task_b",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath: childPatchPath,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      // Read-only parent session dir: fails only the metadata write (same
+      // trigger as the restore-success test above).
+      await fsPromises.chmod(parentSessionDir, 0o555);
+      let result: { patchArtifactsReplicated: boolean };
+      try {
+        result = await archiveChildSessionArtifactsIntoParentSessionDir({
+          parentWorkspaceId: "parent_ws",
+          parentSessionDir,
+          childWorkspaceId: "child_ws",
+          childSessionDir,
+        });
+      } finally {
+        await fsPromises.chmod(parentSessionDir, 0o755);
+      }
+
+      expect(result.patchArtifactsReplicated).toBe(false);
+      // The restore failed, so the staging root holding the backup must
+      // survive cleanup: it is the only copy of the bytes the surviving old
+      // metadata points at.
+      const taskDir = path.join(parentSessionDir, "subagent-patches", "task_b");
+      const stagingRoots = (await fsPromises.readdir(taskDir)).filter((name) =>
+        name.startsWith(".rollup-staging-")
+      );
+      expect(stagingRoots).toHaveLength(1);
+      expect(
+        await fsPromises.readFile(
+          path.join(taskDir, stagingRoots[0], "backup-0", "worktree.patch"),
+          "utf-8"
+        )
+      ).toBe(oldBytes);
+    } finally {
+      renameSpy.mockRestore();
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves swap backups when a swap-failure restore fails mid-replication", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-swapfail-"));
+    const realRename = fsPromises.rename.bind(fsPromises);
+    const renameSpy = spyOn(fsPromises, "rename").mockImplementation(async (src, dest) => {
+      // Project B's swap fails after project A already swapped, and project
+      // A's backup restore then fails too.
+      if (String(src).endsWith(`${path.sep}repo-b`) || String(src).includes(`${path.sep}backup-`)) {
+        throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      }
+      return realRename(src, dest);
+    });
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childDirA = path.join(childSessionDir, "subagent-patches", "task_v", "repo-a");
+      const childDirB = path.join(childSessionDir, "subagent-patches", "task_v", "repo-b");
+      const parentDirA = path.join(parentSessionDir, "subagent-patches", "task_v", "repo-a");
+      const parentDirB = path.join(parentSessionDir, "subagent-patches", "task_v", "repo-b");
+      for (const dir of [childDirA, childDirB, parentDirA, parentDirB]) {
+        await fsPromises.mkdir(dir, { recursive: true });
+      }
+      const oldBytesA = "old parent bytes for repo-a\n";
+      const patchPathA = path.join(childDirA, "worktree.patch");
+      const patchPathB = path.join(childDirB, "worktree.patch");
+      await fsPromises.writeFile(patchPathA, "new child bytes for repo-a\n");
+      await fsPromises.writeFile(patchPathB, "new child bytes for repo-b\n");
+      await fsPromises.writeFile(path.join(parentDirA, "worktree.patch"), oldBytesA);
+      await fsPromises.writeFile(path.join(parentDirB, "worktree.patch"), "old parent bytes b\n");
+      const projectArtifact = (storageKey: string, worktreePatchPath: string) => ({
+        projectPath: `/${storageKey}`,
+        projectName: storageKey,
+        storageKey,
+        status: "ready",
+        commitCount: 0,
+        hadUncommittedChanges: true,
+        worktreePatchPath,
+      });
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_v: {
+              childTaskId: "task_v",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                projectArtifact("repo-a", patchPathA),
+                projectArtifact("repo-b", patchPathB),
+              ],
+              readyProjectCount: 2,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      expect(result.patchArtifactsReplicated).toBe(false);
+      // Repo A swapped, repo B's swap failed, and repo A's restore failed:
+      // the staging root with repo A's backup must survive cleanup.
+      const taskDir = path.join(parentSessionDir, "subagent-patches", "task_v");
+      const stagingRoots = (await fsPromises.readdir(taskDir)).filter((name) =>
+        name.startsWith(".rollup-staging-")
+      );
+      expect(stagingRoots).toHaveLength(1);
+      expect(
+        await fsPromises.readFile(
+          path.join(taskDir, stagingRoots[0], "backup-0", "worktree.patch"),
+          "utf-8"
+        )
+      ).toBe(oldBytesA);
+      // Failed replication keeps the parent metadata free of this task.
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as { artifactsByChildTaskId: Record<string, unknown> };
+      expect(parentFile.artifactsByChildTaskId.task_v).toBeUndefined();
+    } finally {
+      renameSpy.mockRestore();
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves existing parent patch bytes when a later copy in the task fails", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-partial-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childDirA = path.join(childSessionDir, "subagent-patches", "task_p", "repo-a");
+      const childDirB = path.join(childSessionDir, "subagent-patches", "task_p", "repo-b");
+      const parentDirA = path.join(parentSessionDir, "subagent-patches", "task_p", "repo-a");
+      for (const dir of [childDirA, childDirB, parentDirA]) {
+        await fsPromises.mkdir(dir, { recursive: true });
+      }
+      const oldBytesA = "old parent bytes for repo-a\n";
+      const newBytesA = "new child bytes for repo-a\n";
+      const patchPathA = path.join(childDirA, "worktree.patch");
+      await fsPromises.writeFile(patchPathA, newBytesA, "utf-8");
+      await fsPromises.writeFile(path.join(parentDirA, "worktree.patch"), oldBytesA, "utf-8");
+      // Project B's metadata-referenced patch path is a DIRECTORY: its
+      // forced copy fails after project A's copy already staged.
+      const patchPathB = path.join(childDirB, "worktree.patch");
+      await fsPromises.mkdir(patchPathB, { recursive: true });
+      const projectArtifact = (storageKey: string, worktreePatchPath: string) => ({
+        projectPath: `/${storageKey}`,
+        projectName: storageKey,
+        storageKey,
+        status: "ready",
+        commitCount: 0,
+        hadUncommittedChanges: true,
+        worktreePatchPath,
+      });
+      // The parent holds an OLDER entry for the same task, so the child is
+      // fresher and replication is attempted.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_p: {
+              childTaskId: "task_p",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              updatedAtMs: 200,
+              status: "ready",
+              projectArtifacts: [
+                projectArtifact("repo-a", patchPathA),
+                projectArtifact("repo-b", patchPathB),
+              ],
+              readyProjectCount: 2,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+      await fsPromises.writeFile(
+        path.join(parentSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_p: {
+              childTaskId: "task_p",
+              parentWorkspaceId: "x",
+              createdAtMs: 1,
+              updatedAtMs: 100,
+              status: "ready",
+              projectArtifacts: [
+                projectArtifact("repo-a", path.join(parentDirA, "worktree.patch")),
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      // Copies are staged, so project A's earlier success must not have
+      // touched the bytes the retained old metadata points at.
+      expect(result.patchArtifactsReplicated).toBe(false);
+      expect(await fsPromises.readFile(path.join(parentDirA, "worktree.patch"), "utf-8")).toBe(
+        oldBytesA
+      );
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as { artifactsByChildTaskId: Record<string, { updatedAtMs?: number }> };
+      expect(parentFile.artifactsByChildTaskId.task_p?.updatedAtMs).toBe(100);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("reports failed patch replication and keeps parent metadata untouched", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-replfail-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_r", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const patchPath = path.join(childCanonicalDir, "worktree.patch");
+      await fsPromises.writeFile(patchPath, "diff --git a/dirty.txt b/dirty.txt\n", "utf-8");
+      // A regular FILE at the parent's patches root makes every destination
+      // mkdir/cp fail with ENOTDIR: a persistent replication failure.
+      await fsPromises.writeFile(path.join(parentSessionDir, "subagent-patches"), "not a dir");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_r: {
+              childTaskId: "task_r",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath: patchPath,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      // The caller must preserve the child session dir (the only surviving
+      // copy), and parent metadata must not point at never-copied files.
+      expect(result.patchArtifactsReplicated).toBe(false);
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as { artifactsByChildTaskId: Record<string, unknown> };
+      expect(parentFile.artifactsByChildTaskId.task_r).toBeUndefined();
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes patch replication with the parent artifact-file lock", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-lock-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_t", "repo");
+      const parentCanonicalDir = path.join(parentSessionDir, "subagent-patches", "task_t", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentCanonicalDir, { recursive: true });
+      const parentPatchPath = path.join(parentCanonicalDir, "worktree.patch");
+      await fsPromises.writeFile(
+        path.join(childCanonicalDir, "worktree.patch"),
+        "stale child bytes\n",
+        "utf-8"
+      );
+      await fsPromises.writeFile(parentPatchPath, "old parent bytes\n", "utf-8");
+      const artifactsFile = (updatedAtMs: number, worktreePatchPath: string) =>
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_t: {
+              childTaskId: "task_t",
+              parentWorkspaceId: "x",
+              createdAtMs: 1,
+              updatedAtMs,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        });
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        artifactsFile(150, path.join(childCanonicalDir, "worktree.patch")),
+        "utf-8"
+      );
+      await fsPromises.writeFile(
+        path.join(parentSessionDir, "subagent-patches.json"),
+        artifactsFile(100, parentPatchPath),
+        "utf-8"
+      );
+
+      // Hold the parent's artifact-file lock and, while holding it, act as a
+      // lock-respecting concurrent writer that lands a NEWER artifact.
+      let releaseLock!: () => void;
+      const lockHeld = new Promise<void>((resolve) => (releaseLock = resolve));
+      let lockAcquired!: () => void;
+      const acquired = new Promise<void>((resolve) => (lockAcquired = resolve));
+      const lockPromise = workspaceFileLocks.withLock("parent_ws", async () => {
+        lockAcquired();
+        await lockHeld;
+        await fsPromises.writeFile(
+          path.join(parentSessionDir, "subagent-patches.json"),
+          artifactsFile(200, parentPatchPath),
+          "utf-8"
+        );
+        await fsPromises.writeFile(parentPatchPath, "newer parent bytes\n", "utf-8");
+      });
+      await acquired;
+
+      const archivePromise = archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+      // Replication must not run while the lock is held: a freshness
+      // decision made before the concurrent write would authorize copying
+      // stale child bytes over the newer artifact's files.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(await fsPromises.readFile(parentPatchPath, "utf-8")).toBe("old parent bytes\n");
+
+      releaseLock();
+      await lockPromise;
+      await archivePromise;
+
+      // The locked freshness decision saw the concurrent 200 write: the
+      // stale child (150) was skipped entirely.
+      expect(await fsPromises.readFile(parentPatchPath, "utf-8")).toBe("newer parent bytes\n");
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as { artifactsByChildTaskId: Record<string, { updatedAtMs?: number }> };
+      expect(parentFile.artifactsByChildTaskId.task_t?.updatedAtMs).toBe(200);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("does not overwrite a newer parent artifact with a stale child roll-up", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-stale-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_s", "repo");
+      const parentCanonicalDir = path.join(parentSessionDir, "subagent-patches", "task_s", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentCanonicalDir, { recursive: true });
+      const staleBody = "diff --git a/stale.txt b/stale.txt\n";
+      const newerBody = "diff --git a/newer.txt b/newer.txt\n";
+      await fsPromises.writeFile(
+        path.join(childCanonicalDir, "worktree.patch"),
+        staleBody,
+        "utf-8"
+      );
+      await fsPromises.writeFile(
+        path.join(parentCanonicalDir, "worktree.patch"),
+        newerBody,
+        "utf-8"
+      );
+      const projectArtifact = (worktreePatchPath: string) => ({
+        projectPath: "/repo",
+        projectName: "repo",
+        storageKey: "repo",
+        status: "ready",
+        commitCount: 0,
+        hadUncommittedChanges: true,
+        worktreePatchPath,
+      });
+      const artifactsFile = (opts: {
+        sessionDir: string;
+        updatedAtMs: number;
+        worktreePatchPath: string;
+      }) =>
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_s: {
+              childTaskId: "task_s",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              updatedAtMs: opts.updatedAtMs,
+              status: "ready",
+              projectArtifacts: [projectArtifact(opts.worktreePatchPath)],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        });
+      // The parent already holds a NEWER artifact for the same task and
+      // storage key (e.g. the task re-ran); the stale child roll-up must
+      // not overwrite its patch bytes while cleanup deletes the source.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        artifactsFile({
+          sessionDir: childSessionDir,
+          updatedAtMs: 100,
+          worktreePatchPath: path.join(childCanonicalDir, "worktree.patch"),
+        }),
+        "utf-8"
+      );
+      await fsPromises.writeFile(
+        path.join(parentSessionDir, "subagent-patches.json"),
+        artifactsFile({
+          sessionDir: parentSessionDir,
+          updatedAtMs: 200,
+          worktreePatchPath: path.join(parentCanonicalDir, "worktree.patch"),
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      // Patch bytes and metadata both still belong to the newer artifact.
+      expect(
+        await fsPromises.readFile(path.join(parentCanonicalDir, "worktree.patch"), "utf-8")
+      ).toBe(newerBody);
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as {
+        artifactsByChildTaskId: Record<string, { updatedAtMs?: number }>;
+      };
+      expect(parentFile.artifactsByChildTaskId.task_s?.updatedAtMs).toBe(200);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("drops obsolete canonical patches when the newer child entry lacks that kind", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-obsolete-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const childCanonicalDir = path.join(childSessionDir, "subagent-patches", "task_o", "repo");
+      const parentCanonicalDir = path.join(parentSessionDir, "subagent-patches", "task_o", "repo");
+      await fsPromises.mkdir(childCanonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentCanonicalDir, { recursive: true });
+      // Earlier roll-up left both kinds in the parent; the task then re-ran
+      // with commits but a clean tree, so the newer entry has no worktree
+      // patch.
+      await fsPromises.writeFile(
+        path.join(parentCanonicalDir, "worktree.patch"),
+        "diff --git a/stale.txt b/stale.txt\n",
+        "utf-8"
+      );
+      await fsPromises.writeFile(
+        path.join(parentCanonicalDir, "series.mbox"),
+        "old mbox bytes\n",
+        "utf-8"
+      );
+      const newMboxBody =
+        "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n";
+      const childMboxPath = path.join(childCanonicalDir, "series.mbox");
+      await fsPromises.writeFile(childMboxPath, newMboxBody, "utf-8");
+      const artifactsFile = (opts: {
+        updatedAtMs: number;
+        commitCount: number;
+        mboxPath?: string;
+        worktreePatchPath?: string;
+        hadUncommittedChanges: boolean;
+      }) =>
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_o: {
+              childTaskId: "task_o",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              updatedAtMs: opts.updatedAtMs,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: opts.commitCount,
+                  hadUncommittedChanges: opts.hadUncommittedChanges,
+                  ...(opts.mboxPath != null ? { mboxPath: opts.mboxPath } : {}),
+                  ...(opts.worktreePatchPath != null
+                    ? { worktreePatchPath: opts.worktreePatchPath }
+                    : {}),
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: opts.commitCount,
+            },
+          },
+        });
+      await fsPromises.writeFile(
+        path.join(parentSessionDir, "subagent-patches.json"),
+        artifactsFile({
+          updatedAtMs: 100,
+          commitCount: 0,
+          worktreePatchPath: path.join(parentCanonicalDir, "worktree.patch"),
+          hadUncommittedChanges: true,
+        }),
+        "utf-8"
+      );
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        artifactsFile({
+          updatedAtMs: 200,
+          commitCount: 1,
+          mboxPath: childMboxPath,
+          hadUncommittedChanges: false,
+        }),
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      expect(result.patchArtifactsReplicated).toBe(true);
+      // The mbox reflects the newer child; the stale worktree patch must be
+      // gone, or canonical probing would apply the old uncommitted changes
+      // alongside the newer artifact.
+      expect(await fsPromises.readFile(path.join(parentCanonicalDir, "series.mbox"), "utf-8")).toBe(
+        newMboxBody
+      );
+      expect(
+        await fsPromises
+          .access(path.join(parentCanonicalDir, "worktree.patch"))
+          .then(() => true)
+          .catch(() => false)
+      ).toBe(false);
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as {
+        artifactsByChildTaskId: Record<
+          string,
+          { projectArtifacts: Array<{ mboxPath?: string; worktreePatchPath?: string }> }
+        >;
+      };
+      const rolledUp = parentFile.artifactsByChildTaskId.task_o?.projectArtifacts[0];
+      expect(rolledUp?.mboxPath).toBe(path.join(parentCanonicalDir, "series.mbox"));
+      expect(rolledUp?.worktreePatchPath).toBeUndefined();
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("copies the canonical dir even when metadata points at a safe noncanonical dir", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-noncanonical-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const canonicalDir = path.join(childSessionDir, "subagent-patches", "task_g", "repo");
+      const legacyDir = path.join(childSessionDir, "legacy-patches", "task_g");
+      await fsPromises.mkdir(canonicalDir, { recursive: true });
+      await fsPromises.mkdir(legacyDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const patchBody = "diff --git a/dirty.txt b/dirty.txt\n";
+      const mboxBody = "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n";
+      await fsPromises.writeFile(path.join(canonicalDir, "worktree.patch"), patchBody, "utf-8");
+      await fsPromises.writeFile(path.join(legacyDir, "series.mbox"), mboxBody, "utf-8");
+      // The mboxPath is safe (inside the child session dir) but noncanonical:
+      // selecting only its directory would copy the mbox and let child
+      // cleanup delete the canonical worktree.patch, the only capture of the
+      // child's uncommitted work.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_g: {
+              childTaskId: "task_g",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 1,
+                  mboxPath: path.join(legacyDir, "series.mbox"),
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 1,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const destDir = path.join(parentSessionDir, "subagent-patches", "task_g", "repo");
+      expect(await fsPromises.readFile(path.join(destDir, "worktree.patch"), "utf-8")).toBe(
+        patchBody
+      );
+      expect(await fsPromises.readFile(path.join(destDir, "series.mbox"), "utf-8")).toBe(mboxBody);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("copies both metadata dirs when the mbox and worktree patch live in different safe dirs", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-split-meta-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const mboxDir = path.join(childSessionDir, "legacy-mbox", "task_h");
+      const worktreeDir = path.join(childSessionDir, "legacy-worktree", "task_h");
+      await fsPromises.mkdir(mboxDir, { recursive: true });
+      await fsPromises.mkdir(worktreeDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const patchBody = "diff --git a/dirty.txt b/dirty.txt\n";
+      const mboxBody = "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n";
+      await fsPromises.writeFile(path.join(worktreeDir, "worktree.patch"), patchBody, "utf-8");
+      await fsPromises.writeFile(path.join(mboxDir, "series.mbox"), mboxBody, "utf-8");
+      // Both paths are safe but point at two different noncanonical dirs:
+      // selecting only the mbox dir would let child cleanup delete the
+      // worktree patch, the only capture of the child's uncommitted work.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_h: {
+              childTaskId: "task_h",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 1,
+                  mboxPath: path.join(mboxDir, "series.mbox"),
+                  worktreePatchPath: path.join(worktreeDir, "worktree.patch"),
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 1,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const destDir = path.join(parentSessionDir, "subagent-patches", "task_h", "repo");
+      expect(await fsPromises.readFile(path.join(destDir, "series.mbox"), "utf-8")).toBe(mboxBody);
+      expect(await fsPromises.readFile(path.join(destDir, "worktree.patch"), "utf-8")).toBe(
+        patchBody
+      );
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("prefers the metadata-referenced patch over a same-named canonical file during roll-up", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-precedence-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const canonicalDir = path.join(childSessionDir, "subagent-patches", "task_j", "repo");
+      const legacyDir = path.join(childSessionDir, "legacy", "task_j");
+      await fsPromises.mkdir(canonicalDir, { recursive: true });
+      await fsPromises.mkdir(legacyDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      // Same basename, different contents: the apply resolver prefers the
+      // metadata-referenced file, so roll-up must not let the canonical copy
+      // mask it (its source is deleted with the child).
+      await fsPromises.writeFile(
+        path.join(canonicalDir, "worktree.patch"),
+        "diff --git a/stale.txt b/stale.txt\n",
+        "utf-8"
+      );
+      const referencedBody = "diff --git a/referenced.txt b/referenced.txt\n";
+      await fsPromises.writeFile(path.join(legacyDir, "worktree.patch"), referencedBody, "utf-8");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_j: {
+              childTaskId: "task_j",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  worktreePatchPath: path.join(legacyDir, "worktree.patch"),
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const destDir = path.join(parentSessionDir, "subagent-patches", "task_j", "repo");
+      expect(await fsPromises.readFile(path.join(destDir, "worktree.patch"), "utf-8")).toBe(
+        referencedBody
+      );
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps same-basename mbox and worktree patches distinct during roll-up", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-collision-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const legacyMboxDir = path.join(childSessionDir, "legacy-a", "task_k");
+      const legacyWorktreeDir = path.join(childSessionDir, "legacy-b", "task_k");
+      await fsPromises.mkdir(legacyMboxDir, { recursive: true });
+      await fsPromises.mkdir(legacyWorktreeDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      // Two different artifact kinds share a basename in different safe
+      // directories; merging them into one destination file would lose one.
+      const mboxBody = "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n";
+      const worktreeBody = "diff --git a/dirty.txt b/dirty.txt\n";
+      await fsPromises.writeFile(path.join(legacyMboxDir, "patch.diff"), mboxBody, "utf-8");
+      await fsPromises.writeFile(path.join(legacyWorktreeDir, "patch.diff"), worktreeBody, "utf-8");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_k: {
+              childTaskId: "task_k",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 1,
+                  mboxPath: path.join(legacyMboxDir, "patch.diff"),
+                  worktreePatchPath: path.join(legacyWorktreeDir, "patch.diff"),
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 1,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as {
+        artifactsByChildTaskId: Record<
+          string,
+          { projectArtifacts: Array<{ mboxPath?: string; worktreePatchPath?: string }> }
+        >;
+      };
+      const rolled = parentFile.artifactsByChildTaskId.task_k?.projectArtifacts[0];
+      const rolledMboxPath = rolled?.mboxPath;
+      const rolledWorktreePatchPath = rolled?.worktreePatchPath;
+      expect(rolledMboxPath).toBeDefined();
+      expect(rolledWorktreePatchPath).toBeDefined();
+      expect(rolledMboxPath).not.toBe(rolledWorktreePatchPath);
+      expect(await fsPromises.readFile(rolledMboxPath!, "utf-8")).toBe(mboxBody);
+      expect(await fsPromises.readFile(rolledWorktreePatchPath!, "utf-8")).toBe(worktreeBody);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a metadata patch named like the other kind's canonical file from masking it", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-reserved-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const canonicalDir = path.join(childSessionDir, "subagent-patches", "task_m", "repo");
+      const legacyDir = path.join(childSessionDir, "legacy", "task_m");
+      await fsPromises.mkdir(canonicalDir, { recursive: true });
+      await fsPromises.mkdir(legacyDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      // The mbox metadata points at a safe file that happens to be named
+      // worktree.patch; the canonical dir holds the real captured worktree
+      // patch under that reserved name. No worktreePatchPath metadata exists.
+      const capturedBody = "diff --git a/captured.txt b/captured.txt\n";
+      const mboxBody = "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n";
+      await fsPromises.writeFile(path.join(canonicalDir, "worktree.patch"), capturedBody, "utf-8");
+      await fsPromises.writeFile(path.join(legacyDir, "worktree.patch"), mboxBody, "utf-8");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_m: {
+              childTaskId: "task_m",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 1,
+                  mboxPath: path.join(legacyDir, "worktree.patch"),
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 1,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const destDir = path.join(parentSessionDir, "subagent-patches", "task_m", "repo");
+      // The canonical worktree patch survives under its reserved name.
+      expect(await fsPromises.readFile(path.join(destDir, "worktree.patch"), "utf-8")).toBe(
+        capturedBody
+      );
+      // The metadata-referenced mbox stays reachable through rewritten metadata.
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as {
+        artifactsByChildTaskId: Record<string, { projectArtifacts: Array<{ mboxPath?: string }> }>;
+      };
+      const rolledMboxPath =
+        parentFile.artifactsByChildTaskId.task_m?.projectArtifacts[0]?.mboxPath;
+      expect(rolledMboxPath).toBeDefined();
+      expect(rolledMboxPath).not.toBe(path.join(destDir, "worktree.patch"));
+      expect(await fsPromises.readFile(rolledMboxPath!, "utf-8")).toBe(mboxBody);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("does not let a renamed reserved-name mbox reappear via the directory merge", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-renamed-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const legacyDir = path.join(childSessionDir, "legacy", "task_r");
+      await fsPromises.mkdir(legacyDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      // The only patch file is a legacy mbox named worktree.patch; no real
+      // worktree patch exists anywhere. The forced copy renames it, and the
+      // legacy dir's merge must not re-add the original basename: canonical
+      // probing would apply the mbox again as the uncommitted-changes patch.
+      const mboxBody = "From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n";
+      await fsPromises.writeFile(path.join(legacyDir, "worktree.patch"), mboxBody, "utf-8");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_r: {
+              childTaskId: "task_r",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 1,
+                  mboxPath: path.join(legacyDir, "worktree.patch"),
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 1,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      const result = await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      expect(result.patchArtifactsReplicated).toBe(true);
+      const destDir = path.join(parentSessionDir, "subagent-patches", "task_r", "repo");
+      // The renamed copy is the only surviving instance of the file.
+      const destEntries = await fsPromises.readdir(destDir);
+      expect(destEntries).toEqual(["mbox-worktree.patch"]);
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as {
+        artifactsByChildTaskId: Record<string, { projectArtifacts: Array<{ mboxPath?: string }> }>;
+      };
+      expect(parentFile.artifactsByChildTaskId.task_r?.projectArtifacts[0]?.mboxPath).toBe(
+        path.join(destDir, "mbox-worktree.patch")
+      );
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a noncanonical patch filename reachable through rewritten parent metadata", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-basename-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const legacyDir = path.join(childSessionDir, "legacy", "task_i");
+      await fsPromises.mkdir(legacyDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const patchBody = "diff --git a/dirty.txt b/dirty.txt\n";
+      // The safe legacy file keeps its basename through the directory merge,
+      // so metadata rewritten to the canonical worktree.patch filename would
+      // point at a file that does not exist.
+      await fsPromises.writeFile(path.join(legacyDir, "dirty.diff"), patchBody, "utf-8");
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_i: {
+              childTaskId: "task_i",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  worktreePatchPath: path.join(legacyDir, "dirty.diff"),
+                  hadUncommittedChanges: true,
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const parentFile = JSON.parse(
+        await fsPromises.readFile(path.join(parentSessionDir, "subagent-patches.json"), "utf-8")
+      ) as {
+        artifactsByChildTaskId: Record<
+          string,
+          { projectArtifacts: Array<{ worktreePatchPath?: string }> }
+        >;
+      };
+      const rewrittenPath =
+        parentFile.artifactsByChildTaskId.task_i?.projectArtifacts[0]?.worktreePatchPath;
+      expect(rewrittenPath).toBeDefined();
+      expect(await fsPromises.readFile(rewrittenPath!, "utf-8")).toBe(patchBody);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to the canonical dir when patch-path metadata escapes the child session dir", async () => {
+    const base = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-rollup-unsafe-meta-"));
+    try {
+      const childSessionDir = path.join(base, "child");
+      const parentSessionDir = path.join(base, "parent");
+      const canonicalDir = path.join(childSessionDir, "subagent-patches", "task_g", "repo");
+      await fsPromises.mkdir(canonicalDir, { recursive: true });
+      await fsPromises.mkdir(parentSessionDir, { recursive: true });
+      const patchBody = "diff --git a/dirty.txt b/dirty.txt\n";
+      await fsPromises.writeFile(path.join(canonicalDir, "worktree.patch"), patchBody, "utf-8");
+      // Unsafe metadata: the recorded path points outside the child session
+      // dir, but the canonical worktree.patch above still holds the child's
+      // uncommitted work; skipping the copy would lose it on cleanup.
+      await fsPromises.writeFile(
+        path.join(childSessionDir, "subagent-patches.json"),
+        JSON.stringify({
+          version: 2,
+          artifactsByChildTaskId: {
+            task_g: {
+              childTaskId: "task_g",
+              parentWorkspaceId: "child_ws",
+              createdAtMs: 1,
+              status: "ready",
+              projectArtifacts: [
+                {
+                  projectPath: "/repo",
+                  projectName: "repo",
+                  storageKey: "repo",
+                  status: "ready",
+                  commitCount: 0,
+                  hadUncommittedChanges: true,
+                  worktreePatchPath: path.join(base, "elsewhere", "worktree.patch"),
+                },
+              ],
+              readyProjectCount: 1,
+              failedProjectCount: 0,
+              skippedProjectCount: 0,
+              totalCommitCount: 0,
+            },
+          },
+        }),
+        "utf-8"
+      );
+
+      await archiveChildSessionArtifactsIntoParentSessionDir({
+        parentWorkspaceId: "parent_ws",
+        parentSessionDir,
+        childWorkspaceId: "child_ws",
+        childSessionDir,
+      });
+
+      const rolledUpPatch = path.join(
+        parentSessionDir,
+        "subagent-patches",
+        "task_g",
+        "repo",
+        "worktree.patch"
+      );
+      expect(await fsPromises.readFile(rolledUpPatch, "utf-8")).toBe(patchBody);
+    } finally {
+      await fsPromises.rm(base, { recursive: true, force: true });
+    }
   });
 });

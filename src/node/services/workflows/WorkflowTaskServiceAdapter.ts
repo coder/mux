@@ -16,6 +16,7 @@ import type {
 import { isPathInsideDir } from "@/node/utils/pathUtils";
 import {
   getSubagentGitPatchMboxPath,
+  getSubagentGitPatchWorktreePatchPath,
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -25,6 +26,11 @@ import {
   type TaskApplyGitPatchConfiguration,
   type TaskApplyGitPatchResult,
 } from "@/node/services/tools/task_apply_git_patch";
+import {
+  parseDiffGitHeaderLine,
+  parsePatchMetadataPath,
+  stripDiffPathPrefix,
+} from "@/node/services/gitPatchPathParsing";
 
 export const DEFAULT_WORKFLOW_AGENT_ID = "exec";
 
@@ -272,19 +278,48 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       if (projectArtifact.status !== "ready") {
         return `Patch artifact for ${projectArtifact.projectName} is ${projectArtifact.status}; cannot validate allowedPathPrefixes.`;
       }
-      const patchPath = await this.getProjectPatchMboxPath(
+      // Validate every patch file the apply would use: the commit-series mbox
+      // and the uncommitted-changes worktree diff. Both are attacker-controlled.
+      const patchFilePaths: string[] = [];
+      const hasCommitPatch =
+        projectArtifact.commitCount !== 0 ||
+        (typeof projectArtifact.mboxPath === "string" && projectArtifact.mboxPath.length > 0);
+      if (hasCommitPatch) {
+        const mboxPath = await this.getProjectPatchMboxPath(
+          artifactLookup.artifactSessionDir,
+          spec.sourceTaskId,
+          projectArtifact
+        );
+        if (mboxPath == null) {
+          return `Patch file is missing for task ${spec.sourceTaskId}`;
+        }
+        patchFilePaths.push(mboxPath);
+      }
+      // Probed regardless of metadata: the apply path resolves the canonical
+      // worktree patch even when worktreePatchPath was sanitized away, so
+      // skipping validation here would let that file bypass the allowlist.
+      const worktreePatchPath = await this.getProjectWorktreePatchPath(
         artifactLookup.artifactSessionDir,
         spec.sourceTaskId,
         projectArtifact
       );
-      if (patchPath == null) {
-        return `Patch file is missing for task ${spec.sourceTaskId}`;
+      if (worktreePatchPath != null) {
+        patchFilePaths.push(worktreePatchPath);
+      } else if (
+        typeof projectArtifact.worktreePatchPath === "string" &&
+        projectArtifact.worktreePatchPath.length > 0
+      ) {
+        return `Uncommitted-changes patch file is missing for task ${spec.sourceTaskId}`;
       }
-      const patchText = await fs.readFile(patchPath, "utf-8");
-      const patchPaths = extractGitPatchPaths(patchText);
-      for (const patchPath of patchPaths) {
-        if (!isPatchPathAllowed(patchPath, spec.allowedPathPrefixes)) {
-          violations.add(patchPath);
+      if (patchFilePaths.length === 0) {
+        return `Patch artifact for ${projectArtifact.projectName} has no patch files to validate.`;
+      }
+      for (const patchFilePath of patchFilePaths) {
+        const patchText = await fs.readFile(patchFilePath, "utf-8");
+        for (const patchPath of extractGitPatchPaths(patchText)) {
+          if (!isPatchPathAllowed(patchPath, spec.allowedPathPrefixes)) {
+            violations.add(patchPath);
+          }
         }
       }
     }
@@ -322,7 +357,30 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       taskId,
       projectArtifact.storageKey
     );
-    const candidates = [projectArtifact.mboxPath, expectedPatchPath].filter(
+    return this.findPatchFile(artifactSessionDir, [projectArtifact.mboxPath, expectedPatchPath]);
+  }
+
+  private async getProjectWorktreePatchPath(
+    artifactSessionDir: string,
+    taskId: string,
+    projectArtifact: { storageKey: string; worktreePatchPath?: string }
+  ): Promise<string | undefined> {
+    const expectedPatchPath = getSubagentGitPatchWorktreePatchPath(
+      artifactSessionDir,
+      taskId,
+      projectArtifact.storageKey
+    );
+    return this.findPatchFile(artifactSessionDir, [
+      projectArtifact.worktreePatchPath,
+      expectedPatchPath,
+    ]);
+  }
+
+  private async findPatchFile(
+    artifactSessionDir: string,
+    candidatePaths: Array<string | undefined>
+  ): Promise<string | undefined> {
+    const candidates = candidatePaths.filter(
       (candidate): candidate is string =>
         typeof candidate === "string" && isPathInsideDir(artifactSessionDir, candidate)
     );
@@ -526,64 +584,36 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
 
 function extractGitPatchPaths(patchText: string): string[] {
   const paths = new Set<string>();
-  for (const line of patchText.split("\n")) {
+  for (const rawLine of patchText.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.startsWith("diff --git ")) {
-      const parts = splitGitPatchWords(line.slice("diff --git ".length));
-      if (parts.length >= 2) {
-        addPatchPath(paths, parts[0]);
-        addPatchPath(paths, parts[1]);
-      } else {
+      const headerPaths = parseDiffGitHeaderLine(line.slice("diff --git ".length));
+      if (headerPaths.length === 0) {
+        // Fail closed: an allowlist can never match this sentinel.
         paths.add("<unparseable diff header>");
       }
+      for (const headerPath of headerPaths) {
+        addPatchPath(paths, headerPath);
+      }
     } else if (line.startsWith("--- ") || line.startsWith("+++ ")) {
-      addPatchPath(paths, line.slice(4));
+      addPatchPath(paths, stripDiffPathPrefix(parseFileHeaderPath(line.slice(4))));
     } else if (line.startsWith("rename from ")) {
-      addPatchPath(paths, line.slice("rename from ".length));
+      addPatchPath(paths, parsePatchMetadataPath(line.slice("rename from ".length)));
     } else if (line.startsWith("rename to ")) {
-      addPatchPath(paths, line.slice("rename to ".length));
+      addPatchPath(paths, parsePatchMetadataPath(line.slice("rename to ".length)));
     } else if (line.startsWith("copy from ")) {
-      addPatchPath(paths, line.slice("copy from ".length));
+      addPatchPath(paths, parsePatchMetadataPath(line.slice("copy from ".length)));
     } else if (line.startsWith("copy to ")) {
-      addPatchPath(paths, line.slice("copy to ".length));
+      addPatchPath(paths, parsePatchMetadataPath(line.slice("copy to ".length)));
     }
   }
   return Array.from(paths);
 }
 
-function splitGitPatchWords(value: string): string[] {
-  const words: string[] = [];
-  let current = "";
-  let quoted = false;
-  let escaped = false;
-  for (const char of value) {
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-    if (char === "\\" && quoted) {
-      current += char;
-      escaped = true;
-      continue;
-    }
-    if (char === '"') {
-      current += char;
-      quoted = !quoted;
-      continue;
-    }
-    if (!quoted && /\s/.test(char)) {
-      if (current.length > 0) {
-        words.push(current);
-        current = "";
-      }
-      continue;
-    }
-    current += char;
-  }
-  if (current.length > 0) {
-    words.push(current);
-  }
-  return words;
+// Git appends a TAB after unquoted `---`/`+++` paths containing spaces.
+function parseFileHeaderPath(value: string): string {
+  const parsed = parsePatchMetadataPath(value);
+  return parsed.endsWith("\t") ? parsed.slice(0, -1) : parsed;
 }
 
 function addPatchPath(paths: Set<string>, rawPath: string | undefined): void {
@@ -597,19 +627,9 @@ function normalizePatchPath(rawPath: string | undefined): string | undefined {
   if (rawPath == null) {
     return undefined;
   }
-  let value = rawPath.trim();
+  const value = rawPath;
   if (value.length === 0 || value === "/dev/null") {
     return undefined;
-  }
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try {
-      value = JSON.parse(value) as string;
-    } catch {
-      value = value.slice(1, -1);
-    }
-  }
-  if (value.startsWith("a/") || value.startsWith("b/")) {
-    value = value.slice(2);
   }
   const segments = value.split("/");
   if (path.posix.isAbsolute(value) || segments.includes("..")) {

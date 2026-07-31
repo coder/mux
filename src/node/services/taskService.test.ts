@@ -19,6 +19,7 @@ import * as subagentGitPatchArtifacts from "@/node/services/subagentGitPatchArti
 import {
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
+  upsertSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import {
   readSubagentReportArtifact,
@@ -19788,6 +19789,178 @@ describe("TaskService", () => {
     await config.editConfig(() => cfg);
   }
 
+  // Cleanup fails closed for a patch-eligible (exec-like) task with no
+  // artifact on disk, so tests deleting exec tasks must seed a terminal
+  // artifact to represent completed generation.
+  async function seedSkippedPatchArtifact(
+    config: Config,
+    parentWorkspaceId: string,
+    childTaskId: string,
+    projectPath: string
+  ): Promise<void> {
+    await upsertSubagentGitPatchArtifact({
+      workspaceId: parentWorkspaceId,
+      workspaceSessionDir: config.getSessionDir(parentWorkspaceId),
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId,
+        createdAtMs: Date.now(),
+        status: "skipped",
+        projectArtifacts: [
+          {
+            projectPath,
+            projectName: path.basename(projectPath),
+            storageKey: path.basename(projectPath),
+            status: "skipped",
+            commitCount: 0,
+          },
+        ],
+        readyProjectCount: 0,
+        failedProjectCount: 0,
+        skippedProjectCount: 1,
+        totalCommitCount: 0,
+      }),
+    });
+  }
+
+  test("reported leaf cleanup defers a patch-eligible task whose artifact is missing", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "child-exec-333";
+
+    await config.editConfig(() => ({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              projectWorkspace(projectPath, "root", rootWorkspaceId),
+              projectWorkspace(projectPath, "child-task", childTaskId, {
+                name: "agent_exec_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "reported",
+              }),
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    }));
+
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { aiService } = createAIServiceMocks(config, { isStreaming: mock(() => false) });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
+    };
+
+    // An exec task with NO patch artifact means the pending-marker write
+    // failed: deleting the workspace would destroy work nothing records.
+    await internal.cleanupReportedLeafTask(childTaskId);
+    expect(remove).toHaveBeenCalledTimes(0);
+
+    // Once generation succeeds (terminal artifact on disk), cleanup proceeds.
+    await seedSkippedPatchArtifact(config, rootWorkspaceId, childTaskId, projectPath);
+    await internal.cleanupReportedLeafTask(childTaskId);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childTaskId, true);
+  });
+
+  test("reported leaf cleanup defers a task with unrecovered uncaptured changes", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const childTaskId = "child-exec-uncaptured";
+
+    await config.editConfig(() => ({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            trusted: true,
+            workspaces: [
+              projectWorkspace(projectPath, "root", rootWorkspaceId),
+              projectWorkspace(projectPath, "child-task", childTaskId, {
+                name: "agent_exec_child",
+                parentWorkspaceId: rootWorkspaceId,
+                agentType: "exec",
+                taskStatus: "reported",
+              }),
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    }));
+
+    const seedArtifact = async (appliedAtMs?: number): Promise<void> => {
+      await upsertSubagentGitPatchArtifact({
+        workspaceId: rootWorkspaceId,
+        workspaceSessionDir: config.getSessionDir(rootWorkspaceId),
+        childTaskId,
+        updater: () => ({
+          childTaskId,
+          parentWorkspaceId: rootWorkspaceId,
+          createdAtMs: Date.now(),
+          status: "ready",
+          projectArtifacts: [
+            {
+              projectPath,
+              projectName: path.basename(projectPath),
+              storageKey: path.basename(projectPath),
+              status: "ready",
+              commitCount: 1,
+              hadUncommittedChanges: true,
+              worktreePatchSkippedReason: "diff exceeded the capture cap",
+              ...(appliedAtMs != null ? { appliedAtMs } : {}),
+            },
+          ],
+          readyProjectCount: 1,
+          failedProjectCount: 0,
+          skippedProjectCount: 0,
+          totalCommitCount: 1,
+        }),
+      });
+    };
+
+    const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { aiService } = createAIServiceMocks(config, { isStreaming: mock(() => false) });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const internal = taskService as unknown as {
+      cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
+    };
+
+    // The child worktree holds the only copy of the uncaptured changes;
+    // cleanup must not delete it while nothing records recovery.
+    await seedArtifact();
+    await internal.cleanupReportedLeafTask(childTaskId);
+    expect(remove).toHaveBeenCalledTimes(0);
+
+    // An applied project means the user acknowledged the omission (the
+    // apply gate requires acknowledge_uncaptured_changes), so cleanup
+    // proceeds.
+    await seedArtifact(Date.now());
+    await internal.cleanupReportedLeafTask(childTaskId);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith(childTaskId, true);
+  });
+
   test("reported leaf cleanup deletes the finished leaf but keeps siblings and parents", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -19914,6 +20087,8 @@ describe("TaskService", () => {
       cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
     };
 
+    await seedSkippedPatchArtifact(config, grandparentTaskId, parentTaskId, projectPath);
+    await seedSkippedPatchArtifact(config, rootWorkspaceId, grandparentTaskId, projectPath);
     await internal.cleanupReportedLeafTask(childTaskId);
 
     const isStreamingCalls = (isStreaming as unknown as { mock: { calls: Array<[string]> } }).mock
@@ -19996,6 +20171,8 @@ describe("TaskService", () => {
       cleanupReportedLeafTask: (workspaceId: string) => Promise<void>;
     };
 
+    await seedSkippedPatchArtifact(config, grandparentTaskId, parentTaskId, projectPath);
+    await seedSkippedPatchArtifact(config, rootWorkspaceId, grandparentTaskId, projectPath);
     await internal.cleanupReportedLeafTask(childTaskId);
 
     const isStreamingCalls = (isStreaming as unknown as { mock: { calls: Array<[string]> } }).mock
@@ -20113,6 +20290,16 @@ describe("TaskService", () => {
           preserveSubagentsUntilArchive: options?.preserveSubagentsUntilArchive ?? true,
         },
       });
+
+      // Patch-eligible (exec) tasks need a terminal artifact on disk or the
+      // cleanup gate defers them as generation-write failures.
+      let seedParentWorkspaceId = rootWorkspaceId;
+      for (const task of taskChain) {
+        if (task.agentType === "exec") {
+          await seedSkippedPatchArtifact(config, seedParentWorkspaceId, task.id, projectPath);
+        }
+        seedParentWorkspaceId = task.id;
+      }
 
       const isStreaming = mock(() => false);
       const remove = mock(async (workspaceId: string, _force?: boolean): Promise<Result<void>> => {

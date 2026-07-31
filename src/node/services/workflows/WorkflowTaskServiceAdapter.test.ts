@@ -544,6 +544,498 @@ describe("WorkflowTaskServiceAdapter", () => {
     ]);
   });
 
+  test("rejects worktree diffs outside allowed path prefixes even when the mbox passes", async () => {
+    using tmp = new DisposableTempDir("workflow-adapter-worktree-paths");
+    const artifactDir = path.join(tmp.path, "subagent-patches", "task_impl", "repo");
+    await fs.mkdir(artifactDir, { recursive: true });
+    const mboxPath = path.join(artifactDir, "series.mbox");
+    await fs.writeFile(
+      mboxPath,
+      [
+        "diff --git a/.mux/security/runs/latest b/.mux/security/runs/latest",
+        "--- a/.mux/security/runs/latest",
+        "+++ b/.mux/security/runs/latest",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n")
+    );
+    const worktreePatchPath = path.join(artifactDir, "worktree.patch");
+    await fs.writeFile(
+      worktreePatchPath,
+      [
+        "diff --git a/src/escape.ts b/src/escape.ts",
+        "--- a/src/escape.ts",
+        "+++ b/src/escape.ts",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n")
+    );
+    await fs.writeFile(
+      path.join(tmp.path, "subagent-patches.json"),
+      JSON.stringify({
+        version: 2,
+        artifactsByChildTaskId: {
+          task_impl: {
+            childTaskId: "task_impl",
+            parentWorkspaceId: "parent_1",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: [
+              {
+                projectPath: "/repo",
+                projectName: "repo",
+                storageKey: "repo",
+                status: "ready",
+                mboxPath,
+                commitCount: 1,
+                hadUncommittedChanges: true,
+                worktreePatchPath,
+              },
+            ],
+            readyProjectCount: 1,
+            failedProjectCount: 0,
+            skippedProjectCount: 0,
+            totalCommitCount: 1,
+          },
+        },
+      })
+    );
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const applyPatchArtifact = mock(async () => ({
+      success: true as const,
+      taskId: "task_impl",
+      projectResults: [],
+    }));
+    const patchToolConfig: TaskApplyGitPatchConfiguration = {
+      cwd: "/repo",
+      runtime: undefined as unknown as TaskApplyGitPatchConfiguration["runtime"],
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: tmp.path,
+    };
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      patchToolConfig,
+      applyPatchArtifact,
+    });
+
+    const result = await adapter.applyPatch({
+      id: "apply-security-state",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: true,
+      allowedPathPrefixes: [".mux/security"],
+    });
+
+    expect(result).toMatchObject({ success: false, taskId: "task_impl" });
+    expect(result.success ? "" : result.error).toContain("src/escape.ts");
+  });
+
+  test("validates worktree-only patch artifacts against allowed path prefixes", async () => {
+    using tmp = new DisposableTempDir("workflow-adapter-worktree-only-paths");
+    const artifactDir = path.join(tmp.path, "subagent-patches", "task_impl", "repo");
+    await fs.mkdir(artifactDir, { recursive: true });
+    const worktreePatchPath = path.join(artifactDir, "worktree.patch");
+    await fs.writeFile(
+      worktreePatchPath,
+      [
+        "diff --git a/.mux/security/runs/latest b/.mux/security/runs/latest",
+        "--- a/.mux/security/runs/latest",
+        "+++ b/.mux/security/runs/latest",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n")
+    );
+    await fs.writeFile(
+      path.join(tmp.path, "subagent-patches.json"),
+      JSON.stringify({
+        version: 2,
+        artifactsByChildTaskId: {
+          task_impl: {
+            childTaskId: "task_impl",
+            parentWorkspaceId: "parent_1",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: [
+              {
+                projectPath: "/repo",
+                projectName: "repo",
+                storageKey: "repo",
+                status: "ready",
+                commitCount: 0,
+                hadUncommittedChanges: true,
+                worktreePatchPath,
+              },
+            ],
+            readyProjectCount: 1,
+            failedProjectCount: 0,
+            skippedProjectCount: 0,
+            totalCommitCount: 0,
+          },
+        },
+      })
+    );
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const applyPatchArtifact = mock(async (args: { dry_run?: boolean | null }) => ({
+      success: true as const,
+      taskId: "task_impl",
+      dryRun: args.dry_run === true,
+      projectResults: [],
+    }));
+    const patchToolConfig: TaskApplyGitPatchConfiguration = {
+      cwd: "/repo",
+      runtime: undefined as unknown as TaskApplyGitPatchConfiguration["runtime"],
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: tmp.path,
+    };
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      patchToolConfig,
+      applyPatchArtifact,
+    });
+
+    // In-prefix worktree-only artifact passes validation (no "missing mbox").
+    const result = await adapter.applyPatch({
+      id: "apply-security-state",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: true,
+      allowedPathPrefixes: [".mux/security"],
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(applyPatchArtifact).toHaveBeenCalled();
+  });
+
+  test("validates a canonical worktree patch even when worktreePatchPath metadata is absent", async () => {
+    using tmp = new DisposableTempDir("workflow-adapter-canonical-worktree");
+    const artifactDir = path.join(tmp.path, "subagent-patches", "task_impl", "repo");
+    await fs.mkdir(artifactDir, { recursive: true });
+    const mboxPath = path.join(artifactDir, "series.mbox");
+    await fs.writeFile(
+      mboxPath,
+      [
+        "diff --git a/.mux/security/runs/latest b/.mux/security/runs/latest",
+        "--- a/.mux/security/runs/latest",
+        "+++ b/.mux/security/runs/latest",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n")
+    );
+    // Canonical worktree.patch on disk touching a disallowed path; the
+    // artifact metadata omits worktreePatchPath (e.g. sanitized away), but
+    // the apply path would still resolve and apply this file.
+    await fs.writeFile(
+      path.join(artifactDir, "worktree.patch"),
+      [
+        "diff --git a/src/escape.ts b/src/escape.ts",
+        "--- a/src/escape.ts",
+        "+++ b/src/escape.ts",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n")
+    );
+    await fs.writeFile(
+      path.join(tmp.path, "subagent-patches.json"),
+      JSON.stringify({
+        version: 2,
+        artifactsByChildTaskId: {
+          task_impl: {
+            childTaskId: "task_impl",
+            parentWorkspaceId: "parent_1",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: [
+              {
+                projectPath: "/repo",
+                projectName: "repo",
+                storageKey: "repo",
+                status: "ready",
+                mboxPath,
+                commitCount: 1,
+                hadUncommittedChanges: true,
+              },
+            ],
+            readyProjectCount: 1,
+            failedProjectCount: 0,
+            skippedProjectCount: 0,
+            totalCommitCount: 1,
+          },
+        },
+      })
+    );
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const applyPatchArtifact = mock(async (args: { dry_run?: boolean | null }) => ({
+      success: true as const,
+      taskId: "task_impl",
+      dryRun: args.dry_run === true,
+      projectResults: [],
+    }));
+    const patchToolConfig: TaskApplyGitPatchConfiguration = {
+      cwd: "/repo",
+      runtime: undefined as unknown as TaskApplyGitPatchConfiguration["runtime"],
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: tmp.path,
+    };
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      patchToolConfig,
+      applyPatchArtifact,
+    });
+
+    const result = await adapter.applyPatch({
+      id: "apply-security-state",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: true,
+      allowedPathPrefixes: [".mux/security"],
+    });
+
+    expect(result).toMatchObject({ success: false, taskId: "task_impl" });
+    expect(result.success ? "" : result.error).toContain("src/escape.ts");
+    // Only the pre-validation dry-run ran; the violation blocked the real apply.
+    expect(applyPatchArtifact.mock.calls.map(([args]) => args.dry_run)).toEqual([true]);
+  });
+
+  test("accepts a mixed quoted-destination rename header inside the allowed prefix", async () => {
+    using tmp = new DisposableTempDir("workflow-adapter-mixed-quoted-rename");
+    const artifactDir = path.join(tmp.path, "subagent-patches", "task_impl", "repo");
+    await fs.mkdir(artifactDir, { recursive: true });
+    const worktreePatchPath = path.join(artifactDir, "worktree.patch");
+    // Rename of an ordinary name onto one needing C-quoting: git quotes only
+    // the destination, so the header mixes an unquoted and a quoted operand.
+    // Both paths sit inside the allowed prefix; the parser must not reject
+    // the artifact with the unparseable-header sentinel.
+    await fs.writeFile(
+      worktreePatchPath,
+      [
+        'diff --git a/.mux/security/foo "b/.mux/security/f\\303\\263o"',
+        "similarity index 100%",
+        "rename from .mux/security/foo",
+        'rename to ".mux/security/f\\303\\263o"',
+      ].join("\n")
+    );
+    await fs.writeFile(
+      path.join(tmp.path, "subagent-patches.json"),
+      JSON.stringify({
+        version: 2,
+        artifactsByChildTaskId: {
+          task_impl: {
+            childTaskId: "task_impl",
+            parentWorkspaceId: "parent_1",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: [
+              {
+                projectPath: "/repo",
+                projectName: "repo",
+                storageKey: "repo",
+                status: "ready",
+                commitCount: 0,
+                hadUncommittedChanges: true,
+                worktreePatchPath,
+              },
+            ],
+            readyProjectCount: 1,
+            failedProjectCount: 0,
+            skippedProjectCount: 0,
+            totalCommitCount: 0,
+          },
+        },
+      })
+    );
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const applyPatchArtifact = mock(async (args: { dry_run?: boolean | null }) => ({
+      success: true as const,
+      taskId: "task_impl",
+      dryRun: args.dry_run === true,
+      projectResults: [],
+    }));
+    const patchToolConfig: TaskApplyGitPatchConfiguration = {
+      cwd: "/repo",
+      runtime: undefined as unknown as TaskApplyGitPatchConfiguration["runtime"],
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: tmp.path,
+    };
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      patchToolConfig,
+      applyPatchArtifact,
+    });
+
+    const result = await adapter.applyPatch({
+      id: "apply-security-state",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: true,
+      allowedPathPrefixes: [".mux/security"],
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(applyPatchArtifact).toHaveBeenCalled();
+  });
+
+  test("rejects unquoted diff header paths with spaces that escape the allowed prefix", async () => {
+    using tmp = new DisposableTempDir("workflow-adapter-space-paths");
+    const artifactDir = path.join(tmp.path, "subagent-patches", "task_impl", "repo");
+    await fs.mkdir(artifactDir, { recursive: true });
+    const escapePatchPath = path.join(artifactDir, "escape.patch");
+    // Binary-only patch: no ---/+++ lines, so the diff --git header is the
+    // only path source. The file name contains a space and sits OUTSIDE the
+    // allowed prefix (a sibling of .mux/security, not inside it).
+    await fs.writeFile(
+      escapePatchPath,
+      [
+        "diff --git a/.mux/security .mux/security b/.mux/security .mux/security",
+        "new file mode 100644",
+        "index 0000000..ce01362",
+        "GIT binary patch",
+        "literal 6",
+        "NcmZQzU|?i;0000L0L}mS",
+        "",
+        "literal 0",
+        "HcmV?d00001",
+        "",
+      ].join("\n")
+    );
+    const insidePatchPath = path.join(artifactDir, "inside.patch");
+    await fs.writeFile(
+      insidePatchPath,
+      [
+        "diff --git a/.mux/security/run log.txt b/.mux/security/run log.txt",
+        "--- a/.mux/security/run log.txt\t",
+        "+++ b/.mux/security/run log.txt\t",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+      ].join("\n")
+    );
+    const projectArtifactFor = (worktreePatchPath: string) => ({
+      projectPath: "/repo",
+      projectName: "repo",
+      storageKey: "repo",
+      status: "ready",
+      commitCount: 0,
+      hadUncommittedChanges: true,
+      worktreePatchPath,
+    });
+    await fs.writeFile(
+      path.join(tmp.path, "subagent-patches.json"),
+      JSON.stringify({
+        version: 2,
+        artifactsByChildTaskId: {
+          task_escape: {
+            childTaskId: "task_escape",
+            parentWorkspaceId: "parent_1",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: [projectArtifactFor(escapePatchPath)],
+            readyProjectCount: 1,
+            failedProjectCount: 0,
+            skippedProjectCount: 0,
+            totalCommitCount: 0,
+          },
+          task_inside: {
+            childTaskId: "task_inside",
+            parentWorkspaceId: "parent_1",
+            createdAtMs: 1,
+            status: "ready",
+            projectArtifacts: [projectArtifactFor(insidePatchPath)],
+            readyProjectCount: 1,
+            failedProjectCount: 0,
+            skippedProjectCount: 0,
+            totalCommitCount: 0,
+          },
+        },
+      })
+    );
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const applyPatchArtifact = mock(async (args: { dry_run?: boolean | null }) => ({
+      success: true as const,
+      taskId: "task_escape",
+      dryRun: args.dry_run === true,
+      projectResults: [],
+    }));
+    const patchToolConfig: TaskApplyGitPatchConfiguration = {
+      cwd: "/repo",
+      runtime: undefined as unknown as TaskApplyGitPatchConfiguration["runtime"],
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: tmp.path,
+    };
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      patchToolConfig,
+      applyPatchArtifact,
+    });
+
+    const escapeResult = await adapter.applyPatch({
+      id: "apply-escape",
+      sourceTaskId: "task_escape",
+      target: "parent",
+      threeWay: true,
+      force: true,
+      allowedPathPrefixes: [".mux/security"],
+    });
+    expect(escapeResult.success).toBe(false);
+    expect(escapeResult.success ? "" : escapeResult.error).toContain(".mux/security .mux/security");
+    // Only the dry-run preflight ran; validation blocked the real apply.
+    expect(applyPatchArtifact.mock.calls.every(([args]) => args.dry_run === true)).toBe(true);
+
+    // A space-containing path INSIDE the prefix still validates.
+    const insideResult = await adapter.applyPatch({
+      id: "apply-inside",
+      sourceTaskId: "task_inside",
+      target: "parent",
+      threeWay: true,
+      force: true,
+      allowedPathPrefixes: [".mux/security"],
+    });
+    expect(insideResult).toMatchObject({ success: true });
+  });
+
   test("returns dry-run conflicts without applying workflow patches", async () => {
     const create = mock(async () =>
       Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })

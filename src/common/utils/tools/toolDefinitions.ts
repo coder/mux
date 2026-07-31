@@ -732,8 +732,36 @@ export const SubagentGitProjectPatchArtifactSchema = z
     headCommitSha: z.string().optional(),
     commitCount: z.number().int().nonnegative().optional(),
     mboxPath: z.string().optional(),
+    hadUncommittedChanges: z.boolean().optional(),
+    worktreePatchPath: z.string().optional(),
+    worktreePatchBytes: z.number().int().nonnegative().optional(),
+    worktreePatchSkippedReason: z.string().optional(),
     error: z.string().optional(),
     appliedAtMs: z.number().int().nonnegative().optional(),
+    // Target HEAD after the full application; replay-safe retries verify the
+    // applied work is still present against it before skipping.
+    appliedHeadSha: z.string().optional(),
+    // Application asserted via acknowledge_partial_recovery: the manual
+    // recovery may not be reverse-applicable, so replay-safe validation
+    // skips the content check for it (ancestry still applies).
+    appliedAcknowledged: z.boolean().optional(),
+    // True when only the commit series landed (worktree patch failed); replay
+    // integrations must not treat this as a completed application.
+    appliedPartial: z.boolean().optional(),
+    // Target HEAD when the partial application was recorded. Completion
+    // requires it to still be an ancestor of HEAD, so a reset/rebased target
+    // cannot clear the marker while the applied commit series is missing.
+    appliedPartialHeadSha: z.string().optional(),
+    // "am-started": persisted BEFORE git am runs (fence = pre-am HEAD), so a
+    // crash after git am cannot leave applied commits unrecorded. Recovery
+    // retries fresh only when HEAD still equals the fence, else fails
+    // closed. "commits-applied" (or absent, for markers written before this
+    // field existed): the series landed; retries complete the worktree
+    // patch only. "unknown" is never written by an apply: sanitizers map a
+    // present-but-unreadable stage to it (dropping the field would misread
+    // an interrupted am-started record as commits-applied and skip git am),
+    // and recovery fails closed until acknowledged.
+    appliedPartialStage: z.enum(["am-started", "commits-applied", "unknown"]).optional(),
   })
   .strict();
 
@@ -920,6 +948,18 @@ export const TaskApplyGitPatchToolArgsSchema = z
       .boolean()
       .nullish()
       .describe("When true, allow apply even if the patch was previously applied."),
+    acknowledge_partial_recovery: z
+      .boolean()
+      .nullish()
+      .describe(
+        "When true, acknowledge that a PARTIALLY applied artifact (commit series landed, uncommitted-changes patch failed) was completed manually: clears the partial marker and records the artifact as applied without applying anything. Use after resolving the remaining changes by hand, e.g. a merged conflict resolution the automatic already-present detection cannot recognize."
+      ),
+    acknowledge_uncaptured_changes: z
+      .boolean()
+      .nullish()
+      .describe(
+        "When true, apply the captured content even though the child ended with uncommitted changes that were NOT captured into the artifact (see worktreePatchSkippedReason). Without this flag such applies fail so the uncaptured work cannot be silently omitted. Use after recovering the uncaptured changes manually from the preserved child workspace, or after deciding they are not needed."
+      ),
   })
   .strict();
 
@@ -2058,6 +2098,7 @@ export const TOOL_DEFINITIONS = {
   task_apply_git_patch: {
     description:
       "Apply a completed sub-agent task's git-format-patch artifact to the current workspace using `git am`. " +
+      "If the child ended with uncommitted changes, they were captured as a worktree diff and are applied after the commits, landing as uncommitted changes. " +
       "This is an explicit integration step: mux will not auto-apply patches.",
     schema: TaskApplyGitPatchToolArgsSchema,
   },
