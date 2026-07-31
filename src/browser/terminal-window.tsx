@@ -5,6 +5,7 @@
  * Each window connects to a terminal session via WebSocket.
  */
 
+import { installInactiveAnimationPause } from "@/browser/utils/inactiveAnimations";
 import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView/TerminalView";
 import { APIProvider, useAPI } from "@/browser/contexts/API";
