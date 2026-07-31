@@ -185,25 +185,38 @@ export class BackupRepoCache {
       if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
       }
-      // `resetHardToRemote` checks out the configured branch next. `--no-checkout` avoids
-      // materializing an unused default branch that might fail on unrelated paths or filters.
-      //
       // A settings backup often lives in an existing dotfiles repository, and nothing here
-      // ever reads a ref other than `origin/<branch>`. Cloning every branch would transfer
-      // history this feature cannot use, which sparse checkout does not bound because it
-      // limits the working tree and not the transfer. `--single-branch` with no `--branch`
-      // takes the remote's default branch when the configured one does not exist yet, which
-      // is the unborn case `resetToUnbornBranch` already handles.
-      const single = ["clone", "--no-checkout", "--single-branch", "--filter=blob:none"];
-      const remoteHasBranch = (await this.lsRemote()).branchCommit !== null;
-      if (remoteHasBranch) single.push("--branch", this.options.branch);
-      await this.networkGit([
-        ...single,
-        "--origin",
-        "origin",
-        this.options.repoUrl,
-        this.cachePath,
-      ]);
+      // ever reads a ref other than `origin/<branch>`. Transferring anything else is waste
+      // that sparse checkout does not bound, because it limits the working tree and not the
+      // transfer.
+      if ((await this.lsRemote()).branchCommit === null) {
+        // Nothing to fetch: the backup branch does not exist yet, and `--single-branch` would
+        // fall back to the remote's HEAD, downloading a default branch whose history this
+        // feature never reads. An empty repository with the remote attached is the same
+        // starting point `resetToUnbornBranch` produces, without the transfer.
+        // `init <dir>` creates the directory, so this runs before `localGit` has one to -C into.
+        await runLocalGit(
+          ["init", "--initial-branch", this.options.branch, this.cachePath],
+          this.options
+        );
+        await this.localGit(["remote", "add", "origin", this.options.repoUrl]);
+      } else {
+        // `--no-checkout` because `resetHardToRemote` checks out the configured branch next,
+        // and materializing a branch here can fail on unrelated paths this platform cannot
+        // create.
+        await this.networkGit([
+          "clone",
+          "--no-checkout",
+          "--single-branch",
+          "--filter=blob:none",
+          "--branch",
+          this.options.branch,
+          "--origin",
+          "origin",
+          this.options.repoUrl,
+          this.cachePath,
+        ]);
+      }
     }
 
     const actualOrigin = (await this.localGit(["remote", "get-url", "origin"])).stdout.trim();
@@ -309,11 +322,10 @@ export class BackupRepoCache {
   private async resetToUnbornBranch(): Promise<void> {
     const ref = `refs/heads/${this.options.branch}`;
     await this.localGit(["symbolic-ref", "HEAD", ref]);
-    try {
-      await this.localGit(["update-ref", "-d", ref]);
-    } catch {
-      // The ref is already absent, which is the state this method is establishing.
-    }
+    // Not caught, for the same reason as the remote-tracking delete: deleting an absent ref
+    // already succeeds, so the only failures left are real, and continuing past one would leave
+    // the branch attached for the next commit to make the deleted history reachable again.
+    await this.localGit(["update-ref", "-d", ref]);
     await this.localGit(["read-tree", "--empty"]);
     await this.localGit(["clean", "-fdx"]);
   }

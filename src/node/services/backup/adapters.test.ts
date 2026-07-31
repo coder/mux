@@ -282,6 +282,40 @@ describe("backup adapters", () => {
     expect(refs).not.toContain("unrelated");
   });
 
+  it("fetches no history when the backup branch does not exist yet", async () => {
+    // The remote's default branch is not the backup branch, and none of its history is
+    // reachable from the root commit a first backup makes.
+    const seed = path.join(tempDir, "seed-default-branch");
+    await git(["clone", "--quiet", originPath, seed]);
+    await fs.writeFile(path.join(seed, "unrelated.md"), "default branch content\n", "utf-8");
+    await git(["-C", seed, "checkout", "--quiet", "-b", "trunk"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "user.name=T",
+      "commit",
+      "--quiet",
+      "-m",
+      "default branch work",
+    ]);
+    await git(["-C", seed, "push", "--quiet", "origin", "trunk"]);
+    await git(["--git-dir", originPath, "symbolic-ref", "HEAD", "refs/heads/trunk"]);
+
+    await writeMuxFile("AGENTS.md", "first\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+
+    await gitRepo.prepare({ ...settings, branch: "mux-backup" });
+
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, "mux-backup");
+    const objects = await git(["-C", cachePath, "count-objects", "-v"]);
+    expect(objects).toContain("count: 0");
+    expect(objects).toContain("in-pack: 0");
+  });
+
   it("does not recreate deleted history when the remote branch is gone", async () => {
     await writeMuxFile("AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
