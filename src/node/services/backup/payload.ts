@@ -528,9 +528,13 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
         // `curl --manual`: a `-E` value starting with `pkcs11:` is a PKCS#11 URI, and its
         // colon is part of the URI rather than an optional password delimiter.
         if (isCert && /^pkcs11:/i.test(pair)) return match;
-        // `<certificate[:password]>` puts the password last, so a certificate path
-        // containing a colon (a Windows drive letter) keeps its own colon.
-        const separator = isCert ? pair.lastIndexOf(":") : pair.indexOf(":");
+        // `<certificate[:password]>` is delimited by the first colon that is not a Windows
+        // drive letter, and everything after it is the password. Splitting on the LAST
+        // colon instead would leave the leading part of a password containing a colon
+        // exposed.
+        const driveLetter = isCert && /^[A-Za-z]:/.test(pair);
+        const separator = pair.indexOf(":", driveLetter ? 2 : 0);
+        if (separator < 0) return match;
         const user = pair.slice(0, separator);
         const password = pair.slice(separator + 1);
         if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;

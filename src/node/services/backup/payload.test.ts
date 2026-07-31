@@ -405,6 +405,7 @@ describe("backup payload", () => {
     "plainCert": { "command": "curl -E /certs/client.pem https://host.example" },
     "pkcs11Cert": { "command": "curl -E pkcs11:object=my-cert https://host.example" },
     "windowsCert": { "command": "curl -E C:\\\\certs\\\\client.pem https://host.example" },
+    "colonPass": { "command": "curl -E /certs/client.pem:pa:ss https://host.example" },
     "windowsCertPass": {
       "command": "curl -E C:\\\\certs\\\\client.pem:certpass https://host.example"
     },
@@ -458,6 +459,10 @@ describe("backup payload", () => {
     expect(mcp.servers.windowsCert?.command).toBe(
       "curl -E C:\\certs\\client.pem https://host.example"
     );
+    // A password containing a colon must be redacted whole, not just its tail.
+    expect(mcp.servers.colonPass?.command).toBe(
+      `curl -E /certs/client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
     expect(mcp.servers.windowsCertPass?.command).toBe(
       `curl -E C:\\certs\\client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
     );
@@ -470,7 +475,7 @@ describe("backup payload", () => {
     expect(mcp.servers.reference?.command).toBe("curl -u alice:$MCP_PASSWORD https://host.example");
 
     const exported = payloadFileText(payload, "mcp.jsonc");
-    for (const secret of ["hunter2", "ppass", "topsecretphrase", "certpass", "two word"]) {
+    for (const secret of ["hunter2", "ppass", "topsecretphrase", "certpass", "two word", "pa:ss"]) {
       expect(exported).not.toContain(secret);
     }
   });
