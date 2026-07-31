@@ -454,7 +454,22 @@ const CREDENTIAL_ARGUMENT_PATTERNS = [
  * the rule only applies to a command that invokes curl. A `:` is also required and only the
  * half after it is rewritten, so a bare username or a plain certificate path survives.
  */
-const INVOKES_CURL = /(?:^|[\s/=])curl(?:\s|$)/;
+const INVOKES_CURL = /(?:^|[\s/\\="'])curl(?:\.exe)?(?:[\s"']|$)/i;
+
+/**
+ * `curl --manual` requires a `:` inside the certificate portion to be written `\:`, so an
+ * escaped colon is part of the filename rather than the password delimiter.
+ */
+function indexOfUnescapedColon(value: string, from: number): number {
+  for (let index = from; index < value.length; index += 1) {
+    if (value[index] !== ":") continue;
+    let backslashes = 0;
+    while (index - backslashes - 1 >= 0 && value[index - backslashes - 1] === "\\")
+      backslashes += 1;
+    if (backslashes % 2 === 0) return index;
+  }
+  return -1;
+}
 const PAIRED_CREDENTIAL_FLAG = String.raw`(?:-[uUE]|--user|--proxy-user|--cert)`;
 const PAIRED_CREDENTIAL_PATTERN = new RegExp(
   String.raw`(-{1,2}[\w-]+${FLAG_SEPARATOR})(?:"([^"]*:[^"]*)"|'([^']*:[^']*)'|(\S+:\S*))`,
@@ -528,19 +543,18 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
         // `curl --manual`: a `-E` value starting with `pkcs11:` is a PKCS#11 URI, and its
         // colon is part of the URI rather than an optional password delimiter.
         if (isCert && /^pkcs11:/i.test(pair)) return match;
-        // `<certificate[:password]>` is delimited by the first colon that is not a Windows
-        // drive letter, and everything after it is the password. Splitting on the LAST
-        // colon instead would leave the leading part of a password containing a colon
-        // exposed.
+        // `<certificate[:password]>` is delimited by the first unescaped colon that is not
+        // a Windows drive letter, and everything after it is the password. Splitting on the
+        // LAST colon instead would leave the leading part of a colon-bearing password
+        // exposed, and a plain `C:\certs\client.pem` simply finds no delimiter.
         const driveLetter = isCert && /^[A-Za-z]:/.test(pair);
-        const separator = pair.indexOf(":", driveLetter ? 2 : 0);
+        const separator = isCert
+          ? indexOfUnescapedColon(pair, driveLetter ? 2 : 0)
+          : pair.indexOf(":");
         if (separator < 0) return match;
         const user = pair.slice(0, separator);
         const password = pair.slice(separator + 1);
         if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;
-        // A path separator marks this half as the rest of the certificate path, not a
-        // password, as in an unadorned `-E C:\certs\client.pem`.
-        if (isCert && /[\\/]/.test(password)) return match;
         // A numeric pair is a uid:gid, as in a `docker run -u 1000:1000` sharing the
         // command line with a curl call.
         if (/^\d+$/.test(user) && /^\d+$/.test(password)) return match;

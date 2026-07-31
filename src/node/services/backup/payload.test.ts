@@ -406,6 +406,16 @@ describe("backup payload", () => {
     "pkcs11Cert": { "command": "curl -E pkcs11:object=my-cert https://host.example" },
     "windowsCert": { "command": "curl -E C:\\\\certs\\\\client.pem https://host.example" },
     "colonPass": { "command": "curl -E /certs/client.pem:pa:ss https://host.example" },
+    "slashPass": { "command": "curl -E /certs/client.pem:pa/ss https://host.example" },
+    "escapedColonCert": { "command": "curl -E /certs/client\\\\:blue.pem https://host.example" },
+    "escapedColonPass": {
+      "command": "curl -E /certs/client\\\\:blue.pem:certpass https://host.example"
+    },
+    "curlExe": { "command": "curl.exe -u alice:hunter2 https://host.example" },
+    "curlPath": {
+      "command": "C:\\\\Windows\\\\System32\\\\curl.exe -u alice:hunter2 https://host.example"
+    },
+    "curlUpper": { "command": "CURL.EXE --user alice:hunter2 https://host.example" },
     "windowsCertPass": {
       "command": "curl -E C:\\\\certs\\\\client.pem:certpass https://host.example"
     },
@@ -459,9 +469,30 @@ describe("backup payload", () => {
     expect(mcp.servers.windowsCert?.command).toBe(
       "curl -E C:\\certs\\client.pem https://host.example"
     );
-    // A password containing a colon must be redacted whole, not just its tail.
+    // A password containing a colon or a slash must be redacted whole.
     expect(mcp.servers.colonPass?.command).toBe(
       `curl -E /certs/client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.slashPass?.command).toBe(
+      `curl -E /certs/client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    // `curl --manual`: a `:` inside the certificate name is written `\:`, so it is not the
+    // password delimiter.
+    expect(mcp.servers.escapedColonCert?.command).toBe(
+      "curl -E /certs/client\\:blue.pem https://host.example"
+    );
+    expect(mcp.servers.escapedColonPass?.command).toBe(
+      `curl -E /certs/client\\:blue.pem:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    // The Windows executable spelling, an absolute path to it, and any casing.
+    expect(mcp.servers.curlExe?.command).toBe(
+      `curl.exe -u alice:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.curlPath?.command).toBe(
+      `C:\\Windows\\System32\\curl.exe -u alice:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
+    expect(mcp.servers.curlUpper?.command).toBe(
+      `CURL.EXE --user alice:${REDACTED_BACKUP_VALUE} https://host.example`
     );
     expect(mcp.servers.windowsCertPass?.command).toBe(
       `curl -E C:\\certs\\client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
@@ -475,7 +506,15 @@ describe("backup payload", () => {
     expect(mcp.servers.reference?.command).toBe("curl -u alice:$MCP_PASSWORD https://host.example");
 
     const exported = payloadFileText(payload, "mcp.jsonc");
-    for (const secret of ["hunter2", "ppass", "topsecretphrase", "certpass", "two word", "pa:ss"]) {
+    for (const secret of [
+      "hunter2",
+      "ppass",
+      "topsecretphrase",
+      "certpass",
+      "two word",
+      "pa:ss",
+      "pa/ss",
+    ]) {
       expect(exported).not.toContain(secret);
     }
   });
