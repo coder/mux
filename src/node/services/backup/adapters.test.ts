@@ -17,12 +17,20 @@ async function git(args: string[]): Promise<string> {
 
 class TestConfig extends Config {
   state: ProjectsConfig = { projects: new Map() };
+  /**
+   * Runs once immediately before an edit sees the config, mirroring how the real queue
+   * re-reads disk: it stands in for another window saving while an operation is in flight.
+   */
+  beforeEdit: (() => void) | null = null;
 
   override loadConfigOrDefault(): ProjectsConfig {
     return this.state;
   }
 
   override editConfig(edit: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
+    const hook = this.beforeEdit;
+    this.beforeEdit = null;
+    hook?.();
     this.state = edit(this.state);
     return Promise.resolve();
   }
@@ -512,6 +520,35 @@ describe("backup adapters", () => {
     expect(await fs.readFile(path.join(muxRoot, "agents/local-only.md"), "utf-8")).toBe(
       "local only\n"
     );
+  });
+
+  it("keeps preferences another window saved while the restore ran", async () => {
+    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
+    await writeMuxFile("AGENTS.md", "backed up\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+
+    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "light" } } };
+    config.beforeEdit = () => {
+      config.state = {
+        ...config.state,
+        userPreferences: {
+          ...config.state.userPreferences,
+          navigation: { projectOrder: ["/opened/later"] },
+        },
+      };
+    };
+
+    await payload.restore({
+      repositoryRoot: repository.rootDir,
+      managedPath: settings.path,
+    });
+
+    expect(config.state.userPreferences?.appearance?.theme).toBe("dark");
+    expect(config.state.userPreferences?.navigation?.projectOrder).toEqual(["/opened/later"]);
   });
 
   it("writes a safety snapshot of the current local files", async () => {

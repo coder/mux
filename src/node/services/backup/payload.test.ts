@@ -1630,15 +1630,7 @@ describe("backup payload", () => {
       })
     );
 
-    const result = await restoreBackupPayload({
-      muxRoot: restoreRoot,
-      payload,
-      currentPreferences: {
-        appearance: { theme: "light", vimEnabled: true },
-        navigation: { projectOrder: ["/local/project"] },
-        review: { defaultBaseByProject: { "/local/project": "dev" } },
-      },
-    });
+    const result = await restoreBackupPayload({ muxRoot: restoreRoot, payload });
 
     expect(await fs.readFile(path.join(restoreRoot, "skills/shared/SKILL.md"), "utf-8")).toBe(
       "from backup\n"
@@ -1647,7 +1639,15 @@ describe("backup payload", () => {
       "local only\n"
     );
     expect(result.localOnlyFiles).toEqual(["memory/global/local.md", "skills/local/SKILL.md"]);
-    expect(result.preferences).toEqual({
+    const merged = mergeBackupPreferences(
+      {
+        appearance: { theme: "light", vimEnabled: true },
+        navigation: { projectOrder: ["/local/project"] },
+        review: { defaultBaseByProject: { "/local/project": "dev" } },
+      },
+      result.backupPreferences
+    );
+    expect(merged).toEqual({
       appearance: { theme: "dark", vimEnabled: true },
       navigation: {
         launchBehavior: "last-workspace",

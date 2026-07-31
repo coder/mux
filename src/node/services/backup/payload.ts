@@ -101,7 +101,6 @@ export interface CreateBackupPayloadOptions {
 export interface RestoreBackupPayloadOptions {
   muxRoot: string;
   payload: BackupPayload;
-  currentPreferences?: UserPreferences;
   approvedCommandTokens?: readonly string[];
 }
 
@@ -122,7 +121,12 @@ export class BackupCommandApprovalRequiredError extends Error {
 }
 
 export interface RestoreBackupPayloadResult {
-  preferences: UserPreferences;
+  /**
+   * The backup's preferences document, unmerged and absent when the payload carries none.
+   * Merging belongs to the caller so it can read the current config inside the same
+   * serialized edit that writes the result.
+   */
+  backupPreferences?: unknown;
   localOnlyFiles: string[];
 }
 
@@ -1280,7 +1284,7 @@ export async function restoreBackupPayload(
       .filter((file) => file.path !== "preferences.json")
       .map((file) => file.path)
   );
-  let preferences = options.currentPreferences ?? {};
+  let backupPreferences: unknown;
 
   // Recomputed here rather than trusted from the preview, so an approval cannot authorize
   // a command the repository changed between the preview and this restore.
@@ -1296,10 +1300,8 @@ export async function restoreBackupPayload(
   for (const file of options.payload.files) {
     assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
-      preferences = mergeBackupPreferences(
-        options.currentPreferences,
-        JSON.parse(file.content.toString("utf-8")) as unknown
-      );
+      // Parsed here so malformed JSON fails before the first write, but left unmerged.
+      backupPreferences = JSON.parse(file.content.toString("utf-8")) as unknown;
       continue;
     }
     const destination = await resolveContainedPath(options.muxRoot, file.path);
@@ -1326,7 +1328,7 @@ export async function restoreBackupPayload(
   }
 
   return {
-    preferences,
+    backupPreferences,
     localOnlyFiles: [...localPaths].filter((file) => !restoredPaths.has(file)).sort(),
   };
 }

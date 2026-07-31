@@ -268,15 +268,19 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       const result = await restoreBackupPayload({
         muxRoot,
         payload,
-        // The full local preferences, not the exportable projection: the merge result
-        // replaces the stored object, so a projection here would drop machine-local keys.
-        currentPreferences: localPreferences(),
         approvedCommandTokens: restoreOptions.approvedCommandTokens,
       });
-      await options.config.editConfig((current) => ({
-        ...current,
-        userPreferences: normalizeUserPreferences(result.preferences),
-      }));
+      if (result.backupPreferences !== undefined) {
+        await options.config.editConfig((current) => ({
+          ...current,
+          // Merged against the config this edit reads, not a snapshot taken before the
+          // restore: a whole-object write would otherwise discard preferences another
+          // window saved meanwhile, including the machine-local keys no backup carries.
+          userPreferences: normalizeUserPreferences(
+            mergeBackupPreferences(current.userPreferences, result.backupPreferences)
+          ),
+        }));
+      }
 
       const after = await localFilesByPath();
       const changedFiles = [...after.entries()]
