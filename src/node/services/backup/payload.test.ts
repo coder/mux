@@ -473,6 +473,77 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain("sk-live-bare");
   });
 
+  it("requires approval when a restore re-enables a locally disabled command", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "dormant": { "command": "npx dormant-mcp", "disabled": false },
+    "stayDisabled": { "command": "npx quiet-mcp", "disabled": true }
+  }
+}
+`
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    // The backup keeps `dormant` enabled while the local copy has since disabled it, so
+    // restoring makes that command runnable again.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "dormant": { "command": "npx dormant-mcp", "disabled": true },
+    "stayDisabled": { "command": "npx quiet-mcp", "disabled": true }
+  }
+}
+`
+    );
+
+    const approvals = await collectMcpCommandApprovals(muxRoot, payload.files);
+    expect(approvals.map((approval) => approval.command)).toEqual(["npx dormant-mcp"]);
+    expect(await rejection(restoreBackupPayload({ muxRoot, payload }))).toBeInstanceOf(
+      BackupCommandApprovalRequiredError
+    );
+  });
+
+  it("needs no approval to disable a command or for an empty one", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "quieted": { "command": "npx notes-mcp", "disabled": true },
+    "blank": { "command": "" }
+  }
+}
+`
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "quieted": { "command": "npx notes-mcp" },
+    "blank": { "command": "" }
+  }
+}
+`
+    );
+    expect(await collectMcpCommandApprovals(muxRoot, payload.files)).toEqual([]);
+  });
+
   it("still requires approval when the local MCP config is malformed", async () => {
     await write(
       muxRoot,

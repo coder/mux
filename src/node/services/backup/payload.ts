@@ -873,14 +873,17 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
 }
 
 /**
- * A stdio server is either a bare command string or an object carrying `command`
- * (src/common/types/mcp.ts), and both forms are executed.
+ * Mirrors `McpConfigService.normalizeEntry`: a stdio server is either a bare command
+ * string or an object carrying `command`, and only an enabled one is ever started. An
+ * empty command cannot run anything, so it is not a runnable entry.
  */
-function readServerCommand(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
+function readRunnableCommand(value: unknown): string | undefined {
+  if (typeof value === "string") return value.trim() === "" ? undefined : value;
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const command = (value as Record<string, unknown>).command;
-  return typeof command === "string" ? command : undefined;
+  const record = value as Record<string, unknown>;
+  if (record.disabled === true) return undefined;
+  const command = record.command;
+  return typeof command === "string" && command.trim() !== "" ? command : undefined;
 }
 
 /**
@@ -888,20 +891,20 @@ function readServerCommand(value: unknown): string | undefined {
  * every incoming one is therefore new. The backup's own copy must never be read this way:
  * treating an unparseable payload as "no commands" would let it skip the approval gate.
  */
-function readLocalServerCommands(content: string): Map<string, string> {
+function readLocalRunnableCommands(content: string): Map<string, string> {
   try {
-    return readServerCommands(content);
+    return readRunnableCommands(content);
   } catch {
     return new Map();
   }
 }
 
-function readServerCommands(content: string): Map<string, string> {
+function readRunnableCommands(content: string): Map<string, string> {
   const commands = new Map<string, string>();
   const servers = parseJsoncObject(content, "mcp.jsonc").servers;
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) return commands;
   for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
-    const command = readServerCommand(server);
+    const command = readRunnableCommand(server);
     if (command !== undefined) commands.set(name, command);
   }
   return commands;
@@ -913,11 +916,13 @@ export function backupCommandApprovalToken(serverPath: string, command: string):
 }
 
 /**
- * MCP commands a restore would introduce or change. Those strings reach `runtime.exec()`
- * when the server next starts, so a repository the user does not fully control must not
- * be able to change them without the user reading the exact text first. Commands that are
- * unchanged, or whose whole scalar the redaction rehydration kept locally authoritative,
- * produce no entry because they are already equal to the local value here.
+ * MCP commands a restore would make runnable. Those strings reach `runtime.exec()` when
+ * the server next starts, so a repository the user does not fully control must not be able
+ * to change them without the user reading the exact text first. Only commands that are
+ * already runnable locally with identical text produce no entry, which covers both an
+ * unchanged command and one whose whole scalar the redaction rehydration kept locally
+ * authoritative. Re-enabling a locally disabled command therefore still needs approval,
+ * because a disabled entry is never started.
  */
 export async function collectMcpCommandApprovals(
   muxRoot: string,
@@ -927,10 +932,10 @@ export async function collectMcpCommandApprovals(
   if (!file) return [];
 
   const restored = await resolveRestoredContent(muxRoot, file);
-  const incoming = readServerCommands(restored.toString("utf-8"));
+  const incoming = readRunnableCommands(restored.toString("utf-8"));
   const localPath = path.join(muxRoot, "mcp.jsonc");
   const local = (await fileExists(localPath))
-    ? readLocalServerCommands(await fs.readFile(localPath, "utf-8"))
+    ? readLocalRunnableCommands(await fs.readFile(localPath, "utf-8"))
     : new Map<string, string>();
 
   const approvals: BackupCommandApproval[] = [];

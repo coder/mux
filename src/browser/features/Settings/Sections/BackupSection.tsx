@@ -304,11 +304,15 @@ export function BackupSection() {
     try {
       const result = await api.backup.push({
         ...savedDraft,
-        allowSecrets: overrideSecretScan,
+        // Only while the control is visible. Anything else would let an override the user
+        // can no longer see authorize a later push.
+        allowSecrets: overrideSecretScan && secretScanBlocked,
       });
       if (!result.success) {
         setActionError(getOperationErrorMessage(result.error));
-        setSecretScanBlocked(result.error.code === "SECRET_DETECTED");
+        const blocked = result.error.code === "SECRET_DETECTED";
+        setSecretScanBlocked(blocked);
+        if (!blocked) setOverrideSecretScan(false);
         return;
       }
       setPreview(null);

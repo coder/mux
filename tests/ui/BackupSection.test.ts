@@ -152,6 +152,36 @@ describe("BackupSection", () => {
     await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
   });
 
+  test("stops sending a secret override once a non-secret failure hides it", async () => {
+    const { client, view } = renderBackupSection();
+    const canvas = within(view.container);
+    await canvas.findByText("Settings backup");
+
+    const push = jest.spyOn(client.backup, "push").mockResolvedValueOnce({
+      success: false,
+      error: { code: "SECRET_DETECTED", message: "Potential secrets", files: ["AGENTS.md"] },
+    });
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+
+    const override = await canvas.findByRole("checkbox", { name: "Override secret scan" });
+    fireEvent.click(override);
+    await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
+
+    push.mockResolvedValueOnce({
+      success: false,
+      error: { code: "AUTH_FAILED", message: "Could not authenticate" },
+    });
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+    await canvas.findByText(/Could not authenticate/i);
+
+    // The control is gone, so no invisible override may survive to authorize a retry.
+    expect(canvas.queryByRole("checkbox", { name: "Override secret scan" })).toBeNull();
+    fireEvent.click(canvas.getByRole("button", { name: "Back up now" }));
+    await waitFor(() =>
+      expect(push).toHaveBeenLastCalledWith(expect.objectContaining({ allowSecrets: false }))
+    );
+  });
+
   test("requires approving an incoming MCP command before restore sends its token", async () => {
     const approval = {
       path: "servers.notes.command",
