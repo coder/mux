@@ -172,7 +172,6 @@ describe("BackupSection", () => {
     fireEvent.click(override);
     await waitFor(() => expect(override.getAttribute("data-state")).toBe("checked"));
 
-    // A different digest means the flagged bytes changed, so the approval must not carry over.
     push.mockResolvedValueOnce({
       success: false,
       error: {

@@ -88,13 +88,10 @@ describe("AppConfigOnDiskSchema", () => {
     const stored = { repoUrl: "git@example.com:me/dotfiles.git", branch: "main", path: "mux" };
     const parsed = AppConfigOnDiskSchema.safeParse({ settingsBackup: stored });
     expect(parsed.success).toBe(true);
-    expect(
-      SettingsBackupSchema.safeParse(parsed.success && parsed.data.settingsBackup).success
-    ).toBe(true);
+    expect(parsed.success && parsed.data.settingsBackup).toEqual(stored);
 
-    // A value this schema once accepted but the backup API rejects must degrade to "not
-    // configured" instead of failing the whole config parse and taking every other setting
-    // down with it.
+    // A value the backup API rejects must degrade to "not configured" rather than fail the
+    // whole config parse and take every other setting down with it.
     for (const unusable of [
       { repoUrl: "", branch: "main", path: "mux" },
       { repoUrl: "git@example.com:me/dotfiles.git", branch: "main", path: "." },

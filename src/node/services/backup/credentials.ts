@@ -12,21 +12,37 @@ const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
  * `BatchMode=yes` is what keeps ssh from asking for a password, a key passphrase, or host
  * key confirmation (`ssh_config(5)`), which a backup running behind a UI button can never
  * answer: it would just hang Validate, Preview, or Push forever. A command line `-o` beats
- * ssh_config, and an existing ssh command is extended rather than replaced so a custom
- * wrapper still gets used. `core.sshCommand` counts as existing: git treats the environment
- * variable as overriding it, so setting one unconditionally would silently discard the
- * wrapper, key, or proxy a user configured there.
+ * ssh_config, and whichever command git would have run is extended rather than replaced, so
+ * a custom wrapper, key, or proxy keeps working.
+ *
+ * git resolves that command from four places and no more, in this precedence order (git(1),
+ * confirmed against 2.54): `GIT_SSH_COMMAND`, `core.sshCommand`, `GIT_SSH`, plain `ssh`. Any
+ * source left unread is a source silently discarded, so all of them are read here.
  */
 async function nonInteractiveSshCommand(
   args: readonly string[],
   options: GitCredentialOptions
 ): Promise<string> {
-  const ambient = options.env?.GIT_SSH_COMMAND ?? process.env.GIT_SSH_COMMAND;
+  const program = ambientValue(options, "GIT_SSH");
   const base =
-    ambient !== undefined && ambient.trim() !== ""
-      ? ambient
-      : ((await configuredSshCommand(args, options)) ?? "ssh");
+    ambientValue(options, "GIT_SSH_COMMAND") ??
+    (await configuredSshCommand(args, options)) ??
+    // Unlike the other two, GIT_SSH names a program git executes directly, so a path with
+    // spaces only survives becoming part of a shell command line if it is quoted.
+    (program !== null ? shellQuote(program) : "ssh");
   return `${base} -o BatchMode=yes`;
+}
+
+function ambientValue(
+  options: GitCredentialOptions,
+  name: "GIT_SSH_COMMAND" | "GIT_SSH"
+): string | null {
+  const value = options.env?.[name] ?? process.env[name];
+  return value !== undefined && value.trim() !== "" ? value : null;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 /** Reads through the caller's own `-C`, so the value git would apply is the one extended. */

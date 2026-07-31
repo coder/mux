@@ -161,8 +161,8 @@ function assertAllowedPayloadPath(
     path.isAbsolute(relativePath) ||
     // Payload paths are always posix. A backslash is an ordinary filename character
     // here but a separator on Windows, so `skills/..\..\evil` would escape the
-    // destination once path.join runs there. A local snapshot never travels, and the
-    // containment check below resolves the real path either way.
+    // destination once path.join runs there. A local snapshot never travels, and
+    // resolveContainedPath still rejects traversal and symlinked ancestors either way.
     (options.portable && relativePath.includes("\\")) ||
     relativePath
       .split("/")
@@ -620,10 +620,7 @@ function findMcpRedactions(content: Buffer): string[] {
  */
 const AUTO_PUBLISHED_RECURSIVE_FILE = /\.(?:md|mdx|markdown|txt)$/i;
 
-/**
- * A name promising credentials is worth review even as documentation, because notes named
- * this way usually contain the thing they are named after.
- */
+/** A name promising credentials earns review even when the extension is documentation. */
 const CREDENTIAL_PATH_HINT =
   /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|apikey|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
 
@@ -680,9 +677,11 @@ export async function createBackupPayload(
   });
   files.sort((a, b) => a.path.localeCompare(b.path));
 
-  const secretFiles = scanBackupFilesForSecrets(files);
-  if (secretFiles.length > 0 && options.reportSecrets !== true) {
-    throw new Error(`Backup contains possible secrets in: ${secretFiles.join(", ")}`);
+  if (options.reportSecrets !== true) {
+    const secretFiles = scanBackupFilesForSecrets(files);
+    if (secretFiles.length > 0) {
+      throw new Error(`Backup contains possible secrets in: ${secretFiles.join(", ")}`);
+    }
   }
 
   return {

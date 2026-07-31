@@ -212,7 +212,6 @@ describe("BackupService", () => {
     expect(result.error.code).toBe("SECRET_DETECTED");
     expect(result.error.files).toEqual(["skills/private/SKILL.md"]);
     expect(commitAttempted).toBe(false);
-    // The client needs the digest back to approve exactly this payload.
     expect(result.error.secretApproval).toBe("digest-v1");
   });
 

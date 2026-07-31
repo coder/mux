@@ -438,15 +438,44 @@ exit 128
     const result = await withPath(binDir, () =>
       runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
         repoUrl: "git@example.com:owner/repo.git",
-        // Empty rather than absent: this host exports its own GIT_SSH_COMMAND, and the
-        // wrapper under test has to come from git config instead.
-        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "" },
+        // Empty rather than absent, so an ambient GIT_SSH_COMMAND cannot win. GIT_SSH is
+        // set to prove git config outranks it.
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "", GIT_SSH: "/opt/ignored/ssh" },
       })
     );
 
     expect(result.credential).toBe("ssh");
     expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
       "/opt/wrapper/ssh -i /keys/id -o BatchMode=yes"
+    );
+  });
+
+  it("extends a GIT_SSH program, quoting it into the command line", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "config" ]; then',
+        "  exit 1",
+        "fi",
+        `printf '%s\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"`,
+        "",
+      ].join("\n")
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "", GIT_SSH: "/opt/wrap dir/ssh" },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    // git executes GIT_SSH directly, so its path survives becoming a command line only
+    // when quoted. Unquoted, a shell would read `dir/ssh` as the first argument.
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      "'/opt/wrap dir/ssh' -o BatchMode=yes"
     );
   });
 

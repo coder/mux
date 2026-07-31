@@ -72,9 +72,9 @@ describe("BackupRepoCache", () => {
   });
 
   it("materializes only the managed path and preserves the rest of the branch", async () => {
-    // A path elsewhere in the repository must never reach the filesystem: on Windows a name
-    // like `linux/CON` cannot be created and would fail the checkout before Mux reads its own
-    // directory. Committing scoped to the managed path must still leave that file in the tree.
+    // Nothing outside the managed path may reach the filesystem, because a name this
+    // platform cannot create (say `linux/CON` on Windows) would fail the checkout before Mux
+    // reads its own directory. A scoped commit must still leave that file in the tree.
     const seed = path.join(tempDir, "seed");
     await fs.mkdir(path.join(seed, "outside"), { recursive: true });
     await fs.writeFile(path.join(seed, "outside", "keep.txt"), "outside\n", "utf-8");
