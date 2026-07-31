@@ -569,9 +569,9 @@ export function BackupSection() {
             ) : null}
 
             <div className="border-border-light rounded-md border p-3">
-              <h4 className="text-foreground text-xs font-medium">Redactions</h4>
+              <h4 className="text-foreground text-xs font-medium">Kept on this device</h4>
               {preview.redactions.length === 0 ? (
-                <p className="text-muted mt-2 text-xs">No MCP header values need redaction.</p>
+                <p className="text-muted mt-2 text-xs">No MCP values stay on this device.</p>
               ) : (
                 <ul className="text-muted mt-2 space-y-1 text-xs">
                   {preview.redactions.map((redaction) => (

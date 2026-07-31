@@ -433,152 +433,6 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
   return { value: redacted ? url.toString() : rawUrl, redacted };
 }
 
-const CREDENTIAL_NAME = String.raw`[\w-]*(?:key|token|secret|password|auth|credential)[\w-]*`;
-const CREDENTIAL_VALUE = String.raw`"[^"]*"|'[^']*'|\S+`;
-/** A shell accepts `=`, one space, several spaces, or a tab between a flag and its value. */
-const FLAG_SEPARATOR = String.raw`(?:=[ \t]*|[ \t]+)`;
-const CREDENTIAL_ARGUMENT_PATTERNS = [
-  // --api-key sk-1, --api-key=sk-1, --api-key "sk 1"
-  new RegExp(String.raw`(--?${CREDENTIAL_NAME}${FLAG_SEPARATOR})(${CREDENTIAL_VALUE})`, "gi"),
-  // API_KEY=sk-1 npx server
-  new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=[ \t]*)(${CREDENTIAL_VALUE})`, "gi"),
-];
-
-/**
- * Flags whose value is a credential even though the flag name contains no credential word.
- * `curl --help all` documents `-u, --user <user:password>`, `-U, --proxy-user
- * <user:password>`, `-E, --cert <certificate[:password]>`, and `--pass <phrase>`.
- *
- * These are curl's spellings, and other tools reuse the same short flags for unrelated
- * values (`docker run -u alice:staff` is user:group, `sed -E 's/a:b/c/'` is a regex), so
- * the rule only applies to a command that invokes curl. A `:` is also required and only the
- * half after it is rewritten, so a bare username or a plain certificate path survives.
- */
-const INVOKES_CURL = /(?:^|[\s/\\="'])curl(?:\.exe)?(?:[\s"']|$)/i;
-
-/**
- * `curl --manual` requires a `:` inside the certificate portion to be written `\:`, so an
- * escaped colon is part of the filename rather than the password delimiter.
- */
-function indexOfUnescapedColon(value: string, from: number): number {
-  for (let index = from; index < value.length; index += 1) {
-    if (value[index] !== ":") continue;
-    let backslashes = 0;
-    while (index - backslashes - 1 >= 0 && value[index - backslashes - 1] === "\\")
-      backslashes += 1;
-    if (backslashes % 2 === 0) return index;
-  }
-  return -1;
-}
-const PAIRED_CREDENTIAL_FLAG = String.raw`(?:-[uUE]|--user|--proxy-user|--cert)`;
-const PAIRED_CREDENTIAL_PATTERN = new RegExp(
-  String.raw`(-{1,2}[\w-]+${FLAG_SEPARATOR})(?:"([^"]*:[^"]*)"|'([^']*:[^']*)'|(\S+:\S*))`,
-  "g"
-);
-/** `--pass <phrase>` carries the whole value, with no user prefix to preserve. */
-const WHOLE_VALUE_CREDENTIAL_PATTERN = new RegExp(
-  String.raw`(--pass${FLAG_SEPARATOR})(${CREDENTIAL_VALUE})`,
-  "g"
-);
-
-const HEADER_FLAG = String.raw`(?:--header|--head|-H)${FLAG_SEPARATOR}`;
-/**
- * Quote-aware so an unquoted value stops at whitespace. A greedy value would swallow the
- * following arguments, and a restore onto a fresh machine has no local value to put back.
- */
-const HEADER_ARGUMENT_PATTERNS = [
-  // --header 'Authorization: Basic x', -H "X-API-Key: y"
-  new RegExp(String.raw`(${HEADER_FLAG}['"])([\w-]+\s*:\s*)([^'"]*)`, "gi"),
-  // -H X-API-Key:y
-  new RegExp(String.raw`(${HEADER_FLAG})([\w-]+:)(\S*)`, "gi"),
-];
-
-/**
- * `Authorization` does not match `isSensitiveParamName`, whose word boundaries suit
- * query parameters, so name the authorization headers explicitly.
- */
-function isSensitiveHeaderName(name: string): boolean {
-  return /^(?:authorization|proxy-authorization|cookie)$/i.test(name) || isSensitiveParamName(name);
-}
-
-/**
- * `bash -c` runs the command (LocalBaseRuntime.exec), so an unquoted or double-quoted
- * `$VAR` is a reference the restoring machine resolves for itself. Single quotes
- * suppress expansion, so `'$VAR'` is a literal and gets redacted like any other value.
- */
-function isShellReference(value: string): boolean {
-  return /^"?\$/.test(value);
-}
-
-/** A stdio MCP server carries its credential in the command line rather than a header. */
-function redactCommandCredentials(command: string): { value: string; redacted: boolean } {
-  let redacted = false;
-  // A command can embed the credential in a URL argument (`npx mcp-remote
-  // https://host/mcp?api_key=...`), so reuse the URL rules before the flag rules.
-  let value = command.replace(/https?:\/\/[^\s"'`]+/gi, (match) => {
-    const redactedUrl = redactInlineUrl(match);
-    if (redactedUrl.redacted) redacted = true;
-    return redactedUrl.value;
-  });
-  for (const pattern of HEADER_ARGUMENT_PATTERNS) {
-    value = value.replace(pattern, (match, flag: string, header: string, headerValue: string) => {
-      const name = header.replace(/[\s:]+$/, "");
-      const trimmed = headerValue.trim();
-      if (trimmed.length === 0 || !isSensitiveHeaderName(name) || isShellReference(trimmed)) {
-        return match;
-      }
-      redacted = true;
-      return `${flag}${header}${REDACTED_BACKUP_VALUE}`;
-    });
-  }
-  if (INVOKES_CURL.test(value)) {
-    value = value.replace(
-      PAIRED_CREDENTIAL_PATTERN,
-      (match, flag: string, doubled?: string, singled?: string, bare?: string) => {
-        const name = flag.replace(/[=\s]+$/, "");
-        if (!new RegExp(`^${PAIRED_CREDENTIAL_FLAG}$`).test(name)) return match;
-        const pair = doubled ?? singled ?? bare;
-        if (pair === undefined) return match;
-        const isCert = name === "-E" || name === "--cert";
-        // `curl --manual`: a `-E` value starting with `pkcs11:` is a PKCS#11 URI, and its
-        // colon is part of the URI rather than an optional password delimiter.
-        if (isCert && /^pkcs11:/i.test(pair)) return match;
-        // `<certificate[:password]>` is delimited by the first unescaped colon that is not
-        // a Windows drive letter, and everything after it is the password. Splitting on the
-        // LAST colon instead would leave the leading part of a colon-bearing password
-        // exposed, and a plain `C:\certs\client.pem` simply finds no delimiter.
-        const driveLetter = isCert && /^[A-Za-z]:/.test(pair);
-        const separator = isCert
-          ? indexOfUnescapedColon(pair, driveLetter ? 2 : 0)
-          : pair.indexOf(":");
-        if (separator < 0) return match;
-        const user = pair.slice(0, separator);
-        const password = pair.slice(separator + 1);
-        if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;
-        // A numeric pair is a uid:gid, as in a `docker run -u 1000:1000` sharing the
-        // command line with a curl call.
-        if (/^\d+$/.test(user) && /^\d+$/.test(password)) return match;
-        redacted = true;
-        const quote = doubled !== undefined ? '"' : singled !== undefined ? "'" : "";
-        return `${flag}${quote}${user}:${REDACTED_BACKUP_VALUE}${quote}`;
-      }
-    );
-    value = value.replace(WHOLE_VALUE_CREDENTIAL_PATTERN, (match, flag: string, secret: string) => {
-      if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
-      redacted = true;
-      return `${flag}${REDACTED_BACKUP_VALUE}`;
-    });
-  }
-  for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
-    value = value.replace(pattern, (match, flag: string, secret: string) => {
-      if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
-      redacted = true;
-      return `${flag}${REDACTED_BACKUP_VALUE}`;
-    });
-  }
-  return { value, redacted };
-}
-
 /**
  * `jsonc.parse` collapses duplicate keys but `jsonc.modify` rewrites only one occurrence,
  * so a duplicated header would leave the second credential in the exported file. Redaction
@@ -637,15 +491,17 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
   const redactions: string[] = [];
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
   const servers = root.servers;
+  // Every stdio `command` is replaced wholesale, never parsed for credentials. A command is
+  // arbitrary shell text handed to `runtime.exec()`, so deciding which of its fragments are
+  // secret means reimplementing the argument grammar of every tool a user might invoke, and
+  // any gap publishes a credential. It is also barely portable, since it names binaries and
+  // paths that exist on one machine. Local-only, like `appearance.editorConfig`.
   if (servers && typeof servers === "object" && !Array.isArray(servers)) {
     for (const [serverName, rawServer] of Object.entries(servers as Record<string, unknown>)) {
       // A bare string entry is the stdio command itself (mcpConfigService.normalizeEntry).
       if (typeof rawServer === "string") {
-        const redactedEntry = redactCommandCredentials(rawServer);
-        if (redactedEntry.redacted) {
-          edits.push({ path: ["servers", serverName], value: redactedEntry.value });
-          redactions.push(`servers.${serverName}`);
-        }
+        edits.push({ path: ["servers", serverName], value: REDACTED_BACKUP_VALUE });
+        redactions.push(`servers.${serverName}`);
         continue;
       }
       if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
@@ -670,11 +526,8 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
         }
       }
       if (typeof server.command === "string") {
-        const redactedCommand = redactCommandCredentials(server.command);
-        if (redactedCommand.redacted) {
-          edits.push({ path: ["servers", serverName, "command"], value: redactedCommand.value });
-          redactions.push(`servers.${serverName}.command`);
-        }
+        edits.push({ path: ["servers", serverName, "command"], value: REDACTED_BACKUP_VALUE });
+        redactions.push(`servers.${serverName}.command`);
       }
     }
   }
@@ -1004,11 +857,17 @@ interface ServerCommand {
  */
 function readServerCommand(value: unknown): ServerCommand | undefined {
   const raw = typeof value === "string" ? value : undefined;
-  if (raw !== undefined) return raw.trim() === "" ? undefined : { command: raw, enabled: true };
+  if (raw !== undefined) {
+    if (raw.trim() === "" || raw === REDACTED_BACKUP_VALUE) return undefined;
+    return { command: raw, enabled: true };
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
   const command = record.command;
   if (typeof command !== "string" || command.trim() === "") return undefined;
+  // The marker is a placeholder rather than command text: it either rehydrates to the local
+  // value or stays unrunnable, so there is nothing for the user to read and approve.
+  if (command === REDACTED_BACKUP_VALUE) return undefined;
   return { command, enabled: record.disabled !== true };
 }
 
