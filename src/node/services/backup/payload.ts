@@ -1465,14 +1465,26 @@ export async function restoreBackupPayload(
       continue;
     }
     const destination = await resolveContainedPath(options.muxRoot, file.path);
-    if ((await lstatOrNull(destination))?.isDirectory() === true) {
+    const existing = await lstatOrNull(destination);
+    if (existing?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
     }
-    const claim = collisionKey(destination);
-    if (claimed.has(claim)) {
-      throw new Error(`Cannot restore '${file.path}': another entry resolves to the same file`);
+    // Two claims per entry, because two names reach one file two different ways. Folding the
+    // path catches the pair a case-insensitive or normalizing volume would merge, which no
+    // filesystem here can be asked about because neither name exists yet. An identity catches
+    // the pair that is already one file, which no spelling reveals: hard links. Either way a
+    // write goes through to the same bytes, so the entry written last would decide what both
+    // names hold and neither entry would be restored as the backup recorded it.
+    for (const claim of [
+      collisionKey(destination),
+      existing === null ? null : `${existing.dev}:${existing.ino}`,
+    ]) {
+      if (claim === null) continue;
+      if (claimed.has(claim)) {
+        throw new Error(`Cannot restore '${file.path}': another entry resolves to the same file`);
+      }
+      claimed.add(claim);
     }
-    claimed.add(claim);
     const content = await resolveRestoredContent(options.muxRoot, file);
     budget(file.path, content.byteLength);
     writes.push({ destination, content, executable: file.executable === true });

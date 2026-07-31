@@ -1605,6 +1605,33 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain(command);
   });
 
+  it("refuses a restore whose entries are already one local file", async () => {
+    // Hard-linked locally, so a write to either name goes through to the same bytes and the
+    // entry written last would decide what both hold. Neither would be restored as recorded.
+    await write(muxRoot, "skills/demo/first.md", "first\n");
+    await write(muxRoot, "skills/demo/second.md", "second\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "linked-entries");
+    await writeBackupPayload(destination, payload);
+    await fs.rm(path.join(muxRoot, "skills/demo/second.md"));
+    await fs.link(
+      path.join(muxRoot, "skills/demo/first.md"),
+      path.join(muxRoot, "skills/demo/second.md")
+    );
+
+    const rejected = await rejection(
+      restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) })
+    );
+
+    expect((rejected as Error).message).toContain("another entry resolves to the same file");
+    // Refused before the first write, so the local file still holds what it did.
+    expect(await fs.readFile(path.join(muxRoot, "skills/demo/first.md"), "utf-8")).toBe("first\n");
+  });
+
   it("reports a local file the restore writes under another name as restored", async () => {
     // Several names for one file, as a case-insensitive or normalizing volume makes of
     // `note.md` and its other spellings. Restoring the backup's spelling rewrites what every
