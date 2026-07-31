@@ -24,6 +24,17 @@ const TOKEN_HELPER = '!f(){ echo username=x-access-token; echo "password=$MUX_BA
 
 export type BackupCredential = BackupCredentialKind;
 
+export class BackupRemoteUnreachableError extends Error {
+  readonly code = "REMOTE_UNREACHABLE";
+
+  constructor(cause: unknown) {
+    super("Could not reach the backup repository. Check the URL and your network connection.", {
+      cause,
+    });
+    this.name = "BackupRemoteUnreachableError";
+  }
+}
+
 export class BackupAuthFailedError extends Error {
   readonly code = "AUTH_FAILED";
 
@@ -167,10 +178,24 @@ const AUTH_FAILURE_PATTERN =
 const LOCAL_FILESYSTEM_FAILURE_PATTERN =
   /unable to write|insufficient permission for adding an object|no space left on device|read-only file system/i;
 
+/**
+ * Reaching the remote fails through curl, ssh, or git's own resolver depending on the
+ * transport, so the wording varies. Only checked once a failure is known not to be an
+ * authentication problem, which keeps credential classification unchanged.
+ */
+const REMOTE_UNREACHABLE_PATTERN =
+  /could not resolve (?:host|hostname|proxy)|name or service not known|temporary failure in name resolution|connection (?:refused|timed out|reset)|network is (?:unreachable|down)|no route to host|failed to connect to|couldn't connect to server|operation timed out|returned error: 5\d\d|service unavailable|bad gateway|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i;
+
 function isAuthenticationFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (LOCAL_FILESYSTEM_FAILURE_PATTERN.test(message)) return false;
   return AUTH_FAILURE_PATTERN.test(message);
+}
+
+function isRemoteUnreachable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (LOCAL_FILESYSTEM_FAILURE_PATTERN.test(message)) return false;
+  return REMOTE_UNREACHABLE_PATTERN.test(message);
 }
 
 export async function runGitWithCredentialLadder(
@@ -192,6 +217,9 @@ export async function runGitWithCredentialLadder(
       return { credential: controlled.credential, ...result };
     } catch (error) {
       if (!isAuthenticationFailure(error)) {
+        // A remote we cannot reach will not become reachable on the next rung, so this both
+        // classifies the failure and stops the ladder early.
+        if (isRemoteUnreachable(error)) throw new BackupRemoteUnreachableError(error);
         throw error;
       }
     }
@@ -214,6 +242,7 @@ export async function runGitWithCredentialLadder(
     // Every rung has now failed. A raw git error carries a numeric exit code, which the
     // service cannot distinguish from a local filesystem failure.
     if (isAuthenticationFailure(error)) throw new BackupAuthFailedError(error);
+    if (isRemoteUnreachable(error)) throw new BackupRemoteUnreachableError(error);
     throw error;
   }
 }

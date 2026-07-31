@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { BackupAuthFailedError, isGitHubRepoUrl, runGitWithCredentialLadder } from "./credentials";
+import {
+  BackupAuthFailedError,
+  BackupRemoteUnreachableError,
+  isGitHubRepoUrl,
+  runGitWithCredentialLadder,
+} from "./credentials";
 
 async function withPath<T>(binDir: string, run: () => Promise<T>): Promise<T> {
   const originalPath = process.env.PATH;
@@ -262,6 +267,72 @@ exit 128
     // that phrase alone would blame the credential for a full or read-only disk.
     expect(caught).not.toBeInstanceOf(BackupAuthFailedError);
     expect((caught as Error).message).toContain("unable to write sha1 filename");
+  });
+
+  it("reports an unreachable remote instead of a local IO failure, and stops the ladder", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'printf "attempt\\n" >> "$GIT_LOG"',
+        "echo \"fatal: unable to access 'https://nope.invalid/repo.git/': Could not resolve host: nope.invalid\" >&2",
+        "exit 128",
+        "",
+      ].join("\n")
+    );
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", "https://nope.invalid/repo.git"], {
+          repoUrl: "https://nope.invalid/repo.git",
+          token: "test-token",
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BackupRemoteUnreachableError);
+    expect((caught as BackupRemoteUnreachableError).code).toBe("REMOTE_UNREACHABLE");
+    // Retrying an unreachable host on every remaining rung only delays the error.
+    expect((await fs.readFile(logPath, "utf-8")).trim().split("\n")).toHaveLength(1);
+  });
+
+  it("blames a full disk rather than the network when a fetch reports both", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    // Writing objects while streaming means one failure can surface both diagnostics. The
+    // local disk is the actionable cause, so it must win over the connection message.
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'echo "fatal: write error: No space left on device" >&2',
+        'echo "fatal: connection reset by peer" >&2',
+        "exit 128",
+        "",
+      ].join("\n")
+    );
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["fetch", "origin"], {
+          repoUrl: "https://example.com/repo.git",
+          token: "test-token",
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBeInstanceOf(BackupRemoteUnreachableError);
+    expect((caught as Error).message).toContain("No space left on device");
   });
 
   it("keeps the ambient fallback non-interactive too", async () => {
