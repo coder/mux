@@ -5230,15 +5230,10 @@ export function useWorkspaceActivityHydrated(): boolean {
 /** Rounded chrome value: identical raw-stat updates keep the snapshot primitive stable. */
 export function useWorkspaceRoundedStreamingTps(workspaceId: string): number | null {
   const store = getStoreInstance();
-  const subscribe = useCallback(
+  return useSyncExternalStore(
     (listener: () => void) => store.subscribeStreamingStats(workspaceId, listener),
-    [store, workspaceId]
+    () => store.getWorkspaceRoundedStreamingTps(workspaceId)
   );
-  const getSnapshot = useCallback(
-    () => store.getWorkspaceRoundedStreamingTps(workspaceId),
-    [store, workspaceId]
-  );
-  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 /**
