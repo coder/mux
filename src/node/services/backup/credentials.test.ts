@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isGitHubRepoUrl, runGitWithCredentialLadder } from "./credentials";
+import { BackupAuthFailedError, isGitHubRepoUrl, runGitWithCredentialLadder } from "./credentials";
 
 async function withPath<T>(binDir: string, run: () => Promise<T>): Promise<T> {
   const originalPath = process.env.PATH;
@@ -134,6 +134,67 @@ esac
     if (first === undefined || second === undefined) throw new Error("Expected two git attempts");
     expect(first).toContain("credential.helper=");
     expect(second).toBe("fetch\norigin\n");
+  });
+
+  it("reports an exhausted credential ladder as an authentication failure", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+echo 'fatal: Authentication failed for https://example.com/repo.git' >&2
+exit 128
+`
+    );
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["fetch", "origin"], {
+          repoUrl: "https://example.com/repo.git",
+          token: "test-token",
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BackupAuthFailedError);
+    // The service maps any error it cannot classify to IO_ERROR, which would tell the
+    // user their disk failed when their credential is what expired.
+    expect((caught as BackupAuthFailedError).code).toBe("AUTH_FAILED");
+  });
+
+  it("leaves a non-authentication ambient failure unclassified", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+case "$*" in
+  *credential.helper*) echo 'Authentication failed' >&2; exit 1 ;;
+esac
+echo 'fatal: unable to write file' >&2
+exit 128
+`
+    );
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["fetch", "origin"], {
+          repoUrl: "https://example.com/repo.git",
+          token: "test-token",
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).not.toBeInstanceOf(BackupAuthFailedError);
+    expect((caught as Error).message).toContain("unable to write file");
   });
 
   it("makes SSH controlled attempts non-interactive", async () => {

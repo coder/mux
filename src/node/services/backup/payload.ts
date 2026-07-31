@@ -251,6 +251,33 @@ export function serializeBackupPreferences(preferences: unknown): Buffer {
   );
 }
 
+type Appearance = NonNullable<UserPreferences["appearance"]>;
+
+/**
+ * `editorConfig` is excluded on purpose. `customCommand` is executed as a shell command
+ * by `EditorService.openInEditor`, so restoring it from a repository would let whoever
+ * can write to that repository run a command here. The editor is machine-local anyway,
+ * since its binary has to exist on the machine.
+ */
+const BACKED_UP_APPEARANCE_FIELDS = [
+  "theme",
+  "transcriptDensity",
+  "bashCollapsedSummaryMode",
+  "terminalFontConfig",
+  "vimEnabled",
+] as const satisfies ReadonlyArray<keyof Appearance>;
+
+function projectAppearance(value: Appearance | undefined): Appearance | undefined {
+  if (!value) return undefined;
+  const projected: Appearance = {};
+  for (const field of BACKED_UP_APPEARANCE_FIELDS) {
+    if (value[field] !== undefined) {
+      Object.assign(projected, { [field]: copyJson(value[field]) });
+    }
+  }
+  return Object.keys(projected).length > 0 ? projected : undefined;
+}
+
 /**
  * Providers whose option schema is a closed `z.object`, so parsing already dropped
  * undeclared keys. The rest (`google`, `ollama`, `openrouter`) are
@@ -276,7 +303,8 @@ export function projectBackupPreferences(value: unknown): UserPreferences {
   const parsed = UserPreferencesSchema.parse(value ?? {});
   const projected: UserPreferences = {};
 
-  if (parsed.appearance) projected.appearance = copyJson(parsed.appearance);
+  const appearance = projectAppearance(parsed.appearance);
+  if (appearance !== undefined) projected.appearance = appearance;
   if (parsed.navigation?.launchBehavior !== undefined) {
     projected.navigation = { launchBehavior: parsed.navigation.launchBehavior };
   }
@@ -389,14 +417,16 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
 
 const CREDENTIAL_NAME = String.raw`[\w-]*(?:key|token|secret|password|auth|credential)[\w-]*`;
 const CREDENTIAL_VALUE = String.raw`"[^"]*"|'[^']*'|\S+`;
+/** A shell accepts `=`, one space, several spaces, or a tab between a flag and its value. */
+const FLAG_SEPARATOR = String.raw`(?:=[ \t]*|[ \t]+)`;
 const CREDENTIAL_ARGUMENT_PATTERNS = [
   // --api-key sk-1, --api-key=sk-1, --api-key "sk 1"
-  new RegExp(String.raw`(--?${CREDENTIAL_NAME}[= ])(${CREDENTIAL_VALUE})`, "gi"),
+  new RegExp(String.raw`(--?${CREDENTIAL_NAME}${FLAG_SEPARATOR})(${CREDENTIAL_VALUE})`, "gi"),
   // API_KEY=sk-1 npx server
-  new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=)(${CREDENTIAL_VALUE})`, "gi"),
+  new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=[ \t]*)(${CREDENTIAL_VALUE})`, "gi"),
 ];
 
-const HEADER_FLAG = String.raw`(?:--header|--head|-H)[= ]\s*`;
+const HEADER_FLAG = String.raw`(?:--header|--head|-H)${FLAG_SEPARATOR}`;
 /**
  * Quote-aware so an unquoted value stops at whitespace. A greedy value would swallow the
  * following arguments, and a restore onto a fresh machine has no local value to put back.

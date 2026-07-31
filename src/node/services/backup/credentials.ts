@@ -11,6 +11,18 @@ const TOKEN_HELPER = '!f(){ echo username=x-access-token; echo "password=$MUX_BA
 
 export type BackupCredential = BackupCredentialKind;
 
+export class BackupAuthFailedError extends Error {
+  readonly code = "AUTH_FAILED";
+
+  constructor(cause: unknown) {
+    super(
+      "Could not authenticate to the backup repository. Check your SSH key, `gh auth login`, or GH_TOKEN.",
+      { cause }
+    );
+    this.name = "BackupAuthFailedError";
+  }
+}
+
 export interface GitCredentialOptions extends ExecFileAsyncOptions {
   repoUrl: string;
   token?: string;
@@ -147,9 +159,16 @@ export async function runGitWithCredentialLadder(
     }
   }
 
-  const result = await run("git", args, {
-    ...baseOptions,
-    env: { ...options.env, ...NON_INTERACTIVE_ENV },
-  });
-  return { credential: "ambient", ...result };
+  try {
+    const result = await run("git", args, {
+      ...baseOptions,
+      env: { ...options.env, ...NON_INTERACTIVE_ENV },
+    });
+    return { credential: "ambient", ...result };
+  } catch (error) {
+    // Every rung has now failed. A raw git error carries a numeric exit code, which the
+    // service cannot distinguish from a local filesystem failure.
+    if (isAuthenticationFailure(error)) throw new BackupAuthFailedError(error);
+    throw error;
+  }
 }
