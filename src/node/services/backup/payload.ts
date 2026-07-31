@@ -195,30 +195,34 @@ async function lstatOrNull(target: string) {
 }
 
 /**
- * The collected local file each payload path would write over, absent when the payload path
- * names nothing collected, which is the ordinary case of a file the restore creates.
+ * Every collected local path that is the same file as a given payload path, absent when the
+ * payload path names nothing collected, which is the ordinary case of a file restore creates.
  *
  * Comparing the spellings cannot answer this. On a case-insensitive or normalization-folding
  * volume `skills/demo/Foo.md` and `skills/demo/foo.md` are one file, and on a case-sensitive
  * one they are two, so folding is wrong on the second and a literal match is wrong on the
- * first. Only the filesystem knows which it is, so ask it: two paths name one file when it
- * reports one identity for them.
+ * first. Only the filesystem knows which it is, so ask it: paths name one file when it
+ * reports one identity for them. All of them are kept, because a hard link means an identity
+ * can have any number of names and writing the file changes what every one of them reads.
  */
 async function localFilesOverwrittenByPayload(
   muxRoot: string,
   localPaths: Iterable<string>,
   payloadPaths: Iterable<string>
-): Promise<Map<string, string>> {
-  const byIdentity = new Map<string, string>();
+): Promise<Map<string, string[]>> {
+  const byIdentity = new Map<string, string[]>();
   for (const localPath of localPaths) {
     const identity = await fileIdentity(muxRoot, localPath);
-    if (identity !== null) byIdentity.set(identity, localPath);
+    if (identity === null) continue;
+    const names = byIdentity.get(identity);
+    if (names === undefined) byIdentity.set(identity, [localPath]);
+    else names.push(localPath);
   }
-  const overwritten = new Map<string, string>();
+  const overwritten = new Map<string, string[]>();
   for (const payloadPath of payloadPaths) {
     const identity = await fileIdentity(muxRoot, payloadPath);
-    const localPath = identity === null ? undefined : byIdentity.get(identity);
-    if (localPath !== undefined) overwritten.set(payloadPath, localPath);
+    const names = identity === null ? undefined : byIdentity.get(identity);
+    if (names !== undefined) overwritten.set(payloadPath, names);
   }
   return overwritten;
 }
@@ -236,10 +240,10 @@ export async function localOnlyPayloadFiles(
   muxRoot: string,
   localPaths: Iterable<string>,
   restoredPaths: ReadonlySet<string>
-): Promise<{ localOnly: string[]; overwritten: Map<string, string> }> {
+): Promise<{ localOnly: string[]; overwritten: Map<string, string[]> }> {
   const locals = [...localPaths];
   const overwritten = await localFilesOverwrittenByPayload(muxRoot, locals, restoredPaths);
-  const overwrittenLocals = new Set(overwritten.values());
+  const overwrittenLocals = new Set([...overwritten.values()].flat());
   return {
     localOnly: locals
       .filter((file) => !restoredPaths.has(file) && !overwrittenLocals.has(file))

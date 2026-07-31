@@ -578,19 +578,20 @@ describe("backup adapters", () => {
   });
 
   it("does not promise to keep a local file the restore writes under another name", async () => {
-    // A hard link is two names for one file on every filesystem, which is what a
-    // case-insensitive or normalizing volume makes of `Note.md` and `note.md`. The backup
-    // carries one spelling, so restoring it changes the other name's contents too and neither
-    // can be reported as kept.
+    // Hard links give one file several names, as a case-insensitive or normalizing volume
+    // does for `note.md`, `Note.md` and `NOTE.md`. The backup carries one spelling, so
+    // restoring it changes what every other name reads and none of them is kept.
     await writeMuxFile("skills/demo/note.md", "shared\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
-    await fs.link(
-      path.join(muxRoot, "skills/demo/note.md"),
-      path.join(muxRoot, "skills/demo/Note.md")
-    );
+    for (const alias of ["Note.md", "NOTE.md"]) {
+      await fs.link(
+        path.join(muxRoot, "skills/demo/note.md"),
+        path.join(muxRoot, "skills/demo", alias)
+      );
+    }
     await fs.writeFile(path.join(muxRoot, "skills/demo/note.md"), "edited locally\n", "utf-8");
 
     const preview = await payload.previewRestore({

@@ -223,9 +223,10 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
           }
           continue;
         }
-        // Under the spelling the filesystem actually resolves this path to, so a restore
-        // that overwrites a differently-cased local file reads as a change to it.
-        const existing = local.get(overwritten.get(file.path) ?? file.path);
+        // Under a spelling the filesystem actually resolves this path to, so a restore that
+        // overwrites a differently-cased local file reads as a change to it. Any alias will
+        // do: they are one file, so they read the same content and mode.
+        const existing = local.get(overwritten.get(file.path)?.[0] ?? file.path);
         if (!existing) {
           changes.push({ status: "A", path: file.path });
           continue;

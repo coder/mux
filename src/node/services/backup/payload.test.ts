@@ -1606,8 +1606,9 @@ describe("backup payload", () => {
   });
 
   it("reports a local file the restore writes under another name as restored", async () => {
-    // Two names for one file, as a case-insensitive or normalizing volume makes of `Note.md`
-    // and `note.md`. Restoring the backup's spelling rewrites both, so neither is local-only.
+    // Several names for one file, as a case-insensitive or normalizing volume makes of
+    // `note.md` and its other spellings. Restoring the backup's spelling rewrites what every
+    // one of them reads, so none is local-only.
     await write(muxRoot, "skills/demo/note.md", "shared\n");
     const payload = await createBackupPayload({
       muxRoot,
@@ -1616,10 +1617,12 @@ describe("backup payload", () => {
     });
     const destination = path.join(tempDir, "linked-name");
     await writeBackupPayload(destination, payload);
-    await fs.link(
-      path.join(muxRoot, "skills/demo/note.md"),
-      path.join(muxRoot, "skills/demo/Note.md")
-    );
+    for (const alias of ["Note.md", "NOTE.md"]) {
+      await fs.link(
+        path.join(muxRoot, "skills/demo/note.md"),
+        path.join(muxRoot, "skills/demo", alias)
+      );
+    }
 
     const result = await restoreBackupPayload({
       muxRoot,
