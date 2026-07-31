@@ -46,6 +46,17 @@ MUX_DISABLE_TELEMETRY=1 mux
 
 This disables telemetry collection at the backend level.
 
+## Optional AI tracing
+
+Mux can export OpenInference traces for agent turns to an
+[AgentPond](https://github.com/marcusschiesser/agentpond) Files SDK environment.
+This is separate from anonymous usage telemetry and remains disabled unless
+`FILES_SDK_PROVIDER` and the selected provider's environment variables are set
+before Mux starts.
+
+Prompt and response content is never included in these traces. They contain
+operation, model, timing, and token-usage metadata.
+
 ## Source code
 
 - **Payload definitions**: [`src/common/telemetry/payload.ts`](https://github.com/coder/mux/blob/main/src/common/telemetry/payload.ts)

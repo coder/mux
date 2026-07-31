@@ -85,6 +85,9 @@ docs/mermaid.min.js
 # AI SDK DevTools (local dev only)
 .devtools
 
+# AgentPond local trace environments
+.agentpond/
+
 # Nix
 .envrc
 .direnv

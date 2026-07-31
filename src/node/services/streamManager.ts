@@ -89,6 +89,7 @@ import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
+import { agentPondTelemetry } from "./agentPondTracing";
 
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -1858,6 +1859,7 @@ export class StreamManager extends EventEmitter {
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
       headers: request.headers, // Per-request HTTP headers (e.g., anthropic-beta for 1M context)
       maxOutputTokens: request.maxOutputTokens,
+      ...(agentPondTelemetry !== undefined ? { telemetry: agentPondTelemetry } : {}),
       ...(request.streamCallSettings ?? {}),
     });
   }
