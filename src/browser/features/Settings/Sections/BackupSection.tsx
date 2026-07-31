@@ -3,6 +3,7 @@ import { ArchiveRestore, CheckCircle2, CloudUpload, RefreshCw } from "lucide-rea
 import { Button } from "@/browser/components/Button/Button";
 import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { Input } from "@/browser/components/Input/Input";
 import { useAPI, type APIClient } from "@/browser/contexts/API";
 import {
@@ -454,15 +455,18 @@ export function BackupSection() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Button
-            size="sm"
-            onClick={() => void handleSave()}
-            disabled={busy || !isDirty}
-            title={`Save settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_SAVE)})`}
-            className="w-full sm:w-auto"
+          <TooltipIfPresent
+            tooltip={`Save settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_SAVE)})`}
           >
-            {saving ? "Saving..." : "Save settings"}
-          </Button>
+            <Button
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={busy || !isDirty}
+              className="w-full sm:w-auto"
+            >
+              {saving ? "Saving..." : "Save settings"}
+            </Button>
+          </TooltipIfPresent>
           {isDirty ? <span className="text-warning text-xs">Unsaved changes</span> : null}
         </div>
         {saveError ? <p className="text-error text-xs">{saveError}</p> : null}
@@ -496,17 +500,20 @@ export function BackupSection() {
               Mux tries SSH, GitHub CLI credentials, configured tokens, then system git credentials.
             </p>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleValidate()}
-            disabled={busy || isDirty || !configured}
-            title={`Validate repository (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_VALIDATE)})`}
-            className="w-full shrink-0 sm:w-auto"
+          <TooltipIfPresent
+            tooltip={`Validate repository (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_VALIDATE)})`}
           >
-            <RefreshCw className={activeAction === "validate" ? "animate-spin" : ""} />
-            Validate
-          </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleValidate()}
+              disabled={busy || isDirty || !configured}
+              className="w-full shrink-0 sm:w-auto"
+            >
+              <RefreshCw className={activeAction === "validate" ? "animate-spin" : ""} />
+              Validate
+            </Button>
+          </TooltipIfPresent>
         </div>
         {validation ? (
           <div className="bg-background-secondary rounded-md px-3 py-2 text-xs">
@@ -530,16 +537,19 @@ export function BackupSection() {
               Review what a backup would write and what a restore would change locally.
             </p>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void handlePreview()}
-            disabled={busy || isDirty || !configured}
-            title={`Preview changes (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PREVIEW)})`}
-            className="w-full shrink-0 sm:w-auto"
+          <TooltipIfPresent
+            tooltip={`Preview changes (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PREVIEW)})`}
           >
-            Preview changes
-          </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handlePreview()}
+              disabled={busy || isDirty || !configured}
+              className="w-full shrink-0 sm:w-auto"
+            >
+              Preview changes
+            </Button>
+          </TooltipIfPresent>
         </div>
 
         {preview ? (
@@ -622,25 +632,31 @@ export function BackupSection() {
       {statusMessage ? <div className="text-success text-xs">{statusMessage}</div> : null}
 
       <section className="border-border-light flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center">
-        <Button
-          onClick={() => void handlePush()}
-          disabled={busy || isDirty || !configured}
-          title={`Back up settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PUSH)})`}
-          className="w-full sm:w-auto"
+        <TooltipIfPresent
+          tooltip={`Back up settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PUSH)})`}
         >
-          <CloudUpload />
-          {activeAction === "push" ? "Backing up..." : "Back up now"}
-        </Button>
-        <Button
-          variant="destructive"
-          onClick={openRestoreConfirmation}
-          disabled={busy || isDirty || !configured}
-          title={`Restore settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_RESTORE)})`}
-          className="w-full sm:w-auto"
+          <Button
+            onClick={() => void handlePush()}
+            disabled={busy || isDirty || !configured}
+            className="w-full sm:w-auto"
+          >
+            <CloudUpload />
+            {activeAction === "push" ? "Backing up..." : "Back up now"}
+          </Button>
+        </TooltipIfPresent>
+        <TooltipIfPresent
+          tooltip={`Restore settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_RESTORE)})`}
         >
-          <ArchiveRestore />
-          Restore
-        </Button>
+          <Button
+            variant="destructive"
+            onClick={openRestoreConfirmation}
+            disabled={busy || isDirty || !configured}
+            className="w-full sm:w-auto"
+          >
+            <ArchiveRestore />
+            Restore
+          </Button>
+        </TooltipIfPresent>
       </section>
 
       {commandApprovals.length > 0 ? (
