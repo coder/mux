@@ -195,7 +195,17 @@ function isAuthenticationFailure(error: unknown): boolean {
 function isRemoteUnreachable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (LOCAL_FILESYSTEM_FAILURE_PATTERN.test(message)) return false;
+  // A blackholed remote produces no diagnostic at all: the timeout kills git, so the only
+  // evidence is the signal. Local git calls are fast and fail with their own message, so a
+  // killed network command is a stalled remote rather than a local problem.
+  if (isSignalTermination(error)) return true;
   return REMOTE_UNREACHABLE_PATTERN.test(message);
+}
+
+function isSignalTermination(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const signal = (error as Error & { signal?: unknown }).signal;
+  return typeof signal === "string" && signal !== "";
 }
 
 export async function runGitWithCredentialLadder(

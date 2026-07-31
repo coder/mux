@@ -309,6 +309,13 @@ export class BackupService {
         previous?.repoUrl === settings.repoUrl &&
         previous.branch === settings.branch &&
         previous.path === settings.path;
+      // Recording a commit must not resurrect the repository this operation started against.
+      // A long push or restore can finish after another window saved a different repository,
+      // and rewriting the whole tuple here would silently revert that newer configuration.
+      if (previous !== undefined && !sameRepository && Object.keys(commitUpdate).length > 0) {
+        saved = previous;
+        return current;
+      }
       saved = {
         ...settings,
         ...(sameRepository

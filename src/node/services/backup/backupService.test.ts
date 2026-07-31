@@ -259,6 +259,23 @@ describe("BackupService", () => {
     expect(result.error.code).toBe("INVALID_BACKUP");
   });
 
+  test("does not revert a repository saved while a push was still running", async () => {
+    const config = createTestConfig(tempDir);
+    const service = new BackupService(config, {
+      gitRepo: createGitRepo(),
+      payload: createPayload(),
+    });
+    await service.saveSettings(SETTINGS);
+
+    // Another window repoints the backup while the push above is still in flight.
+    const other = { ...SETTINGS, repoUrl: "https://example.com/other.git" };
+    await service.saveSettings(other);
+    await service.push(SETTINGS);
+
+    const stored = service.getSettings();
+    expect(stored?.repoUrl).toBe(other.repoUrl);
+  });
+
   test("rejects a managed path Git for Windows could not check out", async () => {
     // Payload validation only covers paths inside the managed directory, so a reserved or
     // invalid prefix chosen here would make every otherwise-valid file unusable on Windows.

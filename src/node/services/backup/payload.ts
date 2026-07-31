@@ -142,7 +142,16 @@ function isAllowedPayloadPath(relativePath: string): boolean {
   return /^memory\/global\/.+/.test(relativePath);
 }
 
-function assertAllowedPayloadPath(relativePath: string): void {
+/**
+ * `portable: false` is only for the local safety snapshot. That copy never leaves the machine,
+ * so rejecting a name this filesystem accepts would abort a restore over a file it is trying
+ * to protect. Every containment and allowlist rule still applies; only the cross-platform
+ * portability check is relaxed.
+ */
+function assertAllowedPayloadPath(
+  relativePath: string,
+  options: { portable: boolean } = { portable: true }
+): void {
   if (
     !isAllowedPayloadPath(relativePath) ||
     path.isAbsolute(relativePath) ||
@@ -153,7 +162,10 @@ function assertAllowedPayloadPath(relativePath: string): void {
     relativePath
       .split("/")
       .some(
-        (segment) => segment === ".." || isHiddenName(segment) || isWindowsUnusableSegment(segment)
+        (segment) =>
+          segment === ".." ||
+          isHiddenName(segment) ||
+          (options.portable && isWindowsUnusableSegment(segment))
       ) ||
     isForbiddenBasename(path.posix.basename(relativePath))
   ) {
@@ -689,11 +701,13 @@ async function applyExecuteBit(filePath: string, executable: boolean): Promise<v
 
 export async function writeBackupPayload(
   destinationDir: string,
-  payload: BackupPayload
+  payload: BackupPayload,
+  options: { portable?: boolean } = {}
 ): Promise<void> {
+  const portable = options.portable !== false;
   const claimed = new Set<string>();
   for (const file of payload.files) {
-    assertAllowedPayloadPath(file.path);
+    assertAllowedPayloadPath(file.path, { portable });
     // Case-folded: a collision only a case-sensitive source can produce would make the
     // published backup unreadable everywhere, including here.
     const claim = file.path.toLowerCase();

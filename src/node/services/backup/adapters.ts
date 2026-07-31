@@ -253,7 +253,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
     async writeSafetySnapshot(snapshotRoot) {
       // Unredacted: this copy never leaves the machine, and a redacted snapshot could
       // not restore a credential whose MCP server the restore removed.
-      await writeBackupPayload(snapshotRoot, await buildPayload({ keepLocalSecrets: true }));
+      await writeBackupPayload(snapshotRoot, await buildPayload({ keepLocalSecrets: true }), {
+        portable: false,
+      });
     },
 
     async restore(restoreOptions) {

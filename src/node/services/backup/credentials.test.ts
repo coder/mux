@@ -302,6 +302,32 @@ exit 128
     expect((await fs.readFile(logPath, "utf-8")).trim().split("\n")).toHaveLength(1);
   });
 
+  it("reports a stalled remote when the timeout kills git without a diagnostic", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    // A blackholed remote prints nothing, so the only evidence is the signal. Without this,
+    // the timeout surfaces as IO_ERROR and points the user at their local disk.
+    // `exec` so the timeout's signal reaches sleep itself; a shell wrapper would be killed
+    // while its child kept the stdio pipes open.
+    await writeExecutable(path.join(binDir, "git"), "#!/bin/sh\nexec sleep 30\n");
+
+    let caught: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", "https://blackhole.example/repo.git"], {
+          repoUrl: "https://blackhole.example/repo.git",
+          token: "test-token",
+          timeoutMs: 250,
+          env: { GIT_LOG: logPath },
+        })
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BackupRemoteUnreachableError);
+  });
+
   it("blames the local cache when git cannot write FETCH_HEAD", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
