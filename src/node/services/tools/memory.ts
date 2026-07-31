@@ -49,14 +49,22 @@ export function resolveMemoryAccessPolicy(options: {
  * Build the dynamic memory tool description: the base description plus the
  * session-segment memory index (same disclosure mechanic as skills — index
  * advertised next to the tool schema, contents fetched on demand). Falls back
- * to the base description when no snapshot was resolved.
+ * to the base description when no snapshot was resolved. Exported so the
+ * stream setup can refresh an already-created tool's description when a
+ * memory change lands during async tool assembly.
  */
-function buildMemoryDescription(config: ToolConfiguration): string {
+export function buildMemoryToolDescription(
+  memoryIndexEntries: ToolConfiguration["memoryIndexEntries"]
+): string {
   const baseDescription = TOOL_DEFINITIONS.memory.description;
-  if (config.memoryIndexEntries == null) {
+  if (memoryIndexEntries == null) {
     return baseDescription;
   }
-  return `${baseDescription}\n\n${formatMemoryIndexForToolDescription(config.memoryIndexEntries)}`;
+  return `${baseDescription}\n\n${formatMemoryIndexForToolDescription(memoryIndexEntries)}`;
+}
+
+function buildMemoryDescription(config: ToolConfiguration): string {
+  return buildMemoryToolDescription(config.memoryIndexEntries);
 }
 
 /**
