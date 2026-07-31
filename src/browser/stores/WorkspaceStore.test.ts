@@ -5808,6 +5808,15 @@ describe("WorkspaceStore", () => {
       ]);
     });
 
+    it("normalizes queued live batches that arrive oldest-first", () => {
+      const queuedLive = [event(5), event(6)];
+      const retained = [event(4), event(3), event(2)];
+
+      expect(mergeTimelineEvents(queuedLive, retained).map((item) => item.seq)).toEqual([
+        6, 5, 4, 3, 2,
+      ]);
+    });
+
     it("appends older pages without reordering retained history", () => {
       const retained = [event(6), event(5), event(4)];
       const older = [event(3), event(2)];

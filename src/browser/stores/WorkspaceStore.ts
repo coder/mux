@@ -102,23 +102,33 @@ export function mergeTimelineEvents(
   fallback: TimelineEvent[]
 ): TimelineEvent[] {
   if (preferred.length === 0) return fallback;
-  if (fallback.length === 0) return preferred;
+  if (fallback.length === 0) {
+    return preferred.every((event, index) => index === 0 || preferred[index - 1].seq > event.seq)
+      ? preferred
+      : preferred.toSorted((a, b) => b.seq - a.seq);
+  }
 
-  // Timeline pages and live batches are already newest-first. Keep the common non-overlapping paths
-  // linear and allocation-light instead of rebuilding an ID set and sorting the whole retained feed.
-  const preferredOldest = preferred[preferred.length - 1];
+  // Pages are newest-first, but live events queued while the initial snapshot is built can arrive as
+  // one oldest-first batch. Normalize only that uncommon case before taking the linear fast paths.
+  const orderedPreferred = preferred.every(
+    (event, index) => index === 0 || preferred[index - 1].seq > event.seq
+  )
+    ? preferred
+    : preferred.toSorted((a, b) => b.seq - a.seq);
+
+  const preferredOldest = orderedPreferred[orderedPreferred.length - 1];
   const fallbackNewest = fallback[0];
   if (preferredOldest && fallbackNewest && preferredOldest.seq > fallbackNewest.seq) {
-    return [...preferred, ...fallback];
+    return [...orderedPreferred, ...fallback];
   }
   const fallbackOldest = fallback[fallback.length - 1];
-  const preferredNewest = preferred[0];
+  const preferredNewest = orderedPreferred[0];
   if (fallbackOldest && preferredNewest && fallbackOldest.seq > preferredNewest.seq) {
-    return [...fallback, ...preferred];
+    return [...fallback, ...orderedPreferred];
   }
 
-  const preferredIds = new Set(preferred.map((event) => event.id));
-  return [...preferred, ...fallback.filter((event) => !preferredIds.has(event.id))].toSorted(
+  const preferredIds = new Set(orderedPreferred.map((event) => event.id));
+  return [...orderedPreferred, ...fallback.filter((event) => !preferredIds.has(event.id))].toSorted(
     (a, b) => b.seq - a.seq
   );
 }
