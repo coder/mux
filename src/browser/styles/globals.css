@@ -65,9 +65,11 @@
     --color-ask-mode-light: hsl(246 100% 85%);
     --color-ask-mode-alpha: hsla(246 100% 68% / 0.1);
 
-    --color-exec-mode: hsl(268.56 94.04% 55.19%);
-    --color-exec-mode-hover: hsl(268.56 94.04% 67%);
-    --color-exec-mode-light: hsl(268.56 94.04% 78%);
+    /* Preserve the prior purple hue, but raise its lightness so the Exec label stays legible on the
+      redesigned dark composer surface. */
+    --color-exec-mode: hsl(268.56 90% 68%);
+    --color-exec-mode-hover: hsl(268.56 90% 75%);
+    --color-exec-mode-light: hsl(268.56 90% 82%);
 
     /* Edit mode: amber/gold for editing warnings and barriers */
     --color-edit-mode: hsl(38 80% 45%);
