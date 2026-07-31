@@ -724,7 +724,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
   const { open } = useSettings();
-  const { selectedWorkspace } = useWorkspaceContext();
+  const { selectedWorkspace, beginWorkspaceCreation } = useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
@@ -1087,6 +1087,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // the draft (pendingSubProjectPath / creationSubProjectPath); both
           // routes (deep link to a sub-project, or sidebar "+") collapse here.
           selectedProjectPath: creationSubProjectPath ?? props.projectPath,
+          userProjects,
+          onSelectedProjectPathChange: beginWorkspaceCreation,
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,

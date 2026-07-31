@@ -119,16 +119,13 @@ import {
   computeWorkBundleInfos,
 } from "@/browser/utils/messages/transcriptRenderProjection";
 import { isBlockedPreStreamTaskStatus } from "@/browser/utils/ui/workspaceFiltering";
-import { recordSyntheticReactRenderSample } from "@/browser/utils/perf/reactProfileCollector";
+import { PerfRenderMarker } from "@/browser/utils/perf/PerfRenderMarker";
 import {
   CUSTOM_EVENTS,
   type CustomEventType,
   type CustomEventPayloads,
 } from "@/common/constants/events";
 
-// Perf e2e runs load the production bundle where React's onRender profiler callbacks may not
-// fire. This marker records synthetic commit timings for selected subtrees so automated perf
-// runs still capture render-path metrics for workspace-open regressions.
 const TRANSCRIPT_ONLY_NOTICE =
   "This workspace's worktree is no longer available. This is a read-only chat transcript kept for historical and usage-tracking reasons.";
 
@@ -142,34 +139,6 @@ function findTailProposePlanToolId(messages: readonly DisplayedMessage[]): strin
   }
 
   return null;
-}
-
-function PerfRenderMarker(props: { id: string; children: React.ReactNode }): React.ReactElement {
-  const renderStartTimeRef = useRef(performance.now());
-  renderStartTimeRef.current = performance.now();
-  const hasProfiledMountRef = useRef(false);
-
-  useLayoutEffect(() => {
-    if (window.api?.enableReactPerfProfile !== true) {
-      return;
-    }
-
-    const commitTime = performance.now();
-    const actualDuration = Math.max(0, commitTime - renderStartTimeRef.current);
-    const phase = hasProfiledMountRef.current ? "update" : "mount";
-    hasProfiledMountRef.current = true;
-
-    recordSyntheticReactRenderSample({
-      id: props.id,
-      phase,
-      actualDuration,
-      baseDuration: actualDuration,
-      startTime: renderStartTimeRef.current,
-      commitTime,
-    });
-  });
-
-  return <>{props.children}</>;
 }
 
 function isPixelSnapshotEnvironment(): boolean {

@@ -1,11 +1,7 @@
+import path from "path";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
+import { profileChatInputTyping } from "../utils/chatInputPerf";
 import { seedWorkspaceHistoryProfile } from "../utils/historyFixture";
-import {
-  readReactProfileSnapshot,
-  resetReactProfileSamples,
-  withChromeProfiles,
-  writePerfArtifacts,
-} from "../utils/perfProfile";
 
 const shouldRunPerfScenarios = process.env.MUX_E2E_RUN_PERF === "1";
 
@@ -36,40 +32,51 @@ test.describe("chat typing performance profiling", () => {
     });
 
     const input = page.getByRole("textbox", { name: "Message Claude" });
-    await expect(input).toBeVisible({ timeout: 20_000 });
     await input.fill("");
 
-    await resetReactProfileSamples(page);
-
-    const runLabel = "chat-typing-large-history";
-    const chromeProfile = await withChromeProfiles(page, { label: runLabel }, async () => {
-      await input.click();
-      await input.pressSequentially(TYPING_SAMPLE, { delay: 0 });
-      await expect(input).toHaveValue(TYPING_SAMPLE);
-    });
-
-    const reactProfileSnapshot = await readReactProfileSnapshot(page);
-    if (!reactProfileSnapshot) {
-      throw new Error("React profile snapshot was not captured");
-    }
-
-    const artifactDirectory = await writePerfArtifacts({
+    const { chromeProfile, reactProfile } = await profileChatInputTyping({
+      page,
       testInfo,
-      runLabel,
-      chromeProfile,
-      reactProfile: reactProfileSnapshot,
+      runLabel: "chat-typing-large-history",
+      sample: TYPING_SAMPLE,
+      input,
       historyProfile: historySummary,
     });
 
     // The composer owns draft text locally; typing must not re-render the large transcript.
-    expect(reactProfileSnapshot.byProfilerId["chat-pane.transcript"]?.sampleCount ?? 0).toBe(0);
+    expect(reactProfile.byProfilerId["chat-pane.transcript"]?.sampleCount ?? 0).toBe(0);
     expect(chromeProfile.wallTimeMs).toBeLessThan(2_500);
     expect(chromeProfile.cpuProfile).not.toBeNull();
-    expect(reactProfileSnapshot.enabled).toBe(true);
+    expect(reactProfile.enabled).toBe(true);
+  });
 
-    testInfo.annotations.push({
-      type: "perf-artifact",
-      description: artifactDirectory,
+  test("perf: type in the New Workspace composer", async ({ page, workspace }, testInfo) => {
+    const projectName = path.basename(workspace.demoProject.projectPath);
+    await page.getByRole("button", { name: `Create workspace in ${projectName}` }).click();
+
+    const input = page.getByRole("textbox", { name: "Message Claude" });
+    await expect(input).toBeVisible({ timeout: 20_000 });
+
+    // Make the draft non-empty before sampling. Subsequent typing should update
+    // the input without rerendering static creation controls.
+    await input.fill("D");
+
+    const { chromeProfile, reactProfile } = await profileChatInputTyping({
+      page,
+      testInfo,
+      runLabel: "chat-typing-new-workspace",
+      sample: TYPING_SAMPLE.slice(1),
+      input,
+      initialValue: "D",
     });
+
+    // Auto-naming may publish one debounced state update during a long typing sample,
+    // but static creation controls must not rerender once per character.
+    expect(
+      reactProfile.byProfilerId["chat-input.creation-controls"]?.sampleCount ?? 0
+    ).toBeLessThanOrEqual(1);
+    expect(chromeProfile.wallTimeMs).toBeLessThan(2_500);
+    expect(chromeProfile.cpuProfile).not.toBeNull();
+    expect(reactProfile.enabled).toBe(true);
   });
 });

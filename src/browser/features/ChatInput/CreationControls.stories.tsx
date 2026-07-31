@@ -127,6 +127,8 @@ const DEVCONTAINER_BASE_CREATION_CONTROLS_PROPS: Omit<
   onSetDefaultRuntime: fn(),
   disabled: false,
   projectPath: "/home/user/projects/my-app",
+  userProjects: new Map(),
+  onSelectedProjectPathChange: fn(),
   projectName: "my-app",
   nameState: {
     name: "devcontainer-story",
@@ -341,6 +343,8 @@ const CREATION_ERROR_BASE_CONTROLS_PROPS = {
   onSetDefaultRuntime: fn(),
   disabled: false,
   projectPath: CREATION_PROJECT_PATH,
+  userProjects: new Map(),
+  onSelectedProjectPathChange: fn(),
   projectName: "my-project",
   runtimeAvailabilityState: BASE_ARGS.runtimeAvailabilityState,
   nameState: BASE_CREATION_NAME_STATE,

@@ -21,10 +21,10 @@ import {
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { GitBranch, Loader2, Wand2 } from "lucide-react";
-import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import type { ProjectConfig } from "@/common/types/project";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
+import { usePerfRenderMarker } from "@/browser/utils/perf/PerfRenderMarker";
 import { cn } from "@/common/lib/utils";
 import { formatNameGenerationError } from "@/common/utils/errors/formatNameGenerationError";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/Tooltip/Tooltip";
@@ -127,6 +127,9 @@ interface CreationControlsProps {
    * {@link projectPath} when omitted.
    */
   selectedProjectPath?: string;
+  /** Stable project data passed by ChatInput so typing does not subscribe this form to broad contexts. */
+  userProjects: Map<string, ProjectConfig>;
+  onSelectedProjectPathChange: (path: string) => void;
   /** Project name to display as header */
   projectName: string;
   /** Workspace name/title generation state and actions */
@@ -521,9 +524,8 @@ export function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Prominent controls shown above the input during workspace creation.
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
-export function CreationControls(props: CreationControlsProps) {
-  const { userProjects } = useProjectContext();
-  const { beginWorkspaceCreation } = useWorkspaceContext();
+function CreationControlsInner(props: CreationControlsProps) {
+  usePerfRenderMarker("chat-input.creation-controls");
   const { nameState, runtimeAvailabilityState } = props;
 
   // Extract mode from discriminated union for convenience
@@ -739,12 +741,9 @@ export function CreationControls(props: CreationControlsProps) {
           // selecting "gbot/bbot" would show "gbot" because props.projectPath
           // is normalized to the owning parent for runtime/config scoping.
           const selected = props.selectedProjectPath ?? props.projectPath;
-          const selectedLabel = formatProjectHierarchyLabel(selected, userProjects);
-          return userProjects.size > 1 ? (
-            <RadixSelect
-              value={selected}
-              onValueChange={(path: string) => beginWorkspaceCreation(path)}
-            >
+          const selectedLabel = formatProjectHierarchyLabel(selected, props.userProjects);
+          return props.userProjects.size > 1 ? (
+            <RadixSelect value={selected} onValueChange={props.onSelectedProjectPathChange}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <SelectTrigger
@@ -765,9 +764,9 @@ export function CreationControls(props: CreationControlsProps) {
                 <TooltipContent align="start">{selected}</TooltipContent>
               </Tooltip>
               <SelectContent>
-                {Array.from(userProjects.keys()).map((path) => (
+                {Array.from(props.userProjects.keys()).map((path) => (
                   <SelectItem key={path} value={path}>
-                    {formatProjectHierarchyLabel(path, userProjects)}
+                    {formatProjectHierarchyLabel(path, props.userProjects)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1143,3 +1142,75 @@ export function CreationControls(props: CreationControlsProps) {
     </div>
   );
 }
+
+function runtimeEnablementEqual(
+  previous: RuntimeEnablement | undefined,
+  next: RuntimeEnablement | undefined
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  return RUNTIME_CHOICE_ORDER.every((mode) => previous[mode] === next[mode]);
+}
+
+function nameStateEqual(previous: WorkspaceNameState, next: WorkspaceNameState): boolean {
+  return (
+    previous.name === next.name &&
+    previous.title === next.title &&
+    previous.isGenerating === next.isGenerating &&
+    previous.autoGenerate === next.autoGenerate &&
+    previous.error === next.error &&
+    previous.setAutoGenerate === next.setAutoGenerate &&
+    previous.setName === next.setName
+  );
+}
+
+function coderPropsEqual(
+  previous: CreationControlsProps["coderProps"],
+  next: CreationControlsProps["coderProps"]
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+
+  // Callback identities can be recreated by ChatInput's creation hooks while the
+  // runtime data is unchanged. Any dependency that changes their behavior also
+  // changes one of the data props below, which refreshes this boundary.
+  return (
+    previous.enabled === next.enabled &&
+    previous.coderInfo === next.coderInfo &&
+    previous.coderConfig === next.coderConfig &&
+    previous.templates === next.templates &&
+    previous.templatesError === next.templatesError &&
+    previous.presets === next.presets &&
+    previous.presetsError === next.presetsError &&
+    previous.existingWorkspaces === next.existingWorkspaces &&
+    previous.workspacesError === next.workspacesError &&
+    previous.loadingTemplates === next.loadingTemplates &&
+    previous.loadingPresets === next.loadingPresets &&
+    previous.loadingWorkspaces === next.loadingWorkspaces
+  );
+}
+
+function creationControlsPropsEqual(
+  previous: CreationControlsProps,
+  next: CreationControlsProps
+): boolean {
+  const keys = Object.keys(previous) as Array<keyof CreationControlsProps>;
+  if (keys.length !== Object.keys(next).length) return false;
+
+  return keys.every((key) => {
+    if (key === "nameState") return nameStateEqual(previous.nameState, next.nameState);
+    if (key === "coderProps") return coderPropsEqual(previous.coderProps, next.coderProps);
+    if (key === "onSelectedRuntimeChange") return true;
+    if (key === "runtimeEnablement") {
+      return runtimeEnablementEqual(previous.runtimeEnablement, next.runtimeEnablement);
+    }
+    return previous[key] === next[key];
+  });
+}
+
+// CreationControls is intentionally isolated from ChatInput's hot draft-text state.
+// React Compiler cannot optimize ChatInput today because of unsupported async control
+// flow in that component, so this explicit boundary prevents rebuilding the runtime
+// and project selectors on every character while still refreshing on semantic changes.
+export const CreationControls = React.memo(CreationControlsInner, creationControlsPropsEqual);
+CreationControls.displayName = "CreationControls";
