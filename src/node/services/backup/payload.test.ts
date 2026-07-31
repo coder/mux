@@ -4,9 +4,11 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as jsonc from "jsonc-parser";
+import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import {
   REDACTED_BACKUP_VALUE,
   createBackupPayload,
+  serializeBackupPreferences,
   readBackupPayload,
   restoreBackupPayload,
   scanBackupFilesForSecrets,
@@ -162,6 +164,47 @@ describe("backup payload", () => {
     expect(payload.redactions).toEqual(["servers.api.headers.Authorization", "servers.api.url"]);
   });
 
+  it("never exports through a symlink, a nested .git, or an open provider record", async () => {
+    await write(tempDir, "outside-secret.txt", "company secret\n");
+    await fs.symlink(path.join(tempDir, "outside-secret.txt"), path.join(muxRoot, "AGENTS.md"));
+    await fs.mkdir(path.join(tempDir, "outside-skills", "leaked"), { recursive: true });
+    await write(tempDir, "outside-skills/leaked/SKILL.md", "outside skill\n");
+    await fs.symlink(path.join(tempDir, "outside-skills"), path.join(muxRoot, "skills"));
+    await write(muxRoot, "memory/global/demo/.git/config", "url = https://token@host/repo\n");
+    await write(muxRoot, "memory/global/demo/note.md", "kept\n");
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      preferences: {
+        ai: {
+          providerOptions: {
+            anthropic: { use1MContext: true },
+            google: { apiKey: "hunter2" },
+          },
+        },
+      },
+    });
+
+    const paths = payload.files.map((file) => file.path);
+    expect(paths).toEqual(["memory/global/demo/note.md", "preferences.json"]);
+    const everything = Buffer.concat(payload.files.map((file) => file.content)).toString("utf-8");
+    for (const secret of ["company secret", "outside skill", "https://token@host", "hunter2"]) {
+      expect(everything).not.toContain(secret);
+    }
+    expect(everything).toContain("use1MContext");
+  });
+
+  it("keeps no undeclared provider option out of the payload", () => {
+    for (const provider of Object.keys(MuxProviderOptionsSchema.shape)) {
+      const serialized = serializeBackupPreferences({
+        ai: { providerOptions: { [provider]: { apiKey: "hunter2" } } },
+      }).toString("utf-8");
+      expect(serialized).not.toContain("hunter2");
+    }
+  });
+
   it("redacts credentials in stdio MCP commands but keeps shell env references", async () => {
     await write(
       muxRoot,
@@ -171,6 +214,9 @@ describe("backup payload", () => {
     "object": { "command": "npx server --api-key sk-live-object --port 3000" },
     "bare": "env ACME_PASSWORD=hunter2 acme-mcp",
     "header": { "command": "acme-mcp --header 'Authorization: Bearer sk-live-header'" },
+    "basic": { "command": "mcp-proxy --header 'Authorization: Basic dXNlcjpwYXNz'" },
+    "apiKeyHeader": { "command": "mcp-proxy --header 'X-API-Key: hunter2'" },
+    "plainHeader": { "command": "mcp-proxy --header 'Accept: application/json'" },
     "leading": { "command": "PASSWORD=sk-live-leading acme-mcp" },
     "url": { "command": "npx mcp-remote https://host.example/mcp?api_key=hunter2&mode=fast" },
     "quoted": { "command": "acme-mcp --api-key \\"two word secret\\"" },
@@ -191,6 +237,9 @@ describe("backup payload", () => {
         object: { command: string };
         bare: string;
         header: { command: string };
+        basic: { command: string };
+        apiKeyHeader: { command: string };
+        plainHeader: { command: string };
         leading: { command: string };
         url: { command: string };
         quoted: { command: string };
@@ -204,8 +253,17 @@ describe("backup payload", () => {
     );
     expect(mcp.servers.bare).toBe(`env ACME_PASSWORD=${REDACTED_BACKUP_VALUE} acme-mcp`);
     expect(mcp.servers.header.command).toBe(
-      `acme-mcp --header 'Authorization: Bearer ${REDACTED_BACKUP_VALUE}'`
+      `acme-mcp --header 'Authorization: ${REDACTED_BACKUP_VALUE}'`
     );
+    // Any authorization scheme, not just Bearer.
+    expect(mcp.servers.basic.command).toBe(
+      `mcp-proxy --header 'Authorization: ${REDACTED_BACKUP_VALUE}'`
+    );
+    expect(mcp.servers.apiKeyHeader.command).toBe(
+      `mcp-proxy --header 'X-API-Key: ${REDACTED_BACKUP_VALUE}'`
+    );
+    // A non-credential header stays intact so a fresh restore keeps working.
+    expect(mcp.servers.plainHeader.command).toBe("mcp-proxy --header 'Accept: application/json'");
     expect(mcp.servers.leading.command).toBe(`PASSWORD=${REDACTED_BACKUP_VALUE} acme-mcp`);
     expect(mcp.servers.url.command).toContain("mode=fast");
     expect(mcp.servers.url.command).not.toContain("hunter2");
@@ -217,6 +275,8 @@ describe("backup payload", () => {
       "servers.object.command",
       "servers.bare",
       "servers.header.command",
+      "servers.basic.command",
+      "servers.apiKeyHeader.command",
       "servers.leading.command",
       "servers.url.command",
       "servers.quoted.command",

@@ -110,7 +110,9 @@ function assertAllowedPayloadPath(relativePath: string): void {
     // here but a separator on Windows, so `skills/..\..\evil` would escape the
     // destination once path.join runs there.
     relativePath.includes("\\") ||
-    relativePath.split("/").includes("..") ||
+    // A skill installed by cloning carries a .git directory holding an object
+    // database and remote URLs with credentials. It is never part of a settings backup.
+    relativePath.split("/").some((segment) => segment === ".." || segment === ".git") ||
     FORBIDDEN_BASENAMES.has(path.posix.basename(relativePath))
   ) {
     throw new Error(`Backup contains disallowed path '${relativePath}'`);
@@ -168,21 +170,35 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
+/**
+ * lstat, not stat: a symlinked entry would let the closed allowlist export whatever it
+ * points at (`AGENTS.md -> ~/company-secrets.txt`). Symlinks are not backed up.
+ */
+async function isRegularFile(filePath: string): Promise<boolean> {
+  return (await lstatOrNull(filePath))?.isFile() === true;
+}
+
 async function collectDirectory(
   root: string,
   relativeRoot: string,
   filter: (relativePath: string, entry: Dirent) => boolean,
   output: BackupFile[]
 ): Promise<void> {
+  const absoluteRoot = path.join(root, ...relativeRoot.split("/"));
+  // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
+  // refuses to write through symlinks anyway, so they are simply not backed up.
+  if ((await lstatOrNull(absoluteRoot))?.isSymbolicLink() === true) return;
+
   let entries: Dirent[];
   try {
-    entries = await fs.readdir(path.join(root, relativeRoot), { withFileTypes: true });
+    entries = await fs.readdir(absoluteRoot, { withFileTypes: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.name === ".git") continue;
     const relativePath = toPosixPath(relativeRoot, entry.name);
     if (!filter(relativePath, entry)) continue;
     if (entry.isDirectory()) {
@@ -196,7 +212,7 @@ async function collectDirectory(
 export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
   const files: BackupFile[] = [];
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
-    if (await fileExists(path.join(muxRoot, relativePath))) {
+    if (await isRegularFile(path.join(muxRoot, relativePath))) {
       files.push(await readBackupFile(muxRoot, relativePath));
     }
   }
@@ -223,6 +239,27 @@ export function serializeBackupPreferences(preferences: unknown): Buffer {
   );
 }
 
+/**
+ * Providers whose option schema is a closed `z.object`, so parsing already dropped
+ * undeclared keys. The rest (`google`, `ollama`, `openrouter`) are
+ * `z.record(z.string(), z.unknown())`, which would carry an `apiKey` straight into the
+ * backup, so they are excluded. A provider added later is excluded until it is listed
+ * here, which fails closed.
+ */
+const BACKED_UP_PROVIDER_OPTIONS = ["anthropic", "openai", "xai"] as const;
+
+type BackupProviderOptions = NonNullable<NonNullable<UserPreferences["ai"]>["providerOptions"]>;
+
+function projectProviderOptions(value: unknown): BackupProviderOptions | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const source = value as Record<string, unknown>;
+  const projected: Record<string, unknown> = {};
+  for (const provider of BACKED_UP_PROVIDER_OPTIONS) {
+    if (source[provider] !== undefined) projected[provider] = copyJson(source[provider]);
+  }
+  return Object.keys(projected).length > 0 ? (projected as BackupProviderOptions) : undefined;
+}
+
 export function projectBackupPreferences(value: unknown): UserPreferences {
   const parsed = UserPreferencesSchema.parse(value ?? {});
   const projected: UserPreferences = {};
@@ -236,9 +273,8 @@ export function projectBackupPreferences(value: unknown): UserPreferences {
     if (parsed.ai.globalDefaults !== undefined) {
       ai.globalDefaults = copyJson(parsed.ai.globalDefaults);
     }
-    if (parsed.ai.providerOptions !== undefined) {
-      ai.providerOptions = copyJson(parsed.ai.providerOptions);
-    }
+    const providerOptions = projectProviderOptions(parsed.ai.providerOptions);
+    if (providerOptions !== undefined) ai.providerOptions = providerOptions;
     if (parsed.ai.autoCompactionThresholdByModel !== undefined) {
       ai.autoCompactionThresholdByModel = copyJson(parsed.ai.autoCompactionThresholdByModel);
     }
@@ -331,9 +367,18 @@ const CREDENTIAL_ARGUMENT_PATTERNS = [
   new RegExp(String.raw`(--?${CREDENTIAL_NAME}[= ])(${CREDENTIAL_VALUE})`, "gi"),
   // API_KEY=sk-1 npx server
   new RegExp(String.raw`((?:^|\s)${CREDENTIAL_NAME}=)(${CREDENTIAL_VALUE})`, "gi"),
-  // --header "Authorization: Bearer sk-1"
-  /(\bBearer\s+)([^\s"']+)/gi,
 ];
+
+/** `--header 'Authorization: Basic ...'`, `-H "X-API-Key: ..."` */
+const HEADER_ARGUMENT_PATTERN = /((?:--header|--head|-H)[= ]\s*["']?)([\w-]+)(\s*:\s*)([^"'\n]*)/gi;
+
+/**
+ * `Authorization` does not match `isSensitiveParamName`, whose word boundaries suit
+ * query parameters, so name the authorization headers explicitly.
+ */
+function isSensitiveHeaderName(name: string): boolean {
+  return /^(?:authorization|proxy-authorization|cookie)$/i.test(name) || isSensitiveParamName(name);
+}
 
 /**
  * `bash -c` runs the command (LocalBaseRuntime.exec), so an unquoted or double-quoted
@@ -354,6 +399,14 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
     if (redactedUrl.redacted) redacted = true;
     return redactedUrl.value;
   });
+  value = value.replace(
+    HEADER_ARGUMENT_PATTERN,
+    (match, flag: string, name: string, separator: string, headerValue: string) => {
+      if (!isSensitiveHeaderName(name) || isShellReference(headerValue.trim())) return match;
+      redacted = true;
+      return `${flag}${name}${separator}${REDACTED_BACKUP_VALUE}`;
+    }
+  );
   for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
     value = value.replace(pattern, (match, flag: string, secret: string) => {
       if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
