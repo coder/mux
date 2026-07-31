@@ -520,14 +520,23 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
     value = value.replace(
       PAIRED_CREDENTIAL_PATTERN,
       (match, flag: string, doubled?: string, singled?: string, bare?: string) => {
-        if (!new RegExp(`^${PAIRED_CREDENTIAL_FLAG}$`).test(flag.replace(/[=\s]+$/, "")))
-          return match;
+        const name = flag.replace(/[=\s]+$/, "");
+        if (!new RegExp(`^${PAIRED_CREDENTIAL_FLAG}$`).test(name)) return match;
         const pair = doubled ?? singled ?? bare;
         if (pair === undefined) return match;
-        const separator = pair.indexOf(":");
+        const isCert = name === "-E" || name === "--cert";
+        // `curl --manual`: a `-E` value starting with `pkcs11:` is a PKCS#11 URI, and its
+        // colon is part of the URI rather than an optional password delimiter.
+        if (isCert && /^pkcs11:/i.test(pair)) return match;
+        // `<certificate[:password]>` puts the password last, so a certificate path
+        // containing a colon (a Windows drive letter) keeps its own colon.
+        const separator = isCert ? pair.lastIndexOf(":") : pair.indexOf(":");
         const user = pair.slice(0, separator);
         const password = pair.slice(separator + 1);
         if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;
+        // A path separator marks this half as the rest of the certificate path, not a
+        // password, as in an unadorned `-E C:\certs\client.pem`.
+        if (isCert && /[\\/]/.test(password)) return match;
         // A numeric pair is a uid:gid, as in a `docker run -u 1000:1000` sharing the
         // command line with a curl call.
         if (/^\d+$/.test(user) && /^\d+$/.test(password)) return match;
@@ -864,6 +873,22 @@ export async function readBackupPayload(sourceDir: string): Promise<BackupPayloa
   }
 }
 
+/**
+ * An absent file here means the manifest describes content the repository does not have,
+ * which is a corrupt backup rather than a local disk problem. Any other errno still belongs
+ * to the local filesystem and keeps its own error.
+ */
+async function readManifestEntry(sourceDir: string, relativePath: string): Promise<Buffer> {
+  try {
+    return await fs.readFile(await resolveContainedPath(sourceDir, relativePath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(`Backup is missing '${relativePath}'`);
+    }
+    throw error;
+  }
+}
+
 async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
   const manifestPath = await resolveContainedPath(sourceDir, "manifest.json");
   const manifest = parseManifest(await fs.readFile(manifestPath, "utf-8"));
@@ -875,7 +900,7 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
     const key = manifestFile.path.toLowerCase();
     if (seen.has(key)) throw new Error(`Duplicate backup path '${manifestFile.path}'`);
     seen.add(key);
-    const content = await fs.readFile(await resolveContainedPath(sourceDir, manifestFile.path));
+    const content = await readManifestEntry(sourceDir, manifestFile.path);
     if (sha256(content) !== manifestFile.sha256) {
       throw new Error(`Backup checksum mismatch for '${manifestFile.path}'`);
     }

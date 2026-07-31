@@ -403,6 +403,11 @@ describe("backup payload", () => {
     "quotedUser": { "command": "curl -u \\"alice:two word\\" https://host.example" },
     "bareUser": { "command": "curl -u alice https://host.example" },
     "plainCert": { "command": "curl -E /certs/client.pem https://host.example" },
+    "pkcs11Cert": { "command": "curl -E pkcs11:object=my-cert https://host.example" },
+    "windowsCert": { "command": "curl -E C:\\\\certs\\\\client.pem https://host.example" },
+    "windowsCertPass": {
+      "command": "curl -E C:\\\\certs\\\\client.pem:certpass https://host.example"
+    },
     "uidGid": { "command": "docker run -u 1000:1000 image && curl https://host.example" },
     "otherTool": { "command": "docker run -u alice:staff image" },
     "regexFlag": { "command": "sh -c \\"sed -E 's/a:b/c/' | mcp-stdio\\"" },
@@ -446,6 +451,16 @@ describe("backup payload", () => {
     // No credential to remove, so these keep working on a machine with no local value.
     expect(mcp.servers.bareUser?.command).toBe("curl -u alice https://host.example");
     expect(mcp.servers.plainCert?.command).toBe("curl -E /certs/client.pem https://host.example");
+    // `curl --manual`: a `pkcs11:` value is a URI, so its colon is not a delimiter.
+    expect(mcp.servers.pkcs11Cert?.command).toBe(
+      "curl -E pkcs11:object=my-cert https://host.example"
+    );
+    expect(mcp.servers.windowsCert?.command).toBe(
+      "curl -E C:\\certs\\client.pem https://host.example"
+    );
+    expect(mcp.servers.windowsCertPass?.command).toBe(
+      `curl -E C:\\certs\\client.pem:${REDACTED_BACKUP_VALUE} https://host.example`
+    );
     expect(mcp.servers.uidGid?.command).toBe(
       "docker run -u 1000:1000 image && curl https://host.example"
     );
@@ -481,6 +496,23 @@ describe("backup payload", () => {
     // A missing directory is a filesystem failure, so it must not be blamed on the backup.
     const missing = await rejection(readBackupPayload(path.join(tempDir, "absent")));
     expect((missing as { code?: string }).code).toBe("ENOENT");
+  });
+
+  it("reports a manifest entry with no file as an invalid backup", async () => {
+    await write(muxRoot, "AGENTS.md", "backed up\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "incomplete-payload");
+    await writeBackupPayload(destination, payload);
+
+    // The manifest still promises AGENTS.md, so the repository, not the local disk, is wrong.
+    await fs.rm(path.join(destination, "AGENTS.md"));
+    const error = await rejection(readBackupPayload(destination));
+    expect((error as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((error as Error).message).toContain("AGENTS.md");
   });
 
   it("blocks a restore that would change an executable MCP command until it is approved", async () => {
