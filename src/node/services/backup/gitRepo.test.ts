@@ -115,6 +115,48 @@ describe("BackupRepoCache", () => {
     expect(tracked.split("\n")).toContain("mux/AGENTS.md");
   });
 
+  it("keeps payload bytes verbatim when git is asked to convert line endings", async () => {
+    const seed = path.join(tempDir, "crlf-seed");
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "line one\nline two\n", "utf-8");
+    // The backup repository asking for conversion itself, which outranks any config setting.
+    await fs.writeFile(path.join(seed, ".gitattributes"), "* text=auto eol=crlf\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "-c", "core.autocrlf=false", "add", "-A"]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "ask for crlf",
+    ]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    // core.autocrlf=true is an ordinary Windows setting. The manifest records a SHA-256 per
+    // file and a restore writes what it reads, so any conversion here corrupts both.
+    const globalConfig = path.join(tempDir, "converting-gitconfig");
+    await fs.writeFile(globalConfig, "[core]\n\tautocrlf = true\n", "utf-8");
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+      env: { ...process.env, GIT_CONFIG_GLOBAL: globalConfig },
+    });
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await fs.readFile(path.join(repo.cachePath, "mux/AGENTS.md"), "utf-8")).toBe(
+      "line one\nline two\n"
+    );
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });

@@ -345,6 +345,26 @@ describe("backup adapters", () => {
     ).toBe("blob:none");
   });
 
+  it("refuses a cache whose push url is not the configured repository", async () => {
+    await writeMuxFile("AGENTS.md", "first\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    await gitRepo.prepare(settings);
+    // `pushurl` overrides the url for pushes only, so the fetch url stays the expected one.
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    const elsewhere = path.join(tempDir, "elsewhere.git");
+    await git(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
+    await git(["-C", cachePath, "config", "remote.origin.pushurl", elsewhere]);
+
+    const refused = await createBackupGitRepo({ cacheRoot })
+      .prepare(settings)
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((refused as Error | null)?.message).toContain("Backup cache origin");
+  });
+
   it("does not recreate deleted history when the remote branch is gone", async () => {
     await writeMuxFile("AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

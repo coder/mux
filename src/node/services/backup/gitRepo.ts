@@ -14,6 +14,27 @@ import {
  */
 const BLOB_FILTER = "blob:none";
 
+/**
+ * The payload is bytes, not text: the manifest records a SHA-256 per file and a restore writes
+ * what it reads. Any end-of-line conversion in the cache worktree therefore breaks the checksum
+ * and would put the rewritten bytes on the user's disk. `core.autocrlf=true` is an ordinary
+ * Windows setting, and `core.eol` reaches the same conversion, so both are pinned off on the
+ * cache repository rather than passed per command: a git command run there by hand then behaves
+ * the same way.
+ */
+const VERBATIM_CONTENT_CONFIG: ReadonlyArray<readonly [string, string]> = [
+  ["core.autocrlf", "false"],
+  ["core.eol", "lf"],
+];
+
+/**
+ * Config alone is not enough: `.gitattributes` in the backup repository outranks it, so a
+ * dotfiles repo carrying `* text=auto eol=crlf` still converts (verified against git 2.54).
+ * `.git/info/attributes` is the per-repository layer that outranks the tree's own file, and
+ * `-text` there declines conversion for every path.
+ */
+const VERBATIM_ATTRIBUTES = "* -text\n";
+
 const GIT_IDENTITY_ARGS = [
   "-c",
   "user.name=Mux Settings Backup",
@@ -182,6 +203,15 @@ export class BackupRepoCache {
     };
   }
 
+  private async pinVerbatimContent(): Promise<void> {
+    for (const [key, value] of VERBATIM_CONTENT_CONFIG) {
+      await this.localGit(["config", key, value]);
+    }
+    const infoDir = path.join(this.cachePath, ".git", "info");
+    await fs.mkdir(infoDir, { recursive: true });
+    await fs.writeFile(path.join(infoDir, "attributes"), VERBATIM_ATTRIBUTES, "utf-8");
+  }
+
   private async hasOriginRemote(): Promise<boolean> {
     try {
       await this.localGit(["remote", "get-url", "origin"]);
@@ -258,10 +288,22 @@ export class BackupRepoCache {
       // broken until the user deleted the cache by hand.
       await this.initEmptyCache();
     }
+    // Re-applied every time rather than only at creation, so a cache made by an earlier version
+    // of this code, or altered since, still reads and writes payload bytes unchanged.
+    await this.pinVerbatimContent();
 
     const actualOrigin = (await this.localGit(["remote", "get-url", "origin"])).stdout.trim();
     if (actualOrigin !== this.options.repoUrl) {
       throw new BackupOriginMismatchError(actualOrigin, this.options.repoUrl);
+    }
+    // `remote.origin.pushurl` overrides the url for pushes only, so the url just checked is not
+    // necessarily where a backup lands. Checking both means the settings a user confirmed name
+    // the repository this cache reads from and the one it writes to.
+    const pushOrigin = (
+      await this.localGit(["remote", "get-url", "--push", "origin"])
+    ).stdout.trim();
+    if (pushOrigin !== this.options.repoUrl) {
+      throw new BackupOriginMismatchError(pushOrigin, this.options.repoUrl);
     }
   }
 
