@@ -264,7 +264,39 @@ exit 128
     expect((caught as Error).message).toContain("unable to write sha1 filename");
   });
 
-  it("makes SSH controlled attempts non-interactive", async () => {
+  it("keeps the ambient fallback non-interactive too", async () => {
+    if (process.platform === "win32") return;
+    // The controlled ssh rung fails authentication, so the ladder reaches ambient. Without
+    // BatchMode there, ssh can sit waiting on a passphrase prompt nobody can answer.
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ ! -f "$GIT_LOG" ]; then',
+        `  printf 'controlled:%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"`,
+        "  echo 'Permission denied (publickey).' >&2",
+        "  exit 128",
+        "fi",
+        `printf 'ambient:%s\\n' "$GIT_SSH_COMMAND" >> "$GIT_LOG"`,
+        "",
+      ].join("\n")
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "ssh" },
+      })
+    );
+
+    expect(result.credential).toBe("ambient");
+    expect((await fs.readFile(logPath, "utf-8")).trim().split("\n")).toEqual([
+      "controlled:ssh -o BatchMode=yes",
+      "ambient:ssh -o BatchMode=yes",
+    ]);
+  });
+
+  it("makes SSH attempts non-interactive without discarding an ssh wrapper", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(
       path.join(binDir, "git"),
@@ -276,11 +308,15 @@ printf '%s\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     const result = await withPath(binDir, () =>
       runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
         repoUrl: "git@example.com:owner/repo.git",
-        env: { GIT_LOG: logPath },
+        // Hosts such as Coder export their own ssh wrapper, and replacing it outright would
+        // break the very key the wrapper exists to supply.
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "/opt/wrapper/ssh -i /keys/id" },
       })
     );
 
     expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe("ssh -o BatchMode=yes");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      "/opt/wrapper/ssh -i /keys/id -o BatchMode=yes"
+    );
   });
 });

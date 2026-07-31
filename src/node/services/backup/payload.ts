@@ -12,7 +12,6 @@ import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 export const BACKUP_SCHEMA_VERSION = 1;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
 
-const GIT_DIRECTORY = ".git";
 const FORBIDDEN_BASENAMES = new Set(
   [
     "providers.jsonc",
@@ -28,6 +27,21 @@ const FORBIDDEN_BASENAMES = new Set(
 /** Case-insensitive: a differently-cased name resolves to the same file on Windows and macOS. */
 function isForbiddenBasename(name: string): boolean {
   return FORBIDDEN_BASENAMES.has(name.toLowerCase());
+}
+
+/**
+ * No hidden file is portable settings content, and the recursive collections (`skills/`,
+ * `memory/global/`) would otherwise sweep up whatever a directory happens to contain. The
+ * names that show up there are credential and tooling files: `.env` and its variants,
+ * `.netrc`, `.npmrc`, and the `.git` directory of a skill installed by cloning, which holds
+ * an object database and remote URLs with credentials. The secret scanner is not a safety
+ * net for these, because a value like `PASSWORD=hunter2` matches none of its patterns.
+ *
+ * Applied to every path segment, so a hidden directory is not backed up either, and shared
+ * with payload validation so a backup cannot deliver one back.
+ */
+function isHiddenName(name: string): boolean {
+  return name.startsWith(".");
 }
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{16,}\b/,
@@ -154,17 +168,10 @@ function assertAllowedPayloadPath(relativePath: string): void {
     // here but a separator on Windows, so `skills/..\..\evil` would escape the
     // destination once path.join runs there.
     relativePath.includes("\\") ||
-    // A skill installed by cloning carries a .git directory holding an object
-    // database and remote URLs with credentials. It is never part of a settings backup.
-    // Compared case-insensitively because `.GIT` resolves to `.git` on a
-    // case-insensitive filesystem, which is the default on Windows and macOS.
     relativePath
       .split("/")
       .some(
-        (segment) =>
-          segment === ".." ||
-          segment.toLowerCase() === GIT_DIRECTORY ||
-          isWindowsUnusableSegment(segment)
+        (segment) => segment === ".." || isHiddenName(segment) || isWindowsUnusableSegment(segment)
       ) ||
     isForbiddenBasename(path.posix.basename(relativePath))
   ) {
@@ -251,7 +258,7 @@ async function collectDirectory(
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name.toLowerCase() === GIT_DIRECTORY) continue;
+    if (isHiddenName(entry.name)) continue;
     const relativePath = toPosixPath(relativeRoot, entry.name);
     if (!filter(relativePath, entry)) continue;
     if (entry.isDirectory()) {

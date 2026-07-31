@@ -206,6 +206,11 @@ describe("backup payload", () => {
     await fs.symlink(path.join(tempDir, "outside-skills"), path.join(muxRoot, "skills"));
     await write(muxRoot, "memory/global/demo/.git/config", "url = https://token@host/repo\n");
     await write(muxRoot, "memory/global/demo/note.md", "kept\n");
+    // A recursive collection would otherwise sweep up whatever a skill directory holds, and
+    // the secret scanner cannot recognise a low-entropy value like this one.
+    await write(muxRoot, "memory/global/demo/.env", "PASSWORD=hunter2\n");
+    await write(muxRoot, "memory/global/demo/.env.local", "API_PASSWORD=letmein\n");
+    await write(muxRoot, "memory/global/demo/.netrc", "machine host login me password pw\n");
 
     const payload = await createBackupPayload({
       muxRoot,
@@ -224,7 +229,14 @@ describe("backup payload", () => {
     const paths = payload.files.map((file) => file.path);
     expect(paths).toEqual(["memory/global/demo/note.md", "preferences.json"]);
     const everything = Buffer.concat(payload.files.map((file) => file.content)).toString("utf-8");
-    for (const secret of ["company secret", "outside skill", "https://token@host", "hunter2"]) {
+    for (const secret of [
+      "company secret",
+      "outside skill",
+      "https://token@host",
+      "hunter2",
+      "letmein",
+      "password pw",
+    ]) {
       expect(everything).not.toContain(secret);
     }
     expect(everything).toContain("use1MContext");

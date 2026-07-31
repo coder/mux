@@ -7,6 +7,19 @@ const NON_INTERACTIVE_ENV = {
   GCM_INTERACTIVE: "never",
 } as const;
 const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
+
+/**
+ * `BatchMode=yes` is what keeps ssh from asking for a password, a key passphrase, or host
+ * key confirmation (`ssh_config(5)`), which a backup running behind a UI button can never
+ * answer: it would just hang Validate, Preview, or Push forever. A command line `-o` beats
+ * ssh_config, and an ambient `GIT_SSH_COMMAND` is extended rather than replaced so a custom
+ * ssh wrapper still gets used.
+ */
+function nonInteractiveSshCommand(env: Record<string, string | undefined> | undefined): string {
+  const ambient = env?.GIT_SSH_COMMAND ?? process.env.GIT_SSH_COMMAND;
+  const base = ambient !== undefined && ambient.trim() !== "" ? ambient : "ssh";
+  return `${base} -o BatchMode=yes`;
+}
 const TOKEN_HELPER = '!f(){ echo username=x-access-token; echo "password=$MUX_BACKUP_TOKEN"; };f';
 
 export type BackupCredential = BackupCredentialKind;
@@ -103,7 +116,7 @@ async function controlledCredentials(
       {
         credential: "ssh",
         argsPrefix: [],
-        env: { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" },
+        env: { GIT_SSH_COMMAND: nonInteractiveSshCommand(options.env) },
       },
     ];
   }
@@ -187,7 +200,14 @@ export async function runGitWithCredentialLadder(
   try {
     const result = await run("git", args, {
       ...baseOptions,
-      env: { ...options.env, ...NON_INTERACTIVE_ENV },
+      // The ambient rung deliberately drops the controlled rungs' credential wiring, but it
+      // must not drop their non-interactivity: an ssh remote reached here would otherwise
+      // prompt for a passphrase and hang the operation.
+      env: {
+        ...options.env,
+        ...NON_INTERACTIVE_ENV,
+        GIT_SSH_COMMAND: nonInteractiveSshCommand(options.env),
+      },
     });
     return { credential: "ambient", ...result };
   } catch (error) {
