@@ -204,15 +204,16 @@ export class BackupRepoCache {
   }
 
   private async pinVerbatimContent(): Promise<void> {
+    // Every component is checked before anything is written, and the attributes file is opened
+    // without following a final link, because this writes to fixed paths inside a directory
+    // other processes can reach. A link at `.git` redirects `git config` into whatever
+    // repository it points at, and one at `.git/info` or the file itself redirects the write
+    // below, so the checks come first and `git config` is not run until `.git` is known good.
+    const gitDir = path.join(this.cachePath, ".git");
+    await assertNotSymlink(gitDir);
     for (const [key, value] of VERBATIM_CONTENT_CONFIG) {
       await this.localGit(["config", key, value]);
     }
-    // Every component is checked, and the file is opened without following a final link,
-    // because this writes to a fixed path inside a directory that other processes can reach:
-    // a link left at `.git`, `.git/info`, or the file itself would otherwise redirect the
-    // write and truncate something outside the cache.
-    const gitDir = path.join(this.cachePath, ".git");
-    await assertNotSymlink(gitDir);
     const infoDir = path.join(gitDir, "info");
     await assertNotSymlink(infoDir);
     await fs.mkdir(infoDir, { recursive: true });

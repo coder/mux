@@ -387,6 +387,29 @@ describe("backup adapters", () => {
     expect(await git(["--git-dir", elsewhere, "for-each-ref", "refs/heads"])).toBe("");
   });
 
+  it("changes no config in another repository behind a symlinked .git", async () => {
+    const outside = path.join(tempDir, "outside-repo");
+    await fs.mkdir(outside, { recursive: true });
+    await git(["init", "--quiet", "--initial-branch=main", outside]);
+    // Matching origin, so only the link itself distinguishes this from a legitimate cache.
+    await git(["-C", outside, "remote", "add", "origin", settings.repoUrl]);
+    await git(["-C", outside, "config", "core.autocrlf", "input"]);
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    await fs.mkdir(cachePath, { recursive: true });
+    await fs.symlink(path.join(outside, ".git"), path.join(cachePath, ".git"));
+    await writeMuxFile("AGENTS.md", "first\n");
+
+    const refused = await createBackupGitRepo({ cacheRoot })
+      .prepare(settings)
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((refused as Error | null)?.message).toContain("is a symlink");
+    expect(await git(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
+  });
+
   it("refuses to write git attributes through a symlinked info directory", async () => {
     await writeMuxFile("AGENTS.md", "first\n");
     await createBackupGitRepo({ cacheRoot }).prepare(settings);
