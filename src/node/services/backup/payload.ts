@@ -446,11 +446,15 @@ const CREDENTIAL_ARGUMENT_PATTERNS = [
 
 /**
  * Flags whose value is a credential even though the flag name contains no credential word.
- * `curl --help all` documents `-u, --user <user:password>` and `-U, --proxy-user
- * <user:password>`; `--pass` is the private key passphrase and `-E, --cert` takes
- * `<certificate[:password]>`. Matched with a `:` requirement so a bare username or a plain
- * certificate path survives and only the `user:password` form is rewritten.
+ * `curl --help all` documents `-u, --user <user:password>`, `-U, --proxy-user
+ * <user:password>`, `-E, --cert <certificate[:password]>`, and `--pass <phrase>`.
+ *
+ * These are curl's spellings, and other tools reuse the same short flags for unrelated
+ * values (`docker run -u alice:staff` is user:group, `sed -E 's/a:b/c/'` is a regex), so
+ * the rule only applies to a command that invokes curl. A `:` is also required and only the
+ * half after it is rewritten, so a bare username or a plain certificate path survives.
  */
+const INVOKES_CURL = /(?:^|[\s/=])curl(?:\s|$)/;
 const PAIRED_CREDENTIAL_FLAG = String.raw`(?:-[uUE]|--user|--proxy-user|--cert)`;
 const PAIRED_CREDENTIAL_PATTERN = new RegExp(
   String.raw`(-{1,2}[\w-]+${FLAG_SEPARATOR})(?:"([^"]*:[^"]*)"|'([^']*:[^']*)'|(\S+:\S*))`,
@@ -512,30 +516,32 @@ function redactCommandCredentials(command: string): { value: string; redacted: b
       return `${flag}${header}${REDACTED_BACKUP_VALUE}`;
     });
   }
-  value = value.replace(
-    PAIRED_CREDENTIAL_PATTERN,
-    (match, flag: string, doubled?: string, singled?: string, bare?: string) => {
-      if (!new RegExp(`^${PAIRED_CREDENTIAL_FLAG}$`).test(flag.replace(/[=\s]+$/, "")))
-        return match;
-      const pair = doubled ?? singled ?? bare;
-      if (pair === undefined) return match;
-      const separator = pair.indexOf(":");
-      const user = pair.slice(0, separator);
-      const password = pair.slice(separator + 1);
-      if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;
-      // `docker run -u 1000:1000` is a uid:gid pair, not a credential, and redacting it
-      // would break the command on a machine with no local value to put back.
-      if (/^\d+$/.test(user) && /^\d+$/.test(password)) return match;
+  if (INVOKES_CURL.test(value)) {
+    value = value.replace(
+      PAIRED_CREDENTIAL_PATTERN,
+      (match, flag: string, doubled?: string, singled?: string, bare?: string) => {
+        if (!new RegExp(`^${PAIRED_CREDENTIAL_FLAG}$`).test(flag.replace(/[=\s]+$/, "")))
+          return match;
+        const pair = doubled ?? singled ?? bare;
+        if (pair === undefined) return match;
+        const separator = pair.indexOf(":");
+        const user = pair.slice(0, separator);
+        const password = pair.slice(separator + 1);
+        if (password === REDACTED_BACKUP_VALUE || isShellReference(password)) return match;
+        // A numeric pair is a uid:gid, as in a `docker run -u 1000:1000` sharing the
+        // command line with a curl call.
+        if (/^\d+$/.test(user) && /^\d+$/.test(password)) return match;
+        redacted = true;
+        const quote = doubled !== undefined ? '"' : singled !== undefined ? "'" : "";
+        return `${flag}${quote}${user}:${REDACTED_BACKUP_VALUE}${quote}`;
+      }
+    );
+    value = value.replace(WHOLE_VALUE_CREDENTIAL_PATTERN, (match, flag: string, secret: string) => {
+      if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
       redacted = true;
-      const quote = doubled !== undefined ? '"' : singled !== undefined ? "'" : "";
-      return `${flag}${quote}${user}:${REDACTED_BACKUP_VALUE}${quote}`;
-    }
-  );
-  value = value.replace(WHOLE_VALUE_CREDENTIAL_PATTERN, (match, flag: string, secret: string) => {
-    if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;
-    redacted = true;
-    return `${flag}${REDACTED_BACKUP_VALUE}`;
-  });
+      return `${flag}${REDACTED_BACKUP_VALUE}`;
+    });
+  }
   for (const pattern of CREDENTIAL_ARGUMENT_PATTERNS) {
     value = value.replace(pattern, (match, flag: string, secret: string) => {
       if (isShellReference(secret) || secret === REDACTED_BACKUP_VALUE) return match;

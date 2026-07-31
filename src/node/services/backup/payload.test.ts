@@ -403,7 +403,9 @@ describe("backup payload", () => {
     "quotedUser": { "command": "curl -u \\"alice:two word\\" https://host.example" },
     "bareUser": { "command": "curl -u alice https://host.example" },
     "plainCert": { "command": "curl -E /certs/client.pem https://host.example" },
-    "uidGid": { "command": "docker run -u 1000:1000 image" },
+    "uidGid": { "command": "docker run -u 1000:1000 image && curl https://host.example" },
+    "otherTool": { "command": "docker run -u alice:staff image" },
+    "regexFlag": { "command": "sh -c \\"sed -E 's/a:b/c/' | mcp-stdio\\"" },
     "reference": { "command": "curl -u alice:$MCP_PASSWORD https://host.example" }
   }
 }
@@ -444,7 +446,12 @@ describe("backup payload", () => {
     // No credential to remove, so these keep working on a machine with no local value.
     expect(mcp.servers.bareUser?.command).toBe("curl -u alice https://host.example");
     expect(mcp.servers.plainCert?.command).toBe("curl -E /certs/client.pem https://host.example");
-    expect(mcp.servers.uidGid?.command).toBe("docker run -u 1000:1000 image");
+    expect(mcp.servers.uidGid?.command).toBe(
+      "docker run -u 1000:1000 image && curl https://host.example"
+    );
+    // The paired flags are curl's spellings; other tools reuse them for other values.
+    expect(mcp.servers.otherTool?.command).toBe("docker run -u alice:staff image");
+    expect(mcp.servers.regexFlag?.command).toBe("sh -c \"sed -E 's/a:b/c/' | mcp-stdio\"");
     expect(mcp.servers.reference?.command).toBe("curl -u alice:$MCP_PASSWORD https://host.example");
 
     const exported = payloadFileText(payload, "mcp.jsonc");
