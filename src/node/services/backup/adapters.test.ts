@@ -8,7 +8,7 @@ import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { createBackupGitRepo, createBackupPayloadStore } from "./adapters";
-import { BackupNonFastForwardError } from "./gitRepo";
+import { BackupNonFastForwardError, backupCachePath } from "./gitRepo";
 
 async function git(args: string[]): Promise<string> {
   using process = execFileAsync("git", args);
@@ -240,6 +240,46 @@ describe("backup adapters", () => {
       managedPath: settings.path,
     });
     expect(preview.changes).toEqual([{ status: "M", path: "AGENTS.md" }]);
+  });
+
+  it("does not fetch branches other than the configured one", async () => {
+    // A settings backup often points at an existing dotfiles repo, whose other branches can
+    // carry far more history than this feature will ever read.
+    await writeMuxFile("AGENTS.md", "first\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+    const first = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
+    await gitRepo.commitAndPush(first, {
+      managedPath: settings.path,
+      message: "Back up Mux settings",
+      expectedRemoteCommit: first.remoteCommit,
+    });
+
+    const unrelated = path.join(tempDir, "unrelated-clone");
+    await git(["clone", "--quiet", originPath, unrelated]);
+    await fs.writeFile(path.join(unrelated, "huge.bin"), "unrelated payload\n", "utf-8");
+    await git(["-C", unrelated, "checkout", "--quiet", "-b", "unrelated"]);
+    await git(["-C", unrelated, "add", "-A"]);
+    await git([
+      "-C",
+      unrelated,
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "user.name=T",
+      "commit",
+      "--quiet",
+      "-m",
+      "unrelated work",
+    ]);
+    await git(["-C", unrelated, "push", "--quiet", "origin", "unrelated"]);
+
+    await gitRepo.prepare(settings);
+
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    const refs = await git(["-C", cachePath, "for-each-ref", "--format=%(refname)"]);
+    expect(refs).not.toContain("unrelated");
   });
 
   it("does not recreate deleted history when the remote branch is gone", async () => {

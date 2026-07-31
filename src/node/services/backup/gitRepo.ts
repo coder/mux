@@ -187,9 +187,18 @@ export class BackupRepoCache {
       }
       // `resetHardToRemote` checks out the configured branch next. `--no-checkout` avoids
       // materializing an unused default branch that might fail on unrelated paths or filters.
+      //
+      // A settings backup often lives in an existing dotfiles repository, and nothing here
+      // ever reads a ref other than `origin/<branch>`. Cloning every branch would transfer
+      // history this feature cannot use, which sparse checkout does not bound because it
+      // limits the working tree and not the transfer. `--single-branch` with no `--branch`
+      // takes the remote's default branch when the configured one does not exist yet, which
+      // is the unborn case `resetToUnbornBranch` already handles.
+      const single = ["clone", "--no-checkout", "--single-branch", "--filter=blob:none"];
+      const remoteHasBranch = (await this.lsRemote()).branchCommit !== null;
+      if (remoteHasBranch) single.push("--branch", this.options.branch);
       await this.networkGit([
-        "clone",
-        "--no-checkout",
+        ...single,
         "--origin",
         "origin",
         this.options.repoUrl,
@@ -204,15 +213,36 @@ export class BackupRepoCache {
   }
 
   async fetch(): Promise<string | null> {
+    // Only the configured branch, for the same reason the clone is single-branch. An explicit
+    // refspec is an error when the remote lacks that branch, unlike the wildcard it replaced,
+    // and an empty or not-yet-created backup branch is an ordinary state here: report it as
+    // unborn rather than failing the operation.
+    const branch = this.options.branch;
+    if ((await this.lsRemote()).branchCommit === null) {
+      await this.pruneMissingRemoteBranch();
+      return null;
+    }
     await this.networkGit([
       "-C",
       this.cachePath,
       "fetch",
-      "--prune",
       "origin",
-      "+refs/heads/*:refs/remotes/origin/*",
+      `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
     ]);
     return await this.remoteBranchCommit();
+  }
+
+  /**
+   * Drops a remote-tracking ref the remote no longer has, which `--prune` did while the fetch
+   * used a wildcard. Without it a cache that still holds the branch from before it was deleted
+   * remotely would push that history back, recreating files the user deleted deliberately.
+   */
+  private async pruneMissingRemoteBranch(): Promise<void> {
+    try {
+      await this.localGit(["update-ref", "-d", `refs/remotes/origin/${this.options.branch}`]);
+    } catch {
+      // Already absent, which is the state this establishes.
+    }
   }
 
   private async remoteBranchCommit(): Promise<string | null> {
