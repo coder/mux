@@ -30,6 +30,12 @@ function TerminalWindowContent(props: { workspaceId: string; sessionId: string }
   );
 }
 
+try {
+  installInactiveAnimationPause();
+} catch {
+  // Animation throttling is an optimization and must never block renderer startup.
+}
+
 installWindowOpenLocalhostProxyNormalization();
 
 // Get workspace ID from query parameter
