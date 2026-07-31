@@ -157,7 +157,7 @@ describe("backup payload", () => {
       muxRoot,
       "mcp.jsonc",
       `{
-  // Keep this comment: mcp.jsonc is a commented format.
+  // Deploy token: commentsecret
   "servers": {
     "api": {
       "url": "https://user:password@example.com/mcp?token=literal&clientSecret=camel2&X-Amz-Signature=deadbeefcafe&mode=fast",
@@ -188,14 +188,16 @@ describe("backup payload", () => {
 
     expect(mcp.servers.api.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
     expect(mcp.servers.api.headers.Secret).toEqual({ secret: "MCP_SECRET" });
-    // No query value survives, whatever the parameter is called: a signed-URL signature and
-    // an ordinary-looking `mode` are both gone, while the names still describe the endpoint.
-    for (const value of ["password", "literal", "camel2", "deadbeefcafe", "fast"]) {
-      expect(mcp.servers.api.url).not.toContain(value);
+    // Nothing about an endpoint is published, not the userinfo, a query value, the path, or
+    // the host: any of them can carry the credential, spelled however the provider chose.
+    expect(mcp.servers.api.url).toBe(REDACTED_BACKUP_VALUE);
+    expect(mcp.servers.plain.url).toBe(REDACTED_BACKUP_VALUE);
+    // Nothing carrying a credential survives, from the url or from a comment: a comment is
+    // prose the projection cannot inspect, so the export reserializes the document.
+    const text = payloadFileText(payload, "mcp.jsonc");
+    for (const value of ["password", "camel2", "deadbeefcafe", "example.com", "commentsecret"]) {
+      expect(text).not.toContain(value);
     }
-    expect(mcp.servers.api.url).toContain("X-Amz-Signature=");
-    expect(mcp.servers.plain.url).toBe(`https://example.com/mcp?mode=${REDACTED_BACKUP_VALUE}`);
-    expect(payloadFileText(payload, "mcp.jsonc")).toContain("// Keep this comment");
     const destination = path.join(tempDir, "redacted-payload");
     await writeBackupPayload(destination, payload);
     expect((await readBackupPayload(destination)).redactions).toEqual(payload.redactions);
@@ -567,8 +569,8 @@ describe("backup payload", () => {
     const object = mcp.servers.object;
     expect(typeof object === "object" ? object.disabled : undefined).toBe(true);
     const remote = mcp.servers.remote as { url: string; headers: Record<string, unknown> };
-    expect(remote.url).toContain("host.example/mcp");
-    expect(remote.url).not.toContain("urlsecret");
+    expect(remote.url).toBe(REDACTED_BACKUP_VALUE);
+    expect(exported).not.toContain("host.example");
     expect(remote.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
     expect(remote.headers["X-Ref"]).toEqual({ secret: "KEY" });
 
@@ -590,8 +592,16 @@ describe("backup payload", () => {
     expect(await collectMcpCommandApprovals(fresh, readBack.files)).toEqual([]);
     await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
     const freshText = await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8");
-    const freshMcp = jsonc.parse(freshText) as { servers: Record<string, unknown> };
+    const freshMcp = jsonc.parse(freshText) as {
+      servers: Record<string, { url?: string } | string>;
+    };
+    // The HTTP entry survives, but with no local endpoint to put back it stays unusable
+    // rather than pointing anywhere the backup chose.
     expect(Object.keys(freshMcp.servers)).toEqual(["remote"]);
+    const freshRemote = freshMcp.servers.remote;
+    expect(typeof freshRemote === "object" ? freshRemote.url : undefined).toBe(
+      REDACTED_BACKUP_VALUE
+    );
   });
 
   it("rehydrates the url and headers of an entry that also carries a command", async () => {
@@ -629,18 +639,15 @@ describe("backup payload", () => {
     expect(restored.servers.mixed.url).toBe("https://host.example/mcp?api_key=urlsecret");
     expect(restored.servers.mixed.headers.Authorization).toBe("Bearer sk-live-mixed");
 
-    // With no local command the entry is still an HTTP server, so only the command goes.
+    // Neither a command nor a url is exported, so on a machine with no local entry to put
+    // back there is no endpoint left to keep and the entry goes as a whole.
     const fresh = path.join(tempDir, "mixed-fresh");
     await fs.mkdir(fresh, { recursive: true });
     await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
-    const freshMixed = (
-      jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
-        servers: { mixed?: { command?: string; url?: string; headers?: Record<string, string> } };
-      }
-    ).servers.mixed;
-    expect(freshMixed?.command).toBeUndefined();
-    expect(freshMixed?.url).toContain("host.example/mcp");
-    expect(freshMixed?.headers?.Authorization).toBeUndefined();
+    const freshText = await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8");
+    const freshServers = (jsonc.parse(freshText) as { servers: Record<string, unknown> }).servers;
+    expect(freshServers.mixed).toBeUndefined();
+    expect(freshText).not.toContain("host.example");
   });
 
   it("refuses to send a rehydrated header credential to a url the backup changed", async () => {
@@ -670,7 +677,7 @@ describe("backup payload", () => {
     if (!file) throw new Error("expected mcp.jsonc in the payload");
     const moved = file.content
       .toString("utf-8")
-      .replace("https://api.example.com/mcp", "https://evil.example/mcp");
+      .replace(`"url": "${REDACTED_BACKUP_VALUE}"`, '"url": "https://evil.example/mcp"');
     const tampered = {
       ...readBack,
       files: readBack.files.map((candidate) =>
@@ -876,25 +883,17 @@ describe("backup payload", () => {
     const restored = jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
       servers: { api: { url: string; headers?: Record<string, unknown> } };
     };
-    expect(restored.servers.api.url).toBe("https://api.example.com/mcp");
+    // The endpoint is not exported either, so a fresh machine has nothing to point it at.
+    expect(restored.servers.api.url).toBe(REDACTED_BACKUP_VALUE);
     expect(restored.servers.api.headers ?? {}).toEqual({});
   });
 
   it("classifies a mixed entry by the same url truthiness `normalizeEntry` uses", async () => {
-    // `url: ""` is falsy there, so that entry is stdio and keeping it would leave an enabled
-    // server with no command. Whitespace is truthy, so that entry is the http server Mux
-    // would load and only its ignored command may be dropped.
-    await write(
-      muxRoot,
-      "mcp.jsonc",
-      `{
-  "servers": {
-    "blank": { "command": "npx blank-mcp", "url": "" },
-    "spaced": { "command": "npx spaced-mcp", "url": "   ", "disabled": true }
-  }
-}
-`
-    );
+    // Written by hand because an export never publishes a url. `url: ""` is falsy to
+    // `normalizeEntry`, so that entry is stdio and keeping it would leave an enabled server
+    // with no command; whitespace is truthy, so that one is an http entry whose ignored
+    // command may be dropped on its own.
+    await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: {} }));
     const payload = await createBackupPayload({
       muxRoot,
       muxVersion: "1.2.3",
@@ -903,10 +902,29 @@ describe("backup payload", () => {
     const destination = path.join(tempDir, "empty-url");
     await writeBackupPayload(destination, payload);
     const readBack = await readBackupPayload(destination);
+    const tampered = {
+      ...readBack,
+      files: readBack.files.map((candidate) =>
+        candidate.path === "mcp.jsonc"
+          ? {
+              ...candidate,
+              content: Buffer.from(
+                JSON.stringify({
+                  servers: {
+                    blank: { command: REDACTED_BACKUP_VALUE, url: "" },
+                    spaced: { command: REDACTED_BACKUP_VALUE, url: "   ", disabled: true },
+                  },
+                }),
+                "utf-8"
+              ),
+            }
+          : candidate
+      ),
+    };
 
     const fresh = path.join(tempDir, "empty-url-fresh");
     await fs.mkdir(fresh, { recursive: true });
-    await restoreBackupPayload({ muxRoot: fresh, payload: readBack });
+    await restoreBackupPayload({ muxRoot: fresh, payload: tampered });
     const servers = (
       jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
         servers: Record<string, { command?: string; url?: string; disabled?: boolean }>;
@@ -1513,15 +1531,18 @@ describe("backup payload", () => {
     }
   });
 
-  it("redacts a bare key query parameter and detects a Google API key", async () => {
+  it("never publishes a url credential, wherever in the url it sits", async () => {
     await write(
       muxRoot,
       "mcp.jsonc",
       JSON.stringify({
         servers: {
-          google: {
-            url: "https://example.com/mcp?key=AIzaSyA12345678901234567890123456789012&mode=fast",
-          },
+          query: { url: "https://example.com/mcp?key=AIzaSyA12345678901234567890123456789012" },
+          // A capability url: the credential is a path segment, and a low-entropy one at that,
+          // so neither a parameter-name rule nor the secret scanner can find it.
+          capability: { url: "https://mcp.example.com/access/abc123" },
+          fragment: { url: "https://mcp.example.com/mcp#access_token=fragtoken" },
+          tenant: { url: "https://tenantsecret.mcp.example.com/" },
         },
       })
     );
@@ -1533,8 +1554,82 @@ describe("backup payload", () => {
       reportSecrets: true,
     });
     const mcp = payloadFileText(payload, "mcp.jsonc");
-    expect(mcp).not.toContain("AIzaSyA12345678901234567890123456789012");
-    expect(mcp).toContain(`key=${REDACTED_BACKUP_VALUE}`);
+    for (const secret of [
+      "AIzaSyA12345678901234567890123456789012",
+      "abc123",
+      "fragtoken",
+      "tenantsecret",
+    ]) {
+      expect(mcp).not.toContain(secret);
+    }
+    expect(payload.redactions).toEqual([
+      "servers.query.url",
+      "servers.capability.url",
+      "servers.fragment.url",
+      "servers.tenant.url",
+    ]);
+  });
+
+  it("charges what a restore writes, not only what it read", async () => {
+    // Both files stay under the per-file limit, but restoring joins them: the backup keeps its
+    // own padding and the marker pulls in the local command, so the file written is about twice
+    // what either side was charged for.
+    const half = Math.floor(MAX_BACKUP_FILE_BYTES / 2);
+    const command = `npx ${"a".repeat(half)}`;
+    await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: { big: { command } } }));
+    const content = Buffer.from(
+      JSON.stringify({
+        servers: { big: { command: REDACTED_BACKUP_VALUE, toolAllowlist: ["b".repeat(half)] } },
+      }),
+      "utf-8"
+    );
+    expect(content.byteLength).toBeLessThan(MAX_BACKUP_FILE_BYTES);
+
+    const rejected = await rejection(
+      restoreBackupPayload({
+        muxRoot,
+        payload: {
+          manifest: {
+            schemaVersion: 1,
+            exportedAt: "2026-01-01T00:00:00.000Z",
+            muxVersion: "1.2.3",
+            sourceLabel: "attacker",
+            files: [{ path: "mcp.jsonc", sha256: sha256Hex(content.toString("utf-8")) }],
+          },
+          files: [{ path: "mcp.jsonc", content }],
+          redactions: [],
+        },
+      })
+    );
+    expect((rejected as Error).message).toContain("'mcp.jsonc' is larger");
+    expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain(command);
+  });
+
+  it("rejects manifest paths that differ only in Unicode normalization", async () => {
+    const destination = path.join(tempDir, "normalization-payload");
+    // Same name, composed and decomposed. macOS normalizes, so both entries resolve to one
+    // file there and the second write would silently replace the first.
+    const composed = "skills/demo/caf\u00e9.md";
+    const decomposed = "skills/demo/cafe\u0301.md";
+    const body = "demo\n";
+    await fs.mkdir(path.join(destination, "skills", "demo"), { recursive: true });
+    for (const entry of [composed, decomposed]) {
+      await fs.writeFile(path.join(destination, entry), body, "utf-8");
+    }
+    await fs.writeFile(
+      path.join(destination, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        exportedAt: "2026-01-01T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "attacker",
+        files: [composed, decomposed].map((entry) => ({ path: entry, sha256: sha256Hex(body) })),
+      }),
+      "utf-8"
+    );
+
+    const rejected = await rejection(readBackupPayload(destination));
+    expect((rejected as Error).message).toContain("Duplicate backup path");
   });
 
   it("flags a Google API key left in a free-form file", async () => {

@@ -241,6 +241,16 @@ function createByteBudget() {
 
 type ByteBudget = ReturnType<typeof createByteBudget>;
 
+/**
+ * Two paths collide when the filesystem cannot tell them apart, so the comparison has to fold
+ * the same things a filesystem does. Case is the obvious one, and macOS also normalizes: NFC
+ * `café.md` and its NFD spelling are one file there while they differ byte for byte, so
+ * case-folding alone would let the second entry silently overwrite the first.
+ */
+function collisionKey(value: string): string {
+  return value.normalize("NFC").toLowerCase();
+}
+
 async function readBackupFile(
   root: string,
   relativePath: string,
@@ -459,40 +469,6 @@ function isPortableReference(value: unknown): boolean {
 }
 
 /**
- * No query value leaves the device, whatever it is called. Deciding which parameter names
- * hold a credential meant guessing at every provider's spelling (`token`, `accessToken`,
- * `sig`, `X-Amz-Signature`), and each miss published a live credential that the secret
- * scanner cannot recognise either, since a signature is just hex. Names are kept so the
- * endpoint stays readable, and restore puts the local value back for a server that already
- * exists here, exactly as it does for a header.
- */
-function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    // Unparseable, so its credential-bearing parts cannot be found, and `normalizeEntry`
-    // accepts any string here. Nothing about it can be published.
-    return { value: REDACTED_BACKUP_VALUE, redacted: true };
-  }
-
-  let redacted = false;
-  for (const field of ["username", "password"] as const) {
-    if (url[field]) {
-      url[field] = REDACTED_BACKUP_VALUE;
-      redacted = true;
-    }
-  }
-  for (const [name, value] of [...url.searchParams]) {
-    if (value) {
-      url.searchParams.set(name, REDACTED_BACKUP_VALUE);
-      redacted = true;
-    }
-  }
-  return { value: redacted ? url.toString() : rawUrl, redacted };
-}
-
-/**
  * `jsonc.parse` collapses duplicate keys but `jsonc.modify` rewrites only one occurrence,
  * so a duplicated header would leave the second credential in the exported file. Redaction
  * cannot be guaranteed complete for such a file, so refuse it instead.
@@ -543,8 +519,8 @@ const JSONC_EDIT_OPTIONS: jsonc.ModificationOptions = {
 };
 
 /**
- * Rewrites values in place with jsonc edits. mcp.jsonc is a commented format, so
- * reserializing it through JSON.stringify would silently delete the user's comments.
+ * Rewrites values in place with jsonc edits, leaving the rest of the document as it was.
+ * Restore needs that: it writes the file the user just previewed, not a reformatted copy.
  */
 function applyJsoncEdits(text: string, edits: Array<{ path: jsonc.JSONPath; value: unknown }>) {
   let result = text;
@@ -558,14 +534,6 @@ function applyJsoncEdits(text: string, edits: Array<{ path: jsonc.JSONPath; valu
 }
 
 /**
- * Fields Mux itself reads (`McpConfigService.normalizeEntry`), with the type it reads them as.
- * Anything else in the document, at any depth, is replaced with the marker: `normalizeEntry`
- * ignores an unrecognised field such as `env` or `args`, so nobody here can say whether its
- * value is a credential, and `{ "API_KEY": "hunter2" }` is not something a scanner can catch.
- * Restore puts the local value back at that exact path, so a field only Mux ignores is not
- * lost from a machine that already has it.
- */
-/**
  * `McpConfigService.readConfigFile` enumerates `servers` with `Object.entries`, so an array or
  * a string there becomes runnable servers named by index rather than being ignored. A document
  * like that cannot be projected field by field, so an export redacts the whole map and a
@@ -576,12 +544,33 @@ function isUnsupportedServerMap(value: unknown): boolean {
   return Boolean(value) && (typeof value !== "object" || Array.isArray(value));
 }
 
+/**
+ * Fields Mux itself reads (`McpConfigService.normalizeEntry`), with the type it reads them as.
+ * Anything else in the document, at any depth, is replaced with the marker: `normalizeEntry`
+ * ignores an unrecognised field such as `env` or `args`, so nobody here can say whether its
+ * value is a credential, and `{ "API_KEY": "hunter2" }` is not something a scanner can catch.
+ * Restore puts the local value back at that exact path, so a field only Mux ignores is not
+ * lost from a machine that already has it.
+ */
 const PORTABLE_SERVER_FIELDS: Record<string, (value: unknown) => boolean> = {
   transport: (value) =>
     value === "stdio" || value === "http" || value === "sse" || value === "auto",
   disabled: (value) => typeof value === "boolean",
   toolAllowlist: (value) => Array.isArray(value) && value.every((tool) => typeof tool === "string"),
 };
+
+/**
+ * A jsonc edit keeps every comment, and a comment is prose the projection cannot inspect, so a
+ * local `// token=hunter2` beside a server would be published verbatim and the scanner would
+ * not recognise it either. Reserializing publishes only the values this file kept.
+ */
+function serializeProjectedMcp(text: string): Buffer {
+  const projected: unknown = jsonc.parse(text);
+  if (!projected || typeof projected !== "object" || Array.isArray(projected)) {
+    throw new Error("Invalid mcp.jsonc");
+  }
+  return Buffer.from(`${JSON.stringify(projected, null, 2)}\n`, "utf-8");
+}
 
 function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string[] } {
   const text = content.toString("utf-8");
@@ -604,7 +593,7 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
   const servers = readOwn(root, "servers");
   if (isUnsupportedServerMap(servers)) redact(["servers"]);
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
-    return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
+    return { content: serializeProjectedMcp(applyJsoncEdits(text, edits)), redactions };
   }
   const serverRecord = servers as Record<string, unknown>;
 
@@ -641,29 +630,18 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
         }
         continue;
       }
-      if (field === "url") {
-        // Whitespace or empty is falsy to `normalizeEntry`, which makes the entry stdio
-        // rather than HTTP. It carries no credential, and a marker would flip that meaning.
-        if (typeof value !== "string" || value.trim() === "") {
-          if (typeof value !== "string") redact(fieldPath);
-          continue;
-        }
-        const redactedUrl = redactInlineUrl(value);
-        if (redactedUrl.redacted) {
-          edits.push({ path: fieldPath, value: redactedUrl.value });
-          redactions.push(fieldPath.join("."));
-        }
-        continue;
-      }
-      // Every stdio `command` is replaced wholesale, never parsed for credentials. A command
-      // is arbitrary shell text handed to `runtime.exec()`, so deciding which of its fragments
-      // are secret means reimplementing the argument grammar of every tool a user might
-      // invoke, and any gap publishes a credential. It is also barely portable, since it names
-      // binaries and paths that exist on one machine. Local-only, like `appearance.editorConfig`.
+      // Everything else, `command` and `url` included, is replaced wholesale and never parsed
+      // for the credential inside it. A command is arbitrary shell text handed to
+      // `runtime.exec()`, so deciding which fragments are secret means reimplementing the
+      // argument grammar of every tool a user might invoke. A url is no better: the credential
+      // can sit in the userinfo, a query value, the path (`/access/abc123`), the fragment, or
+      // the hostname of a per-tenant endpoint, each spelled however the provider chose, and a
+      // low-entropy token defeats the scanner too. Neither is very portable anyway, and restore
+      // puts the local value back at that exact path.
       redact(fieldPath);
     }
   }
-  return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
+  return { content: serializeProjectedMcp(applyJsoncEdits(text, edits)), redactions };
 }
 
 /** Reports what a payload had redacted, so reading one back describes the same paths. */
@@ -838,9 +816,9 @@ export async function writeBackupPayload(
   const claimed = new Set<string>();
   for (const file of payload.files) {
     assertAllowedPayloadPath(file.path, { portable });
-    // Case-folded: a collision only a case-sensitive source can produce would make the
-    // published backup unreadable everywhere, including here.
-    const claim = file.path.toLowerCase();
+    // A collision only a case-sensitive source can produce would make the published backup
+    // unreadable everywhere, including here.
+    const claim = collisionKey(file.path);
     if (claimed.has(claim)) throw new Error(`Duplicate backup path '${file.path}'`);
     claimed.add(claim);
   }
@@ -956,9 +934,7 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
   const files: BackupFile[] = [];
   const seen = new Set<string>();
   for (const manifestFile of manifest.files) {
-    // Case-folded, because two entries differing only in case resolve to one file on a
-    // case-insensitive filesystem and the second would silently overwrite the first.
-    const key = manifestFile.path.toLowerCase();
+    const key = collisionKey(manifestFile.path);
     if (seen.has(key)) throw new Error(`Duplicate backup path '${manifestFile.path}'`);
     seen.add(key);
     const content = await readManifestEntry(sourceDir, manifestFile.path, budget);
@@ -1193,7 +1169,9 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
   const resolved = resolveRestoredCommands(backup, local, edits);
-  for (const path of resolveRestoredHeaders(backup, local, backupTree, edits)) resolved.add(path);
+  for (const path of resolveRestoredHeaders(backup, local, backupTree, edits, resolved)) {
+    resolved.add(path);
+  }
   collectRedactionRestoreEdits(backup, local, [], edits, resolved);
   return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
 }
@@ -1226,15 +1204,18 @@ function resolveRestoredCommands(
     const isObjectMarker = !isBareMarker && readRecord(entry)?.command === REDACTED_BACKUP_VALUE;
     if (!isBareMarker && !isObjectMarker) continue;
 
-    const localCommand = readAnyServerCommand(readOwn(localServers, name));
+    const localEntry = readOwn(localServers, name);
+    const localCommand = readAnyServerCommand(localEntry);
     if (localCommand === undefined) {
       // `normalizeEntry` gives a url precedence over a command, so a mixed object is an HTTP
       // server whose command is already ignored. Drop only the command and keep the url,
-      // headers, disabled state, and allowlist that do restore. `normalizeEntry` tests the
-      // url for truthiness, so mirror that exactly: only `url: ""` is still stdio, while
-      // whitespace is truthy there and would load as an http entry.
-      const url = isObjectMarker ? readUrl(readRecord(entry)) : undefined;
-      const hasUrl = url !== undefined && url !== "";
+      // headers, disabled state, and allowlist that do restore. What counts is the url the
+      // entry ends up with: a url is never exported either, so a marker with nothing local to
+      // put back leaves the entry with neither a command nor an endpoint, and it goes whole.
+      // `normalizeEntry` tests the url for truthiness, so mirror that exactly: only `url: ""`
+      // is still stdio, while whitespace is truthy there and would load as an http entry.
+      const url = isObjectMarker ? restoredServerUrl(entry, readRecord(localEntry)) : undefined;
+      const hasUrl = url !== undefined && url !== "" && !containsRedaction(url);
       const removed: jsonc.JSONPath = hasUrl ? ["servers", name, "command"] : ["servers", name];
       edits.push({ path: removed, value: undefined });
       handled.add(removed.join("\u0000"));
@@ -1270,7 +1251,8 @@ function resolveRestoredHeaders(
   backup: Record<string, unknown>,
   local: Record<string, unknown>,
   backupTree: jsonc.Node,
-  edits: Array<{ path: jsonc.JSONPath; value: unknown }>
+  edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
+  resolvedServers: ReadonlySet<string>
 ): Set<string> {
   const handled = new Set<string>();
   const servers = readRecord(backup.servers);
@@ -1278,6 +1260,9 @@ function resolveRestoredHeaders(
   const localServers = readRecord(local.servers) ?? {};
 
   for (const [name, entry] of Object.entries(servers)) {
+    // An entry command resolution already removed has no headers left to decide about, and
+    // `jsonc.modify` cannot address a path whose parent this edit list deletes.
+    if (resolvedServers.has(["servers", name].join("\u0000"))) continue;
     const rawHeaders = readRecord(entry)?.headers;
     if (rawHeaders === undefined) continue;
     const localServer = readRecord(readOwn(localServers, name));
@@ -1321,7 +1306,6 @@ function resolveRestoredHeaders(
   return handled;
 }
 
-/** Header names as the document spells them, including any the parser drops. */
 /**
  * Own key names as the document spells them. `jsonc.parse` drops a `__proto__` key while the
  * text keeps it, so a walk over the parse result cannot see, or edit, every key present.
@@ -1408,6 +1392,10 @@ export async function restoreBackupPayload(
   // rejected late cannot leave a half-restored install behind.
   const writes: Array<{ destination: string; content: Buffer; executable: boolean }> = [];
   const claimed = new Set<string>();
+  // Restoring rehydrates local values into repository-controlled text, so what gets written is
+  // not what was read and bounded. A payload made of markers is small however many large local
+  // values it asks for, so the result is charged to the same budget as any other backup byte.
+  const budget = createByteBudget();
   for (const file of options.payload.files) {
     assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
@@ -1419,17 +1407,14 @@ export async function restoreBackupPayload(
     if ((await lstatOrNull(destination))?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
     }
-    // Case-folded: two entries differing only in case are one file on Windows and macOS.
-    const claim = destination.toLowerCase();
+    const claim = collisionKey(destination);
     if (claimed.has(claim)) {
       throw new Error(`Cannot restore '${file.path}': another entry resolves to the same file`);
     }
     claimed.add(claim);
-    writes.push({
-      destination,
-      content: await resolveRestoredContent(options.muxRoot, file),
-      executable: file.executable === true,
-    });
+    const content = await resolveRestoredContent(options.muxRoot, file);
+    budget(file.path, content.byteLength);
+    writes.push({ destination, content, executable: file.executable === true });
   }
 
   for (const write of writes) {

@@ -80,7 +80,7 @@ describe("BackupService against a real repository", () => {
     await writeMuxFile(
       "mcp.jsonc",
       `{
-  // Comments must survive a backup round trip.
+  // Deploy token: comment-secret-abc123
   "servers": {
     "literal": {
       "url": "https://example.com/mcp",
@@ -138,7 +138,8 @@ describe("BackupService against a real repository", () => {
     expect(mcp).not.toContain("Bearer abc123");
     expect(mcp).toContain(REDACTED_BACKUP_VALUE);
     expect(mcp).toContain('"secret": "MCP_TOKEN"');
-    expect(mcp).toContain("// Comments must survive a backup round trip.");
+    // A comment is prose no projection can inspect, so it is not published at all.
+    expect(mcp).not.toContain("comment-secret-abc123");
   });
 
   it("does not create a second commit when nothing changed", async () => {
@@ -179,7 +180,9 @@ describe("BackupService against a real repository", () => {
 
     const restored = await service.restore(settings);
     if (!restored.success) throw new Error(restored.error.message);
-    expect(restored.data.changedFiles).toEqual(["AGENTS.md"]);
+    // mcp.jsonc is reported too: the local file's comment is not in the payload, so restoring
+    // it really does change the file even though every value round-trips.
+    expect(restored.data.changedFiles).toEqual(["AGENTS.md", "mcp.jsonc"]);
     expect(restored.data.localOnlyFiles).toEqual(["agents/local-only.md"]);
     expect(await fs.readFile(path.join(muxRoot, "AGENTS.md"), "utf-8")).toBe(
       "global instructions\n"

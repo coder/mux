@@ -288,17 +288,19 @@ describe("backup adapters", () => {
   });
 
   it("does not report a value the backup redacted as a restore change", async () => {
+    // Canonically formatted, because the export reserializes the document to keep comments out
+    // of the payload: a local file that differs only in layout is a real restore change.
     await writeMuxFile(
       "mcp.jsonc",
-      `{
-  "servers": {
-    "api": {
-      "url": "https://example.com/mcp",
-      "headers": { "Authorization": "Bearer local-secret" }
-    }
-  }
-}
-`
+      `${JSON.stringify(
+        {
+          servers: {
+            api: { url: "https://example.com/mcp", headers: { Authorization: "Bearer local" } },
+          },
+        },
+        null,
+        2
+      )}\n`
     );
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
