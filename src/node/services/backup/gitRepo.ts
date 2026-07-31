@@ -8,6 +8,12 @@ import {
   type GitCredentialOptions,
 } from "./credentials";
 
+/**
+ * Only the managed directory is ever read out of the cache, so blobs are fetched on demand
+ * rather than up front. A dotfiles repository can hold anything elsewhere in its tree.
+ */
+const BLOB_FILTER = "blob:none";
+
 const GIT_IDENTITY_ARGS = [
   "-c",
   "user.name=Mux Settings Backup",
@@ -176,6 +182,40 @@ export class BackupRepoCache {
     };
   }
 
+  private async hasOriginRemote(): Promise<boolean> {
+    try {
+      await this.localGit(["remote", "get-url", "origin"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Creates, or finishes creating, a cache with no objects in it. Safe to re-run: every step
+   * either sets a value or replaces the one already there, so an initialization interrupted
+   * partway is repaired rather than leaving a `.git` that fails the origin check forever.
+   *
+   * The filter settings are what `clone --filter` writes for itself. Without them a later
+   * `fetch` of this branch would download every blob reachable from it, including files outside
+   * the managed directory that sparse checkout never materializes.
+   */
+  private async initEmptyCache(): Promise<void> {
+    // `init <dir>` creates the directory, so this runs before `localGit` has one to -C into.
+    await runLocalGit(
+      ["init", "--initial-branch", this.options.branch, this.cachePath],
+      this.options
+    );
+    // `remote add` fails when the remote is already there, so set the url either way.
+    if (await this.hasOriginRemote()) {
+      await this.localGit(["remote", "set-url", "origin", this.options.repoUrl]);
+    } else {
+      await this.localGit(["remote", "add", "origin", this.options.repoUrl]);
+    }
+    await this.localGit(["config", "remote.origin.promisor", "true"]);
+    await this.localGit(["config", "remote.origin.partialclonefilter", BLOB_FILTER]);
+  }
+
   async ensureCache(): Promise<void> {
     await assertNotSymlink(this.options.cacheRoot);
     await fs.mkdir(this.options.cacheRoot, { recursive: true });
@@ -194,12 +234,7 @@ export class BackupRepoCache {
         // fall back to the remote's HEAD, downloading a default branch whose history this
         // feature never reads. An empty repository with the remote attached is the same
         // starting point `resetToUnbornBranch` produces, without the transfer.
-        // `init <dir>` creates the directory, so this runs before `localGit` has one to -C into.
-        await runLocalGit(
-          ["init", "--initial-branch", this.options.branch, this.cachePath],
-          this.options
-        );
-        await this.localGit(["remote", "add", "origin", this.options.repoUrl]);
+        await this.initEmptyCache();
       } else {
         // `--no-checkout` because `resetHardToRemote` checks out the configured branch next,
         // and materializing a branch here can fail on unrelated paths this platform cannot
@@ -208,7 +243,7 @@ export class BackupRepoCache {
           "clone",
           "--no-checkout",
           "--single-branch",
-          "--filter=blob:none",
+          `--filter=${BLOB_FILTER}`,
           "--branch",
           this.options.branch,
           "--origin",
@@ -217,6 +252,11 @@ export class BackupRepoCache {
           this.cachePath,
         ]);
       }
+    } else if (!(await this.hasOriginRemote())) {
+      // A `.git` without an `origin` is an initialization that did not finish. Left alone it
+      // fails the origin check below on every retry, so backups for this repository would stay
+      // broken until the user deleted the cache by hand.
+      await this.initEmptyCache();
     }
 
     const actualOrigin = (await this.localGit(["remote", "get-url", "origin"])).stdout.trim();

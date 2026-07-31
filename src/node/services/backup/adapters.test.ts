@@ -316,6 +316,35 @@ describe("backup adapters", () => {
     expect(objects).toContain("in-pack: 0");
   });
 
+  it("finishes an interrupted cache initialization instead of failing forever", async () => {
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    // What `git init` leaves behind when the process dies before the remote is added.
+    await fs.mkdir(cachePath, { recursive: true });
+    await git(["init", "--quiet", "--initial-branch", settings.branch, cachePath]);
+    await writeMuxFile("AGENTS.md", "first\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+
+    const repository = await gitRepo.prepare(settings);
+
+    expect(repository.rootDir).toBe(cachePath);
+    expect(await git(["-C", cachePath, "remote", "get-url", "origin"])).toBe(settings.repoUrl);
+  });
+
+  it("keeps blobs outside the managed path out of an initialized cache", async () => {
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    await writeMuxFile("AGENTS.md", "first\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+
+    await gitRepo.prepare(settings);
+
+    // Without these a later fetch pulls every blob the branch reaches, including files
+    // elsewhere in a dotfiles repo that sparse checkout never materializes.
+    expect(await git(["-C", cachePath, "config", "--get", "remote.origin.promisor"])).toBe("true");
+    expect(
+      await git(["-C", cachePath, "config", "--get", "remote.origin.partialclonefilter"])
+    ).toBe("blob:none");
+  });
+
   it("does not recreate deleted history when the remote branch is gone", async () => {
     await writeMuxFile("AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
