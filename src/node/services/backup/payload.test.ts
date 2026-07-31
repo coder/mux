@@ -163,8 +163,7 @@ describe("backup payload", () => {
       "url": "https://user:password@example.com/mcp?token=literal&clientSecret=camel2&X-Amz-Signature=deadbeefcafe&mode=fast",
       "headers": {
         "Authorization": "Bearer literal",
-        "Secret": { "secret": "MCP_SECRET" },
-        "OpObject": { "op": "op://Vault/Item/token" }
+        "Secret": { "secret": "MCP_SECRET" }
       }
     },
     "plain": {
@@ -189,7 +188,6 @@ describe("backup payload", () => {
 
     expect(mcp.servers.api.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
     expect(mcp.servers.api.headers.Secret).toEqual({ secret: "MCP_SECRET" });
-    expect(mcp.servers.api.headers.OpObject).toEqual({ op: "op://Vault/Item/token" });
     // No query value survives, whatever the parameter is called: a signed-URL signature and
     // an ordinary-looking `mode` are both gone, while the names still describe the endpoint.
     for (const value of ["password", "literal", "camel2", "deadbeefcafe", "fast"]) {
@@ -202,8 +200,8 @@ describe("backup payload", () => {
     await writeBackupPayload(destination, payload);
     expect((await readBackupPayload(destination)).redactions).toEqual(payload.redactions);
     expect(payload.redactions).toEqual([
-      "servers.api.headers.Authorization",
       "servers.api.url",
+      "servers.api.headers.Authorization",
       "servers.plain.url",
     ]);
   });
@@ -319,6 +317,87 @@ describe("backup payload", () => {
     const rejected = await rejection(readBackupPayload(destination));
     expect((rejected as { code?: string }).code).toBe("INVALID_BACKUP");
     expect((rejected as Error).message).toContain("larger than the 8 MB limit");
+
+    // The manifest is read before any entry, so it needs the same bound.
+    await sparseFile(destination, "manifest.json", MAX_BACKUP_FILE_BYTES + 1);
+    expect(((await rejection(readBackupPayload(destination))) as Error).message).toContain(
+      "manifest.json' is larger"
+    );
+  });
+
+  it("refuses to publish generated content that exceeds the limits", async () => {
+    await write(muxRoot, "AGENTS.md", "small\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      preferences: {
+        appearance: {
+          terminalFontConfig: { fontFamily: "x".repeat(MAX_BACKUP_FILE_BYTES), fontSize: 12 },
+        },
+      },
+    });
+
+    // Collection budgets bound what is read, and preferences are generated after it, so a
+    // published payload has to be checked once it is assembled.
+    const oversized = await rejection(
+      writeBackupPayload(path.join(tempDir, "generated-payload"), payload)
+    );
+    expect((oversized as Error).message).toContain("'preferences.json' is larger");
+  });
+
+  it("publishes only the MCP fields Mux reads, and restores the rest from local", async () => {
+    const localMcp = JSON.stringify({
+      registry: { token: "top-level-secret" },
+      servers: {
+        tool: {
+          command: "npx tool",
+          env: { API_KEY: "hunter2" },
+          args: ["--token", "swordfish"],
+          disabled: "yes",
+          transport: "stdio",
+          toolAllowlist: ["read"],
+        },
+        api: {
+          url: "/mcp?sig=abc123",
+          headers: { Authorization: { secret: "NAME", fallback: "hunter2" } },
+        },
+      },
+    });
+    await write(muxRoot, "mcp.jsonc", localMcp);
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const exported = payloadFileText(payload, "mcp.jsonc");
+    for (const secret of ["top-level-secret", "hunter2", "swordfish", "abc123"]) {
+      expect(exported).not.toContain(secret);
+    }
+    // A recognized field read as the wrong type is another place to hide a value nobody
+    // reads, so it is redacted while the correctly typed ones publish.
+    expect(exported).not.toContain('"yes"');
+    expect(exported).toContain('"stdio"');
+    expect(exported).toContain('"read"');
+    expect(payload.redactions).toEqual([
+      "registry",
+      "servers.tool.command",
+      "servers.tool.env",
+      "servers.tool.args",
+      "servers.tool.disabled",
+      "servers.api.url",
+      "servers.api.headers.Authorization",
+    ]);
+
+    const destination = path.join(tempDir, "projected-payload");
+    await writeBackupPayload(destination, payload);
+    await restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) });
+    // Restoring onto the machine the values came from puts every one of them back, so a
+    // field Mux ignores is not lost by round-tripping through a repository.
+    expect(jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8"))).toEqual(
+      jsonc.parse(localMcp)
+    );
   });
 
   it("reports a corrupt backup as an invalid backup rather than an IO failure", async () => {

@@ -11,6 +11,7 @@ import { isWindowsUnusableSegment } from "@/common/config/schemas/settingsBackup
 import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
+const BACKUP_MANIFEST_FILE = "manifest.json";
 /**
  * A payload is read wholly into memory on both sides, and the repository side is written by
  * whoever can push to the branch, so an oversized entry would crash the main process during
@@ -445,16 +446,16 @@ export function mergeBackupPreferences(
 }
 
 /**
- * `MCPHeaderValue` is `string | { secret }` (src/common/types/mcp.ts), so Mux sends a
- * plain string verbatim and never interpolates it. Only the object forms are portable.
+ * `MCPHeaderValue` is `string | { secret }` (src/common/types/mcp.ts), so Mux sends a plain
+ * string verbatim and never interpolates it: only the reference form is portable. Exactly one
+ * key, because a sibling property inside the reference would be published verbatim and is a
+ * place to hide a credential that `resolveHeaders` would never read.
  */
 function isPortableReference(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
-  return (
-    (typeof record.secret === "string" && record.secret.trim().length > 0) ||
-    (typeof record.op === "string" && record.op.startsWith("op://"))
-  );
+  const keys = Object.keys(record);
+  return keys.length === 1 && typeof record.secret === "string" && record.secret.trim() !== "";
 }
 
 /**
@@ -470,7 +471,9 @@ function redactInlineUrl(rawUrl: string): { value: string; redacted: boolean } {
   try {
     url = new URL(rawUrl);
   } catch {
-    return { value: rawUrl, redacted: false };
+    // Unparseable, so its credential-bearing parts cannot be found, and `normalizeEntry`
+    // accepts any string here. Nothing about it can be published.
+    return { value: REDACTED_BACKUP_VALUE, redacted: true };
   }
 
   let redacted = false;
@@ -554,83 +557,121 @@ function applyJsoncEdits(text: string, edits: Array<{ path: jsonc.JSONPath; valu
   return result;
 }
 
+/**
+ * Fields Mux itself reads (`McpConfigService.normalizeEntry`), with the type it reads them as.
+ * Anything else in the document, at any depth, is replaced with the marker: `normalizeEntry`
+ * ignores an unrecognised field such as `env` or `args`, so nobody here can say whether its
+ * value is a credential, and `{ "API_KEY": "hunter2" }` is not something a scanner can catch.
+ * Restore puts the local value back at that exact path, so a field only Mux ignores is not
+ * lost from a machine that already has it.
+ */
+const PORTABLE_SERVER_FIELDS: Record<string, (value: unknown) => boolean> = {
+  transport: (value) =>
+    value === "stdio" || value === "http" || value === "sse" || value === "auto",
+  disabled: (value) => typeof value === "boolean",
+  toolAllowlist: (value) => Array.isArray(value) && value.every((tool) => typeof tool === "string"),
+};
+
 function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string[] } {
   const text = content.toString("utf-8");
-  const root = parseJsoncObject(text, "mcp.jsonc");
+  const { parsed: root, tree } = parseJsoncObjectWithTree(text, "mcp.jsonc");
   const redactions: string[] = [];
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
-  const servers = root.servers;
-  // Every stdio `command` is replaced wholesale, never parsed for credentials. A command is
-  // arbitrary shell text handed to `runtime.exec()`, so deciding which of its fragments are
-  // secret means reimplementing the argument grammar of every tool a user might invoke, and
-  // any gap publishes a credential. It is also barely portable, since it names binaries and
-  // paths that exist on one machine. Local-only, like `appearance.editorConfig`.
-  if (servers && typeof servers === "object" && !Array.isArray(servers)) {
-    for (const [serverName, rawServer] of Object.entries(servers as Record<string, unknown>)) {
-      // A bare string entry is the stdio command itself (mcpConfigService.normalizeEntry).
-      if (typeof rawServer === "string") {
-        edits.push({ path: ["servers", serverName], value: REDACTED_BACKUP_VALUE });
-        redactions.push(`servers.${serverName}`);
+
+  function redact(jsonPath: jsonc.JSONPath): void {
+    edits.push({ path: jsonPath, value: REDACTED_BACKUP_VALUE });
+    redactions.push(jsonPath.join("."));
+  }
+
+  // Names come from the document rather than the parse result throughout, because
+  // `jsonc.parse` drops a `__proto__` key while the text keeps it. Enumerating the parsed
+  // object would leave such a key, and its value, published verbatim.
+  for (const key of objectKeyNames(tree, [])) {
+    if (key !== "servers") redact([key]);
+  }
+
+  const servers = readOwn(root, "servers");
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+    return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
+  }
+  const serverRecord = servers as Record<string, unknown>;
+
+  for (const serverName of objectKeyNames(tree, ["servers"])) {
+    const rawServer = readOwn(serverRecord, serverName);
+    // A bare string entry is the stdio command itself (mcpConfigService.normalizeEntry). An
+    // entry the parser dropped, or one of any other shape, cannot be inspected field by field.
+    if (typeof rawServer !== "object" || rawServer === null || Array.isArray(rawServer)) {
+      redact(["servers", serverName]);
+      continue;
+    }
+    const server = rawServer as Record<string, unknown>;
+
+    for (const field of objectKeyNames(tree, ["servers", serverName])) {
+      const fieldPath: jsonc.JSONPath = ["servers", serverName, field];
+      const value = readOwn(server, field);
+      const isPortableField = PORTABLE_SERVER_FIELDS[field];
+      if (isPortableField) {
+        // Read as the wrong type, `normalizeEntry` ignores it, which makes it another place
+        // to hide a value nobody reads.
+        if (!isPortableField(value)) redact(fieldPath);
         continue;
       }
-      if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
-      const server = rawServer as Record<string, unknown>;
-      const headers = server.headers;
-      if (headers && typeof headers === "object" && !Array.isArray(headers)) {
-        for (const [headerName, value] of Object.entries(headers as Record<string, unknown>)) {
-          if (!isPortableReference(value)) {
-            edits.push({
-              path: ["servers", serverName, "headers", headerName],
-              value: REDACTED_BACKUP_VALUE,
-            });
-            redactions.push(`servers.${serverName}.headers.${headerName}`);
+      if (field === "headers") {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          redact(fieldPath);
+          continue;
+        }
+        const headers = value as Record<string, unknown>;
+        for (const headerName of objectKeyNames(tree, fieldPath)) {
+          if (!isPortableReference(readOwn(headers, headerName))) {
+            redact([...fieldPath, headerName]);
           }
         }
+        continue;
       }
-      if (typeof server.url === "string") {
-        const redactedUrl = redactInlineUrl(server.url);
-        if (redactedUrl.redacted) {
-          edits.push({ path: ["servers", serverName, "url"], value: redactedUrl.value });
-          redactions.push(`servers.${serverName}.url`);
+      if (field === "url") {
+        // Whitespace or empty is falsy to `normalizeEntry`, which makes the entry stdio
+        // rather than HTTP. It carries no credential, and a marker would flip that meaning.
+        if (typeof value !== "string" || value.trim() === "") {
+          if (typeof value !== "string") redact(fieldPath);
+          continue;
         }
+        const redactedUrl = redactInlineUrl(value);
+        if (redactedUrl.redacted) {
+          edits.push({ path: fieldPath, value: redactedUrl.value });
+          redactions.push(fieldPath.join("."));
+        }
+        continue;
       }
-      if (typeof server.command === "string") {
-        edits.push({ path: ["servers", serverName, "command"], value: REDACTED_BACKUP_VALUE });
-        redactions.push(`servers.${serverName}.command`);
-      }
+      // Every stdio `command` is replaced wholesale, never parsed for credentials. A command
+      // is arbitrary shell text handed to `runtime.exec()`, so deciding which of its fragments
+      // are secret means reimplementing the argument grammar of every tool a user might
+      // invoke, and any gap publishes a credential. It is also barely portable, since it names
+      // binaries and paths that exist on one machine. Local-only, like `appearance.editorConfig`.
+      redact(fieldPath);
     }
   }
   return { content: Buffer.from(applyJsoncEdits(text, edits), "utf-8"), redactions };
 }
 
+/** Reports what a payload had redacted, so reading one back describes the same paths. */
 function findMcpRedactions(content: Buffer): string[] {
-  const root = parseJsoncObject(content.toString("utf-8"), "mcp.jsonc");
+  const { parsed: root, tree } = parseJsoncObjectWithTree(content.toString("utf-8"), "mcp.jsonc");
   const redactions: string[] = [];
-  const servers = root.servers;
-  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return redactions;
 
-  for (const [serverName, rawServer] of Object.entries(servers as Record<string, unknown>)) {
-    if (typeof rawServer === "string") {
-      if (containsRedaction(rawServer)) redactions.push(`servers.${serverName}`);
-      continue;
+  function walk(value: unknown, jsonPath: jsonc.JSONPath): void {
+    if (typeof value === "string") {
+      if (containsRedaction(value)) redactions.push(jsonPath.join("."));
+      return;
     }
-    if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) continue;
-    const server = rawServer as Record<string, unknown>;
-    const headers = server.headers;
-    if (headers && typeof headers === "object" && !Array.isArray(headers)) {
-      for (const [headerName, value] of Object.entries(headers as Record<string, unknown>)) {
-        if (typeof value === "string" && containsRedaction(value)) {
-          redactions.push(`servers.${serverName}.headers.${headerName}`);
-        }
-      }
-    }
-    if (typeof server.url === "string" && containsRedaction(server.url)) {
-      redactions.push(`servers.${serverName}.url`);
-    }
-    if (typeof server.command === "string" && containsRedaction(server.command)) {
-      redactions.push(`servers.${serverName}.command`);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const record = value as Record<string, unknown>;
+    for (const key of objectKeyNames(tree, jsonPath)) {
+      walk(readOwn(record, key), [...jsonPath, key]);
     }
   }
+
+  walk(root, []);
   return redactions;
 }
 
@@ -739,7 +780,7 @@ async function readManifestIfPresent(
 ): Promise<{ manifest: BackupManifest; raw: string } | null> {
   try {
     const raw = await fs.readFile(
-      await resolveContainedPath(destinationDir, "manifest.json"),
+      await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE),
       "utf-8"
     );
     return { manifest: parseManifest(raw), raw };
@@ -762,12 +803,23 @@ async function applyExecuteBit(filePath: string, executable: boolean): Promise<v
   if (next !== mode) await fs.chmod(filePath, next);
 }
 
+/**
+ * Read-time budgets bound what is buffered; this bounds what is published, which is not the
+ * same set: `preferences.json` is generated after collection, and redaction rewrites content.
+ * Without it a push could commit a payload that every later Preview rejects as oversized.
+ */
+function assertPayloadWithinLimits(files: readonly BackupFile[]): void {
+  const budget = createByteBudget();
+  for (const file of files) budget(file.path, file.content.length);
+}
+
 export async function writeBackupPayload(
   destinationDir: string,
   payload: BackupPayload,
   options: { portable?: boolean } = {}
 ): Promise<void> {
   const portable = options.portable !== false;
+  assertPayloadWithinLimits(payload.files);
   const claimed = new Set<string>();
   for (const file of payload.files) {
     assertAllowedPayloadPath(file.path, { portable });
@@ -791,7 +843,7 @@ export async function writeBackupPayload(
     await fs.writeFile(destination, file.content);
     await applyExecuteBit(destination, file.executable === true);
   }
-  await fs.writeFile(path.join(destinationDir, "manifest.json"), manifestJson, "utf-8");
+  await fs.writeFile(path.join(destinationDir, BACKUP_MANIFEST_FILE), manifestJson, "utf-8");
 }
 
 function parseManifest(raw: string): BackupManifest {
@@ -825,7 +877,7 @@ function parseManifest(raw: string): BackupManifest {
 }
 
 export async function backupPayloadExists(sourceDir: string): Promise<boolean> {
-  return await fileExists(path.join(sourceDir, "manifest.json"));
+  return await fileExists(path.join(sourceDir, BACKUP_MANIFEST_FILE));
 }
 
 export class BackupInvalidPayloadError extends Error {
@@ -879,11 +931,14 @@ async function readManifestEntry(
 }
 
 async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
-  const manifestPath = await resolveContainedPath(sourceDir, "manifest.json");
+  const budget = createByteBudget();
+  const manifestPath = await resolveContainedPath(sourceDir, BACKUP_MANIFEST_FILE);
+  // The manifest is the first thing read from a repository anyone with write access can
+  // change, so it is charged to the same budget before it is parsed.
+  budget(BACKUP_MANIFEST_FILE, (await fs.stat(manifestPath)).size);
   const manifest = parseManifest(await fs.readFile(manifestPath, "utf-8"));
   const files: BackupFile[] = [];
   const seen = new Set<string>();
-  const budget = createByteBudget();
   for (const manifestFile of manifest.files) {
     // Case-folded, because two entries differing only in case resolve to one file on a
     // case-insensitive filesystem and the second would silently overwrite the first.
@@ -1219,7 +1274,7 @@ function resolveRestoredHeaders(
     // Names come from the document, not the parsed object, because `jsonc.parse` drops a
     // `__proto__` key while the text keeps it. Enumerating the parse result would leave that
     // header, and its marker, untouched in the restored file.
-    const names = headerNamesInText(backupTree, name);
+    const names = objectKeyNames(backupTree, ["servers", name, "headers"]);
     const restored: Record<string, unknown> = {};
     for (const headerName of names) {
       if (!hasOwn(localHeaders, headerName)) continue;
@@ -1244,9 +1299,13 @@ function resolveRestoredHeaders(
 }
 
 /** Header names as the document spells them, including any the parser drops. */
-function headerNamesInText(tree: jsonc.Node | undefined, serverName: string): string[] {
+/**
+ * Own key names as the document spells them. `jsonc.parse` drops a `__proto__` key while the
+ * text keeps it, so a walk over the parse result cannot see, or edit, every key present.
+ */
+function objectKeyNames(tree: jsonc.Node | undefined, jsonPath: jsonc.JSONPath): string[] {
   if (!tree) return [];
-  const node = jsonc.findNodeAtLocation(tree, ["servers", serverName, "headers"]);
+  const node = jsonPath.length === 0 ? tree : jsonc.findNodeAtLocation(tree, jsonPath);
   if (node?.type !== "object") return [];
   return (node.children ?? []).flatMap((property) => {
     const key: unknown = property.children?.[0]?.value;
