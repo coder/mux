@@ -310,24 +310,61 @@ function collisionKey(value: string): string {
 }
 
 /**
+ * Confirms the path just opened still holds no symlink between the root and the file, and that
+ * the file it named is the file the handle holds.
+ *
+ * `O_NOFOLLOW` covers only the last component and Node exposes no `openat`, so an ancestor
+ * directory swapped for a symlink between the checks and the open cannot be prevented, only
+ * detected. Comparing the opened handle's identity with the identity the verified walk arrives
+ * at is what makes the detection sound: a component put back after the open still leaves a
+ * different file in hand.
+ */
+async function assertOpenedFileContained(
+  root: string,
+  relativePath: string,
+  opened: { dev: number; ino: number }
+): Promise<void> {
+  let current = root;
+  let last = await fs.lstat(root);
+  for (const segment of relativePath.split("/")) {
+    current = path.join(current, segment);
+    last = await fs.lstat(current);
+    if (last.isSymbolicLink()) throw new Error(`Refusing to follow symlink '${relativePath}'`);
+  }
+  if (last.dev !== opened.dev || last.ino !== opened.ino) {
+    throw new Error(`Refusing to use '${relativePath}': it was replaced while being opened`);
+  }
+}
+
+function noFollowFlag(): number {
+  // Absent on Windows, where a file cannot be swapped for a junction this way.
+  return fs.constants.O_NOFOLLOW ?? 0;
+}
+
+function absolutePathOf(root: string, relativePath: string): string {
+  return path.join(root, ...relativePath.split("/"));
+}
+
+/**
  * Reads a file through one handle, so the size that was checked is the size that is read.
  * Reopening the path after a `stat` lets a file that grew in between defeat the byte budget,
  * and lets a symlink installed in between be followed after the checks said there was none.
  * The window is ordinary rather than adversarial here: agents write under this root while a
- * Preview or Push is running. `O_NOFOLLOW` is absent on Windows, where a junction cannot be
- * swapped in for a file this way.
+ * Preview or Push is running.
  */
 async function readCheckedFile(
-  absolutePath: string,
+  root: string,
+  relativePath: string,
   charge: (size: number) => void
 ): Promise<{ content: Buffer; mode: number }> {
   const handle = await fs.open(
-    absolutePath,
-    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+    absolutePathOf(root, relativePath),
+    fs.constants.O_RDONLY | noFollowFlag()
   );
   try {
     const stat = await handle.stat();
-    if (!stat.isFile()) throw new Error(`Refusing to read '${absolutePath}': not a regular file`);
+    if (!stat.isFile()) throw new Error(`Refusing to read '${relativePath}': not a regular file`);
+    await assertOpenedFileContained(root, relativePath, stat);
     charge(stat.size);
     const content = Buffer.alloc(stat.size);
     let filled = 0;
@@ -347,13 +384,45 @@ async function readCheckedFile(
   }
 }
 
+/**
+ * Writes a file through one handle, opened without following a symlink and verified to be the
+ * file inside the root that was planned before anything is written to it. Deliberately not
+ * `O_TRUNC`: truncation happens after the verification, so a destination that turned out to be
+ * somewhere else is not emptied on the way to finding that out. The mode is set on the handle
+ * rather than the path for the same reason.
+ */
+async function writeCheckedFile(
+  root: string,
+  relativePath: string,
+  content: Buffer,
+  executable: boolean
+): Promise<void> {
+  const destination = absolutePathOf(root, relativePath);
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  const handle = await fs.open(
+    destination,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag()
+  );
+  try {
+    const stat = await handle.stat();
+    await assertOpenedFileContained(root, relativePath, stat);
+    await handle.truncate(0);
+    await handle.write(content, 0, content.length, 0);
+    // Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the read and
+    // write bits to the local umask rather than inventing a source mode.
+    const next = executable ? stat.mode | ((stat.mode & 0o444) >> 2) : stat.mode & ~0o111;
+    if (next !== stat.mode) await handle.chmod(next);
+  } finally {
+    await handle.close();
+  }
+}
+
 async function readBackupFile(
   root: string,
   relativePath: string,
   budget: ByteBudget
 ): Promise<BackupFile> {
-  const absolutePath = path.join(root, ...relativePath.split("/"));
-  const { content, mode } = await readCheckedFile(absolutePath, (size) =>
+  const { content, mode } = await readCheckedFile(root, relativePath, (size) =>
     budget(relativePath, size)
   );
   return { path: relativePath, content, executable: (mode & 0o111) !== 0 };
@@ -862,11 +931,11 @@ async function readManifestIfPresent(
   destinationDir: string
 ): Promise<{ manifest: BackupManifest; raw: string } | null> {
   try {
-    const manifestPath = await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE);
+    await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE);
     // Reading this only avoids a no-op commit, so an oversized one is ignored rather than
     // buffered: the push replaces it either way.
     const raw = (
-      await readCheckedFile(manifestPath, (size) => {
+      await readCheckedFile(destinationDir, BACKUP_MANIFEST_FILE, (size) => {
         if (size > MAX_BACKUP_FILE_BYTES) {
           throw new Error(`'${BACKUP_MANIFEST_FILE}' is larger than the reuse limit`);
         }
@@ -880,16 +949,6 @@ async function readManifestIfPresent(
 
 function normalizeMuxVersion(value: string | undefined): string {
   return typeof value === "string" && value.length > 0 ? value : "unknown";
-}
-
-/**
- * Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the
- * read and write bits to the local umask rather than inventing a source mode.
- */
-async function applyExecuteBit(filePath: string, executable: boolean): Promise<void> {
-  const { mode } = await fs.stat(filePath);
-  const next = executable ? mode | ((mode & 0o444) >> 2) : mode & ~0o111;
-  if (next !== mode) await fs.chmod(filePath, next);
 }
 
 /**
@@ -933,12 +992,15 @@ export async function writeBackupPayload(
   await fs.rm(destinationDir, { recursive: true, force: true });
   await fs.mkdir(destinationDir, { recursive: true });
   for (const file of payload.files) {
-    const destination = await resolveContainedPath(destinationDir, file.path);
-    await fs.mkdir(path.dirname(destination), { recursive: true });
-    await fs.writeFile(destination, file.content);
-    await applyExecuteBit(destination, file.executable === true);
+    await resolveContainedPath(destinationDir, file.path);
+    await writeCheckedFile(destinationDir, file.path, file.content, file.executable === true);
   }
-  await fs.writeFile(path.join(destinationDir, BACKUP_MANIFEST_FILE), manifestJson, "utf-8");
+  await writeCheckedFile(
+    destinationDir,
+    BACKUP_MANIFEST_FILE,
+    Buffer.from(manifestJson, "utf-8"),
+    false
+  );
 }
 
 function parseManifest(raw: string): BackupManifest {
@@ -1014,9 +1076,9 @@ async function readManifestEntry(
   budget: ByteBudget
 ): Promise<Buffer> {
   try {
-    const absolutePath = await resolveContainedPath(sourceDir, relativePath);
+    await resolveContainedPath(sourceDir, relativePath);
     return (
-      await readCheckedFile(absolutePath, (size) => {
+      await readCheckedFile(sourceDir, relativePath, (size) => {
         budget(relativePath, size);
       })
     ).content;
@@ -1030,10 +1092,10 @@ async function readManifestEntry(
 
 async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
   const budget = createByteBudget();
-  const manifestPath = await resolveContainedPath(sourceDir, BACKUP_MANIFEST_FILE);
+  await resolveContainedPath(sourceDir, BACKUP_MANIFEST_FILE);
   // The manifest is the first thing read from a repository anyone with write access can
   // change, so it is charged to the same budget before it is parsed.
-  const manifestRaw = await readCheckedFile(manifestPath, (size) => {
+  const manifestRaw = await readCheckedFile(sourceDir, BACKUP_MANIFEST_FILE, (size) => {
     budget(BACKUP_MANIFEST_FILE, size);
   });
   const manifest = parseManifest(manifestRaw.content.toString("utf-8"));
@@ -1475,7 +1537,7 @@ function readAnyServerCommand(value: unknown): string | undefined {
 }
 
 interface RestorePlan {
-  writes: Array<{ destination: string; content: Buffer; executable: boolean }>;
+  writes: Array<{ path: string; content: Buffer; executable: boolean }>;
   backupPreferences: unknown;
 }
 
@@ -1490,7 +1552,7 @@ export async function planRestoreWrites(
   payload: BackupPayload
 ): Promise<RestorePlan> {
   let backupPreferences: unknown;
-  const writes: Array<{ destination: string; content: Buffer; executable: boolean }> = [];
+  const writes: RestorePlan["writes"] = [];
   const claimed = new Set<string>();
   // Restoring rehydrates local values into repository-controlled text, so what gets written is
   // not what was read and bounded. A payload made of markers is small however many large local
@@ -1530,7 +1592,7 @@ export async function planRestoreWrites(
     }
     const content = await resolveRestoredContent(muxRoot, file);
     budget(file.path, content.byteLength);
-    writes.push({ destination, content, executable: file.executable === true });
+    writes.push({ path: file.path, content, executable: file.executable === true });
   }
   return { writes, backupPreferences };
 }
@@ -1556,9 +1618,7 @@ export async function restoreBackupPayload(
   const plan = await planRestoreWrites(options.muxRoot, options.payload);
 
   for (const write of plan.writes) {
-    await fs.mkdir(path.dirname(write.destination), { recursive: true });
-    await fs.writeFile(write.destination, write.content);
-    await applyExecuteBit(write.destination, write.executable);
+    await writeCheckedFile(options.muxRoot, write.path, write.content, write.executable);
   }
 
   return {
