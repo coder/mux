@@ -1605,6 +1605,40 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain(command);
   });
 
+  it("refuses preferences the merge would reject before writing any file", async () => {
+    // Valid JSON, invalid under the schema. `readBackupPayload` rejects this too, so the guard
+    // here is what keeps the restore safe on its own rather than through its caller.
+    await write(muxRoot, "AGENTS.md", "local\n");
+    const content = Buffer.from(JSON.stringify({ appearance: { theme: 9 } }), "utf-8");
+
+    const rejected = await rejection(
+      restoreBackupPayload({
+        muxRoot,
+        payload: {
+          manifest: {
+            schemaVersion: 1,
+            exportedAt: "2026-01-01T00:00:00.000Z",
+            muxVersion: "1.2.3",
+            sourceLabel: "attacker",
+            files: [
+              { path: "preferences.json", sha256: sha256Hex(content.toString("utf-8")) },
+              { path: "AGENTS.md", sha256: sha256Hex("restored\n") },
+            ],
+          },
+          files: [
+            { path: "preferences.json", content },
+            { path: "AGENTS.md", content: Buffer.from("restored\n", "utf-8") },
+          ],
+          redactions: [],
+        },
+      })
+    );
+
+    expect(rejected).toBeInstanceOf(Error);
+    // Refused during planning, so the other entry never reached the disk.
+    expect(await fs.readFile(path.join(muxRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
+  });
+
   it("refuses a restore whose entries are already one local file", async () => {
     // Hard-linked locally, so a write to either name goes through to the same bytes and the
     // entry written last would decide what both hold. Neither would be restored as recorded.

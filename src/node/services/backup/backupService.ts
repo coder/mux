@@ -290,7 +290,14 @@ export class BackupService {
           approvedCommandTokens: options.approvedCommandTokens,
         });
         const snapshotPath = await this.createSnapshotPath();
-        await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
+        try {
+          await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
+        } catch (error) {
+          // Nothing has been restored yet, so a snapshot that did not finish is an empty or
+          // partial unredacted copy that no recovery can use, and every retry would add one.
+          await fs.rm(snapshotPath, { recursive: true, force: true });
+          throw error;
+        }
         const restored = await this.dependencies.payload.restore({
           repositoryRoot: repository.rootDir,
           managedPath: settings.path,

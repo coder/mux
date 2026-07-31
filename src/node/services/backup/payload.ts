@@ -1454,8 +1454,12 @@ export async function planRestoreWrites(
   for (const file of payload.files) {
     assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
-      // Parsed here so malformed JSON fails before the first write, but left unmerged.
-      backupPreferences = JSON.parse(file.content.toString("utf-8")) as unknown;
+      // Projected here so a document the merge would reject cannot reach the write loop, but
+      // kept unmerged: the merge belongs to the config edit, against the config as it is when
+      // that edit runs rather than as it was before the restore.
+      const parsed: unknown = JSON.parse(file.content.toString("utf-8"));
+      projectBackupPreferences(parsed);
+      backupPreferences = parsed;
       continue;
     }
     const destination = await resolveContainedPath(muxRoot, file.path);

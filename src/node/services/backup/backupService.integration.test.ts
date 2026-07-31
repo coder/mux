@@ -171,6 +171,34 @@ describe("BackupService against a real repository", () => {
     expect(allowed.success).toBe(true);
   });
 
+  it("removes a safety snapshot that could not be written", async () => {
+    const pushed = await service.push(settings);
+    if (!pushed.success) throw new Error(pushed.error.message);
+
+    const payloadStore = createBackupPayloadStore({ config });
+    const failing = new BackupService(config, {
+      gitRepo: createBackupGitRepo({ cacheRoot: path.join(muxRoot, "backup-cache") }),
+      payload: {
+        ...payloadStore,
+        writeSafetySnapshot: async (snapshotRoot) => {
+          // Half-written, which is the state that matters: an unredacted partial copy.
+          await fs.mkdir(snapshotRoot, { recursive: true });
+          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "partial\n", "utf-8");
+          throw new Error("disk full");
+        },
+      },
+    });
+
+    const failed = await failing.restore(settings);
+
+    expect(failed.success).toBe(false);
+    const cacheRoot = path.join(muxRoot, "backup-cache");
+    const snapshots = (await fs.readdir(cacheRoot).catch(() => [])).filter((entry) =>
+      entry.startsWith("restore-")
+    );
+    expect(snapshots).toEqual([]);
+  });
+
   it("leaves no safety snapshot behind when the restore is refused", async () => {
     const pushed = await service.push(settings);
     if (!pushed.success) throw new Error(pushed.error.message);
