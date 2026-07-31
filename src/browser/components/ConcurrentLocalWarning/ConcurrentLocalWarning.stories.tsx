@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import { ConcurrentLocalWarningDecoration } from "./ConcurrentLocalWarning.js";
@@ -12,11 +13,8 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-export const ComposerDecoration: Story = {
-  args: {
-    streamingWorkspaceName: "refactor-db",
-  },
-  render: (args) => (
+function renderComposerDecoration(args: ComponentProps<typeof ConcurrentLocalWarningDecoration>) {
+  return (
     <div className="bg-surface-primary text-light flex h-[360px] flex-col">
       <div className="min-h-0 flex-1 overflow-hidden p-4">
         <div className="mx-auto max-w-4xl space-y-4 text-sm">
@@ -38,13 +36,39 @@ export const ComposerDecoration: Story = {
         </div>
       </div>
     </div>
-  ),
+  );
+}
+
+export const ComposerDecoration: Story = {
+  args: {
+    streamingWorkspaceName: "refactor-db",
+  },
+  render: renderComposerDecoration,
   tags: ["concurrent-local-warning"],
   parameters: {
     docs: {
       description: {
         story:
           "Shows the concurrent local-agent warning pinned in the composer decoration lane, above the input and outside the transcript scroll flow.",
+      },
+    },
+  },
+};
+
+export const PhoneComposerDecoration: Story = {
+  args: {
+    streamingWorkspaceName: "long-running-local-agent",
+  },
+  render: renderComposerDecoration,
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: { matrix: { viewports: ["phone"] } },
+    docs: {
+      description: {
+        story:
+          "Pins the phone-width visual contract so the warning stays a single aligned decoration row without pushing the composer off-screen.",
       },
     },
   },
