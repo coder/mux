@@ -115,6 +115,54 @@ describe("BackupRepoCache", () => {
     expect(tracked.split("\n")).toContain("mux/AGENTS.md");
   });
 
+  it("treats a managed path containing glob characters literally", async () => {
+    const seed = path.join(tempDir, "glob-seed");
+    await fs.mkdir(path.join(seed, "mux[1]"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux[1]", "AGENTS.md"), "managed\n", "utf-8");
+    await fs.mkdir(path.join(seed, "mux1"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux1", "other.txt"), "sibling\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "glob siblings",
+    ]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux[1]",
+    });
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await pathExists(path.join(repo.cachePath, "mux[1]/AGENTS.md"))).toBe(true);
+    expect(await pathExists(path.join(repo.cachePath, "mux1"))).toBe(false);
+
+    const stray = path.join(repo.cachePath, "mux1", "stray.txt");
+    await fs.mkdir(path.dirname(stray), { recursive: true });
+    await fs.writeFile(stray, "untracked\n", "utf-8");
+    await repo.cleanManagedPath("mux[1]");
+    expect(await pathExists(stray)).toBe(true);
+
+    await fs.writeFile(path.join(repo.cachePath, "mux[1]", "AGENTS.md"), "updated\n", "utf-8");
+    const commit = await repo.stageAndCommit("mux[1]", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+    await repo.push();
+    expect(await git(["--git-dir", originPath, "show", `main:mux[1]/AGENTS.md`])).toBe("updated");
+  });
+
   it("reuses the cache and rejects an origin mismatch", async () => {
     const repo = createRepo();
     await repo.ensureCache();

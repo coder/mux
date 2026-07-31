@@ -11,6 +11,7 @@ import type {
   UpdateChannel,
 } from "@/common/config/schemas/appConfigOnDisk";
 import type { UserPreferences } from "@/common/config/schemas/userPreferences";
+import type { SettingsBackup } from "@/common/config/schemas/settingsBackup";
 import type { z } from "zod";
 import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
 import type { AgentAiDefaults } from "./agentAiDefaults";
@@ -201,13 +202,7 @@ export interface ProjectsConfig {
    */
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
 
-  settingsBackup?: {
-    repoUrl: string;
-    branch: string;
-    path: string;
-    lastPushedCommit?: string;
-    lastRestoredCommit?: string;
-  };
+  settingsBackup?: SettingsBackup;
 
   /** Optional 1Password account name used for desktop SDK account selection. */
   onePasswordAccountName?: string;

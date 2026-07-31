@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { AppConfigOnDiskSchema } from "./appConfigOnDisk";
+import { SettingsBackupSchema } from "./settingsBackup";
 
 describe("AppConfigOnDiskSchema", () => {
   it("validates default model setting", () => {
@@ -81,6 +82,34 @@ describe("AppConfigOnDiskSchema", () => {
         runtimeEnablement: { ssh: false, future_runtime: false },
       }).success
     ).toBe(true);
+  });
+
+  it("holds settingsBackup to the shape the backup API returns", () => {
+    const stored = { repoUrl: "git@example.com:me/dotfiles.git", branch: "main", path: "mux" };
+    const parsed = AppConfigOnDiskSchema.safeParse({ settingsBackup: stored });
+    expect(parsed.success).toBe(true);
+    expect(
+      SettingsBackupSchema.safeParse(parsed.success && parsed.data.settingsBackup).success
+    ).toBe(true);
+
+    // A value this schema once accepted but the backup API rejects must degrade to "not
+    // configured" instead of failing the whole config parse and taking every other setting
+    // down with it.
+    for (const unusable of [
+      { repoUrl: "", branch: "main", path: "mux" },
+      { repoUrl: "git@example.com:me/dotfiles.git", branch: "main", path: "." },
+    ]) {
+      expect(SettingsBackupSchema.safeParse(unusable).success).toBe(false);
+      const degraded = AppConfigOnDiskSchema.safeParse({
+        settingsBackup: unusable,
+        defaultModel: "openai:gpt-4o",
+      });
+      expect(degraded.success).toBe(true);
+      if (degraded.success) {
+        expect(degraded.data.settingsBackup).toBeUndefined();
+        expect(degraded.data.defaultModel).toBe("openai:gpt-4o");
+      }
+    }
   });
 
   it("accepts sparse configs", () => {

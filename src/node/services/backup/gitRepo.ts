@@ -52,6 +52,15 @@ export interface RemoteRefs {
 }
 
 /**
+ * `--no-cone` sparse patterns are gitignore-style rather than pathspecs, so the same
+ * managed directory has to be escaped instead: unescaped, `/mux[1]/*` selects `mux1` and
+ * the real backup is never materialized.
+ */
+function escapeSparsePattern(relativePath: string): string {
+  return relativePath.replace(/[\\*?[\]]/g, "\\$&");
+}
+
+/**
  * The managed path is user-supplied and is passed to `git clean -fd --` and
  * `git commit --`, so it has to stay a strict subdirectory. `.` would widen those
  * commands to the whole cache clone, which must never happen.
@@ -211,7 +220,12 @@ export class BackupRepoCache {
    */
   private async applySparseCheckout(): Promise<void> {
     assertSafeRelativePath(this.options.managedPath);
-    await this.localGit(["sparse-checkout", "set", "--no-cone", `/${this.options.managedPath}/*`]);
+    await this.localGit([
+      "sparse-checkout",
+      "set",
+      "--no-cone",
+      `/${escapeSparsePattern(this.options.managedPath)}/*`,
+    ]);
   }
 
   async resetHardToRemote(): Promise<string | null> {

@@ -7,7 +7,8 @@ import {
   UserPreferencesSchema,
   type UserPreferences,
 } from "@/common/config/schemas/userPreferences";
-import { isWindowsUnusableSegment, type BackupCommandApproval } from "@/common/orpc/schemas/backup";
+import { isWindowsUnusableSegment } from "@/common/config/schemas/settingsBackup";
+import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";

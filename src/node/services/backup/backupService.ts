@@ -4,15 +4,14 @@ import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
-import { isValidBackupPath } from "@/common/orpc/schemas/backup";
 import type {
   BackupCommandApproval,
   BackupCredentialKind,
   BackupFileChange,
   BackupOperationError,
-  SettingsBackup,
   SettingsBackupInput,
 } from "@/common/orpc/schemas/backup";
+import { isValidBackupPath, type SettingsBackup } from "@/common/config/schemas/settingsBackup";
 
 export interface PreparedBackupRepository {
   rootDir: string;
