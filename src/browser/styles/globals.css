@@ -2445,9 +2445,9 @@ html[data-renderer-inactive]
     .workspace-status-dot-active,
     .heartbeat-dot,
     .heartbeat-trace,
-    .subagent-connector-active::before,
     .subagent-connector-elbow-active
-  ) {
+  ),
+html[data-renderer-inactive] .subagent-connector-active::before {
   animation-play-state: paused !important;
 }
 
