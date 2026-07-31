@@ -423,6 +423,29 @@ describe("backup payload", () => {
     }
   });
 
+  it("restores over a malformed local MCP config", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{"servers": {"api": {"headers": {"Authorization": "Bearer source-secret"}}}}`
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "malformed-local");
+    await write(restoreRoot, "mcp.jsonc", "{ this is not valid jsonc");
+    await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+
+    // Nothing to rehydrate from a corrupt file, so the marker stays and the file parses.
+    const restored = jsonc.parse(
+      await fs.readFile(path.join(restoreRoot, "mcp.jsonc"), "utf-8")
+    ) as { servers: { api: { headers: Record<string, unknown> } } };
+    expect(restored.servers.api.headers.Authorization).toBe(REDACTED_BACKUP_VALUE);
+  });
+
   it("keeps provider options the backup excludes when restoring", () => {
     const merged = mergeBackupPreferences(
       {

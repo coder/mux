@@ -792,11 +792,20 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
 
 async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {
   const backupText = content.toString("utf-8");
+  // Without a marker there is nothing to rehydrate, so the local file is not consulted.
+  if (!containsRedaction(backupText)) return content;
+
   const backup = parseJsoncObject(backupText, "backup mcp.jsonc");
   const localPath = path.join(muxRoot, "mcp.jsonc");
   let local: Record<string, unknown> = {};
   if (await fileExists(localPath)) {
-    local = parseJsoncObject(await fs.readFile(localPath, "utf-8"), "local mcp.jsonc");
+    try {
+      local = parseJsoncObject(await fs.readFile(localPath, "utf-8"), "local mcp.jsonc");
+    } catch {
+      // A corrupt local file holds no recoverable values, and it must not block the
+      // restore that would replace it.
+      local = {};
+    }
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
   collectRedactionRestoreEdits(backup, local, [], edits);
