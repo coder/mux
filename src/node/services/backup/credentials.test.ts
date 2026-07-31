@@ -114,7 +114,12 @@ printf 'token=%s\n' "$MUX_BACKUP_TOKEN" >> "$GIT_LOG"
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
     await writeExecutable(
       path.join(binDir, "git"),
+      // The ambient rung reads core.sshCommand unless GIT_SSH_COMMAND is already set, so this
+      // answers that probe the way git does for an unset key: non-zero, and not an attempt.
       `#!/bin/sh
+case "$*" in
+  *core.sshCommand*) exit 1 ;;
+esac
 printf '%s\n' '---' >> "$GIT_LOG"
 printf '%s\n' "$@" >> "$GIT_LOG"
 case "$*" in
@@ -207,7 +212,12 @@ exit 128
     await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
     await writeExecutable(
       path.join(binDir, "git"),
+      // The ambient rung reads core.sshCommand unless GIT_SSH_COMMAND is already set, so this
+      // answers that probe the way git does for an unset key: non-zero, and not an attempt.
       `#!/bin/sh
+case "$*" in
+  *core.sshCommand*) exit 1 ;;
+esac
 printf '%s\\n' '---' >> "$GIT_LOG"
 printf '%s\\n' "$@" >> "$GIT_LOG"
 echo 'remote: Permission to owner/repo.git denied to someone.' >&2
