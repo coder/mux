@@ -870,7 +870,7 @@ function collectRedactionRestoreEdits(
     for (const [key, value] of Object.entries(backup as Record<string, unknown>)) {
       collectRedactionRestoreEdits(
         value,
-        localRecord[key],
+        readOwn(localRecord, key),
         [...currentPath, key],
         edits,
         resolvedServers
@@ -1005,7 +1005,7 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
   const resolved = resolveRestoredCommands(backup, local, edits);
-  for (const path of resolveRestoredHeaders(backup, local, edits)) resolved.add(path);
+  for (const path of resolveRestoredHeaders(backup, local, backupText, edits)) resolved.add(path);
   collectRedactionRestoreEdits(backup, local, [], edits, resolved);
   return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
 }
@@ -1038,7 +1038,7 @@ function resolveRestoredCommands(
     const isObjectMarker = !isBareMarker && readRecord(entry)?.command === REDACTED_BACKUP_VALUE;
     if (!isBareMarker && !isObjectMarker) continue;
 
-    const localCommand = readAnyServerCommand(localServers[name]);
+    const localCommand = readAnyServerCommand(readOwn(localServers, name));
     if (localCommand === undefined) {
       // `normalizeEntry` gives a url precedence over a command, so a mixed object is an HTTP
       // server whose command is already ignored. Drop only the command and keep the url,
@@ -1081,17 +1081,19 @@ function resolveRestoredCommands(
 function resolveRestoredHeaders(
   backup: Record<string, unknown>,
   local: Record<string, unknown>,
+  backupText: string,
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>
 ): Set<string> {
   const handled = new Set<string>();
   const servers = readRecord(backup.servers);
   if (!servers) return handled;
   const localServers = readRecord(local.servers) ?? {};
+  const tree = jsonc.parseTree(backupText);
 
   for (const [name, entry] of Object.entries(servers)) {
     const rawHeaders = readRecord(entry)?.headers;
     if (rawHeaders === undefined) continue;
-    const localServer = readRecord(localServers[name]);
+    const localServer = readRecord(readOwn(localServers, name));
     const headersPath: jsonc.JSONPath = ["servers", name, "headers"];
     // The whole subtree is withheld from the generic walk, so no header can be rehydrated
     // by a path this function did not decide on.
@@ -1105,15 +1107,54 @@ function resolveRestoredHeaders(
     }
 
     const localHeaders = readRecord(localServer?.headers) ?? {};
-    for (const [headerName, value] of Object.entries(headers)) {
-      const localValue = localHeaders[headerName];
+    // Names come from the document, not the parsed object, because `jsonc.parse` drops a
+    // `__proto__` key while the text keeps it. Enumerating the parse result would leave that
+    // header, and its marker, untouched in the restored file.
+    const names = headerNamesInText(tree, name);
+    const restored: Record<string, unknown> = {};
+    for (const headerName of names) {
+      if (!hasOwn(localHeaders, headerName)) continue;
+      restored[headerName] = localHeaders[headerName];
+    }
+
+    if (names.length !== Object.keys(restored).length) {
+      // Something has to go: a header with no local counterpart, a duplicate key, or a name
+      // the parser hides. Replacing the whole value is the only edit that reliably removes
+      // it, since `jsonc.modify` cannot address a key it cannot see.
+      edits.push({ path: headersPath, value: restored });
+      continue;
+    }
+    for (const [headerName, value] of Object.entries(restored)) {
       // Skipping an already-identical value keeps `jsonc.modify` from reformatting a header
       // the restore would not have changed.
-      if (JSON.stringify(localValue) === JSON.stringify(value)) continue;
-      edits.push({ path: [...headersPath, headerName], value: localValue });
+      if (JSON.stringify(readOwn(headers, headerName)) === JSON.stringify(value)) continue;
+      edits.push({ path: [...headersPath, headerName], value });
     }
   }
   return handled;
+}
+
+/** Header names as the document spells them, including any the parser drops. */
+function headerNamesInText(tree: jsonc.Node | undefined, serverName: string): string[] {
+  if (!tree) return [];
+  const node = jsonc.findNodeAtLocation(tree, ["servers", serverName, "headers"]);
+  if (node?.type !== "object") return [];
+  return (node.children ?? []).flatMap((property) => {
+    const key: unknown = property.children?.[0]?.value;
+    return typeof key === "string" ? [key] : [];
+  });
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+/**
+ * Header and server names come from the backup, so a name like `constructor` would otherwise
+ * read an `Object.prototype` member and hand a function to `jsonc.modify`.
+ */
+function readOwn(record: Record<string, unknown>, key: string): unknown {
+  return hasOwn(record, key) ? record[key] : undefined;
 }
 
 /** The url the restored entry ends up with, since a redacted url is itself put back from local. */

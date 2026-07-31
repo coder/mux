@@ -563,6 +563,50 @@ describe("backup payload", () => {
     expect(restored.servers.api.headers).toBeUndefined();
   });
 
+  it("treats header names that collide with Object.prototype members as absent locally", async () => {
+    // `localHeaders[name]` would return the inherited function for these names, which
+    // `jsonc.modify` cannot serialize, and `jsonc.parse` drops `__proto__` outright while the
+    // document keeps it, so enumerating the parse result would leave its marker behind.
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          api: { url: "https://api.example.com/mcp", headers: { Authorization: "Bearer local" } },
+        },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    for (const headerName of ["constructor", "toString", "__proto__"]) {
+      const tampered = {
+        ...payload,
+        files: payload.files.map((candidate) =>
+          candidate.path === "mcp.jsonc"
+            ? {
+                ...candidate,
+                content: Buffer.from(
+                  `{"servers":{"api":{"url":"https://api.example.com/mcp","headers":{${JSON.stringify(headerName)}:${JSON.stringify(REDACTED_BACKUP_VALUE)}}}}}`,
+                  "utf-8"
+                ),
+              }
+            : candidate
+        ),
+      };
+      await restoreBackupPayload({ muxRoot, payload: tampered });
+      const text = await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8");
+      expect(text).not.toContain(REDACTED_BACKUP_VALUE);
+      const restored = jsonc.parse(text) as {
+        servers: { api: { headers: Record<string, unknown> } };
+      };
+      expect(restored.servers.api.headers).toEqual({});
+    }
+  });
+
   it("puts a header credential back when the entry still points at the local url", async () => {
     await write(
       muxRoot,
