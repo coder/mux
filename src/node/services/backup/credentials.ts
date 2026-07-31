@@ -6,6 +6,11 @@ const NON_INTERACTIVE_ENV = {
   GIT_TERMINAL_PROMPT: "0",
   GH_PROMPT_DISABLED: "1",
   GCM_INTERACTIVE: "never",
+  // A push rejection is recognized by its wording. git keeps the `[rejected]` status token
+  // untranslated today, so this is not load-bearing, but pinning the locale means the match
+  // does not depend on that staying true.
+  LC_ALL: "C",
+  LANGUAGE: "C",
 } as const;
 const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
 
