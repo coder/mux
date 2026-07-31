@@ -1605,6 +1605,33 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain(command);
   });
 
+  it("works when the root itself is a symlink", async () => {
+    // Keeping ~/.mux on another volume is the user's business, and the no-symlink rule applies
+    // to what is under the root, not to the root itself.
+    const realRoot = path.join(tempDir, "real-root");
+    const linkedRoot = path.join(tempDir, "linked-root");
+    await fs.mkdir(realRoot, { recursive: true });
+    await fs.symlink(realRoot, linkedRoot);
+    await write(realRoot, "AGENTS.md", "through a link\n");
+
+    const payload = await createBackupPayload({
+      muxRoot: linkedRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    expect(payloadFileText(payload, "AGENTS.md")).toBe("through a link\n");
+
+    const destination = path.join(tempDir, "linked-root-payload");
+    await writeBackupPayload(destination, payload);
+    await write(realRoot, "AGENTS.md", "edited\n");
+    await restoreBackupPayload({
+      muxRoot: linkedRoot,
+      payload: await readBackupPayload(destination),
+    });
+
+    expect(await fs.readFile(path.join(realRoot, "AGENTS.md"), "utf-8")).toBe("through a link\n");
+  });
+
   it("refuses preferences the merge would reject before writing any file", async () => {
     // Valid JSON, invalid under the schema. `readBackupPayload` rejects this too, so the guard
     // here is what keeps the restore safe on its own rather than through its caller.

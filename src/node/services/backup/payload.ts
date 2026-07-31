@@ -320,20 +320,31 @@ function collisionKey(value: string): string {
  * different file in hand.
  */
 async function assertOpenedFileContained(
-  root: string,
+  resolvedRoot: string,
   relativePath: string,
   opened: { dev: number; ino: number }
 ): Promise<void> {
-  let current = root;
-  let last = await fs.lstat(root);
+  let current = resolvedRoot;
+  let last: Awaited<ReturnType<typeof fs.lstat>> | undefined;
   for (const segment of relativePath.split("/")) {
     current = path.join(current, segment);
     last = await fs.lstat(current);
     if (last.isSymbolicLink()) throw new Error(`Refusing to follow symlink '${relativePath}'`);
   }
-  if (last.dev !== opened.dev || last.ino !== opened.ino) {
+  if (last === undefined || last.dev !== opened.dev || last.ino !== opened.ino) {
     throw new Error(`Refusing to use '${relativePath}': it was replaced while being opened`);
   }
+}
+
+/**
+ * Resolved once where an operation begins, so every open and check below it uses that result.
+ * The root being a symlink is then neither refused nor traversed again: a user is free to keep
+ * `~/.mux` on another volume, and swapping that link partway through cannot move an operation
+ * already under way onto a different tree. Only the components below the root are held to the
+ * no-symlink rule.
+ */
+async function resolveRoot(root: string): Promise<string> {
+  return await fs.realpath(root);
 }
 
 function noFollowFlag(): number {
@@ -353,18 +364,18 @@ function absolutePathOf(root: string, relativePath: string): string {
  * Preview or Push is running.
  */
 async function readCheckedFile(
-  root: string,
+  resolvedRoot: string,
   relativePath: string,
   charge: (size: number) => void
 ): Promise<{ content: Buffer; mode: number }> {
   const handle = await fs.open(
-    absolutePathOf(root, relativePath),
+    absolutePathOf(resolvedRoot, relativePath),
     fs.constants.O_RDONLY | noFollowFlag()
   );
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) throw new Error(`Refusing to read '${relativePath}': not a regular file`);
-    await assertOpenedFileContained(root, relativePath, stat);
+    await assertOpenedFileContained(resolvedRoot, relativePath, stat);
     charge(stat.size);
     const content = Buffer.alloc(stat.size);
     let filled = 0;
@@ -392,12 +403,12 @@ async function readCheckedFile(
  * rather than the path for the same reason.
  */
 async function writeCheckedFile(
-  root: string,
+  resolvedRoot: string,
   relativePath: string,
   content: Buffer,
   executable: boolean
 ): Promise<void> {
-  const destination = absolutePathOf(root, relativePath);
+  const destination = absolutePathOf(resolvedRoot, relativePath);
   await fs.mkdir(path.dirname(destination), { recursive: true });
   const handle = await fs.open(
     destination,
@@ -405,9 +416,24 @@ async function writeCheckedFile(
   );
   try {
     const stat = await handle.stat();
-    await assertOpenedFileContained(root, relativePath, stat);
+    await assertOpenedFileContained(resolvedRoot, relativePath, stat);
     await handle.truncate(0);
-    await handle.write(content, 0, content.length, 0);
+    let written = 0;
+    while (written < content.length) {
+      // A short write resolves successfully, so the count decides when the file is complete:
+      // treating the first call as the whole write would publish a truncated file as a
+      // finished one.
+      const { bytesWritten } = await handle.write(
+        content,
+        written,
+        content.length - written,
+        written
+      );
+      if (bytesWritten === 0) {
+        throw new Error(`Could not finish writing '${relativePath}'`);
+      }
+      written += bytesWritten;
+    }
     // Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the read and
     // write bits to the local umask rather than inventing a source mode.
     const next = executable ? stat.mode | ((stat.mode & 0o444) >> 2) : stat.mode & ~0o111;
@@ -477,23 +503,24 @@ async function collectDirectory(
 }
 
 export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
+  const root = await resolveRoot(muxRoot);
   const files: BackupFile[] = [];
   const budget = createByteBudget();
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
-    if (await isRegularFile(path.join(muxRoot, relativePath))) {
-      files.push(await readBackupFile(muxRoot, relativePath, budget));
+    if (await isRegularFile(path.join(root, relativePath))) {
+      files.push(await readBackupFile(root, relativePath, budget));
     }
   }
 
   await collectDirectory(
-    muxRoot,
+    root,
     "agents",
     (relativePath, entry) => entry.isDirectory() || /^agents\/[^/]+\.md$/.test(relativePath),
     files,
     budget
   );
-  await collectDirectory(muxRoot, "skills", () => true, files, budget);
-  await collectDirectory(muxRoot, "memory/global", () => true, files, budget);
+  await collectDirectory(root, "skills", () => true, files, budget);
+  await collectDirectory(root, "memory/global", () => true, files, budget);
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -927,9 +954,19 @@ function sameManifestContent(a: BackupManifest, b: BackupManifest): boolean {
   );
 }
 
+/** Null when the directory is not there yet, which is the ordinary first push. */
+async function resolveRootIfPresent(root: string): Promise<string | null> {
+  try {
+    return await resolveRoot(root);
+  } catch {
+    return null;
+  }
+}
+
 async function readManifestIfPresent(
-  destinationDir: string
+  destinationDir: string | null
 ): Promise<{ manifest: BackupManifest; raw: string } | null> {
+  if (destinationDir === null) return null;
   try {
     await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE);
     // Reading this only avoids a no-op commit, so an oversized one is ignored rather than
@@ -984,23 +1021,19 @@ export async function writeBackupPayload(
   }
   // Reuse the previous manifest when content hashes match. Otherwise changing
   // export metadata would produce a commit with no settings changes.
-  const previous = await readManifestIfPresent(destinationDir);
+  const previous = await readManifestIfPresent(await resolveRootIfPresent(destinationDir));
   const reusable = previous && sameManifestContent(previous.manifest, payload.manifest);
   const manifestJson = reusable ? previous.raw : `${JSON.stringify(payload.manifest, null, 2)}\n`;
   assertPayloadWithinLimits(payload.files, manifestJson);
 
   await fs.rm(destinationDir, { recursive: true, force: true });
   await fs.mkdir(destinationDir, { recursive: true });
+  const root = await resolveRoot(destinationDir);
   for (const file of payload.files) {
-    await resolveContainedPath(destinationDir, file.path);
-    await writeCheckedFile(destinationDir, file.path, file.content, file.executable === true);
+    await resolveContainedPath(root, file.path);
+    await writeCheckedFile(root, file.path, file.content, file.executable === true);
   }
-  await writeCheckedFile(
-    destinationDir,
-    BACKUP_MANIFEST_FILE,
-    Buffer.from(manifestJson, "utf-8"),
-    false
-  );
+  await writeCheckedFile(root, BACKUP_MANIFEST_FILE, Buffer.from(manifestJson, "utf-8"), false);
 }
 
 function parseManifest(raw: string): BackupManifest {
@@ -1092,10 +1125,11 @@ async function readManifestEntry(
 
 async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
   const budget = createByteBudget();
-  await resolveContainedPath(sourceDir, BACKUP_MANIFEST_FILE);
+  const root = await resolveRoot(sourceDir);
+  await resolveContainedPath(root, BACKUP_MANIFEST_FILE);
   // The manifest is the first thing read from a repository anyone with write access can
   // change, so it is charged to the same budget before it is parsed.
-  const manifestRaw = await readCheckedFile(sourceDir, BACKUP_MANIFEST_FILE, (size) => {
+  const manifestRaw = await readCheckedFile(root, BACKUP_MANIFEST_FILE, (size) => {
     budget(BACKUP_MANIFEST_FILE, size);
   });
   const manifest = parseManifest(manifestRaw.content.toString("utf-8"));
@@ -1105,7 +1139,7 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
     const key = collisionKey(manifestFile.path);
     if (seen.has(key)) throw new Error(`Duplicate backup path '${manifestFile.path}'`);
     seen.add(key);
-    const content = await readManifestEntry(sourceDir, manifestFile.path, budget);
+    const content = await readManifestEntry(root, manifestFile.path, budget);
     if (sha256(content) !== manifestFile.sha256) {
       throw new Error(`Backup checksum mismatch for '${manifestFile.path}'`);
     }
@@ -1551,6 +1585,7 @@ export async function planRestoreWrites(
   muxRoot: string,
   payload: BackupPayload
 ): Promise<RestorePlan> {
+  const root = await resolveRoot(muxRoot);
   let backupPreferences: unknown;
   const writes: RestorePlan["writes"] = [];
   const claimed = new Set<string>();
@@ -1569,7 +1604,7 @@ export async function planRestoreWrites(
       backupPreferences = parsed;
       continue;
     }
-    const destination = await resolveContainedPath(muxRoot, file.path);
+    const destination = await resolveContainedPath(root, file.path);
     const existing = await lstatOrNull(destination);
     if (existing?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
@@ -1590,7 +1625,7 @@ export async function planRestoreWrites(
       }
       claimed.add(claim);
     }
-    const content = await resolveRestoredContent(muxRoot, file);
+    const content = await resolveRestoredContent(root, file);
     budget(file.path, content.byteLength);
     writes.push({ path: file.path, content, executable: file.executable === true });
   }
@@ -1617,8 +1652,9 @@ export async function restoreBackupPayload(
 
   const plan = await planRestoreWrites(options.muxRoot, options.payload);
 
+  const root = await resolveRoot(options.muxRoot);
   for (const write of plan.writes) {
-    await writeCheckedFile(options.muxRoot, write.path, write.content, write.executable);
+    await writeCheckedFile(root, write.path, write.content, write.executable);
   }
 
   return {
