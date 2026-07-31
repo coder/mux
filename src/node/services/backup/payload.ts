@@ -320,11 +320,18 @@ function collisionKey(value: string): string {
  * different file in hand.
  */
 async function assertOpenedFileContained(
-  resolvedRoot: string,
+  root: BackupRoot,
   relativePath: string,
   opened: { dev: number; ino: number }
 ): Promise<void> {
-  let current = resolvedRoot;
+  // The root is checked by identity, not by name: `realpath` returned a pathname, and a
+  // pathname can be made to point somewhere else afterwards. Node cannot pin a directory, so
+  // the check is that the canonical root is still the same directory this operation started on.
+  const rootStat = await fs.lstat(root.path);
+  if (rootStat.isSymbolicLink() || rootStat.dev !== root.dev || rootStat.ino !== root.ino) {
+    throw new Error(`Refusing to use '${relativePath}': the backup root was replaced`);
+  }
+  let current = root.path;
   let last: Awaited<ReturnType<typeof fs.lstat>> | undefined;
   for (const segment of relativePath.split("/")) {
     current = path.join(current, segment);
@@ -343,8 +350,17 @@ async function assertOpenedFileContained(
  * already under way onto a different tree. Only the components below the root are held to the
  * no-symlink rule.
  */
-async function resolveRoot(root: string): Promise<string> {
-  return await fs.realpath(root);
+interface BackupRoot {
+  path: string;
+  dev: number;
+  ino: number;
+}
+
+async function resolveRoot(root: string): Promise<BackupRoot> {
+  const canonical = await fs.realpath(root);
+  const stat = await fs.lstat(canonical);
+  if (!stat.isDirectory()) throw new Error(`'${root}' is not a directory`);
+  return { path: canonical, dev: stat.dev, ino: stat.ino };
 }
 
 function noFollowFlag(): number {
@@ -364,18 +380,18 @@ function absolutePathOf(root: string, relativePath: string): string {
  * Preview or Push is running.
  */
 async function readCheckedFile(
-  resolvedRoot: string,
+  root: BackupRoot,
   relativePath: string,
   charge: (size: number) => void
 ): Promise<{ content: Buffer; mode: number }> {
   const handle = await fs.open(
-    absolutePathOf(resolvedRoot, relativePath),
+    absolutePathOf(root.path, relativePath),
     fs.constants.O_RDONLY | noFollowFlag()
   );
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) throw new Error(`Refusing to read '${relativePath}': not a regular file`);
-    await assertOpenedFileContained(resolvedRoot, relativePath, stat);
+    await assertOpenedFileContained(root, relativePath, stat);
     charge(stat.size);
     const content = Buffer.alloc(stat.size);
     let filled = 0;
@@ -403,12 +419,12 @@ async function readCheckedFile(
  * rather than the path for the same reason.
  */
 async function writeCheckedFile(
-  resolvedRoot: string,
+  root: BackupRoot,
   relativePath: string,
   content: Buffer,
   executable: boolean
 ): Promise<void> {
-  const destination = absolutePathOf(resolvedRoot, relativePath);
+  const destination = absolutePathOf(root.path, relativePath);
   await fs.mkdir(path.dirname(destination), { recursive: true });
   const handle = await fs.open(
     destination,
@@ -416,7 +432,7 @@ async function writeCheckedFile(
   );
   try {
     const stat = await handle.stat();
-    await assertOpenedFileContained(resolvedRoot, relativePath, stat);
+    await assertOpenedFileContained(root, relativePath, stat);
     await handle.truncate(0);
     let written = 0;
     while (written < content.length) {
@@ -444,7 +460,7 @@ async function writeCheckedFile(
 }
 
 async function readBackupFile(
-  root: string,
+  root: BackupRoot,
   relativePath: string,
   budget: ByteBudget
 ): Promise<BackupFile> {
@@ -471,13 +487,13 @@ async function isRegularFile(filePath: string): Promise<boolean> {
 }
 
 async function collectDirectory(
-  root: string,
+  root: BackupRoot,
   relativeRoot: string,
   filter: (relativePath: string, entry: Dirent) => boolean,
   output: BackupFile[],
   budget: ByteBudget
 ): Promise<void> {
-  const absoluteRoot = path.join(root, ...relativeRoot.split("/"));
+  const absoluteRoot = path.join(root.path, ...relativeRoot.split("/"));
   // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
   // refuses to write through symlinks anyway, so they are simply not backed up.
   if ((await lstatOrNull(absoluteRoot))?.isSymbolicLink() === true) return;
@@ -507,7 +523,7 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
   const files: BackupFile[] = [];
   const budget = createByteBudget();
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
-    if (await isRegularFile(path.join(root, relativePath))) {
+    if (await isRegularFile(path.join(root.path, relativePath))) {
       files.push(await readBackupFile(root, relativePath, budget));
     }
   }
@@ -955,7 +971,7 @@ function sameManifestContent(a: BackupManifest, b: BackupManifest): boolean {
 }
 
 /** Null when the directory is not there yet, which is the ordinary first push. */
-async function resolveRootIfPresent(root: string): Promise<string | null> {
+async function resolveRootIfPresent(root: string): Promise<BackupRoot | null> {
   try {
     return await resolveRoot(root);
   } catch {
@@ -964,11 +980,11 @@ async function resolveRootIfPresent(root: string): Promise<string | null> {
 }
 
 async function readManifestIfPresent(
-  destinationDir: string | null
+  destinationDir: BackupRoot | null
 ): Promise<{ manifest: BackupManifest; raw: string } | null> {
   if (destinationDir === null) return null;
   try {
-    await resolveContainedPath(destinationDir, BACKUP_MANIFEST_FILE);
+    await resolveContainedPath(destinationDir.path, BACKUP_MANIFEST_FILE);
     // Reading this only avoids a no-op commit, so an oversized one is ignored rather than
     // buffered: the push replaces it either way.
     const raw = (
@@ -1030,7 +1046,7 @@ export async function writeBackupPayload(
   await fs.mkdir(destinationDir, { recursive: true });
   const root = await resolveRoot(destinationDir);
   for (const file of payload.files) {
-    await resolveContainedPath(root, file.path);
+    await resolveContainedPath(root.path, file.path);
     await writeCheckedFile(root, file.path, file.content, file.executable === true);
   }
   await writeCheckedFile(root, BACKUP_MANIFEST_FILE, Buffer.from(manifestJson, "utf-8"), false);
@@ -1104,12 +1120,12 @@ export async function readBackupPayload(sourceDir: string): Promise<BackupPayloa
  * to the local filesystem and keeps its own error.
  */
 async function readManifestEntry(
-  sourceDir: string,
+  sourceDir: BackupRoot,
   relativePath: string,
   budget: ByteBudget
 ): Promise<Buffer> {
   try {
-    await resolveContainedPath(sourceDir, relativePath);
+    await resolveContainedPath(sourceDir.path, relativePath);
     return (
       await readCheckedFile(sourceDir, relativePath, (size) => {
         budget(relativePath, size);
@@ -1126,7 +1142,7 @@ async function readManifestEntry(
 async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
   const budget = createByteBudget();
   const root = await resolveRoot(sourceDir);
-  await resolveContainedPath(root, BACKUP_MANIFEST_FILE);
+  await resolveContainedPath(root.path, BACKUP_MANIFEST_FILE);
   // The manifest is the first thing read from a repository anyone with write access can
   // change, so it is charged to the same budget before it is parsed.
   const manifestRaw = await readCheckedFile(root, BACKUP_MANIFEST_FILE, (size) => {
@@ -1571,6 +1587,8 @@ function readAnyServerCommand(value: unknown): string | undefined {
 }
 
 interface RestorePlan {
+  /** Resolved by the plan and reused for the writes, so the two cannot disagree on the tree. */
+  root: BackupRoot;
   writes: Array<{ path: string; content: Buffer; executable: boolean }>;
   backupPreferences: unknown;
 }
@@ -1604,7 +1622,7 @@ export async function planRestoreWrites(
       backupPreferences = parsed;
       continue;
     }
-    const destination = await resolveContainedPath(root, file.path);
+    const destination = await resolveContainedPath(root.path, file.path);
     const existing = await lstatOrNull(destination);
     if (existing?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
@@ -1625,11 +1643,11 @@ export async function planRestoreWrites(
       }
       claimed.add(claim);
     }
-    const content = await resolveRestoredContent(root, file);
+    const content = await resolveRestoredContent(root.path, file);
     budget(file.path, content.byteLength);
     writes.push({ path: file.path, content, executable: file.executable === true });
   }
-  return { writes, backupPreferences };
+  return { root, writes, backupPreferences };
 }
 
 export async function restoreBackupPayload(
@@ -1652,9 +1670,8 @@ export async function restoreBackupPayload(
 
   const plan = await planRestoreWrites(options.muxRoot, options.payload);
 
-  const root = await resolveRoot(options.muxRoot);
   for (const write of plan.writes) {
-    await writeCheckedFile(root, write.path, write.content, write.executable);
+    await writeCheckedFile(plan.root, write.path, write.content, write.executable);
   }
 
   return {
