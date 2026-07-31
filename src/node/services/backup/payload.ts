@@ -316,8 +316,15 @@ function collisionKey(value: string): string {
  * `O_NOFOLLOW` covers only the last component and Node exposes no `openat`, so an ancestor
  * directory swapped for a symlink between the checks and the open cannot be prevented, only
  * detected. Comparing the opened handle's identity with the identity the verified walk arrives
- * at is what makes the detection sound: a component put back after the open still leaves a
- * different file in hand.
+ * at is what does the detecting: a component put back after the open still leaves a different
+ * file in hand.
+ *
+ * What this closes is a backup repository choosing a path that escapes the root, and a symlink
+ * planted under the root beforehand. It is not atomic, and it does not claim to be: every check
+ * here re-resolves a pathname, so a local process that can rename the root repeatedly while a
+ * restore runs can still thread its way between them. Closing that needs directory-relative
+ * opens (`openat`/`O_PATH`), which Node does not expose. A process with that access can write
+ * these files directly anyway, so the pathname checks are the boundary that pays off.
  */
 async function assertOpenedFileContained(
   root: BackupRoot,
@@ -1245,6 +1252,25 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
   return file.path === "mcp.jsonc" ? await restoreMcpFile(muxRoot, file.content) : file.content;
 }
 
+/**
+ * Restore reads the local `mcp.jsonc` to rehydrate the values a backup never carries, so it
+ * goes through the same checked handle as every other read here: a symlink at that path would
+ * otherwise be followed, and an oversized local file would skip the byte budget.
+ * A missing or unreadable file leaves nothing to rehydrate rather than failing the restore.
+ */
+async function readLocalMcpText(muxRoot: string): Promise<string | null> {
+  try {
+    const root = await resolveRoot(muxRoot);
+    const budget = createByteBudget();
+    const { content } = await readCheckedFile(root, "mcp.jsonc", (size) =>
+      budget("mcp.jsonc", size)
+    );
+    return content.toString("utf-8");
+  } catch {
+    return null;
+  }
+}
+
 interface ServerCommand {
   command: string;
   enabled: boolean;
@@ -1332,10 +1358,9 @@ export async function collectMcpCommandApprovals(
 
   const restored = await resolveRestoredContent(muxRoot, file);
   const incoming = readServerCommands(restored.toString("utf-8"));
-  const localPath = path.join(muxRoot, "mcp.jsonc");
-  const local = (await fileExists(localPath))
-    ? readLocalServerCommands(await fs.readFile(localPath, "utf-8"))
-    : new Map<string, ServerCommand>();
+  const localText = await readLocalMcpText(muxRoot);
+  const local =
+    localText === null ? new Map<string, ServerCommand>() : readLocalServerCommands(localText);
 
   const approvals: BackupCommandApproval[] = [];
   for (const [name, entry] of incoming) {
@@ -1374,11 +1399,11 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
     backupText,
     "backup mcp.jsonc"
   );
-  const localPath = path.join(muxRoot, "mcp.jsonc");
+  const localText = await readLocalMcpText(muxRoot);
   let local: Record<string, unknown> = {};
-  if (await fileExists(localPath)) {
+  if (localText !== null) {
     try {
-      local = parseJsoncObject(await fs.readFile(localPath, "utf-8"), "local mcp.jsonc");
+      local = parseJsoncObject(localText, "local mcp.jsonc");
     } catch {
       // A corrupt local file holds no recoverable values, and it must not block the
       // restore that would replace it.

@@ -17,6 +17,7 @@ import {
   mergeBackupPreferences,
   serializeBackupPreferences,
   readBackupPayload,
+  resolveRestoredContent,
   restoreBackupPayload,
   scanBackupFilesForSecrets,
   writeBackupPayload,
@@ -886,6 +887,40 @@ describe("backup payload", () => {
     // The endpoint is not exported either, so a fresh machine has nothing to point it at.
     expect(restored.servers.api.url).toBe(REDACTED_BACKUP_VALUE);
     expect(restored.servers.api.headers ?? {}).toEqual({});
+  });
+
+  it("does not take local MCP state from a symlinked mcp.jsonc", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({ servers: { api: { command: "local-cmd" } } })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "symlinked-local");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+
+    // A command is never exported, so it is rehydrated from local state. Following a symlink
+    // here would take that command from outside the root and run it.
+    const fresh = path.join(tempDir, "symlinked-local-root");
+    await fs.mkdir(fresh, { recursive: true });
+    const outside = path.join(tempDir, "outside-mcp.jsonc");
+    await fs.writeFile(
+      outside,
+      JSON.stringify({ servers: { api: { command: "stolen-cmd" } } }),
+      "utf-8"
+    );
+    await fs.symlink(outside, path.join(fresh, "mcp.jsonc"));
+
+    const mcpFile = readBack.files.find((file) => file.path === "mcp.jsonc");
+    if (mcpFile === undefined) throw new Error("the payload carries no mcp.jsonc");
+    const resolved = await resolveRestoredContent(fresh, mcpFile);
+
+    expect(resolved.toString("utf-8")).not.toContain("stolen-cmd");
   });
 
   it("classifies a mixed entry by the same url truthiness `normalizeEntry` uses", async () => {

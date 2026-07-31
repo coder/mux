@@ -199,6 +199,26 @@ describe("BackupService against a real repository", () => {
     expect(snapshots).toEqual([]);
   });
 
+  it("refuses to write a safety snapshot through a symlinked cache directory", async () => {
+    const pushed = await service.push(settings);
+    if (!pushed.success) throw new Error(pushed.error.message);
+
+    // The git cache lives elsewhere so the symlink below only affects the snapshot.
+    const outside = path.join(tempDir, "outside-cache");
+    await fs.mkdir(outside, { recursive: true });
+    await fs.rm(path.join(muxRoot, "backup-cache"), { recursive: true, force: true });
+    await fs.symlink(outside, path.join(muxRoot, "backup-cache"));
+    const linked = new BackupService(config, {
+      gitRepo: createBackupGitRepo({ cacheRoot: path.join(tempDir, "git-cache") }),
+      payload: createBackupPayloadStore({ config }),
+    });
+
+    const refused = await linked.restore(settings);
+
+    expect(refused.success).toBe(false);
+    expect(await fs.readdir(outside)).toEqual([]);
+  });
+
   it("leaves no safety snapshot behind when the restore is refused", async () => {
     const pushed = await service.push(settings);
     if (!pushed.success) throw new Error(pushed.error.message);

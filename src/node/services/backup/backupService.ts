@@ -354,6 +354,16 @@ export class BackupService {
 
   private async createSnapshotPath(): Promise<string> {
     const cacheRoot = path.join(this.config.rootDir, "backup-cache");
+    // The snapshot holds the local settings unredacted, so it must not be written through a
+    // symlink: `mkdir` with `recursive` succeeds on a link to an existing directory, which
+    // would put the copy wherever the link points (a world-readable /tmp, say).
+    const existing = await fs.lstat(cacheRoot).catch(() => null);
+    if (existing?.isSymbolicLink() === true) {
+      throw new BackupServiceError(
+        "IO_ERROR",
+        `Refusing to write a safety snapshot: '${cacheRoot}' is a symlink`
+      );
+    }
     await fs.mkdir(cacheRoot, { recursive: true });
     return fs.mkdtemp(path.join(cacheRoot, "restore-"));
   }
