@@ -816,9 +816,12 @@ export async function writeBackupPayload(
   const claimed = new Set<string>();
   for (const file of payload.files) {
     assertAllowedPayloadPath(file.path, { portable });
-    // A collision only a case-sensitive source can produce would make the published backup
-    // unreadable everywhere, including here.
-    const claim = collisionKey(file.path);
+    // A published backup is read on filesystems that fold case and normalization, so a
+    // collision only a case-sensitive source can produce would make it unreadable elsewhere.
+    // A local snapshot goes back to the filesystem the files were just collected from, where
+    // two names that coexist are two files by definition, so folding them would refuse to
+    // snapshot a perfectly valid `Foo.md` beside `foo.md` and block the restore entirely.
+    const claim = portable ? collisionKey(file.path) : file.path;
     if (claimed.has(claim)) throw new Error(`Duplicate backup path '${file.path}'`);
     claimed.add(claim);
   }

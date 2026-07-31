@@ -577,6 +577,24 @@ describe("backup adapters", () => {
     );
   });
 
+  it("snapshots case-distinct local files that no published backup could carry", async () => {
+    // Both names coexist on a case-sensitive filesystem and both are collected, so folding
+    // them here would refuse the snapshot and block the restore that depends on it.
+    await writeMuxFile("skills/demo/Foo.md", "upper\n");
+    await writeMuxFile("skills/demo/foo.md", "lower\n");
+    const payload = createBackupPayloadStore({ config });
+    const snapshotRoot = path.join(tempDir, "case-snapshot");
+
+    await payload.writeSafetySnapshot(snapshotRoot);
+
+    expect(await fs.readFile(path.join(snapshotRoot, "skills/demo/Foo.md"), "utf-8")).toBe(
+      "upper\n"
+    );
+    expect(await fs.readFile(path.join(snapshotRoot, "skills/demo/foo.md"), "utf-8")).toBe(
+      "lower\n"
+    );
+  });
+
   it("reports a renamed managed file by its destination path", async () => {
     await writeMuxFile("agents/first.md", "agent\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
