@@ -1429,42 +1429,36 @@ function readAnyServerCommand(value: unknown): string | undefined {
   return command.trim() === "" ? undefined : command;
 }
 
-export async function restoreBackupPayload(
-  options: RestoreBackupPayloadOptions
-): Promise<RestoreBackupPayloadResult> {
-  const localPaths = new Set(
-    (await collectAllowlistedFiles(options.muxRoot)).map((file) => file.path)
-  );
-  const restoredPaths = new Set(
-    options.payload.files
-      .filter((file) => file.path !== "preferences.json")
-      .map((file) => file.path)
-  );
+interface RestorePlan {
+  writes: Array<{ destination: string; content: Buffer; executable: boolean }>;
+  backupPreferences: unknown;
+}
+
+/**
+ * Everything a restore can reject before it writes anything, so a path or a limit that
+ * refuses the payload cannot leave a half-restored install behind. `BackupService.restore`
+ * runs this ahead of the safety snapshot too: a refused restore changes nothing, so it must
+ * not leave an unredacted copy of the local settings behind either.
+ */
+export async function planRestoreWrites(
+  muxRoot: string,
+  payload: BackupPayload
+): Promise<RestorePlan> {
   let backupPreferences: unknown;
-
-  // Recomputed here rather than trusted from the preview, so an approval cannot authorize
-  // a command the repository changed between the preview and this restore.
-  assertBackupCommandsApproved(
-    await collectMcpCommandApprovals(options.muxRoot, options.payload.files),
-    options.approvedCommandTokens
-  );
-
-  // Resolve every destination and its content before the first write, so a path
-  // rejected late cannot leave a half-restored install behind.
   const writes: Array<{ destination: string; content: Buffer; executable: boolean }> = [];
   const claimed = new Set<string>();
   // Restoring rehydrates local values into repository-controlled text, so what gets written is
   // not what was read and bounded. A payload made of markers is small however many large local
   // values it asks for, so the result is charged to the same budget as any other backup byte.
   const budget = createByteBudget();
-  for (const file of options.payload.files) {
+  for (const file of payload.files) {
     assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
       // Parsed here so malformed JSON fails before the first write, but left unmerged.
       backupPreferences = JSON.parse(file.content.toString("utf-8")) as unknown;
       continue;
     }
-    const destination = await resolveContainedPath(options.muxRoot, file.path);
+    const destination = await resolveContainedPath(muxRoot, file.path);
     const existing = await lstatOrNull(destination);
     if (existing?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
@@ -1485,19 +1479,41 @@ export async function restoreBackupPayload(
       }
       claimed.add(claim);
     }
-    const content = await resolveRestoredContent(options.muxRoot, file);
+    const content = await resolveRestoredContent(muxRoot, file);
     budget(file.path, content.byteLength);
     writes.push({ destination, content, executable: file.executable === true });
   }
+  return { writes, backupPreferences };
+}
 
-  for (const write of writes) {
+export async function restoreBackupPayload(
+  options: RestoreBackupPayloadOptions
+): Promise<RestoreBackupPayloadResult> {
+  const localPaths = new Set(
+    (await collectAllowlistedFiles(options.muxRoot)).map((file) => file.path)
+  );
+  const restoredPaths = new Set(
+    options.payload.files
+      .filter((file) => file.path !== "preferences.json")
+      .map((file) => file.path)
+  );
+  // Recomputed here rather than trusted from the preview, so an approval cannot authorize
+  // a command the repository changed between the preview and this restore.
+  assertBackupCommandsApproved(
+    await collectMcpCommandApprovals(options.muxRoot, options.payload.files),
+    options.approvedCommandTokens
+  );
+
+  const plan = await planRestoreWrites(options.muxRoot, options.payload);
+
+  for (const write of plan.writes) {
     await fs.mkdir(path.dirname(write.destination), { recursive: true });
     await fs.writeFile(write.destination, write.content);
     await applyExecuteBit(write.destination, write.executable);
   }
 
   return {
-    backupPreferences,
+    backupPreferences: plan.backupPreferences,
     localOnlyFiles: (await localOnlyPayloadFiles(options.muxRoot, localPaths, restoredPaths))
       .localOnly,
   };

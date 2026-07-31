@@ -22,6 +22,7 @@ import {
   mergeBackupPreferences,
   projectBackupPreferences,
   localOnlyPayloadFiles,
+  planRestoreWrites,
   readBackupPayload,
   restoreBackupPayload,
   backupSecretApprovalDigest,
@@ -261,6 +262,9 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
         await collectMcpCommandApprovals(muxRoot, payload.files),
         validateOptions.approvedCommandTokens
       );
+      // The same preflight the restore runs, so a payload it would refuse is refused here,
+      // before the caller takes a safety snapshot it would have no use for.
+      await planRestoreWrites(muxRoot, payload);
     },
 
     async writeSafetySnapshot(snapshotRoot) {

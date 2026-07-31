@@ -171,6 +171,29 @@ describe("BackupService against a real repository", () => {
     expect(allowed.success).toBe(true);
   });
 
+  it("leaves no safety snapshot behind when the restore is refused", async () => {
+    const pushed = await service.push(settings);
+    if (!pushed.success) throw new Error(pushed.error.message);
+
+    // Two backed-up files become one file locally, which the restore cannot write faithfully.
+    await fs.rm(path.join(muxRoot, "agents/reviewer.md"));
+    await fs.link(path.join(muxRoot, "AGENTS.md"), path.join(muxRoot, "agents/reviewer.md"));
+
+    const refused = await service.restore(settings);
+
+    expect(refused.success).toBe(false);
+    // A restore that changed nothing must not leave an unredacted copy of local settings, and
+    // every retry would add another.
+    const cacheRoot = path.join(muxRoot, "backup-cache");
+    const snapshots = (await fs.readdir(cacheRoot).catch(() => [])).filter((entry) =>
+      entry.startsWith("restore-")
+    );
+    expect(snapshots).toEqual([]);
+    expect(await fs.readFile(path.join(muxRoot, "AGENTS.md"), "utf-8")).toBe(
+      "global instructions\n"
+    );
+  });
+
   it("restores files, keeps local-only files, and records the restored commit", async () => {
     const pushed = await service.push(settings);
     if (!pushed.success) throw new Error(pushed.error.message);
