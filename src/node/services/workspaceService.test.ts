@@ -423,6 +423,110 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("canceled retirement finishes before a reused process ID can persist a new wake", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-cancel-generation";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      let deferDrains = true;
+      spyOn(workspaceService, "hasPendingQueuedOrPreparingTurn").mockImplementation(
+        () => deferDrains
+      );
+      spyOn(workspaceService, "waitForIdleAndNoQueuedMessages").mockImplementation(
+        () => new Promise(() => undefined)
+      );
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: BashMonitorWakeStore;
+        }
+      ).bashMonitorWakeStore;
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "reused-proc",
+        taskId: "bash:reused-proc",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["OLD done"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 8,
+      });
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 1);
+
+      const supersedeStarted = createDeferred<void>();
+      const releaseSupersede = createDeferred<void>();
+      const originalMarkSuperseded = wakeStore.markSuperseded.bind(wakeStore);
+      spyOn(wakeStore, "markSuperseded").mockImplementation(async (...args) => {
+        supersedeStarted.resolve();
+        await releaseSupersede.promise;
+        return originalMarkSuperseded(...args);
+      });
+
+      backgroundProcessManager.emit("monitor:stopped", workspaceId, {
+        processId: "reused-proc",
+        reason: "canceled",
+      });
+      await supersedeStarted.promise;
+
+      backgroundProcessManager.emit("monitor:armed", workspaceId, {
+        processId: "reused-proc",
+        taskId: "bash:reused-proc",
+        workspaceId,
+        displayName: "Reused Proc",
+        filter: "DONE",
+        filterExclude: false,
+        script: "echo NEW done",
+        createdAt: new Date().toISOString(),
+      });
+      deferDrains = false;
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "reused-proc",
+        taskId: "bash:reused-proc",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["NEW done"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 8,
+      });
+
+      await drainPendingDispatches();
+      expect(sendSpy).not.toHaveBeenCalled();
+
+      releaseSupersede.resolve();
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      expect(sendSpy.mock.calls[0][1]).toContain("NEW done");
+      expect(sendSpy.mock.calls[0][1]).not.toContain("OLD done");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("explicit monitor cancellation retracts an already queued synthetic wake", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {

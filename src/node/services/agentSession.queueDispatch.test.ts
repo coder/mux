@@ -345,6 +345,83 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("cancel signal retracts a synthetic entry after dequeue while history append is preparing", async () => {
+    const workspaceId = "queue-dispatch-cancel-preparing";
+    const { session, cleanup, historyService, events } = await createAgentSessionHarness({
+      workspaceId,
+      captureEvents: true,
+    });
+    const originalAppend = historyService.appendToHistory.bind(historyService);
+    let markAppendStarted: () => void = () => undefined;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend: () => void = () => undefined;
+    const appendRelease = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const appendSpy = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (...args) => {
+        markAppendStarted();
+        await appendRelease;
+        return originalAppend(...args);
+      }
+    );
+
+    try {
+      const controller = new AbortController();
+      const canceledReasons: string[] = [];
+      session.queueMessage(
+        "Background monitor wake",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          cancelSignal: controller.signal,
+          onCanceled: (reason) => {
+            canceledReasons.push(reason);
+          },
+        }
+      );
+
+      session.sendQueuedMessages();
+      await appendStarted;
+      controller.abort("monitor canceled");
+      releaseAppend();
+
+      expect(await waitForCondition(() => canceledReasons.length === 1)).toBe(true);
+      expect(await waitForCondition(() => !session.isBusy())).toBe(true);
+      expect(canceledReasons).toEqual(["monitor canceled"]);
+
+      const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(
+          history.data.some((message) =>
+            message.parts.some(
+              (part) => part.type === "text" && part.text === "Background monitor wake"
+            )
+          )
+        ).toBe(false);
+      }
+      expect(
+        events.some(
+          (event) =>
+            event.type === "message" &&
+            event.role === "user" &&
+            event.parts.some(
+              (part) => part.type === "text" && part.text === "Background monitor wake"
+            )
+        )
+      ).toBe(false);
+    } finally {
+      releaseAppend();
+      appendSpy.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("hard user interrupt cancels a pending provider-tool dispatch", async () => {
     const workspaceId = "queue-dispatch-hard-user-interrupt";
     const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({

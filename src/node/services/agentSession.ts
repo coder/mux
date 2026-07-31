@@ -2341,6 +2341,7 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
+      cancelSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
@@ -2348,6 +2349,39 @@ export class AgentSession {
     assert(typeof message === "string", "sendMessage requires a string message");
 
     const isManualUserMessage = internal?.synthetic !== true;
+
+    const cancelSignal = internal?.cancelSignal;
+    const persistedCancelableMessageIds: string[] = [];
+    let cancellationHandled = false;
+    const cancelBeforeAcceptance = async (): Promise<boolean> => {
+      if (cancelSignal?.aborted !== true) return false;
+      if (cancellationHandled) return true;
+      cancellationHandled = true;
+
+      // A queued synthetic send can be canceled after dequeue while validation/history I/O is in
+      // flight. Roll back anything this not-yet-accepted turn appended so cancellation never leaves
+      // a hidden user row that can later enter provider context.
+      for (const messageId of persistedCancelableMessageIds.reverse()) {
+        const deleteResult = await this.historyService.deleteMessage(this.workspaceId, messageId);
+        if (!deleteResult.success) {
+          log.error("Failed to roll back canceled preparing message", {
+            workspaceId: this.workspaceId,
+            messageId,
+            error: deleteResult.error,
+          });
+        }
+      }
+      const reason =
+        typeof cancelSignal.reason === "string"
+          ? cancelSignal.reason
+          : "Queued message canceled before acceptance.";
+      await internal?.onCanceled?.(reason);
+      return true;
+    };
+
+    if (await cancelBeforeAcceptance()) {
+      return Ok(undefined);
+    }
 
     // Last-line-of-defence pricing gate: every dispatch path (initial sends,
     // sendQueuedMessages, dispatchPendingFollowUp,
@@ -2370,6 +2404,9 @@ export class AgentSession {
         this.workspaceId,
         options?.model
       );
+      if (await cancelBeforeAcceptance()) {
+        return Ok(undefined);
+      }
       if (!pricingGate.success) {
         if (isManualUserMessage) {
           const persisted = await this.preserveRejectedManualSend(
@@ -2667,6 +2704,10 @@ export class AgentSession {
     // File changes after this point are surfaced via <system-file-update> diffs instead.
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
 
+    if (await cancelBeforeAcceptance()) {
+      return Ok(undefined);
+    }
+
     // Check compaction threshold BEFORE persisting the user message.
     // Skill snapshots are materialized AFTER this decision (below): when on-send
     // compaction defers the turn, the follow-up re-enters sendMessage with the same
@@ -2685,6 +2726,9 @@ export class AgentSession {
       // so the compaction monitor can detect context limits even before any live
       // stream events have populated lastUsageState.
       await this.seedUsageStateFromHistory();
+      if (await cancelBeforeAcceptance()) {
+        return Ok(undefined);
+      }
 
       const providersConfigForCompaction = this.getProvidersConfigSafe();
       const compactionResult = this.compactionMonitor.checkBeforeSend({
@@ -2752,6 +2796,10 @@ export class AgentSession {
         if (!appendCompactionResult.success) {
           return Err(createUnknownSendMessageError(appendCompactionResult.error));
         }
+        persistedCancelableMessageIds.push(autoCompactionMessage.id);
+        if (await cancelBeforeAcceptance()) {
+          return Ok(undefined);
+        }
 
         this.emitChatEvent({
           type: "auto-compaction-triggered",
@@ -2785,6 +2833,9 @@ export class AgentSession {
       } catch (error) {
         return Err(createUnknownSendMessageError(getErrorMessage(error)));
       }
+      if (await cancelBeforeAcceptance()) {
+        return Ok(undefined);
+      }
     }
 
     if (shouldPersistTurnSnapshots && snapshotResult?.snapshotMessage) {
@@ -2794,6 +2845,10 @@ export class AgentSession {
       );
       if (!snapshotAppendResult.success) {
         return Err(createUnknownSendMessageError(snapshotAppendResult.error));
+      }
+      persistedCancelableMessageIds.push(snapshotResult.snapshotMessage.id);
+      if (await cancelBeforeAcceptance()) {
+        return Ok(undefined);
       }
     }
 
@@ -2805,6 +2860,10 @@ export class AgentSession {
         );
         if (!skillSnapshotAppendResult.success) {
           return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+        }
+        persistedCancelableMessageIds.push(snapshotMessage.id);
+        if (await cancelBeforeAcceptance()) {
+          return Ok(undefined);
         }
       }
     }
@@ -2819,9 +2878,16 @@ export class AgentSession {
         // the orphan via the truncation logic that removes preceding snapshots.
         return Err(createUnknownSendMessageError(appendResult.error));
       }
+      persistedCancelableMessageIds.push(userMessage.id);
+      if (await cancelBeforeAcceptance()) {
+        return Ok(undefined);
+      }
     }
 
     await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
+    if (await cancelBeforeAcceptance()) {
+      return Ok(undefined);
+    }
 
     if (manualGoalInterventionPolicy != null) {
       await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });
@@ -5198,6 +5264,7 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
+      cancelSignal?: AbortSignal;
     }
   ): "tool-end" | "turn-end" | null {
     this.assertNotDisposed("queueMessage");
@@ -5488,6 +5555,15 @@ export class AgentSession {
             // No stream started, so no stream-end drain will fire for the
             // remaining entries — try the next one now (each attempt pops an
             // entry, so this terminates).
+            this.sendQueuedMessages();
+            return;
+          }
+          if (internal?.cancelSignal?.aborted === true) {
+            // Cancellation can arrive after dequeue while sendMessage is validating or writing
+            // history. No stream will start, so release PREPARING and continue with later entries.
+            if (this.turnPhase === TurnPhase.PREPARING) {
+              this.setTurnPhase(TurnPhase.IDLE);
+            }
             this.sendQueuedMessages();
           }
         })

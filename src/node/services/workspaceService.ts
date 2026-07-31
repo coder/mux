@@ -633,6 +633,11 @@ const BASH_MONITOR_WAKE_QUEUE_KEY_PREFIX = "bash-monitor-wake:";
 const BASH_MONITOR_CANCELED_QUEUE_REASON =
   "Background bash monitor was explicitly canceled before its wake dispatched.";
 
+interface QueuedBashMonitorWakeCancellation {
+  abortController: AbortController;
+  canceledProcessKeys: Set<string>;
+}
+
 async function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
   assert(session instanceof AgentSession, "waitForAgentSessionIdle requires an AgentSession");
   try {
@@ -1725,7 +1730,10 @@ export class WorkspaceService extends EventEmitter {
   // Explicit cancellation is a tombstone for late monitor-match handlers and queued wakes. It is
   // cleared when the same process ID is re-armed, which can happen after workspace cleanup.
   private readonly canceledBashMonitorKeys = new Set<string>();
-  private readonly queuedBashMonitorWakeKeysByProcess = new Map<string, Set<string>>();
+  private readonly queuedBashMonitorWakeKeysByProcess = new Map<
+    string,
+    Map<string, QueuedBashMonitorWakeCancellation>
+  >();
   private nextBashMonitorWakeQueueKey = 0;
   private readonly bashMonitorMatchListener = (
     _workspaceId: string,
@@ -1746,11 +1754,13 @@ export class WorkspaceService extends EventEmitter {
     _workspaceId: string,
     payload: MonitorArmedPayload
   ) => {
-    this.canceledBashMonitorKeys.delete(
-      this.bashMonitorProcessKey(payload.workspaceId, payload.processId)
-    );
     this.bashMonitorRegistryLocks
       .withLock(`${payload.workspaceId}:${payload.processId}`, async () => {
+        // Clear the old cancellation only after its locked wake cleanup finishes. New match handlers
+        // use the same lock, so a reused process ID cannot be superseded by the prior generation.
+        this.canceledBashMonitorKeys.delete(
+          this.bashMonitorProcessKey(payload.workspaceId, payload.processId)
+        );
         // Upsert must be durable before the supersede so no interleaving observes the
         // live re-arm without its registry record.
         await this.bashMonitorRegistryStore.upsert(payload);
@@ -1778,7 +1788,11 @@ export class WorkspaceService extends EventEmitter {
       // Tombstone synchronously so an already-scheduled match handler/drain cannot enqueue a wake
       // between the monitor stopping and the persisted/queued cleanup below.
       this.canceledBashMonitorKeys.add(processKey);
-      for (const queueKey of this.queuedBashMonitorWakeKeysByProcess.get(processKey) ?? []) {
+      for (const [queueKey, cancellation] of this.queuedBashMonitorWakeKeysByProcess.get(
+        processKey
+      ) ?? []) {
+        cancellation.canceledProcessKeys.add(processKey);
+        cancellation.abortController.abort(BASH_MONITOR_CANCELED_QUEUE_REASON);
         this.removeQueuedMessagesByDedupeKeyPrefix(workspaceId, queueKey, {
           cancelReason: BASH_MONITOR_CANCELED_QUEUE_REASON,
         });
@@ -2010,16 +2024,21 @@ export class WorkspaceService extends EventEmitter {
   private registerQueuedBashMonitorWake(
     ownerWorkspaceId: string,
     records: readonly BashMonitorWakeRecord[]
-  ): string {
+  ): { queueKey: string; cancellation: QueuedBashMonitorWakeCancellation } {
     const queueKey = `${BASH_MONITOR_WAKE_QUEUE_KEY_PREFIX}${this.nextBashMonitorWakeQueueKey++}:`;
+    const cancellation: QueuedBashMonitorWakeCancellation = {
+      abortController: new AbortController(),
+      canceledProcessKeys: new Set<string>(),
+    };
     for (const record of records) {
       const processKey = this.bashMonitorProcessKey(ownerWorkspaceId, record.processId);
       const queueKeys =
-        this.queuedBashMonitorWakeKeysByProcess.get(processKey) ?? new Set<string>();
-      queueKeys.add(queueKey);
+        this.queuedBashMonitorWakeKeysByProcess.get(processKey) ??
+        new Map<string, QueuedBashMonitorWakeCancellation>();
+      queueKeys.set(queueKey, cancellation);
       this.queuedBashMonitorWakeKeysByProcess.set(processKey, queueKeys);
     }
-    return queueKey;
+    return { queueKey, cancellation };
   }
 
   private unregisterQueuedBashMonitorWake(
@@ -2040,19 +2059,12 @@ export class WorkspaceService extends EventEmitter {
   private async handleBashMonitorMatch(payload: MonitorMatchPayload): Promise<void> {
     try {
       const processKey = this.bashMonitorProcessKey(payload.workspaceId, payload.processId);
-      if (this.canceledBashMonitorKeys.has(processKey)) return;
+      await this.bashMonitorRegistryLocks.withLock(processKey, async () => {
+        if (this.canceledBashMonitorKeys.has(processKey)) return;
 
-      await this.bashMonitorWakeStore.enqueueOrMergePending(payload);
-      // Explicit cancellation can race the async store write. Re-check after persistence so a late
-      // handler cannot resurrect the wake after task_terminate has already retired the monitor.
-      if (this.canceledBashMonitorKeys.has(processKey)) {
-        await this.bashMonitorWakeStore.markSuperseded(
-          payload.workspaceId,
-          BashMonitorWakeStore.wakeId(payload.processId)
-        );
-        return;
-      }
-      this.scheduleBashMonitorWakeDrain(payload.workspaceId);
+        await this.bashMonitorWakeStore.enqueueOrMergePending(payload);
+        this.scheduleBashMonitorWakeDrain(payload.workspaceId);
+      });
     } catch (error) {
       log.error("Failed to enqueue bash monitor wake", { workspaceId: payload.workspaceId, error });
     }
@@ -2289,7 +2301,10 @@ export class WorkspaceService extends EventEmitter {
     }
     if (deliverable.length === 0) return;
 
-    const queueKey = this.registerQueuedBashMonitorWake(ownerWorkspaceId, deliverable);
+    const { queueKey, cancellation } = this.registerQueuedBashMonitorWake(
+      ownerWorkspaceId,
+      deliverable
+    );
     let queueKeyRegistered = true;
     const unregisterQueueKey = (): void => {
       if (!queueKeyRegistered) return;
@@ -2315,6 +2330,7 @@ export class WorkspaceService extends EventEmitter {
     // been delivered. If provider startup fails after acceptance, AgentSession's
     // startup retry must resume that accepted turn instead of appending another copy
     // of the same monitor wake.
+    let cancellationCallbackHandled = false;
     let accepted = false;
     let delivered = false;
     const markDeliveredOnce = async (): Promise<void> => {
@@ -2343,6 +2359,7 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         synthetic: true,
         agentInitiated: true,
+        cancelSignal: cancellation.abortController.signal,
         queueDedupeKey: queueKey,
         removableQueueDedupeKey: true,
         onAccepted: async () => {
@@ -2364,12 +2381,14 @@ export class WorkspaceService extends EventEmitter {
           retryAfterIdleIfBusy("pre-stream failure");
         },
         onCanceled: async (reason) => {
+          if (cancellationCallbackHandled) return;
+          cancellationCallbackHandled = true;
           unregisterQueueKey();
           if (delivered) return;
           const canceledRecords =
             reason === BASH_MONITOR_CANCELED_QUEUE_REASON
               ? deliverable.filter((record) =>
-                  this.canceledBashMonitorKeys.has(
+                  cancellation.canceledProcessKeys.has(
                     this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
                   )
                 )
@@ -2403,14 +2422,7 @@ export class WorkspaceService extends EventEmitter {
       }
     );
 
-    if (
-      !accepted &&
-      deliverable.some((record) =>
-        this.canceledBashMonitorKeys.has(
-          this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
-        )
-      )
-    ) {
+    if (!accepted && cancellation.abortController.signal.aborted) {
       // Cancellation may have raced the async preparation inside sendMessage and attempted queue
       // removal before the entry existed. Retry after sendMessage returns from the enqueue path.
       this.removeQueuedMessagesByDedupeKeyPrefix(ownerWorkspaceId, queueKey, {
@@ -8392,6 +8404,8 @@ export class WorkspaceService extends EventEmitter {
       onAccepted?: () => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      /** Cancels a synthetic send even after it has left MessageQueue for PREPARING. */
+      cancelSignal?: AbortSignal;
       /** Return once the user message is accepted; stream startup continues asynchronously. */
       startStreamInBackground?: boolean;
       /** When true, reject instead of queueing if the workspace is busy. */
@@ -8514,6 +8528,7 @@ export class WorkspaceService extends EventEmitter {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
             goalKind: internal?.goalKind,
+            cancelSignal: internal?.cancelSignal,
             onCanceled: internal?.onCanceled,
             onAccepted: internal?.onAccepted,
             onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
@@ -8603,6 +8618,7 @@ export class WorkspaceService extends EventEmitter {
           agentInitiated: internal?.agentInitiated,
           dedupeKey: internal?.queueDedupeKey,
           removableDedupeKey: internal?.removableQueueDedupeKey,
+          cancelSignal: internal?.cancelSignal,
           onCanceled: internal?.onCanceled,
           onAccepted: internal?.onAccepted,
           onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
@@ -8679,6 +8695,7 @@ export class WorkspaceService extends EventEmitter {
         goalKind: internal?.goalKind,
         goalContinuation: internal?.goalContinuation,
         startStreamInBackground: internal?.startStreamInBackground,
+        cancelSignal: internal?.cancelSignal,
         onCanceled: internal?.onCanceled,
         onAccepted: internal?.onAccepted,
         onAcceptedPreStreamFailure,
