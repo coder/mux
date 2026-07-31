@@ -70,7 +70,7 @@ export const Configured: Story = {
     await canvas.findByText("Restore to this device");
     await canvas.findByText(/github\.headers\.Authorization/i);
     await canvas.findByText("agents/local-only.md");
-    await canvas.findByRole("checkbox", { name: "Override secret scan" });
+    await canvas.findByRole("checkbox", { name: "Approve MCP command changes" });
   },
 };
 

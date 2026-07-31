@@ -883,15 +883,22 @@ function readServerCommand(value: unknown): string | undefined {
   return typeof command === "string" ? command : undefined;
 }
 
+/**
+ * Only for the local file, where a malformed config holds no recoverable commands and
+ * every incoming one is therefore new. The backup's own copy must never be read this way:
+ * treating an unparseable payload as "no commands" would let it skip the approval gate.
+ */
+function readLocalServerCommands(content: string): Map<string, string> {
+  try {
+    return readServerCommands(content);
+  } catch {
+    return new Map();
+  }
+}
+
 function readServerCommands(content: string): Map<string, string> {
   const commands = new Map<string, string>();
-  let servers: unknown;
-  try {
-    servers = parseJsoncObject(content, "mcp.jsonc").servers;
-  } catch {
-    // A malformed file yields no commands, so every incoming one counts as new.
-    return commands;
-  }
+  const servers = parseJsoncObject(content, "mcp.jsonc").servers;
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) return commands;
   for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
     const command = readServerCommand(server);
@@ -923,7 +930,7 @@ export async function collectMcpCommandApprovals(
   const incoming = readServerCommands(restored.toString("utf-8"));
   const localPath = path.join(muxRoot, "mcp.jsonc");
   const local = (await fileExists(localPath))
-    ? readServerCommands(await fs.readFile(localPath, "utf-8"))
+    ? readLocalServerCommands(await fs.readFile(localPath, "utf-8"))
     : new Map<string, string>();
 
   const approvals: BackupCommandApproval[] = [];

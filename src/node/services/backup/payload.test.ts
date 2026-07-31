@@ -473,6 +473,26 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).toContain("sk-live-bare");
   });
 
+  it("still requires approval when the local MCP config is malformed", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      '{ "servers": { "notes": { "command": "npx notes-mcp" } } }\n'
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    await write(muxRoot, "mcp.jsonc", "{ this is not valid json\n");
+    const approvals = await collectMcpCommandApprovals(muxRoot, payload.files);
+    expect(approvals.map((approval) => approval.command)).toEqual(["npx notes-mcp"]);
+    expect(await rejection(restoreBackupPayload({ muxRoot, payload }))).toBeInstanceOf(
+      BackupCommandApprovalRequiredError
+    );
+  });
+
   it("requires approval for a shorthand command string on a fresh machine", async () => {
     await write(muxRoot, "mcp.jsonc", '{ "servers": { "notes": "npx notes-mcp --root /data" } }\n');
     const payload = await createBackupPayload({
