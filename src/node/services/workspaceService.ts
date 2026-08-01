@@ -1750,6 +1750,8 @@ export class WorkspaceService extends EventEmitter {
   // pending for a live process). NOTE: listeners must call withLock synchronously —
   // MutexMap enqueues per-key work in call order, so back-to-back armed/stopped events
   // for a fast-exiting process resolve FIFO and the registry ends deleted.
+  // Serializes monitor match/drain work with destructive history clears for one workspace.
+  private readonly bashMonitorHistoryLocks = new MutexMap<string>();
   private readonly bashMonitorRegistryLocks = new MutexMap<string>();
   private readonly bashMonitorArmedListener = (
     _workspaceId: string,
@@ -2120,12 +2122,14 @@ export class WorkspaceService extends EventEmitter {
   private async handleBashMonitorMatch(payload: MonitorMatchPayload): Promise<void> {
     try {
       const processKey = this.bashMonitorProcessKey(payload.workspaceId, payload.processId);
-      await this.bashMonitorRegistryLocks.withLock(processKey, async () => {
-        if (this.canceledBashMonitorKeys.has(processKey)) return;
+      await this.bashMonitorHistoryLocks.withLock(payload.workspaceId, () =>
+        this.bashMonitorRegistryLocks.withLock(processKey, async () => {
+          if (this.canceledBashMonitorKeys.has(processKey)) return;
 
-        await this.bashMonitorWakeStore.enqueueOrMergePending(payload);
-        this.scheduleBashMonitorWakeDrain(payload.workspaceId);
-      });
+          await this.bashMonitorWakeStore.enqueueOrMergePending(payload);
+          this.scheduleBashMonitorWakeDrain(payload.workspaceId);
+        })
+      );
     } catch (error) {
       log.error("Failed to enqueue bash monitor wake", { workspaceId: payload.workspaceId, error });
     }
@@ -2229,7 +2233,13 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async drainBashMonitorWakes(ownerWorkspaceId: string): Promise<void> {
+  private drainBashMonitorWakes(ownerWorkspaceId: string): Promise<void> {
+    return this.bashMonitorHistoryLocks.withLock(ownerWorkspaceId, () =>
+      this.drainBashMonitorWakesUnlocked(ownerWorkspaceId)
+    );
+  }
+
+  private async drainBashMonitorWakesUnlocked(ownerWorkspaceId: string): Promise<void> {
     const pendingSnapshot = (await this.bashMonitorWakeStore.listPending(ownerWorkspaceId)).filter(
       (record) =>
         !this.cancelingBashMonitorWakeKeys.has(this.bashMonitorWakeKey(ownerWorkspaceId, record.id))
@@ -3399,6 +3409,10 @@ export class WorkspaceService extends EventEmitter {
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
+      clearHistoryForHardRestart: () =>
+        this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, () =>
+          this.historyService.clearHistory(workspaceId)
+        ),
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: (metadata) => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
@@ -9588,6 +9602,17 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private clearHistoryWithRetiredBashMonitorWakes<T>(
+    workspaceId: string,
+    clear: () => Promise<Result<T>>
+  ): Promise<Result<T>> {
+    return this.bashMonitorHistoryLocks.withLock(workspaceId, async () => {
+      const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
+      if (!retireResult.success) return retireResult;
+      return clear();
+    });
+  }
+
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
     const session = this.sessions.get(workspaceId);
     if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
@@ -9598,17 +9623,10 @@ export class WorkspaceService extends EventEmitter {
 
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
-    if (isFullClear) {
-      // Full history deletion removes accepted-wake recovery markers. Retire every pending wake
-      // first so a cleared transcript can never resurrect stale monitor output.
-      const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
-      if (!retireResult.success) return retireResult;
-    }
-
-    const truncateResult = await this.historyService.truncateHistory(
-      workspaceId,
-      effectivePercentage
-    );
+    const truncate = () => this.historyService.truncateHistory(workspaceId, effectivePercentage);
+    const truncateResult = isFullClear
+      ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate)
+      : await truncate();
     if (!truncateResult.success) {
       return Err(truncateResult.error);
     }
@@ -9796,10 +9814,9 @@ export class WorkspaceService extends EventEmitter {
           `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
         );
 
-        const retireResult =
-          await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
-        if (!retireResult.success) return retireResult;
-        const clearResult = await this.historyService.clearHistory(workspaceId);
+        const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, () =>
+          this.historyService.clearHistory(workspaceId)
+        );
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);
         }

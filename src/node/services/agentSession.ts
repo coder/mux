@@ -327,6 +327,8 @@ interface AgentSessionOptions {
   telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
   workspaceGoalService?: WorkspaceGoalService;
+  /** Destructive clear coordinator used by exec hard restart. */
+  clearHistoryForHardRestart?: () => Promise<Result<number[]>>;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
@@ -359,6 +361,7 @@ export class AgentSession {
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly workspaceGoalService?: WorkspaceGoalService;
+  private readonly clearHistoryForHardRestart?: () => Promise<Result<number[]>>;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
@@ -546,6 +549,7 @@ export class AgentSession {
       telemetryService,
       backgroundProcessManager,
       workspaceGoalService,
+      clearHistoryForHardRestart,
       keepBackgroundProcesses,
       onCompactionComplete,
       onIdleCompactionOutcome,
@@ -563,6 +567,7 @@ export class AgentSession {
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
     this.workspaceGoalService = workspaceGoalService;
+    this.clearHistoryForHardRestart = clearHistoryForHardRestart;
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
 
@@ -4407,7 +4412,9 @@ export class AgentSession {
       });
     }
 
-    const clearResult = await this.historyService.clearHistory(this.workspaceId);
+    const clearResult = this.clearHistoryForHardRestart
+      ? await this.clearHistoryForHardRestart()
+      : await this.historyService.clearHistory(this.workspaceId);
     if (!clearResult.success) {
       log.warn("Failed to clear history for exec subagent hard restart", {
         workspaceId: this.workspaceId,
