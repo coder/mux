@@ -117,6 +117,19 @@ describe("ReasoningMessage", () => {
     expect(getReasoningContentContainer(view.container)?.getAttribute("aria-hidden")).toBe("true");
   });
 
+  test("shows only one ellipsis for collapsed streaming reasoning", () => {
+    const streamingMessage = createReasoningMessage("Summary\nBody line", {
+      isStreaming: true,
+      isLastPartOfMessage: true,
+    });
+    const view = render(<ReasoningMessage message={streamingMessage} />);
+
+    // The activity label and collapsed-content marker must not combine into
+    // "Thinking......", which reads as two competing status indicators.
+    expect(view.container.textContent).toContain("Thinking...");
+    expect(view.container.textContent).not.toContain("Thinking......");
+  });
+
   test("does not auto-collapse on stream completion (keeps the mounted expand state)", () => {
     // The streaming→settled transition must not mutate the block: the deleted
     // auto-collapse effect was the source of the mid-turn height tear. With the
