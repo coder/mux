@@ -9591,10 +9591,9 @@ export class WorkspaceService extends EventEmitter {
 
   private async retirePendingBashMonitorWakesBeforeHistoryClear(
     workspaceId: string
-  ): Promise<Result<void>> {
+  ): Promise<Result<BashMonitorWakeRecord[]>> {
     try {
-      await this.bashMonitorWakeStore.supersedeAllPending(workspaceId);
-      return Ok(undefined);
+      return Ok(await this.bashMonitorWakeStore.supersedeAllPending(workspaceId));
     } catch (error) {
       return Err(
         `Cannot clear history until pending monitor wakes are retired: ${getErrorMessage(error)}`
@@ -9609,7 +9608,23 @@ export class WorkspaceService extends EventEmitter {
     return this.bashMonitorHistoryLocks.withLock(workspaceId, async () => {
       const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
       if (!retireResult.success) return retireResult;
-      return clear();
+      const staged = retireResult.data;
+      try {
+        const clearResult = await clear();
+        if (clearResult.success) return clearResult;
+        await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, staged);
+        return clearResult;
+      } catch (error) {
+        try {
+          await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, staged);
+        } catch (restoreError) {
+          log.error("Failed to restore monitor wakes after history clear threw", {
+            workspaceId,
+            error: restoreError,
+          });
+        }
+        throw error;
+      }
     });
   }
 

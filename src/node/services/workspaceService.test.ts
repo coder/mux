@@ -3724,6 +3724,43 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("failed full clear restores pending monitor wakes", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "failed-clear-restores-monitor-wake";
+    try {
+      await config.addWorkspace("/tmp/failed-clear-monitor-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "failed-clear-monitor-project",
+        projectPath: "/tmp/failed-clear-monitor-project",
+        runtimeConfig: { type: "local" },
+      });
+      const wakeStore = new BashMonitorWakeStore(config);
+      await wakeStore.enqueueOrMergePending({
+        processId: "failed-clear-proc",
+        taskId: "bash:failed-clear-proc",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED before clear"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 20,
+      });
+      const truncateSpy = spyOn(historyService, "truncateHistory").mockResolvedValue(
+        Err("injected clear failure")
+      );
+
+      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+
+      expect(result).toEqual(Err("injected clear failure"));
+      expect(await wakeStore.listPending(workspaceId)).toHaveLength(1);
+      truncateSpy.mockRestore();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("destructive history replacement retires pending monitor wakes", async () => {
     const { config, workspaceService, cleanup } = await createServices();
     const workspaceId = "replace-pending-monitor-wake";
