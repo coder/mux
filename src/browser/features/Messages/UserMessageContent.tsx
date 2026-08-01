@@ -41,13 +41,14 @@ const markdownStyles: Record<UserMessageContentProps["variant"], React.CSSProper
     wordBreak: "break-word",
   },
   queued: {
-    color: "var(--color-subtle)",
-    fontFamily: "var(--font-monospace)",
-    fontSize: "12px",
-    lineHeight: "16px",
+    // Queued follow-ups are still user-authored prose, so keep them readable instead of
+    // styling the preview like subdued terminal output.
+    color: "var(--color-text-light)",
+    fontFamily: "inherit",
+    fontSize: "13px",
+    lineHeight: "18px",
     overflowWrap: "break-word",
     wordBreak: "break-word",
-    opacity: 0.9,
   },
 };
 

@@ -45,6 +45,87 @@ export const VoiceInputNoApiKey: AppStory = {
   },
 };
 
+export const QueuedFollowUp: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-queued-follow-up",
+          messages: [
+            createUserMessage("msg-1", "Please audit the settings flow for regressions.", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120_000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I’m reviewing the relevant components and tests now.",
+              { historySequence: 2, timestamp: STABLE_TIMESTAMP - 60_000 }
+            ),
+          ],
+          onChat: (workspaceId, emit) => {
+            // Replay the active turn after history catches up so the queued card is exercised in the
+            // same docked state users see while an agent is working.
+            setTimeout(() => {
+              emit({
+                type: "stream-start",
+                workspaceId,
+                messageId: "msg-3",
+                model: "mock-model",
+                historySequence: 3,
+                startTime: STABLE_TIMESTAMP,
+              });
+              emit({
+                type: "stream-delta",
+                workspaceId,
+                messageId: "msg-3",
+                delta: "Checking the form state and keyboard paths…",
+                tokens: 8,
+                timestamp: STABLE_TIMESTAMP,
+              });
+              emit({
+                type: "queued-message-changed",
+                workspaceId,
+                hasQueuedMessages: true,
+                queuedMessages: [
+                  "Also verify the narrow layout and make sure the action buttons stay easy to scan.",
+                ],
+                displayText:
+                  "Also verify the narrow layout and make sure the action buttons stay easy to scan.",
+                queueDispatchMode: "tool-end",
+              });
+            }, 75);
+          },
+        });
+      }}
+    />
+  ),
+  parameters: {
+    ...appMeta.parameters,
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone", "laptop"] },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatInputAutofocusDone(storyRoot);
+    blurActiveElement();
+
+    await waitFor(() => {
+      const card = storyRoot.querySelector<HTMLElement>('[data-component="QueuedMessageCard"]');
+      if (!card) throw new Error("Queued follow-up card not rendered");
+      if (card.scrollWidth > card.clientWidth) {
+        throw new Error(
+          `Queued follow-up overflows horizontally (${card.scrollWidth}px > ${card.clientWidth}px)`
+        );
+      }
+    });
+  },
+};
+
 export const FocusedComposer: AppStory = {
   render: () => (
     <AppWithMocks
