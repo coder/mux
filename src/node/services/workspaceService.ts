@@ -1752,6 +1752,7 @@ export class WorkspaceService extends EventEmitter {
   // for a fast-exiting process resolve FIFO and the registry ends deleted.
   // Serializes monitor match/drain work with destructive history clears for one workspace.
   private readonly bashMonitorHistoryLocks = new MutexMap<string>();
+  private readonly bashMonitorRecoveryPromise: Promise<void>;
   private readonly bashMonitorRegistryLocks = new MutexMap<string>();
   private readonly bashMonitorArmedListener = (
     _workspaceId: string,
@@ -1957,7 +1958,7 @@ export class WorkspaceService extends EventEmitter {
       this.backgroundProcessManager.on("monitor:stopped", this.bashMonitorStoppedListener);
       this.backgroundProcessManager.on("change", this.bashProcessChangeListener);
     }
-    void this.recoverBashMonitorStateAfterRestart();
+    this.bashMonitorRecoveryPromise = this.recoverBashMonitorStateAfterRestart();
     this.policyService = policyService;
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
@@ -2469,6 +2470,7 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         synthetic: true,
         agentInitiated: true,
+        monitorHistoryLockHeld: !ownerHasAiServiceStream,
         cancelState: cancellation.dispatchState,
         cancelSignal: cancellation.abortController.signal,
         queueDedupeKey: queueKey,
@@ -8523,6 +8525,7 @@ export class WorkspaceService extends EventEmitter {
       onCanceled?: (reason: string) => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
+      monitorHistoryLockHeld?: boolean;
       /** Cancels a synthetic send even after it has left MessageQueue for PREPARING. */
       cancelSignal?: AbortSignal;
       /** Return once the user message is accepted; stream startup continues asynchronously. */
@@ -8647,6 +8650,7 @@ export class WorkspaceService extends EventEmitter {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
             goalKind: internal?.goalKind,
+            monitorHistoryLockHeld: internal?.monitorHistoryLockHeld,
             cancelState: internal?.cancelState,
             cancelSignal: internal?.cancelSignal,
             onCanceled: internal?.onCanceled,
@@ -8738,6 +8742,7 @@ export class WorkspaceService extends EventEmitter {
           agentInitiated: internal?.agentInitiated,
           dedupeKey: internal?.queueDedupeKey,
           removableDedupeKey: internal?.removableQueueDedupeKey,
+          monitorHistoryLockHeld: internal?.monitorHistoryLockHeld,
           cancelState: internal?.cancelState,
           cancelSignal: internal?.cancelSignal,
           onCanceled: internal?.onCanceled,
@@ -8816,6 +8821,7 @@ export class WorkspaceService extends EventEmitter {
         goalKind: internal?.goalKind,
         goalContinuation: internal?.goalContinuation,
         startStreamInBackground: internal?.startStreamInBackground,
+        monitorHistoryLockHeld: internal?.monitorHistoryLockHeld,
         cancelState: internal?.cancelState,
         cancelSignal: internal?.cancelSignal,
         onCanceled: internal?.onCanceled,
@@ -9608,8 +9614,12 @@ export class WorkspaceService extends EventEmitter {
     clear: () => Promise<Result<T>>,
     options?: { discardUnacceptedOnSuccess?: boolean }
   ): Promise<Result<T>> {
-    return this.bashMonitorHistoryLocks.withLock(workspaceId, () =>
-      this.clearHistoryWithRetiredBashMonitorWakesUnlocked(workspaceId, clear, options)
+    // Constructor recovery begins before any user clear can be requested, but owner discovery is
+    // asynchronous. Gate destructive clears on that whole operation, not just its eventual lock.
+    return this.bashMonitorRecoveryPromise.then(() =>
+      this.bashMonitorHistoryLocks.withLock(workspaceId, () =>
+        this.clearHistoryWithRetiredBashMonitorWakesUnlocked(workspaceId, clear, options)
+      )
     );
   }
 

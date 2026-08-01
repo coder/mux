@@ -3642,6 +3642,31 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("destructive clear waits for startup monitor recovery discovery", async () => {
+    const { historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "clear-waits-for-monitor-recovery";
+    const recovery = createDeferred<void>();
+    const internal = workspaceService as unknown as {
+      bashMonitorRecoveryPromise: Promise<void>;
+    };
+    internal.bashMonitorRecoveryPromise = recovery.promise;
+    const truncateSpy = spyOn(historyService, "truncateHistory").mockResolvedValue(Ok([]));
+
+    try {
+      const clearPromise = workspaceService.truncateHistory(workspaceId, 1.0);
+      await drainPendingDispatches();
+      expect(truncateSpy).not.toHaveBeenCalled();
+
+      recovery.resolve();
+      expect(await clearPromise).toEqual(Ok(undefined));
+      expect(truncateSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      recovery.resolve();
+      truncateSpy.mockRestore();
+      await cleanup();
+    }
+  });
+
   test("full chat clear preserves the goal and requires user acknowledgment", async () => {
     const { config, historyService, workspaceService, goalService, cleanup } =
       await createServices();

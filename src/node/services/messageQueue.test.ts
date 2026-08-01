@@ -747,6 +747,20 @@ describe("MessageQueue", () => {
       expect(user.internal).toBeUndefined();
     });
 
+    it("preserves explicit monitor lock ownership through queued dispatch", () => {
+      const queue = new MessageQueue();
+      queue.add("monitor wake", undefined, {
+        synthetic: true,
+        monitorHistoryLockHeld: false,
+        cancelSignal: new AbortController().signal,
+      });
+
+      expect(queue.dequeueNext().internal).toMatchObject({
+        synthetic: true,
+        monitorHistoryLockHeld: false,
+      });
+    });
+
     it("should clear synthetic flag when queue is cleared", () => {
       queue.add("Synthetic one", { model: "gpt-4", agentId: "exec" }, { synthetic: true });
       queue.clear();
