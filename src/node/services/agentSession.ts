@@ -2367,20 +2367,33 @@ export class AgentSession {
           persistedCancelableMessageIds[0]
         );
         if (!rollbackResult.success) {
-          // Do not report cancellation (which would supersede the durable monitor wake) unless the
-          // not-yet-accepted row is actually gone. Continue accepting this wake instead of leaving a
-          // hidden synthetic row that can leak into a later provider request.
-          cancellationDisabled = true;
-          log.error("Failed to roll back canceled preparing turn; continuing acceptance", {
+          // truncateAfterMessage can fail after its atomic rewrite (for example while refreshing
+          // sequence metadata). Verify the durable result before deciding whether cancellation won.
+          const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+            this.workspaceId
+          );
+          const rollbackCommitted =
+            historyResult.success &&
+            persistedCancelableMessageIds.every(
+              (messageId) => !historyResult.data.some((message) => message.id === messageId)
+            );
+          if (!rollbackCommitted) {
+            // Do not report cancellation (which would supersede the durable monitor wake) unless the
+            // not-yet-accepted row is actually gone. Continue accepting this wake instead of leaving
+            // a hidden synthetic row that can leak into a later provider request.
+            cancellationDisabled = true;
+            log.error("Failed to roll back canceled preparing turn; continuing acceptance", {
+              workspaceId: this.workspaceId,
+              error: rollbackResult.error,
+              verificationError: historyResult.success ? undefined : historyResult.error,
+            });
+            return false;
+          }
+          log.warn("Preparing-turn rollback reported failure after its rewrite committed", {
             workspaceId: this.workspaceId,
             error: rollbackResult.error,
           });
-          return false;
         }
-
-        // syncGoalModeWithChatTail may have observed the temporary synthetic user row and paused an
-        // active goal. Reconcile again after truncation before cancellation becomes externally final.
-        await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
       }
 
       const reason =
@@ -2900,10 +2913,13 @@ export class AgentSession {
       }
     }
 
-    await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
-    if (await cancelBeforeAcceptance()) {
-      return Ok(undefined);
+    // Goal synchronization can mutate goal.json based on this durable user row. Once it begins, the
+    // turn has crossed the cancellation point-of-no-return: a concurrent monitor stop must let this
+    // wake finish acceptance rather than delete the row after goal state has already observed it.
+    if (cancelSignal != null) {
+      cancellationDisabled = true;
     }
+    await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
 
     if (manualGoalInterventionPolicy != null) {
       await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });

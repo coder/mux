@@ -501,7 +501,88 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
-  test("cancellation reconciles goal mode after removing the temporary wake row", async () => {
+  test("verifies a committed rollback when truncation reports a post-write failure", async () => {
+    const workspaceId = "queue-dispatch-cancel-post-write-failure";
+    const { session, cleanup, historyService } = await createAgentSessionHarness({ workspaceId });
+    const originalAppend = historyService.appendToHistory.bind(historyService);
+    const originalTruncate = historyService.truncateAfterMessage.bind(historyService);
+    let markAppendStarted: () => void = () => undefined;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend: () => void = () => undefined;
+    const appendRelease = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const appendSpy = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (...args) => {
+        markAppendStarted();
+        await appendRelease;
+        return originalAppend(...args);
+      }
+    );
+    const truncateSpy = spyOn(historyService, "truncateAfterMessage").mockImplementation(
+      async (...args) => {
+        const result = await originalTruncate(...args);
+        expect(result.success).toBe(true);
+        return Err("injected post-write failure");
+      }
+    );
+
+    try {
+      const controller = new AbortController();
+      const cancelState = { canceledBeforeAcceptance: false };
+      const canceledReasons: string[] = [];
+      let accepted = false;
+      const sendPromise = session.sendMessage(
+        "Background monitor wake",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          cancelState,
+          cancelSignal: controller.signal,
+          onCanceled: (reason) => {
+            canceledReasons.push(reason);
+          },
+          onAccepted: () => {
+            accepted = true;
+          },
+        }
+      );
+
+      await appendStarted;
+      controller.abort("monitor canceled");
+      releaseAppend();
+      const result = await sendPromise;
+
+      expect(result.success).toBe(true);
+      expect(truncateSpy).toHaveBeenCalledTimes(1);
+      expect(canceledReasons).toEqual(["monitor canceled"]);
+      expect(cancelState.canceledBeforeAcceptance).toBe(true);
+      expect(accepted).toBe(false);
+
+      const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(
+          history.data.some((message) =>
+            message.parts.some(
+              (part) => part.type === "text" && part.text === "Background monitor wake"
+            )
+          )
+        ).toBe(false);
+      }
+    } finally {
+      releaseAppend();
+      truncateSpy.mockRestore();
+      appendSpy.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("cancellation during goal sync crosses the acceptance point of no return", async () => {
     const workspaceId = "queue-dispatch-cancel-goal-reconcile";
     let markInitialSyncStarted: () => void = () => undefined;
     const initialSyncStarted = new Promise<void>((resolve) => {
@@ -533,6 +614,7 @@ describe("AgentSession queued message tool-call dispatch", () => {
       const controller = new AbortController();
       const cancelState = { canceledBeforeAcceptance: false };
       const canceledReasons: string[] = [];
+      let accepted = false;
       const sendPromise = session.sendMessage(
         "Background monitor wake",
         { model: TEST_MODEL, agentId: "exec" },
@@ -544,6 +626,9 @@ describe("AgentSession queued message tool-call dispatch", () => {
           onCanceled: (reason) => {
             canceledReasons.push(reason);
           },
+          onAccepted: () => {
+            accepted = true;
+          },
         }
       );
 
@@ -553,9 +638,10 @@ describe("AgentSession queued message tool-call dispatch", () => {
       const result = await sendPromise;
 
       expect(result.success).toBe(true);
-      expect(syncGoalModeWithChatTail).toHaveBeenCalledTimes(2);
-      expect(canceledReasons).toEqual(["monitor canceled"]);
-      expect(cancelState.canceledBeforeAcceptance).toBe(true);
+      expect(syncGoalModeWithChatTail).toHaveBeenCalledTimes(1);
+      expect(canceledReasons).toEqual([]);
+      expect(cancelState.canceledBeforeAcceptance).toBe(false);
+      expect(accepted).toBe(true);
 
       const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
       expect(history.success).toBe(true);
@@ -566,7 +652,7 @@ describe("AgentSession queued message tool-call dispatch", () => {
               (part) => part.type === "text" && part.text === "Background monitor wake"
             )
           )
-        ).toBe(false);
+        ).toBe(true);
       }
     } finally {
       releaseInitialSync();
