@@ -2039,10 +2039,18 @@ export class WorkspaceService extends EventEmitter {
       "backward",
       (messages) => {
         for (const message of messages) {
-          const metadata = message.metadata?.muxMetadata;
-          if (metadata?.type !== "bash-monitor-wake") continue;
-          for (const record of metadata.records) {
-            if (record.processId == null || record.wakeUpdatedAt == null) continue;
+          const metadata: unknown = message.metadata?.muxMetadata;
+          if (typeof metadata !== "object" || metadata === null) continue;
+          const candidate = metadata as { type?: unknown; records?: unknown };
+          if (candidate.type !== "bash-monitor-wake" || !Array.isArray(candidate.records)) {
+            continue;
+          }
+          for (const rawRecord of candidate.records) {
+            if (typeof rawRecord !== "object" || rawRecord === null) continue;
+            const record = rawRecord as { processId?: unknown; wakeUpdatedAt?: unknown };
+            if (typeof record.processId !== "string" || typeof record.wakeUpdatedAt !== "string") {
+              continue;
+            }
             const key = this.bashMonitorWakeSnapshotKey(record.processId, record.wakeUpdatedAt);
             if (pendingKeys.has(key)) {
               acceptedKeys.add(key);
@@ -2230,7 +2238,15 @@ export class WorkspaceService extends EventEmitter {
       const snapshotKey = this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt);
       if (acceptedSnapshots.has(snapshotKey)) {
         try {
-          await this.bashMonitorWakeStore.markDelivered(ownerWorkspaceId, record.id);
+          const deliveredSnapshot = await this.bashMonitorWakeStore.markDeliveredSnapshot(
+            ownerWorkspaceId,
+            record
+          );
+          if (!deliveredSnapshot) {
+            // New matches merged after the accepted snapshot. Keep the remainder pending for its own
+            // wake rather than marking those unseen lines delivered with the older accepted turn.
+            this.scheduleBashMonitorWakeDrainAfterIdle(ownerWorkspaceId);
+          }
         } catch (error) {
           // Accepted history is authoritative for redelivery suppression. Keep the pending store row
           // retryable, but never append the same synthetic turn again.
@@ -9562,6 +9578,19 @@ export class WorkspaceService extends EventEmitter {
       );
     }
 
+    const isFullClear = (percentage ?? 1.0) === 1.0;
+    if (isFullClear) {
+      try {
+        // Full history deletion removes accepted-wake recovery markers. Retire every pending wake
+        // first so a cleared transcript can never resurrect stale monitor output.
+        await this.bashMonitorWakeStore.supersedeAllPending(workspaceId);
+      } catch (error) {
+        return Err(
+          `Cannot clear history until pending monitor wakes are retired: ${getErrorMessage(error)}`
+        );
+      }
+    }
+
     const truncateResult = await this.historyService.truncateHistory(
       workspaceId,
       percentage ?? 1.0
@@ -9586,7 +9615,7 @@ export class WorkspaceService extends EventEmitter {
     }
 
     // On full clear, also delete plan file and clear file change tracking
-    if ((percentage ?? 1.0) === 1.0) {
+    if (isFullClear) {
       const metadata = await this.getInfo(workspaceId);
       if (metadata) {
         await this.deletePlanFilesForWorkspace(workspaceId, metadata);

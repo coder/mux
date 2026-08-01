@@ -442,6 +442,13 @@ export class BashMonitorWakeStore {
     return ownerWorkspaceIds;
   }
 
+  async supersedeAllPending(ownerWorkspaceId: string): Promise<void> {
+    const pending = await this.listPending(ownerWorkspaceId);
+    for (const record of pending) {
+      await this.markSuperseded(ownerWorkspaceId, record.id);
+    }
+  }
+
   async markDeliveredSnapshot(
     ownerWorkspaceId: string,
     snapshot: BashMonitorWakeRecord

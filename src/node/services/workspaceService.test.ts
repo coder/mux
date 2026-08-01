@@ -1852,6 +1852,16 @@ describe("WorkspaceService bash monitor wakes", () => {
         timestamp: Date.now(),
         matchedThroughOffset: 13,
       });
+      const malformedWake = createMuxMessage("malformed-wake", "user", "Malformed wake", {
+        synthetic: true,
+      });
+      if (malformedWake.metadata) {
+        (malformedWake.metadata as Record<string, unknown>).muxMetadata = {
+          type: "bash-monitor-wake",
+          records: null,
+        };
+      }
+      await historyService.appendToHistory(workspaceId, malformedWake);
       await historyService.appendToHistory(
         workspaceId,
         createMuxMessage("accepted-wake", "user", "Accepted monitor wake", {
@@ -1874,7 +1884,7 @@ describe("WorkspaceService bash monitor wakes", () => {
           bashMonitorWakeStore: BashMonitorWakeStore;
         }
       ).bashMonitorWakeStore;
-      const markDeliveredSpy = spyOn(wakeStore, "markDelivered").mockRejectedValue(
+      const markDeliveredSpy = spyOn(wakeStore, "markDeliveredSnapshot").mockRejectedValue(
         new Error("injected persistent wake-store failure")
       );
       const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
@@ -3654,6 +3664,48 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         objective: created.objective,
         requireUserAcknowledgmentSinceMs: 1_234_567,
       });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("full chat clear retires pending monitor wakes before deleting acceptance proof", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "clear-pending-monitor-wake";
+    try {
+      await config.addWorkspace("/tmp/clear-monitor-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "clear-monitor-project",
+        projectPath: "/tmp/clear-monitor-project",
+        runtimeConfig: { type: "local" },
+      });
+      const wakeStore = new BashMonitorWakeStore(config);
+      const record = await wakeStore.enqueueOrMergePending({
+        processId: "clear-proc",
+        taskId: "bash:clear-proc",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["DONE before clear"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 17,
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("accepted-before-clear", "user", "Accepted wake", {
+          synthetic: true,
+          muxMetadata: buildBashMonitorWakeMetadata([record]),
+        })
+      );
+
+      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+
+      expect(result.success).toBe(true);
+      expect(await wakeStore.listPending(workspaceId)).toEqual([]);
+      const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(history).toEqual(Ok([]));
     } finally {
       await cleanup();
     }
