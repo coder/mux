@@ -635,6 +635,7 @@ const BASH_MONITOR_CANCELED_QUEUE_REASON =
 
 interface QueuedBashMonitorWakeCancellation {
   abortController: AbortController;
+  dispatchState: { canceledBeforeAcceptance: boolean };
   canceledProcessKeys: Set<string>;
 }
 
@@ -1784,13 +1785,12 @@ export class WorkspaceService extends EventEmitter {
     payload: MonitorStoppedPayload
   ) => {
     const processKey = this.bashMonitorProcessKey(workspaceId, payload.processId);
+    const trackedWakeCancellations = this.queuedBashMonitorWakeKeysByProcess.get(processKey);
     if (payload.reason === "canceled") {
       // Tombstone synchronously so an already-scheduled match handler/drain cannot enqueue a wake
       // between the monitor stopping and the persisted/queued cleanup below.
       this.canceledBashMonitorKeys.add(processKey);
-      for (const [queueKey, cancellation] of this.queuedBashMonitorWakeKeysByProcess.get(
-        processKey
-      ) ?? []) {
+      for (const [queueKey, cancellation] of trackedWakeCancellations ?? []) {
         cancellation.canceledProcessKeys.add(processKey);
         cancellation.abortController.abort(BASH_MONITOR_CANCELED_QUEUE_REASON);
         this.removeQueuedMessagesByDedupeKeyPrefix(workspaceId, queueKey, {
@@ -1802,9 +1802,9 @@ export class WorkspaceService extends EventEmitter {
     this.bashMonitorRegistryLocks
       .withLock(`${workspaceId}:${payload.processId}`, async () => {
         await this.bashMonitorRegistryStore.remove(workspaceId, payload.processId);
-        if (payload.reason === "canceled") {
-          // Cancellation means the condition is no longer relevant, including matches that were
-          // persisted before task_terminate ran but have not yet been accepted into chat history.
+        if (payload.reason === "canceled" && (trackedWakeCancellations?.size ?? 0) === 0) {
+          // With no queued/preparing dispatch, cancellation can retire the persisted wake directly.
+          // Otherwise onCanceled owns the transition only after PREPARING rollback succeeds.
           await this.bashMonitorWakeStore.markSuperseded(
             workspaceId,
             BashMonitorWakeStore.wakeId(payload.processId)
@@ -2028,6 +2028,7 @@ export class WorkspaceService extends EventEmitter {
     const queueKey = `${BASH_MONITOR_WAKE_QUEUE_KEY_PREFIX}${this.nextBashMonitorWakeQueueKey++}:`;
     const cancellation: QueuedBashMonitorWakeCancellation = {
       abortController: new AbortController(),
+      dispatchState: { canceledBeforeAcceptance: false },
       canceledProcessKeys: new Set<string>(),
     };
     for (const record of records) {
@@ -2359,6 +2360,7 @@ export class WorkspaceService extends EventEmitter {
         skipAutoResumeReset: true,
         synthetic: true,
         agentInitiated: true,
+        cancelState: cancellation.dispatchState,
         cancelSignal: cancellation.abortController.signal,
         queueDedupeKey: queueKey,
         removableQueueDedupeKey: true,
@@ -8404,6 +8406,7 @@ export class WorkspaceService extends EventEmitter {
       onAccepted?: () => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      cancelState?: { canceledBeforeAcceptance: boolean };
       /** Cancels a synthetic send even after it has left MessageQueue for PREPARING. */
       cancelSignal?: AbortSignal;
       /** Return once the user message is accepted; stream startup continues asynchronously. */
@@ -8528,6 +8531,7 @@ export class WorkspaceService extends EventEmitter {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
             goalKind: internal?.goalKind,
+            cancelState: internal?.cancelState,
             cancelSignal: internal?.cancelSignal,
             onCanceled: internal?.onCanceled,
             onAccepted: internal?.onAccepted,
@@ -8618,6 +8622,7 @@ export class WorkspaceService extends EventEmitter {
           agentInitiated: internal?.agentInitiated,
           dedupeKey: internal?.queueDedupeKey,
           removableDedupeKey: internal?.removableQueueDedupeKey,
+          cancelState: internal?.cancelState,
           cancelSignal: internal?.cancelSignal,
           onCanceled: internal?.onCanceled,
           onAccepted: internal?.onAccepted,
@@ -8695,6 +8700,7 @@ export class WorkspaceService extends EventEmitter {
         goalKind: internal?.goalKind,
         goalContinuation: internal?.goalContinuation,
         startStreamInBackground: internal?.startStreamInBackground,
+        cancelState: internal?.cancelState,
         cancelSignal: internal?.cancelSignal,
         onCanceled: internal?.onCanceled,
         onAccepted: internal?.onAccepted,

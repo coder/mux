@@ -78,6 +78,8 @@ interface QueuedMessageInternalOptions {
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   onCanceled?: (reason: string) => Promise<void> | void;
+  /** Mutable dispatch outcome shared with sendQueuedMessages. */
+  cancelState?: { canceledBeforeAcceptance: boolean };
   /** Cancels a queued entry even after it has been dequeued into PREPARING. */
   cancelSignal?: AbortSignal;
 }
@@ -118,6 +120,7 @@ interface QueueEntry {
   onCanceled?: (reason: string) => Promise<void> | void;
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+  cancelState?: { canceledBeforeAcceptance: boolean };
   cancelSignal?: AbortSignal;
 }
 
@@ -337,6 +340,9 @@ export class MessageQueue {
       entry.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
     }
 
+    if (internal?.cancelState != null) {
+      entry.cancelState = internal.cancelState;
+    }
     if (internal?.cancelSignal != null) {
       entry.cancelSignal = internal.cancelSignal;
     }
@@ -593,6 +599,7 @@ export class MessageQueue {
           ...(allAddsAreSynthetic ? { synthetic: true } : {}),
           ...(allAddsAreAgentInitiated ? { agentInitiated: true } : {}),
           ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+          ...(entry.cancelState != null ? { cancelState: entry.cancelState } : {}),
           ...(entry.cancelSignal != null ? { cancelSignal: entry.cancelSignal } : {}),
           ...(entry.onAccepted != null ? { onAccepted: entry.onAccepted } : {}),
           ...(entry.onAcceptedPreStreamFailure != null

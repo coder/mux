@@ -2341,6 +2341,7 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
+      cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -2353,29 +2354,44 @@ export class AgentSession {
     const cancelSignal = internal?.cancelSignal;
     const persistedCancelableMessageIds: string[] = [];
     let cancellationHandled = false;
+    let cancellationDisabled = false;
     const cancelBeforeAcceptance = async (): Promise<boolean> => {
-      if (cancelSignal?.aborted !== true) return false;
+      if (cancelSignal?.aborted !== true || cancellationDisabled) return false;
       if (cancellationHandled) return true;
-      cancellationHandled = true;
 
-      // A queued synthetic send can be canceled after dequeue while validation/history I/O is in
-      // flight. Roll back anything this not-yet-accepted turn appended so cancellation never leaves
-      // a hidden user row that can later enter provider context.
-      for (const messageId of persistedCancelableMessageIds.reverse()) {
-        const deleteResult = await this.historyService.deleteMessage(this.workspaceId, messageId);
-        if (!deleteResult.success) {
-          log.error("Failed to roll back canceled preparing message", {
+      if (persistedCancelableMessageIds.length > 0) {
+        // PREPARING is serialized per session, so truncating from this turn's first row atomically
+        // removes every snapshot/user row it appended without touching an accepted later turn.
+        const rollbackResult = await this.historyService.truncateAfterMessage(
+          this.workspaceId,
+          persistedCancelableMessageIds[0]
+        );
+        if (!rollbackResult.success) {
+          // Do not report cancellation (which would supersede the durable monitor wake) unless the
+          // not-yet-accepted row is actually gone. Continue accepting this wake instead of leaving a
+          // hidden synthetic row that can leak into a later provider request.
+          cancellationDisabled = true;
+          log.error("Failed to roll back canceled preparing turn; continuing acceptance", {
             workspaceId: this.workspaceId,
-            messageId,
-            error: deleteResult.error,
+            error: rollbackResult.error,
           });
+          return false;
         }
+
+        // syncGoalModeWithChatTail may have observed the temporary synthetic user row and paused an
+        // active goal. Reconcile again after truncation before cancellation becomes externally final.
+        await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
       }
+
       const reason =
         typeof cancelSignal.reason === "string"
           ? cancelSignal.reason
           : "Queued message canceled before acceptance.";
+      cancellationHandled = true;
       await internal?.onCanceled?.(reason);
+      if (internal?.cancelState != null) {
+        internal.cancelState.canceledBeforeAcceptance = true;
+      }
       return true;
     };
 
@@ -5264,6 +5280,7 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
+      cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }
   ): "tool-end" | "turn-end" | null {
@@ -5558,7 +5575,7 @@ export class AgentSession {
             this.sendQueuedMessages();
             return;
           }
-          if (internal?.cancelSignal?.aborted === true) {
+          if (internal?.cancelState?.canceledBeforeAcceptance === true) {
             // Cancellation can arrive after dequeue while sendMessage is validating or writing
             // history. No stream will start, so release PREPARING and continue with later entries.
             if (this.turnPhase === TurnPhase.PREPARING) {

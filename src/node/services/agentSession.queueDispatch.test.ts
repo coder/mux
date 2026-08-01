@@ -1,6 +1,7 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 
-import { Ok } from "@/common/types/result";
+import { Err, Ok } from "@/common/types/result";
+import type { WorkspaceGoalService } from "./workspaceGoalService";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 
 const TEST_MODEL = "anthropic:claude-sonnet-4-5";
@@ -370,6 +371,7 @@ describe("AgentSession queued message tool-call dispatch", () => {
 
     try {
       const controller = new AbortController();
+      const cancelState = { canceledBeforeAcceptance: false };
       const canceledReasons: string[] = [];
       session.queueMessage(
         "Background monitor wake",
@@ -377,6 +379,7 @@ describe("AgentSession queued message tool-call dispatch", () => {
         {
           synthetic: true,
           agentInitiated: true,
+          cancelState,
           cancelSignal: controller.signal,
           onCanceled: (reason) => {
             canceledReasons.push(reason);
@@ -417,6 +420,156 @@ describe("AgentSession queued message tool-call dispatch", () => {
     } finally {
       releaseAppend();
       appendSpy.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("rollback failure preserves the wake and continues acceptance", async () => {
+    const workspaceId = "queue-dispatch-cancel-rollback-failure";
+    const { session, cleanup, historyService } = await createAgentSessionHarness({ workspaceId });
+    const originalAppend = historyService.appendToHistory.bind(historyService);
+    let markAppendStarted: () => void = () => undefined;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend: () => void = () => undefined;
+    const appendRelease = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const appendSpy = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (...args) => {
+        markAppendStarted();
+        await appendRelease;
+        return originalAppend(...args);
+      }
+    );
+    const truncateSpy = spyOn(historyService, "truncateAfterMessage").mockResolvedValue(
+      Err("injected rollback failure")
+    );
+
+    try {
+      const controller = new AbortController();
+      const cancelState = { canceledBeforeAcceptance: false };
+      const canceledReasons: string[] = [];
+      let accepted = false;
+      const sendPromise = session.sendMessage(
+        "Background monitor wake",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          cancelState,
+          cancelSignal: controller.signal,
+          onCanceled: (reason) => {
+            canceledReasons.push(reason);
+          },
+          onAccepted: () => {
+            accepted = true;
+          },
+        }
+      );
+
+      await appendStarted;
+      controller.abort("monitor canceled");
+      releaseAppend();
+      const result = await sendPromise;
+
+      expect(result.success).toBe(true);
+      expect(truncateSpy).toHaveBeenCalledTimes(1);
+      expect(canceledReasons).toEqual([]);
+      expect(cancelState.canceledBeforeAcceptance).toBe(false);
+      expect(accepted).toBe(true);
+
+      const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(
+          history.data.some((message) =>
+            message.parts.some(
+              (part) => part.type === "text" && part.text === "Background monitor wake"
+            )
+          )
+        ).toBe(true);
+      }
+    } finally {
+      releaseAppend();
+      truncateSpy.mockRestore();
+      appendSpy.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("cancellation reconciles goal mode after removing the temporary wake row", async () => {
+    const workspaceId = "queue-dispatch-cancel-goal-reconcile";
+    let markInitialSyncStarted: () => void = () => undefined;
+    const initialSyncStarted = new Promise<void>((resolve) => {
+      markInitialSyncStarted = resolve;
+    });
+    let releaseInitialSync: () => void = () => undefined;
+    const initialSyncRelease = new Promise<void>((resolve) => {
+      releaseInitialSync = resolve;
+    });
+    let syncCalls = 0;
+    const syncGoalModeWithChatTail = mock(async () => {
+      syncCalls += 1;
+      if (syncCalls === 1) {
+        markInitialSyncStarted();
+        await initialSyncRelease;
+      }
+      return null;
+    });
+    const workspaceGoalService = {
+      assertPricedModelForBudgetedGoal: mock(() => Promise.resolve(Ok(undefined))),
+      syncGoalModeWithChatTail,
+    } as unknown as WorkspaceGoalService;
+    const { session, cleanup, historyService } = await createAgentSessionHarness({
+      workspaceId,
+      workspaceGoalService,
+    });
+
+    try {
+      const controller = new AbortController();
+      const cancelState = { canceledBeforeAcceptance: false };
+      const canceledReasons: string[] = [];
+      const sendPromise = session.sendMessage(
+        "Background monitor wake",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          cancelState,
+          cancelSignal: controller.signal,
+          onCanceled: (reason) => {
+            canceledReasons.push(reason);
+          },
+        }
+      );
+
+      await initialSyncStarted;
+      controller.abort("monitor canceled");
+      releaseInitialSync();
+      const result = await sendPromise;
+
+      expect(result.success).toBe(true);
+      expect(syncGoalModeWithChatTail).toHaveBeenCalledTimes(2);
+      expect(canceledReasons).toEqual(["monitor canceled"]);
+      expect(cancelState.canceledBeforeAcceptance).toBe(true);
+
+      const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(
+          history.data.some((message) =>
+            message.parts.some(
+              (part) => part.type === "text" && part.text === "Background monitor wake"
+            )
+          )
+        ).toBe(false);
+      }
+    } finally {
+      releaseInitialSync();
       session.dispose();
       await cleanup();
     }
