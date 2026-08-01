@@ -124,10 +124,13 @@ describe("ReasoningMessage", () => {
     });
     const view = render(<ReasoningMessage message={streamingMessage} />);
 
-    // The activity label and collapsed-content marker must not combine into
-    // "Thinking......", which reads as two competing status indicators.
-    expect(view.container.textContent).toContain("Thinking...");
-    expect(view.container.textContent).not.toContain("Thinking......");
+    // The accessible activity label omits its own dots while the separate
+    // collapsed-content marker supplies the one visible ellipsis.
+    expect(view.container.querySelector(".shimmer-text-base")?.textContent).toBe("Thinking");
+    expect(view.getByTestId("reasoning-ellipsis").textContent).toBe("...");
+    expect(view.container.querySelector(".shimmer-text-sweep")?.getAttribute("aria-hidden")).toBe(
+      "true"
+    );
   });
 
   test("does not auto-collapse on stream completion (keeps the mounted expand state)", () => {
