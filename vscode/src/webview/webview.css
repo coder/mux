@@ -949,36 +949,69 @@ pre code {
   overflow: auto;
 }
 
-/* Shimmer text effect (desktop parity). */
+/* Text shimmer (kept in sync with the shared desktop component markup). */
 .shimmer-text {
   --shimmer-color: var(--color-muted-foreground);
   --shimmer-dark: color-mix(in srgb, var(--shimmer-color) 25%, black);
-  display: inline; /* Prevent layout shift - behave like normal text */
-  background: linear-gradient(
-    90deg,
-    var(--shimmer-color) 0%,
-    var(--shimmer-color) 35%,
-    var(--shimmer-dark) 50%,
-    var(--shimmer-color) 65%,
-    var(--shimmer-color) 100%
-  );
-  background-size: 300% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  /* Cap at ~30fps (42 steps over 1.4s) to reduce repaints on high-refresh displays */
-  animation: shimmer-text-sweep var(--shimmer-duration, 1.4s) steps(42, end) infinite;
-  /* Decoration inheritance must be explicit for background-clip: text */
+  position: relative;
+  display: inline-block;
+  contain: paint;
+  color: var(--shimmer-color);
   text-decoration: inherit;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
-@keyframes shimmer-text-sweep {
+.shimmer-text-sweep {
+  position: absolute;
+  inset: 0;
+  color: var(--shimmer-dark);
+  pointer-events: none;
+  user-select: none;
+  mask-image: linear-gradient(90deg, transparent 5%, black 50%, transparent 95%);
+  mask-repeat: no-repeat;
+  mask-size: 100% 100%;
+  -webkit-mask-image: linear-gradient(90deg, transparent 5%, black 50%, transparent 95%);
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  animation: shimmer-text-window var(--shimmer-duration, 1.4s) linear infinite;
+}
+
+.shimmer-text-sweep-copy {
+  display: block;
+  width: 100%;
+  white-space: nowrap;
+  animation: shimmer-text-copy var(--shimmer-duration, 1.4s) linear infinite;
+}
+
+@keyframes shimmer-text-window {
   from {
-    background-position: 100% 0;
+    transform: translateX(-100%);
   }
   to {
-    background-position: 0% 0;
+    transform: translateX(100%);
   }
+}
+
+@keyframes shimmer-text-copy {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text-sweep {
+    display: none;
+  }
+}
+
+.shimmer-text.no-shimmer {
+  color: inherit;
+}
+
+.shimmer-text.no-shimmer .shimmer-text-sweep {
+  display: none;
 }
