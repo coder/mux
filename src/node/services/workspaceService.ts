@@ -1978,29 +1978,27 @@ export class WorkspaceService extends EventEmitter {
   private async recoverBashMonitorStateAfterRestart(): Promise<void> {
     try {
       for (const ownerWorkspaceId of await this.bashMonitorRegistryStore.listOwnerWorkspaceIds()) {
-        for (const record of await this.bashMonitorRegistryStore.listAll(ownerWorkspaceId)) {
-          // Defensive: monitors armed after this service was constructed belong to the
-          // live manager; its own retirement events maintain their registry records.
-          if (Date.parse(record.createdAt) >= this.constructedAtMs) continue;
-          // Consume-then-enqueue runs under the same per-key lock as the armed listener,
-          // so a monitor re-armed during recovery is fully ordered against this section:
-          // an earlier re-arm replaces the registry record (consume returns null, no
-          // notice); a later one runs after the notice exists and supersedes it. A match
-          // wake written by the live monitor meanwhile is protected by enqueueMonitorLost
-          // itself, which refuses to upgrade match records updated at/after boot.
-          await this.bashMonitorRegistryLocks.withLock(
-            `${ownerWorkspaceId}:${record.processId}`,
-            async () => {
-              const consumed = await this.bashMonitorRegistryStore.consumeIfArmedBefore(
-                ownerWorkspaceId,
-                record.processId,
-                this.constructedAtMs
-              );
-              if (consumed == null) return;
-              await this.bashMonitorWakeStore.enqueueMonitorLost(consumed, this.constructedAtMs);
-            }
-          );
-        }
+        await this.bashMonitorHistoryLocks.withLock(ownerWorkspaceId, async () => {
+          for (const record of await this.bashMonitorRegistryStore.listAll(ownerWorkspaceId)) {
+            // Defensive: monitors armed after this service was constructed belong to the
+            // live manager; its own retirement events maintain their registry records.
+            if (Date.parse(record.createdAt) >= this.constructedAtMs) continue;
+            // Consume-then-enqueue runs under the same workspace + per-key locks as live lifecycle
+            // listeners, so destructive clears cannot lose or resurrect recovered monitor notices.
+            await this.bashMonitorRegistryLocks.withLock(
+              `${ownerWorkspaceId}:${record.processId}`,
+              async () => {
+                const consumed = await this.bashMonitorRegistryStore.consumeIfArmedBefore(
+                  ownerWorkspaceId,
+                  record.processId,
+                  this.constructedAtMs
+                );
+                if (consumed == null) return;
+                await this.bashMonitorWakeStore.enqueueMonitorLost(consumed, this.constructedAtMs);
+              }
+            );
+          }
+        });
       }
     } catch (error) {
       log.debug("Failed to convert stale bash monitor registry records into wakes", { error });
@@ -3410,10 +3408,13 @@ export class WorkspaceService extends EventEmitter {
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
-      clearHistoryForHardRestart: () =>
-        this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, () =>
-          this.historyService.clearHistory(workspaceId)
-        ),
+      clearHistoryForHardRestart: ({ monitorHistoryLockHeld }) => {
+        const clear = () => this.historyService.clearHistory(workspaceId);
+        const options = { discardUnacceptedOnSuccess: true };
+        return monitorHistoryLockHeld
+          ? this.clearHistoryWithRetiredBashMonitorWakesUnlocked(workspaceId, clear, options)
+          : this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, clear, options);
+      },
       backgroundProcessManager: this.backgroundProcessManager,
       onCompactionComplete: (metadata) => {
         this.schedulePostCompactionMetadataRefresh(workspaceId);
@@ -9604,39 +9605,59 @@ export class WorkspaceService extends EventEmitter {
 
   private clearHistoryWithRetiredBashMonitorWakes<T>(
     workspaceId: string,
-    clear: () => Promise<Result<T>>
+    clear: () => Promise<Result<T>>,
+    options?: { discardUnacceptedOnSuccess?: boolean }
   ): Promise<Result<T>> {
-    return this.bashMonitorHistoryLocks.withLock(workspaceId, async () => {
-      const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
-      if (!retireResult.success) return retireResult;
-      const staged = retireResult.data;
-      const acceptedBefore = await this.findAcceptedBashMonitorWakeSnapshots(workspaceId, staged);
-      const restoreAfterFailedClear = async (): Promise<void> => {
-        const acceptedAfter = await this.findAcceptedBashMonitorWakeSnapshots(workspaceId, staged);
-        const restorable = staged.filter((record) => {
-          if (acceptedBefore == null) return false;
-          const key = this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt);
-          return !acceptedBefore.has(key) || acceptedAfter?.has(key) === true;
-        });
-        await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, restorable);
-      };
-      try {
-        const clearResult = await clear();
-        if (clearResult.success) return clearResult;
-        await restoreAfterFailedClear();
-        return clearResult;
-      } catch (error) {
-        try {
-          await restoreAfterFailedClear();
-        } catch (restoreError) {
-          log.error("Failed to restore monitor wakes after history clear threw", {
-            workspaceId,
-            error: restoreError,
-          });
+    return this.bashMonitorHistoryLocks.withLock(workspaceId, () =>
+      this.clearHistoryWithRetiredBashMonitorWakesUnlocked(workspaceId, clear, options)
+    );
+  }
+
+  private async clearHistoryWithRetiredBashMonitorWakesUnlocked<T>(
+    workspaceId: string,
+    clear: () => Promise<Result<T>>,
+    options?: { discardUnacceptedOnSuccess?: boolean }
+  ): Promise<Result<T>> {
+    const pending = await this.bashMonitorWakeStore.listPending(workspaceId);
+    const acceptedBefore = await this.findAcceptedBashMonitorWakeSnapshots(workspaceId, pending);
+    if (acceptedBefore == null) {
+      return Err("Cannot clear history while monitor wake acceptance cannot be verified.");
+    }
+    const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
+    if (!retireResult.success) return retireResult;
+    const staged = retireResult.data;
+    const restoreSnapshots = async (includeUnaccepted: boolean): Promise<void> => {
+      const acceptedAfter = await this.findAcceptedBashMonitorWakeSnapshots(workspaceId, staged);
+      const restorable = staged.filter((record) => {
+        const key = this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt);
+        return (
+          (includeUnaccepted && !acceptedBefore.has(key)) ||
+          (acceptedBefore.has(key) && acceptedAfter?.has(key) === true)
+        );
+      });
+      await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, restorable);
+    };
+    try {
+      const clearResult = await clear();
+      if (clearResult.success) {
+        if (options?.discardUnacceptedOnSuccess !== true) {
+          await restoreSnapshots(true);
         }
-        throw error;
+        return clearResult;
       }
-    });
+      await restoreSnapshots(true);
+      return clearResult;
+    } catch (error) {
+      try {
+        await restoreSnapshots(true);
+      } catch (restoreError) {
+        log.error("Failed to restore monitor wakes after history clear threw", {
+          workspaceId,
+          error: restoreError,
+        });
+      }
+      throw error;
+    }
   }
 
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
@@ -9650,9 +9671,12 @@ export class WorkspaceService extends EventEmitter {
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
     const truncate = () => this.historyService.truncateHistory(workspaceId, effectivePercentage);
-    const truncateResult = isFullClear
-      ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate)
-      : await truncate();
+    const truncateResult =
+      effectivePercentage > 0
+        ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate, {
+            discardUnacceptedOnSuccess: isFullClear,
+          })
+        : await truncate();
     if (!truncateResult.success) {
       return Err(truncateResult.error);
     }
@@ -9840,8 +9864,10 @@ export class WorkspaceService extends EventEmitter {
           `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
         );
 
-        const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, () =>
-          this.historyService.clearHistory(workspaceId)
+        const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(
+          workspaceId,
+          () => this.historyService.clearHistory(workspaceId),
+          { discardUnacceptedOnSuccess: true }
         );
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);

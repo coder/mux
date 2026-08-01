@@ -3724,6 +3724,86 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("partial truncation that deletes every row retires accepted monitor wakes", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "partial-truncation-deletes-all-monitor-wake";
+    try {
+      await config.addWorkspace("/tmp/partial-delete-all-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "partial-delete-all-project",
+        projectPath: "/tmp/partial-delete-all-project",
+        runtimeConfig: { type: "local" },
+      });
+      const wakeStore = new BashMonitorWakeStore(config);
+      const record = await wakeStore.enqueueOrMergePending({
+        processId: "partial-delete-proc",
+        taskId: "bash:partial-delete-proc",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["DONE before partial deletion"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 29,
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("partial-delete-accepted", "user", "Accepted wake", {
+          synthetic: true,
+          muxMetadata: buildBashMonitorWakeMetadata([record]),
+        })
+      );
+
+      const result = await workspaceService.truncateHistory(workspaceId, 0.75);
+
+      expect(result.success).toBe(true);
+      expect(await wakeStore.listPending(workspaceId)).toEqual([]);
+      expect(await historyService.getHistoryFromLatestBoundary(workspaceId)).toEqual(Ok([]));
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("history scan failure blocks destructive clear without retiring wakes", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "clear-history-scan-failure";
+    try {
+      await config.addWorkspace("/tmp/clear-history-scan-failure-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "clear-history-scan-failure-project",
+        projectPath: "/tmp/clear-history-scan-failure-project",
+        runtimeConfig: { type: "local" },
+      });
+      const wakeStore = new BashMonitorWakeStore(config);
+      await wakeStore.enqueueOrMergePending({
+        processId: "scan-failure-proc",
+        taskId: "bash:scan-failure-proc",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED before scan"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 19,
+      });
+      const iterateSpy = spyOn(historyService, "iterateFullHistory").mockResolvedValue(
+        Err("injected history scan failure")
+      );
+
+      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+
+      expect(result).toEqual(
+        Err("Cannot clear history while monitor wake acceptance cannot be verified.")
+      );
+      expect(await wakeStore.listPending(workspaceId)).toHaveLength(1);
+      iterateSpy.mockRestore();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("failed full clear restores pending monitor wakes", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "failed-clear-restores-monitor-wake";

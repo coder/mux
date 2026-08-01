@@ -328,7 +328,9 @@ interface AgentSessionOptions {
   backgroundProcessManager: BackgroundProcessManager;
   workspaceGoalService?: WorkspaceGoalService;
   /** Destructive clear coordinator used by exec hard restart. */
-  clearHistoryForHardRestart?: () => Promise<Result<number[]>>;
+  clearHistoryForHardRestart?: (options: {
+    monitorHistoryLockHeld: boolean;
+  }) => Promise<Result<number[]>>;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
@@ -361,7 +363,9 @@ export class AgentSession {
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly workspaceGoalService?: WorkspaceGoalService;
-  private readonly clearHistoryForHardRestart?: () => Promise<Result<number[]>>;
+  private readonly clearHistoryForHardRestart?: (options: {
+    monitorHistoryLockHeld: boolean;
+  }) => Promise<Result<number[]>>;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
@@ -528,6 +532,7 @@ export class AgentSession {
     agentInitiated?: boolean;
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
+    monitorHistoryLockHeld?: boolean;
     goalKind?: GoalSyntheticMessageKind;
   };
 
@@ -3043,7 +3048,8 @@ export class AgentSession {
           agentInitiated,
           preparedTurnAbortController.signal,
           goalKind,
-          turnThinkingOverride
+          turnThinkingOverride,
+          internal?.cancelSignal != null
         );
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
@@ -3672,7 +3678,8 @@ export class AgentSession {
     // Session-owned per-turn holder for mid-turn thinking changes. Passed
     // explicitly (not read from the field) so a preempted turn can never pick
     // up its replacement's holder. Absent for internal retry paths.
-    activeTurnThinkingOverride?: ActiveTurnThinkingOverride
+    activeTurnThinkingOverride?: ActiveTurnThinkingOverride,
+    monitorHistoryLockHeld = false
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -3695,6 +3702,7 @@ export class AgentSession {
       agentInitiated,
       openaiTruncationModeOverride,
       ...(goalKind != null ? { goalKind } : {}),
+      monitorHistoryLockHeld,
       providersConfig,
     };
     this.activeStreamUserMessageId = undefined;
@@ -4413,7 +4421,9 @@ export class AgentSession {
     }
 
     const clearResult = this.clearHistoryForHardRestart
-      ? await this.clearHistoryForHardRestart()
+      ? await this.clearHistoryForHardRestart({
+          monitorHistoryLockHeld: context.monitorHistoryLockHeld === true,
+        })
       : await this.historyService.clearHistory(this.workspaceId);
     if (!clearResult.success) {
       log.warn("Failed to clear history for exec subagent hard restart", {
