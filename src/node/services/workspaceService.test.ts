@@ -3761,6 +3761,55 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("partially committed clear keeps an accepted wake retired", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "partial-clear-keeps-accepted-retired";
+    try {
+      await config.addWorkspace("/tmp/partial-clear-monitor-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "partial-clear-monitor-project",
+        projectPath: "/tmp/partial-clear-monitor-project",
+        runtimeConfig: { type: "local" },
+      });
+      const wakeStore = new BashMonitorWakeStore(config);
+      const record = await wakeStore.enqueueOrMergePending({
+        processId: "partial-clear-proc",
+        taskId: "bash:partial-clear-proc",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["DONE before partial clear"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 25,
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("partial-clear-accepted", "user", "Accepted wake", {
+          synthetic: true,
+          muxMetadata: buildBashMonitorWakeMetadata([record]),
+        })
+      );
+      const originalTruncate = historyService.truncateHistory.bind(historyService);
+      const truncateSpy = spyOn(historyService, "truncateHistory").mockImplementation(
+        async (...args) => {
+          const result = await originalTruncate(...args);
+          expect(result.success).toBe(true);
+          return Err("injected post-clear failure");
+        }
+      );
+
+      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+
+      expect(result).toEqual(Err("injected post-clear failure"));
+      expect(await wakeStore.listPending(workspaceId)).toEqual([]);
+      truncateSpy.mockRestore();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("destructive history replacement retires pending monitor wakes", async () => {
     const { config, workspaceService, cleanup } = await createServices();
     const workspaceId = "replace-pending-monitor-wake";

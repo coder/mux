@@ -1757,24 +1757,24 @@ export class WorkspaceService extends EventEmitter {
     _workspaceId: string,
     payload: MonitorArmedPayload
   ) => {
-    this.bashMonitorRegistryLocks
-      .withLock(`${payload.workspaceId}:${payload.processId}`, async () => {
-        // Clear the old cancellation only after its locked wake cleanup finishes. New match handlers
-        // use the same lock, so a reused process ID cannot be superseded by the prior generation.
-        this.canceledBashMonitorKeys.delete(
-          this.bashMonitorProcessKey(payload.workspaceId, payload.processId)
-        );
-        // Upsert must be durable before the supersede so no interleaving observes the
-        // live re-arm without its registry record.
-        await this.bashMonitorRegistryStore.upsert(payload);
-        // Re-arming a processId invalidates any undelivered "monitor lost" notice for it:
-        // post-restart IDs are generated against an empty manager map, so a relaunched
-        // display_name reuses the old ID and the pending notice would describe a live task.
-        await this.bashMonitorWakeStore.supersedePendingMonitorLost(
-          payload.workspaceId,
-          payload.processId
-        );
-      })
+    this.bashMonitorHistoryLocks
+      .withLock(payload.workspaceId, () =>
+        this.bashMonitorRegistryLocks.withLock(
+          `${payload.workspaceId}:${payload.processId}`,
+          async () => {
+            // Clear the old cancellation only after its locked wake cleanup finishes. New match
+            // handlers use the same locks, so a reused ID cannot inherit prior-generation cleanup.
+            this.canceledBashMonitorKeys.delete(
+              this.bashMonitorProcessKey(payload.workspaceId, payload.processId)
+            );
+            await this.bashMonitorRegistryStore.upsert(payload);
+            await this.bashMonitorWakeStore.supersedePendingMonitorLost(
+              payload.workspaceId,
+              payload.processId
+            );
+          }
+        )
+      )
       .catch((error: unknown) => {
         log.error("Failed to persist armed bash monitor", {
           workspaceId: payload.workspaceId,
@@ -1801,18 +1801,20 @@ export class WorkspaceService extends EventEmitter {
       }
     }
 
-    this.bashMonitorRegistryLocks
-      .withLock(`${workspaceId}:${payload.processId}`, async () => {
-        await this.bashMonitorRegistryStore.remove(workspaceId, payload.processId);
-        if (payload.reason === "canceled" && (trackedWakeCancellations?.size ?? 0) === 0) {
-          // With no queued/preparing dispatch, cancellation can retire the persisted wake directly.
-          // Otherwise onCanceled owns the transition only after PREPARING rollback succeeds.
-          await this.bashMonitorWakeStore.markSuperseded(
-            workspaceId,
-            BashMonitorWakeStore.wakeId(payload.processId)
-          );
-        }
-      })
+    this.bashMonitorHistoryLocks
+      .withLock(workspaceId, () =>
+        this.bashMonitorRegistryLocks.withLock(`${workspaceId}:${payload.processId}`, async () => {
+          await this.bashMonitorRegistryStore.remove(workspaceId, payload.processId);
+          if (payload.reason === "canceled" && (trackedWakeCancellations?.size ?? 0) === 0) {
+            // With no queued/preparing dispatch, cancellation can retire the wake directly.
+            // Otherwise onCanceled owns the transition after PREPARING rollback succeeds.
+            await this.bashMonitorWakeStore.markSuperseded(
+              workspaceId,
+              BashMonitorWakeStore.wakeId(payload.processId)
+            );
+          }
+        })
+      )
       .catch((error: unknown) => {
         log.error("Failed to retire bash monitor state", { workspaceId, error });
       });
@@ -2026,7 +2028,7 @@ export class WorkspaceService extends EventEmitter {
   private async findAcceptedBashMonitorWakeSnapshots(
     ownerWorkspaceId: string,
     pending: readonly BashMonitorWakeRecord[]
-  ): Promise<Set<string>> {
+  ): Promise<Set<string> | null> {
     // Narrow WorkspaceService test doubles and older embedders may not expose full-history iteration.
     // Fail open to the existing send path rather than treating an unverified wake as accepted.
     if (typeof this.historyService.iterateFullHistory !== "function") {
@@ -2072,7 +2074,7 @@ export class WorkspaceService extends EventEmitter {
         ownerWorkspaceId,
         error: iteration.error,
       });
-      return new Set<string>();
+      return null;
     }
     return acceptedKeys;
   }
@@ -2244,10 +2246,9 @@ export class WorkspaceService extends EventEmitter {
       (record) =>
         !this.cancelingBashMonitorWakeKeys.has(this.bashMonitorWakeKey(ownerWorkspaceId, record.id))
     );
-    const acceptedSnapshots = await this.findAcceptedBashMonitorWakeSnapshots(
-      ownerWorkspaceId,
-      pendingSnapshot
-    );
+    const acceptedSnapshots =
+      (await this.findAcceptedBashMonitorWakeSnapshots(ownerWorkspaceId, pendingSnapshot)) ??
+      new Set<string>();
     const pending: BashMonitorWakeRecord[] = [];
     for (const record of pendingSnapshot) {
       const snapshotKey = this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt);
@@ -9609,14 +9610,24 @@ export class WorkspaceService extends EventEmitter {
       const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
       if (!retireResult.success) return retireResult;
       const staged = retireResult.data;
+      const acceptedBefore = await this.findAcceptedBashMonitorWakeSnapshots(workspaceId, staged);
+      const restoreAfterFailedClear = async (): Promise<void> => {
+        const acceptedAfter = await this.findAcceptedBashMonitorWakeSnapshots(workspaceId, staged);
+        const restorable = staged.filter((record) => {
+          if (acceptedBefore == null) return false;
+          const key = this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt);
+          return !acceptedBefore.has(key) || acceptedAfter?.has(key) === true;
+        });
+        await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, restorable);
+      };
       try {
         const clearResult = await clear();
         if (clearResult.success) return clearResult;
-        await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, staged);
+        await restoreAfterFailedClear();
         return clearResult;
       } catch (error) {
         try {
-          await this.bashMonitorWakeStore.restorePendingSnapshots(workspaceId, staged);
+          await restoreAfterFailedClear();
         } catch (restoreError) {
           log.error("Failed to restore monitor wakes after history clear threw", {
             workspaceId,
