@@ -83,7 +83,7 @@
 
             outputHashMode = "recursive";
             # Marker used by scripts/update_flake_hash.sh to update this hash in place.
-            outputHash = "sha256-FFlI3j+x4Hp0kgDsHcPSQIDFhQvuBSIQrbTAYBc1CEE="; # mux-offline-cache-hash
+            outputHash = "sha256-hK0zwN0pShMv8NlfMXud+9Jx2J32hz5+qtLMqzunZF8="; # mux-offline-cache-hash
           };
 
           configurePhase = ''
