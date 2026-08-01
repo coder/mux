@@ -57,6 +57,15 @@ test.describe("chat typing performance profiling", () => {
     const input = page.getByRole("textbox", { name: "Message Claude" });
     await expect(input).toBeVisible({ timeout: 20_000 });
 
+    // Creation initializes branches, runtime availability, Coder status, and auto-naming
+    // independently. Let those legitimate commits settle before resetting profiler samples.
+    await expect(page.getByRole("combobox", { name: "Workspace type" })).toBeEnabled();
+    await expect(page.getByRole("combobox", { name: "Select source branch" })).toBeEnabled();
+    const autoNamingButton = page.getByRole("button", { name: "Disable auto-naming" });
+    await expect(autoNamingButton).toBeVisible();
+    await autoNamingButton.click();
+    await expect(page.getByRole("button", { name: "Enable auto-naming" })).toBeVisible();
+
     // Make the draft non-empty before sampling. Subsequent typing should update
     // the input without rerendering static creation controls.
     await input.fill("D");
@@ -70,8 +79,8 @@ test.describe("chat typing performance profiling", () => {
       initialValue: "D",
     });
 
-    // Auto-naming may publish one debounced state update during a long typing sample,
-    // but static creation controls must not rerender once per character.
+    // A late initialization commit may land at the profiling boundary, but the
+    // control tree must stay independent from the per-character draft updates.
     expect(
       reactProfile.byProfilerId["chat-input.creation-controls"]?.sampleCount ?? 0
     ).toBeLessThanOrEqual(1);
