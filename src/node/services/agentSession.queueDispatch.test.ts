@@ -661,7 +661,7 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
-  test("goal sync failure after the boundary still finalizes the durable wake", async () => {
+  test("every goal sync failure after the boundary finalizes the durable wake", async () => {
     const workspaceId = "queue-dispatch-cancel-goal-sync-failure";
     let markSyncStarted: () => void = () => undefined;
     const syncStarted = new Promise<void>((resolve) => {
@@ -708,7 +708,6 @@ describe("AgentSession queued message tool-call dispatch", () => {
       );
 
       await syncStarted;
-      controller.abort("monitor canceled");
       releaseSync();
       let syncError: unknown;
       try {

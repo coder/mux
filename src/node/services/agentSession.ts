@@ -2922,9 +2922,9 @@ export class AgentSession {
     try {
       await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
     } catch (error) {
-      if (cancelSignal?.aborted === true) {
-        // The durable row crossed the point of no return, so a goal-sync failure must still finalize
-        // the monitor wake as accepted. Startup recovery can resume that row without redelivering it.
+      if (cancelSignal != null) {
+        // The durable row crossed the point of no return, so every later goal-sync failure must still
+        // finalize this monitor wake. Startup recovery can resume the row without redelivering it.
         await internal?.onAccepted?.();
       }
       throw error;
