@@ -134,6 +134,31 @@ describe("QueuedMessage banner", () => {
     });
   });
 
+  test("shows send-now failures inline and allows retry", async () => {
+    let attempt = 0;
+    const onSendImmediately = mock(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        throw new Error("Connection lost while interrupting");
+      }
+    });
+
+    const view = render(
+      <QueuedMessage message={createQueuedMessage()} onSendImmediately={onSendImmediately} />
+    );
+
+    fireEvent.click(view.getByText("Send now"));
+    await waitFor(() => {
+      expect(view.getByRole("alert").textContent).toContain("Connection lost while interrupting");
+    });
+
+    fireEvent.click(view.getByText("Send now"));
+    await waitFor(() => {
+      expect(onSendImmediately).toHaveBeenCalledTimes(2);
+      expect(view.queryByRole("alert")).toBeNull();
+    });
+  });
+
   test("does not render Send now button when onSendImmediately is absent", () => {
     const view = render(<QueuedMessage message={createQueuedMessage()} onEdit={mock(() => {})} />);
 

@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import type { QueuedMessage as QueuedMessageType } from "@/common/types/message";
-import { Clock3, Loader2, Pencil, Send } from "lucide-react";
+import { AlertCircle, Clock3, Loader2, Pencil, Send } from "lucide-react";
 import { ChatInputDecoration } from "@/browser/components/ChatPane/ChatInputDecoration";
 import { UserMessageContent } from "@/browser/features/Messages/UserMessageContent";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;
@@ -31,6 +32,7 @@ function deriveQueuedPreview(message: QueuedMessageType): QueuedPreview {
 export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const preview = deriveQueuedPreview(props.message);
   const queueStatusLabel =
     props.message.queueDispatchMode === "turn-end"
@@ -44,10 +46,15 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
   const handleSendImmediately = () => {
     if (isSending || !props.onSendImmediately) return;
     setIsSending(true);
-    // The parent owns send error reporting; this surface only tracks whether another click is safe.
+    setSendError(null);
     props.onSendImmediately().then(
       () => setIsSending(false),
-      () => setIsSending(false)
+      (error: unknown) => {
+        // Keep failures visible at the action that caused them while leaving the queued draft intact
+        // for a retry; consuming this rejection without feedback makes IPC failures look like no-ops.
+        setSendError(getErrorMessage(error));
+        setIsSending(false);
+      }
     );
   };
 
@@ -87,6 +94,16 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
               variant="queued"
             />
           </div>
+
+          {sendError && (
+            <div
+              role="alert"
+              className="border-toast-error-border/50 bg-toast-error-bg/50 text-toast-error-text flex items-start gap-1.5 border-t px-3 py-2 text-xs"
+            >
+              <AlertCircle className="mt-0.5 size-3 shrink-0" />
+              <span className="min-w-0 break-words">{sendError}</span>
+            </div>
+          )}
 
           {hasActions && (
             <div className="border-pending/10 bg-surface-secondary/60 flex flex-wrap items-center justify-end gap-1.5 border-t px-2 py-1.5">
