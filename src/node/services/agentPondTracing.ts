@@ -46,13 +46,6 @@ function createAgentPondTracingState(): AgentPondTracingState | undefined {
             tracer: provider.getTracer("mux"),
             usage: true,
           }),
-          {
-            // Run after OpenTelemetry closes its spans so short-lived CLI turns
-            // are durable before the process can exit.
-            onEnd: flushAgentPondTracing,
-            onAbort: flushAgentPondTracing,
-            onError: flushAgentPondTracing,
-          },
         ],
         isEnabled: true,
         recordInputs: false,
