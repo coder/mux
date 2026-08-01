@@ -1,4 +1,4 @@
-import { isPixel } from "@coder/pixel-storybook";
+import { isPixel } from "@coder/pixel-storybook/storyapi";
 import { waitFor, within } from "@storybook/test";
 
 import type { AppStory } from "@/browser/stories/meta.js";

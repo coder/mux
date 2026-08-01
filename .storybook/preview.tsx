@@ -1,5 +1,5 @@
 import type { Preview } from "@storybook/react-vite";
-import { isPixel } from "@coder/pixel-storybook";
+import { isPixel } from "@coder/pixel-storybook/storyapi";
 import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";
 import {
