@@ -2048,7 +2048,12 @@ export class WorkspaceService extends EventEmitter {
           for (const rawRecord of candidate.records) {
             if (typeof rawRecord !== "object" || rawRecord === null) continue;
             const record = rawRecord as { processId?: unknown; wakeUpdatedAt?: unknown };
-            if (typeof record.processId !== "string" || typeof record.wakeUpdatedAt !== "string") {
+            if (
+              typeof record.processId !== "string" ||
+              record.processId.trim().length === 0 ||
+              typeof record.wakeUpdatedAt !== "string" ||
+              record.wakeUpdatedAt.trim().length === 0
+            ) {
               continue;
             }
             const key = this.bashMonitorWakeSnapshotKey(record.processId, record.wakeUpdatedAt);
@@ -9570,6 +9575,19 @@ export class WorkspaceService extends EventEmitter {
     ]);
   }
 
+  private async retirePendingBashMonitorWakesBeforeHistoryClear(
+    workspaceId: string
+  ): Promise<Result<void>> {
+    try {
+      await this.bashMonitorWakeStore.supersedeAllPending(workspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(
+        `Cannot clear history until pending monitor wakes are retired: ${getErrorMessage(error)}`
+      );
+    }
+  }
+
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
     const session = this.sessions.get(workspaceId);
     if (session?.isBusy() || this.aiService.isStreaming(workspaceId)) {
@@ -9578,22 +9596,18 @@ export class WorkspaceService extends EventEmitter {
       );
     }
 
-    const isFullClear = (percentage ?? 1.0) === 1.0;
+    const effectivePercentage = percentage ?? 1.0;
+    const isFullClear = effectivePercentage >= 1.0;
     if (isFullClear) {
-      try {
-        // Full history deletion removes accepted-wake recovery markers. Retire every pending wake
-        // first so a cleared transcript can never resurrect stale monitor output.
-        await this.bashMonitorWakeStore.supersedeAllPending(workspaceId);
-      } catch (error) {
-        return Err(
-          `Cannot clear history until pending monitor wakes are retired: ${getErrorMessage(error)}`
-        );
-      }
+      // Full history deletion removes accepted-wake recovery markers. Retire every pending wake
+      // first so a cleared transcript can never resurrect stale monitor output.
+      const retireResult = await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
+      if (!retireResult.success) return retireResult;
     }
 
     const truncateResult = await this.historyService.truncateHistory(
       workspaceId,
-      percentage ?? 1.0
+      effectivePercentage
     );
     if (!truncateResult.success) {
       return Err(truncateResult.error);
@@ -9782,6 +9796,9 @@ export class WorkspaceService extends EventEmitter {
           `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
         );
 
+        const retireResult =
+          await this.retirePendingBashMonitorWakesBeforeHistoryClear(workspaceId);
+        if (!retireResult.success) return retireResult;
         const clearResult = await this.historyService.clearHistory(workspaceId);
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);

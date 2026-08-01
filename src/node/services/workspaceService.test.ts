@@ -1861,6 +1861,19 @@ describe("WorkspaceService bash monitor wakes", () => {
           records: null,
         };
       }
+      const emptyIdentityWake = createMuxMessage(
+        "empty-identity-wake",
+        "user",
+        "Empty identity wake",
+        { synthetic: true }
+      );
+      if (emptyIdentityWake.metadata) {
+        (emptyIdentityWake.metadata as Record<string, unknown>).muxMetadata = {
+          type: "bash-monitor-wake",
+          records: [{ processId: "", wakeUpdatedAt: "" }],
+        };
+      }
+      await historyService.appendToHistory(workspaceId, emptyIdentityWake);
       await historyService.appendToHistory(workspaceId, malformedWake);
       await historyService.appendToHistory(
         workspaceId,
@@ -3700,12 +3713,48 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         })
       );
 
-      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+      const result = await workspaceService.truncateHistory(workspaceId, 1.5);
 
       expect(result.success).toBe(true);
       expect(await wakeStore.listPending(workspaceId)).toEqual([]);
       const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
       expect(history).toEqual(Ok([]));
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("destructive history replacement retires pending monitor wakes", async () => {
+    const { config, workspaceService, cleanup } = await createServices();
+    const workspaceId = "replace-pending-monitor-wake";
+    try {
+      await config.addWorkspace("/tmp/replace-monitor-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "replace-monitor-project",
+        projectPath: "/tmp/replace-monitor-project",
+        runtimeConfig: { type: "local" },
+      });
+      const wakeStore = new BashMonitorWakeStore(config);
+      await wakeStore.enqueueOrMergePending({
+        processId: "replace-proc",
+        taskId: "bash:replace-proc",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["DONE before replace"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 19,
+      });
+
+      const result = await workspaceService.replaceHistory(
+        workspaceId,
+        createMuxMessage("replacement-summary", "assistant", "Replacement summary", {})
+      );
+
+      expect(result.success).toBe(true);
+      expect(await wakeStore.listPending(workspaceId)).toEqual([]);
     } finally {
       await cleanup();
     }
