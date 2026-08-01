@@ -424,21 +424,25 @@ This is a condition-driven wake-up. Continue from this event.`;
     };
   }
 
-  test("collapses the raw wake prompt behind a details toggle by default", () => {
-    const { getByText, getByRole, queryByText } = render(
+  test("renders a quiet inline event with the raw wake prompt collapsed", () => {
+    const { container, getByText, getByRole, queryByRole, queryByText } = render(
       <TooltipProvider>
         <MessageRenderer message={createWakeMessage()} />
       </TooltipProvider>
     );
 
-    // Compact summary is visible; the raw prompt body stays hidden until expanded.
-    expect(getByText("Dev Server · /error|ready/")).toBeDefined();
-    expect(getByRole("button", { name: /show details/i }).getAttribute("aria-expanded")).toBe(
-      "false"
-    );
+    expect(getByText("Dev Server monitor matched")).toBeDefined();
+    const toggle = getByRole("button", { name: /show details/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.className).toContain("focus-visible:ring-2");
     expect(queryByText(/failed to load tailwind config/)).toBeNull();
     expect(queryByText(/condition-driven wake-up/)).toBeNull();
-    // The dedicated pill replaces the generic synthetic "auto" pill.
+
+    // A machine-authored event should not look or behave like a user prompt.
+    expect(container.querySelector("[data-bash-monitor-wake]")).not.toBeNull();
+    expect(container.querySelector("[data-message-meta]")).toBeNull();
+    expect(queryByRole("button", { name: "Copy" })).toBeNull();
+    expect(queryByText("monitor wake")).toBeNull();
     expect(queryByText("auto")).toBeNull();
   });
 

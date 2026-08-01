@@ -22,7 +22,7 @@ function buildUserRow(muxMetadata: MuxMessageMetadata) {
 }
 
 describe("buildDisplayedMessagesForMessage bash monitor wake metadata", () => {
-  test("surfaces well-formed wake records for compact rendering", () => {
+  test("surfaces well-formed wake records for inline event rendering", () => {
     const row = buildUserRow({
       type: "bash-monitor-wake",
       records: [

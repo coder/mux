@@ -11,7 +11,6 @@ import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
 import { UserMessageContent } from "./UserMessageContent";
 import { GoalSyntheticMessageContent } from "./GoalSyntheticMessageContent";
-import { BashMonitorWakeMessageContent } from "./BashMonitorWakeMessageContent";
 import {
   formatSubagentStructuredOutput,
   parseSubagentReportEnvelope,
@@ -36,7 +35,6 @@ import {
   ClipboardCheck,
   MessageCircleQuestion,
   Pencil,
-  Radar,
   Target,
 } from "lucide-react";
 import {
@@ -96,7 +94,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const isSynthetic = message.isSynthetic === true;
   const isGoalContinuation = message.isGoalContinuation === true;
   const isBudgetLimitWrapup = message.isBudgetLimitWrapup === true;
-  const bashMonitorWake = message.bashMonitorWake;
   const content = message.content;
   const visibleContent = stripStagedAttachmentNotice(content);
   // Only backend-authored synthetic messages may opt into protocol-aware presentation. A user who
@@ -242,13 +239,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         goal continuation
       </span>
     );
-  } else if (bashMonitorWake) {
-    label = (
-      <span className="bg-muted/20 text-muted flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-        <Radar aria-hidden="true" className="h-3 w-3" />
-        monitor wake
-      </span>
-    );
   } else if (subagentReport) {
     const isInProgress = subagentReport.status === "in_progress";
     label = (
@@ -291,10 +281,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         content={content}
         kind={isBudgetLimitWrapup ? "budget-limit" : "continuation"}
       />
-    );
-  } else if (bashMonitorWake) {
-    renderedContent = (
-      <BashMonitorWakeMessageContent content={content} records={bashMonitorWake.records} />
     );
   } else if (subagentReport) {
     renderedContent = <SubagentReportMessageContent report={subagentReport} />;

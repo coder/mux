@@ -409,12 +409,19 @@ const BASH_MONITOR_WAKE_LOST_PROMPT = [
 ].join("\n");
 
 /**
- * Bash monitor wake messages render as compact cards: title + per-monitor
- * summary with the raw prompt collapsed behind a "Show details" toggle.
- * The play expands the first (match) card so the snapshot covers both the
- * expanded prompt and the collapsed monitor-lost card below it.
+ * Bash monitor wakes render as quiet inline events instead of user bubbles.
+ * The play expands the first (match) event so the snapshot covers both the
+ * on-demand raw prompt and the collapsed monitor-lost event below it.
  */
 export const BashMonitorWakeMessages: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone", "laptop"] },
+    },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -473,7 +480,7 @@ export const BashMonitorWakeMessages: AppStory = {
       () => {
         const found = canvas.getAllByRole("button", { name: /show details/i });
         if (found.length !== 2) {
-          throw new Error(`Expected 2 collapsed wake cards, found ${found.length}`);
+          throw new Error(`Expected 2 collapsed monitor events, found ${found.length}`);
         }
         return found;
       },
