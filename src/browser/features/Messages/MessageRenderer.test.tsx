@@ -456,7 +456,11 @@ This is a condition-driven wake-up. Continue from this event.`;
     const toggle = getByRole("button", { name: /show details/i });
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(queryByText(/failed to load tailwind config/)).toBeDefined();
+    const details = queryByText(/failed to load tailwind config/);
+    expect(details).toBeDefined();
+    expect(
+      details?.closest("[data-transcript-quote-root]")?.getAttribute("data-transcript-quote-text")
+    ).toBe(wakePrompt);
 
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("false");

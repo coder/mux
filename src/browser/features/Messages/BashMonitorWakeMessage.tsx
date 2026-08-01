@@ -2,6 +2,7 @@ import { useState, type ReactElement } from "react";
 import { ChevronRight, Radar } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { BashMonitorWakeDisplayRecord, DisplayedMessage } from "@/common/types/message";
+import { TranscriptQuoteRoot } from "./TranscriptQuoteBoundary";
 
 interface BashMonitorWakeMessageProps {
   message: DisplayedMessage & { type: "user" };
@@ -60,9 +61,11 @@ export function BashMonitorWakeMessage(props: BashMonitorWakeMessageProps): Reac
         <span className="sr-only">{expanded ? "Hide details" : "Show details"}</span>
       </button>
       {expanded && (
-        <pre className="text-muted bg-muted/5 border-border mt-1.5 max-h-[40vh] w-full overflow-y-auto rounded-md border p-2 text-xs leading-relaxed whitespace-pre-wrap">
-          {props.message.content}
-        </pre>
+        <TranscriptQuoteRoot text={props.message.content} className="mt-1.5 w-full">
+          <pre className="text-muted bg-muted/5 border-border max-h-[40vh] overflow-y-auto rounded-md border p-2 text-xs leading-relaxed whitespace-pre-wrap">
+            {props.message.content}
+          </pre>
+        </TranscriptQuoteRoot>
       )}
     </div>
   );
