@@ -78,8 +78,8 @@ interface QueuedMessageInternalOptions {
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   onCanceled?: (reason: string) => Promise<void> | void;
-  /** True only while the dispatching caller owns the workspace monitor/history mutex. */
-  monitorHistoryLockHeld?: boolean;
+  /** Mutable ownership state; queuing clears it before deferred dispatch. */
+  monitorHistoryLockState?: { held: boolean };
   /** Mutable dispatch outcome shared with sendQueuedMessages. */
   cancelState?: { canceledBeforeAcceptance: boolean };
   /** Cancels a queued entry even after it has been dequeued into PREPARING. */
@@ -122,7 +122,7 @@ interface QueueEntry {
   onCanceled?: (reason: string) => Promise<void> | void;
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
-  monitorHistoryLockHeld?: boolean;
+  monitorHistoryLockState?: { held: boolean };
   cancelState?: { canceledBeforeAcceptance: boolean };
   cancelSignal?: AbortSignal;
 }
@@ -343,8 +343,8 @@ export class MessageQueue {
       entry.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
     }
 
-    if (internal?.monitorHistoryLockHeld != null) {
-      entry.monitorHistoryLockHeld = internal.monitorHistoryLockHeld;
+    if (internal?.monitorHistoryLockState != null) {
+      entry.monitorHistoryLockState = internal.monitorHistoryLockState;
     }
     if (internal?.cancelState != null) {
       entry.cancelState = internal.cancelState;
@@ -605,8 +605,8 @@ export class MessageQueue {
           ...(allAddsAreSynthetic ? { synthetic: true } : {}),
           ...(allAddsAreAgentInitiated ? { agentInitiated: true } : {}),
           ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
-          ...(entry.monitorHistoryLockHeld != null
-            ? { monitorHistoryLockHeld: entry.monitorHistoryLockHeld }
+          ...(entry.monitorHistoryLockState != null
+            ? { monitorHistoryLockState: entry.monitorHistoryLockState }
             : {}),
           ...(entry.cancelState != null ? { cancelState: entry.cancelState } : {}),
           ...(entry.cancelSignal != null ? { cancelSignal: entry.cancelSignal } : {}),

@@ -2350,7 +2350,7 @@ export class AgentSession {
       startStreamInBackground?: boolean;
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
-      monitorHistoryLockHeld?: boolean;
+      monitorHistoryLockState?: { held: boolean };
       onCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
@@ -3050,7 +3050,7 @@ export class AgentSession {
           preparedTurnAbortController.signal,
           goalKind,
           turnThinkingOverride,
-          internal?.monitorHistoryLockHeld === true
+          internal?.monitorHistoryLockState?.held === true
         );
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
@@ -5327,7 +5327,7 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
-      monitorHistoryLockHeld?: boolean;
+      monitorHistoryLockState?: { held: boolean };
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }

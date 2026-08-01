@@ -751,13 +751,13 @@ describe("MessageQueue", () => {
       const queue = new MessageQueue();
       queue.add("monitor wake", undefined, {
         synthetic: true,
-        monitorHistoryLockHeld: false,
+        monitorHistoryLockState: { held: false },
         cancelSignal: new AbortController().signal,
       });
 
       expect(queue.dequeueNext().internal).toMatchObject({
         synthetic: true,
-        monitorHistoryLockHeld: false,
+        monitorHistoryLockState: { held: false },
       });
     });
 
