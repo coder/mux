@@ -176,6 +176,8 @@ export function buildBashMonitorWakeMetadata(
   return {
     type: "bash-monitor-wake",
     records: records.map((record) => ({
+      processId: record.processId,
+      wakeUpdatedAt: record.updatedAt,
       kind: record.kind,
       displayName: record.displayName ?? record.processId,
       filter: record.filter,

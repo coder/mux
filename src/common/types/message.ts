@@ -336,6 +336,10 @@ export interface DisplayStatus {
  * prompt (matched lines, task_await guidance) collapsed by default.
  */
 export interface BashMonitorWakeDisplayRecord {
+  /** Stable process identifier used to suppress redelivery after accepted-store write failures. */
+  processId?: string;
+  /** Persisted wake snapshot version; paired with processId for accepted-delivery recovery. */
+  wakeUpdatedAt?: string;
   kind: "match" | "monitor-lost";
   displayName: string;
   filter: string;

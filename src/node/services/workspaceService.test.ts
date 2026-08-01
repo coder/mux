@@ -33,7 +33,7 @@ import type {
 import type { TaskService } from "./taskService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import { BashMonitorRegistryStore } from "./bashMonitorRegistryStore";
-import { BashMonitorWakeStore } from "./bashMonitorWakeStore";
+import { BashMonitorWakeStore, buildBashMonitorWakeMetadata } from "./bashMonitorWakeStore";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
@@ -1821,6 +1821,68 @@ describe("WorkspaceService bash monitor wakes", () => {
       await waitForCondition(() => deliveryAttempts === 2);
       await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
       expect(deliveryAttempts).toBe(2);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("accepted history suppresses redelivery while wake-store reconciliation keeps failing", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-accepted-recovery";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const seedStore = new BashMonitorWakeStore(config);
+      const record = await seedStore.enqueueOrMergePending({
+        processId: "proc-accepted",
+        taskId: "bash:proc-accepted",
+        workspaceId,
+        filter: "DONE",
+        filterExclude: false,
+        lines: ["DONE accepted"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 13,
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("accepted-wake", "user", "Accepted monitor wake", {
+          synthetic: true,
+          muxMetadata: buildBashMonitorWakeMetadata([record]),
+        })
+      );
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => false) }),
+      });
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: BashMonitorWakeStore;
+        }
+      ).bashMonitorWakeStore;
+      const markDeliveredSpy = spyOn(wakeStore, "markDelivered").mockRejectedValue(
+        new Error("injected persistent wake-store failure")
+      );
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+
+      await waitForCondition(() => markDeliveredSpy.mock.calls.length > 0);
+      await drainPendingDispatches();
+      expect(sendSpy).not.toHaveBeenCalled();
+      expect(await wakeStore.listPending(workspaceId)).toHaveLength(1);
     } finally {
       await cleanup();
     }

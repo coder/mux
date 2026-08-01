@@ -2015,6 +2015,53 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private bashMonitorWakeSnapshotKey(processId: string, updatedAt: string): string {
+    assert(processId.trim().length > 0, "bashMonitorWakeSnapshotKey requires processId");
+    assert(updatedAt.trim().length > 0, "bashMonitorWakeSnapshotKey requires updatedAt");
+    return `${processId}:${updatedAt}`;
+  }
+
+  private async findAcceptedBashMonitorWakeSnapshots(
+    ownerWorkspaceId: string,
+    pending: readonly BashMonitorWakeRecord[]
+  ): Promise<Set<string>> {
+    // Narrow WorkspaceService test doubles and older embedders may not expose full-history iteration.
+    // Fail open to the existing send path rather than treating an unverified wake as accepted.
+    if (typeof this.historyService.iterateFullHistory !== "function") {
+      return new Set<string>();
+    }
+    const pendingKeys = new Set(
+      pending.map((record) => this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt))
+    );
+    const acceptedKeys = new Set<string>();
+    const iteration = await this.historyService.iterateFullHistory(
+      ownerWorkspaceId,
+      "backward",
+      (messages) => {
+        for (const message of messages) {
+          const metadata = message.metadata?.muxMetadata;
+          if (metadata?.type !== "bash-monitor-wake") continue;
+          for (const record of metadata.records) {
+            if (record.processId == null || record.wakeUpdatedAt == null) continue;
+            const key = this.bashMonitorWakeSnapshotKey(record.processId, record.wakeUpdatedAt);
+            if (pendingKeys.has(key)) {
+              acceptedKeys.add(key);
+            }
+          }
+        }
+        return acceptedKeys.size < pendingKeys.size;
+      }
+    );
+    if (!iteration.success) {
+      log.error("Failed to scan history for accepted bash monitor wakes", {
+        ownerWorkspaceId,
+        error: iteration.error,
+      });
+      return new Set<string>();
+    }
+    return acceptedKeys;
+  }
+
   private bashMonitorProcessKey(workspaceId: string, processId: string): string {
     assert(workspaceId.trim().length > 0, "bashMonitorProcessKey requires workspaceId");
     assert(processId.trim().length > 0, "bashMonitorProcessKey requires processId");
@@ -2174,8 +2221,27 @@ export class WorkspaceService extends EventEmitter {
       (record) =>
         !this.cancelingBashMonitorWakeKeys.has(this.bashMonitorWakeKey(ownerWorkspaceId, record.id))
     );
+    const acceptedSnapshots = await this.findAcceptedBashMonitorWakeSnapshots(
+      ownerWorkspaceId,
+      pendingSnapshot
+    );
     const pending: BashMonitorWakeRecord[] = [];
     for (const record of pendingSnapshot) {
+      const snapshotKey = this.bashMonitorWakeSnapshotKey(record.processId, record.updatedAt);
+      if (acceptedSnapshots.has(snapshotKey)) {
+        try {
+          await this.bashMonitorWakeStore.markDelivered(ownerWorkspaceId, record.id);
+        } catch (error) {
+          // Accepted history is authoritative for redelivery suppression. Keep the pending store row
+          // retryable, but never append the same synthetic turn again.
+          log.error("Failed to reconcile accepted bash monitor wake", {
+            ownerWorkspaceId,
+            processId: record.processId,
+            error,
+          });
+        }
+        continue;
+      }
       if (
         this.canceledBashMonitorKeys.has(
           this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
