@@ -524,7 +524,7 @@ export function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Prominent controls shown above the input during workspace creation.
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
-function CreationControlsInner(props: CreationControlsProps) {
+function CreationControlsContent(props: CreationControlsProps) {
   usePerfRenderMarker("chat-input.creation-controls");
   const { nameState, runtimeAvailabilityState } = props;
 
@@ -1143,74 +1143,76 @@ function CreationControlsInner(props: CreationControlsProps) {
   );
 }
 
-function runtimeEnablementEqual(
-  previous: RuntimeEnablement | undefined,
-  next: RuntimeEnablement | undefined
-): boolean {
-  if (previous === next) return true;
-  if (!previous || !next) return false;
-  return RUNTIME_CHOICE_ORDER.every((mode) => previous[mode] === next[mode]);
-}
+// ChatInput is not currently compiler-eligible because of its async control flow,
+// so keep this small wrapper compiler-friendly and pass every dependency explicitly.
+// React Compiler then retains the expensive control tree while draft text changes.
+export function CreationControls(props: CreationControlsProps) {
+  const coderProps = props.coderProps
+    ? {
+        enabled: props.coderProps.enabled,
+        onEnabledChange: props.coderProps.onEnabledChange,
+        coderInfo: props.coderProps.coderInfo,
+        coderConfig: props.coderProps.coderConfig,
+        onCoderConfigChange: props.coderProps.onCoderConfigChange,
+        templates: props.coderProps.templates,
+        templatesError: props.coderProps.templatesError,
+        presets: props.coderProps.presets,
+        presetsError: props.coderProps.presetsError,
+        existingWorkspaces: props.coderProps.existingWorkspaces,
+        workspacesError: props.coderProps.workspacesError,
+        loadingTemplates: props.coderProps.loadingTemplates,
+        loadingPresets: props.coderProps.loadingPresets,
+        loadingWorkspaces: props.coderProps.loadingWorkspaces,
+      }
+    : undefined;
+  const runtimeEnablement = props.runtimeEnablement
+    ? {
+        local: props.runtimeEnablement.local,
+        worktree: props.runtimeEnablement.worktree,
+        ssh: props.runtimeEnablement.ssh,
+        coder: props.runtimeEnablement.coder,
+        docker: props.runtimeEnablement.docker,
+        devcontainer: props.runtimeEnablement.devcontainer,
+      }
+    : undefined;
+  const nameState = {
+    name: props.nameState.name,
+    title: props.nameState.title,
+    isGenerating: props.nameState.isGenerating,
+    autoGenerate: props.nameState.autoGenerate,
+    error: props.nameState.error,
+    setAutoGenerate: props.nameState.setAutoGenerate,
+    setName: props.nameState.setName,
+  };
 
-function nameStateEqual(previous: WorkspaceNameState, next: WorkspaceNameState): boolean {
   return (
-    previous.name === next.name &&
-    previous.title === next.title &&
-    previous.isGenerating === next.isGenerating &&
-    previous.autoGenerate === next.autoGenerate &&
-    previous.error === next.error &&
-    previous.setAutoGenerate === next.setAutoGenerate &&
-    previous.setName === next.setName
+    <CreationControlsContent
+      branches={props.branches}
+      branchesLoaded={props.branchesLoaded}
+      trunkBranch={props.trunkBranch}
+      onTrunkBranchChange={props.onTrunkBranchChange}
+      selectedRuntime={props.selectedRuntime}
+      coderConfigFallback={props.coderConfigFallback}
+      sshHostFallback={props.sshHostFallback}
+      defaultRuntimeMode={props.defaultRuntimeMode}
+      onSelectedRuntimeChange={props.onSelectedRuntimeChange}
+      onSetDefaultRuntime={props.onSetDefaultRuntime}
+      disabled={props.disabled}
+      projectPath={props.projectPath}
+      selectedProjectPath={props.selectedProjectPath}
+      userProjects={props.userProjects}
+      onSelectedProjectPathChange={props.onSelectedProjectPathChange}
+      projectName={props.projectName}
+      nameState={nameState}
+      runtimeAvailabilityState={props.runtimeAvailabilityState}
+      runtimeEnablement={runtimeEnablement}
+      runtimeFieldError={props.runtimeFieldError}
+      allowedRuntimeModes={props.allowedRuntimeModes}
+      allowSshHost={props.allowSshHost}
+      allowSshCoder={props.allowSshCoder}
+      runtimePolicyError={props.runtimePolicyError}
+      coderInfo={props.coderInfo}
+      coderProps={coderProps}
+    />
   );
 }
-
-function coderPropsEqual(
-  previous: CreationControlsProps["coderProps"],
-  next: CreationControlsProps["coderProps"]
-): boolean {
-  if (previous === next) return true;
-  if (!previous || !next) return false;
-
-  // Callback identities can be recreated by ChatInput's creation hooks while the
-  // runtime data is unchanged. Any dependency that changes their behavior also
-  // changes one of the data props below, which refreshes this boundary.
-  return (
-    previous.enabled === next.enabled &&
-    previous.coderInfo === next.coderInfo &&
-    previous.coderConfig === next.coderConfig &&
-    previous.templates === next.templates &&
-    previous.templatesError === next.templatesError &&
-    previous.presets === next.presets &&
-    previous.presetsError === next.presetsError &&
-    previous.existingWorkspaces === next.existingWorkspaces &&
-    previous.workspacesError === next.workspacesError &&
-    previous.loadingTemplates === next.loadingTemplates &&
-    previous.loadingPresets === next.loadingPresets &&
-    previous.loadingWorkspaces === next.loadingWorkspaces
-  );
-}
-
-function creationControlsPropsEqual(
-  previous: CreationControlsProps,
-  next: CreationControlsProps
-): boolean {
-  const keys = Object.keys(previous) as Array<keyof CreationControlsProps>;
-  if (keys.length !== Object.keys(next).length) return false;
-
-  return keys.every((key) => {
-    if (key === "nameState") return nameStateEqual(previous.nameState, next.nameState);
-    if (key === "coderProps") return coderPropsEqual(previous.coderProps, next.coderProps);
-    if (key === "onSelectedRuntimeChange") return true;
-    if (key === "runtimeEnablement") {
-      return runtimeEnablementEqual(previous.runtimeEnablement, next.runtimeEnablement);
-    }
-    return previous[key] === next[key];
-  });
-}
-
-// CreationControls is intentionally isolated from ChatInput's hot draft-text state.
-// React Compiler cannot optimize ChatInput today because of unsupported async control
-// flow in that component, so this explicit boundary prevents rebuilding the runtime
-// and project selectors on every character while still refreshing on semantic changes.
-export const CreationControls = React.memo(CreationControlsInner, creationControlsPropsEqual);
-CreationControls.displayName = "CreationControls";

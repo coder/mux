@@ -511,14 +511,6 @@ export function useDraftWorkspaceSettings(
     lastDevcontainerShareCredentials,
   ]);
 
-  const rememberedRuntimeValues: RememberedRuntimeValues = {
-    ssh: lastSsh,
-    dockerImage: lastDockerImage,
-    dockerShareCredentials: lastShareCredentials,
-    devcontainerConfigPath: lastDevcontainerConfigPath,
-    devcontainerShareCredentials: lastDevcontainerShareCredentials,
-  };
-
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
     if (branches.length > 0 && (!trunkBranch || !branches.includes(trunkBranch))) {
@@ -529,11 +521,16 @@ export function useDraftWorkspaceSettings(
 
   // Setter for selected runtime (also persists host/image/coder for future mode switches)
   const setSelectedRuntime = (runtime: ParsedRuntime) => {
-    const mergedRuntime = mergeRememberedRuntimeConfig(
-      runtime,
-      selectedRuntime.mode,
-      rememberedRuntimeValues
-    );
+    // Construct remembered values only when the user changes runtimes. Keeping
+    // this object off the render path lets React Compiler retain the setter
+    // identity while unrelated ChatInput draft text changes.
+    const mergedRuntime = mergeRememberedRuntimeConfig(runtime, selectedRuntime.mode, {
+      ssh: lastSsh,
+      dockerImage: lastDockerImage,
+      dockerShareCredentials: lastShareCredentials,
+      devcontainerConfigPath: lastDevcontainerConfigPath,
+      devcontainerShareCredentials: lastDevcontainerShareCredentials,
+    });
 
     setSelectedRuntimeState(mergedRuntime);
 
