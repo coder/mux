@@ -661,6 +661,65 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("disposed sessions finalize durable wakes after goal sync completes", async () => {
+    const workspaceId = "queue-dispatch-disposed-after-goal-sync";
+    let markSyncStarted: () => void = () => undefined;
+    const syncStarted = new Promise<void>((resolve) => {
+      markSyncStarted = resolve;
+    });
+    let releaseSync: () => void = () => undefined;
+    const syncRelease = new Promise<void>((resolve) => {
+      releaseSync = resolve;
+    });
+    const syncGoalModeWithChatTail = mock(async () => {
+      markSyncStarted();
+      await syncRelease;
+      return null;
+    });
+    const workspaceGoalService = {
+      assertPricedModelForBudgetedGoal: mock(() => Promise.resolve(Ok(undefined))),
+      syncGoalModeWithChatTail,
+    } as unknown as WorkspaceGoalService;
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId,
+      workspaceGoalService,
+    });
+
+    let disposed = false;
+    try {
+      const controller = new AbortController();
+      const cancelState = { canceledBeforeAcceptance: false };
+      let accepted = false;
+      const sendPromise = session.sendMessage(
+        "Background monitor wake",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          cancelState,
+          cancelSignal: controller.signal,
+          onAccepted: () => {
+            accepted = true;
+          },
+        }
+      );
+
+      await syncStarted;
+      session.dispose();
+      disposed = true;
+      releaseSync();
+      const result = await sendPromise;
+
+      expect(result.success).toBe(true);
+      expect(accepted).toBe(true);
+      expect(cancelState.canceledBeforeAcceptance).toBe(false);
+    } finally {
+      releaseSync();
+      if (!disposed) session.dispose();
+      await cleanup();
+    }
+  });
+
   test("every goal sync failure after the boundary finalizes the durable wake", async () => {
     const workspaceId = "queue-dispatch-cancel-goal-sync-failure";
     let markSyncStarted: () => void = () => undefined;

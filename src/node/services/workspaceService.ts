@@ -2334,17 +2334,30 @@ export class WorkspaceService extends EventEmitter {
     let cancellationCallbackHandled = false;
     let accepted = false;
     let delivered = false;
-    const markDeliveredOnce = async (): Promise<void> => {
-      if (delivered) return;
-      delivered = true;
-      try {
-        await markDeliveredAfterAccepted(deliverable);
-      } catch (error) {
-        log.error("Failed to mark bash monitor wake delivered after accepted send", {
-          ownerWorkspaceId,
-          error,
-        });
-      }
+    let deliveryInFlight: Promise<void> | undefined;
+    const markDeliveredOnce = (): Promise<void> => {
+      if (delivered) return Promise.resolve();
+      if (deliveryInFlight) return deliveryInFlight;
+
+      const attempt = (async () => {
+        try {
+          await markDeliveredAfterAccepted(deliverable);
+          delivered = true;
+        } catch (error) {
+          // Keep delivered=false so the post-send/startup-failure path can retry the durable
+          // transition instead of silently stranding an accepted chat row with a pending wake.
+          log.error("Failed to mark bash monitor wake delivered after accepted send", {
+            ownerWorkspaceId,
+            error,
+          });
+        }
+      })().finally(() => {
+        if (deliveryInFlight === attempt) {
+          deliveryInFlight = undefined;
+        }
+      });
+      deliveryInFlight = attempt;
+      return attempt;
     };
 
     const sendResult = await this.sendMessage(

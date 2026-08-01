@@ -2935,8 +2935,12 @@ export class AgentSession {
     }
 
     // Workspace may be tearing down while we await filesystem IO.
-    // If so, skip event emission + streaming to avoid races with dispose().
+    // If so, skip event emission + streaming to avoid races with dispose(). A cancelable monitor
+    // wake past the point of no return is already durable, so finalize it before leaving.
     if (this.disposed) {
+      if (cancelSignal != null && cancellationDisabled) {
+        await internal?.onAccepted?.();
+      }
       return Ok(undefined);
     }
 

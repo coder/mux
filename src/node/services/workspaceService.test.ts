@@ -1760,6 +1760,72 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("retries the delivered transition after a transient wake-store failure", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-delivery-retry";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getForegroundToolCallIds: mock(() => []),
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => true) }),
+      });
+      spyOn(workspaceService, "isBusyForMessage").mockReturnValue(true);
+      spyOn(workspaceService, "hasPendingQueuedOrPreparingTurn").mockReturnValue(false);
+      const wakeStore = (
+        workspaceService as unknown as {
+          bashMonitorWakeStore: BashMonitorWakeStore;
+        }
+      ).bashMonitorWakeStore;
+      const originalMarkDelivered = wakeStore.markDeliveredSnapshot.bind(wakeStore);
+      let deliveryAttempts = 0;
+      spyOn(wakeStore, "markDeliveredSnapshot").mockImplementation(async (...args) => {
+        deliveryAttempts += 1;
+        if (deliveryAttempts === 1) {
+          throw new Error("injected wake-store failure");
+        }
+        return originalMarkDelivered(...args);
+      });
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockImplementation(
+        async (...args: Parameters<WorkspaceService["sendMessage"]>) => {
+          await args[3]?.onAccepted?.();
+          return Ok(undefined);
+        }
+      );
+
+      backgroundProcessManager.emit("monitor:match", workspaceId, {
+        processId: "proc-retry",
+        taskId: "bash:proc-retry",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED retry delivery"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+      });
+
+      await waitForCondition(() => sendSpy.mock.calls.length === 1);
+      await waitForCondition(() => deliveryAttempts === 2);
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+      expect(deliveryAttempts).toBe(2);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("canceled queued monitor wakes supersede only the canceled snapshot", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {
