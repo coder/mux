@@ -214,7 +214,8 @@ describe("Send dispatch modes (mock AI router)", () => {
       const sendButton = await waitForSendModeMenuTrigger(app.view.container);
       fireEvent.click(sendButton);
       await waitFor(() => {
-        expect(app.view.container.textContent).toContain("Queued - Sending after step");
+        expect(app.view.container.textContent).toContain("Queued");
+        expect(app.view.container.textContent).toContain("Sends after this step");
       });
 
       await app.chat.expectTranscriptContains("parallel-step-a.txt");
@@ -263,7 +264,8 @@ describe("Send dispatch modes (mock AI router)", () => {
 
       await waitFor(() => {
         const textContent = app.view.container.textContent ?? "";
-        expect(textContent).toContain("Queued - Sending after turn");
+        expect(textContent).toContain("Queued");
+        expect(textContent).toContain("Sends after this turn");
         expect(textContent).toContain("Send now");
       });
 
@@ -284,7 +286,7 @@ describe("Send dispatch modes (mock AI router)", () => {
       await waitFor(
         () => {
           const textContent = app.view.container.textContent ?? "";
-          expect(textContent).not.toContain("Queued - Sending after turn");
+          expect(textContent).not.toContain("Sends after this turn");
         },
         { timeout: 30_000 }
       );
