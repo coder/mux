@@ -1147,34 +1147,56 @@ function CreationControlsContent(props: CreationControlsProps) {
 // so keep this small wrapper compiler-friendly and pass every dependency explicitly.
 // React Compiler then retains the expensive control tree while draft text changes.
 export function CreationControls(props: CreationControlsProps) {
-  const coderProps = props.coderProps
-    ? {
-        enabled: props.coderProps.enabled,
-        onEnabledChange: props.coderProps.onEnabledChange,
-        coderInfo: props.coderProps.coderInfo,
-        coderConfig: props.coderProps.coderConfig,
-        onCoderConfigChange: props.coderProps.onCoderConfigChange,
-        templates: props.coderProps.templates,
-        templatesError: props.coderProps.templatesError,
-        presets: props.coderProps.presets,
-        presetsError: props.coderProps.presetsError,
-        existingWorkspaces: props.coderProps.existingWorkspaces,
-        workspacesError: props.coderProps.workspacesError,
-        loadingTemplates: props.coderProps.loadingTemplates,
-        loadingPresets: props.coderProps.loadingPresets,
-        loadingWorkspaces: props.coderProps.loadingWorkspaces,
-      }
-    : undefined;
-  const runtimeEnablement = props.runtimeEnablement
-    ? {
-        local: props.runtimeEnablement.local,
-        worktree: props.runtimeEnablement.worktree,
-        ssh: props.runtimeEnablement.ssh,
-        coder: props.runtimeEnablement.coder,
-        docker: props.runtimeEnablement.docker,
-        devcontainer: props.runtimeEnablement.devcontainer,
-      }
-    : undefined;
+  const coderEnabled = props.coderProps?.enabled;
+  const coderOnEnabledChange = props.coderProps?.onEnabledChange;
+  const coderInfo = props.coderProps?.coderInfo;
+  const coderConfig = props.coderProps?.coderConfig;
+  const coderOnConfigChange = props.coderProps?.onCoderConfigChange;
+  const coderTemplates = props.coderProps?.templates;
+  const coderTemplatesError = props.coderProps?.templatesError;
+  const coderPresets = props.coderProps?.presets;
+  const coderPresetsError = props.coderProps?.presetsError;
+  const coderExistingWorkspaces = props.coderProps?.existingWorkspaces;
+  const coderWorkspacesError = props.coderProps?.workspacesError;
+  const coderLoadingTemplates = props.coderProps?.loadingTemplates;
+  const coderLoadingPresets = props.coderProps?.loadingPresets;
+  const coderLoadingWorkspaces = props.coderProps?.loadingWorkspaces;
+  const hasCoderProps = props.coderProps != null;
+  const coderProps = !hasCoderProps
+    ? undefined
+    : {
+        enabled: coderEnabled ?? false,
+        onEnabledChange: coderOnEnabledChange!,
+        coderInfo: coderInfo ?? null,
+        coderConfig: coderConfig ?? null,
+        onCoderConfigChange: coderOnConfigChange!,
+        templates: coderTemplates ?? [],
+        templatesError: coderTemplatesError ?? null,
+        presets: coderPresets ?? [],
+        presetsError: coderPresetsError ?? null,
+        existingWorkspaces: coderExistingWorkspaces ?? [],
+        workspacesError: coderWorkspacesError ?? null,
+        loadingTemplates: coderLoadingTemplates ?? false,
+        loadingPresets: coderLoadingPresets ?? false,
+        loadingWorkspaces: coderLoadingWorkspaces ?? false,
+      };
+  const runtimeLocal = props.runtimeEnablement?.local;
+  const runtimeWorktree = props.runtimeEnablement?.worktree;
+  const runtimeSsh = props.runtimeEnablement?.ssh;
+  const runtimeCoder = props.runtimeEnablement?.coder;
+  const runtimeDocker = props.runtimeEnablement?.docker;
+  const runtimeDevcontainer = props.runtimeEnablement?.devcontainer;
+  const hasRuntimeEnablement = props.runtimeEnablement != null;
+  const runtimeEnablement = !hasRuntimeEnablement
+    ? undefined
+    : {
+        local: runtimeLocal ?? true,
+        worktree: runtimeWorktree ?? true,
+        ssh: runtimeSsh ?? true,
+        coder: runtimeCoder ?? true,
+        docker: runtimeDocker ?? true,
+        devcontainer: runtimeDevcontainer ?? true,
+      };
   const nameState = {
     name: props.nameState.name,
     title: props.nameState.title,

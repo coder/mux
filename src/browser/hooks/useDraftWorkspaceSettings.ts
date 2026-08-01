@@ -519,13 +519,16 @@ export function useDraftWorkspaceSettings(
     }
   }, [branches, recommendedTrunk, trunkBranch, setTrunkBranch]);
 
+  const lastSshHost = lastSsh.host;
+  const lastSshCoder = lastSsh.coder;
+
   // Setter for selected runtime (also persists host/image/coder for future mode switches)
   const setSelectedRuntime = (runtime: ParsedRuntime) => {
     // Construct remembered values only when the user changes runtimes. Keeping
     // this object off the render path lets React Compiler retain the setter
     // identity while unrelated ChatInput draft text changes.
     const mergedRuntime = mergeRememberedRuntimeConfig(runtime, selectedRuntime.mode, {
-      ssh: lastSsh,
+      ssh: { host: lastSshHost, coder: lastSshCoder },
       dockerImage: lastDockerImage,
       dockerShareCredentials: lastShareCredentials,
       devcontainerConfigPath: lastDevcontainerConfigPath,
