@@ -569,6 +569,40 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("deleteMessages", () => {
+    it("atomically removes only targeted rows and preserves later concurrent rows", async () => {
+      const workspaceId = "workspace-delete-messages";
+      await service.appendToHistory(workspaceId, createMuxMessage("before", "assistant", "Before"));
+      await service.appendToHistory(
+        workspaceId,
+        createMuxMessage("wake-snapshot", "user", "Snapshot")
+      );
+      await service.appendToHistory(workspaceId, createMuxMessage("wake", "user", "Wake"));
+      await service.appendToHistory(
+        workspaceId,
+        createMuxMessage("pause-boundary", "user", "Goal paused")
+      );
+
+      const result = await service.deleteMessages(workspaceId, ["wake-snapshot", "wake"]);
+      expect(result.success).toBe(true);
+
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages.map((message) => message.id)).toEqual(["before", "pause-boundary"]);
+    });
+
+    it("does not rewrite history when any target is missing", async () => {
+      const workspaceId = "workspace-delete-messages-missing";
+      await service.appendToHistory(workspaceId, createMuxMessage("wake", "user", "Wake"));
+      await service.appendToHistory(workspaceId, createMuxMessage("later", "user", "Later"));
+
+      const result = await service.deleteMessages(workspaceId, ["wake", "missing"]);
+      expect(result.success).toBe(false);
+
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages.map((message) => message.id)).toEqual(["wake", "later"]);
+    });
+  });
+
   describe("truncateAfterMessage", () => {
     it("should remove message and all subsequent messages", async () => {
       const workspaceId = "workspace1";

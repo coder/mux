@@ -1617,6 +1617,66 @@ export class HistoryService {
   }
 
   /**
+   * Atomically delete a set of recent active-history messages by ID while preserving later rows.
+   * Used to roll back a not-yet-accepted turn without truncating concurrent non-session writers.
+   */
+  async deleteMessages(workspaceId: string, messageIds: readonly string[]): Promise<Result<void>> {
+    assert(messageIds.length > 0, "deleteMessages requires at least one message ID");
+    const ids = new Set(messageIds);
+    assert(ids.size === messageIds.length, "deleteMessages requires unique message IDs");
+
+    return this.fileLocks.withLock(workspaceId, async () => {
+      try {
+        const messages = await this.readChatHistory(workspaceId);
+        const foundIds = new Set(
+          messages.filter((message) => ids.has(message.id)).map((message) => message.id)
+        );
+        const missingIds = messageIds.filter((messageId) => !foundIds.has(messageId));
+        if (missingIds.length > 0) {
+          return Err(`Messages not found in active history: ${missingIds.join(", ")}`);
+        }
+
+        const filteredMessages = messages.filter((message) => !ids.has(message.id));
+        await writeFileAtomic(
+          this.getChatHistoryPath(workspaceId),
+          this.serializeHistoryEntries(filteredMessages, workspaceId)
+        );
+
+        const maxSeq = filteredMessages.reduce((max, message) => {
+          const sequence = message.metadata?.historySequence;
+          if (sequence === undefined) return max;
+          if (!isNonNegativeInteger(sequence)) {
+            log.warn(
+              "Ignoring malformed persisted historySequence while updating sequence counter after batch delete",
+              {
+                workspaceId,
+                messageId: message.id,
+                historySequence: sequence,
+              }
+            );
+            return max;
+          }
+          return sequence > max ? sequence : max;
+        }, -1);
+        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+        const nextSeq = Math.max(maxSeq, archiveMaxSeq) + 1;
+        assert(
+          isNonNegativeInteger(nextSeq),
+          "next history sequence counter after batch delete must be a non-negative integer"
+        );
+        const currentCounter = this.sequenceCounters.get(workspaceId);
+        if (currentCounter === undefined || currentCounter < nextSeq) {
+          this.sequenceCounters.set(workspaceId, nextSeq);
+        }
+
+        return Ok(undefined);
+      } catch (error) {
+        return Err(`Failed to delete messages: ${getErrorMessage(error)}`);
+      }
+    });
+  }
+
+  /**
    * Delete a single message by ID while preserving the rest of the history.
    *
    * This is safer than truncateAfterMessage for cleanup paths where subsequent

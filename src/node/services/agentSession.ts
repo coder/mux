@@ -2360,14 +2360,14 @@ export class AgentSession {
       if (cancellationHandled) return true;
 
       if (persistedCancelableMessageIds.length > 0) {
-        // PREPARING is serialized per session, so truncating from this turn's first row atomically
-        // removes every snapshot/user row it appended without touching an accepted later turn.
-        const rollbackResult = await this.historyService.truncateAfterMessage(
+        // History also has non-session writers (for example goal pause boundaries). Delete exactly
+        // this preparing turn's rows in one atomic rewrite so later concurrent rows are preserved.
+        const rollbackResult = await this.historyService.deleteMessages(
           this.workspaceId,
-          persistedCancelableMessageIds[0]
+          persistedCancelableMessageIds
         );
         if (!rollbackResult.success) {
-          // truncateAfterMessage can fail after its atomic rewrite (for example while refreshing
+          // deleteMessages can fail after its atomic rewrite (for example while refreshing
           // sequence metadata). Verify the durable result before deciding whether cancellation won.
           const historyResult = await this.historyService.getHistoryFromLatestBoundary(
             this.workspaceId
@@ -2919,7 +2919,16 @@ export class AgentSession {
     if (cancelSignal != null) {
       cancellationDisabled = true;
     }
-    await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
+    try {
+      await this.workspaceGoalService?.syncGoalModeWithChatTail(this.workspaceId);
+    } catch (error) {
+      if (cancelSignal?.aborted === true) {
+        // The durable row crossed the point of no return, so a goal-sync failure must still finalize
+        // the monitor wake as accepted. Startup recovery can resume that row without redelivering it.
+        await internal?.onAccepted?.();
+      }
+      throw error;
+    }
 
     if (manualGoalInterventionPolicy != null) {
       await this.applyManualUserMessageGoalSafety({ policy: manualGoalInterventionPolicy });
