@@ -4,6 +4,7 @@ import { TypewriterMarkdown } from "./TypewriterMarkdown";
 import { useStickyExpand } from "./useStickyExpand";
 import { normalizeReasoningMarkdown } from "./MarkdownStyles";
 import { cn } from "@/common/lib/utils";
+import { Shimmer } from "../AIElements/Shimmer";
 import { Lightbulb } from "lucide-react";
 
 interface ReasoningMessageProps {
@@ -150,9 +151,9 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({
           </span>
           <div className="flex min-w-0 items-center gap-1 truncate">
             {isStreaming ? (
-              // Keep the live label static: text shimmer animates background-position,
-              // forcing continuous repaints that make the chat lag while reasoning streams.
-              <span>Thinking...</span>
+              <Shimmer className="thinking-shimmer" colorClass="var(--color-thinking-mode)">
+                Thinking...
+              </Shimmer>
             ) : hasContent ? (
               <span className={cn("truncate whitespace-nowrap text-text", REASONING_FONT_CLASSES)}>
                 {parsedLeadingBoldSummary ? (

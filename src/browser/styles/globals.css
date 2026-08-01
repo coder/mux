@@ -2322,6 +2322,15 @@ pre code {
   }
 }
 
+/* Preserve the Thinking sweep while isolating repaint work to the small label.
+ * A lower stepped refresh rate keeps the motion legible without repainting every frame. */
+.shimmer-text.thinking-shimmer {
+  display: inline-block;
+  contain: paint;
+  will-change: background-position;
+  animation-timing-function: steps(16, end);
+}
+
 /* Disable shimmer effect while keeping same element structure */
 .shimmer-text.no-shimmer {
   background: none;
