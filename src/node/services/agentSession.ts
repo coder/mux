@@ -1357,8 +1357,14 @@ export class AgentSession {
     return metadataResult.data;
   }
 
-  private isCompletedSubagentReportMessage(message: MuxMessage): boolean {
-    if (message.role !== "user" || message.metadata?.synthetic !== true) return false;
+  private isVisibleCompletedSubagentReportMessage(message: MuxMessage): boolean {
+    if (
+      message.role !== "user" ||
+      message.metadata?.synthetic !== true ||
+      message.metadata.uiVisible !== true
+    ) {
+      return false;
+    }
     const text = message.parts
       .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
       .map((part) => part.text)
@@ -1371,7 +1377,7 @@ export class AgentSession {
       return false;
     }
 
-    if (this.isCompletedSubagentReportMessage(message)) {
+    if (this.isVisibleCompletedSubagentReportMessage(message)) {
       return false;
     }
     if (this.isSyntheticGoalPauseBoundaryMessage(message)) {
@@ -1667,10 +1673,14 @@ export class AgentSession {
     }
 
     const lastHistoryMessage = this.getLastNonSystemHistoryMessage(historyResult.data);
-    if (lastHistoryMessage && this.isCompletedSubagentReportMessage(lastHistoryMessage)) {
+    const interruptedByPartial = partial?.role === "assistant";
+    if (
+      !interruptedByPartial &&
+      lastHistoryMessage &&
+      this.isVisibleCompletedSubagentReportMessage(lastHistoryMessage)
+    ) {
       return "completed";
     }
-    const interruptedByPartial = partial?.role === "assistant";
     const interruptedByHistory =
       lastHistoryMessage?.role === "user" ||
       (lastHistoryMessage?.role === "assistant" &&

@@ -157,6 +157,87 @@ describe("AgentSession startup auto-retry recovery", () => {
     session.dispose();
   });
 
+  test("visible completed subagent report cards do not mask recoverable assistant partials", async () => {
+    const workspaceId = "startup-retry-subagent-report-with-partial";
+    const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("original-user", "user", "Continue the original task", {
+        timestamp: Date.now(),
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage(
+        "completed-subagent-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: "child-task",
+          agentType: "explore",
+          status: "completed",
+          title: "Final report",
+          reportMarkdown: "Investigation complete.",
+        }),
+        { timestamp: Date.now(), synthetic: true, uiVisible: true }
+      )
+    );
+    await historyService.writePartial(
+      workspaceId,
+      createMuxMessage("assistant-partial", "assistant", "Interrupted response", {
+        timestamp: Date.now(),
+        partial: true,
+      })
+    );
+
+    session.ensureStartupAutoRetryCheck();
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(true);
+    session.dispose();
+  });
+
+  test("hidden completed subagent reports preserve the existing startup retry fallback", async () => {
+    const workspaceId = "startup-retry-hidden-subagent-report";
+    const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("original-user", "user", "Continue the original task", {
+        timestamp: Date.now(),
+      })
+    );
+    await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage(
+        "hidden-completed-subagent-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: "child-task",
+          agentType: "explore",
+          status: "completed",
+          title: "Final report",
+          reportMarkdown: "Investigation complete.",
+        }),
+        { timestamp: Date.now(), synthetic: true }
+      )
+    );
+
+    session.ensureStartupAutoRetryCheck();
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(true);
+    session.dispose();
+  });
+
   test("startup auto-retry reuses workspace-turn metadata from the retry user message", async () => {
     const workspaceId = "startup-retry-workspace-turn-metadata";
     const { session, historyService, aiService, cleanup } = await createSessionBundle(workspaceId);
