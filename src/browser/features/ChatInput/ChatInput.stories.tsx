@@ -47,6 +47,9 @@ export const VoiceInputNoApiKey: AppStory = {
 
 export const ComposerTooltip: AppStory = {
   tags: ["tooltip-visual"],
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
   render: () => (
     <AppWithMocks
       setup={() =>
