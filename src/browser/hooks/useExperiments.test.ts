@@ -3,7 +3,7 @@
  *
  * Key invariant:
  * - For user-overridable experiments, absence of a localStorage entry must be treated as
- *   "no explicit override" (undefined), so the backend can apply PostHog assignment.
+ *   "no explicit override" (undefined) rather than an explicit "off".
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";

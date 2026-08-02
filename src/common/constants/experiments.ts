@@ -34,10 +34,7 @@ export interface ExperimentDefinition {
   description: string;
   /** Default state - false means disabled by default */
   enabledByDefault: boolean;
-  /**
-   * When true, user can override remote PostHog assignment via Settings toggle.
-   * When false (default), remote assignment is authoritative.
-   */
+  /** When true, the user can toggle this experiment in Settings. */
   userOverridable?: boolean;
   /**
    * When set, the experiment is only toggleable on these platforms. On other platforms it

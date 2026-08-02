@@ -52,7 +52,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   });
 
   // Subscribe to local override state so toggles apply immediately.
-  // If undefined, the backend will apply the PostHog assignment.
   const programmaticToolCalling = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
   );

@@ -137,60 +137,31 @@ const ExperimentsContext = createContext<ExperimentsContextValue | null>(null);
 export function ExperimentsProvider(props: { children: React.ReactNode }) {
   const apiState = useAPI();
 
-  const persistBackendOverride = useCallback(
-    async (experimentId: ExperimentId, enabled: boolean | undefined) => {
-      if (
-        apiState.status !== "connected" ||
-        !apiState.api ||
-        enabled === undefined ||
-        !EXPERIMENTS[experimentId].userOverridable ||
-        !isExperimentSupported(experimentId)
-      ) {
-        return;
-      }
-
-      try {
-        await apiState.api.experiments.setOverride({ experimentId, enabled });
-      } catch {
-        // Best effort
-      }
-    },
-    [apiState.status, apiState.api]
-  );
-
-  const setExperiment = useCallback(
-    (experimentId: ExperimentId, enabled: boolean) => {
-      setExperimentState(experimentId, enabled);
-      void persistBackendOverride(experimentId, enabled);
-    },
-    [persistBackendOverride]
-  );
-
-  useEffect(() => {
+  // localStorage is the source of truth: always send the complete set so the backend
+  // mirrors exactly what Settings shows, including overrides the user has cleared.
+  const syncOverridesToBackend = useCallback(async () => {
     if (apiState.status !== "connected" || !apiState.api) {
       return;
     }
 
-    const localOverrides = getExplicitLocalExperimentOverrides();
-    const syncLocalOverrides = async () => {
-      const entries = Object.entries(localOverrides) as Array<[ExperimentId, boolean]>;
-      if (entries.length === 0) {
-        return;
-      }
-
-      try {
-        await Promise.all(
-          entries.map(async ([experimentId, enabled]) => {
-            await apiState.api.experiments.setOverride({ experimentId, enabled });
-          })
-        );
-      } catch {
-        // Best effort
-      }
-    };
-
-    void syncLocalOverrides();
+    try {
+      await apiState.api.experiments.sync({ overrides: getExplicitLocalExperimentOverrides() });
+    } catch {
+      // Best effort
+    }
   }, [apiState.status, apiState.api]);
+
+  const setExperiment = useCallback(
+    (experimentId: ExperimentId, enabled: boolean) => {
+      setExperimentState(experimentId, enabled);
+      void syncOverridesToBackend();
+    },
+    [syncOverridesToBackend]
+  );
+
+  useEffect(() => {
+    void syncOverridesToBackend();
+  }, [syncOverridesToBackend]);
 
   return (
     <ExperimentsContext.Provider value={{ setExperiment }}>

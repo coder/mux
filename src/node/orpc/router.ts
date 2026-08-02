@@ -5983,11 +5983,11 @@ export const router = (authToken?: string) => {
         }),
     },
     experiments: {
-      setOverride: t
-        .input(schemas.experiments.setOverride.input)
-        .output(schemas.experiments.setOverride.output)
+      sync: t
+        .input(schemas.experiments.sync.input)
+        .output(schemas.experiments.sync.output)
         .handler(async ({ context, input }) => {
-          await context.experimentsService.setOverride(input.experimentId, input.enabled);
+          await context.experimentsService.syncOverrides(input.overrides);
         }),
     },
     debug: {

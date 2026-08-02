@@ -23,12 +23,8 @@ export {
  * For reactive updates in React components, use useExperimentValue (UI gating) or
  * useExperimentOverrideValue (backend send options).
  *
- * IMPORTANT: For user-overridable experiments, returns `undefined` when no explicit
- * localStorage override exists. This signals to the backend to use the PostHog
- * assignment instead of treating the default value as a user choice.
- *
- * @param experimentId - The experiment to check
- * @returns Whether the experiment is enabled, or undefined if backend should decide
+ * For user-overridable experiments, returns `undefined` when no explicit localStorage
+ * override exists, so send options can distinguish "user chose off" from "user never chose".
  */
 export function isExperimentEnabled(experimentId: ExperimentId): boolean | undefined {
   const experiment = EXPERIMENTS[experimentId];
@@ -38,8 +34,6 @@ export function isExperimentEnabled(experimentId: ExperimentId): boolean | undef
 
   const key = getExperimentKey(experimentId);
 
-  // For user-overridable experiments: only return a value if user explicitly set one.
-  // This allows the backend to use PostHog assignment when there's no override.
   if (experiment.userOverridable) {
     const stored = readPersistedState<unknown>(key, undefined);
     return typeof stored === "boolean" ? stored : undefined;

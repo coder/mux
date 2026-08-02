@@ -133,10 +133,10 @@ describe("ExperimentsProvider", () => {
       JSON.stringify(true)
     );
 
-    const setOverrideMock = mock(() => Promise.resolve());
+    const syncMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        setOverride: setOverrideMock,
+        sync: syncMock,
       },
     };
 
@@ -149,10 +149,30 @@ describe("ExperimentsProvider", () => {
     );
 
     await waitFor(() => {
-      expect(setOverrideMock).toHaveBeenCalledWith({
-        experimentId: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
-        enabled: true,
+      expect(syncMock).toHaveBeenCalledWith({
+        overrides: { [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true },
       });
+    });
+  });
+
+  test("sends an empty override set when localStorage has none, clearing backend state", async () => {
+    const syncMock = mock(() => Promise.resolve());
+    currentClientMock = {
+      experiments: {
+        sync: syncMock,
+      },
+    };
+
+    render(
+      <APIProvider client={currentClientMock as APIClient}>
+        <ExperimentsProvider>
+          <div />
+        </ExperimentsProvider>
+      </APIProvider>
+    );
+
+    await waitFor(() => {
+      expect(syncMock).toHaveBeenCalledWith({ overrides: {} });
     });
   });
 
@@ -181,10 +201,10 @@ describe("ExperimentsProvider", () => {
   });
 
   test("persists backend overrides when a user toggles an experiment", async () => {
-    const setOverrideMock = mock(() => Promise.resolve());
+    const syncMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        setOverride: setOverrideMock,
+        sync: syncMock,
       },
     };
 
@@ -208,9 +228,8 @@ describe("ExperimentsProvider", () => {
     fireEvent.click(getByTestId("toggle"));
 
     await waitFor(() => {
-      expect(setOverrideMock).toHaveBeenCalledWith({
-        experimentId: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
-        enabled: true,
+      expect(syncMock).toHaveBeenCalledWith({
+        overrides: { [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true },
       });
       expect(getByTestId("toggle").textContent).toBe("true");
     });

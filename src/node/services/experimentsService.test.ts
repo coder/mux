@@ -45,7 +45,7 @@ describe("ExperimentsService", () => {
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(false);
 
-    await service.setOverride(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING, true);
+    await service.syncOverrides({ [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: true });
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(true);
   });
@@ -56,7 +56,7 @@ describe("ExperimentsService", () => {
       telemetryService: first.telemetryService,
       muxHome: tempDir,
     });
-    await service.setOverride(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES, true);
+    await service.syncOverrides({ [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true });
 
     expect((await readOverridesFile()).overrides).toEqual({
       [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true,
@@ -79,9 +79,9 @@ describe("ExperimentsService", () => {
   test("clearing an override disables the experiment and drops its telemetry variant", async () => {
     const { telemetryService, setFeatureFlagVariant } = createTelemetryService();
     const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
-    await service.setOverride(EXPERIMENT_IDS.MEMORY, true);
+    await service.syncOverrides({ [EXPERIMENT_IDS.MEMORY]: true });
 
-    await service.setOverride(EXPERIMENT_IDS.MEMORY, null);
+    await service.syncOverrides({});
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.MEMORY)).toBe(false);
     expect((await readOverridesFile()).overrides).toEqual({});
@@ -91,7 +91,7 @@ describe("ExperimentsService", () => {
   test("an explicit false override keeps the experiment disabled", async () => {
     const { telemetryService } = createTelemetryService();
     const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
-    await service.setOverride(EXPERIMENT_IDS.AGENT_BROWSER, false);
+    await service.syncOverrides({ [EXPERIMENT_IDS.AGENT_BROWSER]: false });
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.AGENT_BROWSER)).toBe(false);
     expect((await readOverridesFile()).overrides).toEqual({
@@ -120,7 +120,7 @@ describe("ExperimentsService", () => {
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.PORTABLE_DESKTOP)).toBe(false);
 
-    await service.setOverride(EXPERIMENT_IDS.PORTABLE_DESKTOP, true);
+    await service.syncOverrides({ [EXPERIMENT_IDS.PORTABLE_DESKTOP]: true });
 
     expect((await readOverridesFile()).overrides).toEqual({});
     expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.PORTABLE_DESKTOP, null);
@@ -148,10 +148,37 @@ describe("ExperimentsService", () => {
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.TOOL_SEARCH)).toBe(false);
   });
 
+  test("clears a persisted override that the renderer no longer has locally", async () => {
+    await fs.writeFile(
+      path.join(tempDir, OVERRIDES_FILE),
+      JSON.stringify({
+        version: 1,
+        experiments: {},
+        overrides: { [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: true },
+      }),
+      "utf-8"
+    );
+
+    const { telemetryService, setFeatureFlagVariant } = createTelemetryService();
+    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    await service.initialize();
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
+
+    // A renderer with empty localStorage reports no overrides at all.
+    await service.syncOverrides({});
+
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
+    expect((await readOverridesFile()).overrides).toEqual({});
+    expect(setFeatureFlagVariant).toHaveBeenLastCalledWith(
+      EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT,
+      null
+    );
+  });
+
   test("writes an empty experiments map so older builds still read overrides", async () => {
     const { telemetryService } = createTelemetryService();
     const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
-    await service.setOverride(EXPERIMENT_IDS.TIMELINE, true);
+    await service.syncOverrides({ [EXPERIMENT_IDS.TIMELINE]: true });
 
     expect((await readOverridesFile()).experiments).toEqual({});
   });

@@ -77,26 +77,39 @@ export class ExperimentsService {
     }
   }
 
-  async setOverride(
-    experimentId: ExperimentId,
-    enabled: boolean | null | undefined
-  ): Promise<void> {
+  /**
+   * Replace all overrides with the renderer's complete local state. Overrides absent
+   * from `next` are cleared rather than left behind, so backend gates can never stay
+   * enabled for an experiment the user's Settings shows as off.
+   */
+  async syncOverrides(next: Partial<Record<ExperimentId, boolean>>): Promise<void> {
     await this.ensureInitialized();
-    assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
-    assert(
-      EXPERIMENTS[experimentId].userOverridable === true,
-      `Experiment ${experimentId} does not support user overrides`
-    );
-    assert(
-      enabled == null || typeof enabled === "boolean",
-      `Experiment override for ${experimentId} must be boolean | null | undefined`
-    );
 
-    if (!this.isExperimentSupported(experimentId) || enabled == null) {
-      this.overrides.delete(experimentId);
-      this.telemetryService.setFeatureFlagVariant(experimentId, null);
-    } else {
+    const previous = new Set(this.overrides.keys());
+    this.overrides.clear();
+
+    for (const [key, enabled] of Object.entries(next)) {
+      const experimentId = key as ExperimentId;
+      assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+      assert(
+        EXPERIMENTS[experimentId].userOverridable === true,
+        `Experiment ${experimentId} does not support user overrides`
+      );
+
+      if (typeof enabled !== "boolean" || !this.isExperimentSupported(experimentId)) {
+        continue;
+      }
+
       this.overrides.set(experimentId, enabled);
+    }
+
+    for (const experimentId of previous) {
+      if (!this.overrides.has(experimentId)) {
+        this.telemetryService.setFeatureFlagVariant(experimentId, null);
+      }
+    }
+
+    for (const [experimentId, enabled] of this.overrides) {
       this.telemetryService.setFeatureFlagVariant(experimentId, enabled);
     }
 
