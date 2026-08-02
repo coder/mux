@@ -5046,6 +5046,7 @@ export class TaskService {
   ): Promise<Set<string>> {
     if (candidateTaskIds.size === 0) return new Set<string>();
 
+    const visibleCompletedReports = new Set<string>();
     const awaitingResponse = new Set<string>();
     const responded = new Set<string>();
     // The duplicate-ending decision only depends on the active context epoch. If compaction already
@@ -5065,6 +5066,13 @@ export class TaskService {
           .map((part) => part.text)
           .join("\n");
         const report = parseSubagentReportEnvelope(text);
+        if (
+          report?.status === "completed" &&
+          message.metadata?.uiVisible === true &&
+          candidateTaskIds.has(report.taskId)
+        ) {
+          visibleCompletedReports.add(report.taskId);
+        }
         if (report?.status === "in_progress" && candidateTaskIds.has(report.taskId)) {
           // A newer update requires a newer assistant response before terminal handoff can be
           // suppressed. This avoids hiding a final result behind an unprocessed progress update.
@@ -5081,7 +5089,7 @@ export class TaskService {
         awaitingResponse.clear();
       }
     }
-    return responded;
+    return new Set([...responded].filter((taskId) => visibleCompletedReports.has(taskId)));
   }
 
   private async hasAcceptedSubagentProgressReport(

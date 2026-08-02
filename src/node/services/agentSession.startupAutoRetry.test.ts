@@ -14,6 +14,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
 import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
+import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 interface AutoRetryResumeRequest {
@@ -121,6 +122,38 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(retryOptions.options.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
     expect(retryOptions.options.disableWorkspaceAgents).toBe(true);
 
+    session.dispose();
+  });
+
+  test("visible completed subagent report cards do not schedule startup auto-retry", async () => {
+    const workspaceId = "startup-retry-subagent-report-card";
+    const { session, historyService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const appendResult = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage(
+        "completed-subagent-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: "child-task",
+          agentType: "explore",
+          status: "completed",
+          title: "Final report",
+          reportMarkdown: "Investigation complete.",
+        }),
+        { timestamp: Date.now(), synthetic: true, uiVisible: true }
+      )
+    );
+    expect(appendResult.success).toBe(true);
+
+    session.ensureStartupAutoRetryCheck();
+    const startupCheckPromise = (
+      session as unknown as { startupAutoRetryCheckPromise: Promise<void> | null }
+    ).startupAutoRetryCheckPromise;
+    await startupCheckPromise;
+
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
     session.dispose();
   });
 

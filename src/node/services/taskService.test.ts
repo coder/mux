@@ -2628,6 +2628,57 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toEqual([]);
   });
 
+  test("completed subagent wake remains when its visible terminal report card is missing", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const childId = "task-progress-missing-terminal-card";
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: childId,
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "progress-without-card",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childId,
+          agentType: "explore",
+          status: "in_progress",
+          title: "Progress",
+          reportMarkdown: "Progress was answered but terminal persistence failed.",
+        }),
+        { timestamp: Date.now(), synthetic: true }
+      )
+    );
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage("progress-without-card-response", "assistant", "Progress handled.", {
+        timestamp: Date.now(),
+      })
+    );
+
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(
+      "Background sub-agent task(s) have completed"
+    );
+  });
+
   test("completed subagent wake remains when the latest progress update has no assistant response", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
