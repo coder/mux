@@ -49,7 +49,10 @@ import * as forkOrchestrator from "@/node/services/utils/forkOrchestrator";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/constants/workflowReports";
-import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import {
+  formatSubagentReportEnvelope,
+  parseSubagentReportEnvelope,
+} from "@/common/utils/subagentReportEnvelope";
 import { defaultModel } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -63,7 +66,7 @@ import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
 } from "@/common/utils/workflowRunMessages";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { ProvidersConfigMap, WorkspaceChatMessage } from "@/common/orpc/types";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -462,7 +465,9 @@ function createWorkspaceServiceMocks(
   const updateAgentStatus =
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
   const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
-  const emitChatEvent = overrides?.emitChatEvent ?? mock(() => undefined);
+  const emitChatEvent =
+    overrides?.emitChatEvent ??
+    mock((_workspaceId: string, _message: WorkspaceChatMessage) => undefined);
   const isWorkflowInvocationCurrent =
     overrides?.isWorkflowInvocationCurrent ?? mock(() => Promise.resolve(true));
 
@@ -2557,6 +2562,134 @@ describe("TaskService", () => {
     expect(prompt).not.toContain("failed terminally");
     expect(prompt).toContain("wst_error");
     expect(prompt).toContain("task_await");
+  });
+
+  test("completed subagent wake is suppressed after the parent responded to its latest progress update", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const childId = "task-progress-responded";
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: childId,
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "progress-update",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childId,
+          agentType: "explore",
+          status: "in_progress",
+          title: "Progress",
+          reportMarkdown: "Found the relevant code path.",
+        }),
+        { timestamp: Date.now(), synthetic: true }
+      )
+    );
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage("progress-response", "assistant", "Thanks, I have integrated that update.", {
+        timestamp: Date.now(),
+      })
+    );
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "terminal-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childId,
+          agentType: "explore",
+          status: "completed",
+          title: "Final report",
+          reportMarkdown: "Investigation complete.",
+        }),
+        { timestamp: Date.now(), synthetic: true, uiVisible: true }
+      )
+    );
+
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toEqual([]);
+  });
+
+  test("completed subagent wake remains when the latest progress update has no assistant response", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const childId = "task-progress-unanswered";
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: childId,
+      outputDelivery: "already_injected",
+      terminalOutcome: "completed",
+    });
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "old-progress",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childId,
+          agentType: "explore",
+          status: "in_progress",
+          title: "Earlier progress",
+          reportMarkdown: "An earlier update was processed.",
+        }),
+        { timestamp: Date.now(), synthetic: true }
+      )
+    );
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage("old-response", "assistant", "Earlier response", { timestamp: Date.now() })
+    );
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "latest-progress",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childId,
+          agentType: "explore",
+          status: "in_progress",
+          title: "Latest progress",
+          reportMarkdown: "A newer update has not been processed yet.",
+        }),
+        { timestamp: Date.now(), synthetic: true }
+      )
+    );
+
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+    await internal.drainTerminalAttention(parentId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(
+      "Background sub-agent task(s) have completed"
+    );
   });
 
   test("terminal wake-up waits for queued owner turn to clear", async () => {
@@ -15862,6 +15995,75 @@ describe("TaskService", () => {
     expect(sendMessage.mock.calls[1]?.[1]).toContain("Found a second issue.");
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
     expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
+  });
+
+  test("terminal report becomes a visible card without a second parent response after progress was answered", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-progress-terminal-card";
+    const childId = "child-progress-terminal-card";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage, emitChatEvent } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "accepted-progress",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childId,
+          agentType: "explore",
+          status: "in_progress",
+          title: "Progress",
+          reportMarkdown: "Initial investigation complete.",
+        }),
+        { timestamp: Date.now(), synthetic: true }
+      )
+    );
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage("progress-answer", "assistant", "I incorporated the progress update.", {
+        timestamp: Date.now(),
+      })
+    );
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-terminal-report",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [{ type: "text", text: "Final investigation result." }],
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    const parentHistory = await collectFullHistory(historyService, parentId);
+    const completedReport = parentHistory.find((message) => {
+      const text = message.parts
+        .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      const report = parseSubagentReportEnvelope(text);
+      return report?.taskId === childId && report.status === "completed";
+    });
+    expect(completedReport?.metadata).toMatchObject({ synthetic: true, uiVisible: true });
+    expect(emitChatEvent).toHaveBeenCalledTimes(1);
   });
 
   test("terminal reports supersede queued incremental updates for the same child", async () => {

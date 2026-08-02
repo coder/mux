@@ -5040,6 +5040,74 @@ export class TaskService {
     });
   }
 
+  private async findProgressRespondedTaskIds(
+    ownerWorkspaceId: string,
+    candidateTaskIds: ReadonlySet<string>
+  ): Promise<Set<string>> {
+    if (candidateTaskIds.size === 0) return new Set<string>();
+
+    const awaitingResponse = new Set<string>();
+    const responded = new Set<string>();
+    // The duplicate-ending decision only depends on the active context epoch. If compaction already
+    // summarized an older progress turn, retain the terminal wake rather than scanning lifetime history.
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(ownerWorkspaceId);
+    if (!historyResult.success) {
+      log.warn("Failed to inspect progress wake responses", {
+        ownerWorkspaceId,
+        error: historyResult.error,
+      });
+      return new Set<string>();
+    }
+    for (const message of historyResult.data) {
+      if (message.role === "user" && message.metadata?.synthetic === true) {
+        const text = message.parts
+          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+        const report = parseSubagentReportEnvelope(text);
+        if (report?.status === "in_progress" && candidateTaskIds.has(report.taskId)) {
+          // A newer update requires a newer assistant response before terminal handoff can be
+          // suppressed. This avoids hiding a final result behind an unprocessed progress update.
+          awaitingResponse.add(report.taskId);
+          responded.delete(report.taskId);
+        }
+        continue;
+      }
+
+      if (message.role === "assistant" && message.metadata?.partial !== true) {
+        for (const taskId of awaitingResponse) {
+          responded.add(taskId);
+        }
+        awaitingResponse.clear();
+      }
+    }
+    return responded;
+  }
+
+  private async hasAcceptedSubagentProgressReport(
+    ownerWorkspaceId: string,
+    taskId: string
+  ): Promise<boolean> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(ownerWorkspaceId);
+    if (!historyResult.success) {
+      log.warn("Failed to inspect accepted subagent progress reports", {
+        ownerWorkspaceId,
+        taskId,
+        error: historyResult.error,
+      });
+      return false;
+    }
+    return historyResult.data.some((message) => {
+      if (message.role !== "user" || message.metadata?.synthetic !== true) return false;
+      const text = message.parts
+        .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+      const report = parseSubagentReportEnvelope(text);
+      return report?.taskId === taskId && report.status === "in_progress";
+    });
+  }
+
   /**
    * Drain pending terminal notifications for one owner workspace: defer (leave pending) when the
    * owner is busy/queued/preparing, otherwise send one coalesced synthetic wake-up and mark the
@@ -5084,12 +5152,52 @@ export class TaskService {
       return;
     }
 
-    const injectedNotifications = pending.filter((n) => n.outputDelivery === "already_injected");
+    const suppressibleTaskIds = new Set(
+      pending
+        .filter(
+          (notification) =>
+            notification.sourceKind === "agent_task" &&
+            notification.outputDelivery === "already_injected" &&
+            notification.terminalOutcome === "completed"
+        )
+        .map((notification) => notification.sourceId)
+    );
+    const respondedProgressTaskIds = await this.findProgressRespondedTaskIds(
+      ownerWorkspaceId,
+      suppressibleTaskIds
+    );
+    const effectivePending: TerminalAttentionNotification[] = [];
+    for (const notification of pending) {
+      if (
+        notification.sourceKind === "agent_task" &&
+        respondedProgressTaskIds.has(notification.sourceId)
+      ) {
+        // The parent already produced a response to this child's latest progress wake. The terminal
+        // report is persisted as a visible card, so another generic model turn would create a second
+        // ending without adding context. Keep failures and first/only completions unchanged.
+        try {
+          await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
+        } catch (error) {
+          log.error("Failed to consume redundant subagent completion wake", {
+            ownerWorkspaceId,
+            taskId: notification.sourceId,
+            error,
+          });
+        }
+        continue;
+      }
+      effectivePending.push(notification);
+    }
+    if (effectivePending.length === 0) return;
+
+    const injectedNotifications = effectivePending.filter(
+      (n) => n.outputDelivery === "already_injected"
+    );
     const injectedTaskIds = injectedNotifications.map((n) => n.sourceId);
-    const awaitHandleIds = pending
+    const awaitHandleIds = effectivePending
       .filter((n) => n.outputDelivery === "requires_task_await")
       .map((n) => n.sourceId);
-    const workflowNotifications = pending.filter(
+    const workflowNotifications = effectivePending.filter(
       (n) => n.outputDelivery === "workflow_result_context"
     );
     const anyInjectedFailure = injectedNotifications.some(
@@ -5124,13 +5232,13 @@ export class TaskService {
     const prompt = promptSections.join("\n\n");
 
     const markPendingDelivered = async () => {
-      for (const notification of pending) {
+      for (const notification of effectivePending) {
         await this.terminalAttentionStore.markDelivered(ownerWorkspaceId, notification.id);
       }
     };
 
     const markPendingForRetry = async () => {
-      for (const notification of pending) {
+      for (const notification of effectivePending) {
         await this.terminalAttentionStore.markPending(ownerWorkspaceId, notification.id);
       }
     };
@@ -10585,11 +10693,16 @@ export class TaskService {
       });
     }
 
+    const hadAcceptedProgressReport = await this.hasAcceptedSubagentProgressReport(
+      parentWorkspaceId,
+      childWorkspaceId
+    );
     await this.deliverReportToParent(
       parentWorkspaceId,
       childWorkspaceId,
       latestChildEntry,
-      reportArgs
+      reportArgs,
+      { uiVisible: hadAcceptedProgressReport }
     );
 
     // Resolve foreground waiters.
@@ -11146,7 +11259,8 @@ export class TaskService {
       title?: string;
       structuredOutput?: unknown;
       planFilePath?: string;
-    }
+    },
+    options?: { uiVisible?: boolean }
   ): Promise<void> {
     assert(
       childWorkspaceId.length > 0,
@@ -11161,7 +11275,8 @@ export class TaskService {
           parentWorkspaceId,
           childWorkspaceId,
           childEntry,
-          report
+          report,
+          options
         );
       });
     } else {
@@ -11169,7 +11284,8 @@ export class TaskService {
         parentWorkspaceId,
         childWorkspaceId,
         childEntry,
-        report
+        report,
+        options
       );
     }
 
@@ -11187,7 +11303,8 @@ export class TaskService {
       title?: string;
       structuredOutput?: unknown;
       planFilePath?: string;
-    }
+    },
+    options?: { uiVisible?: boolean }
   ): Promise<readonly string[]> {
     const agentType = coerceNonEmptyString(childEntry?.workspace.agentType) ?? "agent";
 
@@ -11280,12 +11397,19 @@ export class TaskService {
     const reportMessage = createMuxMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
       synthetic: true,
+      ...(options?.uiVisible === true ? { uiVisible: true } : {}),
     });
 
     const appendResult = await this.historyService.appendToHistory(
       parentWorkspaceId,
       reportMessage
     );
+    if (appendResult.success && options?.uiVisible === true) {
+      this.workspaceService.emitChatEvent(parentWorkspaceId, {
+        ...reportMessage,
+        type: "message",
+      });
+    }
     if (!appendResult.success) {
       log.error("Failed to append synthetic subagent report to parent history", {
         parentWorkspaceId,
