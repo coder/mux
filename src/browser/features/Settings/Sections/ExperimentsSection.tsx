@@ -730,10 +730,7 @@ export function ExperimentsSection() {
   const experiments = useMemo(
     () =>
       allExperiments.filter(
-        (exp) =>
-          exp.showInSettings !== false &&
-          exp.userOverridable === true &&
-          !MEMORY_SUB_EXPERIMENT_IDS.includes(exp.id)
+        (exp) => exp.showInSettings !== false && !MEMORY_SUB_EXPERIMENT_IDS.includes(exp.id)
       ),
     [allExperiments]
   );

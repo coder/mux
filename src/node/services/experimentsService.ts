@@ -91,11 +91,6 @@ export class ExperimentsService {
     for (const [key, enabled] of Object.entries(next)) {
       const experimentId = key as ExperimentId;
       assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
-      assert(
-        EXPERIMENTS[experimentId].userOverridable === true,
-        `Experiment ${experimentId} does not support user overrides`
-      );
-
       if (typeof enabled !== "boolean" || !this.isExperimentSupported(experimentId)) {
         continue;
       }

@@ -6,7 +6,6 @@ describe("experiments registry", () => {
     const experiment = EXPERIMENTS[EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES];
 
     expect(experiment.enabledByDefault).toBe(false);
-    expect(experiment.userOverridable).toBe(true);
     expect(experiment.showInSettings).toBe(true);
   });
 
@@ -19,14 +18,13 @@ describe("experiments registry", () => {
       throw new Error("Expected multi-project workspaces experiment to be registered");
     }
 
-    expect(experiment.showInSettings !== false && experiment.userOverridable === true).toBe(true);
+    expect(experiment.showInSettings).not.toBe(false);
   });
 
   test("keeps portable desktop visible in Settings while remaining opt-in", () => {
     const experiment = EXPERIMENTS[EXPERIMENT_IDS.PORTABLE_DESKTOP];
 
     expect(experiment.enabledByDefault).toBe(false);
-    expect(experiment.userOverridable).toBe(true);
     expect(experiment.showInSettings).toBe(true);
   });
 });

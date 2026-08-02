@@ -82,7 +82,7 @@ function getExplicitLocalExperimentOverrides(): Partial<Record<ExperimentId, boo
   const overrides: Partial<Record<ExperimentId, boolean>> = {};
 
   for (const experimentId of Object.keys(EXPERIMENTS) as ExperimentId[]) {
-    if (!EXPERIMENTS[experimentId].userOverridable || !isExperimentSupported(experimentId)) {
+    if (!isExperimentSupported(experimentId)) {
       continue;
     }
 

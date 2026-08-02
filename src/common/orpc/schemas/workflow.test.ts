@@ -184,7 +184,6 @@ describe("workflow experiment gate", () => {
     const experiment = EXPERIMENTS[EXPERIMENT_IDS.DYNAMIC_WORKFLOWS];
 
     expect(experiment.enabledByDefault).toBe(false);
-    expect(experiment.userOverridable).toBe(true);
     expect(experiment.showInSettings).toBe(true);
   });
 });

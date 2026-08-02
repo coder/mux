@@ -34,8 +34,6 @@ export interface ExperimentDefinition {
   description: string;
   /** Default state - false means disabled by default */
   enabledByDefault: boolean;
-  /** When true, the user can toggle this experiment in Settings. */
-  userOverridable?: boolean;
   /**
    * When set, the experiment is only toggleable on these platforms. On other platforms it
    * appears disabled with a message.
@@ -58,7 +56,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Programmatic Tool Calling",
     description: "Enable code_execution tool for multi-tool workflows in a sandboxed JS runtime",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE]: {
@@ -66,7 +63,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "PTC Exclusive Mode",
     description: "Replace all tools with code_execution (forces PTC usage)",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.CONFIGURABLE_BIND_URL]: {
@@ -75,7 +71,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Allow mux to listen on a non-localhost address so other devices on your LAN/VPN can connect. Anyone on your network with the auth token can access your mux API. HTTP only; use only on trusted networks (Tailscale recommended).",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART]: {
@@ -83,7 +78,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Exec sub-agent hard restart",
     description: "Hard-restart exec sub-agents on context overflow",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.MUX_GOVERNOR]: {
@@ -91,7 +85,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Mux Governor",
     description: "Remote policy delivery for enterprise Mux Governor service",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: {
@@ -99,7 +92,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Multi-project workspaces",
     description: "Enable workspaces that can span multiple projects instead of a single project",
     enabledByDefault: false,
-    userOverridable: true,
     // Keep this visible so users can opt into the still-default-off experiment from Settings.
     showInSettings: true,
   },
@@ -108,7 +100,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Agent Browser",
     description: "Show the Browser tab in the right sidebar for live agent-browser viewing",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.ADVISOR_TOOL]: {
@@ -116,7 +107,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Advisor Tool",
     description: "Enable the experimental client-side advisor tool foundation",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.WORKSPACE_HEARTBEATS]: {
@@ -124,7 +114,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Workspace Heartbeats",
     description: "Persist per-workspace heartbeat settings for future background follow-ups",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.PORTABLE_DESKTOP]: {
@@ -132,7 +121,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Portable Desktop",
     description: "Enable virtual desktop sessions for GUI-based agent interactions",
     enabledByDefault: false,
-    userOverridable: true,
     platformRestriction: ["linux"],
     showInSettings: true,
   },
@@ -141,7 +129,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Dynamic Workflows",
     description: "Enable durable JavaScript workflow orchestration for delegated agent tasks",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.MEMORY]: {
@@ -150,7 +137,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Enable the agent memory tool and memory index (global / project / workspace scopes)",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   // Sub-experiment of Agent Memory (flat flag, gated on the parent at the call
@@ -162,7 +148,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Memory Hot Set",
     description: "Preload pinned and frequently used memory files into the system prompt",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   // Sub-experiment of Agent Memory (flat flag, gated on the parent at call
@@ -174,7 +159,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Background dream agent that consolidates memory files after compaction, on idle, and at archive",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.TOOL_SEARCH]: {
@@ -183,7 +167,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Defer MCP tool definitions out of the model-visible tool list until the model discovers them via the tool_catalog_search tool",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT]: {
@@ -192,7 +175,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Also discover Agent Skills from .claude/skills and ~/.claude/skills (read-only, lowest precedence within each scope)",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: {
@@ -201,7 +183,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "When you invoke a skill, whole-line !`command` directives in SKILL.md run in the workspace and are replaced with their output before the model sees the skill. Commands come from skill files, so only enable this if you trust the skills in your projects.",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.TIMELINE]: {
@@ -210,7 +191,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     description:
       "Record a durable birds-eye timeline per workspace: prompts, agent events, goals, heartbeats, sub-agents, and workflows",
     enabledByDefault: false,
-    userOverridable: true,
     showInSettings: true,
   },
 };
