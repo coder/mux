@@ -46,6 +46,7 @@ export const VoiceInputNoApiKey: AppStory = {
 };
 
 export const ComposerTooltip: AppStory = {
+  tags: ["tooltip-visual"],
   render: () => (
     <AppWithMocks
       setup={() =>
