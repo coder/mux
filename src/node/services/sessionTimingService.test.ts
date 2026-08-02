@@ -8,10 +8,9 @@ import { SessionTimingService } from "./sessionTimingService";
 import type { TelemetryService } from "./telemetryService";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 
-function createMockTelemetryService(): Pick<TelemetryService, "capture" | "getFeatureFlag"> {
+function createMockTelemetryService(): Pick<TelemetryService, "capture"> {
   return {
     capture: mock(() => undefined),
-    getFeatureFlag: mock(() => Promise.resolve(undefined)),
   };
 }
 
@@ -20,7 +19,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("SessionTimingService", () => {
   let tempDir: string;
   let config: Config;
-  let telemetry: Pick<TelemetryService, "capture" | "getFeatureFlag">;
+  let telemetry: Pick<TelemetryService, "capture">;
   let service: SessionTimingService;
 
   beforeEach(async () => {

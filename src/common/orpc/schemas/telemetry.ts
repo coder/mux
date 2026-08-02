@@ -224,7 +224,6 @@ const ErrorOccurredPropertiesSchema = z.object({
 
 const ExperimentOverriddenPropertiesSchema = z.object({
   experimentId: z.string(),
-  assignedVariant: z.union([z.string(), z.boolean(), z.null()]),
   userChoice: z.boolean(),
 });
 

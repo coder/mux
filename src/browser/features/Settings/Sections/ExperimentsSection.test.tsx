@@ -63,7 +63,6 @@ void mock.module("@/browser/contexts/ExperimentsContext", () => ({
     },
   ],
   useExperimentValue: (experimentId: string) => experimentValues[experimentId] ?? experimentEnabled,
-  useRemoteExperimentValue: () => null,
 }));
 
 void mock.module("@/browser/hooks/useTelemetry", () => ({

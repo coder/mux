@@ -5,32 +5,25 @@ import {
   type ExperimentId,
 } from "@/common/constants/experiments";
 import { getMuxHome } from "@/common/constants/paths";
-import type { ExperimentValue } from "@/common/orpc/types";
-import { log } from "@/node/services/log";
 import type { TelemetryService } from "@/node/services/telemetryService";
 
 import * as fs from "fs/promises";
 import writeFileAtomic from "write-file-atomic";
 import * as path from "path";
-import { getErrorMessage } from "@/common/utils/errors";
 
-export type { ExperimentValue };
-
-interface CachedVariant {
-  value: string | boolean;
-  fetchedAtMs: number;
-  source: "posthog" | "cache";
-}
-
-interface ExperimentsCacheFile {
+interface ExperimentsFile {
   version: 1;
-  experiments: Record<string, { value: string | boolean; fetchedAtMs: number }>;
+  /**
+   * Always written as an empty object. Builds before remote evaluation was removed
+   * abort reading this file when `experiments` is absent, which would silently drop
+   * the user's overrides on downgrade.
+   */
+  experiments: Record<string, never>;
   overrides?: Record<string, boolean>;
 }
 
-const CACHE_FILE_NAME = "feature_flags.json";
-const CACHE_FILE_VERSION = 1;
-const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
+const OVERRIDES_FILE_NAME = "feature_flags.json";
+const OVERRIDES_FILE_VERSION = 1;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -39,37 +32,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Backend experiments service.
  *
- * Evaluates PostHog feature flags in the main process (via posthog-node) and exposes
- * the current assignments to the renderer via oRPC.
- *
- * Design goals:
- * - Never block user flows on network calls (use cached values and refresh in background)
- * - Fail closed (unknown = control/disabled)
- * - Avoid calling PostHog when telemetry is disabled
+ * Experiments are opt-in local toggles: an experiment is enabled only when the user
+ * explicitly turns it on in Settings. Overrides are persisted so main-process gates
+ * (oRPC routes, AI runtime, tool registration) agree with the renderer on every launch.
  */
 export class ExperimentsService {
   private readonly telemetryService: TelemetryService;
   private readonly muxHome: string;
-  private readonly cacheFilePath: string;
-  private readonly cacheTtlMs: number;
+  private readonly overridesFilePath: string;
   private readonly platform: NodeJS.Platform;
 
-  private readonly cachedVariants = new Map<ExperimentId, CachedVariant>();
   private readonly overrides = new Map<ExperimentId, boolean>();
-  private readonly refreshInFlight = new Map<ExperimentId, Promise<void>>();
 
-  private cacheLoaded = false;
+  private initialized = false;
 
   constructor(options: {
     telemetryService: TelemetryService;
     muxHome?: string;
-    cacheTtlMs?: number;
     platform?: NodeJS.Platform;
   }) {
     this.telemetryService = options.telemetryService;
     this.muxHome = options.muxHome ?? getMuxHome();
-    this.cacheFilePath = path.join(this.muxHome, CACHE_FILE_NAME);
-    this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.overridesFilePath = path.join(this.muxHome, OVERRIDES_FILE_NAME);
     this.platform = options.platform ?? process.platform;
   }
 
@@ -78,63 +62,19 @@ export class ExperimentsService {
   }
 
   async initialize(): Promise<void> {
-    if (this.cacheLoaded) {
+    if (this.initialized) {
       return;
     }
 
-    await this.loadCacheFromDisk();
-    this.cacheLoaded = true;
+    await this.loadOverridesFromDisk();
+    this.initialized = true;
 
-    // Populate telemetry properties from cache immediately so variant breakdowns
-    // are present even before a background refresh completes.
-    for (const [experimentId, cached] of this.cachedVariants) {
-      if (!this.isExperimentSupported(experimentId)) {
-        this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
-        continue;
-      }
-
-      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), cached.value);
-    }
-
-    // Renderer overrides must win over cached/remote assignments so server-side gates
-    // and telemetry reflect the same explicit user choice on fresh launches.
     for (const [experimentId, enabled] of this.overrides) {
-      if (!this.isExperimentSupported(experimentId)) {
-        this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
-        continue;
-      }
-
-      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), enabled);
+      this.telemetryService.setFeatureFlagVariant(
+        experimentId,
+        this.isExperimentSupported(experimentId) ? enabled : null
+      );
     }
-
-    // Refresh in background (best effort). We only refresh values that are stale or missing
-    // to avoid unnecessary network calls during startup.
-    if (this.isRemoteEvaluationEnabled()) {
-      for (const experimentId of Object.keys(EXPERIMENTS) as ExperimentId[]) {
-        this.maybeRefreshInBackground(experimentId);
-      }
-    }
-  }
-
-  isRemoteEvaluationEnabled(): boolean {
-    return (
-      this.telemetryService.getPostHogClient() !== null &&
-      this.telemetryService.getDistinctId() !== null
-    );
-  }
-
-  /**
-   * Return current values for all known experiments.
-   * This is used to render Settings → Experiments.
-   */
-  getAll(): Record<ExperimentId, ExperimentValue> {
-    const result: Partial<Record<ExperimentId, ExperimentValue>> = {};
-
-    for (const experimentId of Object.keys(EXPERIMENTS) as ExperimentId[]) {
-      result[experimentId] = this.getExperimentValue(experimentId);
-    }
-
-    return result as Record<ExperimentId, ExperimentValue>;
   }
 
   async setOverride(
@@ -152,238 +92,52 @@ export class ExperimentsService {
       `Experiment override for ${experimentId} must be boolean | null | undefined`
     );
 
-    if (!this.isExperimentSupported(experimentId)) {
+    if (!this.isExperimentSupported(experimentId) || enabled == null) {
       this.overrides.delete(experimentId);
-      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), null);
-      await this.writeCacheToDisk();
-      return;
-    }
-
-    if (enabled == null) {
-      this.overrides.delete(experimentId);
-      const cached = this.cachedVariants.get(experimentId);
-      this.telemetryService.setFeatureFlagVariant(
-        this.getFlagKey(experimentId),
-        cached?.value ?? null
-      );
+      this.telemetryService.setFeatureFlagVariant(experimentId, null);
     } else {
       this.overrides.set(experimentId, enabled);
-      this.telemetryService.setFeatureFlagVariant(this.getFlagKey(experimentId), enabled);
+      this.telemetryService.setFeatureFlagVariant(experimentId, enabled);
     }
 
-    await this.writeCacheToDisk();
-  }
-
-  getExperimentValue(experimentId: ExperimentId): ExperimentValue {
-    assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
-
-    if (!this.isExperimentSupported(experimentId)) {
-      return { value: null, source: "disabled" };
-    }
-
-    const override = this.overrides.get(experimentId);
-    if (override !== undefined) {
-      if (this.isRemoteEvaluationEnabled() && !EXPERIMENTS[experimentId].localOverrideOnly) {
-        this.maybeRefreshInBackground(experimentId);
-      }
-      return { value: override, source: "override" };
-    }
-
-    // Local-override-only experiments never consult remote/cached assignment:
-    // without an explicit local toggle they read as disabled, so Settings and
-    // security gates (isExperimentLocallyEnabled) always agree.
-    if (EXPERIMENTS[experimentId].localOverrideOnly) {
-      return { value: null, source: "disabled" };
-    }
-
-    if (!this.isRemoteEvaluationEnabled()) {
-      return { value: null, source: "disabled" };
-    }
-
-    const cached = this.cachedVariants.get(experimentId);
-    if (!cached) {
-      // No cached value yet. Fail closed, but kick off a background refresh.
-      this.maybeRefreshInBackground(experimentId);
-      return { value: null, source: "cache" };
-    }
-
-    this.maybeRefreshInBackground(experimentId);
-    return { value: cached.value, source: cached.source };
+    await this.writeOverridesToDisk();
   }
 
   /**
-   * True only when the user has explicitly enabled the experiment via a local
-   * override (Settings → Experiments toggle). Remote/cached PostHog assignment
-   * can NEVER satisfy this gate. Use for security-sensitive experiments where
-   * "enabled" must mean deliberate local user consent (e.g. skill dynamic
-   * context injection, which executes repo-controlled shell commands).
+   * True only when the user has explicitly enabled the experiment in Settings.
+   * Nothing else can enable an experiment, so security-sensitive gates (e.g. skill
+   * dynamic context injection, which executes repo-controlled shell commands) can
+   * rely on this meaning deliberate local consent.
    */
-  isExperimentLocallyEnabled(experimentId: ExperimentId): boolean {
+  isExperimentEnabled(experimentId: ExperimentId): boolean {
+    assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+
+    if (!this.isExperimentSupported(experimentId)) {
+      return false;
+    }
+
     return this.overrides.get(experimentId) === true;
   }
 
-  /**
-   * Convert an experiment assignment to a boolean gate.
-   *
-   * NOTE: This intentionally does not block on network calls.
-   */
-  isExperimentEnabled(experimentId: ExperimentId): boolean {
-    const value = this.getExperimentValue(experimentId).value;
-
-    // PostHog can return either boolean flags or string variants.
-    if (typeof value === "boolean") {
-      return value;
-    }
-
-    if (typeof value === "string") {
-      // For now, treat variant "test" as enabled for experiments with control/test variants.
-      // If we add experiments with different variant semantics, add a mapping per experiment.
-      return value === "test";
-    }
-
-    return false;
-  }
-
-  async refreshAll(): Promise<void> {
-    await this.ensureInitialized();
-
-    if (!this.isRemoteEvaluationEnabled()) {
-      return;
-    }
-
-    await Promise.all(
-      (Object.keys(EXPERIMENTS) as ExperimentId[]).map(async (experimentId) => {
-        await this.refreshExperiment(experimentId);
-      })
-    );
-  }
-
-  async refreshExperiment(experimentId: ExperimentId): Promise<void> {
-    await this.ensureInitialized();
-    assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
-
-    if (!this.isExperimentSupported(experimentId) || !this.isRemoteEvaluationEnabled()) {
-      return;
-    }
-
-    const existing = this.refreshInFlight.get(experimentId);
-    if (existing) {
-      return existing;
-    }
-
-    const promise = this.refreshExperimentImpl(experimentId).finally(() => {
-      this.refreshInFlight.delete(experimentId);
-    });
-
-    this.refreshInFlight.set(experimentId, promise);
-    return promise;
-  }
-
-  private async refreshExperimentImpl(experimentId: ExperimentId): Promise<void> {
-    const client = this.telemetryService.getPostHogClient();
-    const distinctId = this.telemetryService.getDistinctId();
-    assert(client, "PostHog client must exist when remote evaluation is enabled");
-    assert(distinctId, "distinctId must exist when remote evaluation is enabled");
-
-    const flagKey = this.getFlagKey(experimentId);
-
-    try {
-      const value = await client.getFeatureFlag(flagKey, distinctId);
-      if (typeof value !== "string" && typeof value !== "boolean") {
-        return;
-      }
-
-      const cached: CachedVariant = {
-        value,
-        fetchedAtMs: Date.now(),
-        source: "posthog",
-      };
-
-      this.cachedVariants.set(experimentId, cached);
-      if (!this.overrides.has(experimentId)) {
-        this.telemetryService.setFeatureFlagVariant(flagKey, value);
-      }
-
-      await this.writeCacheToDisk();
-    } catch (error) {
-      log.debug("Failed to refresh experiment from PostHog", {
-        experimentId,
-        error: getErrorMessage(error),
-      });
-    }
-  }
-
-  private maybeRefreshInBackground(experimentId: ExperimentId): void {
-    if (!this.isExperimentSupported(experimentId)) {
-      return;
-    }
-
-    const cached = this.cachedVariants.get(experimentId);
-    if (!cached) {
-      void this.refreshExperiment(experimentId);
-      return;
-    }
-
-    if (Date.now() - cached.fetchedAtMs > this.cacheTtlMs) {
-      void this.refreshExperiment(experimentId);
-    }
-  }
-
-  private getFlagKey(experimentId: ExperimentId): string {
-    // Today, our experiment IDs are already PostHog flag keys.
-    // If that ever changes, this is the single mapping point.
-    return experimentId;
-  }
-
   private async ensureInitialized(): Promise<void> {
-    if (this.cacheLoaded) {
+    if (this.initialized) {
       return;
     }
 
     await this.initialize();
-    assert(this.cacheLoaded, "ExperimentsService failed to initialize");
+    assert(this.initialized, "ExperimentsService failed to initialize");
   }
 
-  private async loadCacheFromDisk(): Promise<void> {
+  private async loadOverridesFromDisk(): Promise<void> {
     try {
-      const raw = await fs.readFile(this.cacheFilePath, "utf-8");
+      const raw = await fs.readFile(this.overridesFilePath, "utf-8");
       const parsed = JSON.parse(raw) as unknown;
 
-      if (!isRecord(parsed)) {
+      if (!isRecord(parsed) || parsed.version !== OVERRIDES_FILE_VERSION) {
         return;
       }
 
-      const version = parsed.version;
-      const experiments = parsed.experiments;
       const overrides = parsed.overrides;
-
-      if (version !== CACHE_FILE_VERSION || !isRecord(experiments)) {
-        return;
-      }
-
-      for (const [key, value] of Object.entries(experiments)) {
-        if (!(key in EXPERIMENTS) || !isRecord(value)) {
-          continue;
-        }
-
-        const fetchedAtMs = value.fetchedAtMs;
-        const variant = value.value;
-
-        if (typeof fetchedAtMs !== "number" || !Number.isFinite(fetchedAtMs)) {
-          continue;
-        }
-
-        if (typeof variant !== "string" && typeof variant !== "boolean") {
-          continue;
-        }
-
-        this.cachedVariants.set(key as ExperimentId, {
-          value: variant,
-          fetchedAtMs,
-          source: "cache",
-        });
-      }
-
       if (!isRecord(overrides)) {
         return;
       }
@@ -396,35 +150,27 @@ export class ExperimentsService {
         this.overrides.set(key as ExperimentId, value);
       }
     } catch {
-      // Ignore missing/corrupt cache
+      // Ignore missing/corrupt overrides
     }
   }
 
-  private async writeCacheToDisk(): Promise<void> {
+  private async writeOverridesToDisk(): Promise<void> {
     try {
-      const experiments: ExperimentsCacheFile["experiments"] = {};
-      for (const [experimentId, cached] of this.cachedVariants) {
-        experiments[experimentId] = {
-          value: cached.value,
-          fetchedAtMs: cached.fetchedAtMs,
-        };
-      }
-
-      const overrides: NonNullable<ExperimentsCacheFile["overrides"]> = {};
+      const overrides: NonNullable<ExperimentsFile["overrides"]> = {};
       for (const [experimentId, enabled] of this.overrides) {
         overrides[experimentId] = enabled;
       }
 
-      const payload: ExperimentsCacheFile = {
-        version: CACHE_FILE_VERSION,
-        experiments,
+      const payload: ExperimentsFile = {
+        version: OVERRIDES_FILE_VERSION,
+        experiments: {},
         overrides,
       };
 
       await fs.mkdir(this.muxHome, { recursive: true });
-      await writeFileAtomic(this.cacheFilePath, JSON.stringify(payload, null, 2), "utf-8");
+      await writeFileAtomic(this.overridesFilePath, JSON.stringify(payload, null, 2), "utf-8");
     } catch {
-      // Ignore cache persistence failures
+      // Ignore persistence failures
     }
   }
 }

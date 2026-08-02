@@ -134,14 +134,6 @@ export class TelemetryService {
   private featureFlagVariants: Record<string, string | boolean> = {};
   private readonly muxHome: string;
 
-  getPostHogClient(): PostHog | null {
-    return this.client;
-  }
-
-  getDistinctId(): string | null {
-    return this.distinctId;
-  }
-
   /**
    * Check if telemetry is enabled.
    * Returns true only after initialize() completes and telemetry was not disabled.
@@ -275,19 +267,6 @@ export class TelemetryService {
    * Track a telemetry event.
    * Events are silently ignored when disabled.
    */
-
-  async getFeatureFlag(key: string): Promise<boolean | string | undefined> {
-    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
-      return undefined;
-    }
-
-    try {
-      // `getFeatureFlag` will automatically emit $feature_flag_called.
-      return await this.client.getFeatureFlag(key, this.distinctId, { disableGeoip: true });
-    } catch {
-      return undefined;
-    }
-  }
   capture(payload: TelemetryEventPayload): void {
     if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
       return;

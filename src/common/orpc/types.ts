@@ -65,8 +65,6 @@ export type PolicyStatus = z.infer<typeof schemas.PolicyStatusSchema>;
 export type PolicySource = z.infer<typeof schemas.PolicySourceSchema>;
 export type EffectivePolicy = z.infer<typeof schemas.EffectivePolicySchema>;
 export type PolicyRuntimeId = z.infer<typeof schemas.PolicyRuntimeIdSchema>;
-export type ExperimentValue = z.infer<typeof schemas.ExperimentValueSchema>;
-
 // Type guards for common chat message variants
 export function isCaughtUpMessage(msg: WorkspaceChatMessage): msg is CaughtUpMessage {
   return (msg as { type?: string }).type === "caught-up";

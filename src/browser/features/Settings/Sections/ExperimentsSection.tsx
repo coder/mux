@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Info } from "lucide-react";
-import {
-  useExperiment,
-  useExperimentValue,
-  useRemoteExperimentValue,
-} from "@/browser/contexts/ExperimentsContext";
+import { useExperiment, useExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import {
   getExperimentList,
   getExperimentPlatformRestrictionLabel,
@@ -53,7 +49,6 @@ interface ExperimentRowProps {
 
 function ExperimentRow(props: ExperimentRowProps) {
   const [enabled, setEnabled] = useExperiment(props.experimentId);
-  const remote = useRemoteExperimentValue(props.experimentId);
   const telemetry = useTelemetry();
   const { availabilityMessage, disabled = false, onToggle, experimentId } = props;
 
@@ -65,10 +60,10 @@ function ExperimentRow(props: ExperimentRowProps) {
 
       setEnabled(value);
       // Track the override for analytics
-      telemetry.experimentOverridden(experimentId, remote?.value ?? null, value);
+      telemetry.experimentOverridden(experimentId, value);
       onToggle?.(value);
     },
-    [disabled, setEnabled, telemetry, experimentId, remote?.value, onToggle]
+    [disabled, setEnabled, telemetry, experimentId, onToggle]
   );
 
   return (

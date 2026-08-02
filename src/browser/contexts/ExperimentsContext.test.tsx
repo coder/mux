@@ -1,11 +1,10 @@
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { GlobalWindow } from "happy-dom";
 import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
-import type { ExperimentValue } from "@/common/orpc/types";
 import { requireTestModule, type RecursivePartial } from "@/browser/testUtils";
 import type * as APIModule from "./API";
 import type { APIClient } from "./API";
@@ -90,8 +89,8 @@ describe("ExperimentsProvider", () => {
 
     // Broader browser runs can leave bare globals, event constructors, and timer functions pointed
     // at stale or fake implementations from earlier suites. Rebind the globals
-    // ExperimentsProvider reaches through indirectly so the polling test always exercises the fresh
-    // happy-dom window installed for this case.
+    // ExperimentsProvider reaches through indirectly so each case runs against the fresh
+    // happy-dom window installed for it.
     globalThis.localStorage = dom.localStorage;
     globalThis.location = dom.location as unknown as Location;
     globalThis.StorageEvent = dom.StorageEvent as unknown as typeof StorageEvent;
@@ -128,94 +127,6 @@ describe("ExperimentsProvider", () => {
     }
   });
 
-  test("polls getAll until remote variants are available", async () => {
-    let callCount = 0;
-
-    const getAllMock = mock(() => {
-      callCount += 1;
-
-      if (callCount === 1) {
-        return Promise.resolve({
-          [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: { value: null, source: "cache" },
-        } satisfies Record<string, ExperimentValue>);
-      }
-
-      return Promise.resolve({
-        [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: { value: "test", source: "posthog" },
-      } satisfies Record<string, ExperimentValue>);
-    });
-
-    currentClientMock = {
-      experiments: {
-        getAll: getAllMock,
-        reload: mock(() => Promise.resolve()),
-      },
-    };
-
-    let scheduledPoll: (() => void) | null = null;
-    const expectedInitialPollDelayMs = 100;
-    const scheduledPollHandle = originalSetTimeout(() => undefined, 0);
-    originalClearTimeout(scheduledPollHandle);
-
-    // Capture the provider's first poll callback so this assertion does not depend on whichever
-    // timer implementation earlier suites left behind.
-    globalThis.setTimeout = ((callback: TimerHandler, delay?: number) => {
-      if (delay === expectedInitialPollDelayMs && typeof callback === "function") {
-        const scheduledCallback = callback as () => void;
-        scheduledPoll = () => {
-          scheduledCallback();
-        };
-        return scheduledPollHandle;
-      }
-
-      return originalSetTimeout(callback, delay);
-    }) as typeof globalThis.setTimeout;
-    globalThis.clearTimeout = ((timeout: ReturnType<typeof setTimeout>) => {
-      if (timeout === scheduledPollHandle) {
-        scheduledPoll = null;
-        return;
-      }
-
-      originalClearTimeout(timeout);
-    }) as typeof globalThis.clearTimeout;
-
-    function Observer() {
-      const enabled = useExperimentValue(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
-      return <div data-testid="enabled">{String(enabled)}</div>;
-    }
-
-    const { getByTestId } = render(
-      <APIProvider client={currentClientMock as APIClient}>
-        <ExperimentsProvider>
-          <Observer />
-        </ExperimentsProvider>
-      </APIProvider>
-    );
-
-    expect(getByTestId("enabled").textContent).toBe("false");
-
-    await waitFor(() => {
-      expect(scheduledPoll).not.toBeNull();
-    });
-
-    const pollRemoteExperiments: () => void =
-      scheduledPoll ??
-      (() => {
-        throw new Error("Expected poll callback to be scheduled");
-      });
-    expect(scheduledPoll).not.toBeNull();
-
-    act(() => {
-      pollRemoteExperiments();
-    });
-
-    await waitFor(() => {
-      expect(getByTestId("enabled").textContent).toBe("true");
-    });
-
-    expect(getAllMock.mock.calls.length).toBeGreaterThanOrEqual(2);
-  });
-
   test("syncs existing local overrides to the backend on connect", async () => {
     globalThis.window.localStorage.setItem(
       getExperimentKey(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES),
@@ -225,9 +136,7 @@ describe("ExperimentsProvider", () => {
     const setOverrideMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        getAll: mock(() => Promise.resolve({} satisfies Record<string, ExperimentValue>)),
         setOverride: setOverrideMock,
-        reload: mock(() => Promise.resolve()),
       },
     };
 
@@ -275,9 +184,7 @@ describe("ExperimentsProvider", () => {
     const setOverrideMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        getAll: mock(() => Promise.resolve({} satisfies Record<string, ExperimentValue>)),
         setOverride: setOverrideMock,
-        reload: mock(() => Promise.resolve()),
       },
     };
 

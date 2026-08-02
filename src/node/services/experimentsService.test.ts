@@ -2,10 +2,22 @@ import { describe, expect, test, beforeEach, afterEach, mock } from "bun:test";
 import { ExperimentsService } from "./experimentsService";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { TelemetryService } from "./telemetryService";
-import type { PostHog } from "posthog-node";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
+
+const OVERRIDES_FILE = "feature_flags.json";
+
+function createTelemetryService(): {
+  telemetryService: TelemetryService;
+  setFeatureFlagVariant: ReturnType<typeof mock>;
+} {
+  const setFeatureFlagVariant = mock(() => undefined);
+  return {
+    telemetryService: { setFeatureFlagVariant } as unknown as TelemetryService,
+    setFeatureFlagVariant,
+  };
+}
 
 describe("ExperimentsService", () => {
   let tempDir: string;
@@ -18,238 +30,87 @@ describe("ExperimentsService", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  test("loads cached experiment values from disk and exposes them", async () => {
-    const cacheFilePath = path.join(tempDir, "feature_flags.json");
-    await fs.writeFile(
-      cacheFilePath,
-      JSON.stringify(
-        {
-          version: 1,
-          experiments: {
-            [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: {
-              value: "test",
-              fetchedAtMs: Date.now(),
-            },
-          },
-        },
-        null,
-        2
-      ),
-      "utf-8"
-    );
+  async function readOverridesFile(): Promise<{
+    experiments?: unknown;
+    overrides?: Record<string, unknown>;
+  }> {
+    const raw = await fs.readFile(path.join(tempDir, OVERRIDES_FILE), "utf-8");
+    return JSON.parse(raw) as { experiments?: unknown; overrides?: Record<string, unknown> };
+  }
 
-    const setFeatureFlagVariant = mock(() => undefined);
-    const fakePostHog = {
-      getFeatureFlag: mock(() => Promise.resolve("test")),
-    } as unknown as PostHog;
-
-    const telemetryService = {
-      getPostHogClient: mock(() => fakePostHog),
-      getDistinctId: mock(() => "distinct-id"),
-      setFeatureFlagVariant,
-    } as unknown as TelemetryService;
-
-    const service = new ExperimentsService({
-      telemetryService,
-      muxHome: tempDir,
-      cacheTtlMs: 60 * 60 * 1000,
-    });
-
-    await service.initialize();
-
-    const values = service.getAll();
-    expect(values[EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]).toEqual({
-      value: "test",
-      source: "cache",
-    });
-
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
-      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
-      "test"
-    );
-  });
-
-  test("isExperimentLocallyEnabled requires a local override; remote/cached assignment never satisfies it", async () => {
-    const cacheFilePath = path.join(tempDir, "feature_flags.json");
-    // Seed a cached remote assignment that turns the experiment ON.
-    await fs.writeFile(
-      cacheFilePath,
-      JSON.stringify(
-        {
-          version: 1,
-          experiments: {
-            [EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT]: {
-              value: true,
-              fetchedAtMs: Date.now(),
-            },
-          },
-        },
-        null,
-        2
-      ),
-      "utf-8"
-    );
-
-    const telemetryService = {
-      getPostHogClient: mock(() => ({
-        getFeatureFlag: mock(() => Promise.resolve(true)),
-      })),
-      getDistinctId: mock(() => "distinct-id"),
-      setFeatureFlagVariant: mock(() => undefined),
-    } as unknown as TelemetryService;
-
-    const service = new ExperimentsService({
-      telemetryService,
-      muxHome: tempDir,
-      cacheTtlMs: 60 * 60 * 1000,
-    });
-    await service.initialize();
-
-    // localOverrideOnly: the cached remote assignment must be excluded from the
-    // evaluation path entirely, so BOTH gates read disabled — Settings UI and
-    // the execution gate can never disagree.
-    expect(service.getExperimentValue(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toEqual({
-      value: null,
-      source: "disabled",
-    });
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
-    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
-
-    // An explicit local toggle enables both gates consistently.
-    await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, true);
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
-    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(true);
-
-    // Clearing the override turns both gates off again (no remote fallback).
-    await service.setOverride(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT, null);
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
-    expect(service.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)).toBe(false);
-  });
-
-  test("refreshExperiment updates cache and writes it to disk", async () => {
-    const setFeatureFlagVariant = mock(() => undefined);
-    const fakePostHog = {
-      getFeatureFlag: mock(() => Promise.resolve("test")),
-    } as unknown as PostHog;
-
-    const telemetryService = {
-      getPostHogClient: mock(() => fakePostHog),
-      getDistinctId: mock(() => "distinct-id"),
-      setFeatureFlagVariant,
-    } as unknown as TelemetryService;
-
-    const service = new ExperimentsService({
-      telemetryService,
-      muxHome: tempDir,
-      cacheTtlMs: 0,
-    });
-
-    await service.initialize();
-    await service.refreshExperiment(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
-
-    const value = service.getExperimentValue(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
-    expect(value.value).toBe("test");
-    expect(value.source).toBe("posthog");
-
-    const cacheFilePath = path.join(tempDir, "feature_flags.json");
-    const disk = JSON.parse(await fs.readFile(cacheFilePath, "utf-8")) as unknown;
-    expect(typeof disk).toBe("object");
-
-    expect((disk as { version: unknown }).version).toBe(1);
-    expect((disk as { experiments: Record<string, unknown> }).experiments).toHaveProperty(
-      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
-    );
-
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
-      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
-      "test"
-    );
-  });
-
-  test("persists backend overrides and applies them before remote gating", async () => {
-    const setFeatureFlagVariant = mock(() => undefined);
-    const telemetryService = {
-      getPostHogClient: mock(() => null),
-      getDistinctId: mock(() => null),
-      setFeatureFlagVariant,
-    } as unknown as TelemetryService;
-
+  test("experiments are disabled until the user sets an override", async () => {
+    const { telemetryService } = createTelemetryService();
     const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
     await service.initialize();
+
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(false);
+
+    await service.setOverride(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING, true);
+
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(true);
+  });
+
+  test("overrides survive a restart and re-apply their telemetry variant", async () => {
+    const first = createTelemetryService();
+    const service = new ExperimentsService({
+      telemetryService: first.telemetryService,
+      muxHome: tempDir,
+    });
     await service.setOverride(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES, true);
 
-    expect(service.getExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toEqual({
-      value: true,
-      source: "override",
-    });
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toBe(true);
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
-      EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
-      true
-    );
-
-    const cacheFilePath = path.join(tempDir, "feature_flags.json");
-    const disk = JSON.parse(await fs.readFile(cacheFilePath, "utf-8")) as {
-      overrides?: Record<string, unknown>;
-    };
-    expect(disk.overrides).toEqual({
+    expect((await readOverridesFile()).overrides).toEqual({
       [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true,
     });
 
-    const reloadedSetFeatureFlagVariant = mock(() => undefined);
-    const reloadedTelemetryService = {
-      getPostHogClient: mock(() => null),
-      getDistinctId: mock(() => null),
-      setFeatureFlagVariant: reloadedSetFeatureFlagVariant,
-    } as unknown as TelemetryService;
-
-    const reloadedService = new ExperimentsService({
-      telemetryService: reloadedTelemetryService,
+    const second = createTelemetryService();
+    const reloaded = new ExperimentsService({
+      telemetryService: second.telemetryService,
       muxHome: tempDir,
     });
-    await reloadedService.initialize();
+    await reloaded.initialize();
 
-    expect(reloadedService.getExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toEqual({
-      value: true,
-      source: "override",
-    });
-    expect(reloadedService.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toBe(true);
-    expect(reloadedSetFeatureFlagVariant).toHaveBeenCalledWith(
+    expect(reloaded.isExperimentEnabled(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES)).toBe(true);
+    expect(second.setFeatureFlagVariant).toHaveBeenCalledWith(
       EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
       true
     );
   });
 
-  test("platform-restricted experiments stay disabled on unsupported platforms", async () => {
-    const cacheFilePath = path.join(tempDir, "feature_flags.json");
+  test("clearing an override disables the experiment and drops its telemetry variant", async () => {
+    const { telemetryService, setFeatureFlagVariant } = createTelemetryService();
+    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    await service.setOverride(EXPERIMENT_IDS.MEMORY, true);
+
+    await service.setOverride(EXPERIMENT_IDS.MEMORY, null);
+
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.MEMORY)).toBe(false);
+    expect((await readOverridesFile()).overrides).toEqual({});
+    expect(setFeatureFlagVariant).toHaveBeenLastCalledWith(EXPERIMENT_IDS.MEMORY, null);
+  });
+
+  test("an explicit false override keeps the experiment disabled", async () => {
+    const { telemetryService } = createTelemetryService();
+    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    await service.setOverride(EXPERIMENT_IDS.AGENT_BROWSER, false);
+
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.AGENT_BROWSER)).toBe(false);
+    expect((await readOverridesFile()).overrides).toEqual({
+      [EXPERIMENT_IDS.AGENT_BROWSER]: false,
+    });
+  });
+
+  test("platform-restricted experiments ignore overrides on unsupported platforms", async () => {
     await fs.writeFile(
-      cacheFilePath,
-      JSON.stringify(
-        {
-          version: 1,
-          experiments: {
-            [EXPERIMENT_IDS.PORTABLE_DESKTOP]: {
-              value: true,
-              fetchedAtMs: Date.now(),
-            },
-          },
-          overrides: {
-            [EXPERIMENT_IDS.PORTABLE_DESKTOP]: true,
-          },
-        },
-        null,
-        2
-      ),
+      path.join(tempDir, OVERRIDES_FILE),
+      JSON.stringify({
+        version: 1,
+        experiments: {},
+        overrides: { [EXPERIMENT_IDS.PORTABLE_DESKTOP]: true },
+      }),
       "utf-8"
     );
 
-    const setFeatureFlagVariant = mock(() => undefined);
-    const telemetryService = {
-      getPostHogClient: mock(() => null),
-      getDistinctId: mock(() => null),
-      setFeatureFlagVariant,
-    } as unknown as TelemetryService;
-
+    const { telemetryService, setFeatureFlagVariant } = createTelemetryService();
     const service = new ExperimentsService({
       telemetryService,
       muxHome: tempDir,
@@ -257,37 +118,41 @@ describe("ExperimentsService", () => {
     });
     await service.initialize();
 
-    expect(service.getExperimentValue(EXPERIMENT_IDS.PORTABLE_DESKTOP)).toEqual({
-      value: null,
-      source: "disabled",
-    });
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.PORTABLE_DESKTOP)).toBe(false);
 
     await service.setOverride(EXPERIMENT_IDS.PORTABLE_DESKTOP, true);
 
-    const disk = JSON.parse(await fs.readFile(cacheFilePath, "utf-8")) as {
-      overrides?: Record<string, unknown>;
-    };
-    expect(disk.overrides).toEqual({});
+    expect((await readOverridesFile()).overrides).toEqual({});
     expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.PORTABLE_DESKTOP, null);
   });
 
-  test("returns disabled when telemetry is disabled", async () => {
-    const telemetryService = {
-      getPostHogClient: mock(() => null),
-      getDistinctId: mock(() => null),
-      setFeatureFlagVariant: mock(() => undefined),
-    } as unknown as TelemetryService;
+  test("overrides written by a build with remote evaluation still load", async () => {
+    await fs.writeFile(
+      path.join(tempDir, OVERRIDES_FILE),
+      JSON.stringify({
+        version: 1,
+        experiments: {
+          [EXPERIMENT_IDS.TOOL_SEARCH]: { value: "test", fetchedAtMs: Date.now() },
+        },
+        overrides: { [EXPERIMENT_IDS.AGENT_BROWSER]: true },
+      }),
+      "utf-8"
+    );
 
+    const { telemetryService } = createTelemetryService();
     const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
     await service.initialize();
 
-    const values = service.getAll();
-    expect(values[EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]).toEqual({
-      value: null,
-      source: "disabled",
-    });
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.AGENT_BROWSER)).toBe(true);
+    // A cached remote assignment must not survive as an implicit opt-in.
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.TOOL_SEARCH)).toBe(false);
+  });
 
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(false);
+  test("writes an empty experiments map so older builds still read overrides", async () => {
+    const { telemetryService } = createTelemetryService();
+    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    await service.setOverride(EXPERIMENT_IDS.TIMELINE, true);
+
+    expect((await readOverridesFile()).experiments).toEqual({});
   });
 });

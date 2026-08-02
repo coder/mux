@@ -351,8 +351,6 @@ export interface ErrorOccurredPayload {
 export interface ExperimentOverriddenPayload {
   /** Experiment identifier (e.g., 'agent-browser') */
   experimentId: string;
-  /** The variant PostHog assigned (null if not remote-controlled) */
-  assignedVariant: string | boolean | null;
   /** What the user chose (true = enabled, false = disabled) */
   userChoice: boolean;
 }

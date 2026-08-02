@@ -182,13 +182,9 @@ export function trackErrorOccurred(
  * @param assignedVariant - What PostHog assigned (null if not remote-controlled)
  * @param userChoice - What the user chose (true = enabled, false = disabled)
  */
-export function trackExperimentOverridden(
-  experimentId: string,
-  assignedVariant: string | boolean | null,
-  userChoice: boolean
-): void {
+export function trackExperimentOverridden(experimentId: string, userChoice: boolean): void {
   trackEvent({
     event: "experiment_overridden",
-    properties: { experimentId, assignedVariant, userChoice },
+    properties: { experimentId, userChoice },
   });
 }

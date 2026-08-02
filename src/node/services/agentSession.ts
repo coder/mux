@@ -6370,12 +6370,9 @@ export class AgentSession {
   }): Promise<string> {
     // The typeof guard mirrors the getWorkspaceMetadata guard in
     // materializeAgentSkillSnapshots: test mocks may provide a partial AIService.
-    // isExperimentLocallyEnabled (not isExperimentEnabled): shell execution must
-    // require a deliberate local Settings toggle; a remote/cached experiment
-    // assignment must never be able to switch it on.
     if (
-      typeof this.aiService.isExperimentLocallyEnabled !== "function" ||
-      !this.aiService.isExperimentLocallyEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)
+      typeof this.aiService.isExperimentEnabled !== "function" ||
+      !this.aiService.isExperimentEnabled(EXPERIMENT_IDS.SKILL_DYNAMIC_CONTEXT)
     ) {
       return args.body;
     }
@@ -6386,10 +6383,9 @@ export class AgentSession {
         // SECURITY AUDIT: this sink executes shell commands sourced from SKILL.md
         // bodies, which are repo-controlled and therefore attacker-controlled input
         // (any cloned repo can ship arbitrary skills). It is acceptable only because:
-        // (1) it is gated on an explicit LOCAL override of the default-off
-        // "skill-dynamic-context" experiment (Settings toggle); remote/cached
-        // experiment assignment can never enable it (see isExperimentLocallyEnabled),
-        // so the user has deliberately opted into skills running commands; and
+        // (1) it is gated on the default-off "skill-dynamic-context" experiment,
+        // which only an explicit local Settings toggle can enable, so the user has
+        // deliberately opted into skills running commands; and
         // (2) it runs solely on user-initiated skill invocations (slash "/skill" or
         // inline "$skill" refs) — the model-side agent_skill_read tool never reaches
         // this path — so each execution traces to a deliberate user action on a skill

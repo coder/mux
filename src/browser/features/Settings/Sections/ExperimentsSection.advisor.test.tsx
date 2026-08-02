@@ -165,7 +165,6 @@ void mock.module("@/browser/contexts/ExperimentsContext", () => ({
     },
   ],
   useExperimentValue: (experimentId: string) => experimentValues[experimentId] ?? false,
-  useRemoteExperimentValue: () => null,
 }));
 
 void mock.module("@/browser/hooks/useModelsFromSettings", () => ({

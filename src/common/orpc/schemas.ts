@@ -337,7 +337,6 @@ export {
   splashScreens,
   tasks,
   experiments,
-  ExperimentValueSchema,
   telemetry,
   TelemetryEventSchema,
   ssh,

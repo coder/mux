@@ -49,14 +49,6 @@ export interface ExperimentDefinition {
    * Defaults to true. Use false for invisible A/B tests.
    */
   showInSettings?: boolean;
-  /**
-   * When true, only an explicit local override (Settings toggle) can enable the
-   * experiment — remote/cached PostHog assignment is excluded from its
-   * evaluation path entirely. Use for security-sensitive experiments where
-   * "enabled" must mean deliberate local user consent (e.g. features that
-   * execute repo-controlled shell commands). Implies userOverridable.
-   */
-  localOverrideOnly?: boolean;
 }
 
 /**
@@ -214,9 +206,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
-    // Executes repo-controlled shell commands: enabling must be a deliberate
-    // local user action, never a remote rollout bucket.
-    localOverrideOnly: true,
   },
   [EXPERIMENT_IDS.TIMELINE]: {
     id: EXPERIMENT_IDS.TIMELINE,
