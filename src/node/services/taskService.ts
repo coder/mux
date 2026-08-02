@@ -21,6 +21,7 @@ import {
   SUBAGENT_FAILURE_ENVELOPE_TAG,
   formatSubagentReportEnvelope,
   parseSubagentReportEnvelope,
+  parseSubagentReportFromMessage,
 } from "@/common/utils/subagentReportEnvelope";
 import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
@@ -10768,11 +10769,7 @@ export class TaskService {
           if (message.role !== "user" || message.metadata?.synthetic !== true) {
             continue;
           }
-          const text = message.parts
-            .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-            .map((part) => part.text)
-            .join("\n");
-          const reportEnvelope = parseSubagentReportEnvelope(text);
+          const reportEnvelope = parseSubagentReportFromMessage(message);
           if (reportEnvelope == null || reportEnvelope.status === "in_progress") {
             continue;
           }

@@ -149,7 +149,7 @@ import { execBuffered } from "@/node/utils/runtime/helpers";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 import type { MemorySessionContext } from "@/node/services/memoryService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
-import { parseSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import { parseSubagentReportFromMessage } from "@/common/utils/subagentReportEnvelope";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
 
@@ -1430,11 +1430,7 @@ export class AgentSession {
     ) {
       return false;
     }
-    const text = message.parts
-      .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-      .map((part) => part.text)
-      .join("\n");
-    return parseSubagentReportEnvelope(text)?.status === "completed";
+    return parseSubagentReportFromMessage(message)?.status === "completed";
   }
 
   private shouldUseUserMessageForRetry(message: MuxMessage): boolean {
