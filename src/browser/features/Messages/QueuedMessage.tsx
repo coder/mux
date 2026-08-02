@@ -111,7 +111,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
                 <button
                   type="button"
                   onClick={props.onEdit}
-                  className="text-muted hover:bg-hover hover:text-foreground flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors"
+                  className="text-muted hover:bg-hover hover:text-foreground flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors"
                 >
                   <Pencil className="size-3" />
                   Edit
@@ -123,7 +123,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
                   type="button"
                   onClick={handleSendImmediately}
                   disabled={isSending}
-                  className="bg-pending/10 text-pending hover:bg-pending/20 flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  className="bg-pending/10 text-pending hover:bg-pending/20 flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSending ? (
                     <Loader2 className="size-3 animate-spin" />
