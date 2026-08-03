@@ -119,26 +119,45 @@ const SELECTION_OPT_IN_PATTERN = new RegExp(
  * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
  * new entry is a decision for review.
  *
- * Counted per file rather than listed per file, because an opt-in added to a file that
- * already appears here would otherwise go unreviewed: a class on a transcript-wide container
- * in `ReviewPanel.tsx`, which already opts in several metadata values, would suppress
- * nothing and change no file name.
+ * Each occurrence is pinned by the trimmed source line that carries it, in source order,
+ * so what was reviewed is the element the class sits on, not a per-file count. A count
+ * cannot tell a reviewed opt-in from a different one that replaced it in the same file,
+ * and a bare file list cannot see an addition next to an existing entry. Unrelated edits
+ * elsewhere in a file leave the entry alone; editing the carrying line itself, even
+ * around the class, resubmits that occurrence for review, which is the point. Still an
+ * exact-match posture: identity comes from the line's text, not from parsing TSX.
  *
  * Suppression utilities (`select-none` and its arbitrary spelling) are deliberately not
  * tracked here: turning selection off on a control is the ordinary use of that utility,
  * whereas turning it back on is the exception to this guard. Broad suppression written as
  * CSS is still caught below.
  *
- * Files named by `@source` directives are counted here too, keyed by repo-relative path:
- * Tailwind scans those for utility classes just like TSX under `src/`.
+ * Files named by `@source` directives are scanned here too, keyed by repo-relative path:
+ * Tailwind reads those for utility classes just like TSX under `src/`.
  */
-const SELECTION_OPT_INS: Record<string, number> = {
-  "src/browser/components/AgentListItem/AgentListItem.tsx": 1,
-  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx": 1,
-  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": 1,
-  "src/browser/components/SectionHeader/SectionHeader.tsx": 2,
-  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx": 1,
-  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": 4,
+const SELECTION_OPT_INS: Record<string, string[]> = {
+  "src/browser/components/AgentListItem/AgentListItem.tsx": [
+    'className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none select-text"',
+  ],
+  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx": [
+    '<span className="text-accent shrink-0 select-all">{commit.hash}</span>',
+  ],
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": [
+    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"',
+  ],
+  "src/browser/components/SectionHeader/SectionHeader.tsx": [
+    'className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none select-text"',
+    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"',
+  ],
+  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx": [
+    '<div className="text-foreground mt-1 break-all select-all">{pending.fingerprint}</div>',
+  ],
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": [
+    '<div className="text-foreground break-all select-all">',
+    '<div className="text-foreground break-all select-all">',
+    '<div className="text-foreground break-all select-all">',
+    '<div className="text-foreground break-all select-all">',
+  ],
 };
 
 const EDITABLE_SELECTORS = [
@@ -372,11 +391,13 @@ describe("touch text-selection guard", () => {
   });
 
   it("opts content back into selection only in reviewed components", async () => {
-    const optIns: Record<string, number> = {};
+    const optIns: Record<string, string[]> = {};
     const countInto = (key: string, source: string) => {
-      const matches = source.match(SELECTION_OPT_IN_PATTERN);
-      if (matches) {
-        optIns[key] = matches.length;
+      for (const match of source.matchAll(SELECTION_OPT_IN_PATTERN)) {
+        const lineStart = source.lastIndexOf("\n", match.index) + 1;
+        const lineEnd = source.indexOf("\n", match.index);
+        const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd).trim();
+        (optIns[key] ??= []).push(line);
       }
     };
     // Test files are skipped: they ship no UI, and this file names the utilities it matches.
