@@ -19,7 +19,7 @@
 import { Scanner } from "@tailwindcss/oxide";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readFile, stat } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postcss, { type ChildNode, type Container, type Declaration } from "postcss";
 
@@ -67,24 +67,64 @@ const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url))
 
 /**
  * Files whose contents can put a `user-select` declaration on a rendered element: the
- * renderer's entry HTML (vite.config.ts `rollupOptions.input`) and the `src` tree those
- * entries are built from, minus the test, story, and fixture conventions, which ship no
- * product UI. A token anywhere else, docs prose, a fixture's sample payload, a Storybook
- * story, the VS Code webview's own stylesheet, emits at most an unused utility rule into
- * the compiled CSS and styles nothing the app renders, so inventorying those files made
- * behavior-neutral edits fail, the tautological shape AGENTS.md forbids. `src` is taken
- * whole rather than `src/browser` alone because the renderer imports shared modules
- * (`src/common`, `src/constants`, `src/types`), and over-inclusion only asks for review
- * while under-inclusion silently exempts a file.
+ * renderer's entry HTML (vite.config.ts `rollupOptions.input`) and the `src/` segments
+ * the renderer is bundled from, minus the test, story, and fixture conventions, which
+ * ship no product UI. A token anywhere else, docs prose, a fixture's sample payload, a
+ * backend prompt string in `src/node`, emits at most an unused utility rule into the
+ * compiled CSS and styles nothing the app renders, so inventorying those files made
+ * behavior-neutral edits fail, the tautological shape AGENTS.md forbids.
+ *
+ * The segments are a reviewed list rather than a computed module graph, because file-
+ * level reachability needs a bundler's resolution rules, and segment-level transitive
+ * closure over-includes: `src/common` runtime-imports `@/node` in server-only corners
+ * that the renderer never reaches (the eslint `no-cross-boundary-imports` rule bans
+ * browser -> node directly but not common -> node). Whole segments are included, so a
+ * renderer-visible file inside a listed segment cannot be silently exempt; the drift
+ * guard below keeps the list current when the renderer starts importing a new segment.
+ * `src/types` is only ambient `.d.ts` declarations, never imported as a module.
  */
+const RENDERER_SEGMENTS = ["browser", "common", "constants", "version"];
 const RUNTIME_ENTRY_HTML = ["index.html", "terminal.html"];
 const NON_RUNTIME_SOURCE = /\.(?:test|stories|fixtures)\.[jt]sx?$/;
 
 function isRuntimeSource(relativePath: string): boolean {
+  if (RUNTIME_ENTRY_HTML.includes(relativePath)) {
+    return true;
+  }
+  const [root, segment] = relativePath.split("/");
   return (
-    RUNTIME_ENTRY_HTML.includes(relativePath) ||
-    (relativePath.startsWith("src/") && !NON_RUNTIME_SOURCE.test(relativePath))
+    root === "src" &&
+    segment !== undefined &&
+    RENDERER_SEGMENTS.includes(segment.replace(/\.[jt]sx?$/, "")) &&
+    !NON_RUNTIME_SOURCE.test(relativePath)
   );
+}
+
+/**
+ * Import specifiers that pull code into a bundle. Type-only statements are stripped
+ * first: they are erased at build time, and browser code type-imports `@/node` today.
+ */
+const TYPE_ONLY_IMPORT = /\b(?:import|export)\s+type\b[^"']*["'][^"']*["']/g;
+const IMPORT_SPECIFIER =
+  /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)["']([^"']+)["']/g;
+
+function importedSegments(source: string, fileDir: string): Set<string> {
+  const segments = new Set<string>();
+  for (const match of source.replace(TYPE_ONLY_IMPORT, "").matchAll(IMPORT_SPECIFIER)) {
+    const specifier = match[1].split("?")[0];
+    let target: string | undefined;
+    if (specifier.startsWith("@/")) {
+      target = specifier.slice(2).split("/")[0];
+    } else if (specifier.startsWith(".")) {
+      const resolved = relative(REPO_ROOT, resolve(fileDir, specifier)).replaceAll("\\", "/");
+      const [root, segment] = resolved.split("/");
+      target = root === "src" ? segment : undefined;
+    }
+    if (target !== undefined) {
+      segments.add(target.replace(/\.[jt]sx?$/, ""));
+    }
+  }
+  return segments;
 }
 
 /**
@@ -437,6 +477,23 @@ async function readAppShellSelectors(): Promise<string[]> {
   return [...indexHtml.matchAll(/\bid="([^"]+)"/g)].map((match) => `#${match[1]}`);
 }
 
+/**
+ * Tailwind's own scanner supplies the file list, so which files exist and are scannable
+ * is never a hand-rolled walk; the runtime filter then keeps only the sources that can
+ * style a rendered element. The parsed stylesheet is skipped: its declarations are
+ * covered by the stylesheet assertions.
+ */
+function runtimeSourceFiles(): string[] {
+  const scanner = new Scanner({
+    sources: [{ base: REPO_ROOT.replace(/[\\/]$/, ""), pattern: "**/*", negated: false }],
+  });
+  scanner.scan();
+  return scanner.files
+    .filter((filePath) => resolve(filePath) !== STYLESHEET_PATH)
+    .map((filePath) => relative(REPO_ROOT, filePath).replaceAll("\\", "/"))
+    .filter(isRuntimeSource);
+}
+
 function applicableSelectors(viewport: Viewport, value: (candidate: string) => boolean) {
   return selectionRules
     .filter(
@@ -526,20 +583,8 @@ describe("touch text-selection guard", () => {
         fileSites[token] = (fileSites[token] ?? 0) + 1;
       }
     };
-    // Tailwind's own scanner still supplies the file list, so which files exist and are
-    // scannable is never a hand-rolled walk; the runtime filter then keeps only the
-    // sources that can style a rendered element. The parsed stylesheet is skipped too,
-    // since its declarations are covered by the assertions above.
-    const scanner = new Scanner({
-      sources: [{ base: REPO_ROOT.replace(/[\\/]$/, ""), pattern: "**/*", negated: false }],
-    });
-    scanner.scan();
-    for (const filePath of scanner.files) {
-      const relativePath = relative(REPO_ROOT, filePath).replaceAll("\\", "/");
-      if (!isRuntimeSource(relativePath) || resolve(filePath) === STYLESHEET_PATH) {
-        continue;
-      }
-      collectInto(relativePath, await readFile(filePath, "utf8"));
+    for (const relativePath of runtimeSourceFiles()) {
+      collectInto(relativePath, await readFile(resolve(REPO_ROOT, relativePath), "utf8"));
     }
     for (const directivePath of sourceDirectivePaths) {
       const resolved = resolve(STYLESHEET_DIR, directivePath);
@@ -567,6 +612,30 @@ describe("touch text-selection guard", () => {
     expect(await collectSelectionSites(SELECTION_SUPPRESSION_PATTERN)).toEqual(
       SELECTION_SUPPRESSIONS
     );
+  });
+
+  /**
+   * Drift guard for RENDERER_SEGMENTS: if browser code starts importing a new `src/`
+   * segment at runtime, that segment's files become renderer-visible and must join the
+   * inventory scan, so an unlisted import fails here rather than being silently exempt.
+   * Only the browser segment is checked because `src/common` legitimately runtime-
+   * imports `@/node` in corners the renderer never reaches; a segment reachable only
+   * through common is the accepted residual of segment-level granularity.
+   */
+  it("scans every segment the renderer imports directly", async () => {
+    const unlisted = new Set<string>();
+    for (const relativePath of runtimeSourceFiles()) {
+      if (!relativePath.startsWith("src/browser/")) {
+        continue;
+      }
+      const source = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
+      for (const segment of importedSegments(source, dirname(resolve(REPO_ROOT, relativePath)))) {
+        if (!RENDERER_SEGMENTS.includes(segment)) {
+          unlisted.add(segment);
+        }
+      }
+    }
+    expect([...unlisted]).toEqual([]);
   });
 
   it("leaves content selectable for fine pointers", () => {
