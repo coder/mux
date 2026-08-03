@@ -390,18 +390,30 @@ const FINE_VIEWPORTS: Viewport[] = [PHONE_WIDTH_PX, DESKTOP_WIDTH_PX].map((width
 }));
 
 /**
- * A selector consisting of exactly one class or id token, which can therefore only match
- * elements carrying it. Merely containing a class is not evidence of scoping, because
- * `:not(.allow-selection)` contains one and still matches nearly everything. Requiring the
- * whole selector to be one token needs no selector engine to defend.
+ * Structural precondition for the reviewed list below: exactly one class or id token.
+ * Merely containing a class is not evidence of scoping, because `:not(.allow-selection)`
+ * contains one and still matches nearly everything. Requiring the whole selector to be
+ * one token needs no selector engine to defend.
  */
 const SINGLE_COMPONENT_SELECTOR = /^[.#][A-Za-z0-9_-]+$/;
 
 /**
- * One token is still not scoping when the element it names wraps the application:
- * `#root` (index.html) contains everything React renders, so suppressing selection there
- * suppresses it app-wide by inheritance. Ids are read from index.html rather than
- * hardcoded, so a renamed or added shell container stays covered.
+ * Suppression selectors reviewed as genuinely component-scoped. One token is still not
+ * evidence of scope: `.mobile-layout` is a single class attached to App.tsx's
+ * application-wide wrapper, so suppressing selection on it would reach every desktop
+ * descendant by inheritance while staying structurally indistinguishable from
+ * `.line-number`. Which one a token is lives in TSX this contract cannot read, and
+ * reading class names out of shell files does not settle it either (`titlebar-drag`
+ * appears in App.tsx on a scoped strip), so no selector is accepted automatically; each
+ * is a reviewed entry, the same posture as the source-side inventories.
+ */
+const SCOPED_SUPPRESSION_SELECTORS = [".line-number", ".titlebar-drag"];
+
+/**
+ * Hard floor under the reviewed list: `#root` (index.html) contains everything React
+ * renders, so suppressing selection there suppresses it app-wide by inheritance, and an
+ * enumeration entry must not be able to override that. Ids are read from index.html
+ * rather than hardcoded, so a renamed or added shell container stays covered.
  */
 let appShellSelectors: string[] = [];
 
@@ -457,9 +469,9 @@ describe("touch text-selection guard", () => {
   /**
    * The same inheritance argument in reverse, and viewport-independent because a rule that
    * can reach content is wrong at every width: only the guard on `body` may suppress
-   * selection broadly, and everything else must name a single component.
+   * selection broadly, and everything else must be a reviewed component selector.
    */
-  it("suppresses selection only through the body guard or one component class", () => {
+  it("suppresses selection only through the body guard or a reviewed component selector", () => {
     const offenders = selectionRules
       .filter((rule) => rule.value === "none")
       .flatMap((rule) => rule.selectors)
@@ -467,7 +479,11 @@ describe("touch text-selection guard", () => {
       .filter(
         (selector) =>
           selector !== "body" &&
-          (!SINGLE_COMPONENT_SELECTOR.test(selector) || appShellSelectors.includes(selector))
+          !(
+            SINGLE_COMPONENT_SELECTOR.test(selector) &&
+            SCOPED_SUPPRESSION_SELECTORS.includes(selector) &&
+            !appShellSelectors.includes(selector)
+          )
       );
     expect([...new Set(offenders)]).toEqual([]);
   });
