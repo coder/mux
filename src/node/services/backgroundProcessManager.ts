@@ -90,6 +90,12 @@ export type MonitorWakeDeliveryState =
   | { status: "blocked"; readSettled: Promise<void> }
   | { status: "settled"; shownThroughOffset: number };
 
+export interface OutputShownPayload {
+  processId: string;
+  processStartTime: number;
+  shownThroughOffset: number;
+}
+
 export interface MonitorArmedPayload {
   processId: string;
   taskId: string;
@@ -212,6 +218,7 @@ export interface ForegroundProcess {
  */
 export interface BackgroundProcessManagerEvents {
   change: [workspaceId: string];
+  "output:shown": [workspaceId: string, payload: OutputShownPayload];
   "monitor:match": [workspaceId: string, payload: MonitorMatchPayload];
   "monitor:armed": [workspaceId: string, payload: MonitorArmedPayload];
   "monitor:stopped": [workspaceId: string, payload: MonitorStoppedPayload];
@@ -1310,6 +1317,8 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     proc.incompleteLineBuffer =
       currentStatus === "running" && !hasTrailingNewline ? allLines[allLines.length - 1] : "";
 
+    const shownThroughOffsetBeforeRead = proc.shownThroughOffset;
+
     // Advance the monitor's "shown through" mark only on unfiltered reads. A filtered read may have
     // dropped matched lines, so it must not count as having shown them. End-of-last-complete-line =
     // read cursor minus the trailing fragment we just buffered (cleared, hence 0, on exit). Offsets
@@ -1335,6 +1344,16 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
     );
 
     const filteredOutput = applyFilter(linesToReturn);
+
+    if (proc.shownThroughOffset > shownThroughOffsetBeforeRead) {
+      // A wake can queue between sequential task_await reads. Notify the workspace after each
+      // frontier advance so it can retract that queued wake before the next turn accepts it.
+      this.emit("output:shown", proc.workspaceId, {
+        processId: proc.id,
+        processStartTime: proc.startTime,
+        shownThroughOffset: proc.shownThroughOffset,
+      });
+    }
 
     // Suggest filter_exclude if polling too frequently on a running process
     const shouldSuggestFilterExclude =

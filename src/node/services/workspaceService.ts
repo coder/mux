@@ -245,6 +245,7 @@ import type {
   MonitorArmedPayload,
   MonitorMatchPayload,
   MonitorStoppedPayload,
+  OutputShownPayload,
 } from "@/node/services/backgroundProcessManager";
 import { BashMonitorRegistryStore } from "@/node/services/bashMonitorRegistryStore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
@@ -632,11 +633,15 @@ const IDLE_ONLY_BUSY_SKIP_MESSAGE = "Workspace is busy; idle-only send was skipp
 const BASH_MONITOR_WAKE_QUEUE_KEY_PREFIX = "bash-monitor-wake:";
 const BASH_MONITOR_CANCELED_QUEUE_REASON =
   "Background bash monitor was explicitly canceled before its wake dispatched.";
+const BASH_MONITOR_SHOWN_QUEUE_REASON =
+  "Background bash monitor output was already shown before its wake dispatched.";
 
 interface QueuedBashMonitorWakeCancellation {
   abortController: AbortController;
   dispatchState: { canceledBeforeAcceptance: boolean };
   canceledProcessKeys: Set<string>;
+  shownProcessKeys: Set<string>;
+  matchedOutputByProcess: Map<string, { matchedThroughOffset: number; originNotAfterMs: number }>;
 }
 
 async function waitForAgentSessionIdle(session: AgentSession, signal?: AbortSignal): Promise<void> {
@@ -1736,6 +1741,31 @@ export class WorkspaceService extends EventEmitter {
     Map<string, QueuedBashMonitorWakeCancellation>
   >();
   private nextBashMonitorWakeQueueKey = 0;
+  private readonly bashOutputShownListener = (
+    workspaceId: string,
+    payload: OutputShownPayload
+  ): void => {
+    const processKey = this.bashMonitorProcessKey(workspaceId, payload.processId);
+    for (const [queueKey, cancellation] of this.queuedBashMonitorWakeKeysByProcess.get(
+      processKey
+    ) ?? []) {
+      // Process IDs are reusable across restarts. Match the existing delivery gate's createdAt
+      // generation bound so output from a newer process cannot supersede an older pending wake.
+      const matchedOutput = cancellation.matchedOutputByProcess.get(processKey);
+      if (
+        matchedOutput == null ||
+        payload.processStartTime > matchedOutput.originNotAfterMs ||
+        payload.shownThroughOffset < matchedOutput.matchedThroughOffset
+      ) {
+        continue;
+      }
+      cancellation.shownProcessKeys.add(processKey);
+      cancellation.abortController.abort(BASH_MONITOR_SHOWN_QUEUE_REASON);
+      this.removeQueuedMessagesByDedupeKeyPrefix(workspaceId, queueKey, {
+        cancelReason: BASH_MONITOR_SHOWN_QUEUE_REASON,
+      });
+    }
+  };
   private readonly bashMonitorMatchListener = (
     _workspaceId: string,
     payload: MonitorMatchPayload
@@ -1953,6 +1983,7 @@ export class WorkspaceService extends EventEmitter {
     this.bashMonitorWakeStore = new BashMonitorWakeStore(config);
     this.bashMonitorRegistryStore = new BashMonitorRegistryStore(config);
     if (typeof this.backgroundProcessManager.on === "function") {
+      this.backgroundProcessManager.on("output:shown", this.bashOutputShownListener);
       this.backgroundProcessManager.on("monitor:match", this.bashMonitorMatchListener);
       this.backgroundProcessManager.on("monitor:armed", this.bashMonitorArmedListener);
       this.backgroundProcessManager.on("monitor:stopped", this.bashMonitorStoppedListener);
@@ -2093,9 +2124,24 @@ export class WorkspaceService extends EventEmitter {
       abortController: new AbortController(),
       dispatchState: { canceledBeforeAcceptance: false },
       canceledProcessKeys: new Set<string>(),
+      shownProcessKeys: new Set<string>(),
+      matchedOutputByProcess: new Map(),
     };
     for (const record of records) {
       const processKey = this.bashMonitorProcessKey(ownerWorkspaceId, record.processId);
+      if (record.kind === "match" && record.matchedThroughOffset != null) {
+        const previous = cancellation.matchedOutputByProcess.get(processKey);
+        cancellation.matchedOutputByProcess.set(processKey, {
+          matchedThroughOffset: Math.max(
+            previous?.matchedThroughOffset ?? 0,
+            record.matchedThroughOffset
+          ),
+          originNotAfterMs: Math.min(
+            previous?.originNotAfterMs ?? Number.POSITIVE_INFINITY,
+            Date.parse(record.createdAt)
+          ),
+        });
+      }
       const queueKeys =
         this.queuedBashMonitorWakeKeysByProcess.get(processKey) ??
         new Map<string, QueuedBashMonitorWakeCancellation>();
@@ -2502,14 +2548,20 @@ export class WorkspaceService extends EventEmitter {
           cancellationCallbackHandled = true;
           unregisterQueueKey();
           if (delivered) return;
-          const canceledRecords =
+          const canceledProcessKeys =
             reason === BASH_MONITOR_CANCELED_QUEUE_REASON
-              ? deliverable.filter((record) =>
-                  cancellation.canceledProcessKeys.has(
+              ? cancellation.canceledProcessKeys
+              : reason === BASH_MONITOR_SHOWN_QUEUE_REASON
+                ? cancellation.shownProcessKeys
+                : undefined;
+          const canceledRecords =
+            canceledProcessKeys == null
+              ? deliverable
+              : deliverable.filter((record) =>
+                  canceledProcessKeys.has(
                     this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
                   )
-                )
-              : deliverable;
+                );
           const cancelingKeys = canceledRecords.map((record) =>
             this.bashMonitorWakeKey(ownerWorkspaceId, record.id)
           );
@@ -2542,9 +2594,11 @@ export class WorkspaceService extends EventEmitter {
     if (!accepted && cancellation.abortController.signal.aborted) {
       // Cancellation may have raced the async preparation inside sendMessage and attempted queue
       // removal before the entry existed. Retry after sendMessage returns from the enqueue path.
-      this.removeQueuedMessagesByDedupeKeyPrefix(ownerWorkspaceId, queueKey, {
-        cancelReason: BASH_MONITOR_CANCELED_QUEUE_REASON,
-      });
+      const cancelReason =
+        typeof cancellation.abortController.signal.reason === "string"
+          ? cancellation.abortController.signal.reason
+          : BASH_MONITOR_CANCELED_QUEUE_REASON;
+      this.removeQueuedMessagesByDedupeKeyPrefix(ownerWorkspaceId, queueKey, { cancelReason });
     }
 
     if (!sendResult.success) {

@@ -7,6 +7,7 @@ import {
   type MonitorArmedPayload,
   type MonitorMatchPayload,
   type MonitorStoppedPayload,
+  type OutputShownPayload,
 } from "./backgroundProcessManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -859,6 +860,37 @@ describe("BackgroundProcessManager", () => {
       expect(incompleteLineBytes).toBeGreaterThan(0);
       expect(incompleteLineBytes).toBeLessThanOrEqual(1_000_000);
     });
+  });
+
+  it("emits output:shown when an unfiltered read advances the shown frontier", async () => {
+    const shownEvents: Array<{ workspaceId: string; payload: OutputShownPayload }> = [];
+    manager.on("output:shown", (workspaceId, payload) => {
+      shownEvents.push({ workspaceId, payload });
+    });
+
+    const result = await manager.spawn(runtime, testWorkspaceId, "printf 'line\\n'", {
+      cwd: process.cwd(),
+      displayName: "shown-event",
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    const proc = await manager.getProcess(result.processId);
+    expect(proc).not.toBeNull();
+    if (proc == null) return;
+
+    const output = await manager.getOutput(result.processId, undefined, false, 1);
+    expect(output.success).toBe(true);
+    expect(shownEvents).toEqual([
+      {
+        workspaceId: testWorkspaceId,
+        payload: {
+          processId: result.processId,
+          processStartTime: proc.startTime,
+          shownThroughOffset: 5,
+        },
+      },
+    ]);
   });
 
   describe("getSettledShownThroughOffset", () => {
