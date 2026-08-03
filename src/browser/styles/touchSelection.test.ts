@@ -7,11 +7,10 @@
  * declaration that wins for a viewport rather than matching literal source.
  *
  * Selection reaches an element from every route that produces a `user-select`
- * declaration, so all are checked: rules written in globals.css, Tailwind utilities in
- * any file Tailwind reads (its own scanner decides which, so `index.html` and other
- * non-TypeScript sources are included), and inline styles, whether React style objects
- * or DOM style assignments. Only the first route is visible to this parse; the others
- * need the source scan.
+ * declaration, so all are checked: rules written in globals.css, Tailwind utilities,
+ * and inline styles, whether React style objects or DOM style assignments. Only the
+ * first route is visible to this parse; the others need the source scan, which covers
+ * exactly the files that can put a declaration on a rendered element.
  *
  * `@tailwindcss/oxide` is the scanner underneath the declared `tailwindcss` and
  * `@tailwindcss/vite` packages; asking it for the file list is what keeps "which files
@@ -65,6 +64,28 @@ const ARBITRARY_SELECTION_CLASS = /\[(?:-(?:webkit|moz|ms|o)-)?user-select:[^\s\
 const STYLESHEET_DIR = fileURLToPath(new URL("./", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url));
+
+/**
+ * Files whose contents can put a `user-select` declaration on a rendered element: the
+ * renderer's entry HTML (vite.config.ts `rollupOptions.input`) and the `src` tree those
+ * entries are built from, minus the test, story, and fixture conventions, which ship no
+ * product UI. A token anywhere else, docs prose, a fixture's sample payload, a Storybook
+ * story, the VS Code webview's own stylesheet, emits at most an unused utility rule into
+ * the compiled CSS and styles nothing the app renders, so inventorying those files made
+ * behavior-neutral edits fail, the tautological shape AGENTS.md forbids. `src` is taken
+ * whole rather than `src/browser` alone because the renderer imports shared modules
+ * (`src/common`, `src/constants`, `src/types`), and over-inclusion only asks for review
+ * while under-inclusion silently exempts a file.
+ */
+const RUNTIME_ENTRY_HTML = ["index.html", "terminal.html"];
+const NON_RUNTIME_SOURCE = /\.(?:test|stories|fixtures)\.[jt]sx?$/;
+
+function isRuntimeSource(relativePath: string): boolean {
+  return (
+    RUNTIME_ENTRY_HTML.includes(relativePath) ||
+    (relativePath.startsWith("src/") && !NON_RUNTIME_SOURCE.test(relativePath))
+  );
+}
 
 /**
  * The one `@source` form this contract models: a double-quoted plain file path, which
@@ -173,11 +194,8 @@ const SELECTION_OPT_INS: Record<string, Record<string, number>> = {
  * so a human reviews what each new suppression wraps.
  */
 const SELECTION_SUPPRESSIONS: Record<string, Record<string, number>> = {
-  ".design-sync/previews/Checkbox.tsx": { "select-none": 1 },
-  ".design-sync/previews/Switch.tsx": { "select-none": 1 },
   "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-none": 1 },
   "src/browser/components/ChatPane/TranscriptHydrationSkeleton.tsx": { "select-none": 1 },
-  "src/browser/components/Checkbox/Checkbox.stories.tsx": { "select-none": 1 },
   "src/browser/components/FileIcon/FileIcon.tsx": { "userSelect:none": 1 },
   "src/browser/components/InstructionsTab/AdditionalSystemContextScratchpad.tsx": {
     "select-none": 1,
@@ -187,7 +205,6 @@ const SELECTION_SUPPRESSIONS: Record<string, Record<string, number>> = {
   "src/browser/components/ScrollArea/ScrollArea.tsx": { "select-none": 1 },
   "src/browser/components/SectionHeader/SectionHeader.tsx": { "select-none": 1 },
   "src/browser/components/SelectPrimitive/SelectPrimitive.tsx": { "select-none": 1 },
-  "src/browser/components/Switch/Switch.stories.tsx": { "select-none": 1 },
   "src/browser/components/ThinkingSlider/ProModeToggle.tsx": { "select-none": 1 },
   "src/browser/components/ThinkingSlider/ThinkingSlider.tsx": { "select-none": 1 },
   "src/browser/components/TitleBar/TitleBar.tsx": { "select-none": 1 },
@@ -208,11 +225,9 @@ const SELECTION_SUPPRESSIONS: Record<string, Record<string, number>> = {
   "src/browser/features/Tools/AgentSkillReadFileToolCall.tsx": { "select-none": 1 },
   "src/browser/features/Tools/AskUserQuestionToolCall.tsx": { "select-none": 1 },
   "src/browser/features/Tools/FileReadToolCall.tsx": { "select-none": 1 },
-  "src/browser/features/Tools/GoogleSearchToolCall.fixtures.ts": { "user-select:none": 1 },
   "src/browser/features/Tools/Shared/HookOutputDisplay.tsx": { "select-none": 1 },
   "src/browser/features/Tools/Shared/ToolPrimitives.tsx": { "select-none": 1 },
   "src/browser/hooks/useResizableSidebar.ts": { "userSelect:none": 1 },
-  "vscode/src/webview/webview.css": { "user-select:none": 1 },
 };
 
 const EDITABLE_SELECTORS = [
@@ -511,18 +526,17 @@ describe("touch text-selection guard", () => {
         fileSites[token] = (fileSites[token] ?? 0) + 1;
       }
     };
-    // Tailwind's own scanner decides which files are read, so `index.html`, docs, and
-    // every other automatic source it would extract class names from are included.
-    // Test files are skipped (they ship no UI, and this file names the utilities it
-    // matches), and so is the parsed stylesheet, whose declarations the assertions
-    // above already cover.
+    // Tailwind's own scanner still supplies the file list, so which files exist and are
+    // scannable is never a hand-rolled walk; the runtime filter then keeps only the
+    // sources that can style a rendered element. The parsed stylesheet is skipped too,
+    // since its declarations are covered by the assertions above.
     const scanner = new Scanner({
       sources: [{ base: REPO_ROOT.replace(/[\\/]$/, ""), pattern: "**/*", negated: false }],
     });
     scanner.scan();
     for (const filePath of scanner.files) {
       const relativePath = relative(REPO_ROOT, filePath).replaceAll("\\", "/");
-      if (/\.test\.tsx?$/.test(relativePath) || resolve(filePath) === STYLESHEET_PATH) {
+      if (!isRuntimeSource(relativePath) || resolve(filePath) === STYLESHEET_PATH) {
         continue;
       }
       collectInto(relativePath, await readFile(filePath, "utf8"));
