@@ -567,6 +567,28 @@ describe("Config", () => {
       expect(loaded.projects.has(legacyProjectPath)).toBe(false);
     });
 
+    it("survives a corrupted non-string subProjectPath on a mux-chat record", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              "/home/user/repo",
+              {
+                workspaces: [
+                  { path: "/home/user/repo/ws", id: "mux-chat", name: "chat", subProjectPath: 42 },
+                ],
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/home/user/repo")?.workspaces).toHaveLength(1);
+    });
+
     it("keeps other workspaces in a system Mux project and retains the project", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(

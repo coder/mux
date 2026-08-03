@@ -689,9 +689,12 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
       // an ancestor project (e.g. ~/.mux registered as a project) on an
       // earlier load, stamping subProjectPath with the original system/Mux
       // path. Match the entry in either location.
+      // typeof guard: config JSON is unvalidated at runtime, and a corrupted
+      // non-string subProjectPath would make path.basename throw, collapsing
+      // the whole config load to empty defaults.
       const legacyProjectPath = projectIsSystemMux
         ? projectPath
-        : workspace.subProjectPath != null && isSystemMuxPath(workspace.subProjectPath)
+        : typeof workspace.subProjectPath === "string" && isSystemMuxPath(workspace.subProjectPath)
           ? workspace.subProjectPath
           : null;
       if (legacyProjectPath === null) {
