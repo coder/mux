@@ -5430,6 +5430,22 @@ export class AgentSession {
     }
   }
 
+  setQueuedMessageDispatchMode(mode: "tool-end" | "turn-end"): boolean {
+    this.assertNotDisposed("setQueuedMessageDispatchMode");
+    const didUpdate = this.messageQueue.setVisibleQueueDispatchMode(mode);
+    if (!didUpdate) {
+      return false;
+    }
+
+    this.emitQueuedMessageChanged();
+    // Keep step-boundary yielding in sync with the effective queue, including hidden entries.
+    this.backgroundProcessManager.setMessageQueued(
+      this.workspaceId,
+      !this.messageQueue.isEmpty() && this.messageQueue.getQueueDispatchMode() === "tool-end"
+    );
+    return true;
+  }
+
   private notifyQueuedMessageCleared(
     callbacks: {
       onCanceled?: (reason: string) => Promise<void> | void;

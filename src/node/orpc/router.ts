@@ -4454,6 +4454,15 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      setQueuedMessageDispatchMode: t
+        .input(schemas.workspace.setQueuedMessageDispatchMode.input)
+        .output(schemas.workspace.setQueuedMessageDispatchMode.output)
+        .handler(({ context, input }) =>
+          context.workspaceService.setQueuedMessageDispatchMode(
+            input.workspaceId,
+            input.queueDispatchMode
+          )
+        ),
       truncateHistory: t
         .input(schemas.workspace.truncateHistory.input)
         .output(schemas.workspace.truncateHistory.output)

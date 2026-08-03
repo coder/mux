@@ -9495,6 +9495,20 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  setQueuedMessageDispatchMode(
+    workspaceId: string,
+    queueDispatchMode: "tool-end" | "turn-end"
+  ): Result<boolean> {
+    try {
+      const session = this.getOrCreateSession(workspaceId);
+      return Ok(session.setQueuedMessageDispatchMode(queueDispatchMode));
+    } catch (error) {
+      const errorMessage = getErrorMessage(error);
+      log.error("Unexpected error updating queued message dispatch mode:", error);
+      return Err(`Failed to update queued message dispatch mode: ${errorMessage}`);
+    }
+  }
+
   removeQueuedMessagesByDedupeKeyPrefix(
     workspaceId: string,
     prefix: string,

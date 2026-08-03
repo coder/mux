@@ -1440,6 +1440,13 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  setQueuedMessageDispatchMode: {
+    input: z.object({
+      workspaceId: z.string(),
+      queueDispatchMode: z.enum(["tool-end", "turn-end"]),
+    }),
+    output: ResultSchema(z.boolean(), z.string()),
+  },
   truncateHistory: {
     input: z.object({
       workspaceId: z.string(),

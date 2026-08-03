@@ -1044,6 +1044,25 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     }
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
 
+  const handleQueuedDispatchModeChange = useCallback(
+    async (queueDispatchMode: QueueDispatchMode) => {
+      if (!api) {
+        throw new Error("Workspace API is unavailable.");
+      }
+      const result = await api.workspace.setQueuedMessageDispatchMode({
+        workspaceId,
+        queueDispatchMode,
+      });
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+      if (!result.data) {
+        throw new Error("The queued message is no longer available.");
+      }
+    },
+    [api, workspaceId]
+  );
+
   const handleCancelCompactionFromBarrier = useCallback(() => {
     if (!api || !aggregator) {
       return;
@@ -1848,6 +1867,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       onSendQueuedImmediately={
                         workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
                       }
+                      onQueuedDispatchModeChange={handleQueuedDispatchModeChange}
                       reviews={reviews}
                       onCheckReviews={handleCheckReviews}
                     />
@@ -1917,6 +1937,7 @@ interface ChatInputPaneProps {
   queuedMessage: QueuedMessageData | null;
   onEditQueuedMessage: () => void;
   onSendQueuedImmediately: (() => Promise<void>) | undefined;
+  onQueuedDispatchModeChange: (mode: QueueDispatchMode) => Promise<void>;
   reviews: ReviewsState;
   onCheckReviews: (ids: string[]) => void;
 }
@@ -1932,6 +1953,21 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     decorationEntries.push(createChatInputDecorationStackItem(entry));
   };
 
+  // Keep the user's pending follow-up closest to the transcript, above every workspace decoration,
+  // so it reads as the next message rather than as another banner competing near the composer.
+  if (props.queuedMessage) {
+    addDecorationEntry({
+      key: "queued-message",
+      node: (
+        <QueuedMessage
+          message={props.queuedMessage}
+          onEdit={() => void props.onEditQueuedMessage()}
+          onChangeDispatchMode={props.onQueuedDispatchModeChange}
+          onSendImmediately={props.onSendQueuedImmediately}
+        />
+      ),
+    });
+  }
   if (props.shouldShowCompactionWarning) {
     addDecorationEntry({
       key: "compaction-warning",
@@ -1996,18 +2032,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
     addDecorationEntry({
       key: "reviews-banner",
       node: <ReviewsBanner workspaceId={props.workspaceId} />,
-    });
-  }
-  if (props.queuedMessage) {
-    addDecorationEntry({
-      key: "queued-message",
-      node: (
-        <QueuedMessage
-          message={props.queuedMessage}
-          onEdit={() => void props.onEditQueuedMessage()}
-          onSendImmediately={props.onSendQueuedImmediately}
-        />
-      ),
     });
   }
   if (props.isPreStreamAgentTask) {

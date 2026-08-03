@@ -3154,8 +3154,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         attachments.length === 0 &&
         reviewPanelItems.length === 0
       ) {
-        // User request: with an already-queued follow-up and an empty composer, Enter
-        // should activate the visible "Send now" action instead of requiring a mouse click.
+        // With an already-queued follow-up and an empty composer, Enter remains the keyboard
+        // shortcut for the dropdown's Send now action.
         e.preventDefault();
         e.stopPropagation();
         void props.onSendQueuedImmediately();

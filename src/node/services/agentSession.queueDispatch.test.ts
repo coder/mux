@@ -249,6 +249,45 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("updates visible queued dispatch mode without dequeuing content", async () => {
+    const workspaceId = "queue-dispatch-mode-update";
+    const setMessageQueued = mock((_workspaceId: string, _queued: boolean) => undefined);
+    const { session, cleanup, events } = await createAgentSessionHarness({
+      workspaceId,
+      captureEvents: true,
+      backgroundProcessManagerOverrides: { setMessageQueued },
+    });
+
+    try {
+      session.queueMessage("my queued follow-up", {
+        model: TEST_MODEL,
+        agentId: "exec",
+        queueDispatchMode: "turn-end",
+      });
+
+      expect(session.setQueuedMessageDispatchMode("tool-end")).toBe(true);
+      const toolEndEvent = events.filter((event) => event.type === "queued-message-changed").at(-1);
+      expect(toolEndEvent).toMatchObject({
+        queuedMessages: ["my queued follow-up"],
+        queueDispatchMode: "tool-end",
+      });
+      expect(setMessageQueued).toHaveBeenLastCalledWith(workspaceId, true);
+      expect(session.hasQueuedMessages()).toBe(true);
+
+      expect(session.setQueuedMessageDispatchMode("turn-end")).toBe(true);
+      const turnEndEvent = events.filter((event) => event.type === "queued-message-changed").at(-1);
+      expect(turnEndEvent).toMatchObject({
+        queuedMessages: ["my queued follow-up"],
+        queueDispatchMode: "turn-end",
+      });
+      expect(setMessageQueued).toHaveBeenLastCalledWith(workspaceId, false);
+      expect(session.hasQueuedMessages()).toBe(true);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("restoreQueueToInput discards a queued heartbeat instead of restoring it", async () => {
     const workspaceId = "queue-dispatch-restore-discards-heartbeat";
     const { session, cleanup } = await createAgentSessionHarness({ workspaceId });

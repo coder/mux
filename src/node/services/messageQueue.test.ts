@@ -281,6 +281,45 @@ describe("MessageQueue", () => {
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
     });
 
+    it("updates all visible entries without changing hidden queue entries or content order", () => {
+      const validOptions: SendMessageOptions = { model: "gpt-4", agentId: "exec" };
+      queue.add(
+        "hidden wake",
+        { ...validOptions, queueDispatchMode: "tool-end" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          sealed: true,
+        }
+      );
+      queue.add("visible first", { ...validOptions, queueDispatchMode: "tool-end" });
+      queue.add("visible second", {
+        ...validOptions,
+        queueDispatchMode: "turn-end",
+        muxMetadata: {
+          type: "agent-skill",
+          rawCommand: "/init",
+          skillName: "init",
+          scope: "built-in",
+        },
+      });
+
+      expect(queue.setVisibleQueueDispatchMode("turn-end")).toBe(true);
+      expect(queue.getVisibleQueueDispatchMode()).toBe("turn-end");
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+      expect(queue.getMessages()).toEqual(["hidden wake", "visible first", "visible second"]);
+
+      queue.dequeueNext();
+      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+    });
+
+    it("does not update a queue containing only hidden entries", () => {
+      queue.add("hidden wake", undefined, { synthetic: true, agentInitiated: true });
+
+      expect(queue.setVisibleQueueDispatchMode("turn-end")).toBe(false);
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+    });
+
     it("should reset mode to tool-end when cleared", () => {
       queue.add("Follow up", {
         model: "gpt-4",

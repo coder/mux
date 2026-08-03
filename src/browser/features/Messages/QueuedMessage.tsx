@@ -1,16 +1,11 @@
 import React, { useState } from "react";
 import type { QueuedMessage as QueuedMessageType } from "@/common/types/message";
-import {
-  AlertCircle,
-  ChevronDown,
-  ChevronRight,
-  Clock3,
-  Loader2,
-  Pencil,
-  Send,
-} from "lucide-react";
+import { AlertCircle, Check, ChevronDown, Clock3, Loader2, Pencil, Send } from "lucide-react";
 import { ChatDockSurface } from "@/browser/components/ChatPane/chatDockColumn";
+import { SEND_DISPATCH_MODES } from "@/browser/features/ChatInput/sendDispatchModes";
+import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
 import { UserMessageContent } from "@/browser/features/Messages/UserMessageContent";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -18,6 +13,7 @@ interface QueuedMessageProps {
   message: QueuedMessageType;
   className?: string;
   onEdit?: () => void;
+  onChangeDispatchMode?: (mode: QueueDispatchMode) => Promise<void>;
   onSendImmediately?: () => Promise<void>;
 }
 
@@ -39,35 +35,44 @@ function deriveQueuedPreview(message: QueuedMessageType): QueuedPreview {
 }
 
 export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const [isSending, setIsSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"mode" | "send-now" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const preview = deriveQueuedPreview(props.message);
+  const queueDispatchMode = props.message.queueDispatchMode ?? "tool-end";
   const queueStatusLabel =
-    props.message.queueDispatchMode === "turn-end"
-      ? "Sends after this turn"
-      : "Sends after this step";
+    queueDispatchMode === "turn-end" ? "Sends after this turn" : "Sends after this step";
+  const isActionPending = pendingAction != null;
 
-  const handleToggle = () => {
-    setIsExpanded((prev) => !prev);
-  };
-
-  const handleSendImmediately = () => {
-    if (isSending || !props.onSendImmediately) return;
-    setIsSending(true);
-    setSendError(null);
-    props.onSendImmediately().then(
-      () => setIsSending(false),
+  const handleDispatchModeChange = (mode: QueueDispatchMode) => {
+    setIsMenuOpen(false);
+    if (mode === queueDispatchMode || isActionPending || !props.onChangeDispatchMode) return;
+    setPendingAction("mode");
+    setActionError(null);
+    props.onChangeDispatchMode(mode).then(
+      () => setPendingAction(null),
       (error: unknown) => {
-        // Keep failures visible at the action that caused them while leaving the queued draft intact
-        // for a retry; consuming this rejection without feedback makes IPC failures look like no-ops.
-        setSendError(getErrorMessage(error));
-        setIsSending(false);
+        setActionError(getErrorMessage(error));
+        setPendingAction(null);
       }
     );
   };
 
-  const hasActions = props.onEdit != null || props.onSendImmediately != null;
+  const handleSendImmediately = () => {
+    setIsMenuOpen(false);
+    if (isActionPending || !props.onSendImmediately) return;
+    setPendingAction("send-now");
+    setActionError(null);
+    props.onSendImmediately().then(
+      () => setPendingAction(null),
+      (error: unknown) => {
+        // Keep failures visible at the action that caused them while leaving the queued draft intact
+        // for a retry; consuming this rejection without feedback makes IPC failures look like no-ops.
+        setActionError(getErrorMessage(error));
+        setPendingAction(null);
+      }
+    );
+  };
 
   // Mirror the sent user-message shape so dispatching the queued draft removes temporary status
   // chrome instead of making the content jump from a full-width banner into a right-aligned bubble.
@@ -78,90 +83,115 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
         data-component="QueuedMessageBanner"
       >
         <div className="ml-auto w-fit max-w-full" data-component="QueuedMessageGroup">
-          {isExpanded && (
-            <div
-              className="overflow-hidden rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] shadow-sm"
-              data-component="QueuedMessageCard"
-            >
-              {/* Keep queued drafts bounded so long content never pushes the composer off-screen. */}
-              <div className="max-h-[40vh] overflow-y-auto px-3 py-2">
-                <UserMessageContent
-                  content={preview.sanitizedText || preview.fallbackLabel}
-                  reviews={props.message.reviews}
-                  fileParts={props.message.fileParts}
-                  variant="sent"
-                />
-              </div>
-
-              {sendError && (
-                <div
-                  role="alert"
-                  className="border-toast-error-border/50 bg-toast-error-bg/50 text-toast-error-text flex items-start gap-1.5 border-t px-3 py-2 text-xs"
-                >
-                  <AlertCircle className="mt-0.5 size-3 shrink-0" />
-                  <span className="min-w-0 break-words">{sendError}</span>
-                </div>
-              )}
+          <div
+            className="border-pending/20 overflow-hidden rounded-lg border bg-[color-mix(in_srgb,var(--color-user-surface)_85%,var(--color-surface-primary)_15%)] shadow-sm"
+            data-component="QueuedMessageCard"
+          >
+            {/* Keep queued drafts bounded so long content never pushes the composer off-screen. */}
+            <div className="max-h-[40vh] overflow-y-auto px-3 py-2">
+              <UserMessageContent
+                content={preview.sanitizedText || preview.fallbackLabel}
+                reviews={props.message.reviews}
+                fileParts={props.message.fileParts}
+                variant="sent"
+              />
             </div>
-          )}
+
+            {actionError && (
+              <div
+                role="alert"
+                className="border-toast-error-border/50 bg-toast-error-bg/50 text-toast-error-text flex items-start gap-1.5 border-t px-3 py-2 text-xs"
+              >
+                <AlertCircle className="mt-0.5 size-3 shrink-0" />
+                <span className="min-w-0 break-words">{actionError}</span>
+              </div>
+            )}
+          </div>
 
           <div
-            className={cn(
-              "flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-[11px]",
-              isExpanded && "mt-1.5"
-            )}
-            data-component="QueuedMessageMeta"
+            className="mt-1.5 flex max-w-full flex-wrap items-center justify-end gap-1 text-[11px]"
+            data-component="QueuedMessageActions"
           >
-            {isExpanded && hasActions && (
-              <div
-                className="flex flex-wrap items-center justify-start gap-1"
-                data-component="QueuedMessageActions"
+            {props.onEdit && (
+              <button
+                type="button"
+                onClick={props.onEdit}
+                className="text-muted hover:bg-hover hover:text-foreground flex h-6 items-center gap-1 rounded-md px-1.5 font-medium transition-colors"
               >
-                {props.onEdit && (
-                  <button
-                    type="button"
-                    onClick={props.onEdit}
-                    className="text-muted hover:bg-hover hover:text-foreground flex h-6 items-center gap-1 rounded-md px-1.5 font-medium transition-colors"
-                  >
-                    <Pencil className="size-3" />
-                    Edit
-                  </button>
-                )}
+                <Pencil className="size-3" />
+                Edit
+              </button>
+            )}
 
-                {props.onSendImmediately && (
+            <div
+              className="relative"
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setIsMenuOpen(false);
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || !isMenuOpen) return;
+                event.preventDefault();
+                stopKeyboardPropagation(event);
+                setIsMenuOpen(false);
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setIsMenuOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={isMenuOpen}
+                className="text-secondary bg-muted/10 hover:bg-hover hover:text-foreground flex h-6 max-w-full items-center gap-1.5 rounded-md px-2 font-medium transition-colors"
+                data-component="QueuedMessageStatus"
+              >
+                {pendingAction === "mode" ? (
+                  <Loader2 className="size-3 shrink-0 animate-spin" />
+                ) : (
+                  <Clock3 className="text-pending size-3 shrink-0" />
+                )}
+                <span className="text-foreground shrink-0">Queued</span>
+                <span className="truncate">{queueStatusLabel}</span>
+                <ChevronDown className="size-3 shrink-0" />
+              </button>
+
+              {isMenuOpen && (
+                <div
+                  role="menu"
+                  className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 min-w-[12rem] rounded-md border p-1.5 shadow-md"
+                  data-component="QueuedMessageDispatchMenu"
+                >
+                  {SEND_DISPATCH_MODES.map((entry) => (
+                    <button
+                      key={entry.mode}
+                      type="button"
+                      role="menuitem"
+                      disabled={isActionPending || !props.onChangeDispatchMode}
+                      className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => handleDispatchModeChange(entry.mode)}
+                    >
+                      <span>{entry.label}</span>
+                      {queueDispatchMode === entry.mode && <Check className="size-3" />}
+                    </button>
+                  ))}
+                  <div className="border-border-light my-1 border-t" />
                   <button
                     type="button"
+                    role="menuitem"
+                    disabled={isActionPending || !props.onSendImmediately}
+                    className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center gap-2 rounded-sm px-2.5 py-1 text-left text-xs disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={handleSendImmediately}
-                    disabled={isSending}
-                    className="bg-pending/10 text-pending hover:bg-pending/20 flex h-6 items-center gap-1 rounded-md px-2 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {isSending ? (
+                    {pendingAction === "send-now" ? (
                       <Loader2 className="size-3 animate-spin" />
                     ) : (
                       <Send className="size-3" />
                     )}
-                    {isSending ? "Sending…" : "Send now"}
+                    Send now
                   </button>
-                )}
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={handleToggle}
-              aria-expanded={isExpanded}
-              className="text-muted hover:text-foreground ml-auto flex max-w-full min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors"
-              data-component="QueuedMessageStatus"
-            >
-              <Clock3 className="text-pending size-3 shrink-0" />
-              <span className="text-foreground shrink-0 font-medium">Queued</span>
-              <span className="truncate">{queueStatusLabel}</span>
-              {isExpanded ? (
-                <ChevronDown className="size-3 shrink-0" />
-              ) : (
-                <ChevronRight className="size-3 shrink-0" />
+                </div>
               )}
-            </button>
+            </div>
           </div>
         </div>
       </div>

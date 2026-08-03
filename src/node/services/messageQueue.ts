@@ -192,6 +192,22 @@ export class MessageQueue {
   }
 
   /**
+   * Update the dispatch boundary for every user-visible queued entry represented by the
+   * aggregate queued-message card. Hidden synthetic/background entries keep their own mode.
+   */
+  setVisibleQueueDispatchMode(mode: QueueDispatchMode): boolean {
+    let foundVisibleEntry = false;
+    for (const entry of this.entries) {
+      if (!entry.userAuthored) {
+        continue;
+      }
+      entry.dispatchMode = mode;
+      foundVisibleEntry = true;
+    }
+    return foundVisibleEntry;
+  }
+
+  /**
    * Add a message to the queue. Plain messages batch into the newest open entry;
    * special sends start their own entry (see class docblock). Never throws.
    */
