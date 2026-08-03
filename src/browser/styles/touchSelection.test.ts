@@ -78,11 +78,10 @@ const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
  * `WebkitUserSelect`, DOM's `webkitUserSelect`) or kebab-case inside strings
  * (`setProperty`, `cssText`).
  *
- * Spellings of suppression are excluded: `select-[none]` and `[user-select:none]` as
- * arbitrary forms of the untracked `select-none`, and inline values that are literally
- * `none` or the empty-string reset. An inline value this pattern cannot see, such as a
- * variable or a conditional, counts as an opt-in: a match is a review gate, and the
- * cost of a false positive is one entry below.
+ * Spellings of suppression are excluded here and tracked by the suppression pattern
+ * below instead; the empty-string reset is neither. An inline value this pattern cannot
+ * see, such as a variable or a conditional, counts as an opt-in: a match is a review
+ * gate, and the cost of a false positive is one entry below.
  *
  * Each alternative carries its parser's case posture. Tailwind candidates and JS
  * property lookups are case-sensitive (`SELECT-TEXT` and `[USER-SELECT:text]` compile
@@ -105,6 +104,25 @@ const SELECTION_OPT_IN_PATTERN = new RegExp(
     String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b(?!\s*[:=]\s*["'\`](?:none)?["'\`])`,
     // kebab-case inside strings, in any case the browser would accept.
     `(?:-(?:${anyCase("webkit")}|${anyCase("moz")}|${anyCase("ms")}|${anyCase("o")})-)?\\b${anyCase("user-select")}\\b(?!\\s*:\\s*${anyCase("none")}\\b)`,
+  ].join("|"),
+  "g"
+);
+
+/**
+ * The complement: every spelling that suppresses selection, in the same forms as the
+ * opt-in pattern. `user-select` inherits, so `select-none` on a control is safe while
+ * the same class on an application-wide container (the App.tsx shell) disables desktop
+ * selection for everything under it, and which one a line is cannot be told from the
+ * class name. Both directions are therefore review gates against the same enumeration
+ * machinery; a suppression added anywhere is one entry, reviewed for what it wraps.
+ */
+const SELECTION_SUPPRESSION_PATTERN = new RegExp(
+  [
+    String.raw`\b(?:[A-Za-z0-9_-]+:)*select-none\b`,
+    String.raw`\bselect-\[none\]`,
+    String.raw`\[(?:-(?:webkit|moz|ms|o)-)?user-select:none\]`,
+    String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b\s*[:=]\s*["'\`]none["'\`]`,
+    `(?:-(?:${anyCase("webkit")}|${anyCase("moz")}|${anyCase("ms")}|${anyCase("o")})-)?\\b${anyCase("user-select")}\\b\\s*:\\s*${anyCase("none")}\\b`,
   ].join("|"),
   "g"
 );
@@ -160,6 +178,119 @@ const SELECTION_OPT_INS: Record<string, string[]> = {
     '<div className="text-foreground break-all select-all">\n{diagnosticInfo.outputLength.toLocaleString()} bytes',
     '<div className="text-foreground break-all select-all">\n{diagnosticInfo.fileDiffCount}',
     '<div className="text-foreground break-all select-all">\n{diagnosticInfo.hunkCount}',
+  ],
+};
+
+/**
+ * Sites that suppress selection, pinned with the same line-plus-content identity as the
+ * opt-ins above. Most entries are the ordinary per-control use; the enumeration exists
+ * because the exceptional case, suppression on an app-wide container, is
+ * indistinguishable from it in a static scan, so a human reviews what each new or moved
+ * suppression wraps. Generated mechanically from the current tree; regenerate an entry
+ * by running the test and copying the reported diff.
+ */
+const SELECTION_SUPPRESSIONS: Record<string, string[]> = {
+  "src/browser/components/AgentListItem/AgentListItem.tsx": [
+    '"bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-1.5 select-none transition-all duration-150";\nconst HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =',
+  ],
+  "src/browser/components/ChatPane/TranscriptHydrationSkeleton.tsx": [
+    'className="flex flex-col gap-8 py-6 select-none"\n>',
+  ],
+  "src/browser/components/Checkbox/Checkbox.stories.tsx": [
+    '<label htmlFor={props.id} className="text-sm select-none">\n{props.label}',
+  ],
+  "src/browser/components/FileIcon/FileIcon.tsx": ['userSelect: "none",\nfontStyle: "normal",'],
+  "src/browser/components/InstructionsTab/AdditionalSystemContextScratchpad.tsx": [
+    '<label className="flex cursor-pointer items-center gap-1.5 select-none">\n<input',
+  ],
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": [
+    '"group sticky top-0 z-30 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";\n// Shared classes for the chevron toggle buttons on project/section headers.',
+    '"font-primary bg-surface-primary border-border-light relative flex flex-1 select-none flex-col overflow-hidden border-r",\n// In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)',
+  ],
+  "src/browser/components/ProjectSidebar/TaskGroupListItem.tsx": [
+    '"bg-surface-primary relative flex items-start rounded-l-sm py-2 pr-2 select-none transition-all duration-150 hover:bg-surface-secondary",\nprops.sectionId != null ? "ml-2" : "ml-0",',
+  ],
+  "src/browser/components/ScrollArea/ScrollArea.tsx": [
+    '"z-40 flex touch-none select-none bg-transparent transition-colors",\norientation === "vertical" ? "h-full w-1.5" : "h-1.5 flex-col",',
+  ],
+  "src/browser/components/SectionHeader/SectionHeader.tsx": [
+    'className="group relative ml-0 flex items-center gap-1 py-1.5 pr-1 pl-2.5 select-none"\ndata-section-id={section.id}',
+  ],
+  "src/browser/components/SelectPrimitive/SelectPrimitive.tsx": [
+    '"hover:bg-hover focus:bg-hover relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-2 pl-6 text-xs outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50",\nclassName',
+  ],
+  "src/browser/components/Switch/Switch.stories.tsx": [
+    '<span className="text-sm select-none">{props.label}</span>\n</div>',
+  ],
+  "src/browser/components/ThinkingSlider/ProModeToggle.tsx": [
+    '"hover:bg-hover shrink-0 rounded-sm bg-transparent px-1 text-center text-[11px] transition-all duration-200 select-none",\nprops.className',
+  ],
+  "src/browser/components/ThinkingSlider/ThinkingSlider.tsx": [
+    '"text-foreground w-[5ch] shrink-0 text-center text-[11px] font-medium select-none";\ninterface ThinkingControlProps {',
+  ],
+  "src/browser/components/TitleBar/TitleBar.tsx": [
+    '"bg-sidebar border-border-light font-primary text-muted titlebar-safe-left titlebar-safe-left-gutter-4 flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",\nisDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",',
+  ],
+  "src/browser/features/ChatInput/CreationControls.tsx": [
+    '"focus:bg-hover data-[state=checked]:bg-hover relative flex cursor-default select-none items-center rounded-sm py-1.5 pr-3 pl-3 text-xs outline-none",\n"data-[disabled]:pointer-events-none data-[disabled]:opacity-50"',
+  ],
+  "src/browser/features/Messages/ChatBarrier/StreamingBarrierView.tsx": [
+    '"text-assistant-border counter-nums-mono inline-flex min-w-[14ch] items-baseline justify-end text-[11px] whitespace-nowrap select-none",\nprops.tokenCount === undefined && "invisible"',
+    '"text-muted text-[11px] whitespace-nowrap select-none",\n// Low-priority hints yield to the status label in narrow panes',
+  ],
+  "src/browser/features/Messages/MarkdownComponents.tsx": [
+    '<summary className="cursor-pointer py-1 pl-1 font-semibold select-none">{children}</summary>\n),',
+  ],
+  "src/browser/features/Messages/OperationalBundleMessage.tsx": [
+    '"flex w-full cursor-pointer items-center gap-2 text-left text-secondary transition-colors select-none hover:text-foreground",\n"focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"',
+  ],
+  "src/browser/features/Messages/ReasoningMessage.tsx": [
+    '"flex items-center justify-between gap-2 select-none",\nisCollapsible && "cursor-pointer",',
+  ],
+  "src/browser/features/Messages/WorkBundleMessage.tsx": [
+    '"text-muted hover:text-foreground flex w-full cursor-pointer items-center gap-2 border-b border-border/60 py-3 text-left text-base transition-colors select-none",\n"focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"',
+  ],
+  "src/browser/features/RightSidebar/BrowserTab/BrowserViewport.tsx": [
+    'className="pointer-events-none absolute top-1/2 left-1/2 max-h-full max-w-full -translate-x-1/2 -translate-y-1/2 select-none"\ndraggable={false}',
+  ],
+  "src/browser/features/RightSidebar/CodeReview/FileTree.tsx": [
+    '"cursor-pointer select-none flex items-center gap-1.5 rounded py-0.5 px-1.5",\nisSelected ? "bg-code-keyword-overlay" : "bg-transparent hover:bg-white/5"',
+  ],
+  "src/browser/features/RightSidebar/CodeReview/ImmersiveDiffRevealLoadingState.tsx": [
+    'className="mx-auto flex h-full w-full max-w-5xl flex-col gap-3 overflow-hidden px-4 py-5 select-none"\n>',
+  ],
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": [
+    "<details className=\"bg-modal-bg border-border-light [&_summary]:text-muted mt-4 w-full max-w-96 cursor-pointer rounded border p-3 [&_summary]:flex [&_summary]:list-none [&_summary]:items-center [&_summary]:gap-1.5 [&_summary]:text-xs [&_summary]:font-medium [&_summary]:select-none [&_summary::-webkit-details-marker]:hidden [&_summary::before]:text-[10px] [&_summary::before]:transition-transform [&_summary::before]:duration-200 [&_summary::before]:content-['\u25b6'] [&[open]_summary::before]:rotate-90\">\n<summary>Show diagnostic info</summary>",
+  ],
+  "src/browser/features/RightSidebar/StatsTab.tsx": [
+    '<label className="text-muted flex items-center gap-2 text-xs select-none">\n<input',
+  ],
+  "src/browser/features/Shared/DiffRenderer.tsx": [
+    'className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"\nstyle={{ background: resolvedBackground }}',
+    'className={cn("relative text-center select-none", isInteractive && "cursor-pointer")}\nstyle={{ background }}',
+    'className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"\nstyle={{ background: getDiffLineGutterBackground(lineType) }}',
+    'className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"\nstyle={{ background: getDiffLineGutterBackground(lineType) }}',
+  ],
+  "src/browser/features/Tools/AgentSkillReadFileToolCall.tsx": [
+    '<div className="text-secondary font-monospace mr-2 min-w-10 border-r border-white/10 pr-3 text-right opacity-40 select-none">\n{parsedContent.lineNumbers.map((lineNum, i) => (',
+  ],
+  "src/browser/features/Tools/AskUserQuestionToolCall.tsx": [
+    '"flex cursor-pointer items-start gap-2.5 rounded px-2 py-1.5 transition-colors select-none",\nchecked ? "bg-accent/10 hover:bg-accent/15" : "hover:bg-white/5"',
+  ],
+  "src/browser/features/Tools/FileReadToolCall.tsx": [
+    '<div className="text-secondary font-monospace mr-2 min-w-10 border-r border-white/10 pr-3 text-right opacity-40 select-none">\n{parsedContent.lineNumbers.map((lineNum, i) => (',
+  ],
+  "src/browser/features/Tools/GoogleSearchToolCall.fixtures.ts": [
+    "user-select: none;\nmargin: 0 8px;",
+  ],
+  "src/browser/features/Tools/Shared/HookOutputDisplay.tsx": [
+    '"transition-colors cursor-pointer select-none"\n)}',
+  ],
+  "src/browser/features/Tools/Shared/ToolPrimitives.tsx": [
+    '"flex items-center gap-2 cursor-pointer select-none text-secondary hover:text-foreground",\nclassName',
+  ],
+  "src/browser/hooks/useResizableSidebar.ts": [
+    'document.body.style.userSelect = "none";\ndocument.body.style.cursor = "col-resize";',
   ],
 };
 
@@ -411,10 +542,10 @@ describe("touch text-selection guard", () => {
     expect([...new Set(offenders)]).toEqual([]);
   });
 
-  it("opts content back into selection only in reviewed components", async () => {
-    const optIns: Record<string, string[]> = {};
-    const countInto = (key: string, source: string) => {
-      for (const match of source.matchAll(SELECTION_OPT_IN_PATTERN)) {
+  async function collectSelectionSites(pattern: RegExp): Promise<Record<string, string[]>> {
+    const sites: Record<string, string[]> = {};
+    const collectInto = (key: string, source: string) => {
+      for (const match of source.matchAll(pattern)) {
         const lineStart = source.lastIndexOf("\n", match.index) + 1;
         const lineEnd = source.indexOf("\n", match.index);
         const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd).trim();
@@ -423,7 +554,7 @@ describe("touch text-selection guard", () => {
           .split("\n")
           .map((candidate) => candidate.trim())
           .find((candidate) => candidate !== "");
-        (optIns[key] ??= []).push(`${line}\n${following ?? ""}`);
+        (sites[key] ??= []).push(`${line}\n${following ?? ""}`);
       }
     };
     // Test files are skipped: they ship no UI, and this file names the utilities it matches.
@@ -431,7 +562,7 @@ describe("touch text-selection guard", () => {
       if (/\.test\.tsx?$/.test(relativePath)) {
         continue;
       }
-      countInto(
+      collectInto(
         `src/${relativePath.replaceAll("\\", "/")}`,
         await readFile(join(SOURCE_DIR, relativePath), "utf8")
       );
@@ -446,12 +577,22 @@ describe("touch text-selection guard", () => {
       if (!stats.isFile()) {
         throw new Error(`Unsupported non-file @source target: ${directivePath}`);
       }
-      countInto(
+      collectInto(
         relative(REPO_ROOT, resolved).replaceAll("\\", "/"),
         await readFile(resolved, "utf8")
       );
     }
-    expect(optIns).toEqual(SELECTION_OPT_INS);
+    return sites;
+  }
+
+  it("opts content back into selection only in reviewed components", async () => {
+    expect(await collectSelectionSites(SELECTION_OPT_IN_PATTERN)).toEqual(SELECTION_OPT_INS);
+  });
+
+  it("suppresses selection in source only at reviewed sites", async () => {
+    expect(await collectSelectionSites(SELECTION_SUPPRESSION_PATTERN)).toEqual(
+      SELECTION_SUPPRESSIONS
+    );
   });
 
   it("leaves content selectable for fine pointers", () => {
