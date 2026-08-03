@@ -41,6 +41,7 @@ import {
   TaskToolCall,
   TaskAwaitToolCall,
   TaskListToolCall,
+  TaskSendMessageToolCall,
   TaskTerminateToolCall,
 } from "../TaskToolCall";
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
@@ -191,6 +192,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   task: { component: TaskToolCall, schema: TOOL_DEFINITIONS.task.schema },
   task_await: { component: TaskAwaitToolCall, schema: TOOL_DEFINITIONS.task_await.schema },
   task_list: { component: TaskListToolCall, schema: TOOL_DEFINITIONS.task_list.schema },
+  task_send_message: {
+    component: TaskSendMessageToolCall,
+    schema: TOOL_DEFINITIONS.task_send_message.schema,
+  },
   task_terminate: {
     component: TaskTerminateToolCall,
     schema: TOOL_DEFINITIONS.task_terminate.schema,

@@ -714,6 +714,17 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
+<summary>task_send_message (3)</summary>
+
+| Env var                              | JSON path             | Type   | Description                                                                                                                             |
+| ------------------------------------ | --------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_MESSAGE`             | `message`             | string | Updated guidance to send to the sub-agent.                                                                                              |
+| `MUX_TOOL_INPUT_QUEUE_DISPATCH_MODE` | `queue_dispatch_mode` | enum   | When the child is busy, dispatch the guidance at "tool-end" after its next tool call (default) or at "turn-end" after its current turn. |
+| `MUX_TOOL_INPUT_TASK_ID`             | `task_id`             | string | Active descendant sub-agent task ID returned by task or task_list.                                                                      |
+
+</details>
+
+<details>
 <summary>task_terminate (2)</summary>
 
 | Env var                           | JSON path           | Type   | Description                                                                                                                                                                                                                                                                       |

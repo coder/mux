@@ -10315,6 +10315,248 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  test("sendMessageToDescendantAgentTask sends updated guidance with the child's settings", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-guidance";
+    const childTaskId = "child-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskThinkingLevel: "medium",
+          taskExperiments: { advisorTool: true },
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
+      sendMessage: mock(
+        async (
+          _workspaceId: string,
+          _message: string,
+          _options: unknown,
+          internal?: { onAccepted?: () => Promise<void> | void }
+        ): Promise<Result<void>> => {
+          await internal?.onAccepted?.();
+          return Ok(undefined);
+        }
+      ),
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.sendMessageToDescendantAgentTask(
+      parentWorkspaceId,
+      childTaskId,
+      "Inspect the generated schema instead.",
+      "turn-end"
+    );
+
+    expect(result).toEqual(Ok({ delivery: "accepted" }));
+    expect(sendMessage).toHaveBeenCalledWith(
+      childTaskId,
+      "Updated guidance from parent:\n\nInspect the generated schema instead.",
+      {
+        model: "openai:gpt-5.2",
+        agentId: "explore",
+        thinkingLevel: "medium",
+        reasoningMode: undefined,
+        experiments: { advisorTool: true },
+        queueDispatchMode: "turn-end",
+      },
+      expect.objectContaining({
+        synthetic: true,
+        agentInitiated: true,
+        startStreamInBackground: true,
+      })
+    );
+  });
+
+  test("sendMessageToDescendantAgentTask revives awaiting-report tasks and rolls back failed sends", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-awaiting-guidance";
+    const childTaskId = "child-awaiting-guidance";
+    let sendSucceeds = false;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "awaiting_report",
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage: mock(
+        (): Promise<Result<void, SendMessageError>> =>
+          Promise.resolve(
+            sendSucceeds ? Ok(undefined) : Err({ type: "unknown", raw: "send failed" })
+          )
+      ),
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "Continue with the correction.",
+        "tool-end"
+      )
+    ).toEqual(Err({ code: "send_failed", message: "send failed" }));
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("awaiting_report");
+
+    sendSucceeds = true;
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "Continue with the correction.",
+        "tool-end"
+      )
+    ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "tool-end" }));
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
+  });
+
+  test("sendMessageToDescendantAgentTask updates queued prompts without bypassing scheduling", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-queued-guidance";
+    const childTaskId = "child-queued-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "queued",
+          taskPrompt: "Original brief",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.sendMessageToDescendantAgentTask(
+      parentWorkspaceId,
+      childTaskId,
+      "Do not edit generated files.",
+      "tool-end"
+    );
+
+    expect(result).toEqual(Ok({ delivery: "queued" }));
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPrompt).toBe(
+      "Original brief\n\nUpdated guidance from parent:\n\nDo not edit generated files."
+    );
+  });
+
+  test("sendMessageToDescendantAgentTask treats legacy missing taskStatus as running", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-legacy-guidance";
+    const childTaskId = "child-legacy-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: undefined,
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "Apply the corrected requirement.",
+        "tool-end"
+      )
+    ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "tool-end" }));
+  });
+
+  test("sendMessageToDescendantAgentTask rejects non-descendants and settled children", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-guidance-scope";
+    const otherParentId = "other-guidance-scope";
+    const otherChildId = "other-child-guidance-scope";
+    const settledChildId = "settled-child-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "other-parent", otherParentId),
+        projectWorkspace(projectPath, "other-child", otherChildId, {
+          parentWorkspaceId: otherParentId,
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "settled-child", settledChildId, {
+          parentWorkspaceId,
+          taskStatus: "reported",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { taskService } = createTaskServiceHarness(config);
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        otherChildId,
+        "Correction",
+        "tool-end"
+      )
+    ).toEqual(Err({ code: "invalid_scope" }));
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        settledChildId,
+        "Correction",
+        "tool-end"
+      )
+    ).toEqual(Err({ code: "not_active", taskStatus: "reported" }));
+  });
+
   test("requestAgentFinalReportForTimeout records finalization token only after prompt send succeeds", async () => {
     const config = await createTestConfig(rootDir);
 

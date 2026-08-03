@@ -542,6 +542,22 @@ describe("TOOL_DEFINITIONS", () => {
     ).toBe(false);
   });
 
+  it("accepts sub-agent guidance dispatch modes and rejects blank guidance", () => {
+    expect(
+      TOOL_DEFINITIONS.task_send_message.schema.safeParse({
+        task_id: "child-task",
+        message: "Use the latest user correction.",
+        queue_dispatch_mode: "turn-end",
+      }).success
+    ).toBe(true);
+    expect(
+      TOOL_DEFINITIONS.task_send_message.schema.safeParse({
+        task_id: "child-task",
+        message: "   ",
+      }).success
+    ).toBe(false);
+  });
+
   describe("task tool isolation parameter", () => {
     const validArgs = { agentId: "explore", prompt: "investigate", title: "Investigate" };
 

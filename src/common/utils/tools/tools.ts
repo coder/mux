@@ -32,6 +32,7 @@ import type { MuxToolScope } from "@/common/types/toolScope";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
+import { createTaskSendMessageTool } from "@/node/services/tools/task_send_message";
 import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
 import { createTaskWorkspaceLifecycleTool } from "@/node/services/tools/task_workspace_lifecycle";
 import { createTaskListTool } from "@/node/services/tools/task_list";
@@ -561,6 +562,7 @@ export async function getToolsForModel(
     task: wrap(createTaskTool(config)),
     task_await: wrap(createTaskAwaitTool(config)),
     task_apply_git_patch: wrap(createTaskApplyGitPatchTool(config)),
+    task_send_message: wrap(createTaskSendMessageTool(config)),
     task_terminate: wrap(createTaskTerminateTool(config)),
     task_workspace_lifecycle: wrap(createTaskWorkspaceLifecycleTool(config)),
     task_list: wrap(createTaskListTool(config)),

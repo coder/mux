@@ -26,6 +26,7 @@ import {
   Monitor,
   Move,
   MousePointerClick,
+  MessageSquareMore,
   Paperclip,
   Info,
   List,
@@ -276,6 +277,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   review_pane_update: Sparkles,
   review_pane_get: ScanEye,
   analytics_query: Database,
+  task_send_message: MessageSquareMore,
   task_apply_git_patch: GitCommit,
   // Layers (stacked planes) reads as "manage the stack of child workspaces" — matches the
   // WorkspaceLifecycleToolCall card's glyph.

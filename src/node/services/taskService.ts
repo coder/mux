@@ -605,6 +605,19 @@ interface MaterializedTaskLaunch {
   sourceRuntimeConfigUpdate?: RuntimeConfig;
 }
 
+export type TaskMessageQueueDispatchMode = "tool-end" | "turn-end";
+
+export interface SendAgentTaskMessageResult {
+  delivery: "accepted" | "queued";
+  queueDispatchMode?: TaskMessageQueueDispatchMode;
+}
+
+export type SendAgentTaskMessageError =
+  | { code: "not_found" }
+  | { code: "invalid_scope" }
+  | { code: "not_active"; taskStatus: AgentTaskStatus | "unknown" }
+  | { code: "send_failed"; message: string };
+
 export interface TerminateAgentTaskResult {
   /** Task IDs terminated (includes descendants). */
   terminatedTaskIds: string[];
@@ -3972,6 +3985,136 @@ export class TaskService {
     }
 
     return Ok({ taskId, kind: "agent", status: "running" });
+  }
+
+  async sendMessageToDescendantAgentTask(
+    ancestorWorkspaceId: string,
+    taskId: string,
+    message: string,
+    queueDispatchMode: TaskMessageQueueDispatchMode
+  ): Promise<Result<SendAgentTaskMessageResult, SendAgentTaskMessageError>> {
+    assert(
+      ancestorWorkspaceId.length > 0,
+      "sendMessageToDescendantAgentTask: ancestorWorkspaceId must be non-empty"
+    );
+    assert(taskId.length > 0, "sendMessageToDescendantAgentTask: taskId must be non-empty");
+    const trimmedMessage = message.trim();
+    assert(
+      trimmedMessage.length > 0,
+      "sendMessageToDescendantAgentTask: message must be non-empty"
+    );
+
+    return this.workspaceEventLocks.withLock(taskId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const entry = findWorkspaceEntry(cfg, taskId);
+      if (!entry) {
+        return Err({ code: "not_found" as const });
+      }
+
+      const taskIndex = this.buildAgentTaskIndex(cfg);
+      if (
+        !this.isDescendantAgentTaskUsingParentById(
+          taskIndex.parentById,
+          ancestorWorkspaceId,
+          taskId
+        )
+      ) {
+        return Err({ code: "invalid_scope" as const });
+      }
+
+      // Missing status is a legacy running task: old persisted children predate taskStatus.
+      const previousStatus = entry.workspace.taskStatus ?? "running";
+      if (previousStatus === "queued") {
+        const initialPrompt = coerceNonEmptyString(entry.workspace.taskPrompt);
+        if (!initialPrompt) {
+          return Err({
+            code: "send_failed" as const,
+            message: "Queued task has no durable prompt to update.",
+          });
+        }
+        // A queued child has not started yet, so fold the correction into its durable initial prompt
+        // instead of bypassing the parallel-task scheduler with a generic sendMessage call.
+        await this.editWorkspaceEntry(taskId, (workspace) => {
+          workspace.taskPrompt = `${initialPrompt}\n\nUpdated guidance from parent:\n\n${trimmedMessage}`;
+        });
+        return Ok({ delivery: "queued" as const });
+      }
+
+      if (previousStatus !== "running" && previousStatus !== "awaiting_report") {
+        return Err({ code: "not_active" as const, taskStatus: previousStatus ?? "unknown" });
+      }
+
+      if (previousStatus === "awaiting_report") {
+        await this.editWorkspaceEntry(
+          taskId,
+          (workspace) => {
+            workspace.taskStatus = "running";
+          },
+          { allowMissing: true }
+        );
+      }
+
+      let accepted = false;
+      const sendResult = await this.workspaceService.sendMessage(
+        taskId,
+        // Keep the correction explicit in the child transcript so it cannot be confused with the
+        // original brief, while synthetic metadata avoids treating parent orchestration as a direct
+        // human intervention in child-only features such as goals and interactive questions.
+        `Updated guidance from parent:\n\n${trimmedMessage}`,
+        {
+          model: entry.workspace.taskModelString ?? defaultModel,
+          agentId: resolveTaskAgentIdForResume(entry.workspace),
+          thinkingLevel: entry.workspace.taskThinkingLevel,
+          reasoningMode: coerceOpenAIReasoningMode(entry.workspace.aiSettings?.reasoningMode),
+          experiments: entry.workspace.taskExperiments,
+          queueDispatchMode,
+        },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          startStreamInBackground: true,
+          onAcceptedPreStreamFailure:
+            previousStatus === "awaiting_report"
+              ? async () => {
+                  // The queued guidance was persisted but its replacement stream could not start;
+                  // keep the child recoverable by restoring the completion-reminder state.
+                  await this.editWorkspaceEntry(
+                    taskId,
+                    (workspace) => {
+                      if (workspace.taskStatus === "running") {
+                        workspace.taskStatus = "awaiting_report";
+                      }
+                    },
+                    { allowMissing: true }
+                  );
+                }
+              : undefined,
+          onAccepted: () => {
+            accepted = true;
+          },
+        }
+      );
+
+      if (!sendResult.success) {
+        if (previousStatus === "awaiting_report") {
+          await this.editWorkspaceEntry(
+            taskId,
+            (workspace) => {
+              if (workspace.taskStatus === "running") {
+                workspace.taskStatus = "awaiting_report";
+              }
+            },
+            { allowMissing: true }
+          );
+        }
+        return Err({
+          code: "send_failed" as const,
+          message: formatSendMessageError(sendResult.error).message,
+        });
+      }
+
+      return Ok(accepted ? { delivery: "accepted" } : { delivery: "queued", queueDispatchMode });
+    });
   }
 
   async terminateDescendantAgentTask(

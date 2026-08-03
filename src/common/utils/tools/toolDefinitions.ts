@@ -339,6 +339,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
     "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
+    "If later user guidance corrects or refines an active sub-agent's work, use task_send_message to update the existing child instead of terminating and recreating it. " +
     isolationGuidance +
     "Use the bash tool to run shell commands."
   );
@@ -974,6 +975,81 @@ export const TaskApplyGitPatchToolResultSchema = z.union([
       note: z.string().optional(),
     })
     .strict(),
+]);
+
+// -----------------------------------------------------------------------------
+// task_send_message (send updated guidance to a running sub-agent)
+// -----------------------------------------------------------------------------
+
+export const TaskSendMessageToolArgsSchema = z
+  .object({
+    task_id: z
+      .string()
+      .min(1)
+      .describe("Active descendant sub-agent task ID returned by task or task_list."),
+    message: z.string().trim().min(1).describe("Updated guidance to send to the sub-agent."),
+    queue_dispatch_mode: z
+      .enum(["tool-end", "turn-end"])
+      .nullish()
+      .describe(
+        'When the child is busy, dispatch the guidance at "tool-end" after its next tool call (default) or at "turn-end" after its current turn.'
+      ),
+  })
+  .strict();
+
+const TaskSendMessageToolAcceptedResultSchema = z
+  .object({
+    status: z.literal("accepted"),
+    taskId: z.string(),
+  })
+  .strict();
+
+const TaskSendMessageToolQueuedResultSchema = z
+  .object({
+    status: z.literal("queued"),
+    taskId: z.string(),
+    queueDispatchMode: z.enum(["tool-end", "turn-end"]).optional(),
+  })
+  .strict();
+
+const TaskSendMessageToolNotFoundResultSchema = z
+  .object({
+    status: z.literal("not_found"),
+    taskId: z.string(),
+  })
+  .strict();
+
+const TaskSendMessageToolInvalidScopeResultSchema = z
+  .object({
+    status: z.literal("invalid_scope"),
+    taskId: z.string(),
+  })
+  .strict();
+
+const TaskSendMessageToolNotActiveResultSchema = z
+  .object({
+    status: z.literal("not_active"),
+    taskId: z.string(),
+    taskStatus: z.enum(["starting", "interrupted", "reported", "unknown"]),
+    error: z.string(),
+  })
+  .strict();
+
+const TaskSendMessageToolErrorResultSchema = z
+  .object({
+    status: z.literal("error"),
+    taskId: z.string(),
+    error: z.string(),
+  })
+  .strict();
+
+export const TaskSendMessageToolResultSchema = z.discriminatedUnion("status", [
+  TaskSendMessageToolAcceptedResultSchema,
+  TaskSendMessageToolQueuedResultSchema,
+  TaskSendMessageToolNotFoundResultSchema,
+  TaskSendMessageToolInvalidScopeResultSchema,
+  TaskSendMessageToolNotActiveResultSchema,
+  TaskSendMessageToolErrorResultSchema,
 ]);
 
 // -----------------------------------------------------------------------------
@@ -2089,6 +2165,14 @@ export const TOOL_DEFINITIONS = {
       "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
     schema: TaskAwaitToolArgsSchema,
   },
+  task_send_message: {
+    description:
+      "Send updated guidance to a running descendant sub-agent without terminating or recreating it. " +
+      "If the child is busy, the message is queued for the requested boundary; tool-end is the default so corrections can take effect after the child's next tool call. Queued tasks have the guidance appended to their durable launch prompt. " +
+      "Use this when a new user message corrects or refines work that an active sub-agent is already performing. " +
+      "This tool only accepts sub-agent task IDs in the current workspace's descendant tree; it does not target bash tasks, workflow runs, or workspace-turn handles.",
+    schema: TaskSendMessageToolArgsSchema,
+  },
   task_terminate: {
     description:
       "Terminate one or more tasks immediately (sub-agent tasks, background bash tasks, or workflow runs). " +
@@ -2948,6 +3032,7 @@ export type BridgeableToolName =
   | "task_await"
   | "task_apply_git_patch"
   | "task_list"
+  | "task_send_message"
   | "task_terminate"
   | "task_workspace_lifecycle"
   | "heartbeat"
@@ -2975,6 +3060,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_await: TaskAwaitToolResultSchema,
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
+  task_send_message: TaskSendMessageToolResultSchema,
   task_terminate: TaskTerminateToolResultSchema,
   task_workspace_lifecycle: TaskWorkspaceLifecycleToolResultSchema,
   heartbeat: HeartbeatToolResultSchema,
@@ -3089,6 +3175,7 @@ export function getAvailableTools(
     "task",
     "task_await",
     "task_apply_git_patch",
+    "task_send_message",
     "task_terminate",
     "task_workspace_lifecycle",
     "task_list",

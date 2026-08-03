@@ -40,6 +40,8 @@ import type {
   TaskAwaitToolSuccessResult,
   TaskListToolArgs,
   TaskListToolSuccessResult,
+  TaskSendMessageToolArgs,
+  TaskSendMessageToolSuccessResult,
   TaskTerminateToolArgs,
   TaskTerminateToolSuccessResult,
   ToolErrorResult,
@@ -99,6 +101,7 @@ const TaskStatusBadge: React.FC<{
 }> = ({ status, className }) => {
   const getStatusStyle = () => {
     switch (status) {
+      case "accepted":
       case "completed":
       case "reported":
         return "bg-success/20 text-success";
@@ -1600,6 +1603,54 @@ const TaskListItem: React.FC<{
     openWorkspaceId={task.workspaceId}
   />
 );
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TASK SEND MESSAGE TOOL CALL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface TaskSendMessageToolCallProps {
+  args: TaskSendMessageToolArgs;
+  result?: TaskSendMessageToolSuccessResult;
+  status?: ToolStatus;
+}
+
+export const TaskSendMessageToolCall: React.FC<TaskSendMessageToolCallProps> = ({
+  args,
+  result,
+  status = "pending",
+}) => {
+  const { expanded, toggleExpanded } = useToolExpansion(false);
+  const summary = result?.status ?? "sending";
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_send_message" />
+        <ToolName>task_send_message</ToolName>
+        <span className="text-muted text-[10px]">{summary}</span>
+        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+      </ToolHeader>
+
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 space-y-2 rounded-md p-3">
+            <div className="flex items-center gap-2">
+              <TaskId id={args.task_id} />
+              {result && <TaskStatusBadge status={result.status} />}
+            </div>
+            <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+              {args.message}
+            </div>
+            {result && "error" in result && result.error && (
+              <div className="text-danger text-[11px]">{result.error}</div>
+            )}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TASK TERMINATE TOOL CALL

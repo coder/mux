@@ -56,6 +56,7 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
         "task",
         "task_await",
         "task_list",
+        "task_send_message",
         "task_terminate",
         "task_apply_git_patch",
         "propose_plan",

@@ -267,6 +267,48 @@ describe("TaskAwaitToolCall", () => {
   });
 });
 
+const taskSendMessageArgs = {
+  task_id: "child-task",
+  message: "Use the corrected API shape.",
+};
+const TaskSendMessageToolCall = getToolComponent("task_send_message", taskSendMessageArgs);
+
+describe("TaskSendMessageToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  });
+
+  test("shows the guidance and target when expanded", () => {
+    const view = render(
+      <TooltipProvider>
+        <TaskSendMessageToolCall
+          args={taskSendMessageArgs}
+          status="completed"
+          result={{ status: "queued", taskId: "child-task", queueDispatchMode: "tool-end" }}
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText("queued")).toBeDefined();
+    fireEvent.click(view.getByText("task_send_message"));
+    expect(view.getByText("child-task")).toBeDefined();
+    expect(view.getByText("Use the corrected API shape.")).toBeDefined();
+  });
+});
+
 const taskTerminateArgs = { task_ids: ["wfr_x"] };
 const TaskTerminateToolCall = getToolComponent("task_terminate", taskTerminateArgs);
 

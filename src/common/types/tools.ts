@@ -26,6 +26,7 @@ import type {
   MemoryToolResultSchema,
   AttachFileToolResultSchema,
   TaskToolResultSchema,
+  TaskSendMessageToolResultSchema,
   TaskAwaitToolResultSchema,
   TaskApplyGitPatchToolResultSchema,
   TaskListToolResultSchema,
@@ -267,6 +268,11 @@ export type TaskApplyGitPatchToolResult = TaskApplyGitPatchToolSuccessResult | T
 export type TaskListToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_list.schema>;
 
 export type TaskListToolSuccessResult = z.infer<typeof TaskListToolResultSchema>;
+
+// Task Send Message Tool Types
+export type TaskSendMessageToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_send_message.schema>;
+
+export type TaskSendMessageToolSuccessResult = z.infer<typeof TaskSendMessageToolResultSchema>;
 
 // Task Terminate Tool Types
 export type TaskTerminateToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_terminate.schema>;

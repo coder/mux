@@ -297,7 +297,7 @@ subagent:
       - What changed (paths / key details)
       - What you ran (tests, typecheck, lint)
       - Any follow-ups / risks
-    - You may call task/task_await/task_list/task_terminate to delegate further when available.
+    - You may call task/task_await/task_list/task_send_message/task_terminate to delegate further when available.
       Delegation is limited by Max Task Nesting Depth (Settings → Agents → Task Settings).
     - Do not call propose_plan.
 tools:
@@ -517,6 +517,7 @@ tools:
     - task
     - task_await
     - task_list
+    - task_send_message
     - task_terminate
     - task_apply_git_patch
     # No planning tools
@@ -621,6 +622,7 @@ tools:
     - task
     - task_apply_git_patch
     - task_list
+    - task_send_message
     - task_terminate
     - task_workspace_lifecycle
 ---
