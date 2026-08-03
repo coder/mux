@@ -3145,7 +3145,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (!props.onSendQueuedImmediately || e.repeat) return;
       e.preventDefault();
       stopKeyboardPropagation(e);
-      void props.onSendQueuedImmediately();
+      props.onSendQueuedImmediately().catch((error: unknown) => {
+        props.onQueuedActionError?.(error);
+      });
       return;
     }
 
@@ -3153,7 +3155,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       e.preventDefault();
       if (hasOnlyQueuedMessage && props.onQueuedDispatchModeChange) {
         stopKeyboardPropagation(e);
-        void props.onQueuedDispatchModeChange("turn-end");
+        props.onQueuedDispatchModeChange("turn-end").catch((error: unknown) => {
+          props.onQueuedActionError?.(error);
+        });
       } else {
         void handleSend({ queueDispatchMode: "turn-end" });
       }
@@ -3168,7 +3172,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (hasOnlyQueuedMessage && props.onQueuedDispatchModeChange && !e.repeat) {
         e.preventDefault();
         stopKeyboardPropagation(e);
-        void props.onQueuedDispatchModeChange("tool-end");
+        props.onQueuedDispatchModeChange("tool-end").catch((error: unknown) => {
+          props.onQueuedActionError?.(error);
+        });
         return;
       }
       e.preventDefault();

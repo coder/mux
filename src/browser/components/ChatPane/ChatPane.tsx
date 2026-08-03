@@ -406,6 +406,17 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     });
   }, [api, workspaceId, autoCompactionThreshold]);
 
+  const [queuedActionErrorState, setQueuedActionErrorState] = useState<{
+    workspaceId: string;
+    messageId: string;
+    error: string;
+  } | null>(null);
+  const queuedActionError =
+    queuedActionErrorState?.workspaceId === workspaceId &&
+    queuedActionErrorState.messageId === workspaceState?.queuedMessage?.id
+      ? queuedActionErrorState.error
+      : null;
+
   const [editingState, setEditingState] = useState(() => ({
     workspaceId,
     message: undefined as EditingMessageState | undefined,
@@ -1008,6 +1019,17 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     }
   }, [workspaceState?.queuedMessage?.id]);
 
+  const clearQueuedActionError = () => setQueuedActionErrorState(null);
+  const handleQueuedActionError = (error: unknown) => {
+    const queuedMessageId = workspaceState?.queuedMessage?.id;
+    if (!queuedMessageId) return;
+    setQueuedActionErrorState({
+      workspaceId,
+      messageId: queuedMessageId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  };
+
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
     const queuedMessage = workspaceState?.queuedMessage;
@@ -1020,6 +1042,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       return;
     }
 
+    clearQueuedActionError();
     sendQueuedImmediatelyInFlightRef.current = queuedMessage.id;
     // Release the duplicate-send guard only if it still points at this attempt; a
     // newer queued message (or a clear) may have already reset it in the meantime.
@@ -1037,6 +1060,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
       });
       if (!interruptResult.success) {
         clearInFlightGuardIfCurrent();
+        throw new Error(interruptResult.error);
       }
     } catch (error) {
       clearInFlightGuardIfCurrent();
@@ -1045,6 +1069,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
 
   const handleQueuedDispatchModeChange = async (queueDispatchMode: QueueDispatchMode) => {
+    clearQueuedActionError();
     if (!api) {
       throw new Error("Workspace API is unavailable.");
     }
@@ -1865,6 +1890,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                         workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
                       }
                       onQueuedDispatchModeChange={handleQueuedDispatchModeChange}
+                      onQueuedActionError={handleQueuedActionError}
+                      queuedActionError={queuedActionError}
+                      onClearQueuedActionError={clearQueuedActionError}
                       reviews={reviews}
                       onCheckReviews={handleCheckReviews}
                     />
@@ -1935,6 +1963,9 @@ interface ChatInputPaneProps {
   onEditQueuedMessage: () => void;
   onSendQueuedImmediately: (() => Promise<void>) | undefined;
   onQueuedDispatchModeChange: (mode: QueueDispatchMode) => Promise<void>;
+  queuedActionError: string | null;
+  onQueuedActionError: (error: unknown) => void;
+  onClearQueuedActionError: () => void;
   reviews: ReviewsState;
   onCheckReviews: (ids: string[]) => void;
 }
@@ -1960,6 +1991,8 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           message={props.queuedMessage}
           onEdit={() => void props.onEditQueuedMessage()}
           onChangeDispatchMode={props.onQueuedDispatchModeChange}
+          actionError={props.queuedActionError}
+          onActionStart={props.onClearQueuedActionError}
           onSendImmediately={props.onSendQueuedImmediately}
         />
       ),
@@ -2084,6 +2117,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         canInterrupt={props.canInterrupt}
         queuedMessage={props.queuedMessage}
         onQueuedDispatchModeChange={props.onQueuedDispatchModeChange}
+        onQueuedActionError={props.onQueuedActionError}
         onSendQueuedImmediately={props.onSendQueuedImmediately}
         onReady={props.onChatInputReady}
         attachedReviews={reviews.attachedReviews}

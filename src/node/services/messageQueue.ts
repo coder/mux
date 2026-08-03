@@ -193,7 +193,7 @@ export class MessageQueue {
    * messages should not change the queue badge shown beside the user's own follow-up.
    */
   getVisibleQueueDispatchMode(): QueueDispatchMode {
-    return this.getDispatchMode(this.getVisibleEntries());
+    return this.getVisibleEntries()[0]?.dispatchMode ?? "tool-end";
   }
 
   /**

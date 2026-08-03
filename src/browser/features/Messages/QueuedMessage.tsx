@@ -15,6 +15,8 @@ interface QueuedMessageProps {
   className?: string;
   onEdit?: () => void;
   onChangeDispatchMode?: (mode: QueueDispatchMode) => Promise<void>;
+  actionError?: string | null;
+  onActionStart?: () => void;
   onSendImmediately?: () => Promise<void>;
 }
 
@@ -48,6 +50,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
   const handleDispatchModeChange = (mode: QueueDispatchMode) => {
     setIsMenuOpen(false);
     if (mode === queueDispatchMode || isActionPending || !props.onChangeDispatchMode) return;
+    props.onActionStart?.();
     setPendingAction("mode");
     setActionError(null);
     props.onChangeDispatchMode(mode).then(
@@ -62,6 +65,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
   const handleSendImmediately = () => {
     setIsMenuOpen(false);
     if (isActionPending || !props.onSendImmediately) return;
+    props.onActionStart?.();
     setPendingAction("send-now");
     setActionError(null);
     props.onSendImmediately().then(
@@ -98,13 +102,13 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
               />
             </div>
 
-            {actionError && (
+            {(actionError ?? props.actionError) && (
               <div
                 role="alert"
                 className="border-toast-error-border/50 bg-toast-error-bg/50 text-toast-error-text flex items-start gap-1.5 border-t px-3 py-2 text-xs"
               >
                 <AlertCircle className="mt-0.5 size-3 shrink-0" />
-                <span className="min-w-0 break-words">{actionError}</span>
+                <span className="min-w-0 break-words">{actionError ?? props.actionError}</span>
               </div>
             )}
           </div>

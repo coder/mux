@@ -313,6 +313,25 @@ describe("MessageQueue", () => {
       expect(queue.getQueueDispatchMode()).toBe("turn-end");
     });
 
+    it("reports the first visible entry mode instead of a later visible tool-end entry", () => {
+      const validOptions: SendMessageOptions = { model: "gpt-4", agentId: "exec" };
+      queue.add("visible turn-end head", {
+        ...validOptions,
+        queueDispatchMode: "turn-end",
+        muxMetadata: {
+          type: "agent-skill",
+          rawCommand: "/init",
+          skillName: "init",
+          scope: "built-in",
+        },
+      });
+      queue.add("visible tool-end tail", { ...validOptions, queueDispatchMode: "tool-end" });
+
+      expect(queue.getVisibleQueueDispatchMode()).toBe("turn-end");
+      queue.dequeueNext();
+      expect(queue.getVisibleQueueDispatchMode()).toBe("tool-end");
+    });
+
     it("uses the FIFO head mode for the next drain even when a later hidden entry is tool-end", () => {
       const validOptions: SendMessageOptions = { model: "gpt-4", agentId: "exec" };
       queue.add("visible first", { ...validOptions, queueDispatchMode: "turn-end" });
