@@ -4694,15 +4694,18 @@ describe("WorkspaceService initialize", () => {
     const sessionDirFor = (id: string) => path.join(realConfig.sessionsDir, id);
     const knownDir = sessionDirFor("known-ws");
     const legacyDir = sessionDirFor("proj-legacy-branch");
+    // Unreferenced in config (the load-time migration removed the legacy Chat
+    // with Mux entry) but exempt from reaping so downgrades keep the history.
+    const muxChatDir = sessionDirFor("mux-chat");
     const staleOrphanDir = sessionDirFor("stale-orphan-ws");
     const freshOrphanDir = sessionDirFor("fresh-orphan-ws");
-    for (const dir of [knownDir, legacyDir, staleOrphanDir, freshOrphanDir]) {
+    for (const dir of [knownDir, legacyDir, muxChatDir, staleOrphanDir, freshOrphanDir]) {
       await fsPromises.mkdir(dir, { recursive: true });
     }
     // Backdate everything except the fresh orphan past the grace window, proving
     // retention comes from config references rather than directory age.
     const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    for (const dir of [knownDir, legacyDir, staleOrphanDir]) {
+    for (const dir of [knownDir, legacyDir, muxChatDir, staleOrphanDir]) {
       await fsPromises.utimes(dir, staleTime, staleTime);
     }
 
@@ -4731,6 +4734,7 @@ describe("WorkspaceService initialize", () => {
       await service.initialize();
       expect(await exists(knownDir)).toBe(true);
       expect(await exists(legacyDir)).toBe(true);
+      expect(await exists(muxChatDir)).toBe(true);
       expect(await exists(freshOrphanDir)).toBe(true);
       expect(await exists(staleOrphanDir)).toBe(false);
     } finally {

@@ -666,7 +666,9 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
  * filtered out) but still swept by config-driven background jobs like
  * AgentStatusService, which sent its stale transcript to the LLM on every
  * launch. Drop the leftovers on load. Older builds recreate the entry on
- * downgrade; this cleanup re-runs on the next upgrade.
+ * downgrade; this cleanup re-runs on the next upgrade. The workspace's session
+ * data is preserved for downgrades: cleanupOrphanSessionDirs exempts the
+ * mux-chat id from orphan reaping.
  */
 function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boolean {
   let modified = false;

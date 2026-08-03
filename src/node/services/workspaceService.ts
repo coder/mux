@@ -3829,6 +3829,11 @@ export class WorkspaceService extends EventEmitter {
     const config = this.config.loadConfigOrDefault({ throwOnError: true });
 
     const knownIds = new Set<string>(allMetadata.map((metadata) => metadata.id));
+    // The config load-time migration (removeLegacyMuxChatEntries) drops the
+    // removed Chat with Mux workspace from config, which would make its
+    // session dir look orphaned here. Preserve the transcript: a downgraded
+    // build recreates the workspace and should find its history intact.
+    knownIds.add("mux-chat");
     for (const [projectPath, projectConfig] of config.projects) {
       for (const workspace of projectConfig.workspaces) {
         if (workspace.id) {
