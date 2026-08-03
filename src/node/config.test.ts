@@ -451,6 +451,115 @@ describe("Config", () => {
     });
   });
 
+  describe("legacy Chat with Mux cleanup", () => {
+    const legacyProjectPath = "/home/user/.mux/system/Mux";
+
+    function legacyMuxChatWorkspace(projectPath: string) {
+      return {
+        path: projectPath,
+        id: "mux-chat",
+        name: "chat-with-mux",
+        title: "Chat with Mux",
+        agentId: "mux",
+      };
+    }
+
+    it("removes the legacy system Mux project and persists the cleanup", async () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              legacyProjectPath,
+              {
+                workspaces: [legacyMuxChatWorkspace(legacyProjectPath)],
+                projectKind: "system",
+              },
+            ],
+            ["/repo", { workspaces: [] }],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.has(legacyProjectPath)).toBe(false);
+      expect(loaded.projects.has("/repo")).toBe(true);
+
+      await flushConfigEdits();
+      const persisted = fs.readFileSync(configFile, "utf-8");
+      expect(persisted).not.toContain("mux-chat");
+    });
+
+    it("removes stale entries left under other mux roots", () => {
+      const staleProjectPath = "/home/user/.mux-dev/system/Mux";
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              legacyProjectPath,
+              { workspaces: [legacyMuxChatWorkspace(legacyProjectPath)], projectKind: "system" },
+            ],
+            [
+              staleProjectPath,
+              { workspaces: [legacyMuxChatWorkspace(staleProjectPath)], projectKind: "system" },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(0);
+    });
+
+    it("keeps unrelated workspaces whose id collides with mux-chat", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              "/home/user/mux",
+              {
+                workspaces: [{ path: "/home/user/mux-chat", id: "mux-chat", name: "chat" }],
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get("/home/user/mux")?.workspaces).toHaveLength(1);
+    });
+
+    it("keeps other workspaces in a system Mux project and retains the project", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              legacyProjectPath,
+              {
+                workspaces: [
+                  legacyMuxChatWorkspace(legacyProjectPath),
+                  { path: "/home/user/other", id: "other-ws", name: "other" },
+                ],
+                projectKind: "system",
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      const workspaces = loaded.projects.get(legacyProjectPath)?.workspaces;
+      expect(workspaces?.map((w) => w.id)).toEqual(["other-ws"]);
+    });
+  });
+
   describe("modelFallbacks normalization", () => {
     it("self-heals malformed modelFallbacks on load instead of breaking sends", () => {
       const configFile = path.join(tempDir, "config.json");
