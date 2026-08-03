@@ -83,9 +83,31 @@ const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
  * `none` or the empty-string reset. An inline value this pattern cannot see, such as a
  * variable or a conditional, counts as an opt-in: a match is a review gate, and the
  * cost of a false positive is one entry below.
+ *
+ * Each alternative carries its parser's case posture. Tailwind candidates and JS
+ * property lookups are case-sensitive (`SELECT-TEXT` and `[USER-SELECT:text]` compile
+ * to nothing or fail the build, verified against `compile()`, and `style.USERSELECT`
+ * is inert), but CSS parsed out of strings is case-insensitive, and a regex flag
+ * cannot vary per alternative, so the kebab spellings are built letter by letter.
  */
-const SELECTION_OPT_IN_PATTERN =
-  /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b|\bselect-\[(?!none\])[^\s\]]+\]|\bselect-\((?:[\w-]+:)?--[^\s)]+\)|\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]|\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b(?!\s*[:=]\s*["'`](?:none)?["'`])|(?:-(?:webkit|moz|ms|o)-)?\buser-select\b(?!\s*:\s*none\b)/g;
+const anyCase = (kebab: string) => kebab.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`);
+
+const SELECTION_OPT_IN_PATTERN = new RegExp(
+  [
+    // Named utilities behind any variant chain.
+    String.raw`\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b`,
+    // Arbitrary-value and variable forms.
+    String.raw`\bselect-\[(?!none\])[^\s\]]+\]`,
+    String.raw`\bselect-\((?:[\w-]+:)?--[^\s)]+\)`,
+    // The arbitrary-property form.
+    String.raw`\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]`,
+    // camelCase inline styles, unless the value is a literal none or empty reset.
+    String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b(?!\s*[:=]\s*["'\`](?:none)?["'\`])`,
+    // kebab-case inside strings, in any case the browser would accept.
+    `(?:-(?:${anyCase("webkit")}|${anyCase("moz")}|${anyCase("ms")}|${anyCase("o")})-)?\\b${anyCase("user-select")}\\b(?!\\s*:\\s*${anyCase("none")}\\b)`,
+  ].join("|"),
+  "g"
+);
 
 /**
  * Components that opt content back into selection with a Tailwind class or inline style.
