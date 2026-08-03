@@ -141,170 +141,74 @@ const SELECTION_SUPPRESSION_PATTERN = new RegExp(
  * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
  * new entry is a decision for review.
  *
- * Each occurrence is pinned by the trimmed source line that carries it plus the next
- * non-empty line, in source order, so what was reviewed is the element the class sits on
- * and the content it exposes, not a per-file count. A count cannot tell a reviewed
- * opt-in from a different one that replaced it in the same file, a carrying line alone
- * cannot tell apart duplicates (`ReviewPanel.tsx` wraps four metadata values in
- * byte-identical divs, distinguished only by the content line under them), and a bare
- * file list cannot see an addition next to an existing entry. Unrelated edits elsewhere
- * in a file leave the entry alone; editing a pinned line, even around the class,
- * resubmits that occurrence for review, which is the point. Still an exact-match
- * posture: identity comes from line text, not from parsing TSX.
- *
- * Suppression utilities (`select-none` and its arbitrary spelling) are deliberately not
- * tracked here: turning selection off on a control is the ordinary use of that utility,
- * whereas turning it back on is the exception to this guard. Broad suppression written as
- * CSS is still caught below.
- *
- * Files named by `@source` directives are scanned here too, keyed by repo-relative path:
- * Tailwind reads those for utility classes just like TSX under `src/`.
+ * The inventory records normalized matched tokens per file with a count, nothing else.
+ * The token is the part that affects `user-select`: the full Tailwind candidate
+ * including variants and important markers, or the inline property spelling.
+ * Surrounding source is deliberately not recorded: an earlier revision pinned each
+ * occurrence's line text, which made behavior-neutral refactors (reordering classes on
+ * a line, renaming a nearby expression) fail the contract, the tautology AGENTS.md
+ * forbids. The accepted residual is that moving an already-reviewed token onto a
+ * different element in the same file is invisible here, because telling identical
+ * tokens apart needs surrounding text or TSX parsing; adds, removals, kind and variant
+ * changes, and cross-file moves all still fail, and the PR diff itself shows what a
+ * moved class newly wraps.
  */
-const SELECTION_OPT_INS: Record<string, string[]> = {
-  "src/browser/components/AgentListItem/AgentListItem.tsx": [
-    'className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none select-text"\nvalue={editingTitle}',
-  ],
-  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx": [
-    '<span className="text-accent shrink-0 select-all">{commit.hash}</span>\n<span className="text-muted-light shrink-0">{commit.date}</span>',
-  ],
-  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": [
-    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"\n/>',
-  ],
-  "src/browser/components/SectionHeader/SectionHeader.tsx": [
-    'className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none select-text"\n/>',
-    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"\n/>',
-  ],
-  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx": [
-    '<div className="text-foreground mt-1 break-all select-all">{pending.fingerprint}</div>\n</div>',
-  ],
-  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": [
-    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.command}',
-    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.outputLength.toLocaleString()} bytes',
-    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.fileDiffCount}',
-    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.hunkCount}',
-  ],
+const SELECTION_OPT_INS: Record<string, Record<string, number>> = {
+  "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-text": 1 },
+  "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx": { "select-all": 1 },
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": { "select-text": 1 },
+  "src/browser/components/SectionHeader/SectionHeader.tsx": { "select-text": 2 },
+  "src/browser/components/SshPromptDialog/SshPromptDialog.tsx": { "select-all": 1 },
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": { "select-all": 4 },
 };
 
 /**
- * Sites that suppress selection, pinned with the same line-plus-content identity as the
- * opt-ins above. Most entries are the ordinary per-control use; the enumeration exists
- * because the exceptional case, suppression on an app-wide container, is
- * indistinguishable from it in a static scan, so a human reviews what each new or moved
- * suppression wraps. Generated mechanically from the current tree; regenerate an entry
- * by running the test and copying the reported diff.
+ * Sites that suppress selection, inventoried the same way. Most entries are the
+ * ordinary per-control use; the enumeration exists because the exceptional case,
+ * suppression on an app-wide container, is indistinguishable from it in a static scan,
+ * so a human reviews what each new suppression wraps.
  */
-const SELECTION_SUPPRESSIONS: Record<string, string[]> = {
-  ".design-sync/previews/Checkbox.tsx": [
-    '<label htmlFor={props.id} className="text-sm select-none">\n{props.label}',
-  ],
-  ".design-sync/previews/Switch.tsx": [
-    '<span className="text-sm select-none">{props.label}</span>\n</div>',
-  ],
-  "src/browser/components/AgentListItem/AgentListItem.tsx": [
-    '"bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-1.5 select-none transition-all duration-150";\nconst HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =',
-  ],
-  "src/browser/components/ChatPane/TranscriptHydrationSkeleton.tsx": [
-    'className="flex flex-col gap-8 py-6 select-none"\n>',
-  ],
-  "src/browser/components/Checkbox/Checkbox.stories.tsx": [
-    '<label htmlFor={props.id} className="text-sm select-none">\n{props.label}',
-  ],
-  "src/browser/components/FileIcon/FileIcon.tsx": ['userSelect: "none",\nfontStyle: "normal",'],
-  "src/browser/components/InstructionsTab/AdditionalSystemContextScratchpad.tsx": [
-    '<label className="flex cursor-pointer items-center gap-1.5 select-none">\n<input',
-  ],
-  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": [
-    '"group sticky top-0 z-30 py-2 pl-2 pr-1 flex select-none items-center border-l-transparent bg-surface-primary transition-colors duration-150";\n// Shared classes for the chevron toggle buttons on project/section headers.',
-    '"font-primary bg-surface-primary border-border-light relative flex flex-1 select-none flex-col overflow-hidden border-r",\n// In desktop mode when collapsed, hide border (LeftSidebar handles the partial border)',
-  ],
-  "src/browser/components/ProjectSidebar/TaskGroupListItem.tsx": [
-    '"bg-surface-primary relative flex items-start rounded-l-sm py-2 pr-2 select-none transition-all duration-150 hover:bg-surface-secondary",\nprops.sectionId != null ? "ml-2" : "ml-0",',
-  ],
-  "src/browser/components/ScrollArea/ScrollArea.tsx": [
-    '"z-40 flex touch-none select-none bg-transparent transition-colors",\norientation === "vertical" ? "h-full w-1.5" : "h-1.5 flex-col",',
-  ],
-  "src/browser/components/SectionHeader/SectionHeader.tsx": [
-    'className="group relative ml-0 flex items-center gap-1 py-1.5 pr-1 pl-2.5 select-none"\ndata-section-id={section.id}',
-  ],
-  "src/browser/components/SelectPrimitive/SelectPrimitive.tsx": [
-    '"hover:bg-hover focus:bg-hover relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pr-2 pl-6 text-xs outline-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50",\nclassName',
-  ],
-  "src/browser/components/Switch/Switch.stories.tsx": [
-    '<span className="text-sm select-none">{props.label}</span>\n</div>',
-  ],
-  "src/browser/components/ThinkingSlider/ProModeToggle.tsx": [
-    '"hover:bg-hover shrink-0 rounded-sm bg-transparent px-1 text-center text-[11px] transition-all duration-200 select-none",\nprops.className',
-  ],
-  "src/browser/components/ThinkingSlider/ThinkingSlider.tsx": [
-    '"text-foreground w-[5ch] shrink-0 text-center text-[11px] font-medium select-none";\ninterface ThinkingControlProps {',
-  ],
-  "src/browser/components/TitleBar/TitleBar.tsx": [
-    '"bg-sidebar border-border-light font-primary text-muted titlebar-safe-left titlebar-safe-left-gutter-4 flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",\nisDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",',
-  ],
-  "src/browser/features/ChatInput/CreationControls.tsx": [
-    '"focus:bg-hover data-[state=checked]:bg-hover relative flex cursor-default select-none items-center rounded-sm py-1.5 pr-3 pl-3 text-xs outline-none",\n"data-[disabled]:pointer-events-none data-[disabled]:opacity-50"',
-  ],
-  "src/browser/features/Messages/ChatBarrier/StreamingBarrierView.tsx": [
-    '"text-assistant-border counter-nums-mono inline-flex min-w-[14ch] items-baseline justify-end text-[11px] whitespace-nowrap select-none",\nprops.tokenCount === undefined && "invisible"',
-    '"text-muted text-[11px] whitespace-nowrap select-none",\n// Low-priority hints yield to the status label in narrow panes',
-  ],
-  "src/browser/features/Messages/MarkdownComponents.tsx": [
-    '<summary className="cursor-pointer py-1 pl-1 font-semibold select-none">{children}</summary>\n),',
-  ],
-  "src/browser/features/Messages/OperationalBundleMessage.tsx": [
-    '"flex w-full cursor-pointer items-center gap-2 text-left text-secondary transition-colors select-none hover:text-foreground",\n"focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"',
-  ],
-  "src/browser/features/Messages/ReasoningMessage.tsx": [
-    '"flex items-center justify-between gap-2 select-none",\nisCollapsible && "cursor-pointer",',
-  ],
-  "src/browser/features/Messages/WorkBundleMessage.tsx": [
-    '"text-muted hover:text-foreground flex w-full cursor-pointer items-center gap-2 border-b border-border/60 py-3 text-left text-base transition-colors select-none",\n"focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"',
-  ],
-  "src/browser/features/RightSidebar/BrowserTab/BrowserViewport.tsx": [
-    'className="pointer-events-none absolute top-1/2 left-1/2 max-h-full max-w-full -translate-x-1/2 -translate-y-1/2 select-none"\ndraggable={false}',
-  ],
-  "src/browser/features/RightSidebar/CodeReview/FileTree.tsx": [
-    '"cursor-pointer select-none flex items-center gap-1.5 rounded py-0.5 px-1.5",\nisSelected ? "bg-code-keyword-overlay" : "bg-transparent hover:bg-white/5"',
-  ],
-  "src/browser/features/RightSidebar/CodeReview/ImmersiveDiffRevealLoadingState.tsx": [
-    'className="mx-auto flex h-full w-full max-w-5xl flex-col gap-3 overflow-hidden px-4 py-5 select-none"\n>',
-  ],
-  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": [
-    "<details className=\"bg-modal-bg border-border-light [&_summary]:text-muted mt-4 w-full max-w-96 cursor-pointer rounded border p-3 [&_summary]:flex [&_summary]:list-none [&_summary]:items-center [&_summary]:gap-1.5 [&_summary]:text-xs [&_summary]:font-medium [&_summary]:select-none [&_summary::-webkit-details-marker]:hidden [&_summary::before]:text-[10px] [&_summary::before]:transition-transform [&_summary::before]:duration-200 [&_summary::before]:content-['\u25b6'] [&[open]_summary::before]:rotate-90\">\n<summary>Show diagnostic info</summary>",
-  ],
-  "src/browser/features/RightSidebar/StatsTab.tsx": [
-    '<label className="text-muted flex items-center gap-2 text-xs select-none">\n<input',
-  ],
-  "src/browser/features/Shared/DiffRenderer.tsx": [
-    'className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"\nstyle={{ background: resolvedBackground }}',
-    'className={cn("relative text-center select-none", isInteractive && "cursor-pointer")}\nstyle={{ background }}',
-    'className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"\nstyle={{ background: getDiffLineGutterBackground(lineType) }}',
-    'className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"\nstyle={{ background: getDiffLineGutterBackground(lineType) }}',
-  ],
-  "src/browser/features/Tools/AgentSkillReadFileToolCall.tsx": [
-    '<div className="text-secondary font-monospace mr-2 min-w-10 border-r border-white/10 pr-3 text-right opacity-40 select-none">\n{parsedContent.lineNumbers.map((lineNum, i) => (',
-  ],
-  "src/browser/features/Tools/AskUserQuestionToolCall.tsx": [
-    '"flex cursor-pointer items-start gap-2.5 rounded px-2 py-1.5 transition-colors select-none",\nchecked ? "bg-accent/10 hover:bg-accent/15" : "hover:bg-white/5"',
-  ],
-  "src/browser/features/Tools/FileReadToolCall.tsx": [
-    '<div className="text-secondary font-monospace mr-2 min-w-10 border-r border-white/10 pr-3 text-right opacity-40 select-none">\n{parsedContent.lineNumbers.map((lineNum, i) => (',
-  ],
-  "src/browser/features/Tools/GoogleSearchToolCall.fixtures.ts": [
-    "user-select: none;\nmargin: 0 8px;",
-  ],
-  "src/browser/features/Tools/Shared/HookOutputDisplay.tsx": [
-    '"transition-colors cursor-pointer select-none"\n)}',
-  ],
-  "src/browser/features/Tools/Shared/ToolPrimitives.tsx": [
-    '"flex items-center gap-2 cursor-pointer select-none text-secondary hover:text-foreground",\nclassName',
-  ],
-  "src/browser/hooks/useResizableSidebar.ts": [
-    'document.body.style.userSelect = "none";\ndocument.body.style.cursor = "col-resize";',
-  ],
-  "vscode/src/webview/webview.css": [
-    "user-select: none;\nborder-right: 1px solid var(--color-line-number-border);",
-  ],
+const SELECTION_SUPPRESSIONS: Record<string, Record<string, number>> = {
+  ".design-sync/previews/Checkbox.tsx": { "select-none": 1 },
+  ".design-sync/previews/Switch.tsx": { "select-none": 1 },
+  "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-none": 1 },
+  "src/browser/components/ChatPane/TranscriptHydrationSkeleton.tsx": { "select-none": 1 },
+  "src/browser/components/Checkbox/Checkbox.stories.tsx": { "select-none": 1 },
+  "src/browser/components/FileIcon/FileIcon.tsx": { "userSelect:none": 1 },
+  "src/browser/components/InstructionsTab/AdditionalSystemContextScratchpad.tsx": {
+    "select-none": 1,
+  },
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": { "select-none": 2 },
+  "src/browser/components/ProjectSidebar/TaskGroupListItem.tsx": { "select-none": 1 },
+  "src/browser/components/ScrollArea/ScrollArea.tsx": { "select-none": 1 },
+  "src/browser/components/SectionHeader/SectionHeader.tsx": { "select-none": 1 },
+  "src/browser/components/SelectPrimitive/SelectPrimitive.tsx": { "select-none": 1 },
+  "src/browser/components/Switch/Switch.stories.tsx": { "select-none": 1 },
+  "src/browser/components/ThinkingSlider/ProModeToggle.tsx": { "select-none": 1 },
+  "src/browser/components/ThinkingSlider/ThinkingSlider.tsx": { "select-none": 1 },
+  "src/browser/components/TitleBar/TitleBar.tsx": { "select-none": 1 },
+  "src/browser/features/ChatInput/CreationControls.tsx": { "select-none": 1 },
+  "src/browser/features/Messages/ChatBarrier/StreamingBarrierView.tsx": { "select-none": 2 },
+  "src/browser/features/Messages/MarkdownComponents.tsx": { "select-none": 1 },
+  "src/browser/features/Messages/OperationalBundleMessage.tsx": { "select-none": 1 },
+  "src/browser/features/Messages/ReasoningMessage.tsx": { "select-none": 1 },
+  "src/browser/features/Messages/WorkBundleMessage.tsx": { "select-none": 1 },
+  "src/browser/features/RightSidebar/BrowserTab/BrowserViewport.tsx": { "select-none": 1 },
+  "src/browser/features/RightSidebar/CodeReview/FileTree.tsx": { "select-none": 1 },
+  "src/browser/features/RightSidebar/CodeReview/ImmersiveDiffRevealLoadingState.tsx": {
+    "select-none": 1,
+  },
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": { "select-none": 1 },
+  "src/browser/features/RightSidebar/StatsTab.tsx": { "select-none": 1 },
+  "src/browser/features/Shared/DiffRenderer.tsx": { "select-none": 4 },
+  "src/browser/features/Tools/AgentSkillReadFileToolCall.tsx": { "select-none": 1 },
+  "src/browser/features/Tools/AskUserQuestionToolCall.tsx": { "select-none": 1 },
+  "src/browser/features/Tools/FileReadToolCall.tsx": { "select-none": 1 },
+  "src/browser/features/Tools/GoogleSearchToolCall.fixtures.ts": { "user-select:none": 1 },
+  "src/browser/features/Tools/Shared/HookOutputDisplay.tsx": { "select-none": 1 },
+  "src/browser/features/Tools/Shared/ToolPrimitives.tsx": { "select-none": 1 },
+  "src/browser/hooks/useResizableSidebar.ts": { "userSelect:none": 1 },
+  "vscode/src/webview/webview.css": { "user-select:none": 1 },
 };
 
 const EDITABLE_SELECTORS = [
@@ -564,19 +468,27 @@ describe("touch text-selection guard", () => {
     expect([...new Set(offenders)]).toEqual([]);
   });
 
-  async function collectSelectionSites(pattern: RegExp): Promise<Record<string, string[]>> {
-    const sites: Record<string, string[]> = {};
+  /**
+   * Whitespace and quotes never change what a spelling declares, and only the kebab CSS
+   * forms are case-insensitive to their parser, so exactly those are lowercased; the
+   * `=`/`:` fold makes a DOM assignment and a style-object entry the same token.
+   */
+  function normalizeToken(token: string): string {
+    const compact = token.replace(/\s+/g, "").replace(/["'`]/g, "").replace("=", ":");
+    return /^-?(?:webkit-|moz-|ms-|o-)?user-select/i.test(compact)
+      ? compact.toLowerCase()
+      : compact;
+  }
+
+  async function collectSelectionSites(
+    pattern: RegExp
+  ): Promise<Record<string, Record<string, number>>> {
+    const sites: Record<string, Record<string, number>> = {};
     const collectInto = (key: string, source: string) => {
       for (const match of source.matchAll(pattern)) {
-        const lineStart = source.lastIndexOf("\n", match.index) + 1;
-        const lineEnd = source.indexOf("\n", match.index);
-        const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd).trim();
-        const following = source
-          .slice(lineEnd === -1 ? source.length : lineEnd + 1)
-          .split("\n")
-          .map((candidate) => candidate.trim())
-          .find((candidate) => candidate !== "");
-        (sites[key] ??= []).push(`${line}\n${following ?? ""}`);
+        const token = normalizeToken(match[0]);
+        const fileSites = (sites[key] ??= {});
+        fileSites[token] = (fileSites[token] ?? 0) + 1;
       }
     };
     // Tailwind's own scanner decides which files are read, so `index.html`, docs, and
