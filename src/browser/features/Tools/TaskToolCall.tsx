@@ -995,10 +995,15 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         normalizeTaskGroupLabel(metadata?.bestOf?.label) ??
         getTaskGroupLabelAtIndex(args, index),
       // Prefer live metadata while the workspace exists: a plan child's auto-handoff to
-      // exec rewrites its settings after launch, so a result snapshot can go stale.
-      // Result-carried settings remain as the fallback surviving workspace cleanup.
-      modelString: metadata?.taskModelString ?? resultAiSettings?.modelString,
-      thinkingLevel: metadata?.taskThinkingLevel ?? resultAiSettings?.thinkingLevel,
+      // exec rewrites its settings after launch, so a spawn snapshot can go stale. After
+      // cleanup, a linked task_await report carries report-time settings; the spawn
+      // result is the last resort.
+      modelString:
+        metadata?.taskModelString ?? linkedReport?.modelString ?? resultAiSettings?.modelString,
+      thinkingLevel:
+        metadata?.taskThinkingLevel ??
+        linkedReport?.thinkingLevel ??
+        resultAiSettings?.thinkingLevel,
     };
   });
 

@@ -1,9 +1,14 @@
 import type { DisplayedMessage } from "@/common/types/message";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 
 export interface LinkedTaskReport {
   taskId: string;
   reportMarkdown: string;
   title?: string;
+  // Report-time AI settings: fresher than the spawn result when a plan child
+  // handed off to exec after launch.
+  modelString?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 export interface TaskReportLinking {
@@ -122,12 +127,23 @@ export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskRepo
       if (typeof reportMarkdown !== "string") continue;
 
       const title = (r as { title?: unknown }).title;
+      const modelString = (r as { modelString?: unknown }).modelString;
+      const thinkingLevel = (r as { thinkingLevel?: unknown }).thinkingLevel;
 
       // Last-wins (history order)
       reportByTaskId.set(taskId, {
         taskId,
         reportMarkdown,
         title: typeof title === "string" ? title : undefined,
+        modelString:
+          typeof modelString === "string" && modelString.trim().length > 0
+            ? modelString
+            : undefined,
+        thinkingLevel:
+          typeof thinkingLevel === "string" &&
+          (THINKING_LEVELS as readonly string[]).includes(thinkingLevel)
+            ? (thinkingLevel as ThinkingLevel)
+            : undefined,
       });
     }
   }

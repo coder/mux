@@ -788,6 +788,8 @@ export const TaskAwaitToolCompletedResultSchema = z
     finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
     structuredOutput: z.unknown().optional(),
     title: z.string().optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskThinkingLevelSchema.optional(),
     output: z.string().optional(),
     elapsed_ms: z.number().optional(),
     exitCode: z.number().optional(),

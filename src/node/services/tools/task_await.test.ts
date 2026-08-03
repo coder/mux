@@ -565,6 +565,43 @@ describe("task_await tool", () => {
     );
   });
 
+  it("propagates report-time AI settings into completed results", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-report-settings");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const waitForAgentReport = mock(() =>
+      Promise.resolve({
+        reportMarkdown: "final report",
+        model: "anthropic:claude-opus-5",
+        thinkingLevel: "high" as const,
+      })
+    );
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "final report",
+          modelString: "anthropic:claude-opus-5",
+          thinkingLevel: "high",
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
+    });
+  });
+
   it("includes elapsed_ms for completed agent task results when timestamps are available", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-agent-elapsed-completed");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
