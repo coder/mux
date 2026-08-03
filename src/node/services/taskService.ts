@@ -777,6 +777,8 @@ interface PendingTaskWaiter extends BackgroundableForegroundWaiter {
     title?: string;
     structuredOutput?: unknown;
     planFilePath?: string;
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
   }) => void;
 }
 
@@ -790,6 +792,9 @@ interface CompletedAgentReportCacheEntry {
   planFilePath?: string;
   structuredOutput?: unknown;
   title?: string;
+  // Final settings the child reported with (post plan-to-exec handoff), not the launch snapshot.
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
   // Ancestor workspace IDs captured when the report was cached.
   // Used to keep descendant-scope checks working even if the task workspace is cleaned up.
   ancestorWorkspaceIds: string[];
@@ -6055,6 +6060,8 @@ export class TaskService {
     title?: string;
     structuredOutput?: unknown;
     planFilePath?: string;
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
   }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
@@ -6067,6 +6074,8 @@ export class TaskService {
         title: cached.title,
         planFilePath: cached.planFilePath,
         structuredOutput: cached.structuredOutput,
+        model: cached.model,
+        thinkingLevel: cached.thinkingLevel,
       };
     }
 
@@ -6084,6 +6093,8 @@ export class TaskService {
       planFilePath?: string;
       structuredOutput?: unknown;
       title?: string;
+      model?: string;
+      thinkingLevel?: ThinkingLevel;
     } | null> => {
       if (!requestingWorkspaceId) {
         return null;
@@ -6101,6 +6112,8 @@ export class TaskService {
         title: artifact.title,
         planFilePath: artifact.planFilePath,
         structuredOutput: artifact.structuredOutput,
+        model: artifact.model,
+        thinkingLevel: artifact.thinkingLevel,
         workflowOwnedAncestorWorkspaceIds: artifact.workflowOwnedAncestorWorkspaceIds,
         ancestorWorkspaceIds: artifact.ancestorWorkspaceIds,
       });
@@ -6128,6 +6141,8 @@ export class TaskService {
         title: artifact.title,
         planFilePath: artifact.planFilePath,
         structuredOutput: artifact.structuredOutput,
+        model: artifact.model,
+        thinkingLevel: artifact.thinkingLevel,
       };
     };
 
@@ -10780,7 +10795,11 @@ export class TaskService {
     );
 
     // Resolve foreground waiters.
-    const hadForegroundWaiters = this.resolveWaiters(childWorkspaceId, reportArgs);
+    const hadForegroundWaiters = this.resolveWaiters(childWorkspaceId, {
+      ...reportArgs,
+      model: latestChildEntry?.workspace.taskModelString,
+      thinkingLevel: latestChildEntry?.workspace.taskThinkingLevel,
+    });
 
     // Free slot and start queued tasks.
     await this.maybeStartQueuedTasks();
@@ -10854,6 +10873,8 @@ export class TaskService {
       title?: string;
       structuredOutput?: unknown;
       planFilePath?: string;
+      model?: string;
+      thinkingLevel?: ThinkingLevel;
     }
   ): boolean {
     this.markTaskForegroundRelevant(taskId);
@@ -10875,6 +10896,8 @@ export class TaskService {
       title: report.title,
       planFilePath: report.planFilePath,
       structuredOutput: report.structuredOutput,
+      model: report.model,
+      thinkingLevel: report.thinkingLevel,
       ancestorWorkspaceIds,
       workflowOwnedAncestorWorkspaceIds,
     });

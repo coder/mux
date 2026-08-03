@@ -335,16 +335,19 @@ function normalizePendingTaskStatuses(params: {
   createdTasks: readonly SpawnedTaskInfo[];
   completedReports?: readonly CompletedTaskInfo[];
 }): PendingTaskInfo[] {
-  const completedTaskIds = new Set((params.completedReports ?? []).map((report) => report.taskId));
+  const completedReportsByTaskId = new Map(
+    (params.completedReports ?? []).map((report) => [report.taskId, report])
+  );
   return params.createdTasks.map((createdTask) => {
-    if (completedTaskIds.has(createdTask.taskId)) {
+    const completedReport = completedReportsByTaskId.get(createdTask.taskId);
+    if (completedReport) {
       return {
         taskId: createdTask.taskId,
         status: "completed",
         groupKind: createdTask.groupKind,
         label: createdTask.label,
-        modelString: createdTask.modelString,
-        thinkingLevel: createdTask.thinkingLevel,
+        modelString: completedReport.modelString ?? createdTask.modelString,
+        thinkingLevel: completedReport.thinkingLevel ?? createdTask.thinkingLevel,
       };
     }
 
@@ -652,8 +655,10 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                 agentType: requestedAgentId,
                 groupKind: createdTask.groupKind,
                 label: createdTask.label,
-                modelString: createdTask.modelString,
-                thinkingLevel: createdTask.thinkingLevel,
+                // Prefer the settings the report was produced with: a plan child that
+                // auto-handoffs to exec rewrites its task settings after launch.
+                modelString: report.model ?? createdTask.modelString,
+                thinkingLevel: report.thinkingLevel ?? createdTask.thinkingLevel,
               } satisfies CompletedTaskInfo,
             };
           } catch (error: unknown) {

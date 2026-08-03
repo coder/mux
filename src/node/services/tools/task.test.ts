@@ -832,6 +832,52 @@ describe("task tool", () => {
     });
   });
 
+  it("prefers report-time AI settings over the launch snapshot in completed results", async () => {
+    using tempDir = new TestTempDir("test-task-tool-report-time-settings");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    // Launch resolves plan-phase settings; the report arrives after a plan-to-exec
+    // handoff rewrote the child's task settings.
+    const create = mock(() =>
+      Ok({
+        taskId: "child-task",
+        kind: "agent" as const,
+        status: "running" as const,
+        modelString: "openai:plan-model",
+        thinkingLevel: "low" as const,
+      })
+    );
+    const waitForAgentReport = mock(() =>
+      Promise.resolve({
+        reportMarkdown: "final report",
+        model: "anthropic:exec-model",
+        thinkingLevel: "high" as const,
+      })
+    );
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "plan",
+          prompt: "plan then implement",
+          title: "Plan task",
+          run_in_background: false,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(result).toMatchObject({
+      status: "completed",
+      taskId: "child-task",
+      modelString: "anthropic:exec-model",
+      thinkingLevel: "high",
+    });
+  });
+
   it("preserves completed best-of reports when another foreground wait times out", async () => {
     using tempDir = new TestTempDir("test-task-tool-best-of-timeout-partial-complete");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
