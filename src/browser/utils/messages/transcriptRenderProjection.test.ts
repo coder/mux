@@ -570,6 +570,22 @@ describe("task_await poll grouping", () => {
     });
   });
 
+  test("expands groups with call-level interruptions", () => {
+    const infos = computeTaskAwaitPollGroupInfos([
+      tool({ id: "await-running", toolName: "task_await" }),
+      tool({
+        id: "await-interrupted",
+        toolName: "task_await",
+        status: "interrupted",
+      }),
+    ]);
+
+    expect(infos[0]).toMatchObject({
+      defaultExpanded: true,
+      summary: { title: "Task wait interrupted", tone: "interrupted" },
+    });
+  });
+
   test("conversation rows break poll groups", () => {
     const infos = computeTaskAwaitPollGroupInfos([
       tool({ id: "await-1", toolName: "task_await" }),

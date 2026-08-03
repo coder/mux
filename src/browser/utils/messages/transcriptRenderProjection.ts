@@ -535,7 +535,8 @@ export function summarizeOperationalBundle(
     const statuses = messages.flatMap(getTaskAwaitResultStatuses);
     const hasFailure =
       messages.some(hasTaskAwaitCallFailure) || statuses.some(isTaskAwaitFailureStatus);
-    const hasInterruption = statuses.includes("interrupted");
+    const hasInterruption =
+      messages.some(hasTaskAwaitCallInterruption) || statuses.includes("interrupted");
     if (hasFailure || hasInterruption) {
       return {
         title: hasFailure ? "Task wait needs attention" : "Task wait interrupted",
@@ -601,9 +602,17 @@ function hasTaskAwaitCallFailure(message: OperationalBundleMemberMessage): boole
   return isPlainObject(result) && result.success === false;
 }
 
+function hasTaskAwaitCallInterruption(message: OperationalBundleMemberMessage): boolean {
+  return (
+    message.type === "tool" && message.toolName === "task_await" && message.status === "interrupted"
+  );
+}
+
 function hasTaskAwaitTerminalIssue(messages: readonly OperationalBundleMemberMessage[]): boolean {
   return (
-    messages.some(hasTaskAwaitCallFailure) ||
+    messages.some(
+      (message) => hasTaskAwaitCallFailure(message) || hasTaskAwaitCallInterruption(message)
+    ) ||
     messages
       .flatMap(getTaskAwaitResultStatuses)
       .some((status) => isTaskAwaitFailureStatus(status) || status === "interrupted")

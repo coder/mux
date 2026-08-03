@@ -1253,6 +1253,9 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     summaryTitle = `${formatTasks(failedCount)} failed`;
     summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
     summaryTone = "danger";
+  } else if (status === "interrupted" && interruptedCount === 0) {
+    summaryTitle = "Task wait interrupted";
+    summaryTone = "interrupted";
   } else if (interruptedCount > 0) {
     summaryTitle = `${formatTasks(interruptedCount)} interrupted`;
     summaryDetail = [

@@ -1,6 +1,10 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
-import { ExpandIcon, ToolContainer } from "@/browser/features/Tools/Shared/ToolPrimitives";
+import {
+  ExpandIcon,
+  ToolContainer,
+  ToolIcon,
+} from "@/browser/features/Tools/Shared/ToolPrimitives";
 import type { OperationalBundleInfo } from "@/browser/utils/messages/transcriptRenderProjection";
 
 interface OperationalBundleMessageProps {
@@ -33,6 +37,9 @@ export function OperationalBundleMessage(props: OperationalBundleMessageProps): 
         <ExpandIcon expanded={props.expanded} className="text-muted shrink-0">
           ▶
         </ExpandIcon>
+        {props.item.entries.every(
+          (entry) => entry.message.type === "tool" && entry.message.toolName === "task_await"
+        ) && <ToolIcon toolName="task_await" className="text-task-mode" />}
         <span className="text-secondary min-w-0 flex-1 truncate text-sm leading-5">
           <span
             className={cn(

@@ -192,6 +192,13 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText(/still waiting/i)).toBeNull();
   });
 
+  test("renders call-level interruption as terminal", () => {
+    const view = renderTaskAwaitToolCall({ status: "interrupted", result: undefined });
+
+    expect(view.getByText("Task wait interrupted")).toBeDefined();
+    expect(view.queryByText("Checked task status")).toBeNull();
+  });
+
   test("keeps active task counts visible beside interruptions", () => {
     const view = renderTaskAwaitToolCall({
       status: "completed",
