@@ -95,15 +95,22 @@ const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
  */
 const anyCase = (kebab: string) => kebab.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`);
 
+/**
+ * A Tailwind variant chain, named (`hover:`) or arbitrary (`[&:hover]:`), so the whole
+ * candidate lands in the recorded token: a variant change alters when the declaration
+ * applies, which is a behavioral edit the inventory must see.
+ */
+const VARIANT_CHAIN = String.raw`(?:(?:[A-Za-z0-9_-]+|\[[^\s\]]+\]):)*`;
+
 const SELECTION_OPT_IN_PATTERN = new RegExp(
   [
-    // Named utilities behind any variant chain.
-    String.raw`\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b`,
+    // Named utilities behind any variant chain, with either important-marker spelling.
+    String.raw`!?${VARIANT_CHAIN}\bselect-(?:text|all|auto)\b!?`,
     // Arbitrary-value and variable forms.
-    String.raw`\bselect-\[(?!none\])[^\s\]]+\]`,
-    String.raw`\bselect-\((?:[\w-]+:)?--[^\s)]+\)`,
+    String.raw`!?${VARIANT_CHAIN}\bselect-\[(?!none\])[^\s\]]+\]!?`,
+    String.raw`!?${VARIANT_CHAIN}\bselect-\((?:[\w-]+:)?--[^\s)]+\)!?`,
     // The arbitrary-property form.
-    String.raw`\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]`,
+    String.raw`!?${VARIANT_CHAIN}\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]!?`,
     // camelCase inline styles, unless the value is a literal none or empty reset.
     String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b(?!\s*[:=]\s*["'\`](?:none)?["'\`])`,
     // kebab-case inside strings, in any case the browser would accept.
@@ -113,18 +120,18 @@ const SELECTION_OPT_IN_PATTERN = new RegExp(
 );
 
 /**
- * The complement: every spelling that suppresses selection, in the same forms as the
- * opt-in pattern. `user-select` inherits, so `select-none` on a control is safe while
- * the same class on an application-wide container (the App.tsx shell) disables desktop
- * selection for everything under it, and which one a line is cannot be told from the
- * class name. Both directions are therefore review gates against the same enumeration
- * machinery; a suppression added anywhere is one entry, reviewed for what it wraps.
+ * The same spellings with the value `none`. `user-select` inherits, so `select-none` on
+ * a control is safe while the same class on an application-wide container (the App.tsx
+ * shell) disables desktop selection for everything under it, and which one a line is
+ * cannot be told from the class name. Both directions are therefore review gates
+ * against the same enumeration machinery; a suppression added anywhere is one entry,
+ * reviewed for what it wraps.
  */
 const SELECTION_SUPPRESSION_PATTERN = new RegExp(
   [
-    String.raw`\b(?:[A-Za-z0-9_-]+:)*select-none\b`,
-    String.raw`\bselect-\[none\]`,
-    String.raw`\[(?:-(?:webkit|moz|ms|o)-)?user-select:none\]`,
+    String.raw`!?${VARIANT_CHAIN}\bselect-none\b!?`,
+    String.raw`!?${VARIANT_CHAIN}\bselect-\[none\]!?`,
+    String.raw`!?${VARIANT_CHAIN}\[(?:-(?:webkit|moz|ms|o)-)?user-select:none\]!?`,
     String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b\s*[:=]\s*["'\`]none["'\`]`,
     `(?:-(?:${anyCase("webkit")}|${anyCase("moz")}|${anyCase("ms")}|${anyCase("o")})-)?\\b${anyCase("user-select")}\\b\\s*:\\s*${anyCase("none")}\\b`,
   ].join("|"),
@@ -134,24 +141,21 @@ const SELECTION_SUPPRESSION_PATTERN = new RegExp(
 /**
  * Components that opt content back into selection with a Tailwind class or inline style.
  *
- * Either one puts a `user-select` declaration on the element itself, which beats
- * the guard inherited from `body`, so each entry is content that stays selectable on touch.
- * Every current one is a short value a user copies: a commit SHA, an SSH fingerprint, review
- * metadata, or a rename input. Enumerated rather than inferred because whether an element is
- * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
- * new entry is a decision for review.
+ * Either one puts a `user-select` declaration on the element itself, which beats the
+ * guard inherited from `body`, so each entry is content that stays selectable on touch.
+ * Enumerated rather than inferred because whether an element is narrow enough for that
+ * to be safe (a SHA, a fingerprint, an input) is not visible in the stylesheet or the
+ * class name, so a new entry is a decision for review.
  *
- * The inventory records normalized matched tokens per file with a count, nothing else.
- * The token is the part that affects `user-select`: the full Tailwind candidate
- * including variants and important markers, or the inline property spelling.
- * Surrounding source is deliberately not recorded: an earlier revision pinned each
- * occurrence's line text, which made behavior-neutral refactors (reordering classes on
- * a line, renaming a nearby expression) fail the contract, the tautology AGENTS.md
- * forbids. The accepted residual is that moving an already-reviewed token onto a
- * different element in the same file is invisible here, because telling identical
- * tokens apart needs surrounding text or TSX parsing; adds, removals, kind and variant
- * changes, and cross-file moves all still fail, and the PR diff itself shows what a
- * moved class newly wraps.
+ * The recorded token is the full Tailwind candidate, variants and important markers
+ * included, or the inline property spelling. Surrounding source is deliberately not
+ * recorded, because pinning line text makes behavior-neutral refactors (reordering
+ * classes on a line, renaming a nearby expression) fail the contract, the tautology
+ * AGENTS.md forbids. The accepted residual: moving an already-reviewed token onto a
+ * different element in the same file is invisible here, since telling identical tokens
+ * apart needs surrounding text or TSX parsing; adds, removals, kind and variant
+ * changes, and cross-file moves all fail, and the PR diff itself shows what a moved
+ * class newly wraps.
  */
 const SELECTION_OPT_INS: Record<string, Record<string, number>> = {
   "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-text": 1 },
@@ -198,7 +202,7 @@ const SELECTION_SUPPRESSIONS: Record<string, Record<string, number>> = {
   "src/browser/features/RightSidebar/CodeReview/ImmersiveDiffRevealLoadingState.tsx": {
     "select-none": 1,
   },
-  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": { "select-none": 1 },
+  "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": { "[&_summary]:select-none": 1 },
   "src/browser/features/RightSidebar/StatsTab.tsx": { "select-none": 1 },
   "src/browser/features/Shared/DiffRenderer.tsx": { "select-none": 4 },
   "src/browser/features/Tools/AgentSkillReadFileToolCall.tsx": { "select-none": 1 },
