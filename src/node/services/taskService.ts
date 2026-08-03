@@ -414,7 +414,7 @@ type AgentReportFinalizationResult =
   | { finalized: true }
   | {
       finalized: false;
-      reason: "invalid_structured_output" | "terminal_interrupted";
+      reason: "invalid_structured_output" | "pending_guidance" | "terminal_interrupted";
       message: string;
     };
 
@@ -615,7 +615,7 @@ export interface SendAgentTaskMessageResult {
 export type SendAgentTaskMessageError =
   | { code: "not_found" }
   | { code: "invalid_scope" }
-  | { code: "not_active"; taskStatus: AgentTaskStatus | "unknown" }
+  | { code: "not_active"; taskStatus: AgentTaskStatus | "unknown"; message?: string }
   | { code: "send_failed"; message: string };
 
 export interface TerminateAgentTaskResult {
@@ -4026,6 +4026,13 @@ export class TaskService {
       ) {
         return Err({ code: "invalid_scope" as const });
       }
+      if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
+        return Err({
+          code: "not_active" as const,
+          taskStatus: entry.workspace.taskStatus ?? "unknown",
+          message: "Task workspace is archived and cannot accept updated guidance.",
+        });
+      }
       if (entry.workspace.taskStatus !== "queued") {
         return Ok(null);
       }
@@ -4066,21 +4073,45 @@ export class TaskService {
         return Err({ code: "invalid_scope" as const });
       }
 
+      if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
+        return Err({
+          code: "not_active" as const,
+          taskStatus: entry.workspace.taskStatus ?? "unknown",
+          message: "Task workspace is archived and cannot accept updated guidance.",
+        });
+      }
+
       // Missing status is a legacy running task: old persisted children predate taskStatus.
       const previousStatus = entry.workspace.taskStatus ?? "running";
       if (previousStatus !== "running" && previousStatus !== "awaiting_report") {
         return Err({ code: "not_active" as const, taskStatus: previousStatus ?? "unknown" });
       }
 
-      if (previousStatus === "awaiting_report") {
+      await this.editWorkspaceEntry(
+        taskId,
+        (workspace) => {
+          workspace.taskGuidancePending = true;
+          if (previousStatus === "awaiting_report") {
+            workspace.taskStatus = "running";
+          }
+        },
+        { allowMissing: true }
+      );
+
+      const clearGuidanceReservation = async (restoreAfterFailure: boolean): Promise<void> => {
         await this.editWorkspaceEntry(
           taskId,
           (workspace) => {
-            workspace.taskStatus = "running";
+            delete workspace.taskGuidancePending;
+            if (restoreAfterFailure && workspace.taskStatus === "running") {
+              workspace.taskStatus = this.aiService.isStreaming(taskId)
+                ? previousStatus
+                : "awaiting_report";
+            }
           },
           { allowMissing: true }
         );
-      }
+      };
 
       let accepted = false;
       const sendResult = await this.workspaceService.sendMessage(
@@ -4101,40 +4132,20 @@ export class TaskService {
           synthetic: true,
           agentInitiated: true,
           startStreamInBackground: true,
-          onAcceptedPreStreamFailure:
-            previousStatus === "awaiting_report"
-              ? async () => {
-                  // The queued guidance was persisted but its replacement stream could not start;
-                  // keep the child recoverable by restoring the completion-reminder state.
-                  await this.editWorkspaceEntry(
-                    taskId,
-                    (workspace) => {
-                      if (workspace.taskStatus === "running") {
-                        workspace.taskStatus = "awaiting_report";
-                      }
-                    },
-                    { allowMissing: true }
-                  );
-                }
-              : undefined,
-          onAccepted: () => {
+          onAcceptedPreStreamFailure: async () => {
+            // If the replacement turn cannot start, remove the settlement reservation and restore
+            // an idle child to completion recovery instead of leaving it permanently running.
+            await clearGuidanceReservation(true);
+          },
+          onAccepted: async () => {
+            await clearGuidanceReservation(false);
             accepted = true;
           },
         }
       );
 
       if (!sendResult.success) {
-        if (previousStatus === "awaiting_report") {
-          await this.editWorkspaceEntry(
-            taskId,
-            (workspace) => {
-              if (workspace.taskStatus === "running") {
-                workspace.taskStatus = "awaiting_report";
-              }
-            },
-            { allowMissing: true }
-          );
-        }
+        await clearGuidanceReservation(true);
         return Err({
           code: "send_failed" as const,
           message: formatSendMessageError(sendResult.error).message,
@@ -9547,6 +9558,13 @@ export class TaskService {
       return;
     }
 
+    // Parent corrections queued for the next task turn supersede any report emitted by the old
+    // turn. Keep the task active until AgentSession accepts the reserved guidance and clears this
+    // durable flag; otherwise turn-end dispatch could deliver a stale report before the correction.
+    if (entry.workspace.taskGuidancePending === true) {
+      return;
+    }
+
     if (reportArgs) {
       const finalization = await this.finalizeAgentTaskReport(workspaceId, entry, reportArgs);
       if (finalization.finalized) {
@@ -10692,6 +10710,14 @@ export class TaskService {
     const cfgBeforeReport = this.config.loadConfigOrDefault();
     const latestEntryBeforeReport =
       findWorkspaceEntry(cfgBeforeReport, childWorkspaceId) ?? childEntry;
+    if (latestEntryBeforeReport?.workspace.taskGuidancePending === true) {
+      return {
+        finalized: false,
+        reason: "pending_guidance",
+        message: "A parent guidance update is pending; ignore this stale report.",
+      };
+    }
+
     const statusBefore = latestEntryBeforeReport?.workspace.taskStatus;
     if (statusBefore === "reported") {
       return { finalized: true };

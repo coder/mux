@@ -1030,7 +1030,15 @@ const TaskSendMessageToolNotActiveResultSchema = z
   .object({
     status: z.literal("not_active"),
     taskId: z.string(),
-    taskStatus: z.enum(["starting", "interrupted", "reported", "unknown"]),
+    taskStatus: z.enum([
+      "queued",
+      "starting",
+      "running",
+      "awaiting_report",
+      "interrupted",
+      "reported",
+      "unknown",
+    ]),
     error: z.string(),
   })
   .strict();

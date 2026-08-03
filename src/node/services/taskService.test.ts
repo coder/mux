@@ -10435,6 +10435,7 @@ describe("TaskService", () => {
       )
     ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "tool-end" }));
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskGuidancePending).toBe(true);
   });
 
   test("sendMessageToDescendantAgentTask serializes queued guidance with launch reservation", async () => {
@@ -10524,6 +10525,50 @@ describe("TaskService", () => {
     );
   });
 
+  test("pending parent guidance blocks stale report settlement at stream end", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-pending-guidance-report";
+    const childTaskId = "child-pending-guidance-report";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+          taskGuidancePending: true,
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { taskService } = createTaskServiceHarness(config);
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "assistant-stale-report",
+      metadata: { model: "openai:gpt-5.2", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-stale",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Stale report" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ],
+    });
+
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskGuidancePending).toBe(true);
+  });
+
   test("sendMessageToDescendantAgentTask treats legacy missing taskStatus as running", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
@@ -10557,6 +10602,46 @@ describe("TaskService", () => {
         "tool-end"
       )
     ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "tool-end" }));
+  });
+
+  test("sendMessageToDescendantAgentTask rejects archived descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-archived-guidance";
+    const childTaskId = "child-archived-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          archivedAt: "2026-08-03T00:00:00.000Z",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "Correction",
+        "tool-end"
+      )
+    ).toEqual(
+      Err({
+        code: "not_active",
+        taskStatus: "running",
+        message: "Task workspace is archived and cannot accept updated guidance.",
+      })
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("sendMessageToDescendantAgentTask rejects non-descendants and settled children", async () => {

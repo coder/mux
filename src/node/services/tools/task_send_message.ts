@@ -51,7 +51,9 @@ export const createTaskSendMessageTool: ToolFactory = (config: ToolConfiguration
                   status: "not_active" as const,
                   taskId: args.task_id,
                   taskStatus: error.taskStatus,
-                  error: `Task is ${error.taskStatus} and cannot accept updated guidance.`,
+                  error:
+                    error.message ??
+                    `Task is ${error.taskStatus} and cannot accept updated guidance.`,
                 }
               : { status: "error" as const, taskId: args.task_id, error: error.message };
 

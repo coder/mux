@@ -206,6 +206,10 @@ export const WorkspaceMetadataSchema = z.object({
       description:
         "Agent task lifecycle status for child workspaces (queued|starting|running|awaiting_report|interrupted|reported).",
     }),
+  taskGuidancePending: z.boolean().optional().meta({
+    description:
+      "Whether parent guidance has been queued but not yet accepted into a replacement task turn.",
+  }),
   taskLaunchError: z.string().optional().meta({
     description: "Startup failure recorded before an agent task could begin streaming.",
   }),
