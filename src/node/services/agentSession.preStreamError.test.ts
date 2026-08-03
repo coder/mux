@@ -126,6 +126,46 @@ describe("AgentSession pre-stream errors", () => {
     expect(sendQueuedMessages).toHaveBeenCalledTimes(1);
   });
 
+  it("notifies accepted background sends when startup is aborted during preparation", async () => {
+    const workspaceId = "ws-background-startup-aborted-during-preparation";
+    const { session, cleanup } = await createAgentSessionHarness({ workspaceId });
+    historyCleanup = cleanup;
+    let finishStartup: (() => void) | undefined;
+    const privateSession = session as unknown as {
+      streamWithHistory: () => Promise<Result<void, SendMessageError>>;
+      activePreparedTurnAbortController: AbortController | null;
+    };
+    privateSession.streamWithHistory = async () => {
+      await new Promise<void>((resolve) => {
+        finishStartup = resolve;
+      });
+      return Ok(undefined);
+    };
+
+    const failure = new Promise<SendMessageError>((resolve) => {
+      void session.sendMessage(
+        "background",
+        { model: "anthropic:claude-3-5-sonnet-latest", agentId: "exec" },
+        {
+          startStreamInBackground: true,
+          onAcceptedPreStreamFailure: resolve,
+        }
+      );
+    });
+
+    while (privateSession.activePreparedTurnAbortController == null || finishStartup == null) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    privateSession.activePreparedTurnAbortController.abort();
+    finishStartup();
+
+    expect(await failure).toEqual({
+      type: "unknown",
+      raw: "Accepted stream startup was canceled during preparation.",
+    });
+    await session.waitForIdle();
+  });
+
   it("acknowledges edited sends immediately and surfaces later startup failure via stream-error", async () => {
     const workspaceId = "ws-edit-startup-failed";
 

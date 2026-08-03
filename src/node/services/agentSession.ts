@@ -3082,7 +3082,7 @@ export class AgentSession {
         }
 
         // Turn-phase transitions for success are driven by stream events.
-        return await this.streamWithHistory(
+        const streamResult = await this.streamWithHistory(
           modelForStream,
           optionsForStream,
           undefined,
@@ -3093,6 +3093,14 @@ export class AgentSession {
           turnThinkingOverride,
           internal?.monitorHistoryLockState?.held === true
         );
+        if (streamResult.success && preparedTurnAbortController.signal.aborted) {
+          await notifyAcceptedPreStreamFailure(
+            createUnknownSendMessageError(
+              "Accepted stream startup was canceled during preparation."
+            )
+          );
+        }
+        return streamResult;
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
         // session stuck in PREPARING. Guard by controller identity so an aborted startup cannot
