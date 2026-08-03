@@ -69,7 +69,7 @@ const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url))
 /**
  * Files whose contents can put a `user-select` declaration on a rendered element: the
  * renderer's entry HTML (vite.config.ts `rollupOptions.input`) and the `src/` segments
- * the renderer is bundled from, minus the test, story, and fixture conventions, which
+ * the renderer is bundled from, minus tests, fixtures, and Storybook-only sources, which
  * ship no product UI. A token anywhere else, docs prose, a fixture's sample payload, a
  * backend prompt string in `src/node`, emits at most an unused utility rule into the
  * compiled CSS and styles nothing the app renders, so inventorying those files made
@@ -86,7 +86,8 @@ const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url))
  */
 const RENDERER_SEGMENTS = ["browser", "common", "constants", "version"];
 const RUNTIME_ENTRY_HTML = ["index.html", "terminal.html"];
-const NON_RUNTIME_SOURCE = /\.(?:test|stories|fixtures)\.[jt]sx?$/;
+const NON_RUNTIME_SOURCE =
+  /(?:^|\/)stories\/|\/settingsStoryUtils\.[jt]sx?$|\.(?:test|stories|fixtures)\.[jt]sx?$/;
 
 function isRuntimeSource(relativePath: string): boolean {
   if (RUNTIME_ENTRY_HTML.includes(relativePath)) {
@@ -721,6 +722,18 @@ describe("touch text-selection guard", () => {
     expect(await collectSelectionSites(SELECTION_SUPPRESSION_PATTERN)).toEqual(
       SELECTION_SUPPRESSIONS
     );
+  });
+
+  it("scans renderer sources but not Storybook helpers", () => {
+    const runtimeSources = new Set(runtimeSourceFiles());
+    expect({
+      production: runtimeSources.has("src/browser/features/Settings/Sections/GeneralSection.tsx"),
+      storybook: [
+        "src/browser/stories/mocks/orpc.ts",
+        "src/browser/stories/storyPlayHelpers.ts",
+        "src/browser/features/Settings/Sections/settingsStoryUtils.tsx",
+      ].filter((relativePath) => runtimeSources.has(relativePath)),
+    }).toEqual({ production: true, storybook: [] });
   });
 
   /**
