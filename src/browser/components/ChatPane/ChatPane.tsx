@@ -1577,12 +1577,17 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                     )}
                     {deferredMessages.map((msg, index) => {
                       const workBundle = workBundleInfos?.[index];
+                      const operationalBundle = workBundle
+                        ? undefined
+                        : operationalBundleInfos?.[index];
                       const taskAwaitPollGroup = taskAwaitPollGroupInfos[index];
-                      if (taskAwaitPollGroup && !workBundle) {
+                      if (taskAwaitPollGroup && !workBundle && !operationalBundle) {
                         const override = operationalBundleExpansionOverrides.get(
                           taskAwaitPollGroup.key
                         );
-                        const expanded = override ?? taskAwaitPollGroup.defaultExpanded;
+                        // A failure/interruption discovered after the user collapsed routine polls must
+                        // still surface immediately; terminal attention wins over a stale false override.
+                        const expanded = taskAwaitPollGroup.defaultExpanded || override === true;
                         const renderHeader = taskAwaitPollGroup.position === "head";
                         if (!renderHeader && !expanded) {
                           return null;
@@ -1633,9 +1638,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       const renderWorkBundle = workBundle?.position === "head";
                       const renderMessageBeforeWorkBundle = renderWorkBundle && msg.type === "user";
                       const renderMessageAfterWorkBundle = !renderWorkBundle;
-                      const operationalBundle = workBundle
-                        ? undefined
-                        : operationalBundleInfos?.[index];
                       const operationalBundleOverride = operationalBundle
                         ? operationalBundleExpansionOverrides.get(operationalBundle.key)
                         : undefined;
