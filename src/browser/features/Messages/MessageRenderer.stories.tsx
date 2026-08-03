@@ -22,6 +22,7 @@ import {
   buildWorkflowRunCardMessage,
 } from "@/common/utils/workflowRunMessages";
 import {
+  createCompletedTaskTool,
   createFileEditTool,
   createFileReadTool,
   createTaskAwaitTool,
@@ -118,6 +119,21 @@ export const TaskAwaitTranscript: AppStory = {
             `Task await summary overflows horizontally (${summary.scrollWidth}px > ${summary.clientWidth}px)`
           );
         }
+
+        const groupedSummary = canvasElement.querySelector<HTMLElement>(
+          '[data-component="OperationalBundleSummary"]'
+        );
+        const standaloneSummary = summary.querySelector<HTMLElement>(
+          '[data-component="TaskAwaitSummary"]'
+        );
+        if (!groupedSummary || !standaloneSummary) {
+          throw new Error("Task wait summary typography targets not rendered");
+        }
+        if (
+          getComputedStyle(groupedSummary).fontSize !== getComputedStyle(standaloneSummary).fontSize
+        ) {
+          throw new Error("Grouped and standalone task waits use inconsistent text sizes");
+        }
         return summary;
       },
       { timeout: 15_000 }
@@ -137,6 +153,81 @@ export const TaskAwaitTranscript: AppStory = {
       if (details.scrollWidth > details.clientWidth) {
         throw new Error(
           `Task await details overflow horizontally (${details.scrollWidth}px > ${details.clientWidth}px)`
+        );
+      }
+    });
+  },
+};
+
+export const TaskReportTranscript: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone", "laptop"] },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-task-report-transcript",
+          messages: [
+            createUserMessage("msg-task-report-1", "Investigate the transcript typography bug.", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60_000,
+            }),
+            createAssistantMessage("msg-task-report-2", "The investigation is complete.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP,
+              toolCalls: [
+                createCompletedTaskTool("task-report-complete", {
+                  subagent_type: "explore",
+                  prompt: "Find why task report text renders larger than nearby tool chrome.",
+                  title: "Investigate task report typography",
+                  taskId: "task-report-1",
+                  reportTitle: "Typography investigation",
+                  reportMarkdown: `# Typography investigation
+
+The report inherited transcript-sized markdown styles instead of compact task chrome.
+
+## Fix
+
+- Keep body text aligned with compact \`tool chrome\`.
+- Preserve modest heading hierarchy without transcript-scale headings.`,
+                }),
+              ],
+            }),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const taskCard = await waitFor(() => {
+      const card = canvasElement.querySelector<HTMLElement>('[data-component="TaskToolCall"]');
+      if (!card) throw new Error("Task report card not rendered");
+      return card;
+    });
+    const taskHeader = taskCard.querySelector<HTMLElement>('[data-scroll-intent="ignore"]');
+    if (!taskHeader) throw new Error("Task report header not rendered");
+    await userEvent.click(taskHeader);
+
+    await waitFor(() => {
+      const report = taskCard.querySelector<HTMLElement>(".task-report-markdown");
+      const heading = report?.querySelector<HTMLElement>("h1");
+      if (!report || !heading) throw new Error("Expanded task report markdown not rendered");
+      if (Number.parseFloat(getComputedStyle(report).fontSize) > 12) {
+        throw new Error("Task report body text is larger than compact tool chrome");
+      }
+      if (Number.parseFloat(getComputedStyle(heading).fontSize) > 14) {
+        throw new Error("Task report heading is too large for compact tool chrome");
+      }
+      if (taskCard.scrollWidth > taskCard.clientWidth) {
+        throw new Error(
+          `Task report card overflows horizontally (${taskCard.scrollWidth}px > ${taskCard.clientWidth}px)`
         );
       }
     });

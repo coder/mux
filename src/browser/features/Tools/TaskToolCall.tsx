@@ -886,6 +886,13 @@ function getAggregateTaskStatus(
   return fallbackStatus;
 }
 
+const TaskReportMarkdown: React.FC<{ content: string; className?: string }> = (props) => (
+  <MarkdownRenderer
+    content={props.content}
+    className={cn("task-report-markdown", props.className)}
+  />
+);
+
 const TaskToolCandidateCard: React.FC<{
   entry: TaskToolDisplayEntry;
   index: number;
@@ -928,11 +935,7 @@ const TaskToolCandidateCard: React.FC<{
         )}
       </div>
 
-      {hasReport && entry.reportMarkdown && (
-        <div className="text-[11px]">
-          <MarkdownRenderer content={entry.reportMarkdown} />
-        </div>
-      )}
+      {hasReport && entry.reportMarkdown && <TaskReportMarkdown content={entry.reportMarkdown} />}
     </div>
   );
 };
@@ -1097,7 +1100,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     createdTaskGroupCount < totalTaskGroupCount;
 
   return (
-    <ToolContainer expanded={expanded}>
+    <ToolContainer expanded={expanded} data-component="TaskToolCall">
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <TaskIcon toolName="task" />
@@ -1199,9 +1202,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               singleEntry?.reportMarkdown && (
                 <div className="task-divider border-t pt-2">
                   <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
-                  <div className="text-[11px]">
-                    <MarkdownRenderer content={singleEntry.reportMarkdown} />
-                  </div>
+                  <TaskReportMarkdown content={singleEntry.reportMarkdown} />
                 </div>
               )
             )}
@@ -1429,7 +1430,10 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             summaryTone === "waiting" && "text-muted"
           )}
         />
-        <span className="counter-nums min-w-0 flex-1 truncate text-[12px] leading-5">
+        <span
+          data-component="TaskAwaitSummary"
+          className="counter-nums min-w-0 flex-1 truncate text-[12px] leading-5"
+        >
           <span
             className={cn(
               summaryTone === "active" ? "text-foreground" : "text-secondary",
@@ -1599,9 +1603,7 @@ const TaskAwaitResult: React.FC<{
       )}
 
       {showDetails && reportMarkdown && (
-        <div className="mt-2 text-[11px]">
-          <MarkdownRenderer content={reportMarkdown} />
-        </div>
+        <TaskReportMarkdown content={reportMarkdown} className="mt-2" />
       )}
 
       {"error" in result && result.error && (

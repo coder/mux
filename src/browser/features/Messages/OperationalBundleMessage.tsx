@@ -22,6 +22,9 @@ export function OperationalBundleMessage(props: OperationalBundleMessageProps): 
         }`)
       : props.item.summary.title;
   const details = props.item.entries.length === 1 ? "" : props.item.summary.details;
+  const isTaskAwaitBundle = props.item.entries.every(
+    (entry) => entry.message.type === "tool" && entry.message.toolName === "task_await"
+  );
 
   return (
     <ToolContainer data-testid="operational-bundle" expanded={false} className="bg-transparent">
@@ -37,10 +40,14 @@ export function OperationalBundleMessage(props: OperationalBundleMessageProps): 
         <ExpandIcon expanded={props.expanded} className="text-muted shrink-0">
           ▶
         </ExpandIcon>
-        {props.item.entries.every(
-          (entry) => entry.message.type === "tool" && entry.message.toolName === "task_await"
-        ) && <ToolIcon toolName="task_await" className="text-task-mode" />}
-        <span className="text-secondary min-w-0 flex-1 truncate text-sm leading-5">
+        {isTaskAwaitBundle && <ToolIcon toolName="task_await" className="text-task-mode" />}
+        <span
+          data-component={isTaskAwaitBundle ? "OperationalBundleSummary" : undefined}
+          className={cn(
+            "text-secondary min-w-0 flex-1 truncate leading-5",
+            isTaskAwaitBundle ? "text-[12px]" : "text-sm"
+          )}
+        >
           <span
             className={cn(
               props.item.summary.tone === "danger" && "text-danger",

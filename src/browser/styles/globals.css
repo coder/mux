@@ -1882,6 +1882,35 @@ code {
   font-size: 13px;
 }
 
+/* Task reports live inside compact tool chrome. Override the transcript-sized markdown defaults
+   on the renderer itself so report-bearing task variants cannot jump to 14–20px text. */
+.markdown-content.task-report-markdown {
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.markdown-content.task-report-markdown h1 {
+  font-size: 14px;
+}
+
+.markdown-content.task-report-markdown h2 {
+  font-size: 13px;
+}
+
+.markdown-content.task-report-markdown h3 {
+  font-size: 12px;
+}
+
+.markdown-content.task-report-markdown h4,
+.markdown-content.task-report-markdown h5,
+.markdown-content.task-report-markdown h6 {
+  font-size: 11px;
+}
+
+.markdown-content.task-report-markdown code {
+  font-size: 11px;
+}
+
 /* Remove default margins on first and last elements */
 .markdown-content > :first-child {
   margin-top: 0;
