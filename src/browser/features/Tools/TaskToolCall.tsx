@@ -1214,7 +1214,13 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     summaryTone = "danger";
   } else if (interruptedCount > 0) {
     summaryTitle = `${formatTasks(interruptedCount)} interrupted`;
-    summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
+    summaryDetail = [
+      pendingCount > 0 ? `${formatTasks(pendingCount)} still active` : undefined,
+      completedCount > 0 ? `${completedCount} completed` : undefined,
+    ]
+      .filter((detail): detail is string => detail != null)
+      .join(" · ");
+    summaryDetail = summaryDetail.length > 0 ? summaryDetail : undefined;
     summaryTone = "interrupted";
   } else if (status === "executing") {
     summaryTitle = targetCount

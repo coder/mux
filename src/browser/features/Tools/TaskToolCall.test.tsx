@@ -192,6 +192,22 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText(/still waiting/i)).toBeNull();
   });
 
+  test("keeps active task counts visible beside interruptions", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [
+          { status: "interrupted", taskId: "task-1" },
+          { status: "running", taskId: "task-2" },
+          { status: "queued", taskId: "task-3" },
+        ],
+      },
+    });
+
+    expect(view.getByText("1 task interrupted")).toBeDefined();
+    expect(view.getByText(/2 tasks still active/)).toBeDefined();
+  });
+
   test("surfaces call-level task_await failures", () => {
     const view = renderTaskAwaitToolCall({
       status: "failed",
