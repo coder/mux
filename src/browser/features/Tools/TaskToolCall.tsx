@@ -294,6 +294,7 @@ interface TaskRowProps {
   startedAtMs?: number;
   openWorkspaceId?: string;
   className?: string;
+  variant?: "default" | "await";
 }
 
 function isTaskRowElapsedActive(status: string): boolean {
@@ -326,28 +327,68 @@ const TaskRowElapsed: React.FC<{ startedAtMs: number | undefined; status: string
   return null;
 };
 
-const TaskRow: React.FC<TaskRowProps> = (props) => (
-  <div
-    className={cn("bg-code-bg flex flex-wrap items-center gap-2 rounded-sm p-2", props.className)}
-  >
-    <TaskId id={props.taskId} openWorkspaceId={props.openWorkspaceId} />
-    <TaskStatusBadge status={props.status} />
-    {props.agentType && (
-      <AgentTypeBadge
-        type={props.agentType}
-        taskId={props.taskId}
-        openWorkspaceId={props.openWorkspaceId}
-      />
-    )}
-    {props.title && (
-      <span className="text-foreground max-w-[200px] truncate text-[11px]">{props.title}</span>
-    )}
-    {typeof props.depth === "number" && props.depth > 0 && (
-      <span className="text-muted text-[10px]">depth: {props.depth}</span>
-    )}
-    <TaskRowElapsed startedAtMs={props.startedAtMs} status={props.status} />
-  </div>
-);
+const TaskRow: React.FC<TaskRowProps> = (props) => {
+  if (props.variant === "await") {
+    return (
+      <div
+        className={cn(
+          "border-border-light/60 bg-surface-primary/40 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-md border px-2.5 py-2",
+          props.className
+        )}
+      >
+        <div className="min-w-0">
+          {props.title ? (
+            <div className="text-foreground truncate text-[11px] font-medium">{props.title}</div>
+          ) : (
+            <TaskId
+              id={props.taskId}
+              openWorkspaceId={props.openWorkspaceId}
+              className="text-secondary opacity-100"
+            />
+          )}
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            {props.title && <TaskId id={props.taskId} openWorkspaceId={props.openWorkspaceId} />}
+            {props.agentType && (
+              <AgentTypeBadge
+                type={props.agentType}
+                taskId={props.taskId}
+                openWorkspaceId={props.openWorkspaceId}
+              />
+            )}
+            {typeof props.depth === "number" && props.depth > 0 && (
+              <span className="text-muted text-[10px]">depth {props.depth}</span>
+            )}
+            <TaskRowElapsed startedAtMs={props.startedAtMs} status={props.status} />
+          </div>
+        </div>
+        <TaskStatusBadge status={props.status} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={cn("bg-code-bg flex flex-wrap items-center gap-2 rounded-sm p-2", props.className)}
+    >
+      <TaskId id={props.taskId} openWorkspaceId={props.openWorkspaceId} />
+      <TaskStatusBadge status={props.status} />
+      {props.agentType && (
+        <AgentTypeBadge
+          type={props.agentType}
+          taskId={props.taskId}
+          openWorkspaceId={props.openWorkspaceId}
+        />
+      )}
+      {props.title && (
+        <span className="text-foreground max-w-[200px] truncate text-[11px]">{props.title}</span>
+      )}
+      {typeof props.depth === "number" && props.depth > 0 && (
+        <span className="text-muted text-[10px]">depth: {props.depth}</span>
+      )}
+      <TaskRowElapsed startedAtMs={props.startedAtMs} status={props.status} />
+    </div>
+  );
+};
 
 const MAX_TASK_DEPTH_TRAVERSAL = 50;
 
@@ -1313,23 +1354,25 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
       </ToolHeader>
 
       {expanded && (
-        <ToolDetails>
-          <div className="task-surface mt-1 rounded-md p-3">
-            {/* Config info */}
+        <ToolDetails className="mt-1.5 border-t-0 pt-0">
+          <div
+            data-component="TaskAwaitDetails"
+            className="border-task-mode/20 bg-task-mode/5 overflow-hidden rounded-lg border"
+          >
             {showConfigInfo && (
-              <div className="task-divider text-muted mb-2 flex flex-wrap gap-2 border-b pb-2 text-[10px]">
-                {taskIds != null && <span>Waiting for: {taskIds.length} task(s)</span>}
-                {timeoutSecs != null && <span>Timeout: {timeoutSecs}s</span>}
-                {args.filter != null && <span>Filter: {args.filter}</span>}
-                {args.filter_exclude === true && <span>Exclude: true</span>}
+              <div className="border-task-mode/10 bg-surface-secondary/40 text-muted flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 text-[10px]">
+                {taskIds != null && <span>{formatTasks(taskIds.length)}</span>}
+                {timeoutSecs != null && <span>· {timeoutSecs}s timeout</span>}
+                {args.filter != null && <span className="truncate">· filter {args.filter}</span>}
+                {args.filter_exclude === true && <span>· excluding matches</span>}
               </div>
             )}
 
-            {callError && <ErrorBox className="mb-2">{callError}</ErrorBox>}
+            {callError && <ErrorBox className="m-2">{callError}</ErrorBox>}
 
             {/* Results */}
             {results.length > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-1.5 p-2">
                 {results.map((r, idx) => {
                   const taskId = typeof r.taskId === "string" ? r.taskId : null;
 
@@ -1355,17 +1398,20 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
                 })}
               </div>
             ) : status === "executing" ? (
-              <div className="space-y-2">
-                {awaitedRows.map((row) => (
-                  <TaskRow key={row.taskId} {...row} />
-                ))}
-                <div className="text-muted text-[11px] italic">
-                  Waiting for tasks to complete
+              <>
+                <div className="space-y-1.5 p-2">
+                  {awaitedRows.map((row) => (
+                    <TaskRow key={row.taskId} {...row} variant="await" />
+                  ))}
+                </div>
+                <div className="border-task-mode/10 text-muted flex items-center gap-1.5 border-t px-3 py-2 text-[10px]">
+                  <LoaderCircle className="text-task-mode size-3 animate-spin" />
+                  Listening for task updates
                   <LoadingDots />
                 </div>
-              </div>
+              </>
             ) : (
-              <div className="text-muted text-[11px] italic">No tasks specified</div>
+              <div className="text-muted px-3 py-2 text-[11px] italic">No tasks specified</div>
             )}
           </div>
         </ToolDetails>
@@ -1403,33 +1449,47 @@ const TaskAwaitResult: React.FC<{
   const showDetails = !suppressReport;
 
   return (
-    <div className="bg-code-bg rounded-sm p-2">
-      <div className={cn("flex flex-wrap items-center gap-2", showDetails && "mb-1")}>
-        <TaskId id={result.taskId} openWorkspaceId={openWorkspaceId} />
+    <div className="border-border-light/60 bg-surface-primary/40 rounded-md border px-2.5 py-2">
+      <div className={cn("grid grid-cols-[minmax(0,1fr)_auto] gap-2", showDetails && "mb-1")}>
+        <div className="min-w-0">
+          {title ? (
+            <div className="text-foreground truncate text-[11px] font-medium">{title}</div>
+          ) : (
+            <TaskId
+              id={result.taskId}
+              openWorkspaceId={openWorkspaceId}
+              className="text-secondary opacity-100"
+            />
+          )}
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+            {title && <TaskId id={result.taskId} openWorkspaceId={openWorkspaceId} />}
+            {exitCode !== undefined && (
+              <span className="text-muted text-[10px]">exit {exitCode}</span>
+            )}
+            {elapsedMs !== undefined && (
+              <span className="text-muted counter-nums text-[10px]">
+                took {formatDuration(elapsedMs)}
+              </span>
+            )}
+            {note && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="View notice"
+                    className="text-muted hover:text-secondary rounded p-0.5 transition-colors"
+                  >
+                    <Info size={12} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        </div>
         <TaskStatusBadge status={result.status} />
-        {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
-        {exitCode !== undefined && <span className="text-muted text-[10px]">exit {exitCode}</span>}
-        {elapsedMs !== undefined && (
-          <span className="text-muted counter-nums text-[10px]">
-            took {formatDuration(elapsedMs)}
-          </span>
-        )}
-        {note && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                aria-label="View notice"
-                className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
-              >
-                <Info size={12} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
 
       {showDetails && patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}

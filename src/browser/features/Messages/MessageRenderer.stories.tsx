@@ -106,26 +106,40 @@ export const TaskAwaitTranscript: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await waitFor(
+    const activeWait = await waitFor(
       () => {
         if (canvas.queryByText("Checked task status 3 times") == null) {
           throw new Error("Repeated task_await polls were not collapsed");
         }
-        if (canvas.queryByText("Waiting for 2 tasks") == null) {
-          throw new Error("Standalone task_await summary did not render");
-        }
-        const summary = canvasElement.querySelector<HTMLElement>(
-          '[data-component="TaskAwaitToolCall"]'
-        );
-        if (!summary) throw new Error("Task await summary not rendered");
+        const summary = canvas.queryByLabelText("Waiting for 2 tasks. Show task wait details");
+        if (!summary) throw new Error("Standalone task_await summary did not render");
         if (summary.scrollWidth > summary.clientWidth) {
           throw new Error(
             `Task await summary overflows horizontally (${summary.scrollWidth}px > ${summary.clientWidth}px)`
           );
         }
+        return summary;
       },
       { timeout: 15_000 }
     );
+
+    // Keep the active wait expanded in the visual baseline so the compact row and its richer
+    // on-demand task details are reviewed together at phone and laptop widths.
+    await userEvent.click(activeWait);
+    await waitFor(() => {
+      const details = canvasElement.querySelector<HTMLElement>(
+        '[data-component="TaskAwaitDetails"]'
+      );
+      if (!details) throw new Error("Expanded task_await details did not render");
+      if (canvas.queryByText("task-research") == null || canvas.queryByText("task-tests") == null) {
+        throw new Error("Expanded task_await details omitted awaited task IDs");
+      }
+      if (details.scrollWidth > details.clientWidth) {
+        throw new Error(
+          `Task await details overflow horizontally (${details.scrollWidth}px > ${details.clientWidth}px)`
+        );
+      }
+    });
   },
 };
 
