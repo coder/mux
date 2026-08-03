@@ -7,15 +7,20 @@
  * declaration that wins for a viewport rather than matching literal source.
  *
  * Selection reaches an element from every route that produces a `user-select`
- * declaration, so all are checked: rules written in globals.css, Tailwind utilities named
- * in TSX or in files pulled in by `@source` directives, and inline styles, whether React
- * style objects or DOM style assignments. Only the first route is visible to this parse;
- * the others need their own source scan.
+ * declaration, so all are checked: rules written in globals.css, Tailwind utilities in
+ * any file Tailwind reads (its own scanner decides which, so `index.html` and other
+ * non-TypeScript sources are included), and inline styles, whether React style objects
+ * or DOM style assignments. Only the first route is visible to this parse; the others
+ * need the source scan.
+ *
+ * `@tailwindcss/oxide` is the scanner underneath the declared `tailwindcss` and
+ * `@tailwindcss/vite` packages; asking it for the file list is what keeps "which files
+ * does Tailwind scan" from becoming another hand-rolled approximation.
  */
-import { Glob } from "bun";
+import { Scanner } from "@tailwindcss/oxide";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readFile, stat } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postcss, { type ChildNode, type Container, type Declaration } from "postcss";
 
@@ -57,10 +62,9 @@ const APPLIED_SELECTION_UTILITY =
  */
 const ARBITRARY_SELECTION_CLASS = /\[(?:-(?:webkit|moz|ms|o)-)?user-select:[^\s\]]+\]/;
 
-const SOURCE_DIR = new URL("../../", import.meta.url).pathname;
-
 const STYLESHEET_DIR = fileURLToPath(new URL("./", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url));
 
 /**
  * The one `@source` form this contract models: a double-quoted plain file path, which
@@ -190,6 +194,12 @@ const SELECTION_OPT_INS: Record<string, string[]> = {
  * by running the test and copying the reported diff.
  */
 const SELECTION_SUPPRESSIONS: Record<string, string[]> = {
+  ".design-sync/previews/Checkbox.tsx": [
+    '<label htmlFor={props.id} className="text-sm select-none">\n{props.label}',
+  ],
+  ".design-sync/previews/Switch.tsx": [
+    '<span className="text-sm select-none">{props.label}</span>\n</div>',
+  ],
   "src/browser/components/AgentListItem/AgentListItem.tsx": [
     '"bg-surface-primary relative flex items-start gap-1.5 rounded-l-sm py-2 pr-1.5 select-none transition-all duration-150";\nconst HIDE_INLINE_ACTIONS_ON_MOBILE_TOUCH =',
   ],
@@ -292,6 +302,9 @@ const SELECTION_SUPPRESSIONS: Record<string, string[]> = {
   "src/browser/hooks/useResizableSidebar.ts": [
     'document.body.style.userSelect = "none";\ndocument.body.style.cursor = "col-resize";',
   ],
+  "vscode/src/webview/webview.css": [
+    "user-select: none;\nborder-right: 1px solid var(--color-line-number-border);",
+  ],
 };
 
 const EDITABLE_SELECTORS = [
@@ -341,6 +354,15 @@ beforeAll(async () => {
   const stylesheet = postcss.parse(
     await readFile(new URL("./globals.css", import.meta.url), "utf8")
   );
+
+  // The source scan assumes Tailwind's default automatic detection from the project
+  // root. A `source(...)` clause on the import changes or disables that base, which
+  // would silently invalidate the scan, so it must be modelled before it is allowed.
+  stylesheet.walkAtRules(/^import$/i, (atRule) => {
+    if (atRule.params.includes("tailwindcss") && /\bsource\s*\(/i.test(atRule.params)) {
+      throw new Error(`Unsupported source() clause on the Tailwind import: ${atRule.params}`);
+    }
+  });
 
   sourceDirectivePaths = [];
   stylesheet.walkAtRules(/^source$/i, (atRule) => {
@@ -476,7 +498,7 @@ const SINGLE_COMPONENT_SELECTOR = /^[.#][A-Za-z0-9_-]+$/;
 let appShellSelectors: string[] = [];
 
 async function readAppShellSelectors(): Promise<string[]> {
-  const indexHtml = await readFile(join(REPO_ROOT, "index.html"), "utf8");
+  const indexHtml = await readFile(resolve(REPO_ROOT, "index.html"), "utf8");
   return [...indexHtml.matchAll(/\bid="([^"]+)"/g)].map((match) => `#${match[1]}`);
 }
 
@@ -557,15 +579,21 @@ describe("touch text-selection guard", () => {
         (sites[key] ??= []).push(`${line}\n${following ?? ""}`);
       }
     };
-    // Test files are skipped: they ship no UI, and this file names the utilities it matches.
-    for await (const relativePath of new Glob("**/*.{ts,tsx}").scan({ cwd: SOURCE_DIR })) {
-      if (/\.test\.tsx?$/.test(relativePath)) {
+    // Tailwind's own scanner decides which files are read, so `index.html`, docs, and
+    // every other automatic source it would extract class names from are included.
+    // Test files are skipped (they ship no UI, and this file names the utilities it
+    // matches), and so is the parsed stylesheet, whose declarations the assertions
+    // above already cover.
+    const scanner = new Scanner({
+      sources: [{ base: REPO_ROOT.replace(/[\\/]$/, ""), pattern: "**/*", negated: false }],
+    });
+    scanner.scan();
+    for (const filePath of scanner.files) {
+      const relativePath = relative(REPO_ROOT, filePath).replaceAll("\\", "/");
+      if (/\.test\.tsx?$/.test(relativePath) || resolve(filePath) === STYLESHEET_PATH) {
         continue;
       }
-      collectInto(
-        `src/${relativePath.replaceAll("\\", "/")}`,
-        await readFile(join(SOURCE_DIR, relativePath), "utf8")
-      );
+      collectInto(relativePath, await readFile(filePath, "utf8"));
     }
     for (const directivePath of sourceDirectivePaths) {
       const resolved = resolve(STYLESHEET_DIR, directivePath);
