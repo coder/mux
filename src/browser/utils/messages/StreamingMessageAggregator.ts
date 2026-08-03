@@ -36,6 +36,7 @@ import type {
 } from "@/common/types/tools";
 import type { AssistedReviewHunk } from "@/common/types/review";
 import { formatAssistedFilter, parseAssistedFilter } from "@/common/utils/review/assistedReview";
+import { parseSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -82,6 +83,18 @@ import {
   isSideQuestionUserMessage as isSideQuestionUserMuxMessage,
 } from "@/common/utils/messages/sideQuestion";
 import { isWorkflowResultMessage } from "@/common/utils/workflowRunMessages";
+
+function isDisplayOnlyCompletedSubagentReport(message: MuxMessage): boolean {
+  if (
+    message.role !== "user" ||
+    message.metadata?.synthetic !== true ||
+    message.metadata.uiVisible !== true
+  ) {
+    return false;
+  }
+
+  return parseSubagentReportEnvelope(getTextPartContent(message.parts))?.status === "completed";
+}
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -3060,6 +3073,13 @@ export class StreamingMessageAggregator {
     this.maybeTrackLoadedSkillFromAgentSkillSnapshot(incomingMessage.metadata?.agentSkillSnapshot);
 
     if (incomingMessage.role !== "user" || isSideQuestionUserMuxMessage(incomingMessage)) {
+      return;
+    }
+
+    if (isDisplayOnlyCompletedSubagentReport(incomingMessage)) {
+      // A terminal report card is appended for visibility after the parent already answered the
+      // progress update. It intentionally starts no new parent turn, so preserve the idle lifecycle
+      // instead of briefly presenting the card as an interrupted user request.
       return;
     }
 

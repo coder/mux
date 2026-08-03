@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
+import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
 import { shouldNotifyOnResponseComplete } from "./responseCompletionMetadata";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
@@ -504,6 +505,47 @@ describe("StreamingMessageAggregator", () => {
       expect(userMessages[0]?.isSynthetic).toBe(true);
       expect(userMessages[1]?.content).toBe("hello");
       expect(userMessages[1]?.isSynthetic).toBeUndefined();
+    });
+
+    test("does not start a parent response for a visible completed subagent report", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("assistant-1", "assistant", "I incorporated the progress update.", {
+            timestamp: 1,
+            historySequence: 1,
+          }),
+        ],
+        false
+      );
+
+      aggregator.handleMessage({
+        ...createMuxMessage(
+          "report-1",
+          "user",
+          formatSubagentReportEnvelope({
+            taskId: "task-1",
+            agentType: "explore",
+            status: "completed",
+            title: "Investigation complete",
+            reportMarkdown: "The child finished successfully.",
+          }),
+          {
+            timestamp: 2,
+            historySequence: 2,
+            synthetic: true,
+            uiVisible: true,
+          }
+        ),
+        type: "message",
+      });
+
+      expect(aggregator.getPendingStreamStartTime()).toBeNull();
+      expect(aggregator.getDisplayedMessages().at(-1)).toMatchObject({
+        type: "user",
+        id: "report-1",
+        isSynthetic: true,
+      });
     });
 
     test("renders persisted workflow slash invocation before workflow card", () => {
