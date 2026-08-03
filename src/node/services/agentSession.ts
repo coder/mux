@@ -3043,8 +3043,10 @@ export class AgentSession {
       if (acceptedPreStreamFailureNotified) {
         return;
       }
-      acceptedPreStreamFailureNotified = true;
       await internal?.onAcceptedPreStreamFailure?.(error);
+      // Only suppress duplicate notifications after cleanup succeeds. A transient callback failure
+      // must remain retryable from the surrounding catch path so durable reservations do not stick.
+      acceptedPreStreamFailureNotified = true;
     };
 
     const preparedTurnAbortController = new AbortController();

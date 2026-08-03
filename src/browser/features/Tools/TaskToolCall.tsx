@@ -1614,13 +1614,10 @@ interface TaskSendMessageToolCallProps {
   status?: ToolStatus;
 }
 
-export const TaskSendMessageToolCall: React.FC<TaskSendMessageToolCallProps> = ({
-  args,
-  result,
-  status = "pending",
-}) => {
+export const TaskSendMessageToolCall: React.FC<TaskSendMessageToolCallProps> = (props) => {
   const { expanded, toggleExpanded } = useToolExpansion(false);
-  const summary = result?.status ?? "sending";
+  const status = props.status ?? "pending";
+  const summary = props.result?.status ?? "sending";
 
   return (
     <ToolContainer expanded={expanded}>
@@ -1636,14 +1633,14 @@ export const TaskSendMessageToolCall: React.FC<TaskSendMessageToolCallProps> = (
         <ToolDetails>
           <div className="task-surface mt-1 space-y-2 rounded-md p-3">
             <div className="flex items-center gap-2">
-              <TaskId id={args.task_id} />
-              {result && <TaskStatusBadge status={result.status} />}
+              <TaskId id={props.args.task_id} />
+              {props.result && <TaskStatusBadge status={props.result.status} />}
             </div>
             <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
-              {args.message}
+              {props.args.message}
             </div>
-            {result && "error" in result && result.error && (
-              <div className="text-danger text-[11px]">{result.error}</div>
+            {props.result && "error" in props.result && props.result.error && (
+              <div className="text-danger text-[11px]">{props.result.error}</div>
             )}
           </div>
         </ToolDetails>
