@@ -192,6 +192,16 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText(/still waiting/i)).toBeNull();
   });
 
+  test("surfaces call-level task_await failures", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "failed",
+      result: { success: false, error: "Task service unavailable" },
+    });
+
+    expect(view.getByText("Task wait failed")).toBeDefined();
+    expect(view.getByText("Task service unavailable")).toBeDefined();
+  });
+
   test("uses valid legacy agentType for task_await rows when agentId is invalid", () => {
     workspaceContextMock = {
       workspaceMetadata: new Map([

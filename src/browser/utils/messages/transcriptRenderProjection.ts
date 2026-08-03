@@ -533,7 +533,8 @@ export function summarizeOperationalBundle(
   if (allTaskAwaits) {
     const pollCount = messages.length;
     const statuses = messages.flatMap(getTaskAwaitResultStatuses);
-    const hasFailure = statuses.some(isTaskAwaitFailureStatus);
+    const hasFailure =
+      messages.some(hasTaskAwaitCallFailure) || statuses.some(isTaskAwaitFailureStatus);
     const hasInterruption = statuses.includes("interrupted");
     if (hasFailure || hasInterruption) {
       return {
@@ -592,10 +593,21 @@ function isTaskAwaitFailureStatus(status: string): boolean {
   return status === "error" || status === "invalid_scope" || status === "not_found";
 }
 
+function hasTaskAwaitCallFailure(message: OperationalBundleMemberMessage): boolean {
+  if (message.type !== "tool" || message.toolName !== "task_await") return false;
+  if (message.status === "failed") return true;
+
+  const result = unwrapJsonResult(message.result);
+  return isPlainObject(result) && result.success === false;
+}
+
 function hasTaskAwaitTerminalIssue(messages: readonly OperationalBundleMemberMessage[]): boolean {
-  return messages
-    .flatMap(getTaskAwaitResultStatuses)
-    .some((status) => isTaskAwaitFailureStatus(status) || status === "interrupted");
+  return (
+    messages.some(hasTaskAwaitCallFailure) ||
+    messages
+      .flatMap(getTaskAwaitResultStatuses)
+      .some((status) => isTaskAwaitFailureStatus(status) || status === "interrupted")
+  );
 }
 
 function isEmptyCompletedWebSearch(message: OperationalBundleMemberMessage): boolean {

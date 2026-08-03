@@ -9,6 +9,7 @@ import {
   ToolDetails,
   LoadingDots,
   ErrorBox,
+  ToolIcon,
 } from "./Shared/ToolPrimitives";
 import {
   useToolExpansion,
@@ -41,6 +42,7 @@ import type {
   TaskListToolSuccessResult,
   TaskTerminateToolArgs,
   TaskTerminateToolSuccessResult,
+  ToolErrorResult,
 } from "@/common/types/tools";
 import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { formatGitPatchArtifactSummary } from "./taskPatchSummary";
@@ -1110,7 +1112,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
 
 interface TaskAwaitToolCallProps {
   args: TaskAwaitToolArgs;
-  result?: TaskAwaitToolSuccessResult;
+  result?: TaskAwaitToolSuccessResult | ToolErrorResult;
   status?: ToolStatus;
   startedAt?: number;
   taskReportLinking?: TaskReportLinking;
@@ -1125,7 +1127,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
 }) => {
   const taskIds = args.task_ids;
   const timeoutSecs = args.timeout_secs;
-  const results = result?.results ?? [];
+  const callError = isToolErrorResult(result) ? result.error : undefined;
+  const results = result && "results" in result ? result.results : [];
 
   const suppressReportInAwaitTaskIds = taskReportLinking?.suppressReportInAwaitTaskIds;
 
@@ -1201,7 +1204,11 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   let summaryTitle: string;
   let summaryDetail: string | undefined;
   let summaryTone: "active" | "danger" | "interrupted" | "success" | "waiting";
-  if (failedCount > 0) {
+  if (callError != null || status === "failed") {
+    summaryTitle = "Task wait failed";
+    summaryDetail = callError;
+    summaryTone = "danger";
+  } else if (failedCount > 0) {
     summaryTitle = `${formatTasks(failedCount)} failed`;
     summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
     summaryTone = "danger";
@@ -1230,7 +1237,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   // semantic timeline row instead of repeating the full generic tool chrome, while keeping
   // failures expanded so the actionable details are never hidden.
   const { expanded, toggleExpanded } = useStickyExpand("tools", false, {
-    forceExpanded: failedCount > 0,
+    forceExpanded: callError != null || status === "failed" || failedCount > 0,
   });
 
   const SummaryIcon =
@@ -1255,9 +1262,21 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         className="group min-h-5 gap-2"
         aria-label={`${summaryTitle}. Show task wait details`}
       >
-        <SummaryIcon
+        <ToolIcon
+          toolName="task_await"
           className={cn(
-            "size-3.5 shrink-0",
+            "[&_svg]:size-3.5",
+            summaryTone === "active" && "text-task-mode",
+            summaryTone === "danger" && "text-danger",
+            summaryTone === "success" && "text-success",
+            summaryTone === "interrupted" && "text-interrupted",
+            summaryTone === "waiting" && "text-muted"
+          )}
+        />
+        <SummaryIcon
+          aria-hidden="true"
+          className={cn(
+            "size-3 shrink-0",
             summaryTone === "active" && "text-task-mode animate-spin",
             summaryTone === "danger" && "text-danger",
             summaryTone === "success" && "text-success",
@@ -1299,6 +1318,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
                 {args.filter_exclude === true && <span>Exclude: true</span>}
               </div>
             )}
+
+            {callError && <ErrorBox className="mb-2">{callError}</ErrorBox>}
 
             {/* Results */}
             {results.length > 0 ? (

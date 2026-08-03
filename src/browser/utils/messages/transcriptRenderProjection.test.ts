@@ -549,6 +549,27 @@ describe("task_await poll grouping", () => {
     });
   });
 
+  test("expands groups with call-level task_await failures", () => {
+    const infos = computeTaskAwaitPollGroupInfos([
+      tool({
+        id: "await-running",
+        toolName: "task_await",
+        result: { results: [{ status: "running", taskId: "task-1" }] },
+      }),
+      tool({
+        id: "await-call-failed",
+        toolName: "task_await",
+        status: "failed",
+        result: { success: false, error: "service unavailable" },
+      }),
+    ]);
+
+    expect(infos[0]).toMatchObject({
+      defaultExpanded: true,
+      summary: { title: "Task wait needs attention", tone: "danger" },
+    });
+  });
+
   test("conversation rows break poll groups", () => {
     const infos = computeTaskAwaitPollGroupInfos([
       tool({ id: "await-1", toolName: "task_await" }),
