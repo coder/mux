@@ -30,19 +30,25 @@ const DESKTOP_WIDTH_PX = 1900;
 const PHONE_WIDTH_PX = 390;
 
 /**
- * Both spellings are asserted: WebKit is the engine this guard exists for, and older
- * iPadOS honours only the prefixed property, so dropping either one regresses it.
+ * Older iPadOS honours only the prefixed property, so the guard requires both spellings.
  */
-const SELECTION_PROPERTIES = ["user-select", "-webkit-user-select"];
+const GUARD_SELECTION_PROPERTIES = ["user-select", "-webkit-user-select"];
 
 /**
- * Collection recognises every vendor spelling, not just the two asserted above: a rule
- * setting only `-moz-user-select` still changes selection in that engine, so ignoring it
- * would let a descendant override slip past the whole-stylesheet checks below.
- * Case-insensitive because browsers match property names and keyword values that way;
- * collected properties and values are lowercased so the assertions compare one spelling.
+ * Collection and fine-pointer assertions cover every vendor spelling: a rule setting only
+ * `-moz-user-select` still changes selection in that engine. CSS property names and keyword
+ * values are case-insensitive, so both are lowercased before comparison.
  */
-const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/i;
+const RECOGNIZED_SELECTION_PROPERTIES = [
+  ...GUARD_SELECTION_PROPERTIES,
+  "-moz-user-select",
+  "-ms-user-select",
+  "-o-user-select",
+];
+const SELECTION_PROPERTY_PATTERN = new RegExp(
+  `^(?:${RECOGNIZED_SELECTION_PROPERTIES.join("|")})$`,
+  "i"
+);
 
 /**
  * Tailwind's selection utilities, matched anywhere in the token so variant chains
@@ -105,28 +111,127 @@ function isRuntimeSource(relativePath: string): boolean {
   );
 }
 
-/**
- * Import specifiers that pull code into a bundle. Type-only statements are stripped
- * first: they are erased at build time, and browser code type-imports `@/node` today.
- */
-const TYPE_ONLY_IMPORT = /\b(?:import|export)\s+type\b[^"']*["'][^"']*["']/g;
-const IMPORT_SPECIFIER =
-  /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)["']([^"']+)["']/g;
+function scriptKindForPath(filePath: string): ts.ScriptKind {
+  if (/\.[cm]?tsx$/.test(filePath)) {
+    return ts.ScriptKind.TSX;
+  }
+  if (/\.[cm]?jsx$/.test(filePath)) {
+    return ts.ScriptKind.JSX;
+  }
+  if (/\.[cm]?js$/.test(filePath)) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.TS;
+}
 
-function importedSegments(source: string, fileDir: string): Set<string> {
+function isJavaScriptScriptKind(scriptKind: ts.ScriptKind): boolean {
+  return scriptKind === ts.ScriptKind.JS || scriptKind === ts.ScriptKind.JSX;
+}
+
+function importClauseHasRuntimeValue(
+  importClause: ts.ImportClause | undefined,
+  scriptKind: ts.ScriptKind
+): boolean {
+  if (!importClause || importClause.name) {
+    return !importClause?.isTypeOnly;
+  }
+  if (importClause.isTypeOnly) {
+    return false;
+  }
+  const bindings = importClause.namedBindings;
+  return (
+    bindings === undefined ||
+    ts.isNamespaceImport(bindings) ||
+    (bindings.elements.length === 0 && isJavaScriptScriptKind(scriptKind)) ||
+    bindings.elements.some((element) => !element.isTypeOnly)
+  );
+}
+
+function exportDeclarationHasRuntimeValue(
+  declaration: ts.ExportDeclaration,
+  scriptKind: ts.ScriptKind
+): boolean {
+  if (declaration.isTypeOnly || !declaration.moduleSpecifier) {
+    return false;
+  }
+  const clause = declaration.exportClause;
+  return (
+    clause === undefined ||
+    ts.isNamespaceExport(clause) ||
+    (clause.elements.length === 0 && isJavaScriptScriptKind(scriptKind)) ||
+    clause.elements.some((element) => !element.isTypeOnly)
+  );
+}
+
+function stringLiteralValue(expression: ts.Expression | undefined): string | undefined {
+  let candidate = expression;
+  while (
+    candidate &&
+    (ts.isParenthesizedExpression(candidate) ||
+      ts.isAsExpression(candidate) ||
+      ts.isTypeAssertionExpression(candidate) ||
+      ts.isSatisfiesExpression(candidate) ||
+      ts.isNonNullExpression(candidate))
+  ) {
+    candidate = candidate.expression;
+  }
+  return candidate && ts.isStringLiteralLike(candidate) ? candidate.text : undefined;
+}
+
+function importedSegments(source: string, filePath: string): Set<string> {
+  const scriptKind = scriptKindForPath(filePath);
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind
+  );
+  const specifiers = new Set<string>();
+  const addSpecifier = (expression: ts.Expression | undefined) => {
+    const specifier = stringLiteralValue(expression);
+    if (specifier !== undefined) {
+      specifiers.add(specifier.split("?")[0]);
+    }
+  };
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isImportDeclaration(node) &&
+      importClauseHasRuntimeValue(node.importClause, scriptKind)
+    ) {
+      addSpecifier(node.moduleSpecifier);
+    } else if (ts.isExportDeclaration(node) && exportDeclarationHasRuntimeValue(node, scriptKind)) {
+      addSpecifier(node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly) {
+      if (ts.isExternalModuleReference(node.moduleReference)) {
+        addSpecifier(node.moduleReference.expression);
+      }
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (isDynamicImport || isRequire) {
+        addSpecifier(node.arguments[0]);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
   const segments = new Set<string>();
-  for (const match of source.replace(TYPE_ONLY_IMPORT, "").matchAll(IMPORT_SPECIFIER)) {
-    const specifier = match[1].split("?")[0];
+  for (const specifier of specifiers) {
     let target: string | undefined;
     if (specifier.startsWith("@/")) {
       target = specifier.slice(2).split("/")[0];
     } else if (specifier.startsWith(".")) {
-      const resolved = relative(REPO_ROOT, resolve(fileDir, specifier)).replaceAll("\\", "/");
+      const resolved = relative(REPO_ROOT, resolve(dirname(filePath), specifier)).replaceAll(
+        "\\",
+        "/"
+      );
       const [root, segment] = resolved.split("/");
       target = root === "src" ? segment : undefined;
     }
     if (target !== undefined) {
-      segments.add(target.replace(/\.[jt]sx?$/, ""));
+      segments.add(target.replace(EXECUTABLE_SOURCE, ""));
     }
   }
   return segments;
@@ -526,7 +631,7 @@ describe("touch text-selection guard", () => {
   it.each([IPAD_WIDTH_PX, IPAD_LANDSCAPE_WIDTH_PX, DESKTOP_WIDTH_PX])(
     "suppresses body selection on a coarse pointer at %ipx",
     (widthPx) => {
-      for (const property of SELECTION_PROPERTIES) {
+      for (const property of GUARD_SELECTION_PROPERTIES) {
         expect(effectiveValue("body", property, { widthPx, coarse: true })).toBe("none");
       }
     }
@@ -535,7 +640,7 @@ describe("touch text-selection guard", () => {
   it("keeps editable controls selectable wherever body selection is suppressed", () => {
     for (const viewport of COARSE_VIEWPORTS) {
       for (const selector of EDITABLE_SELECTORS) {
-        for (const property of SELECTION_PROPERTIES) {
+        for (const property of GUARD_SELECTION_PROPERTIES) {
           expect(effectiveValue(selector, property, viewport)).toBe("text");
         }
       }
@@ -598,19 +703,12 @@ describe("touch text-selection guard", () => {
 
   function sourceWithoutComments(relativePath: string, source: string): string {
     if (/\.[cm]?[jt]sx?$/.test(relativePath)) {
-      const scriptKind = /\.[cm]?tsx$/.test(relativePath)
-        ? ts.ScriptKind.TSX
-        : /\.[cm]?jsx$/.test(relativePath)
-          ? ts.ScriptKind.JSX
-          : /\.[cm]?js$/.test(relativePath)
-            ? ts.ScriptKind.JS
-            : ts.ScriptKind.TS;
       const sourceFile = ts.createSourceFile(
         relativePath,
         source,
         ts.ScriptTarget.Latest,
         true,
-        scriptKind
+        scriptKindForPath(relativePath)
       );
       const tokenSpans: SourceSpan[] = [];
       const collectTokenSpans = (node: ts.Node) => {
@@ -653,6 +751,39 @@ describe("touch text-selection guard", () => {
       normalizeToken(match[0])
     );
   }
+
+  it("finds runtime imports without matching comments, strings, or type-only imports", () => {
+    const source = [
+      '// do not import "@/node/comment"',
+      "const copy = 'import \"@/desktop/copy\"';",
+      'import type { NodeType } from "@/node/type";',
+      'import { type CliType } from "@/cli/type";',
+      'export type { DesktopType } from "@/desktop/type";',
+      'export { type NodeType } from "@/node/reexport";',
+      'import {} from "@/node/empty-import";',
+      'export {} from "@/desktop/empty-export";',
+      'import Browser from "@/browser/value";',
+      'import "@/browser/side-effect";',
+      'import BrowserAlias = require("@/browser/equal");',
+      'import type NodeAlias = require("@/node/equal");',
+      'export { commonValue } from "@/common/value";',
+      'void import(("@/constants/dynamic"));',
+      'const value = require("@/version" as const);',
+    ].join("\n");
+    expect(
+      [...importedSegments(source, resolve(REPO_ROOT, "src/browser/example.ts"))].sort()
+    ).toEqual(["browser", "common", "constants", "version"]);
+  });
+
+  it("keeps empty JavaScript imports that still execute their modules", () => {
+    const source = [
+      'import {} from "@/node/empty-import";',
+      'export {} from "@/desktop/empty-export";',
+    ].join("\n");
+    expect(
+      [...importedSegments(source, resolve(REPO_ROOT, "src/browser/example.js"))].sort()
+    ).toEqual(["desktop", "node"]);
+  });
 
   it("ignores comments while inventorying selection sites", () => {
     const cases = [
@@ -760,7 +891,7 @@ describe("touch text-selection guard", () => {
         continue;
       }
       const source = await readFile(resolve(REPO_ROOT, relativePath), "utf8");
-      for (const segment of importedSegments(source, dirname(resolve(REPO_ROOT, relativePath)))) {
+      for (const segment of importedSegments(source, resolve(REPO_ROOT, relativePath))) {
         if (!RENDERER_SEGMENTS.includes(segment)) {
           unlisted.add(segment);
         }
@@ -775,7 +906,7 @@ describe("touch text-selection guard", () => {
     // IDs), so suppressing them app-wide would break copying on desktop.
     for (const viewport of FINE_VIEWPORTS) {
       for (const selector of ["body", "button", '[role="button"]']) {
-        for (const property of SELECTION_PROPERTIES) {
+        for (const property of RECOGNIZED_SELECTION_PROPERTIES) {
           expect(effectiveValue(selector, property, viewport)).not.toBe("none");
         }
       }
