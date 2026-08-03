@@ -3,6 +3,7 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
 import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
+import { getInterruptionContext } from "@/common/utils/messages/retryEligibility";
 import { shouldNotifyOnResponseComplete } from "./responseCompletionMetadata";
 import { MAX_HISTORY_HIDDEN_SEGMENTS } from "./transcriptTruncationPlan";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
@@ -541,11 +542,13 @@ describe("StreamingMessageAggregator", () => {
       });
 
       expect(aggregator.getPendingStreamStartTime()).toBeNull();
-      expect(aggregator.getDisplayedMessages().at(-1)).toMatchObject({
+      const displayedMessages = aggregator.getDisplayedMessages();
+      expect(displayedMessages.at(-1)).toMatchObject({
         type: "user",
         id: "report-1",
         isSynthetic: true,
       });
+      expect(getInterruptionContext(displayedMessages).hasInterruptedStream).toBe(false);
     });
 
     test("renders persisted workflow slash invocation before workflow card", () => {

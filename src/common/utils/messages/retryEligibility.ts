@@ -1,6 +1,7 @@
 import type { DisplayedMessage } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
 import type { RuntimeStatusEvent, StreamAbortReasonSnapshot } from "@/common/types/stream";
+import { isCompletedSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 
 /**
  * Debug flag to force all errors to be retryable.
@@ -141,12 +142,24 @@ export function getLastNonDecorativeMessage(
  * Decorative rows and /btw side-branch rows are persisted in the transcript but
  * must not become the retry candidate for the main agent.
  */
+function isDisplayOnlyCompletedSubagentReport(message: DisplayedMessage): boolean {
+  return (
+    message.type === "user" &&
+    message.isSynthetic === true &&
+    isCompletedSubagentReportEnvelope(message.content)
+  );
+}
+
 export function getLastMainRetryCandidateMessage(
   messages: DisplayedMessage[]
 ): DisplayedMessage | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const candidate = messages[i];
-    if (isDecorativeTranscriptMessage(candidate) || isSideQuestionTranscriptMessage(candidate)) {
+    if (
+      isDecorativeTranscriptMessage(candidate) ||
+      isSideQuestionTranscriptMessage(candidate) ||
+      isDisplayOnlyCompletedSubagentReport(candidate)
+    ) {
       continue;
     }
     return candidate;

@@ -36,7 +36,7 @@ import type {
 } from "@/common/types/tools";
 import type { AssistedReviewHunk } from "@/common/types/review";
 import { formatAssistedFilter, parseAssistedFilter } from "@/common/utils/review/assistedReview";
-import { parseSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import { isCompletedSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -93,7 +93,7 @@ function isDisplayOnlyCompletedSubagentReport(message: MuxMessage): boolean {
     return false;
   }
 
-  return parseSubagentReportEnvelope(getTextPartContent(message.parts))?.status === "completed";
+  return isCompletedSubagentReportEnvelope(getTextPartContent(message.parts));
 }
 
 // Maximum number of messages to display in the DOM for performance
