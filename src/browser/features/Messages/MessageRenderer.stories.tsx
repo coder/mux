@@ -25,6 +25,7 @@ import {
   createCompletedTaskTool,
   createFileEditTool,
   createFileReadTool,
+  createGenericTool,
   createTaskAwaitTool,
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
@@ -129,10 +130,13 @@ export const TaskAwaitTranscript: AppStory = {
         if (!groupedSummary || !standaloneSummary) {
           throw new Error("Task wait summary typography targets not rendered");
         }
-        if (
-          getComputedStyle(groupedSummary).fontSize !== getComputedStyle(standaloneSummary).fontSize
-        ) {
+        const groupedFontSize = Number.parseFloat(getComputedStyle(groupedSummary).fontSize);
+        const standaloneFontSize = Number.parseFloat(getComputedStyle(standaloneSummary).fontSize);
+        if (groupedFontSize !== standaloneFontSize) {
           throw new Error("Grouped and standalone task waits use inconsistent text sizes");
+        }
+        if (standaloneFontSize > 11) {
+          throw new Error("Task wait summary is larger than compact tool chrome");
         }
         return summary;
       },
@@ -198,6 +202,20 @@ The report inherited transcript-sized markdown styles instead of compact task ch
 - Keep body text aligned with compact \`tool chrome\`.
 - Preserve modest heading hierarchy without transcript-scale headings.`,
                 }),
+                createGenericTool(
+                  "agent-report-update",
+                  "agent_report",
+                  {
+                    title: "Agent update",
+                    reportMarkdown: `## Agent update
+
+The same compact report typography applies to incremental agent findings.
+
+- Body and inline \`code\` remain aligned with tool chrome.
+- Headings retain a modest hierarchy.`,
+                  },
+                  { success: true }
+                ),
               ],
             }),
           ],
@@ -215,8 +233,16 @@ The report inherited transcript-sized markdown styles instead of compact task ch
     if (!taskHeader) throw new Error("Task report header not rendered");
     await userEvent.click(taskHeader);
 
+    const agentReportCard = await waitFor(() => {
+      const card = canvasElement.querySelector<HTMLElement>(
+        '[data-component="AgentReportToolCall"]'
+      );
+      if (!card) throw new Error("Agent report card not rendered");
+      return card;
+    });
+
     await waitFor(() => {
-      const report = taskCard.querySelector<HTMLElement>(".task-report-markdown");
+      const report = taskCard.querySelector<HTMLElement>(".compact-report-markdown");
       const heading = report?.querySelector<HTMLElement>("h1");
       if (!report || !heading) throw new Error("Expanded task report markdown not rendered");
       if (Number.parseFloat(getComputedStyle(report).fontSize) > 12) {
@@ -228,6 +254,29 @@ The report inherited transcript-sized markdown styles instead of compact task ch
       if (taskCard.scrollWidth > taskCard.clientWidth) {
         throw new Error(
           `Task report card overflows horizontally (${taskCard.scrollWidth}px > ${taskCard.clientWidth}px)`
+        );
+      }
+    });
+
+    await waitFor(() => {
+      const report = agentReportCard.querySelector<HTMLElement>(".compact-report-markdown");
+      const heading = report?.querySelector<HTMLElement>("h2");
+      const code = report?.querySelector<HTMLElement>("code");
+      if (!report || !heading || !code) {
+        throw new Error("Expanded agent report markdown not rendered");
+      }
+      if (Number.parseFloat(getComputedStyle(report).fontSize) > 11) {
+        throw new Error("Agent report body text is larger than compact tool chrome");
+      }
+      if (Number.parseFloat(getComputedStyle(heading).fontSize) > 13) {
+        throw new Error("Agent report heading is too large for compact tool chrome");
+      }
+      if (Number.parseFloat(getComputedStyle(code).fontSize) > 11) {
+        throw new Error("Agent report inline code is larger than compact tool chrome");
+      }
+      if (agentReportCard.scrollWidth > agentReportCard.clientWidth) {
+        throw new Error(
+          `Agent report card overflows horizontally (${agentReportCard.scrollWidth}px > ${agentReportCard.clientWidth}px)`
         );
       }
     });

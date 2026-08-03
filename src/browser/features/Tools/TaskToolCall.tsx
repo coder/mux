@@ -889,7 +889,7 @@ function getAggregateTaskStatus(
 const TaskReportMarkdown: React.FC<{ content: string; className?: string }> = (props) => (
   <MarkdownRenderer
     content={props.content}
-    className={cn("task-report-markdown", props.className)}
+    className={cn("compact-report-markdown", props.className)}
   />
 );
 
@@ -1432,7 +1432,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         />
         <span
           data-component="TaskAwaitSummary"
-          className="counter-nums min-w-0 flex-1 truncate text-[12px] leading-5"
+          className="counter-nums min-w-0 flex-1 truncate text-[11px] leading-5"
         >
           <span
             className={cn(

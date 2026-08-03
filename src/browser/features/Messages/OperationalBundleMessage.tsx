@@ -45,7 +45,7 @@ export function OperationalBundleMessage(props: OperationalBundleMessageProps): 
           data-component={isTaskAwaitBundle ? "OperationalBundleSummary" : undefined}
           className={cn(
             "text-secondary min-w-0 flex-1 truncate leading-5",
-            isTaskAwaitBundle ? "text-[12px]" : "text-sm"
+            isTaskAwaitBundle ? "text-[11px]" : "text-sm"
           )}
         >
           <span

@@ -65,7 +65,7 @@ export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
   const preview = firstLine.length > 80 ? firstLine.slice(0, 80).trim() + "…" : firstLine;
 
   return (
-    <ToolContainer expanded={expanded}>
+    <ToolContainer expanded={expanded} data-component="AgentReportToolCall">
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="agent_report" />
@@ -75,7 +75,7 @@ export const AgentReportToolCall: React.FC<AgentReportToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
-          <MarkdownRenderer content={reportMarkdown} className="text-[11px]" />
+          <MarkdownRenderer content={reportMarkdown} className="compact-report-markdown" />
           {errorResult && <ErrorBox className="mt-2">{errorResult.error}</ErrorBox>}
         </ToolDetails>
       )}
