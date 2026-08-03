@@ -910,6 +910,41 @@ function collectWorkflowRunIdsFromToolOutput(output: unknown): string[] {
   return runIds;
 }
 
+/**
+ * Tolerant extraction of the task IDs a persisted task tool output references. Recovery
+ * bookkeeping must survive outputs written by newer releases (extra fields would fail the
+ * strict result schema) so that a mid-stream downgrade cannot duplicate fallback reports.
+ */
+function collectReferencedTaskIdsFromTaskToolOutput(output: unknown, into: Set<string>): void {
+  if (output == null || typeof output !== "object") {
+    return;
+  }
+  const addTaskId = (value: unknown): void => {
+    if (typeof value === "string" && value.length > 0) {
+      into.add(value);
+    }
+  };
+
+  const record = output as Record<string, unknown>;
+  addTaskId(record.taskId);
+  if (Array.isArray(record.taskIds)) {
+    for (const taskId of record.taskIds) {
+      addTaskId(taskId);
+    }
+  }
+  for (const key of ["tasks", "reports"] as const) {
+    const rows = record[key];
+    if (!Array.isArray(rows)) {
+      continue;
+    }
+    for (const row of rows) {
+      if (row != null && typeof row === "object") {
+        addTaskId((row as Record<string, unknown>).taskId);
+      }
+    }
+  }
+}
+
 function collectWorkflowRunIdsFromTaskAwaitInput(input: unknown): string[] {
   if (input == null || typeof input !== "object") {
     return [];
@@ -11222,30 +11257,7 @@ export class TaskService {
         continue;
       }
 
-      const parsedOutput = TaskToolResultSchema.safeParse(part.output);
-      if (!parsedOutput.success) {
-        continue;
-      }
-
-      const output = parsedOutput.data;
-      if (typeof output.taskId === "string") {
-        referencedTaskIds.add(output.taskId);
-      }
-      if (Array.isArray(output.taskIds)) {
-        for (const taskId of output.taskIds) {
-          referencedTaskIds.add(taskId);
-        }
-      }
-      if ("tasks" in output && Array.isArray(output.tasks)) {
-        for (const task of output.tasks) {
-          referencedTaskIds.add(task.taskId);
-        }
-      }
-      if ("reports" in output && Array.isArray(output.reports)) {
-        for (const report of output.reports) {
-          referencedTaskIds.add(report.taskId);
-        }
-      }
+      collectReferencedTaskIdsFromTaskToolOutput(part.output, referencedTaskIds);
     }
 
     return {

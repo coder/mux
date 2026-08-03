@@ -18035,6 +18035,126 @@ describe("TaskService", () => {
     ).toHaveLength(1);
   });
 
+  test("deferred fallback honors partial task outputs carrying unknown future fields", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-best-of-future-fields-fallback";
+    const childOneId = "child-best-of-future-fields-fallback-1";
+    const childTwoId = "child-best-of-future-fields-fallback-2";
+    const childThreeId = "child-best-of-future-fields-fallback-3";
+    const bestOf = {
+      groupId: "best-of-future-fields-fallback-group",
+      index: 0,
+      total: 3,
+    } as const;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        {
+          path: path.join(projectPath, "child-1"),
+          id: childOneId,
+          name: "agent_explore_child_1",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "reported",
+          bestOf,
+        },
+        projectWorkspace(projectPath, "child-2", childTwoId, {
+          name: "agent_explore_child_2",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 1 },
+        }),
+        projectWorkspace(projectPath, "child-3", childThreeId, {
+          name: "agent_explore_child_3",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "interrupted",
+          bestOf: { ...bestOf, index: 2 },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    // An output written by a newer release: extra fields fail the strict result schema, but
+    // the referenced-task bookkeeping must still see these IDs or recovery would append a
+    // duplicate fallback report after a downgrade.
+    const parentPartial = createMuxMessage(
+      "assistant-parent-best-of-future-fields-fallback",
+      "assistant",
+      "Waiting on best-of subagents…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-best-of-future-fields-fallback-call",
+          toolName: "task",
+          input: {
+            subagent_type: "explore",
+            prompt: "compare options",
+            title: "Best of 3",
+            n: 3,
+          },
+          state: "output-available",
+          output: {
+            status: "running",
+            taskIds: [childOneId, childTwoId, childThreeId],
+            tasks: [
+              { taskId: childOneId, status: "completed", futureRowField: "x" },
+              { taskId: childTwoId, status: "running" },
+              { taskId: childThreeId, status: "running" },
+            ],
+            note: "use task_await to monitor progress",
+            futureTopLevelField: "y",
+          },
+        },
+      ]
+    );
+    expect((await partialService.writePartial(parentId, parentPartial)).success).toBe(true);
+
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childOneId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "Report from child one",
+      title: "Option one",
+      nowMs: Date.now(),
+    });
+
+    const internal = taskService as unknown as {
+      deliverDeferredBestOfSiblingReports: (params: {
+        parentWorkspaceId: string;
+        groupId: string;
+        total: number;
+      }) => Promise<void>;
+    };
+
+    await internal.deliverDeferredBestOfSiblingReports({
+      parentWorkspaceId: parentId,
+      groupId: bestOf.groupId,
+      total: bestOf.total,
+    });
+
+    const parentHistory = await collectFullHistory(historyService, parentId);
+    const serializedParentHistory = JSON.stringify(parentHistory);
+    expect(serializedParentHistory).not.toContain("<mux_subagent_report>");
+    expect(serializedParentHistory).not.toContain("Report from child one");
+  });
+
   test("incremental best-of updates do not suppress deferred terminal reports", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
