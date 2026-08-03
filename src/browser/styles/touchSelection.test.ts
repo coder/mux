@@ -205,6 +205,8 @@ let selectionRules: SelectionRule[] = [];
 let sourceDirectivePaths: string[] = [];
 
 beforeAll(async () => {
+  appShellSelectors = await readAppShellSelectors();
+
   const stylesheet = postcss.parse(
     await readFile(new URL("./globals.css", import.meta.url), "utf8")
   );
@@ -334,6 +336,19 @@ const FINE_VIEWPORTS: Viewport[] = [PHONE_WIDTH_PX, DESKTOP_WIDTH_PX].map((width
  */
 const SINGLE_COMPONENT_SELECTOR = /^[.#][A-Za-z0-9_-]+$/;
 
+/**
+ * One token is still not scoping when the element it names wraps the application:
+ * `#root` (index.html) contains everything React renders, so suppressing selection there
+ * suppresses it app-wide by inheritance. Ids are read from index.html rather than
+ * hardcoded, so a renamed or added shell container stays covered.
+ */
+let appShellSelectors: string[] = [];
+
+async function readAppShellSelectors(): Promise<string[]> {
+  const indexHtml = await readFile(join(REPO_ROOT, "index.html"), "utf8");
+  return [...indexHtml.matchAll(/\bid="([^"]+)"/g)].map((match) => `#${match[1]}`);
+}
+
 function applicableSelectors(viewport: Viewport, value: (candidate: string) => boolean) {
   return selectionRules
     .filter(
@@ -387,8 +402,11 @@ describe("touch text-selection guard", () => {
     const offenders = selectionRules
       .filter((rule) => rule.value === "none")
       .flatMap((rule) => rule.selectors)
+      .map((selector) => selector.trim())
       .filter(
-        (selector) => selector !== "body" && !SINGLE_COMPONENT_SELECTOR.test(selector.trim())
+        (selector) =>
+          selector !== "body" &&
+          (!SINGLE_COMPONENT_SELECTOR.test(selector) || appShellSelectors.includes(selector))
       );
     expect([...new Set(offenders)]).toEqual([]);
   });
