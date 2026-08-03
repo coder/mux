@@ -661,7 +661,7 @@ const BASH_MONITOR_WAKE_LOST_PROMPT = [
 ].join("\n");
 
 /**
- * Bash monitor wakes render as quiet inline events instead of user bubbles.
+ * Bash monitor wakes render as quiet right-aligned events instead of user bubbles.
  * The play expands the first (match) event so the snapshot covers both the
  * on-demand raw prompt and the collapsed monitor-lost event below it.
  */
@@ -738,6 +738,20 @@ export const BashMonitorWakeMessages: AppStory = {
       },
       { timeout: 15_000 }
     );
+
+    const monitorWakeRows = canvasElement.querySelectorAll<HTMLElement>("[data-bash-monitor-wake]");
+    if (monitorWakeRows.length !== 2) {
+      throw new Error(`Expected 2 monitor wake rows, found ${monitorWakeRows.length}`);
+    }
+    for (const row of monitorWakeRows) {
+      const rowBounds = row.getBoundingClientRect();
+      const toggle = row.querySelector<HTMLElement>("button");
+      if (!toggle) throw new Error("Monitor wake toggle not rendered");
+      const toggleBounds = toggle.getBoundingClientRect();
+      if (Math.abs(rowBounds.right - toggleBounds.right) > 1) {
+        throw new Error("Monitor wake summary is not right-aligned");
+      }
+    }
 
     // Expand the first (match) card; the monitor-lost card stays collapsed.
     await userEvent.click(toggles[0]);

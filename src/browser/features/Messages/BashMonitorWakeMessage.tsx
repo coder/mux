@@ -30,7 +30,8 @@ function summarizeRecords(records: BashMonitorWakeDisplayRecord[]): string {
 /**
  * Monitor wakes are machine-authored events, not user prompts. Keep them visible
  * for transcript continuity without giving them a full user bubble, metadata row,
- * or duplicate status badge. The model-facing prompt stays available on demand.
+ * or duplicate status badge. Right-align the compact wake like the user-side event that
+ * resumed the turn, while keeping the model-facing prompt available on demand.
  */
 export function BashMonitorWakeMessage(props: BashMonitorWakeMessageProps): ReactElement {
   const [expanded, setExpanded] = useState(false);
@@ -39,7 +40,7 @@ export function BashMonitorWakeMessage(props: BashMonitorWakeMessageProps): Reac
 
   return (
     <div
-      className={cn("my-2 flex min-w-0 flex-col items-center", props.className)}
+      className={cn("my-2 flex min-w-0 flex-col items-end", props.className)}
       data-message-block
       data-bash-monitor-wake
     >
