@@ -36,8 +36,16 @@ const SELECTION_PROPERTIES = ["user-select", "-webkit-user-select"];
  */
 const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/;
 
-/** Tailwind's selection utilities, including variants such as `hover:select-text`. */
-const APPLIED_SELECTION_UTILITY = /^(?:[\w[\]./-]+:)*select-(?:none|text|all|auto)$/;
+/**
+ * Tailwind's selection utilities, matched anywhere in the token so variant chains
+ * (`hover:`, `[&:hover]:`) and important markers (`select-text!`, `!select-text`) cannot
+ * hide them. The arbitrary-value and variable forms (`select-[text]`, `select-(--x)`)
+ * compile to nothing in this Tailwind version, where `select-*` is a static utility
+ * (verified against `@tailwindcss/node`'s `compile()`), but they are refused anyway so a
+ * Tailwind upgrade cannot silently open the gap.
+ */
+const APPLIED_SELECTION_UTILITY =
+  /\bselect-(?:none|text|all|auto)\b|\bselect-\[[^\s\]]+\]|\bselect-\((?:[\w-]+:)?--[^\s)]+\)/;
 
 /**
  * The arbitrary-property spelling, `[user-select:text]` in any vendor prefix, which
@@ -60,12 +68,14 @@ const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
 
 /**
- * Opt-ins as they appear in class names, in any variant: the named utilities and the
- * arbitrary-property form. `[user-select:none]` is excluded as the arbitrary spelling
- * of `select-none`, which is untracked for the reason given below.
+ * Opt-ins as they appear in class names, in any variant: the named utilities, the
+ * arbitrary-value and variable forms (tracked despite compiling to nothing today, see
+ * above), and the arbitrary-property form. `select-[none]` and `[user-select:none]` are
+ * excluded as arbitrary spellings of `select-none`, which is untracked for the reason
+ * given below.
  */
 const SELECTION_OPT_IN_CLASS =
-  /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b|\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]/g;
+  /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b|\bselect-\[(?!none\])[^\s\]]+\]|\bselect-\((?:[\w-]+:)?--[^\s)]+\)|\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]/g;
 
 /**
  * Components that opt content back into selection with a Tailwind class.
