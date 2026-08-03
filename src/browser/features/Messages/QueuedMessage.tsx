@@ -6,6 +6,7 @@ import { SEND_DISPATCH_MODES } from "@/browser/features/ChatInput/sendDispatchMo
 import type { QueueDispatchMode } from "@/browser/features/ChatInput/types";
 import { UserMessageContent } from "@/browser/features/Messages/UserMessageContent";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -166,18 +167,25 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
                       key={entry.mode}
                       type="button"
                       role="menuitem"
+                      aria-label={entry.label}
                       disabled={isActionPending || !props.onChangeDispatchMode}
                       className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center justify-between gap-2 rounded-sm px-2.5 py-1 text-left text-xs disabled:cursor-not-allowed disabled:opacity-50"
                       onClick={() => handleDispatchModeChange(entry.mode)}
                     >
                       <span>{entry.label}</span>
-                      {queueDispatchMode === entry.mode && <Check className="size-3" />}
+                      <span className="flex items-center gap-1.5">
+                        <kbd className="bg-background-secondary text-muted border-border-medium rounded border px-1.5 py-px font-mono text-[10px] whitespace-nowrap [@media(max-width:768px)]:hidden">
+                          {formatKeybind(entry.keybind)}
+                        </kbd>
+                        {queueDispatchMode === entry.mode && <Check className="size-3" />}
+                      </span>
                     </button>
                   ))}
                   <div className="border-border-light my-1 border-t" />
                   <button
                     type="button"
                     role="menuitem"
+                    aria-label="Send now"
                     disabled={isActionPending || !props.onSendImmediately}
                     className="hover:bg-hover focus-visible:bg-hover text-foreground flex w-full items-center gap-2 rounded-sm px-2.5 py-1 text-left text-xs disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={handleSendImmediately}
@@ -187,7 +195,10 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
                     ) : (
                       <Send className="size-3" />
                     )}
-                    Send now
+                    <span className="flex-1">Send now</span>
+                    <kbd className="bg-background-secondary text-muted border-border-medium rounded border px-1.5 py-px font-mono text-[10px] whitespace-nowrap [@media(max-width:768px)]:hidden">
+                      {formatKeybind(KEYBINDS.SEND_QUEUED_MESSAGE_NOW)}
+                    </kbd>
                   </button>
                 </div>
               )}

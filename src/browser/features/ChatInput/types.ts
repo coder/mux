@@ -49,6 +49,7 @@ export interface ChatInputWorkspaceVariant {
   disabled?: boolean;
   /** Queued follow-up currently waiting during an active workspace stream. */
   queuedMessage?: QueuedMessage | null;
+  onQueuedDispatchModeChange?: (mode: QueueDispatchMode) => Promise<void>;
   onSendQueuedImmediately?: () => Promise<void>;
   /** Optional explanation displayed when input is disabled */
   disabledReason?: string;

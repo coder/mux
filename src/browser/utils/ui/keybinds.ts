@@ -302,6 +302,9 @@ export const KEYBINDS = {
   /** Send message / Submit form */
   SEND_MESSAGE: { key: "Enter" },
 
+  /** Send an existing queued message immediately */
+  SEND_QUEUED_MESSAGE_NOW: { key: "Enter", ctrl: true, shift: true },
+
   /** Send message after current turn ends */
   SEND_MESSAGE_AFTER_TURN: { key: "Enter", ctrl: true },
 

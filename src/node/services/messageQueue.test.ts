@@ -313,6 +313,25 @@ describe("MessageQueue", () => {
       expect(queue.getQueueDispatchMode()).toBe("turn-end");
     });
 
+    it("uses the FIFO head mode for the next drain even when a later hidden entry is tool-end", () => {
+      const validOptions: SendMessageOptions = { model: "gpt-4", agentId: "exec" };
+      queue.add("visible first", { ...validOptions, queueDispatchMode: "turn-end" });
+      queue.add(
+        "hidden later",
+        { ...validOptions, queueDispatchMode: "tool-end" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          sealed: true,
+        }
+      );
+
+      expect(queue.getQueueDispatchMode()).toBe("tool-end");
+      expect(queue.getNextQueueDispatchMode()).toBe("turn-end");
+      queue.dequeueNext();
+      expect(queue.getNextQueueDispatchMode()).toBe("tool-end");
+    });
+
     it("does not update a queue containing only hidden entries", () => {
       queue.add("hidden wake", undefined, { synthetic: true, agentInitiated: true });
 

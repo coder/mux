@@ -265,6 +265,12 @@ describe("AgentSession queued message tool-call dispatch", () => {
         queueDispatchMode: "turn-end",
       });
 
+      session.queueMessage(
+        "hidden later",
+        { model: TEST_MODEL, agentId: "exec", queueDispatchMode: "tool-end" },
+        { synthetic: true, agentInitiated: true }
+      );
+
       expect(session.setQueuedMessageDispatchMode("tool-end")).toBe(true);
       const toolEndEvent = events.filter((event) => event.type === "queued-message-changed").at(-1);
       expect(toolEndEvent).toMatchObject({

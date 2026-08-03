@@ -230,7 +230,7 @@ describe("Send dispatch modes (mock AI router)", () => {
     }
   }, 60_000);
 
-  test("pressing Enter on an empty composer sends the queued message now", async () => {
+  test("queued send keybinds update the boundary and can send immediately", async () => {
     const app = await createAppHarness({ branchPrefix: "queued-enter-send-now" });
 
     try {
@@ -305,18 +305,41 @@ describe("Send dispatch modes (mock AI router)", () => {
       });
 
       textarea.focus();
-      expect(fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 })).toBe(
-        false
-      );
-      // A fast second Enter press should be ignored while the send-now interrupt is in flight.
-      expect(fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 })).toBe(
-        false
-      );
+      fireEvent.keyDown(textarea, {
+        key: "Enter",
+        code: "Enter",
+        charCode: 13,
+        ctrlKey: true,
+      });
+      await waitFor(() => {
+        expect(app.view.container.textContent).toContain("Sends after this turn");
+      });
+
+      fireEvent.keyDown(textarea, { key: "Enter", code: "Enter", charCode: 13 });
+      await waitFor(() => {
+        expect(app.view.container.textContent).toContain("Sends after this step");
+      });
+
+      fireEvent.keyDown(textarea, {
+        key: "Enter",
+        code: "Enter",
+        charCode: 13,
+        ctrlKey: true,
+        shiftKey: true,
+      });
+      // A fast repeated send-now shortcut should be ignored while the interrupt is in flight.
+      fireEvent.keyDown(textarea, {
+        key: "Enter",
+        code: "Enter",
+        charCode: 13,
+        ctrlKey: true,
+        shiftKey: true,
+        repeat: true,
+      });
 
       await waitFor(
         () => {
-          const textContent = app.view.container.textContent ?? "";
-          expect(textContent).not.toContain("Sends after this turn");
+          expect(app.view.container.textContent).not.toContain("Sends after this step");
         },
         { timeout: 30_000 }
       );

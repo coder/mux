@@ -174,6 +174,11 @@ export class MessageQueue {
     return entries.some((entry) => entry.dispatchMode === "tool-end") ? "tool-end" : "turn-end";
   }
 
+  /** Dispatch boundary for the FIFO head entry — the only entry the next drain can send. */
+  getNextQueueDispatchMode(): QueueDispatchMode {
+    return this.entries[0]?.dispatchMode ?? "tool-end";
+  }
+
   /**
    * Effective dispatch mode across pending entries: any entry queued for tool-end
    * makes the whole queue dispatch at tool-end (sticky, matching pre-entry behavior),

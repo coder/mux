@@ -1044,24 +1044,21 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     }
   }, [api, workspaceId, workspaceState?.queuedMessage, workspaceState?.canInterrupt, storeRaw]);
 
-  const handleQueuedDispatchModeChange = useCallback(
-    async (queueDispatchMode: QueueDispatchMode) => {
-      if (!api) {
-        throw new Error("Workspace API is unavailable.");
-      }
-      const result = await api.workspace.setQueuedMessageDispatchMode({
-        workspaceId,
-        queueDispatchMode,
-      });
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-      if (!result.data) {
-        throw new Error("The queued message is no longer available.");
-      }
-    },
-    [api, workspaceId]
-  );
+  const handleQueuedDispatchModeChange = async (queueDispatchMode: QueueDispatchMode) => {
+    if (!api) {
+      throw new Error("Workspace API is unavailable.");
+    }
+    const result = await api.workspace.setQueuedMessageDispatchMode({
+      workspaceId,
+      queueDispatchMode,
+    });
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+    if (!result.data) {
+      throw new Error("The queued message is no longer available.");
+    }
+  };
 
   const handleCancelCompactionFromBarrier = useCallback(() => {
     if (!api || !aggregator) {
@@ -2086,6 +2083,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         onEditLastUserMessage={props.onEditLastUserMessage}
         canInterrupt={props.canInterrupt}
         queuedMessage={props.queuedMessage}
+        onQueuedDispatchModeChange={props.onQueuedDispatchModeChange}
         onSendQueuedImmediately={props.onSendQueuedImmediately}
         onReady={props.onChatInputReady}
         attachedReviews={reviews.attachedReviews}
