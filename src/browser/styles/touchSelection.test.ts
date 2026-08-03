@@ -6,10 +6,11 @@
  * validation). This asserts the rules against the stylesheet instead, resolving the
  * declaration that wins for a viewport rather than matching literal source.
  *
- * Selection reaches an element from every place Tailwind collects class names, so all are
- * checked: rules written in globals.css, Tailwind utilities named in TSX, and files pulled
- * in by `@source` directives. The utilities only enter the build through
- * `@import "tailwindcss"`, so they never appear in this parse and need their own scan.
+ * Selection reaches an element from every route that produces a `user-select`
+ * declaration, so all are checked: rules written in globals.css, Tailwind utilities named
+ * in TSX or in files pulled in by `@source` directives, and inline styles, whether React
+ * style objects or DOM style assignments. Only the first route is visible to this parse;
+ * the others need their own source scan.
  */
 import { Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
@@ -70,19 +71,26 @@ const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
 
 /**
- * Opt-ins as they appear in class names, in any variant: the named utilities, the
- * arbitrary-value and variable forms (tracked despite compiling to nothing today, see
- * above), and the arbitrary-property form. `select-[none]` and `[user-select:none]` are
- * excluded as arbitrary spellings of `select-none`, which is untracked for the reason
- * given below.
+ * Opt-ins as they appear in source, in every spelling that produces a declaration:
+ * the named utilities in any variant, the arbitrary-value and variable forms (tracked
+ * despite compiling to nothing today, see above), the arbitrary-property form, and
+ * inline styles, camelCase for React style objects and DOM assignments (`userSelect`,
+ * `WebkitUserSelect`, DOM's `webkitUserSelect`) or kebab-case inside strings
+ * (`setProperty`, `cssText`).
+ *
+ * Spellings of suppression are excluded: `select-[none]` and `[user-select:none]` as
+ * arbitrary forms of the untracked `select-none`, and inline values that are literally
+ * `none` or the empty-string reset. An inline value this pattern cannot see, such as a
+ * variable or a conditional, counts as an opt-in: a match is a review gate, and the
+ * cost of a false positive is one entry below.
  */
-const SELECTION_OPT_IN_CLASS =
-  /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b|\bselect-\[(?!none\])[^\s\]]+\]|\bselect-\((?:[\w-]+:)?--[^\s)]+\)|\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]/g;
+const SELECTION_OPT_IN_PATTERN =
+  /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b|\bselect-\[(?!none\])[^\s\]]+\]|\bselect-\((?:[\w-]+:)?--[^\s)]+\)|\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]|\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b(?!\s*[:=]\s*["'`](?:none)?["'`])|(?:-(?:webkit|moz|ms|o)-)?\buser-select\b(?!\s*:\s*none\b)/g;
 
 /**
- * Components that opt content back into selection with a Tailwind class.
+ * Components that opt content back into selection with a Tailwind class or inline style.
  *
- * Such a class compiles to a `user-select` declaration on the element itself, which beats
+ * Either one puts a `user-select` declaration on the element itself, which beats
  * the guard inherited from `body`, so each entry is content that stays selectable on touch.
  * Every current one is a short value a user copies: a commit SHA, an SSH fingerprint, review
  * metadata, or a rename input. Enumerated rather than inferred because whether an element is
@@ -344,7 +352,7 @@ describe("touch text-selection guard", () => {
   it("opts content back into selection only in reviewed components", async () => {
     const optIns: Record<string, number> = {};
     const countInto = (key: string, source: string) => {
-      const matches = source.match(SELECTION_OPT_IN_CLASS);
+      const matches = source.match(SELECTION_OPT_IN_PATTERN);
       if (matches) {
         optIns[key] = matches.length;
       }
