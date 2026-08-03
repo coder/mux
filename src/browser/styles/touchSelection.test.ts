@@ -33,8 +33,10 @@ const SELECTION_PROPERTIES = ["user-select", "-webkit-user-select"];
  * Collection recognises every vendor spelling, not just the two asserted above: a rule
  * setting only `-moz-user-select` still changes selection in that engine, so ignoring it
  * would let a descendant override slip past the whole-stylesheet checks below.
+ * Case-insensitive because browsers match property names and keyword values that way;
+ * collected properties and values are lowercased so the assertions compare one spelling.
  */
-const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/;
+const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/i;
 
 /**
  * Tailwind's selection utilities, matched anywhere in the token so variant chains
@@ -156,7 +158,7 @@ beforeAll(async () => {
   );
 
   sourceDirectivePaths = [];
-  stylesheet.walkAtRules("source", (atRule) => {
+  stylesheet.walkAtRules(/^source$/i, (atRule) => {
     const match = PLAIN_SOURCE_PATH.exec(atRule.params.trim());
     if (!match) {
       throw new Error(`Unsupported @source form: @source ${atRule.params}`);
@@ -167,7 +169,9 @@ beforeAll(async () => {
   // `@apply select-text` sets selection without a `user-select` declaration to find, and
   // resolving what a utility expands to needs Tailwind's variant and layer handling, so
   // the honest response is to refuse rather than report a guard this cannot see.
-  stylesheet.walkAtRules("apply", (atRule) => {
+  // At-rule names are matched case-insensitively: `@APPLY` currently compiles to
+  // nothing, but refusing it keeps a Tailwind change from opening the gap silently.
+  stylesheet.walkAtRules(/^apply$/i, (atRule) => {
     const appliesSelection = atRule.params
       .split(/\s+/)
       .some(
@@ -181,6 +185,11 @@ beforeAll(async () => {
   selectionRules = [];
   let order = 0;
   stylesheet.walkDecls((decl: Declaration) => {
+    // A CSS ident escape (`user-sele\63t`) can spell a property in a form no pattern
+    // sees, so escaped property names are refused rather than decoded.
+    if (decl.prop.includes("\\")) {
+      throw new Error(`Unsupported escaped property name: ${decl.prop}`);
+    }
     if (!SELECTION_PROPERTY_PATTERN.test(decl.prop)) {
       return;
     }
@@ -196,8 +205,8 @@ beforeAll(async () => {
     }
     selectionRules.push({
       selectors: decl.parent.selectors,
-      property: decl.prop,
-      value: decl.value,
+      property: decl.prop.toLowerCase(),
+      value: decl.value.toLowerCase(),
       mediaParams: collectMediaParams(decl),
       order: order++,
     });
