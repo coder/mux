@@ -1895,6 +1895,7 @@ export class Config {
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
+              taskPendingGuidance: workspace.taskPendingGuidance,
               taskLaunchError: workspace.taskLaunchError,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -2005,6 +2006,7 @@ export class Config {
             metadata.workflowTask ??= workspace.workflowTask;
             metadata.bestOf ??= workspace.bestOf;
             metadata.taskStatus ??= workspace.taskStatus;
+            metadata.taskPendingGuidance ??= workspace.taskPendingGuidance;
             metadata.taskLaunchError ??= workspace.taskLaunchError;
             metadata.reportedAt ??= workspace.reportedAt;
             metadata.taskModelString ??= workspace.taskModelString;
@@ -2105,6 +2107,7 @@ export class Config {
               workflowTask: workspace.workflowTask,
               bestOf: workspace.bestOf,
               taskStatus: workspace.taskStatus,
+              taskPendingGuidance: workspace.taskPendingGuidance,
               taskLaunchError: workspace.taskLaunchError,
               reportedAt: workspace.reportedAt,
               taskModelString: workspace.taskModelString,
@@ -2168,6 +2171,7 @@ export class Config {
             workflowTask: workspace.workflowTask,
             bestOf: workspace.bestOf,
             taskStatus: workspace.taskStatus,
+            taskPendingGuidance: workspace.taskPendingGuidance,
             taskLaunchError: workspace.taskLaunchError,
             reportedAt: workspace.reportedAt,
             taskModelString: workspace.taskModelString,
@@ -2260,6 +2264,7 @@ export class Config {
         workflowTask: metadata.workflowTask,
         bestOf: metadata.bestOf,
         taskStatus: metadata.taskStatus,
+        taskPendingGuidance: metadata.taskPendingGuidance,
         taskLaunchError: metadata.taskLaunchError,
         reportedAt: metadata.reportedAt,
         taskModelString: metadata.taskModelString,

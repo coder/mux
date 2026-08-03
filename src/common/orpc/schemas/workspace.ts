@@ -206,10 +206,19 @@ export const WorkspaceMetadataSchema = z.object({
       description:
         "Agent task lifecycle status for child workspaces (queued|starting|running|awaiting_report|interrupted|reported).",
     }),
-  taskGuidancePending: z.boolean().optional().meta({
-    description:
-      "Whether parent guidance has been queued but not yet accepted into a replacement task turn.",
-  }),
+  taskPendingGuidance: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        message: z.string().min(1),
+        queueDispatchMode: z.enum(["tool-end", "turn-end"]),
+      })
+    )
+    .optional()
+    .meta({
+      description:
+        "Parent guidance queued for replacement task turns but not yet accepted into chat history.",
+    }),
   taskLaunchError: z.string().optional().meta({
     description: "Startup failure recorded before an agent task could begin streaming.",
   }),

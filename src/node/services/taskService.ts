@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 
@@ -2171,10 +2172,35 @@ export class TaskService {
       const restartCompletionInstruction = isPlanLike
         ? "When you have a final plan, call propose_plan exactly once."
         : "When you have a final answer, return it in your final assistant message.";
+      const pendingGuidance = task.taskPendingGuidance ?? [];
+      const pendingGuidanceIds = new Set(pendingGuidance.map((guidance) => guidance.id));
+      const pendingGuidancePrompt =
+        pendingGuidance.length > 0
+          ? "\n\nApply these pending parent guidance updates in order:\n\n" +
+            pendingGuidance
+              .map((guidance, index) => `${index + 1}. ${guidance.message}`)
+              .join("\n\n")
+          : "";
+      const clearAcceptedPendingGuidance = async (): Promise<void> => {
+        if (pendingGuidanceIds.size === 0) {
+          return;
+        }
+        await this.editWorkspaceEntry(
+          task.id!,
+          (workspace) => {
+            const remaining = (workspace.taskPendingGuidance ?? []).filter(
+              (guidance) => !pendingGuidanceIds.has(guidance.id)
+            );
+            workspace.taskPendingGuidance = remaining.length > 0 ? remaining : undefined;
+          },
+          { allowMissing: true }
+        );
+      };
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
         "Mux restarted while this task was running. Continue where you left off. " +
-          restartCompletionInstruction,
+          restartCompletionInstruction +
+          pendingGuidancePrompt,
         {
           model,
           agentId,
@@ -2182,7 +2208,11 @@ export class TaskService {
           reasoningMode: coerceOpenAIReasoningMode(task.aiSettings?.reasoningMode),
           experiments: task.taskExperiments,
         },
-        { synthetic: true, agentInitiated: true }
+        {
+          synthetic: true,
+          agentInitiated: true,
+          ...(pendingGuidance.length > 0 ? { onAccepted: clearAcceptedPendingGuidance } : {}),
+        }
       );
       const durationMs = Date.now() - resumeStartedAt;
       if (!sendResult.success) {
@@ -4087,10 +4117,14 @@ export class TaskService {
         return Err({ code: "not_active" as const, taskStatus: previousStatus ?? "unknown" });
       }
 
+      const guidanceId = randomUUID();
       await this.editWorkspaceEntry(
         taskId,
         (workspace) => {
-          workspace.taskGuidancePending = true;
+          workspace.taskPendingGuidance = [
+            ...(workspace.taskPendingGuidance ?? []),
+            { id: guidanceId, message: trimmedMessage, queueDispatchMode },
+          ];
           if (previousStatus === "awaiting_report") {
             workspace.taskStatus = "running";
           }
@@ -4102,8 +4136,16 @@ export class TaskService {
         await this.editWorkspaceEntry(
           taskId,
           (workspace) => {
-            delete workspace.taskGuidancePending;
-            if (restoreAfterFailure && workspace.taskStatus === "running") {
+            const remainingGuidance = (workspace.taskPendingGuidance ?? []).filter(
+              (guidance) => guidance.id !== guidanceId
+            );
+            workspace.taskPendingGuidance =
+              remainingGuidance.length > 0 ? remainingGuidance : undefined;
+            if (
+              restoreAfterFailure &&
+              remainingGuidance.length === 0 &&
+              workspace.taskStatus === "running"
+            ) {
               workspace.taskStatus = this.aiService.isStreaming(taskId)
                 ? previousStatus
                 : "awaiting_report";
@@ -9561,7 +9603,7 @@ export class TaskService {
     // Parent corrections queued for the next task turn supersede any report emitted by the old
     // turn. Keep the task active until AgentSession accepts the reserved guidance and clears this
     // durable flag; otherwise turn-end dispatch could deliver a stale report before the correction.
-    if (entry.workspace.taskGuidancePending === true) {
+    if ((entry.workspace.taskPendingGuidance?.length ?? 0) > 0) {
       return;
     }
 
@@ -10710,7 +10752,7 @@ export class TaskService {
     const cfgBeforeReport = this.config.loadConfigOrDefault();
     const latestEntryBeforeReport =
       findWorkspaceEntry(cfgBeforeReport, childWorkspaceId) ?? childEntry;
-    if (latestEntryBeforeReport?.workspace.taskGuidancePending === true) {
+    if ((latestEntryBeforeReport?.workspace.taskPendingGuidance?.length ?? 0) > 0) {
       return {
         finalized: false,
         reason: "pending_guidance",

@@ -3356,6 +3356,57 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
+  test("initialize replays and clears persisted pending task guidance", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-restart-guidance";
+    const childTaskId = "child-restart-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskPendingGuidance: [
+            { id: "guidance-1", message: "First correction", queueDispatchMode: "turn-end" },
+            { id: "guidance-2", message: "Second correction", queueDispatchMode: "tool-end" },
+          ],
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const sendMessage = mock(
+      async (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: { onAccepted?: () => Promise<void> | void }
+      ): Promise<Result<void>> => {
+        await internal?.onAccepted?.();
+        return Ok(undefined);
+      }
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childTaskId,
+      expect.stringContaining("1. First correction\n\n2. Second correction"),
+      expect.objectContaining({ model: "openai:gpt-5.2", agentId: "exec" }),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toBeUndefined();
+  });
+
   test("initialize drains persisted terminal wake-ups from before restart", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
@@ -10435,7 +10486,78 @@ describe("TaskService", () => {
       )
     ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "tool-end" }));
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
-    expect(findWorkspaceInConfig(config, childTaskId)?.taskGuidancePending).toBe(true);
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toEqual([
+      expect.objectContaining({
+        message: "Continue with the correction.",
+        queueDispatchMode: "tool-end",
+      }),
+    ]);
+  });
+
+  test("sendMessageToDescendantAgentTask preserves later queued guidance reservations", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-multiple-guidance";
+    const childTaskId = "child-multiple-guidance";
+    const acceptedCallbacks: Array<() => Promise<void> | void> = [];
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService } = createWorkspaceServiceMocks({
+      sendMessage: mock(
+        (
+          _workspaceId: string,
+          _message: string,
+          _options: unknown,
+          internal?: { onAccepted?: () => Promise<void> | void }
+        ): Promise<Result<void>> => {
+          if (internal?.onAccepted) {
+            acceptedCallbacks.push(internal.onAccepted);
+          }
+          return Promise.resolve(Ok(undefined));
+        }
+      ),
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "First correction",
+        "turn-end"
+      )
+    ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "turn-end" }));
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "Second correction",
+        "turn-end"
+      )
+    ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "turn-end" }));
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toHaveLength(2);
+
+    await acceptedCallbacks[0]?.();
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toEqual([
+      expect.objectContaining({ message: "Second correction" }),
+    ]);
+    await acceptedCallbacks[1]?.();
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toBeUndefined();
   });
 
   test("sendMessageToDescendantAgentTask serializes queued guidance with launch reservation", async () => {
@@ -10541,7 +10663,13 @@ describe("TaskService", () => {
           agentId: "exec",
           agentType: "exec",
           taskStatus: "running",
-          taskGuidancePending: true,
+          taskPendingGuidance: [
+            {
+              id: "pending-guidance",
+              message: "Apply the correction.",
+              queueDispatchMode: "turn-end",
+            },
+          ],
         }),
       ],
       testTaskSettings()
@@ -10566,7 +10694,7 @@ describe("TaskService", () => {
     });
 
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
-    expect(findWorkspaceInConfig(config, childTaskId)?.taskGuidancePending).toBe(true);
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toHaveLength(1);
   });
 
   test("sendMessageToDescendantAgentTask treats legacy missing taskStatus as running", async () => {
