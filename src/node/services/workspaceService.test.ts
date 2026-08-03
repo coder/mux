@@ -798,6 +798,62 @@ describe("WorkspaceService bash monitor wakes", () => {
     }
   });
 
+  test("unregisters pending wakes when a delivery-state query fails", async () => {
+    const { config, cleanup } = await createTestHistoryService();
+    try {
+      const workspaceId = "bash-monitor-delivery-gate-failure";
+      const projectPath = path.join(config.rootDir, "project");
+      await config.addWorkspace(projectPath, {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "project",
+        projectPath,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+      });
+
+      const wakeStore = new BashMonitorWakeStore(config);
+      await wakeStore.enqueueOrMergePending({
+        processId: "proc-failed-gate",
+        taskId: "bash:proc-failed-gate",
+        workspaceId,
+        filter: "FAILED",
+        filterExclude: false,
+        lines: ["FAILED gate"],
+        totalMatches: 1,
+        timestamp: Date.now(),
+        matchedThroughOffset: 100,
+      });
+
+      const getDeliveryState = mock(() => Promise.reject(new Error("delivery gate failed")));
+      const backgroundProcessManager = Object.assign(new EventEmitter(), {
+        cleanup: mock(() => Promise.resolve()),
+        getForegroundToolCallIds: mock(() => []),
+        getMonitorWakeDeliveryState: getDeliveryState,
+      }) as unknown as BackgroundProcessManager & EventEmitter;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        backgroundProcessManager,
+        aiService: createMockAIService({ isStreaming: mock(() => true) }),
+      });
+      spyOn(workspaceService, "isBusyForMessage").mockReturnValue(true);
+      spyOn(workspaceService, "hasPendingQueuedOrPreparingTurn").mockReturnValue(false);
+      const sendSpy = spyOn(workspaceService, "sendMessage").mockResolvedValue(Ok(undefined));
+
+      await waitForCondition(() => getDeliveryState.mock.calls.length === 1);
+      await drainPendingDispatches();
+      backgroundProcessManager.emit("monitor:stopped", workspaceId, {
+        processId: "proc-failed-gate",
+        reason: "canceled",
+      });
+
+      await waitForCondition(async () => (await wakeStore.listPending(workspaceId)).length === 0);
+      expect(sendSpy).not.toHaveBeenCalled();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("converts stale armed-monitor registry records into monitor-lost wakes at startup", async () => {
     const { config, cleanup } = await createTestHistoryService();
     try {

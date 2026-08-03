@@ -2406,88 +2406,94 @@ export class WorkspaceService extends EventEmitter {
       this.unregisterQueuedBashMonitorWake(ownerWorkspaceId, pending, queueKey);
     };
 
-    // Delivery gate: re-check each match against the shown frontier immediately before sending it.
-    // If task_await is already reading that same process, defer only that record until the read
-    // settles; unrelated process wakes in this owner batch remain deliverable. Partial manager stubs
-    // without the non-blocking query retain the previous settled-frontier behavior.
-    const canQueryDeliveryState =
-      typeof this.backgroundProcessManager.getMonitorWakeDeliveryState === "function";
-    const canQueryShownFrontier =
-      typeof this.backgroundProcessManager.getSettledShownThroughOffset === "function";
     const deliverable: BashMonitorWakeRecord[] = [];
-    const supersededByShown: BashMonitorWakeRecord[] = [];
-    for (const record of pending) {
-      let shownThroughOffset: number | undefined;
-      if (record.kind === "match" && record.matchedThroughOffset != null) {
-        if (canQueryDeliveryState) {
-          const state = await this.backgroundProcessManager.getMonitorWakeDeliveryState(
-            record.processId,
-            Date.parse(record.createdAt)
-          );
-          if (state?.status === "blocked") {
-            this.scheduleBashMonitorWakeDrainAfterRead(ownerWorkspaceId, state.readSettled);
+    let prompt: string;
+    try {
+      // Delivery gate: re-check each match against the shown frontier immediately before sending it.
+      // If task_await is already reading that same process, defer only that record until the read
+      // settles; unrelated process wakes in this owner batch remain deliverable. Partial manager stubs
+      // without the non-blocking query retain the previous settled-frontier behavior.
+      const canQueryDeliveryState =
+        typeof this.backgroundProcessManager.getMonitorWakeDeliveryState === "function";
+      const canQueryShownFrontier =
+        typeof this.backgroundProcessManager.getSettledShownThroughOffset === "function";
+      const supersededByShown: BashMonitorWakeRecord[] = [];
+      for (const record of pending) {
+        let shownThroughOffset: number | undefined;
+        if (record.kind === "match" && record.matchedThroughOffset != null) {
+          if (canQueryDeliveryState) {
+            const state = await this.backgroundProcessManager.getMonitorWakeDeliveryState(
+              record.processId,
+              Date.parse(record.createdAt)
+            );
+            if (state?.status === "blocked") {
+              this.scheduleBashMonitorWakeDrainAfterRead(ownerWorkspaceId, state.readSettled);
+              continue;
+            }
+            shownThroughOffset = state?.shownThroughOffset;
+          } else if (canQueryShownFrontier) {
+            shownThroughOffset = await this.backgroundProcessManager.getSettledShownThroughOffset(
+              record.processId,
+              Date.parse(record.createdAt)
+            );
+          }
+          if (shownThroughOffset != null && shownThroughOffset >= record.matchedThroughOffset) {
+            supersededByShown.push(record);
             continue;
           }
-          shownThroughOffset = state?.shownThroughOffset;
-        } else if (canQueryShownFrontier) {
-          shownThroughOffset = await this.backgroundProcessManager.getSettledShownThroughOffset(
-            record.processId,
-            Date.parse(record.createdAt)
-          );
         }
-        if (shownThroughOffset != null && shownThroughOffset >= record.matchedThroughOffset) {
-          supersededByShown.push(record);
-          continue;
-        }
+        deliverable.push(record);
       }
-      deliverable.push(record);
-    }
-    const supersededBeforeSend = new Map(
-      supersededByShown.map((record) => [record.id, record] as const)
-    );
-    if (supersededBeforeSend.size > 0) {
-      await markSupersededSnapshots([...supersededBeforeSend.values()]);
-    }
-    if (cancellation.abortController.signal.aborted) {
-      // Stop accepting new invalidations, then include every event retained while the gate awaited.
-      unregisterQueueKey();
-      const newlyInvalidated = pending.filter(
-        (record) =>
-          !supersededBeforeSend.has(record.id) &&
-          cancellation.invalidatedProcessKeys.has(
+      const supersededBeforeSend = new Map(
+        supersededByShown.map((record) => [record.id, record] as const)
+      );
+      if (supersededBeforeSend.size > 0) {
+        await markSupersededSnapshots([...supersededBeforeSend.values()]);
+      }
+      if (cancellation.abortController.signal.aborted) {
+        // Stop accepting new invalidations, then include every event retained while the gate awaited.
+        unregisterQueueKey();
+        const newlyInvalidated = pending.filter(
+          (record) =>
+            !supersededBeforeSend.has(record.id) &&
+            cancellation.invalidatedProcessKeys.has(
+              this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
+            )
+        );
+        for (const record of newlyInvalidated) {
+          supersededBeforeSend.set(record.id, record);
+        }
+        if (newlyInvalidated.length > 0) {
+          await markSupersededSnapshots(newlyInvalidated);
+        }
+        if (supersededBeforeSend.size < pending.length) {
+          this.scheduleBashMonitorWakeDrain(ownerWorkspaceId);
+        }
+        return;
+      }
+      // Cancellation can land while the shown-frontier checks above await I/O. Drop those records
+      // before constructing the prompt, while allowing unrelated process wakes in the batch through.
+      for (let index = deliverable.length - 1; index >= 0; index--) {
+        const record = deliverable[index];
+        if (
+          this.canceledBashMonitorKeys.has(
             this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
           )
-      );
-      for (const record of newlyInvalidated) {
-        supersededBeforeSend.set(record.id, record);
+        ) {
+          deliverable.splice(index, 1);
+          await this.bashMonitorWakeStore.markSuperseded(ownerWorkspaceId, record.id);
+        }
       }
-      if (newlyInvalidated.length > 0) {
-        await markSupersededSnapshots(newlyInvalidated);
+      if (deliverable.length === 0) {
+        unregisterQueueKey();
+        return;
       }
-      if (supersededBeforeSend.size < pending.length) {
-        this.scheduleBashMonitorWakeDrain(ownerWorkspaceId);
-      }
-      return;
-    }
-    // Cancellation can land while the shown-frontier checks above await I/O. Drop those records
-    // before constructing the prompt, while allowing unrelated process wakes in the batch through.
-    for (let index = deliverable.length - 1; index >= 0; index--) {
-      const record = deliverable[index];
-      if (
-        this.canceledBashMonitorKeys.has(
-          this.bashMonitorProcessKey(ownerWorkspaceId, record.processId)
-        )
-      ) {
-        deliverable.splice(index, 1);
-        await this.bashMonitorWakeStore.markSuperseded(ownerWorkspaceId, record.id);
-      }
-    }
-    if (deliverable.length === 0) {
-      unregisterQueueKey();
-      return;
-    }
 
-    const prompt = buildBashMonitorWakePrompt(deliverable);
+      prompt = buildBashMonitorWakePrompt(deliverable);
+    } catch (error) {
+      unregisterQueueKey();
+      throw error;
+    }
     const retryAfterIdleIfBusy = (reason: string): void => {
       if (
         this.isBusyForMessage(ownerWorkspaceId) ||
