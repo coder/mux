@@ -3111,11 +3111,17 @@ export class AgentSession {
       // goal continuations should unblock once the user message exists: for
       // Resume, that makes chat history the durable source of truth for the
       // running goal before runtime warmup or streaming can race/fail.
+      const drainQueuedMessagesAfterFailedStartup = (): void => {
+        if (this.turnPhase === TurnPhase.IDLE && !this.messageQueue.isEmpty()) {
+          this.sendQueuedMessages();
+        }
+      };
       startPreparedStream()
         .then(async (result) => {
           if (!result.success) {
             await notifyAcceptedPreStreamFailure(result.error);
           }
+          drainQueuedMessagesAfterFailedStartup();
         })
         .catch(async (error: unknown) => {
           log.error("Accepted background stream failed before startup completed", {
@@ -3134,6 +3140,7 @@ export class AgentSession {
               error: getErrorMessage(callbackError),
             });
           }
+          drainQueuedMessagesAfterFailedStartup();
         });
       return Ok(undefined);
     }

@@ -100,6 +100,8 @@ describe("AgentSession pre-stream errors", () => {
       streamWithHistory: () => Promise<Result<void, SendMessageError>>;
     };
     privateSession.streamWithHistory = () => Promise.reject(new Error("startup rejected"));
+    const sendQueuedMessages = mock(() => undefined);
+    session.sendQueuedMessages = sendQueuedMessages;
 
     const failure = new Promise<SendMessageError>((resolve) => {
       void session.sendMessage(
@@ -112,8 +114,16 @@ describe("AgentSession pre-stream errors", () => {
       );
     });
 
+    session.queueMessage("later correction", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+    });
+
     expect(await failure).toEqual({ type: "unknown", raw: "startup rejected" });
     await session.waitForIdle();
+    // The failure callback resolves before the rejection handler continues to drain the queue.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sendQueuedMessages).toHaveBeenCalledTimes(1);
   });
 
   it("acknowledges edited sends immediately and surfaces later startup failure via stream-error", async () => {
