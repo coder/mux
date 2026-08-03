@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { DisplayedMessage } from "@/common/types/message";
 import {
   computeOperationalBundleInfos,
+  computeTaskAwaitPollGroupInfos,
   computeWorkBundleInfos,
   summarizeOperationalBundle,
 } from "./transcriptRenderProjection";
@@ -502,6 +503,38 @@ describe("work bundle coalescing", () => {
   });
 });
 
+describe("task_await poll grouping", () => {
+  test("leaves standalone waits visible and collapses consecutive polls", () => {
+    const first = tool({ id: "await-1", toolName: "task_await", status: "completed" });
+    const second = tool({ id: "await-2", toolName: "task_await", status: "executing" });
+
+    expect(computeTaskAwaitPollGroupInfos([first])[0]).toBeUndefined();
+
+    const infos = computeTaskAwaitPollGroupInfos([first, second]);
+    expect(infos[0]).toMatchObject({
+      position: "head",
+      state: "active",
+      defaultExpanded: false,
+      summary: {
+        title: "Checked task status 2 times",
+        activeTitle: "Waiting for tasks · 2 checks",
+        details: "",
+      },
+    });
+    expect(infos[1]).toMatchObject({ position: "member", defaultExpanded: false });
+  });
+
+  test("conversation rows break poll groups", () => {
+    const infos = computeTaskAwaitPollGroupInfos([
+      tool({ id: "await-1", toolName: "task_await" }),
+      assistant("a1"),
+      tool({ id: "await-2", toolName: "task_await" }),
+    ]);
+
+    expect(infos.every((info) => info === undefined)).toBe(true);
+  });
+});
+
 describe("operational bundle coalescing", () => {
   test("groups consecutive reasoning and tool calls without mutating messages", () => {
     const first = reasoning({ id: "think-1" });
@@ -705,6 +738,20 @@ describe("operational bundle coalescing", () => {
 });
 
 describe("operational bundle summary", () => {
+  test("uses task-specific copy for repeated task_await polls", () => {
+    const summary = summarizeOperationalBundle([
+      tool({ id: "await-1", toolName: "task_await" }),
+      tool({ id: "await-2", toolName: "task_await" }),
+      tool({ id: "await-3", toolName: "task_await" }),
+    ]);
+
+    expect(summary).toEqual({
+      title: "Checked task status 3 times",
+      activeTitle: "Waiting for tasks · 3 checks",
+      details: "",
+    });
+  });
+
   test("summarizes mixed tools and reasoning", () => {
     const summary = summarizeOperationalBundle([
       reasoning({ id: "think-1" }),

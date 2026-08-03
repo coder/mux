@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { Info } from "lucide-react";
+import { CircleAlert, CircleCheck, Clock3, Info, LoaderCircle } from "lucide-react";
 import {
   ToolContainer,
   ToolHeader,
@@ -1193,41 +1193,89 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
-  // Keep task_await collapsed by default (following the sticky tools preference), but
-  // auto-expand when failures are present so they aren't hidden behind a "completed"
-  // badge. failedCount is usually 0 at mount and only rises once awaited results land,
-  // so pass it as a live forceExpanded signal (latched) rather than a one-time seed.
+  const pendingCount = totalCount - completedCount - failedCount;
+  const targetCount = totalCount > 0 ? totalCount : taskIds?.length;
+  const formatTasks = (count: number) => `${count} ${count === 1 ? "task" : "tasks"}`;
+
+  let summaryTitle: string;
+  let summaryDetail: string | undefined;
+  let summaryTone: "active" | "danger" | "success" | "waiting";
+  if (failedCount > 0) {
+    summaryTitle = `${formatTasks(failedCount)} failed`;
+    summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
+    summaryTone = "danger";
+  } else if (status === "executing") {
+    summaryTitle = targetCount
+      ? `Waiting for ${formatTasks(targetCount)}`
+      : "Waiting for background work";
+    summaryTone = "active";
+  } else if (pendingCount > 0) {
+    summaryTitle = `Still waiting for ${formatTasks(pendingCount)}`;
+    summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
+    summaryTone = "waiting";
+  } else if (completedCount > 0) {
+    summaryTitle = `${formatTasks(completedCount)} completed`;
+    summaryTone = "success";
+  } else {
+    summaryTitle = "Checked task status";
+    summaryTone = "waiting";
+  }
+
+  // task_await commonly appears several times during one turn. Give each poll a compact,
+  // semantic timeline row instead of repeating the full generic tool chrome, while keeping
+  // failures expanded so the actionable details are never hidden.
   const { expanded, toggleExpanded } = useStickyExpand("tools", false, {
     forceExpanded: failedCount > 0,
   });
 
-  const effectiveStatus: ToolStatus = status === "completed" && failedCount > 0 ? "failed" : status;
+  const SummaryIcon =
+    summaryTone === "active"
+      ? LoaderCircle
+      : summaryTone === "danger"
+        ? CircleAlert
+        : summaryTone === "success"
+          ? CircleCheck
+          : Clock3;
 
   return (
-    <ToolContainer expanded={expanded}>
-      <ToolHeader onClick={toggleExpanded}>
-        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <TaskIcon toolName="task_await" />
-        <ToolName>task_await</ToolName>
+    <ToolContainer
+      expanded={expanded}
+      data-component="TaskAwaitToolCall"
+      className={cn("my-1 bg-transparent px-2 py-1.5", expanded && "bg-surface-secondary/40")}
+    >
+      <ToolHeader
+        onClick={toggleExpanded}
+        className="group min-h-5 gap-2"
+        aria-label={`${summaryTitle}. Show task wait details`}
+      >
+        <SummaryIcon
+          className={cn(
+            "size-3.5 shrink-0",
+            summaryTone === "active" && "text-task-mode animate-spin",
+            summaryTone === "danger" && "text-danger",
+            summaryTone === "success" && "text-success",
+            summaryTone === "waiting" && "text-muted"
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate text-[12px] leading-5">
+          <span
+            className={cn(
+              summaryTone === "active" ? "text-foreground" : "text-secondary",
+              summaryTone === "danger" && "text-danger"
+            )}
+          >
+            {summaryTitle}
+          </span>
+          {summaryDetail && <span className="text-muted"> · {summaryDetail}</span>}
+        </span>
         {status === "executing" && (
-          <span className="text-pending counter-nums ml-2 text-[10px] whitespace-nowrap [@container(max-width:500px)]:hidden">
-            <ElapsedTimeDisplay
-              startedAt={startedAt}
-              isActive={true}
-              separator=""
-              prefix="elapsed "
-            />
+          <span className="text-muted counter-nums text-[10px] whitespace-nowrap [@container(max-width:350px)]:hidden">
+            <ElapsedTimeDisplay startedAt={startedAt} isActive={true} separator="" prefix="" />
           </span>
         )}
-        {totalCount > 0 && (
-          <span className="text-muted text-[10px]">
-            {completedCount}/{totalCount} completed
-          </span>
-        )}
-        {failedCount > 0 && <span className="text-danger text-[10px]">{failedCount} failed</span>}
-        <StatusIndicator status={effectiveStatus}>
-          {getStatusDisplay(effectiveStatus)}
-        </StatusIndicator>
+        <ExpandIcon expanded={expanded} className="text-muted group-hover:text-secondary shrink-0">
+          ▶
+        </ExpandIcon>
       </ToolHeader>
 
       {expanded && (

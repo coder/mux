@@ -24,12 +24,110 @@ import {
 import {
   createFileEditTool,
   createFileReadTool,
+  createTaskAwaitTool,
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 
 const meta = { ...appMeta, title: "App/Chat/Messages" };
 export default meta;
+
+export const TaskAwaitTranscript: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone", "laptop"] },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupStreamingChatStory({
+          workspaceId: "ws-task-await-transcript",
+          messages: [
+            createUserMessage("msg-await-1", "Research the regression and verify the fix.", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 240_000,
+            }),
+            createAssistantMessage(
+              "msg-await-2",
+              "I delegated the investigation and test pass. I’ll wait for both results.",
+              { historySequence: 2, timestamp: STABLE_TIMESTAMP - 235_000 }
+            ),
+            createAssistantMessage("msg-await-3", "", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 180_000,
+              toolCalls: [
+                createTaskAwaitTool("await-poll-1", {
+                  task_ids: ["task-research", "task-tests"],
+                  timeout_secs: 0,
+                  results: [
+                    { taskId: "task-research", status: "running" },
+                    { taskId: "task-tests", status: "running" },
+                  ],
+                }),
+                createTaskAwaitTool("await-poll-2", {
+                  task_ids: ["task-research", "task-tests"],
+                  timeout_secs: 30,
+                  results: [
+                    { taskId: "task-research", status: "running" },
+                    { taskId: "task-tests", status: "running" },
+                  ],
+                }),
+                createTaskAwaitTool("await-poll-3", {
+                  task_ids: ["task-research", "task-tests"],
+                  timeout_secs: 30,
+                  results: [
+                    { taskId: "task-research", status: "running" },
+                    { taskId: "task-tests", status: "running" },
+                  ],
+                }),
+              ],
+            }),
+            createAssistantMessage(
+              "msg-await-4",
+              "No update yet. I’m continuing to wait without crowding the transcript.",
+              { historySequence: 4, timestamp: STABLE_TIMESTAMP - 60_000 }
+            ),
+          ],
+          streamingMessageId: "msg-await-5",
+          historySequence: 5,
+          pendingTool: {
+            toolCallId: "await-active",
+            toolName: "task_await",
+            args: { task_ids: ["task-research", "task-tests"], timeout_secs: 300 },
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(
+      () => {
+        if (canvas.queryByText("Checked task status 3 times") == null) {
+          throw new Error("Repeated task_await polls were not collapsed");
+        }
+        if (canvas.queryByText("Waiting for 2 tasks") == null) {
+          throw new Error("Standalone task_await summary did not render");
+        }
+        const summary = canvasElement.querySelector<HTMLElement>(
+          '[data-component="TaskAwaitToolCall"]'
+        );
+        if (!summary) throw new Error("Task await summary not rendered");
+        if (summary.scrollWidth > summary.clientWidth) {
+          throw new Error(
+            `Task await summary overflows horizontally (${summary.scrollWidth}px > ${summary.clientWidth}px)`
+          );
+        }
+      },
+      { timeout: 15_000 }
+    );
+  },
+};
 
 const LARGE_DIFF = [
   "--- src/api/users.ts",

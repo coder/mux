@@ -6,6 +6,7 @@ export type OperationalBundleMemberMessage = DisplayedMessage & { type: "reasoni
 export interface OperationalBundleSummary {
   title: string;
   details: string;
+  activeTitle?: string;
 }
 
 export interface OperationalBundleEntry {
@@ -171,6 +172,55 @@ export function computeWorkBundleInfos(
       };
     }
     index = span.finalIndex + 1;
+  }
+
+  return infos;
+}
+
+export function computeTaskAwaitPollGroupInfos(
+  messages: DisplayedMessage[]
+): Array<OperationalBundleInfo | undefined> {
+  const infos = new Array<OperationalBundleInfo | undefined>(messages.length);
+  let index = 0;
+
+  while (index < messages.length) {
+    const firstIndex = index;
+    const entries: OperationalBundleEntry[] = [];
+    while (index < messages.length) {
+      const message = messages[index];
+      if (!isOperationalBundleMemberMessage(message) || !isTaskAwaitMessage(message)) {
+        break;
+      }
+      entries.push({ message, originalIndex: index });
+      index += 1;
+    }
+
+    if (entries.length < 2) {
+      index = Math.max(index, firstIndex + 1);
+      continue;
+    }
+
+    const frozenEntries = Object.freeze(entries);
+    const state = frozenEntries.some((entry) => isActiveOperationalMessage(entry.message))
+      ? "active"
+      : "settled";
+    const info: OperationalBundleInfo = {
+      key: `task-await-polls:${frozenEntries[0].message.id}`,
+      position: "head",
+      headIndex: firstIndex,
+      entries: frozenEntries,
+      summary: summarizeOperationalBundle(frozenEntries.map((entry) => entry.message)),
+      state,
+      // Polling is useful evidence on demand, but it should never expand into a stack by default.
+      defaultExpanded: false,
+    };
+
+    for (const entry of frozenEntries) {
+      infos[entry.originalIndex] = {
+        ...info,
+        position: entry.originalIndex === firstIndex ? "head" : "member",
+      };
+    }
   }
 
   return infos;
@@ -473,6 +523,17 @@ export function summarizeOperationalBundle(
     throw new Error("Cannot summarize an empty operational bundle");
   }
 
+  const allTaskAwaits = messages.every(isTaskAwaitMessage);
+  if (allTaskAwaits) {
+    const pollCount = messages.length;
+    return {
+      title: pollCount === 1 ? "Checked task status" : `Checked task status ${pollCount} times`,
+      activeTitle:
+        pollCount === 1 ? "Waiting for tasks" : `Waiting for tasks · ${pollCount} checks`,
+      details: "",
+    };
+  }
+
   const allSearchMisses = messages.every(isEmptyCompletedWebSearch);
   if (allSearchMisses) {
     return {
@@ -492,6 +553,10 @@ export function summarizeOperationalBundle(
     title: `Ran ${messages.length.toLocaleString()} operations`,
     details: formatDetails(messages),
   };
+}
+
+function isTaskAwaitMessage(message: OperationalBundleMemberMessage): boolean {
+  return message.type === "tool" && message.toolName === "task_await";
 }
 
 function isEmptyCompletedWebSearch(message: OperationalBundleMemberMessage): boolean {

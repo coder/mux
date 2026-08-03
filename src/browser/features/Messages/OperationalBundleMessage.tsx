@@ -12,9 +12,10 @@ interface OperationalBundleMessageProps {
 export function OperationalBundleMessage(props: OperationalBundleMessageProps): React.ReactElement {
   const title =
     props.item.state === "active"
-      ? `Running ${props.item.entries.length.toLocaleString()} ${
+      ? (props.item.summary.activeTitle ??
+        `Running ${props.item.entries.length.toLocaleString()} ${
           props.item.entries.length === 1 ? "operation" : "operations"
-        }`
+        }`)
       : props.item.summary.title;
   const details = props.item.entries.length === 1 ? "" : props.item.summary.details;
 

@@ -116,6 +116,7 @@ import {
 } from "./sideQuestionScrollHold";
 import {
   computeOperationalBundleInfos,
+  computeTaskAwaitPollGroupInfos,
   computeWorkBundleInfos,
 } from "@/browser/utils/messages/transcriptRenderProjection";
 import { isBlockedPreStreamTaskStatus } from "@/browser/utils/ui/workspaceFiltering";
@@ -530,6 +531,11 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // Precompute bash_output grouping once per message snapshot so row rendering stays O(n).
   const bashOutputGroupInfos = useMemo(
     () => computeBashOutputGroupInfos(deferredMessages),
+    [deferredMessages]
+  );
+
+  const taskAwaitPollGroupInfos = useMemo(
+    () => computeTaskAwaitPollGroupInfos(deferredMessages),
     [deferredMessages]
   );
 
@@ -1573,6 +1579,37 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       </div>
                     )}
                     {deferredMessages.map((msg, index) => {
+                      const taskAwaitPollGroup = taskAwaitPollGroupInfos[index];
+                      if (taskAwaitPollGroup) {
+                        const override = operationalBundleExpansionOverrides.get(
+                          taskAwaitPollGroup.key
+                        );
+                        const expanded = override ?? taskAwaitPollGroup.defaultExpanded;
+                        const renderHeader = taskAwaitPollGroup.position === "head";
+                        if (!renderHeader && !expanded) {
+                          return null;
+                        }
+
+                        return (
+                          <React.Fragment key={`${workspaceId}:${msg.id}:task-await-polls`}>
+                            {renderHeader && (
+                              <OperationalBundleMessage
+                                item={taskAwaitPollGroup}
+                                expanded={expanded}
+                                onToggle={() =>
+                                  setOperationalBundleExpanded(taskAwaitPollGroup.key, !expanded)
+                                }
+                              />
+                            )}
+                            {expanded &&
+                              renderMessageAtIndex(msg, index, {
+                                key: `${workspaceId}:${msg.id}:task-await-poll`,
+                                className: "ml-4",
+                              })}
+                          </React.Fragment>
+                        );
+                      }
+
                       const workBundle = workBundleInfos?.[index];
                       const workBundleOverride = workBundle
                         ? workBundleExpansionOverrides.get(workBundle.key)
