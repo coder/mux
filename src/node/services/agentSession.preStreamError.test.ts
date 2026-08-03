@@ -92,6 +92,30 @@ describe("AgentSession pre-stream errors", () => {
     expect(streamError?.messageId).toMatch(/^assistant-/);
   });
 
+  it("notifies accepted background sends when stream startup rejects", async () => {
+    const workspaceId = "ws-background-startup-rejected";
+    const { session, cleanup } = await createAgentSessionHarness({ workspaceId });
+    historyCleanup = cleanup;
+    const privateSession = session as unknown as {
+      streamWithHistory: () => Promise<Result<void, SendMessageError>>;
+    };
+    privateSession.streamWithHistory = () => Promise.reject(new Error("startup rejected"));
+
+    const failure = new Promise<SendMessageError>((resolve) => {
+      void session.sendMessage(
+        "background",
+        { model: "anthropic:claude-3-5-sonnet-latest", agentId: "exec" },
+        {
+          startStreamInBackground: true,
+          onAcceptedPreStreamFailure: resolve,
+        }
+      );
+    });
+
+    expect(await failure).toEqual({ type: "unknown", raw: "startup rejected" });
+    await session.waitForIdle();
+  });
+
   it("acknowledges edited sends immediately and surfaces later startup failure via stream-error", async () => {
     const workspaceId = "ws-edit-startup-failed";
 

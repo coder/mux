@@ -10437,6 +10437,54 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
   });
 
+  test("sendMessageToDescendantAgentTask serializes queued guidance with launch reservation", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-queued-race";
+    const childTaskId = "child-queued-race";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "queued",
+          taskPrompt: "Original brief",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { taskService } = createTaskServiceHarness(config);
+    const internalTaskService = taskService as unknown as {
+      mutex: { acquire(): Promise<AsyncDisposable> };
+    };
+    const schedulerLock = await internalTaskService.mutex.acquire();
+    const guidanceResult = taskService.sendMessageToDescendantAgentTask(
+      parentWorkspaceId,
+      childTaskId,
+      "Use the correction.",
+      "tool-end"
+    );
+    await Promise.resolve();
+    await config.editConfig((current) => {
+      const child = current.projects
+        .get(projectPath)
+        ?.workspaces.find((workspace) => workspace.id === childTaskId);
+      assert(child);
+      child.taskStatus = "starting";
+      return current;
+    });
+    await schedulerLock[Symbol.asyncDispose]();
+
+    expect(await guidanceResult).toEqual(Err({ code: "not_active", taskStatus: "starting" }));
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPrompt).toBe("Original brief");
+  });
+
   test("sendMessageToDescendantAgentTask updates queued prompts without bypassing scheduling", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

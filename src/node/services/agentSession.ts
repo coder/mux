@@ -3038,6 +3038,15 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(getErrorMessage(error)));
     }
 
+    let acceptedPreStreamFailureNotified = false;
+    const notifyAcceptedPreStreamFailure = async (error: SendMessageError): Promise<void> => {
+      if (acceptedPreStreamFailureNotified) {
+        return;
+      }
+      acceptedPreStreamFailureNotified = true;
+      await internal?.onAcceptedPreStreamFailure?.(error);
+    };
+
     const preparedTurnAbortController = new AbortController();
     this.activePreparedTurnAbortController = preparedTurnAbortController;
     this.setTurnPhase(TurnPhase.PREPARING);
@@ -3045,6 +3054,9 @@ export class AgentSession {
     const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
       try {
         if (preparedTurnAbortController.signal.aborted) {
+          await notifyAcceptedPreStreamFailure(
+            createUnknownSendMessageError("Accepted stream startup was canceled before it began.")
+          );
           return Ok(undefined);
         }
         // If this is a compaction request, terminate background processes first.
@@ -3063,6 +3075,9 @@ export class AgentSession {
         // This provides crash safety - the follow-up survives app restarts.
 
         if (this.disposed || preparedTurnAbortController.signal.aborted) {
+          await notifyAcceptedPreStreamFailure(
+            createUnknownSendMessageError("Accepted stream startup was canceled before streaming.")
+          );
           return Ok(undefined);
         }
 
@@ -3099,16 +3114,26 @@ export class AgentSession {
       startPreparedStream()
         .then(async (result) => {
           if (!result.success) {
-            await internal?.onAcceptedPreStreamFailure?.(result.error);
+            await notifyAcceptedPreStreamFailure(result.error);
           }
         })
-        .catch((error: unknown) => {
+        .catch(async (error: unknown) => {
           log.error("Accepted background stream failed before startup completed", {
             workspaceId: this.workspaceId,
             editMessageId,
             goalKind,
             error: getErrorMessage(error),
           });
+          try {
+            await notifyAcceptedPreStreamFailure(
+              createUnknownSendMessageError(getErrorMessage(error))
+            );
+          } catch (callbackError: unknown) {
+            log.error("Accepted background stream failure callback failed", {
+              workspaceId: this.workspaceId,
+              error: getErrorMessage(callbackError),
+            });
+          }
         });
       return Ok(undefined);
     }

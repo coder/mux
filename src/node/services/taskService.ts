@@ -4004,13 +4004,57 @@ export class TaskService {
       "sendMessageToDescendantAgentTask: message must be non-empty"
     );
 
+    const queuedUpdateResult = await (async (): Promise<
+      Result<SendAgentTaskMessageResult | null, SendAgentTaskMessageError>
+    > => {
+      // The scheduler snapshots taskPrompt and flips queued -> starting under this mutex. Use the
+      // same lock so a correction is either included in that snapshot or observes starting and is
+      // rejected; it can never be persisted after the scheduler already captured a stale prompt.
+      await using _lock = await this.mutex.acquire();
+      const cfg = this.config.loadConfigOrDefault();
+      const entry = findWorkspaceEntry(cfg, taskId);
+      if (!entry) {
+        return Err({ code: "not_found" as const });
+      }
+      const taskIndex = this.buildAgentTaskIndex(cfg);
+      if (
+        !this.isDescendantAgentTaskUsingParentById(
+          taskIndex.parentById,
+          ancestorWorkspaceId,
+          taskId
+        )
+      ) {
+        return Err({ code: "invalid_scope" as const });
+      }
+      if (entry.workspace.taskStatus !== "queued") {
+        return Ok(null);
+      }
+
+      const initialPrompt = coerceNonEmptyString(entry.workspace.taskPrompt);
+      if (!initialPrompt) {
+        return Err({
+          code: "send_failed" as const,
+          message: "Queued task has no durable prompt to update.",
+        });
+      }
+      await this.editWorkspaceEntry(taskId, (workspace) => {
+        workspace.taskPrompt = `${initialPrompt}\n\nUpdated guidance from parent:\n\n${trimmedMessage}`;
+      });
+      return Ok({ delivery: "queued" as const });
+    })();
+    if (!queuedUpdateResult.success) {
+      return queuedUpdateResult;
+    }
+    if (queuedUpdateResult.data != null) {
+      return Ok(queuedUpdateResult.data);
+    }
+
     return this.workspaceEventLocks.withLock(taskId, async () => {
       const cfg = this.config.loadConfigOrDefault();
       const entry = findWorkspaceEntry(cfg, taskId);
       if (!entry) {
         return Err({ code: "not_found" as const });
       }
-
       const taskIndex = this.buildAgentTaskIndex(cfg);
       if (
         !this.isDescendantAgentTaskUsingParentById(
@@ -4024,22 +4068,6 @@ export class TaskService {
 
       // Missing status is a legacy running task: old persisted children predate taskStatus.
       const previousStatus = entry.workspace.taskStatus ?? "running";
-      if (previousStatus === "queued") {
-        const initialPrompt = coerceNonEmptyString(entry.workspace.taskPrompt);
-        if (!initialPrompt) {
-          return Err({
-            code: "send_failed" as const,
-            message: "Queued task has no durable prompt to update.",
-          });
-        }
-        // A queued child has not started yet, so fold the correction into its durable initial prompt
-        // instead of bypassing the parallel-task scheduler with a generic sendMessage call.
-        await this.editWorkspaceEntry(taskId, (workspace) => {
-          workspace.taskPrompt = `${initialPrompt}\n\nUpdated guidance from parent:\n\n${trimmedMessage}`;
-        });
-        return Ok({ delivery: "queued" as const });
-      }
-
       if (previousStatus !== "running" && previousStatus !== "awaiting_report") {
         return Err({ code: "not_active" as const, taskStatus: previousStatus ?? "unknown" });
       }
