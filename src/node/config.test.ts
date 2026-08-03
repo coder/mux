@@ -534,6 +534,39 @@ describe("Config", () => {
       expect(loaded.projects.get("/home/user/mux")?.workspaces).toHaveLength(1);
     });
 
+    it("removes entries already merged into an ancestor project via subProjectPath", () => {
+      // An earlier load's subproject merge relocated mux-chat into the
+      // registered ~/.mux parent and left the system/Mux child empty.
+      const parentProjectPath = "/home/user/.mux";
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              parentProjectPath,
+              {
+                workspaces: [
+                  {
+                    ...legacyMuxChatWorkspace(legacyProjectPath),
+                    subProjectPath: legacyProjectPath,
+                  },
+                  { path: "/home/user/.mux/other", id: "other-ws", name: "other" },
+                ],
+              },
+            ],
+            [legacyProjectPath, { workspaces: [], projectKind: "system" }],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get(parentProjectPath)?.workspaces.map((w) => w.id)).toEqual([
+        "other-ws",
+      ]);
+      expect(loaded.projects.has(legacyProjectPath)).toBe(false);
+    });
+
     it("keeps other workspaces in a system Mux project and retains the project", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(

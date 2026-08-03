@@ -671,37 +671,58 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
  * mux-chat id from orphan reaping.
  */
 function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boolean {
+  // Match by path shape (basename "Mux" under "system") rather than the
+  // current root dir so stale entries from other roots (e.g. a ~/.mux entry
+  // seen by a ~/.mux-dev build) are cleaned too.
+  const isSystemMuxPath = (candidate: string): boolean =>
+    path.basename(candidate) === "Mux" && path.basename(path.dirname(candidate)) === "system";
+
   let modified = false;
   for (const [projectPath, projectConfig] of projects) {
-    // Match the project by path shape (basename "Mux" under "system") rather
-    // than the current root dir so stale entries from other roots (e.g. a
-    // ~/.mux entry seen by a ~/.mux-dev build) are cleaned too.
-    const isSystemMuxProjectPath =
-      path.basename(projectPath) === "Mux" && path.basename(path.dirname(projectPath)) === "system";
-    if (!isSystemMuxProjectPath) {
-      continue;
-    }
+    const projectIsSystemMux = isSystemMuxPath(projectPath);
 
     const remaining = projectConfig.workspaces.filter((workspace) => {
       if (workspace.id !== "mux-chat") {
+        return true;
+      }
+      // The subproject merge below may have already relocated the entry into
+      // an ancestor project (e.g. ~/.mux registered as a project) on an
+      // earlier load, stamping subProjectPath with the original system/Mux
+      // path. Match the entry in either location.
+      const legacyProjectPath = projectIsSystemMux
+        ? projectPath
+        : workspace.subProjectPath != null && isSystemMuxPath(workspace.subProjectPath)
+          ? workspace.subProjectPath
+          : null;
+      if (legacyProjectPath === null) {
         return true;
       }
       // Keep unrelated workspaces whose generated id happens to be "mux-chat";
       // only entries carrying the built-in workspace's markers are legacy.
       const looksLikeLegacyMuxChat =
         workspace.agentId === "mux" ||
-        workspace.path === projectPath ||
+        workspace.path === legacyProjectPath ||
         workspace.name === "chat-with-mux" ||
         workspace.title === "Chat with Mux";
       return !looksLikeLegacyMuxChat;
     });
 
-    if (remaining.length !== projectConfig.workspaces.length) {
+    const removedEntries = remaining.length !== projectConfig.workspaces.length;
+    if (removedEntries) {
       projectConfig.workspaces = remaining;
       modified = true;
-      if (remaining.length === 0) {
-        projects.delete(projectPath);
-      }
+    }
+
+    // Delete the system Mux project once empty. The already-empty +
+    // projectKind check covers the shell left behind when the subproject
+    // merge relocated its only workspace into a parent project.
+    if (
+      projectIsSystemMux &&
+      remaining.length === 0 &&
+      (removedEntries || projectConfig.projectKind === "system")
+    ) {
+      projects.delete(projectPath);
+      modified = true;
     }
   }
   return modified;
