@@ -10036,6 +10036,68 @@ describe("TaskService", () => {
     expect(serializedParentHistory).toContain("claims");
   });
 
+  test("waitForAgentReport surfaces the child's report-time AI settings", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-report-settings";
+    const childTaskId = "task-report-settings";
+
+    // The persisted settings at report time differ from any launch-time snapshot a
+    // caller may hold (e.g. after a plan-to-exec handoff rewrote them).
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        {
+          path: path.join(projectPath, "child-task"),
+          id: childTaskId,
+          name: "agent_exec_child",
+          parentWorkspaceId,
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "anthropic:claude-opus-5",
+          taskThinkingLevel: "high",
+        },
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "assistant-child-report-settings",
+      metadata: { model: "anthropic:claude-opus-5", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-settings-call",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Done", title: "Result" },
+          state: "output-available",
+          output: {
+            success: true,
+            report: { reportMarkdown: "Done", title: "Result" },
+          },
+        },
+        { type: "text", text: "Done" },
+      ],
+    });
+
+    const report = await taskService.waitForAgentReport(childTaskId, {
+      requestingWorkspaceId: parentWorkspaceId,
+    });
+    expect(report.model).toBe("anthropic:claude-opus-5");
+    expect(report.thinkingLevel).toBe("high");
+  });
+
   test("workflow-owned child reports do not trigger generic parent handoff", async () => {
     const config = await createTestConfig(rootDir);
 
