@@ -143,6 +143,17 @@ const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
  * `WebkitUserSelect`, DOM's `webkitUserSelect`) or kebab-case inside strings
  * (`setProperty`, `cssText`).
  *
+ * A normal `select-auto` is exempt: `auto` is the property's initial value and resolves
+ * through the parent's used value, and globals.css is unlayered while utilities live in
+ * Tailwind's `@layer utilities`, so a normal utility cannot beat the guard or the
+ * editable opt-backs; declaring `auto` there changes nothing. The important-marked
+ * forms stay tracked, because an author-important utility beats the unlayered normal
+ * guard rules, so `select-auto!` on an editable would re-break iPad selection. So do
+ * the inline spellings of `auto`, which sit above every stylesheet rule. Residual, same
+ * class as the token-move one: `select-auto` co-located on one element with another
+ * selection utility it outranks in compiled order (`select-all` sorts before `auto`)
+ * changes behavior invisibly at token granularity; only the PR diff shows co-location.
+ *
  * Spellings of suppression are excluded here and tracked by the suppression pattern
  * below instead; the empty-string reset is neither. An inline value this pattern cannot
  * see, such as a variable or a conditional, counts as an opt-in: a match is a review
@@ -166,7 +177,10 @@ const VARIANT_CHAIN = String.raw`(?:(?:[A-Za-z0-9_-]+|\[[^\s\]]+\]):)*`;
 const SELECTION_OPT_IN_PATTERN = new RegExp(
   [
     // Named utilities behind any variant chain, with either important-marker spelling.
-    String.raw`!?${VARIANT_CHAIN}\bselect-(?:text|all|auto)\b!?`,
+    String.raw`!?${VARIANT_CHAIN}\bselect-(?:text|all)\b!?`,
+    // select-auto only when important-marked (see the exemption above).
+    String.raw`!${VARIANT_CHAIN}\bselect-auto\b`,
+    String.raw`${VARIANT_CHAIN}\bselect-auto\b!`,
     // Arbitrary-value and variable forms.
     String.raw`!?${VARIANT_CHAIN}\bselect-\[(?!none\])[^\s\]]+\]!?`,
     String.raw`!?${VARIANT_CHAIN}\bselect-\((?:[\w-]+:)?--[^\s)]+\)!?`,
