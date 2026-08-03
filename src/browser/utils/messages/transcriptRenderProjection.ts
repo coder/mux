@@ -532,11 +532,10 @@ export function summarizeOperationalBundle(
   const allTaskAwaits = messages.every(isTaskAwaitMessage);
   if (allTaskAwaits) {
     const pollCount = messages.length;
-    const statuses = messages.flatMap(getTaskAwaitResultStatuses);
     const hasFailure =
-      messages.some(hasTaskAwaitCallFailure) || statuses.some(isTaskAwaitFailureStatus);
+      messages.some(hasTaskAwaitCallFailure) || messages.some(hasTaskAwaitResultFailure);
     const hasInterruption =
-      messages.some(hasTaskAwaitCallInterruption) || statuses.includes("interrupted");
+      messages.some(hasTaskAwaitCallInterruption) || messages.some(hasTaskAwaitResultInterruption);
     if (hasFailure || hasInterruption) {
       return {
         title: hasFailure ? "Task wait needs attention" : "Task wait interrupted",
@@ -578,20 +577,38 @@ function isTaskAwaitMessage(message: OperationalBundleMemberMessage): boolean {
   return message.type === "tool" && message.toolName === "task_await";
 }
 
-function getTaskAwaitResultStatuses(message: OperationalBundleMemberMessage): string[] {
+function getTaskAwaitResultEntries(message: OperationalBundleMemberMessage): object[] {
   if (message.type !== "tool" || message.toolName !== "task_await") return [];
 
   const result = unwrapJsonResult(message.result);
   if (!isPlainObject(result) || !Array.isArray(result.results)) return [];
 
-  return result.results.flatMap((entry) => {
-    if (!isPlainObject(entry) || typeof entry.status !== "string") return [];
-    return [entry.status];
-  });
+  return result.results.filter(isPlainObject);
 }
 
-function isTaskAwaitFailureStatus(status: string): boolean {
-  return status === "error" || status === "invalid_scope" || status === "not_found";
+function isInterruptedTaskAwaitEntry(entry: object): boolean {
+  if (!("status" in entry) || typeof entry.status !== "string") return false;
+  if (entry.status === "interrupted") return true;
+  return (
+    entry.status === "error" &&
+    "error" in entry &&
+    typeof entry.error === "string" &&
+    entry.error.trim().toLowerCase() === "interrupted"
+  );
+}
+
+function hasTaskAwaitResultInterruption(message: OperationalBundleMemberMessage): boolean {
+  return getTaskAwaitResultEntries(message).some(isInterruptedTaskAwaitEntry);
+}
+
+function hasTaskAwaitResultFailure(message: OperationalBundleMemberMessage): boolean {
+  return getTaskAwaitResultEntries(message).some((entry) => {
+    if (isInterruptedTaskAwaitEntry(entry)) return false;
+    if (!("status" in entry) || typeof entry.status !== "string") return false;
+    return (
+      entry.status === "error" || entry.status === "invalid_scope" || entry.status === "not_found"
+    );
+  });
 }
 
 function hasTaskAwaitCallFailure(message: OperationalBundleMemberMessage): boolean {
@@ -609,13 +626,12 @@ function hasTaskAwaitCallInterruption(message: OperationalBundleMemberMessage): 
 }
 
 function hasTaskAwaitTerminalIssue(messages: readonly OperationalBundleMemberMessage[]): boolean {
-  return (
-    messages.some(
-      (message) => hasTaskAwaitCallFailure(message) || hasTaskAwaitCallInterruption(message)
-    ) ||
-    messages
-      .flatMap(getTaskAwaitResultStatuses)
-      .some((status) => isTaskAwaitFailureStatus(status) || status === "interrupted")
+  return messages.some(
+    (message) =>
+      hasTaskAwaitCallFailure(message) ||
+      hasTaskAwaitCallInterruption(message) ||
+      hasTaskAwaitResultFailure(message) ||
+      hasTaskAwaitResultInterruption(message)
   );
 }
 

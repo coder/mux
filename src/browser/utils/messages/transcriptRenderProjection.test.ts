@@ -586,6 +586,22 @@ describe("task_await poll grouping", () => {
     });
   });
 
+  test("classifies interrupted error rows as cancelled waits", () => {
+    const infos = computeTaskAwaitPollGroupInfos([
+      tool({ id: "await-running", toolName: "task_await" }),
+      tool({
+        id: "await-aborted",
+        toolName: "task_await",
+        result: { results: [{ status: "error", taskId: "task-1", error: "Interrupted" }] },
+      }),
+    ]);
+
+    expect(infos[0]).toMatchObject({
+      defaultExpanded: true,
+      summary: { title: "Task wait interrupted", tone: "interrupted" },
+    });
+  });
+
   test("conversation rows break poll groups", () => {
     const infos = computeTaskAwaitPollGroupInfos([
       tool({ id: "await-1", toolName: "task_await" }),

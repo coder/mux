@@ -192,6 +192,18 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText(/still waiting/i)).toBeNull();
   });
 
+  test("treats interrupted error rows as cancelled waits, not failed tasks", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [{ status: "error", taskId: "task-1", error: "Interrupted" }],
+      },
+    });
+
+    expect(view.getByText("1 task interrupted")).toBeDefined();
+    expect(view.queryByText("1 task failed")).toBeNull();
+  });
+
   test("renders call-level interruption as terminal", () => {
     const view = renderTaskAwaitToolCall({ status: "interrupted", result: undefined });
 

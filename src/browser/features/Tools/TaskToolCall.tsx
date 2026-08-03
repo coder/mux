@@ -1151,6 +1151,15 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
 // TASK AWAIT TOOL CALL
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function isInterruptedTaskAwaitResult(
+  result: TaskAwaitToolSuccessResult["results"][number]
+): boolean {
+  return (
+    result.status === "interrupted" ||
+    (result.status === "error" && result.error.trim().toLowerCase() === "interrupted")
+  );
+}
+
 interface TaskAwaitToolCallProps {
   args: TaskAwaitToolArgs;
   result?: TaskAwaitToolSuccessResult | ToolErrorResult;
@@ -1180,9 +1189,11 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   const completedCount = results.filter((r) => r.status === "completed").length;
   const totalCount = results.length;
   const failedCount = results.filter(
-    (r) => r.status === "error" || r.status === "invalid_scope" || r.status === "not_found"
+    (r) =>
+      !isInterruptedTaskAwaitResult(r) &&
+      (r.status === "error" || r.status === "invalid_scope" || r.status === "not_found")
   ).length;
-  const interruptedCount = results.filter((r) => r.status === "interrupted").length;
+  const interruptedCount = results.filter(isInterruptedTaskAwaitResult).length;
 
   const workspaceContext = useOptionalWorkspaceContext();
   const workspaceMetadata = workspaceContext?.workspaceMetadata;
@@ -1334,7 +1345,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             summaryTone === "waiting" && "text-muted"
           )}
         />
-        <span className="min-w-0 flex-1 truncate text-[12px] leading-5">
+        <span className="counter-nums min-w-0 flex-1 truncate text-[12px] leading-5">
           <span
             className={cn(
               summaryTone === "active" ? "text-foreground" : "text-secondary",
