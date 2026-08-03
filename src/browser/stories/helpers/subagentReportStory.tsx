@@ -28,6 +28,8 @@ const REPORT_MESSAGES = [
     taskId: "18c2511cea",
     agentType: "explore",
     status: "in_progress",
+    model: "anthropic:claude-opus-5",
+    thinkingLevel: "high",
     title: "Current report presentation traced across the parent transcript",
     reportMarkdown:
       "Parent-side reports currently expose the model-facing envelope. A dedicated renderer can preserve **markdown**, paths like `src/browser/features/Messages/UserMessage.tsx`, and status without the raw protocol.",
@@ -38,6 +40,8 @@ const REPORT_MESSAGES = [
     taskId: "18c2511cea",
     agentType: "explore",
     // Omit status to cover report envelopes persisted before incremental updates existed.
+    model: "anthropic:claude-opus-5",
+    thinkingLevel: "high",
     title: "Presentation recommendation complete",
     reportMarkdown: [
       "## Recommendation",

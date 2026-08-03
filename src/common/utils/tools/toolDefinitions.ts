@@ -531,6 +531,7 @@ export function buildTaskToolAgentArgsSchema(options: {
 }
 
 const TaskHandleKindSchema = z.enum(["agent_task", "workspace_turn"]);
+const TaskThinkingLevelSchema = z.enum(THINKING_LEVELS);
 const TaskToolSpawnedTaskSchema = z
   .object({
     taskId: z.string(),
@@ -539,6 +540,8 @@ const TaskToolSpawnedTaskSchema = z
     workspaceId: z.string().optional(),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
     label: z.string().optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskThinkingLevelSchema.optional(),
   })
   .strict();
 
@@ -557,6 +560,8 @@ const TaskToolCompletedReportSchema = z
     finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
     groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
     label: z.string().optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskThinkingLevelSchema.optional(),
   })
   .strict();
 
@@ -569,6 +574,8 @@ export const TaskToolQueuedResultSchema = z
     workspaceId: z.string().optional(),
     tasks: z.array(TaskToolSpawnedTaskSchema).min(1).optional(),
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskThinkingLevelSchema.optional(),
     note: z
       .string()
       .min(1)
@@ -605,6 +612,8 @@ export const TaskToolCompletedResultSchema = z
     messageId: z.string().optional(),
     finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
+    modelString: z.string().optional(),
+    thinkingLevel: TaskThinkingLevelSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -1160,8 +1169,6 @@ const TaskListStatusSchema = z.enum([
   "failed",
   "completed",
 ]);
-const TaskListThinkingLevelSchema = z.enum(THINKING_LEVELS);
-
 export const TaskListToolArgsSchema = z
   .object({
     statuses: z
@@ -1193,7 +1200,7 @@ export const TaskListToolTaskSchema = z
     handleKind: TaskHandleKindSchema.optional(),
     workspaceId: z.string().optional(),
     modelString: z.string().optional(),
-    thinkingLevel: TaskListThinkingLevelSchema.optional(),
+    thinkingLevel: TaskThinkingLevelSchema.optional(),
     sticky: z.boolean().optional(),
     workflowProgress: WorkflowProgressSummarySchema.optional(),
     depth: z.number().int().min(0),

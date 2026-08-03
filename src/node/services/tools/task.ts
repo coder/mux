@@ -150,6 +150,8 @@ interface SpawnedTaskInfo {
   status: "queued" | "starting" | "running";
   groupKind?: TaskGroupKind;
   label?: string;
+  modelString?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 interface PendingTaskInfo {
@@ -157,6 +159,8 @@ interface PendingTaskInfo {
   status: "queued" | "starting" | "running" | "completed" | "interrupted";
   groupKind?: TaskGroupKind;
   label?: string;
+  modelString?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 interface CompletedTaskInfo {
@@ -168,6 +172,8 @@ interface CompletedTaskInfo {
   agentType: string;
   groupKind?: TaskGroupKind;
   label?: string;
+  modelString?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 type ForegroundWaitOutcome =
@@ -223,6 +229,8 @@ function serializeCompletedReport(report: CompletedTaskInfo) {
     agentType: report.agentType,
     groupKind: report.groupKind,
     label: report.label,
+    modelString: report.modelString,
+    thinkingLevel: report.thinkingLevel,
   };
 }
 
@@ -274,6 +282,8 @@ function buildPendingTaskResult(params: {
     return {
       status,
       taskId: task.taskId,
+      modelString: task.modelString,
+      thinkingLevel: task.thinkingLevel,
       note: params.note,
     };
   }
@@ -286,6 +296,8 @@ function buildPendingTaskResult(params: {
       status: task.status,
       groupKind: task.groupKind,
       label: task.label,
+      modelString: task.modelString,
+      thinkingLevel: task.thinkingLevel,
     })),
     note: params.note,
     ...(serializedReports ? { reports: serializedReports } : {}),
@@ -306,6 +318,8 @@ function buildCompletedTaskResult(params: {
       title: report.title,
       agentId: report.agentId,
       agentType: report.agentType,
+      modelString: report.modelString,
+      thinkingLevel: report.thinkingLevel,
     };
   }
 
@@ -329,6 +343,8 @@ function normalizePendingTaskStatuses(params: {
         status: "completed",
         groupKind: createdTask.groupKind,
         label: createdTask.label,
+        modelString: createdTask.modelString,
+        thinkingLevel: createdTask.thinkingLevel,
       };
     }
 
@@ -346,6 +362,8 @@ function normalizePendingTaskStatuses(params: {
               : "running",
       groupKind: createdTask.groupKind,
       label: createdTask.label,
+      modelString: createdTask.modelString,
+      thinkingLevel: createdTask.thinkingLevel,
     };
   });
 }
@@ -585,6 +603,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         const task = {
           taskId: created.data.taskId,
           status: created.data.status,
+          modelString: created.data.modelString,
+          thinkingLevel: created.data.thinkingLevel,
           ...(taskGroupCount > 1 || launch.label
             ? { groupKind: launch.kind, ...(launch.label ? { label: launch.label } : {}) }
             : {}),
@@ -632,6 +652,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                 agentType: requestedAgentId,
                 groupKind: createdTask.groupKind,
                 label: createdTask.label,
+                modelString: createdTask.modelString,
+                thinkingLevel: createdTask.thinkingLevel,
               } satisfies CompletedTaskInfo,
             };
           } catch (error: unknown) {

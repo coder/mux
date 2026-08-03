@@ -8,6 +8,7 @@ import type {
   MuxToolPart,
 } from "@/common/types/message";
 import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   GOAL_BUDGET_LIMIT_KIND,
@@ -134,6 +135,8 @@ export function createSubagentReportMessage(
     title: string;
     reportMarkdown: string;
     status?: "in_progress" | "completed";
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
     structuredOutput?: unknown;
   }
 ): ChatMuxMessage {
@@ -145,6 +148,8 @@ export function createSubagentReportMessage(
       status: opts.status ?? "completed",
       title: opts.title,
       reportMarkdown: opts.reportMarkdown,
+      ...(opts.model !== undefined ? { model: opts.model } : {}),
+      ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
       ...(opts.structuredOutput !== undefined ? { structuredOutput: opts.structuredOutput } : {}),
     }),
     {

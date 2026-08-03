@@ -631,7 +631,15 @@ describe("TaskService", () => {
 
     const result = await createAgentTask(taskService, parentId, "Inspect the scratch files");
 
-    expect(result).toEqual(Ok({ taskId: childId, kind: "agent", status: "running" }));
+    expect(result).toEqual(
+      Ok({
+        taskId: childId,
+        kind: "agent",
+        status: "running",
+        modelString: "anthropic:claude-opus-4-6",
+        thinkingLevel: "high",
+      })
+    );
     const scratchProject = config.loadConfigOrDefault().projects.get(SCRATCH_PROJECT_CONFIG_KEY);
     const child = scratchProject?.workspaces.find((workspace) => workspace.id === childId);
     expect(child?.kind).toBe("scratch");

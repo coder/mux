@@ -288,6 +288,32 @@ Found the **message renderer** and its responsive story coverage.
     expect(parseSubagentReportEnvelope(formatSubagentReportEnvelope(expected))).toEqual(expected);
   });
 
+  test("shows the sub-agent model and thinking level when the envelope carries them", () => {
+    const withMetadata = createReportMessage(`<mux_subagent_report>
+{"taskId":"task-model","agentType":"explore","status":"completed","title":"Model exposed","reportMarkdown":"Body","model":"anthropic:claude-opus-5","thinkingLevel":"high"}
+</mux_subagent_report>`);
+
+    const metadataView = render(
+      <TooltipProvider>
+        <MessageRenderer message={withMetadata} />
+      </TooltipProvider>
+    );
+    expect(metadataView.getByText("Opus 5")).toBeDefined();
+    expect(metadataView.getByText("thinking: high")).toBeDefined();
+    metadataView.unmount();
+
+    const withoutMetadata = createReportMessage(`<mux_subagent_report>
+{"taskId":"task-no-model","agentType":"explore","status":"completed","title":"No model","reportMarkdown":"Body"}
+</mux_subagent_report>`);
+
+    const plainView = render(
+      <TooltipProvider>
+        <MessageRenderer message={withoutMetadata} />
+      </TooltipProvider>
+    );
+    expect(plainView.queryByText(/thinking:/)).toBeNull();
+  });
+
   test("normalizes multiline report titles instead of exposing the envelope", () => {
     const message = createReportMessage(`<mux_subagent_report>
 <task_id>task-multiline-title</task_id>

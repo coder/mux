@@ -2,8 +2,10 @@ import { useState, type ReactElement } from "react";
 import { Bot, Braces, ChevronRight, CircleCheck, Radio } from "lucide-react";
 
 import { cn } from "@/common/lib/utils";
+import { getThinkingOptionLabel } from "@/common/types/thinking";
 import type { SubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { ModelDisplay } from "./ModelDisplay";
 
 export { parseSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 
@@ -40,6 +42,22 @@ export function SubagentReportMessageContent(
           </div>
           <div className="text-muted mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-snug">
             <span className="truncate">{props.report.agentType}</span>
+            {props.report.model && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="truncate">
+                  <ModelDisplay modelString={props.report.model} />
+                </span>
+              </>
+            )}
+            {props.report.thinkingLevel != null && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="shrink-0">
+                  thinking: {getThinkingOptionLabel(props.report.thinkingLevel, props.report.model)}
+                </span>
+              </>
+            )}
             <span aria-hidden="true">·</span>
             <span
               className={cn(

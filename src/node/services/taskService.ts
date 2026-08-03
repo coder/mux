@@ -292,6 +292,8 @@ function formatSubagentReportUserMessage(params: {
   title: string;
   reportMarkdown: string;
   status: "in_progress" | "completed";
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
   structuredOutput?: unknown;
 }): string {
   assert(params.childWorkspaceId.length > 0, "subagent report message requires child id");
@@ -305,6 +307,8 @@ function formatSubagentReportUserMessage(params: {
     status: params.status,
     title: params.title,
     reportMarkdown: params.reportMarkdown,
+    ...(params.model != null ? { model: params.model } : {}),
+    ...(params.thinkingLevel != null ? { thinkingLevel: params.thinkingLevel } : {}),
     ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
   });
 }
@@ -560,6 +564,9 @@ export interface TaskCreateResult {
   taskId: string;
   kind: TaskKind;
   status: "queued" | "starting" | "running";
+  /** Resolved (post-precedence) AI settings the child was created with. */
+  modelString?: string;
+  thinkingLevel?: ThinkingLevel;
 }
 
 type TaskLaunchStart = { kind: "sendMessage"; prompt: string } | { kind: "resumeStream" };
@@ -2598,7 +2605,13 @@ export class TaskService {
           ? { preferredTrunkBranch: parentBranchName }
           : {}),
       });
-      results.push({ taskId, kind: "agent", status });
+      results.push({
+        taskId,
+        kind: "agent",
+        status,
+        modelString: taskModelString,
+        thinkingLevel: effectiveThinkingLevel,
+      });
     }
 
     for (const [index, result] of results.entries()) {
@@ -3764,7 +3777,13 @@ export class TaskService {
       // Schedule queue processing (best-effort).
       void this.maybeStartQueuedTasks();
       taskQueueDebug("TaskService.create queued scheduled maybeStartQueuedTasks", { taskId });
-      return Ok({ taskId, kind: "agent", status: "queued" });
+      return Ok({
+        taskId,
+        kind: "agent",
+        status: "queued",
+        modelString: taskModelString,
+        thinkingLevel: effectiveThinkingLevel,
+      });
     }
 
     const initLogger = this.startWorkspaceInit(taskId, parentMeta.projectPath);
@@ -3971,7 +3990,13 @@ export class TaskService {
       return Err(message);
     }
 
-    return Ok({ taskId, kind: "agent", status: "running" });
+    return Ok({
+      taskId,
+      kind: "agent",
+      status: "running",
+      modelString: taskModelString,
+      thinkingLevel: effectiveThinkingLevel,
+    });
   }
 
   async terminateDescendantAgentTask(
@@ -5746,6 +5771,12 @@ export class TaskService {
         title,
         reportMarkdown: report.reportMarkdown,
         status: "in_progress",
+        ...(childEntry.workspace.taskModelString != null
+          ? { model: childEntry.workspace.taskModelString }
+          : {}),
+        ...(childEntry.workspace.taskThinkingLevel != null
+          ? { thinkingLevel: childEntry.workspace.taskThinkingLevel }
+          : {}),
         ...(report.structuredOutput !== undefined
           ? { structuredOutput: report.structuredOutput }
           : {}),
@@ -11114,6 +11145,8 @@ export class TaskService {
       agentType?: string;
       groupKind?: TaskGroupKind;
       label?: string;
+      modelString?: string;
+      thinkingLevel?: ThinkingLevel;
     }> = [];
 
     for (const sibling of siblings) {
@@ -11132,6 +11165,8 @@ export class TaskService {
         agentType: sibling.agentType,
         groupKind: sibling.kind,
         label: sibling.label,
+        modelString: artifact.model,
+        thinkingLevel: artifact.thinkingLevel,
       });
     }
 
@@ -11315,6 +11350,8 @@ export class TaskService {
     options?: { uiVisible?: boolean }
   ): Promise<readonly string[]> {
     const agentType = coerceNonEmptyString(childEntry?.workspace.agentType) ?? "agent";
+    const childModelString = childEntry?.workspace.taskModelString;
+    const childThinkingLevel = childEntry?.workspace.taskThinkingLevel;
 
     const output = {
       status: "completed" as const,
@@ -11324,6 +11361,8 @@ export class TaskService {
       planFilePath: report.planFilePath,
       structuredOutput: report.structuredOutput,
       agentType,
+      modelString: childModelString,
+      thinkingLevel: childThinkingLevel,
     };
     const parsedOutput = TaskToolResultSchema.safeParse(output);
     if (!parsedOutput.success) {
@@ -11396,6 +11435,8 @@ export class TaskService {
       title: titlePrefix,
       reportMarkdown: report.reportMarkdown,
       status: "completed",
+      ...(childModelString != null ? { model: childModelString } : {}),
+      ...(childThinkingLevel != null ? { thinkingLevel: childThinkingLevel } : {}),
       ...(report.structuredOutput !== undefined
         ? { structuredOutput: report.structuredOutput }
         : {}),

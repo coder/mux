@@ -36,6 +36,8 @@ export const TaskWorkflowStates: Story = {
         result={{
           status: "running",
           taskId: "task-fe-001",
+          modelString: "anthropic:claude-opus-5",
+          thinkingLevel: "high",
           note: "Use task_await to monitor progress.",
         }}
         status="completed"
@@ -75,6 +77,8 @@ export const TaskWithReport: Story = {
           status: "completed",
           taskId: "task-abc123",
           title: "Test File Analysis",
+          modelString: "openai:gpt-5.6-sol",
+          thinkingLevel: "xhigh",
           reportMarkdown: `# Test File Analysis
 
 Found **47 test files** across the project.
@@ -111,6 +115,8 @@ export const BestOfTaskGroup: Story = {
               title: "Option 1",
               agentId: "explore",
               agentType: "explore",
+              modelString: "anthropic:claude-sonnet-5",
+              thinkingLevel: "medium",
               reportMarkdown: "Use **shared helper utilities** for tree coalescing.",
             },
             {

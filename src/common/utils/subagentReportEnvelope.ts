@@ -1,3 +1,5 @@
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+
 export type SubagentReportStatus = "in_progress" | "completed";
 
 export interface SubagentReportEnvelope {
@@ -6,6 +8,8 @@ export interface SubagentReportEnvelope {
   status: SubagentReportStatus;
   title: string;
   reportMarkdown: string;
+  model?: string;
+  thinkingLevel?: ThinkingLevel;
   structuredOutput?: unknown;
 }
 
@@ -24,6 +28,10 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isStatus(value: unknown): value is SubagentReportStatus {
   return value === "in_progress" || value === "completed";
+}
+
+function isThinkingLevel(value: unknown): value is ThinkingLevel {
+  return typeof value === "string" && (THINKING_LEVELS as readonly string[]).includes(value);
 }
 
 /**
@@ -64,6 +72,10 @@ function parseJsonEnvelope(inner: string): SubagentReportEnvelope | null {
     status: record.status,
     title: record.title,
     reportMarkdown: record.reportMarkdown,
+    // Model/thinking are display metadata: tolerate absent or malformed values so a bad
+    // producer can never invalidate an otherwise well-formed report.
+    ...(isNonEmptyString(record.model) ? { model: record.model } : {}),
+    ...(isThinkingLevel(record.thinkingLevel) ? { thinkingLevel: record.thinkingLevel } : {}),
     ...(Object.hasOwn(record, "structuredOutput")
       ? { structuredOutput: record.structuredOutput }
       : {}),
