@@ -106,12 +106,13 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
           )}
 
           {hasActions && (
-            <div className="border-pending/10 bg-surface-secondary/60 flex flex-wrap items-center justify-end gap-1.5 border-t px-2 py-1.5">
+            // Keep secondary actions visually distinct without letting their footer outweigh the draft.
+            <div className="border-pending/10 bg-surface-secondary/60 flex flex-wrap items-center justify-end gap-1 border-t px-1.5 py-1">
               {props.onEdit && (
                 <button
                   type="button"
                   onClick={props.onEdit}
-                  className="text-muted hover:bg-hover hover:text-foreground flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors"
+                  className="text-muted hover:bg-hover hover:text-foreground flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors"
                 >
                   <Pencil className="size-3" />
                   Edit
@@ -123,7 +124,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
                   type="button"
                   onClick={handleSendImmediately}
                   disabled={isSending}
-                  className="bg-pending/10 text-pending hover:bg-pending/20 flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  className="bg-pending/10 text-pending hover:bg-pending/20 flex h-6 items-center gap-1 rounded-md px-2 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isSending ? (
                     <Loader2 className="size-3 animate-spin" />
