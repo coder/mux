@@ -119,13 +119,16 @@ const SELECTION_OPT_IN_PATTERN = new RegExp(
  * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
  * new entry is a decision for review.
  *
- * Each occurrence is pinned by the trimmed source line that carries it, in source order,
- * so what was reviewed is the element the class sits on, not a per-file count. A count
- * cannot tell a reviewed opt-in from a different one that replaced it in the same file,
- * and a bare file list cannot see an addition next to an existing entry. Unrelated edits
- * elsewhere in a file leave the entry alone; editing the carrying line itself, even
- * around the class, resubmits that occurrence for review, which is the point. Still an
- * exact-match posture: identity comes from the line's text, not from parsing TSX.
+ * Each occurrence is pinned by the trimmed source line that carries it plus the next
+ * non-empty line, in source order, so what was reviewed is the element the class sits on
+ * and the content it exposes, not a per-file count. A count cannot tell a reviewed
+ * opt-in from a different one that replaced it in the same file, a carrying line alone
+ * cannot tell apart duplicates (`ReviewPanel.tsx` wraps four metadata values in
+ * byte-identical divs, distinguished only by the content line under them), and a bare
+ * file list cannot see an addition next to an existing entry. Unrelated edits elsewhere
+ * in a file leave the entry alone; editing a pinned line, even around the class,
+ * resubmits that occurrence for review, which is the point. Still an exact-match
+ * posture: identity comes from line text, not from parsing TSX.
  *
  * Suppression utilities (`select-none` and its arbitrary spelling) are deliberately not
  * tracked here: turning selection off on a control is the ordinary use of that utility,
@@ -137,26 +140,26 @@ const SELECTION_OPT_IN_PATTERN = new RegExp(
  */
 const SELECTION_OPT_INS: Record<string, string[]> = {
   "src/browser/components/AgentListItem/AgentListItem.tsx": [
-    'className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none select-text"',
+    'className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none select-text"\nvalue={editingTitle}',
   ],
   "src/browser/components/GitStatusIndicatorView/GitStatusIndicatorView.tsx": [
-    '<span className="text-accent shrink-0 select-all">{commit.hash}</span>',
+    '<span className="text-accent shrink-0 select-all">{commit.hash}</span>\n<span className="text-muted-light shrink-0">{commit.date}</span>',
   ],
   "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": [
-    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"',
+    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"\n/>',
   ],
   "src/browser/components/SectionHeader/SectionHeader.tsx": [
-    'className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none select-text"',
-    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"',
+    'className="bg-background/50 text-foreground min-w-0 flex-1 rounded border border-white/20 px-1.5 py-0.5 text-xs font-medium outline-none select-text"\n/>',
+    'className="bg-background/50 text-foreground w-full rounded border border-white/20 px-1.5 py-0.5 text-xs outline-none select-text"\n/>',
   ],
   "src/browser/components/SshPromptDialog/SshPromptDialog.tsx": [
-    '<div className="text-foreground mt-1 break-all select-all">{pending.fingerprint}</div>',
+    '<div className="text-foreground mt-1 break-all select-all">{pending.fingerprint}</div>\n</div>',
   ],
   "src/browser/features/RightSidebar/CodeReview/ReviewPanel.tsx": [
-    '<div className="text-foreground break-all select-all">',
-    '<div className="text-foreground break-all select-all">',
-    '<div className="text-foreground break-all select-all">',
-    '<div className="text-foreground break-all select-all">',
+    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.command}',
+    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.outputLength.toLocaleString()} bytes',
+    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.fileDiffCount}',
+    '<div className="text-foreground break-all select-all">\n{diagnosticInfo.hunkCount}',
   ],
 };
 
@@ -397,7 +400,12 @@ describe("touch text-selection guard", () => {
         const lineStart = source.lastIndexOf("\n", match.index) + 1;
         const lineEnd = source.indexOf("\n", match.index);
         const line = source.slice(lineStart, lineEnd === -1 ? source.length : lineEnd).trim();
-        (optIns[key] ??= []).push(line);
+        const following = source
+          .slice(lineEnd === -1 ? source.length : lineEnd + 1)
+          .split("\n")
+          .map((candidate) => candidate.trim())
+          .find((candidate) => candidate !== "");
+        (optIns[key] ??= []).push(`${line}\n${following ?? ""}`);
       }
     };
     // Test files are skipped: they ship no UI, and this file names the utilities it matches.
