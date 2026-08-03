@@ -69,11 +69,10 @@ const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url))
 /**
  * Files whose contents can put a `user-select` declaration on a rendered element: the
  * renderer's entry HTML (vite.config.ts `rollupOptions.input`) and the `src/` segments
- * the renderer is bundled from, minus tests, fixtures, and Storybook-only sources, which
- * ship no product UI. A token anywhere else, docs prose, a fixture's sample payload, a
- * backend prompt string in `src/node`, emits at most an unused utility rule into the
- * compiled CSS and styles nothing the app renders, so inventorying those files made
- * behavior-neutral edits fail, the tautological shape AGENTS.md forbids.
+ * the renderer is bundled from, limited to executable files and minus tests, fixtures,
+ * and Storybook-only sources. Tokens in docs, assets, fixture payloads, declarations, or
+ * backend prompts can emit unused Tailwind rules but cannot style rendered UI, so
+ * inventorying them creates the behavior-neutral failures AGENTS.md forbids.
  *
  * The segments are a reviewed list rather than a computed module graph, because file-
  * level reachability needs a bundler's resolution rules, and segment-level transitive
@@ -86,6 +85,8 @@ const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url))
  */
 const RENDERER_SEGMENTS = ["browser", "common", "constants", "version"];
 const RUNTIME_ENTRY_HTML = ["index.html", "terminal.html"];
+const EXECUTABLE_SOURCE = /\.[cm]?[jt]sx?$/;
+const DECLARATION_SOURCE = /\.d\.[cm]?ts$/;
 const NON_RUNTIME_SOURCE =
   /(?:^|\/)stories\/|\/settingsStoryUtils\.[jt]sx?$|\.(?:test|stories|fixtures)\.[jt]sx?$/;
 
@@ -97,7 +98,9 @@ function isRuntimeSource(relativePath: string): boolean {
   return (
     root === "src" &&
     segment !== undefined &&
-    RENDERER_SEGMENTS.includes(segment.replace(/\.[jt]sx?$/, "")) &&
+    RENDERER_SEGMENTS.includes(segment.replace(EXECUTABLE_SOURCE, "")) &&
+    EXECUTABLE_SOURCE.test(relativePath) &&
+    !DECLARATION_SOURCE.test(relativePath) &&
     !NON_RUNTIME_SOURCE.test(relativePath)
   );
 }
@@ -724,16 +727,22 @@ describe("touch text-selection guard", () => {
     );
   });
 
-  it("scans renderer sources but not Storybook helpers", () => {
+  it("scans executable renderer sources but not non-runtime files", () => {
     const runtimeSources = new Set(runtimeSourceFiles());
     expect({
-      production: runtimeSources.has("src/browser/features/Settings/Sections/GeneralSection.tsx"),
-      storybook: [
+      production: [
+        "src/browser/features/Settings/Sections/GeneralSection.tsx",
+        "src/browser/features/Analytics/sqlExplorerSampleQueryRunner.cjs",
+      ].every((relativePath) => runtimeSources.has(relativePath)),
+      excluded: [
         "src/browser/stories/mocks/orpc.ts",
         "src/browser/stories/storyPlayHelpers.ts",
         "src/browser/features/Settings/Sections/settingsStoryUtils.tsx",
+        "src/browser/assets/icons/README.md",
+        "src/browser/assets/icons/openai.svg",
+        "src/browser/assets/file-icons/seti-icon-theme.json",
       ].filter((relativePath) => runtimeSources.has(relativePath)),
-    }).toEqual({ production: true, storybook: [] });
+    }).toEqual({ production: true, excluded: [] });
   });
 
   /**
