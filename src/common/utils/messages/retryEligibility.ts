@@ -146,6 +146,7 @@ function isDisplayOnlyCompletedSubagentReport(message: DisplayedMessage): boolea
   return (
     message.type === "user" &&
     message.isSynthetic === true &&
+    message.isUiVisible === true &&
     isCompletedSubagentReportEnvelope(message.content)
   );
 }

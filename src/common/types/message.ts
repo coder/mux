@@ -750,6 +750,8 @@ export type DisplayedMessage =
       fileParts?: FilePart[]; // Optional attachments
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;
+      /** True only for synthetic messages intentionally rendered in the normal transcript. */
+      isUiVisible?: boolean;
       timestamp?: number;
       /** True for synthetic user turns created by the active-goal continuation loop. */
       isGoalContinuation?: boolean;

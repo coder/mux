@@ -547,8 +547,45 @@ describe("StreamingMessageAggregator", () => {
         type: "user",
         id: "report-1",
         isSynthetic: true,
+        isUiVisible: true,
       });
       expect(getInterruptionContext(displayedMessages).hasInterruptedStream).toBe(false);
+    });
+
+    test("keeps hidden completed subagent reports in the retry lifecycle", () => {
+      withDebugLlmRequestEnabled(() => {
+        const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+        aggregator.loadHistoricalMessages(
+          [
+            createMuxMessage(
+              "report-1",
+              "user",
+              formatSubagentReportEnvelope({
+                taskId: "task-1",
+                agentType: "explore",
+                status: "completed",
+                title: "Investigation complete",
+                reportMarkdown: "The child finished successfully.",
+              }),
+              {
+                timestamp: 1,
+                historySequence: 1,
+                synthetic: true,
+              }
+            ),
+          ],
+          false
+        );
+
+        const displayedMessages = aggregator.getDisplayedMessages();
+        expect(displayedMessages.at(-1)).toMatchObject({
+          type: "user",
+          id: "report-1",
+          isSynthetic: true,
+          isUiVisible: undefined,
+        });
+        expect(getInterruptionContext(displayedMessages).hasInterruptedStream).toBe(true);
+      });
     });
 
     test("renders persisted workflow slash invocation before workflow card", () => {

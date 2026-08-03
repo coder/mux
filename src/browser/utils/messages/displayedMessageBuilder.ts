@@ -308,6 +308,7 @@ function buildUserDisplayedMessages(options: {
       fileParts: fileParts.length > 0 ? fileParts : undefined,
       historySequence,
       isSynthetic: message.metadata?.synthetic === true ? true : undefined,
+      isUiVisible: message.metadata?.uiVisible === true ? true : undefined,
       isGoalContinuation: message.metadata?.kind === GOAL_CONTINUATION_KIND ? true : undefined,
       isBudgetLimitWrapup: message.metadata?.kind === GOAL_BUDGET_LIMIT_KIND ? true : undefined,
       timestamp: baseTimestamp,
