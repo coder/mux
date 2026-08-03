@@ -22,6 +22,7 @@ import { readFile, stat } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postcss, { type ChildNode, type Container, type Declaration } from "postcss";
+import ts from "typescript";
 
 const IPAD_WIDTH_PX = 834;
 const IPAD_LANDSCAPE_WIDTH_PX = 1194;
@@ -586,13 +587,107 @@ describe("touch text-selection guard", () => {
       : compact;
   }
 
+  interface SourceSpan {
+    start: number;
+    end: number;
+  }
+
+  function sourceWithoutComments(relativePath: string, source: string): string {
+    if (/\.[cm]?[jt]sx?$/.test(relativePath)) {
+      const scriptKind = /\.[cm]?tsx$/.test(relativePath)
+        ? ts.ScriptKind.TSX
+        : /\.[cm]?jsx$/.test(relativePath)
+          ? ts.ScriptKind.JSX
+          : /\.[cm]?js$/.test(relativePath)
+            ? ts.ScriptKind.JS
+            : ts.ScriptKind.TS;
+      const sourceFile = ts.createSourceFile(
+        relativePath,
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+        scriptKind
+      );
+      const tokenSpans: SourceSpan[] = [];
+      const collectTokenSpans = (node: ts.Node) => {
+        const children = node.getChildren(sourceFile);
+        if (children.length === 0) {
+          tokenSpans.push({ start: node.getStart(sourceFile, false), end: node.end });
+          return;
+        }
+        children.forEach(collectTokenSpans);
+      };
+      collectTokenSpans(sourceFile);
+
+      let result = "";
+      let copiedThrough = 0;
+      const copyCommentlessGap = (end: number) => {
+        result += source
+          .slice(copiedThrough, end)
+          .replace(/^#![^\r\n]*(?:\r?\n|$)/, " ")
+          .replace(/\/\*[\s\S]*?(?:\*\/|$)|\/\/[^\r\n]*/g, " ");
+      };
+      for (const span of tokenSpans) {
+        copyCommentlessGap(span.start);
+        result += source.slice(span.start, span.end);
+        copiedThrough = span.end;
+      }
+      copyCommentlessGap(source.length);
+      return result;
+    }
+    if (/\.(?:html|md|svg)$/.test(relativePath)) {
+      return source.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
+    }
+    return source;
+  }
+
+  function matchedTokens(relativePath: string, source: string, pattern: RegExp): string[] {
+    if ([...source.matchAll(pattern)].length === 0) {
+      return [];
+    }
+    return [...sourceWithoutComments(relativePath, source).matchAll(pattern)].map((match) =>
+      normalizeToken(match[0])
+    );
+  }
+
+  it("ignores comments while inventorying selection sites", () => {
+    const cases = [
+      {
+        relativePath: "component.tsx",
+        source: [
+          "#!/usr/bin/env bun --select-none",
+          'const className = "select-text"; // select-none',
+          'const style = { userSelect: "text" }; /* userSelect: "none" */',
+          "const view = <><span>https://example.test</span>",
+          '<button className="select-none" />{/* select-none */}</>;',
+          'const template = `/* select-all */ ${/* select-none */ "select-text"}`;',
+          "const pattern = /https?:\\/\\/example/;",
+        ].join("\n"),
+        optIns: ["select-text", "userSelect", "select-all", "select-text"],
+        suppressions: ["select-none"],
+      },
+      {
+        relativePath: "index.html",
+        source: '<div class="select-text"><!-- select-none --></div>',
+        optIns: ["select-text"],
+        suppressions: [],
+      },
+    ];
+    for (const { relativePath, source, optIns, suppressions } of cases) {
+      expect({
+        relativePath,
+        optIns: matchedTokens(relativePath, source, SELECTION_OPT_IN_PATTERN),
+        suppressions: matchedTokens(relativePath, source, SELECTION_SUPPRESSION_PATTERN),
+      }).toEqual({ relativePath, optIns, suppressions });
+    }
+  });
+
   async function collectSelectionSites(
     pattern: RegExp
   ): Promise<Record<string, Record<string, number>>> {
     const sites: Record<string, Record<string, number>> = {};
     const collectInto = (key: string, source: string) => {
-      for (const match of source.matchAll(pattern)) {
-        const token = normalizeToken(match[0]);
+      for (const token of matchedTokens(key, source, pattern)) {
         const fileSites = (sites[key] ??= {});
         fileSites[token] = (fileSites[token] ?? 0) + 1;
       }
