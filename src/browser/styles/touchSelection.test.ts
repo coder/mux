@@ -6,14 +6,16 @@
  * validation). This asserts the rules against the stylesheet instead, resolving the
  * declaration that wins for a viewport rather than matching literal source.
  *
- * Selection reaches an element from two places, so both are checked: rules written in
- * globals.css, and Tailwind utilities named in TSX, which globals.css only pulls in
- * through its `@import "tailwindcss"` and which therefore never appear in this parse.
+ * Selection reaches an element from every place Tailwind collects class names, so all are
+ * checked: rules written in globals.css, Tailwind utilities named in TSX, and files pulled
+ * in by `@source` directives. The utilities only enter the build through
+ * `@import "tailwindcss"`, so they never appear in this parse and need their own scan.
  */
 import { Glob } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import postcss, { type ChildNode, type Container, type Declaration } from "postcss";
 
 const IPAD_WIDTH_PX = 834;
@@ -46,6 +48,17 @@ const ARBITRARY_SELECTION_CLASS = /\[(?:-(?:webkit|moz|ms|o)-)?user-select:[^\s\
 
 const SOURCE_DIR = new URL("../../", import.meta.url).pathname;
 
+const STYLESHEET_DIR = fileURLToPath(new URL("./", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+
+/**
+ * The one `@source` form this contract models: a double-quoted plain file path, which
+ * Tailwind resolves against the stylesheet's directory (verified against
+ * `@tailwindcss/node`'s `compile()`). `not`, `inline(...)`, globs, and directories all
+ * throw, so extending to them is a deliberate edit rather than a silent guess.
+ */
+const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
+
 /**
  * Opt-ins as they appear in class names, in any variant: the named utilities and the
  * arbitrary-property form. `[user-select:none]` is excluded as the arbitrary spelling
@@ -73,6 +86,9 @@ const SELECTION_OPT_IN_CLASS =
  * tracked here: turning selection off on a control is the ordinary use of that utility,
  * whereas turning it back on is the exception to this guard. Broad suppression written as
  * CSS is still caught below.
+ *
+ * Files named by `@source` directives are counted here too, keyed by repo-relative path:
+ * Tailwind scans those for utility classes just like TSX under `src/`.
  */
 const SELECTION_OPT_INS: Record<string, number> = {
   "src/browser/components/AgentListItem/AgentListItem.tsx": 1,
@@ -122,11 +138,21 @@ function collectMediaParams(node: ChildNode | Container): string[] {
 }
 
 let selectionRules: SelectionRule[] = [];
+let sourceDirectivePaths: string[] = [];
 
 beforeAll(async () => {
   const stylesheet = postcss.parse(
     await readFile(new URL("./globals.css", import.meta.url), "utf8")
   );
+
+  sourceDirectivePaths = [];
+  stylesheet.walkAtRules("source", (atRule) => {
+    const match = PLAIN_SOURCE_PATH.exec(atRule.params.trim());
+    if (!match) {
+      throw new Error(`Unsupported @source form: @source ${atRule.params}`);
+    }
+    sourceDirectivePaths.push(match[1]);
+  });
 
   // `@apply select-text` sets selection without a `user-select` declaration to find, and
   // resolving what a utility expands to needs Tailwind's variant and layer handling, so
@@ -298,16 +324,36 @@ describe("touch text-selection guard", () => {
 
   it("opts content back into selection only in reviewed components", async () => {
     const optIns: Record<string, number> = {};
-    // Test files are skipped: they ship no UI, and this file names the utilities it matches.
-    for await (const relative of new Glob("**/*.{ts,tsx}").scan({ cwd: SOURCE_DIR })) {
-      if (/\.test\.tsx?$/.test(relative)) {
-        continue;
-      }
-      const source = await readFile(join(SOURCE_DIR, relative), "utf8");
+    const countInto = (key: string, source: string) => {
       const matches = source.match(SELECTION_OPT_IN_CLASS);
       if (matches) {
-        optIns[`src/${relative.replaceAll("\\", "/")}`] = matches.length;
+        optIns[key] = matches.length;
       }
+    };
+    // Test files are skipped: they ship no UI, and this file names the utilities it matches.
+    for await (const relativePath of new Glob("**/*.{ts,tsx}").scan({ cwd: SOURCE_DIR })) {
+      if (/\.test\.tsx?$/.test(relativePath)) {
+        continue;
+      }
+      countInto(
+        `src/${relativePath.replaceAll("\\", "/")}`,
+        await readFile(join(SOURCE_DIR, relativePath), "utf8")
+      );
+    }
+    for (const directivePath of sourceDirectivePaths) {
+      const resolved = resolve(STYLESHEET_DIR, directivePath);
+      // A path that matches nothing is scanned as nothing, exactly as Tailwind treats it.
+      const stats = await stat(resolved).catch(() => undefined);
+      if (!stats) {
+        continue;
+      }
+      if (!stats.isFile()) {
+        throw new Error(`Unsupported non-file @source target: ${directivePath}`);
+      }
+      countInto(
+        relative(REPO_ROOT, resolved).replaceAll("\\", "/"),
+        await readFile(resolved, "utf8")
+      );
     }
     expect(optIns).toEqual(SELECTION_OPT_INS);
   });
