@@ -64,14 +64,15 @@ const SELECTION_OPT_IN_CLASS =
  * narrow enough for that to be safe is not visible in the stylesheet or the class name, so a
  * new entry is a decision for review.
  *
- * Counted per file rather than listed per file, because a second opt-in added to a file that
- * already appears here would otherwise go unreviewed: `ReviewPanel.tsx` legitimately marks
- * four metadata values selectable, and a fifth class on a transcript-wide container in that
- * same file would suppress nothing and change no file name.
+ * Counted per file rather than listed per file, because an opt-in added to a file that
+ * already appears here would otherwise go unreviewed: a class on a transcript-wide container
+ * in `ReviewPanel.tsx`, which already opts in several metadata values, would suppress
+ * nothing and change no file name.
  *
- * Suppression utilities (`select-none`, 35 uses) are deliberately not tracked here: turning
- * selection off on a control is the ordinary use of that utility, whereas turning it back on
- * is the exception to this guard. Broad suppression written as CSS is still caught below.
+ * Suppression utilities (`select-none` and its arbitrary spelling) are deliberately not
+ * tracked here: turning selection off on a control is the ordinary use of that utility,
+ * whereas turning it back on is the exception to this guard. Broad suppression written as
+ * CSS is still caught below.
  */
 const SELECTION_OPT_INS: Record<string, number> = {
   "src/browser/components/AgentListItem/AgentListItem.tsx": 1,
@@ -170,11 +171,11 @@ beforeAll(async () => {
 /**
  * Media queries this contract can evaluate, matched exactly rather than parsed.
  *
- * Parsing the grammar by hand kept accepting queries a browser rejects, first
- * `(pointer: coarse: fine)` and then `(min-width: 0 px)`. Each of those silently disabled
- * the guard in production while every assertion here still passed, because the parser read
- * a valid prefix and ignored the rest. Exact keys cannot drift from the grammar that way:
- * an unlisted query throws, and extending this map is a deliberate edit.
+ * A hand-rolled parser accepts queries a browser rejects, such as `(pointer: coarse: fine)`
+ * or `(min-width: 0 px)`, by reading a valid prefix and ignoring the rest; such a query
+ * silently disables the guard while every assertion here still passes. Exact keys cannot
+ * drift from the grammar that way: an unlisted query throws, and extending this map is a
+ * deliberate edit.
  */
 const MEDIA_QUERIES: Record<string, (viewport: Viewport) => boolean> = {
   "(pointer: coarse)": (viewport) => viewport.coarse,
@@ -230,9 +231,9 @@ const FINE_VIEWPORTS: Viewport[] = [PHONE_WIDTH_PX, DESKTOP_WIDTH_PX].map((width
 
 /**
  * A selector consisting of exactly one class or id token, which can therefore only match
- * elements carrying it. Earlier revisions asked whether a selector merely contained a class,
- * which admitted `body *` and then `:not(.allow-selection)`; both suppress selection across
- * the app. Requiring the whole selector to be one token needs no selector engine to defend.
+ * elements carrying it. Merely containing a class is not evidence of scoping, because
+ * `:not(.allow-selection)` contains one and still matches nearly everything. Requiring the
+ * whole selector to be one token needs no selector engine to defend.
  */
 const SINGLE_COMPONENT_SELECTOR = /^[.#][A-Za-z0-9_-]+$/;
 
