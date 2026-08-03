@@ -2144,6 +2144,57 @@ export class TaskService {
         continue;
       }
 
+      const pendingGuidance = task.taskPendingGuidance ?? [];
+      if (pendingGuidance.length > 0) {
+        // Pending corrections outrank generic restart recovery and must replay even when this task
+        // still has active descendants. Otherwise the descendant gate below can strand the durable
+        // reservation forever after the in-memory queue is lost on restart.
+        const pendingGuidanceIds = new Set(pendingGuidance.map((guidance) => guidance.id));
+        const model = task.taskModelString ?? defaultModel;
+        const agentId = resolveTaskAgentIdForResume(task);
+        const clearAcceptedPendingGuidance = async (): Promise<void> => {
+          await this.editWorkspaceEntry(
+            task.id!,
+            (workspace) => {
+              const remaining = (workspace.taskPendingGuidance ?? []).filter(
+                (guidance) => !pendingGuidanceIds.has(guidance.id)
+              );
+              workspace.taskPendingGuidance = remaining.length > 0 ? remaining : undefined;
+            },
+            { allowMissing: true }
+          );
+        };
+        const sendResult = await this.workspaceService.sendMessage(
+          task.id,
+          "Mux restarted before these parent guidance updates could run. Apply them in order and continue:\n\n" +
+            pendingGuidance
+              .map((guidance, index) => `${index + 1}. ${guidance.message}`)
+              .join("\n\n"),
+          {
+            model,
+            agentId,
+            thinkingLevel: task.taskThinkingLevel,
+            reasoningMode: coerceOpenAIReasoningMode(task.aiSettings?.reasoningMode),
+            experiments: task.taskExperiments,
+          },
+          {
+            synthetic: true,
+            agentInitiated: true,
+            onAccepted: clearAcceptedPendingGuidance,
+          }
+        );
+        if (!sendResult.success) {
+          failedRunningCount += 1;
+          log.error("Failed to replay pending task guidance on startup", {
+            taskId: task.id,
+            error: sendResult.error,
+          });
+          continue;
+        }
+        resumedRunningCount += 1;
+        continue;
+      }
+
       // Best-effort: if mux restarted mid-stream, nudge the agent to continue and report.
       // Only do this when the task has no blocking running descendants, to avoid duplicate spawns.
       const hasBlockingActiveDescendants =
@@ -2172,35 +2223,10 @@ export class TaskService {
       const restartCompletionInstruction = isPlanLike
         ? "When you have a final plan, call propose_plan exactly once."
         : "When you have a final answer, return it in your final assistant message.";
-      const pendingGuidance = task.taskPendingGuidance ?? [];
-      const pendingGuidanceIds = new Set(pendingGuidance.map((guidance) => guidance.id));
-      const pendingGuidancePrompt =
-        pendingGuidance.length > 0
-          ? "\n\nApply these pending parent guidance updates in order:\n\n" +
-            pendingGuidance
-              .map((guidance, index) => `${index + 1}. ${guidance.message}`)
-              .join("\n\n")
-          : "";
-      const clearAcceptedPendingGuidance = async (): Promise<void> => {
-        if (pendingGuidanceIds.size === 0) {
-          return;
-        }
-        await this.editWorkspaceEntry(
-          task.id!,
-          (workspace) => {
-            const remaining = (workspace.taskPendingGuidance ?? []).filter(
-              (guidance) => !pendingGuidanceIds.has(guidance.id)
-            );
-            workspace.taskPendingGuidance = remaining.length > 0 ? remaining : undefined;
-          },
-          { allowMissing: true }
-        );
-      };
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
         "Mux restarted while this task was running. Continue where you left off. " +
-          restartCompletionInstruction +
-          pendingGuidancePrompt,
+          restartCompletionInstruction,
         {
           model,
           agentId,
@@ -2208,11 +2234,7 @@ export class TaskService {
           reasoningMode: coerceOpenAIReasoningMode(task.aiSettings?.reasoningMode),
           experiments: task.taskExperiments,
         },
-        {
-          synthetic: true,
-          agentInitiated: true,
-          ...(pendingGuidance.length > 0 ? { onAccepted: clearAcceptedPendingGuidance } : {}),
-        }
+        { synthetic: true, agentInitiated: true }
       );
       const durationMs = Date.now() - resumeStartedAt;
       if (!sendResult.success) {
@@ -4125,7 +4147,9 @@ export class TaskService {
             ...(workspace.taskPendingGuidance ?? []),
             { id: guidanceId, message: trimmedMessage, queueDispatchMode },
           ];
-          if (previousStatus === "awaiting_report") {
+          if (workspace.taskStatus == null || previousStatus === "awaiting_report") {
+            // Persist the legacy implicit-running state so startup recovery can replay this durable
+            // guidance if Mux exits before the replacement turn accepts it.
             workspace.taskStatus = "running";
           }
         },

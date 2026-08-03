@@ -3407,6 +3407,68 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toBeUndefined();
   });
 
+  test("initialize replays pending guidance even when the task has active descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-restart-guidance-descendant";
+    const childTaskId = "child-restart-guidance-descendant";
+    const grandchildTaskId = "grandchild-restart-guidance";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+          taskPendingGuidance: [
+            {
+              id: "guidance-blocked",
+              message: "Apply this correction",
+              queueDispatchMode: "turn-end",
+            },
+          ],
+        }),
+        projectWorkspace(projectPath, "grandchild", grandchildTaskId, {
+          parentWorkspaceId: childTaskId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const sendMessage = mock(
+      async (
+        _workspaceId: string,
+        _message: string,
+        _options: unknown,
+        internal?: { onAccepted?: () => Promise<void> | void }
+      ): Promise<Result<void>> => {
+        await internal?.onAccepted?.();
+        return Ok(undefined);
+      }
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await taskService.initialize();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      childTaskId,
+      expect.stringContaining("Apply this correction"),
+      expect.any(Object),
+      expect.objectContaining({ synthetic: true, agentInitiated: true })
+    );
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toBeUndefined();
+  });
+
   test("initialize drains persisted terminal wake-ups from before restart", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
@@ -10770,6 +10832,43 @@ describe("TaskService", () => {
       })
     );
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("sendMessageToDescendantAgentTask persists legacy implicit-running status", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-legacy-guidance-persistence";
+    const childTaskId = "child-legacy-guidance-persistence";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: undefined,
+          taskModelString: "openai:gpt-5.2",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "Persist this correction",
+        "turn-end"
+      )
+    ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "turn-end" }));
+
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("running");
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toHaveLength(1);
   });
 
   test("sendMessageToDescendantAgentTask rejects non-descendants and settled children", async () => {
