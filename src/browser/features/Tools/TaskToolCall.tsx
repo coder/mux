@@ -994,10 +994,11 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         resultTaskGroup?.label ??
         normalizeTaskGroupLabel(metadata?.bestOf?.label) ??
         getTaskGroupLabelAtIndex(args, index),
-      // Result-carried settings survive child workspace cleanup; live metadata covers
-      // tasks spawned before the result existed (e.g. task-created events).
-      modelString: resultAiSettings?.modelString ?? metadata?.taskModelString,
-      thinkingLevel: resultAiSettings?.thinkingLevel ?? metadata?.taskThinkingLevel,
+      // Prefer live metadata while the workspace exists: a plan child's auto-handoff to
+      // exec rewrites its settings after launch, so a result snapshot can go stale.
+      // Result-carried settings remain as the fallback surviving workspace cleanup.
+      modelString: metadata?.taskModelString ?? resultAiSettings?.modelString,
+      thinkingLevel: metadata?.taskThinkingLevel ?? resultAiSettings?.thinkingLevel,
     };
   });
 

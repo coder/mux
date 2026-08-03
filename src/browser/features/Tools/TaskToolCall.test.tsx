@@ -137,6 +137,81 @@ describe("TaskToolCall", () => {
     expect(setSelectedWorkspace).toHaveBeenCalledTimes(1);
     expect(setSelectedWorkspace.mock.calls[0][0]).toEqual(workspace);
   });
+
+  test("prefers live workspace settings over the result snapshot", () => {
+    // A plan child's auto-handoff to exec rewrites live metadata after launch; the
+    // result snapshot keeps the stale plan-phase settings.
+    const workspace = createWorkspaceMetadata({
+      id: "task-child-1",
+      taskModelString: "anthropic:claude-opus-5",
+      taskThinkingLevel: "high",
+    });
+    workspaceContextMock = {
+      workspaceMetadata: new Map([[workspace.id, workspace]]),
+    };
+
+    const agentTaskArgs = {
+      subagent_type: "plan",
+      prompt: "Plan then implement.",
+      title: "Plan task",
+      run_in_background: true,
+    };
+    const AgentTaskToolCall = getToolComponent("task", agentTaskArgs);
+    const view = render(
+      <TooltipProvider>
+        <AgentTaskToolCall
+          args={agentTaskArgs}
+          result={{
+            status: "running",
+            taskId: "task-child-1",
+            modelString: "openai:gpt-5.2",
+            thinkingLevel: "low",
+            note: "Task started in background.",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByText("task"));
+
+    const settings = view.container.querySelector("[data-task-ai-settings]");
+    expect(settings?.textContent).toContain("Opus 5");
+    expect(settings?.textContent).toContain("thinking: high");
+    expect(settings?.textContent).not.toContain("thinking: low");
+  });
+
+  test("falls back to result-carried settings after workspace cleanup", () => {
+    workspaceContextMock = { workspaceMetadata: new Map() };
+
+    const agentTaskArgs = {
+      subagent_type: "explore",
+      prompt: "Look around.",
+      title: "Explore task",
+      run_in_background: true,
+    };
+    const AgentTaskToolCall = getToolComponent("task", agentTaskArgs);
+    const view = render(
+      <TooltipProvider>
+        <AgentTaskToolCall
+          args={agentTaskArgs}
+          result={{
+            status: "running",
+            taskId: "task-child-2",
+            modelString: "openai:gpt-5.2",
+            thinkingLevel: "low",
+            note: "Task started in background.",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByText("task"));
+
+    const settings = view.container.querySelector("[data-task-ai-settings]");
+    expect(settings?.textContent).toContain("thinking: low");
+  });
 });
 
 describe("TaskAwaitToolCall", () => {
