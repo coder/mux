@@ -4,12 +4,12 @@ import React, {
   useSyncExternalStore,
   useCallback,
   useEffect,
+  useState,
 } from "react";
 import {
   type ExperimentId,
   EXPERIMENTS,
   getExperimentKey,
-  getExperimentList,
   isExperimentSupportedOnPlatform,
 } from "@/common/constants/experiments";
 import { getStorageChangeEvent } from "@/common/constants/events";
@@ -65,19 +65,6 @@ function getExperimentOverrideSnapshot(experimentId: ExperimentId): boolean | un
   }
 }
 
-/**
- * Get current experiment state from localStorage.
- * Returns the stored value or the default if not set.
- */
-function getExperimentSnapshot(experimentId: ExperimentId): boolean {
-  const experiment = EXPERIMENTS[experimentId];
-  if (!isExperimentSupported(experimentId)) {
-    return false;
-  }
-
-  return getExperimentOverrideSnapshot(experimentId) ?? experiment.enabledByDefault;
-}
-
 function getExplicitLocalExperimentOverrides(): Partial<Record<ExperimentId, boolean>> {
   const overrides: Partial<Record<ExperimentId, boolean>> = {};
 
@@ -126,6 +113,7 @@ function setExperimentState(experimentId: ExperimentId, enabled: boolean): void 
  */
 interface ExperimentsContextValue {
   setExperiment: (experimentId: ExperimentId, enabled: boolean) => void;
+  backendOverrides: Partial<Record<ExperimentId, boolean>> | null;
 }
 
 const ExperimentsContext = createContext<ExperimentsContextValue | null>(null);
@@ -136,35 +124,78 @@ const ExperimentsContext = createContext<ExperimentsContextValue | null>(null);
  */
 export function ExperimentsProvider(props: { children: React.ReactNode }) {
   const apiState = useAPI();
+  const [backendOverrides, setBackendOverrides] = useState<Partial<
+    Record<ExperimentId, boolean>
+  > | null>(null);
 
-  // localStorage is the source of truth: always send the complete set so the backend
-  // mirrors exactly what Settings shows, including overrides the user has cleared.
-  const syncOverridesToBackend = useCallback(async () => {
-    if (apiState.status !== "connected" || !apiState.api) {
-      return;
-    }
+  const persistOverride = useCallback(
+    async (experimentId: ExperimentId, enabled: boolean) => {
+      if (apiState.status !== "connected" || !apiState.api) {
+        return;
+      }
 
-    try {
-      await apiState.api.experiments.sync({ overrides: getExplicitLocalExperimentOverrides() });
-    } catch {
-      // Best effort
-    }
-  }, [apiState.status, apiState.api]);
+      try {
+        await apiState.api.experiments.setOverride({ experimentId, enabled });
+      } catch {
+        // Best effort
+      }
+    },
+    [apiState.status, apiState.api]
+  );
 
   const setExperiment = useCallback(
     (experimentId: ExperimentId, enabled: boolean) => {
       setExperimentState(experimentId, enabled);
-      void syncOverridesToBackend();
+      setBackendOverrides((prev) => (prev ? { ...prev, [experimentId]: enabled } : prev));
+      void persistOverride(experimentId, enabled);
     },
-    [syncOverridesToBackend]
+    [persistOverride]
   );
 
   useEffect(() => {
-    void syncOverridesToBackend();
-  }, [syncOverridesToBackend]);
+    if (apiState.status !== "connected" || !apiState.api) {
+      setBackendOverrides(null);
+      return;
+    }
+
+    const api = apiState.api;
+    let cancelled = false;
+
+    const reconcile = async () => {
+      // Upload this client's local overrides first, then adopt the merged backend state.
+      // Uploads are per-experiment: this client's localStorage is origin-scoped and may
+      // legitimately be empty, so it must never clear overrides another client set.
+      try {
+        await Promise.all(
+          Object.entries(getExplicitLocalExperimentOverrides()).map(([experimentId, enabled]) =>
+            api.experiments.setOverride({ experimentId: experimentId as ExperimentId, enabled })
+          )
+        );
+      } catch {
+        // Best effort
+      }
+
+      try {
+        const overrides = await api.experiments.getOverrides();
+        if (!cancelled) {
+          setBackendOverrides(overrides);
+        }
+      } catch {
+        if (!cancelled) {
+          setBackendOverrides(null);
+        }
+      }
+    };
+
+    void reconcile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiState.status, apiState.api]);
 
   return (
-    <ExperimentsContext.Provider value={{ setExperiment }}>
+    <ExperimentsContext.Provider value={{ setExperiment, backendOverrides }}>
       {props.children}
     </ExperimentsContext.Provider>
   );
@@ -184,9 +215,25 @@ export function useExperimentValue(experimentId: ExperimentId): boolean {
     [experimentId]
   );
 
-  const getSnapshot = useCallback(() => getExperimentSnapshot(experimentId), [experimentId]);
+  const getSnapshot = useCallback(
+    () => getExperimentOverrideSnapshot(experimentId),
+    [experimentId]
+  );
 
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const localOverride = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  const context = useContext(ExperimentsContext);
+
+  if (!isExperimentSupported(experimentId)) {
+    return false;
+  }
+
+  // An explicit local toggle wins, which also settles the race against an in-flight
+  // backend read: a toggle made while it loads is not overwritten when it resolves.
+  if (localOverride !== undefined) {
+    return localOverride;
+  }
+
+  return context?.backendOverrides?.[experimentId] ?? EXPERIMENTS[experimentId].enabledByDefault;
 }
 
 /**
@@ -247,34 +294,4 @@ export function useExperiment(experimentId: ExperimentId): [boolean, (enabled: b
   );
 
   return [enabled, setEnabled];
-}
-
-/**
- * Get all experiments with their current state.
- * Reactive - re-renders when any experiment changes.
- * Use sparingly; prefer useExperimentValue for single experiments.
- */
-export function useAllExperiments(): Record<ExperimentId, boolean> {
-  const experiments = getExperimentList();
-
-  // Subscribe to all experiments
-  const subscribe = useCallback(
-    (callback: () => void) => {
-      const unsubscribes = experiments.map((exp) => subscribeToExperiment(exp.id, callback));
-      return () => unsubscribes.forEach((unsub) => unsub());
-    },
-    [experiments]
-  );
-
-  const getSnapshot = useCallback(() => {
-    const result: Partial<Record<ExperimentId, boolean>> = {};
-
-    for (const exp of experiments) {
-      result[exp.id] = getExperimentSnapshot(exp.id);
-    }
-
-    return result as Record<ExperimentId, boolean>;
-  }, [experiments]);
-
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }

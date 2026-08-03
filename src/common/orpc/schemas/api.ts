@@ -136,14 +136,14 @@ import { ThinkingLevelSchema } from "../../types/thinking";
 
 // Experiments
 export const experiments = {
-  /**
-   * Replaces every backend override with the renderer's complete local state, so a
-   * cleared localStorage cannot leave an orphaned override enabling a backend gate
-   * that Settings shows as off.
-   */
-  sync: {
+  getOverrides: {
+    input: z.void(),
+    output: z.partialRecord(z.enum(EXPERIMENT_IDS), z.boolean()),
+  },
+  setOverride: {
     input: z.object({
-      overrides: z.partialRecord(z.enum(EXPERIMENT_IDS), z.boolean()),
+      experimentId: z.enum(EXPERIMENT_IDS),
+      enabled: z.boolean().nullish(),
     }),
     output: z.void(),
   },

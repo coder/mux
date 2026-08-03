@@ -78,33 +78,39 @@ export class ExperimentsService {
   }
 
   /**
-   * Replace all overrides with the renderer's complete local state. Overrides absent
-   * from `next` are cleared rather than left behind, so backend gates can never stay
-   * enabled for an experiment the user's Settings shows as off.
+   * Overrides persisted for this machine. Renderers read these so a client whose
+   * origin-scoped localStorage is empty still shows the state its backend gates use.
    */
-  async syncOverrides(next: Partial<Record<ExperimentId, boolean>>): Promise<void> {
+  async getOverrides(): Promise<Partial<Record<ExperimentId, boolean>>> {
     await this.ensureInitialized();
 
-    const previous = new Set(this.overrides.keys());
-    this.overrides.clear();
-
-    for (const [key, enabled] of Object.entries(next)) {
-      const experimentId = key as ExperimentId;
-      assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
-      if (typeof enabled !== "boolean" || !this.isExperimentSupported(experimentId)) {
-        continue;
-      }
-
-      this.overrides.set(experimentId, enabled);
-    }
-
-    for (const experimentId of previous) {
-      if (!this.overrides.has(experimentId)) {
-        this.telemetryService.setFeatureFlagVariant(experimentId, null);
-      }
-    }
-
+    const result: Partial<Record<ExperimentId, boolean>> = {};
     for (const [experimentId, enabled] of this.overrides) {
+      if (this.isExperimentSupported(experimentId)) {
+        result[experimentId] = enabled;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Update a single override. Writes are per-experiment so a client cannot clear
+   * overrides it never knew about: localStorage is origin-scoped, and a second
+   * renderer starting empty must not wipe state persisted for this machine.
+   */
+  async setOverride(
+    experimentId: ExperimentId,
+    enabled: boolean | null | undefined
+  ): Promise<void> {
+    await this.ensureInitialized();
+    assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+
+    if (!this.isExperimentSupported(experimentId) || enabled == null) {
+      this.overrides.delete(experimentId);
+      this.telemetryService.setFeatureFlagVariant(experimentId, null);
+    } else {
+      this.overrides.set(experimentId, enabled);
       this.telemetryService.setFeatureFlagVariant(experimentId, enabled);
     }
 

@@ -133,10 +133,11 @@ describe("ExperimentsProvider", () => {
       JSON.stringify(true)
     );
 
-    const syncMock = mock(() => Promise.resolve());
+    const setOverrideMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        sync: syncMock,
+        setOverride: setOverrideMock,
+        getOverrides: mock(() => Promise.resolve({})),
       },
     };
 
@@ -149,31 +150,42 @@ describe("ExperimentsProvider", () => {
     );
 
     await waitFor(() => {
-      expect(syncMock).toHaveBeenCalledWith({
-        overrides: { [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true },
+      expect(setOverrideMock).toHaveBeenCalledWith({
+        experimentId: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+        enabled: true,
       });
     });
   });
 
-  test("sends an empty override set when localStorage has none, clearing backend state", async () => {
-    const syncMock = mock(() => Promise.resolve());
+  test("adopts a backend override when this client has no local state, and clears nothing", async () => {
+    const setOverrideMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        sync: syncMock,
+        setOverride: setOverrideMock,
+        getOverrides: mock(() =>
+          Promise.resolve({ [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true })
+        ),
       },
     };
 
-    render(
+    function Observer() {
+      const enabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
+      return <div data-testid="enabled">{String(enabled)}</div>;
+    }
+
+    const { getByTestId } = render(
       <APIProvider client={currentClientMock as APIClient}>
         <ExperimentsProvider>
-          <div />
+          <Observer />
         </ExperimentsProvider>
       </APIProvider>
     );
 
     await waitFor(() => {
-      expect(syncMock).toHaveBeenCalledWith({ overrides: {} });
+      expect(getByTestId("enabled").textContent).toBe("true");
     });
+
+    expect(setOverrideMock).not.toHaveBeenCalled();
   });
 
   test("returns false for a platform-restricted experiment on unsupported platforms", () => {
@@ -201,10 +213,11 @@ describe("ExperimentsProvider", () => {
   });
 
   test("persists backend overrides when a user toggles an experiment", async () => {
-    const syncMock = mock(() => Promise.resolve());
+    const setOverrideMock = mock(() => Promise.resolve());
     currentClientMock = {
       experiments: {
-        sync: syncMock,
+        setOverride: setOverrideMock,
+        getOverrides: mock(() => Promise.resolve({})),
       },
     };
 
@@ -228,8 +241,9 @@ describe("ExperimentsProvider", () => {
     fireEvent.click(getByTestId("toggle"));
 
     await waitFor(() => {
-      expect(syncMock).toHaveBeenCalledWith({
-        overrides: { [EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES]: true },
+      expect(setOverrideMock).toHaveBeenCalledWith({
+        experimentId: EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES,
+        enabled: true,
       });
       expect(getByTestId("toggle").textContent).toBe("true");
     });
