@@ -37,10 +37,22 @@ const SELECTION_PROPERTY_PATTERN = /^(?:-(?:webkit|moz|ms|o)-)?user-select$/;
 /** Tailwind's selection utilities, including variants such as `hover:select-text`. */
 const APPLIED_SELECTION_UTILITY = /^(?:[\w[\]./-]+:)*select-(?:none|text|all|auto)$/;
 
+/**
+ * The arbitrary-property spelling, `[user-select:text]` in any vendor prefix, which
+ * compiles to the same direct declaration a named utility does. Unanchored, so a
+ * variant chain in front does not hide it.
+ */
+const ARBITRARY_SELECTION_CLASS = /\[(?:-(?:webkit|moz|ms|o)-)?user-select:[^\s\]]+\]/;
+
 const SOURCE_DIR = new URL("../../", import.meta.url).pathname;
 
-/** The same utilities where they appear as class names, in any variant. */
-const SELECTION_OPT_IN_CLASS = /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b/g;
+/**
+ * Opt-ins as they appear in class names, in any variant: the named utilities and the
+ * arbitrary-property form. `[user-select:none]` is excluded as the arbitrary spelling
+ * of `select-none`, which is untracked for the reason given below.
+ */
+const SELECTION_OPT_IN_CLASS =
+  /\b(?:[A-Za-z0-9_-]+:)*select-(?:text|all|auto)\b|\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]/g;
 
 /**
  * Components that opt content back into selection with a Tailwind class.
@@ -119,7 +131,12 @@ beforeAll(async () => {
   // resolving what a utility expands to needs Tailwind's variant and layer handling, so
   // the honest response is to refuse rather than report a guard this cannot see.
   stylesheet.walkAtRules("apply", (atRule) => {
-    if (atRule.params.split(/\s+/).some((token) => APPLIED_SELECTION_UTILITY.test(token))) {
+    const appliesSelection = atRule.params
+      .split(/\s+/)
+      .some(
+        (token) => APPLIED_SELECTION_UTILITY.test(token) || ARBITRARY_SELECTION_CLASS.test(token)
+      );
+    if (appliesSelection) {
       throw new Error(`Selection set via @apply cannot be modelled: @apply ${atRule.params}`);
     }
   });
