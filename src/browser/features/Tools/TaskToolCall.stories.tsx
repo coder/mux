@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { waitFor, within } from "@storybook/test";
 import type { ReactNode } from "react";
 import { TaskApplyGitPatchToolCall } from "@/browser/features/Tools/TaskApplyGitPatchToolCall";
 import { TaskToolCall } from "@/browser/features/Tools/TaskToolCall";
@@ -139,6 +140,59 @@ export const BestOfTaskGroup: Story = {
       />
     </ToolStoryShell>
   ),
+};
+
+/** long custom model IDs must wrap inside a narrow card instead of overflowing */
+export const TaskNarrowLongModelId: Story = {
+  render: () => (
+    <div data-testid="narrow-task-card" className="bg-background w-[320px] p-2">
+      <TaskToolCall
+        args={{
+          subagent_type: "explore",
+          prompt: "Analyze the frontend React components in src/browser/",
+          title: "Frontend analysis",
+          run_in_background: true,
+        }}
+        result={{
+          status: "running",
+          taskId: "task-fe-001",
+          // Deliberately hyphen-free: only an unbroken token exercises the wrap fix.
+          modelString:
+            "openrouter:acmelabs/somextremelylongcustommodelidentifierwithoutanybreakopportunitieswhatsoeverv2instruct",
+          thinkingLevel: "high",
+          note: "Use task_await to monitor progress.",
+        }}
+        status="completed"
+      />
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    canvas.getByText("task").click();
+    await waitFor(() => {
+      if (!canvasElement.querySelector("[data-task-ai-settings]")) {
+        throw new Error("task AI settings did not render after expanding");
+      }
+    });
+    const container = canvasElement.querySelector('[data-testid="narrow-task-card"]');
+    if (!(container instanceof HTMLElement)) {
+      throw new Error("narrow task card container not found");
+    }
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+    const containerRight = container.getBoundingClientRect().right;
+    const settings = container.querySelector("[data-task-ai-settings]");
+    const settingsRight = settings?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY;
+    // Right-edge containment, not scrollWidth: ancestors clip overflow, which would
+    // hide a too-wide settings row from scrollWidth-based checks.
+    if (settingsRight > containerRight + 1) {
+      throw new Error(
+        `task AI settings overflowed the ${container.clientWidth}px card by ` +
+          `${Math.round(settingsRight - containerRight)}px`
+      );
+    }
+  },
 };
 
 /** task_apply_git_patch states: executing, dry-run, success, and failure */

@@ -465,11 +465,20 @@ const TaskAiSettingsDisplay: React.FC<TaskAiSettingsInfo & { className?: string 
     return null;
   }
   return (
+    // min-w-0 at both flex levels + break-words let long custom model IDs wrap inside
+    // narrow cards instead of forcing right-edge overflow.
     <span
-      className={cn("text-muted inline-flex flex-wrap items-center gap-1.5", props.className)}
+      className={cn(
+        "text-muted inline-flex min-w-0 max-w-full flex-wrap items-center gap-1.5 break-words",
+        props.className
+      )}
       data-task-ai-settings
     >
-      {props.modelString && <ModelDisplay modelString={props.modelString} />}
+      {props.modelString && (
+        <span className="min-w-0">
+          <ModelDisplay modelString={props.modelString} />
+        </span>
+      )}
       {props.thinkingLevel != null && (
         <span className="rounded bg-[var(--color-bg-tertiary)] px-1 py-0.5 font-mono leading-none">
           thinking: {getThinkingOptionLabel(props.thinkingLevel, props.modelString)}
