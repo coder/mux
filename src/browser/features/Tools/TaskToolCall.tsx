@@ -1138,6 +1138,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   const failedCount = results.filter(
     (r) => r.status === "error" || r.status === "invalid_scope" || r.status === "not_found"
   ).length;
+  const interruptedCount = results.filter((r) => r.status === "interrupted").length;
 
   const workspaceContext = useOptionalWorkspaceContext();
   const workspaceMetadata = workspaceContext?.workspaceMetadata;
@@ -1193,17 +1194,21 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
-  const pendingCount = totalCount - completedCount - failedCount;
+  const pendingCount = totalCount - completedCount - failedCount - interruptedCount;
   const targetCount = totalCount > 0 ? totalCount : taskIds?.length;
   const formatTasks = (count: number) => `${count} ${count === 1 ? "task" : "tasks"}`;
 
   let summaryTitle: string;
   let summaryDetail: string | undefined;
-  let summaryTone: "active" | "danger" | "success" | "waiting";
+  let summaryTone: "active" | "danger" | "interrupted" | "success" | "waiting";
   if (failedCount > 0) {
     summaryTitle = `${formatTasks(failedCount)} failed`;
     summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
     summaryTone = "danger";
+  } else if (interruptedCount > 0) {
+    summaryTitle = `${formatTasks(interruptedCount)} interrupted`;
+    summaryDetail = completedCount > 0 ? `${completedCount} completed` : undefined;
+    summaryTone = "interrupted";
   } else if (status === "executing") {
     summaryTitle = targetCount
       ? `Waiting for ${formatTasks(targetCount)}`
@@ -1235,7 +1240,9 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         ? CircleAlert
         : summaryTone === "success"
           ? CircleCheck
-          : Clock3;
+          : summaryTone === "interrupted"
+            ? CircleAlert
+            : Clock3;
 
   return (
     <ToolContainer
@@ -1254,6 +1261,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             summaryTone === "active" && "text-task-mode animate-spin",
             summaryTone === "danger" && "text-danger",
             summaryTone === "success" && "text-success",
+            summaryTone === "interrupted" && "text-interrupted",
             summaryTone === "waiting" && "text-muted"
           )}
         />
@@ -1261,7 +1269,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
           <span
             className={cn(
               summaryTone === "active" ? "text-foreground" : "text-secondary",
-              summaryTone === "danger" && "text-danger"
+              summaryTone === "danger" && "text-danger",
+              summaryTone === "interrupted" && "text-interrupted"
             )}
           >
             {summaryTitle}

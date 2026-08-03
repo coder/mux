@@ -182,6 +182,16 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText("task_await")).toBeNull();
   });
 
+  test("renders interrupted waits as terminal instead of still waiting", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: { results: [{ status: "interrupted", taskId: "task-1" }] },
+    });
+
+    expect(view.getByText("1 task interrupted")).toBeDefined();
+    expect(view.queryByText(/still waiting/i)).toBeNull();
+  });
+
   test("uses valid legacy agentType for task_await rows when agentId is invalid", () => {
     workspaceContextMock = {
       workspaceMetadata: new Map([

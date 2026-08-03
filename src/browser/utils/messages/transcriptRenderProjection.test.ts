@@ -524,6 +524,31 @@ describe("task_await poll grouping", () => {
     expect(infos[1]).toMatchObject({ position: "member", defaultExpanded: false });
   });
 
+  test("expands poll groups with terminal failures", () => {
+    const infos = computeTaskAwaitPollGroupInfos([
+      tool({
+        id: "await-running",
+        toolName: "task_await",
+        result: { results: [{ status: "running", taskId: "task-1" }] },
+      }),
+      tool({
+        id: "await-failed",
+        toolName: "task_await",
+        result: { results: [{ status: "error", taskId: "task-1", error: "failed" }] },
+      }),
+    ]);
+
+    expect(infos[0]).toMatchObject({
+      defaultExpanded: true,
+      summary: {
+        title: "Task wait needs attention",
+        activeTitle: "Task wait needs attention",
+        details: "2 checks",
+        tone: "danger",
+      },
+    });
+  });
+
   test("conversation rows break poll groups", () => {
     const infos = computeTaskAwaitPollGroupInfos([
       tool({ id: "await-1", toolName: "task_await" }),
@@ -719,6 +744,36 @@ describe("operational bundle coalescing", () => {
       position: "head",
       state: "settled",
       defaultExpanded: false,
+    });
+  });
+
+  test("keeps task_await operational bundles quiet unless they need attention", () => {
+    const active = computeOperationalBundleInfos(
+      [
+        tool({
+          id: "await-active",
+          toolName: "task_await",
+          status: "executing",
+          result: { results: [{ status: "running", taskId: "task-1" }] },
+        }),
+      ],
+      { isTurnActive: true }
+    );
+    expect(active[0]).toMatchObject({ defaultExpanded: false });
+
+    const failed = computeOperationalBundleInfos(
+      [
+        tool({
+          id: "await-failed",
+          toolName: "task_await",
+          result: { results: [{ status: "not_found", taskId: "task-1" }] },
+        }),
+      ],
+      { isTurnActive: false }
+    );
+    expect(failed[0]).toMatchObject({
+      defaultExpanded: true,
+      summary: { title: "Task wait needs attention", tone: "danger" },
     });
   });
 

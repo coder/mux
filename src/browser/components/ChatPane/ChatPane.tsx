@@ -534,10 +534,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     [deferredMessages]
   );
 
-  const taskAwaitPollGroupInfos = useMemo(
-    () => computeTaskAwaitPollGroupInfos(deferredMessages),
-    [deferredMessages]
-  );
+  const taskAwaitPollGroupInfos = computeTaskAwaitPollGroupInfos(deferredMessages);
 
   const workBundleInfos = useMemo(
     () => (transcriptDensity === "hyper" ? computeWorkBundleInfos(deferredMessages) : undefined),
@@ -1579,8 +1576,9 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       </div>
                     )}
                     {deferredMessages.map((msg, index) => {
+                      const workBundle = workBundleInfos?.[index];
                       const taskAwaitPollGroup = taskAwaitPollGroupInfos[index];
-                      if (taskAwaitPollGroup) {
+                      if (taskAwaitPollGroup && !workBundle) {
                         const override = operationalBundleExpansionOverrides.get(
                           taskAwaitPollGroup.key
                         );
@@ -1610,7 +1608,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                         );
                       }
 
-                      const workBundle = workBundleInfos?.[index];
                       const workBundleOverride = workBundle
                         ? workBundleExpansionOverrides.get(workBundle.key)
                         : undefined;

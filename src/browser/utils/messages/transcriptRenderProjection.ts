@@ -7,6 +7,7 @@ export interface OperationalBundleSummary {
   title: string;
   details: string;
   activeTitle?: string;
+  tone?: "danger" | "interrupted";
 }
 
 export interface OperationalBundleEntry {
@@ -201,18 +202,20 @@ export function computeTaskAwaitPollGroupInfos(
     }
 
     const frozenEntries = Object.freeze(entries);
+    const messagesInGroup = frozenEntries.map((entry) => entry.message);
     const state = frozenEntries.some((entry) => isActiveOperationalMessage(entry.message))
       ? "active"
       : "settled";
+    const needsAttention = hasTaskAwaitTerminalIssue(messagesInGroup);
     const info: OperationalBundleInfo = {
       key: `task-await-polls:${frozenEntries[0].message.id}`,
       position: "head",
       headIndex: firstIndex,
       entries: frozenEntries,
-      summary: summarizeOperationalBundle(frozenEntries.map((entry) => entry.message)),
+      summary: summarizeOperationalBundle(messagesInGroup),
       state,
-      // Polling is useful evidence on demand, but it should never expand into a stack by default.
-      defaultExpanded: false,
+      // Routine polls stay quiet, but terminal failures and interruptions need their details visible.
+      defaultExpanded: needsAttention,
     };
 
     for (const entry of frozenEntries) {
@@ -270,13 +273,16 @@ export function computeOperationalBundleInfos(
 
     const frozenEntries = Object.freeze(entries);
     const first = entries[0].message;
+    const messagesInBundle = frozenEntries.map((entry) => entry.message);
+    const allTaskAwaits = messagesInBundle.every(isTaskAwaitMessage);
 
     const state = frozenEntries.some((entry) => isActiveOperationalMessage(entry.message))
       ? "active"
       : "settled";
-    const defaultExpanded = state === "active";
+    const defaultExpanded =
+      hasTaskAwaitTerminalIssue(messagesInBundle) || (state === "active" && !allTaskAwaits);
     const key = `bundle:${first.id}`;
-    const summary = summarizeOperationalBundle(frozenEntries.map((entry) => entry.message));
+    const summary = summarizeOperationalBundle(messagesInBundle);
 
     for (const entry of frozenEntries) {
       infos[entry.originalIndex] = {
@@ -526,6 +532,17 @@ export function summarizeOperationalBundle(
   const allTaskAwaits = messages.every(isTaskAwaitMessage);
   if (allTaskAwaits) {
     const pollCount = messages.length;
+    const statuses = messages.flatMap(getTaskAwaitResultStatuses);
+    const hasFailure = statuses.some(isTaskAwaitFailureStatus);
+    const hasInterruption = statuses.includes("interrupted");
+    if (hasFailure || hasInterruption) {
+      return {
+        title: hasFailure ? "Task wait needs attention" : "Task wait interrupted",
+        activeTitle: hasFailure ? "Task wait needs attention" : "Task wait interrupted",
+        details: pollCount === 1 ? "" : `${pollCount} checks`,
+        tone: hasFailure ? "danger" : "interrupted",
+      };
+    }
     return {
       title: pollCount === 1 ? "Checked task status" : `Checked task status ${pollCount} times`,
       activeTitle:
@@ -557,6 +574,28 @@ export function summarizeOperationalBundle(
 
 function isTaskAwaitMessage(message: OperationalBundleMemberMessage): boolean {
   return message.type === "tool" && message.toolName === "task_await";
+}
+
+function getTaskAwaitResultStatuses(message: OperationalBundleMemberMessage): string[] {
+  if (message.type !== "tool" || message.toolName !== "task_await") return [];
+
+  const result = unwrapJsonResult(message.result);
+  if (!isPlainObject(result) || !Array.isArray(result.results)) return [];
+
+  return result.results.flatMap((entry) => {
+    if (!isPlainObject(entry) || typeof entry.status !== "string") return [];
+    return [entry.status];
+  });
+}
+
+function isTaskAwaitFailureStatus(status: string): boolean {
+  return status === "error" || status === "invalid_scope" || status === "not_found";
+}
+
+function hasTaskAwaitTerminalIssue(messages: readonly OperationalBundleMemberMessage[]): boolean {
+  return messages
+    .flatMap(getTaskAwaitResultStatuses)
+    .some((status) => isTaskAwaitFailureStatus(status) || status === "interrupted");
 }
 
 function isEmptyCompletedWebSearch(message: OperationalBundleMemberMessage): boolean {

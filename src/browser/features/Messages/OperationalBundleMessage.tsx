@@ -34,7 +34,14 @@ export function OperationalBundleMessage(props: OperationalBundleMessageProps): 
           ▶
         </ExpandIcon>
         <span className="text-secondary min-w-0 flex-1 truncate text-sm leading-5">
-          <span>{title}</span>
+          <span
+            className={cn(
+              props.item.summary.tone === "danger" && "text-danger",
+              props.item.summary.tone === "interrupted" && "text-interrupted"
+            )}
+          >
+            {title}
+          </span>
           {details && <span className="text-muted"> · {details}</span>}
         </span>
       </button>
