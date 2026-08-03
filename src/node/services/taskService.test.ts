@@ -15929,7 +15929,11 @@ describe("TaskService", () => {
     });
 
     const report = await waiter;
-    expect(report).toEqual({ reportMarkdown: "Interrupted child report", title: "Result" });
+    expect(report).toEqual({
+      reportMarkdown: "Interrupted child report",
+      title: "Result",
+      model: "openai:gpt-4o-mini",
+    });
 
     const postCfg = config.loadConfigOrDefault();
     const ws = Array.from(postCfg.projects.values())
@@ -15943,7 +15947,11 @@ describe("TaskService", () => {
       timeoutMs: 10_000,
       requestingWorkspaceId: parentId,
     });
-    expect(persisted).toEqual({ reportMarkdown: "Interrupted child report", title: "Result" });
+    expect(persisted).toEqual({
+      reportMarkdown: "Interrupted child report",
+      title: "Result",
+      model: "openai:gpt-4o-mini",
+    });
   });
 
   test("handleStreamEnd rejects waiters when interrupted task stream ends without report", async () => {
@@ -19012,6 +19020,7 @@ describe("TaskService", () => {
         reportMarkdown: "# Proposed workflow plan\n\nDo the tiny safe change.\n",
         title: "Proposed plan",
         planFilePath: planPath,
+        model: "openai:gpt-4o-mini",
       });
       expect(debugSpy).toHaveBeenCalledWith(
         "Workflow plan completion using canonical plan file path",
@@ -19099,6 +19108,7 @@ describe("TaskService", () => {
         reportMarkdown: "# Interrupted workflow plan\n\nStill complete.\n",
         title: "Proposed plan",
         planFilePath: planPath,
+        model: "openai:gpt-4o-mini",
       });
       expect(replaceHistory).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
