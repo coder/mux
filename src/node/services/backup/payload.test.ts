@@ -263,6 +263,14 @@ describe("backup payload", () => {
     }
   });
 
+  it("does not collide approval tokens when components contain the delimiter", () => {
+    // JSONC escapes can put any character, including NUL, into either component, so a
+    // repository writer must not be able to craft a pair that hashes like another command.
+    const shifted = backupCommandApprovalToken("servers.x.command", "Y.command\0Z");
+    const original = backupCommandApprovalToken("servers.x.command\0Y.command", "Z");
+    expect(shifted).not.toBe(original);
+  });
+
   it("reports every required command when only some are approved", () => {
     const approvals = [
       { path: "servers.a.command", command: "npx a", token: "token-a" },

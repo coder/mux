@@ -921,11 +921,14 @@ export function backupSecretApprovalDigest(
   flaggedPaths: readonly string[]
 ): string {
   const flagged = new Set(flaggedPaths);
+  // JSON for the same reason as backupCommandApprovalToken: no delimiter is unambiguous
+  // once a component can contain it. Paths are portable-checked today, but the digest must
+  // not depend on that staying true.
   const parts = files
     .filter((file) => flagged.has(file.path))
-    .map((file) => `${file.path}\0${sha256(file.content)}`)
-    .sort();
-  return sha256(Buffer.from(parts.join("\n"), "utf-8"));
+    .map((file) => [file.path, sha256(file.content)] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return sha256(Buffer.from(JSON.stringify(parts), "utf-8"));
 }
 
 export async function createBackupPayload(
@@ -1340,7 +1343,10 @@ function readServerCommands(content: string): Map<string, ServerCommand> {
 
 /** Binds an approval to the exact command text the user read. */
 export function backupCommandApprovalToken(serverPath: string, command: string): string {
-  return sha256(Buffer.from(`${serverPath}\0${command}`, "utf-8"));
+  // JSON, not delimiter-joined: both components come from JSONC strings, whose escapes can
+  // produce any character including NUL, so no delimiter makes concatenation unambiguous
+  // and a crafted pair could collide with a different command's token.
+  return sha256(Buffer.from(JSON.stringify([serverPath, command]), "utf-8"));
 }
 
 /**
