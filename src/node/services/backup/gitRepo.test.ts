@@ -726,6 +726,61 @@ describe("BackupRepoCache", () => {
     expect(await git(["--git-dir", originPath, "show", `main:mux[1]/AGENTS.md`])).toBe("updated");
   });
 
+  it("accepts the absolute origin Git stores for a relative local repository path", async () => {
+    const seed = path.join(tempDir, "relative-origin-seed");
+    await git(["clone", originPath, seed]);
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
+    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+
+    const relativeOrigin = path.relative(process.cwd(), originPath);
+    const nestedCacheRoot = path.join(
+      tempDir,
+      "nested",
+      "one",
+      "two",
+      "three",
+      "four",
+      "five",
+      "six",
+      "seven",
+      "cache"
+    );
+    const repo = new BackupRepoCache({
+      repoUrl: relativeOrigin,
+      branch: "main",
+      cacheRoot: nestedCacheRoot,
+      managedPath: "mux",
+    });
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    const storedOrigin = await git(["-C", repo.cachePath, "config", "--get", "remote.origin.url"]);
+    expect(path.isAbsolute(storedOrigin)).toBe(true);
+    expect(await fs.realpath(storedOrigin)).toBe(await fs.realpath(originPath));
+
+    for (const compatibleOrigin of [relativeOrigin, originPath]) {
+      await git(["-C", repo.cachePath, "remote", "set-url", "origin", compatibleOrigin]);
+      await repo.ensureCache();
+      expect(await git(["-C", repo.cachePath, "config", "--get", "remote.origin.url"])).toBe(
+        storedOrigin
+      );
+    }
+
+    const other = path.join(tempDir, "relative-other.git");
+    await git(["init", "--bare", other]);
+    await git(["-C", repo.cachePath, "remote", "set-url", "origin", other]);
+    const failure = await repo.ensureCache().then(
+      () => null,
+      (error: unknown) => error
+    );
+    expect(failure).toBeInstanceOf(BackupOriginMismatchError);
+  });
+
   it("reuses the cache and rejects an origin mismatch", async () => {
     const repo = createRepo();
     await repo.ensureCache();

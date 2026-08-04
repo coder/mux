@@ -149,6 +149,37 @@ function safeRelativePath(relativePath: string): string {
   return segments.join("/");
 }
 
+function isRelativeLocalRepoPath(repoUrl: string): boolean {
+  return (
+    !path.isAbsolute(repoUrl) && !repoUrl.includes("://") && !/^(?:[^@]+@)?[^:/]+:/.test(repoUrl)
+  );
+}
+
+/**
+ * Git resolves a relative local URL from the caller's cwd. Keep that absolute spelling in
+ * the cache so later `git -C <cache>` commands reach the same repository. Concatenation
+ * preserves `..` around symlinks, which lexical path normalization can change.
+ */
+function repoUrlForGit(repoUrl: string): string {
+  if (!isRelativeLocalRepoPath(repoUrl)) return repoUrl;
+  const cwd = process.cwd();
+  return `${cwd}${cwd.endsWith(path.sep) ? "" : path.sep}${repoUrl}`;
+}
+
+async function matchesConfiguredRepoUrl(
+  actual: string,
+  configured: string,
+  effective: string
+): Promise<boolean> {
+  if (actual === configured || actual === effective) return true;
+  if (!path.isAbsolute(actual) || !isRelativeLocalRepoPath(configured)) return false;
+  try {
+    return (await fs.realpath(actual)) === (await fs.realpath(effective));
+  } catch {
+    return false;
+  }
+}
+
 async function runLocalGit(
   args: string[],
   options: ExecFileAsyncOptions = {}
@@ -379,11 +410,13 @@ export function backupCachePath(cacheRoot: string, repoUrl: string, branch: stri
 
 export class BackupRepoCache {
   readonly cachePath: string;
+  private readonly repoUrl: string;
   private baseRemoteCommit: string | null | undefined;
   private usedCredential: BackupCredential | undefined;
 
   constructor(private readonly options: BackupRepoCacheOptions) {
     this.cachePath = backupCachePath(options.cacheRoot, options.repoUrl, options.branch);
+    this.repoUrl = repoUrlForGit(options.repoUrl);
   }
 
   get credential(): BackupCredential | undefined {
@@ -392,7 +425,7 @@ export class BackupRepoCache {
 
   private credentialOptions(): GitCredentialOptions {
     return {
-      repoUrl: this.options.repoUrl,
+      repoUrl: this.repoUrl,
       timeoutMs: this.options.timeoutMs,
       signal: this.options.signal,
       onStderrData: this.options.onStderrData,
@@ -416,7 +449,7 @@ export class BackupRepoCache {
   }
 
   async lsRemote(): Promise<RemoteRefs> {
-    const result = await this.networkGit(["ls-remote", this.options.repoUrl]);
+    const result = await this.networkGit(["ls-remote", this.repoUrl]);
     const refs = new Map<string, string>();
     for (const line of result.stdout.split(/\r?\n/)) {
       const match = /^([0-9a-f]{40,64})\s+(.+)$/.exec(line.trim());
@@ -490,7 +523,7 @@ export class BackupRepoCache {
           this.options.branch,
           "--origin",
           "origin",
-          this.options.repoUrl,
+          this.repoUrl,
           this.cachePath,
         ]);
       }
@@ -533,7 +566,7 @@ export class BackupRepoCache {
     // `remote.origin.pushurl` overrides the url for pushes only and is multi-valued, so every
     // value is held to the same expectation as the url; absent means pushes use the url.
     for (const url of [...valuesOf("remote.origin.url"), ...valuesOf("remote.origin.pushurl")]) {
-      if (url !== this.options.repoUrl) {
+      if (!(await matchesConfiguredRepoUrl(url, this.options.repoUrl, this.repoUrl))) {
         throw new BackupOriginMismatchError(url, this.options.repoUrl);
       }
     }
@@ -552,7 +585,7 @@ export class BackupRepoCache {
     );
     const rebuilt: Array<readonly [string, string]> = [
       ...kept,
-      ["remote.origin.url", this.options.repoUrl],
+      ["remote.origin.url", this.repoUrl],
       ["remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
       // What `clone --filter` writes for itself. Without them a later fetch of this branch
       // would download every blob reachable from it, including files outside the managed
