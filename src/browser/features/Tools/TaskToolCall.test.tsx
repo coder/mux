@@ -511,6 +511,37 @@ describe("TaskAwaitToolCall", () => {
     expect(view.getByText(/explore · Pagination exploration/)).toBeDefined();
   });
 
+  test("prefers the spawn title over the sub-agent's own report title", () => {
+    const taskSpawn = createToolMessage({
+      toolName: "task",
+      args: {
+        agentId: "explore",
+        prompt: "Find pagination helpers.",
+        title: "Pagination exploration",
+        run_in_background: true,
+      },
+      result: { status: "queued", taskId: "task-1" },
+    });
+
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "task-1",
+            title: "Pagination Helpers Investigation Complete",
+            reportMarkdown: "Report",
+          },
+        ],
+      },
+      taskReportLinking: computeTaskReportLinking([taskSpawn]),
+    });
+
+    expect(view.getByText(/explore · Pagination exploration/)).toBeDefined();
+    expect(view.queryByText(/Investigation Complete/)).toBeNull();
+  });
+
   test("keeps multi-task completion summaries count-only", () => {
     const view = renderTaskAwaitToolCall({
       status: "completed",

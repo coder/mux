@@ -1354,12 +1354,14 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             firstResult.handleKind === "workspace_turn"
           ? "workspace"
           : taskReportLinking?.spawnAgentTypeByTaskId.get(completedTaskId);
+    // Spawn-side intent first (bash model_intent, task spawn title); the result's own
+    // title (report heading, bash display_name) is only a fallback.
     const description =
       (bashSpawn
         ? sanitizeDisplayableModelIntent(bashSpawn.modelIntent, bashSpawn.script)
         : undefined) ??
-      trimToNonEmptyString(firstResult.title) ??
-      trimToNonEmptyString(taskReportLinking?.spawnTitleByTaskId.get(completedTaskId));
+      trimToNonEmptyString(taskReportLinking?.spawnTitleByTaskId.get(completedTaskId)) ??
+      trimToNonEmptyString(firstResult.title);
     const detail = [kind, description].filter((part): part is string => part != null).join(" · ");
     singleTaskDetail = detail.length > 0 ? detail : undefined;
   }
