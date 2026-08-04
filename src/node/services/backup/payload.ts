@@ -585,16 +585,18 @@ function projectAppearance(value: Appearance | undefined): Appearance | undefine
   return Object.keys(projected).length > 0 ? projected : undefined;
 }
 
-/**
- * Providers whose option schema is a closed `z.object`, so parsing already dropped
- * undeclared keys. The rest (`google`, `ollama`, `openrouter`) are
- * `z.record(z.string(), z.unknown())`, which would carry an `apiKey` straight into the
- * backup, so they are excluded. A provider added later is excluded until it is listed
- * here, which fails closed.
- */
-const BACKED_UP_PROVIDER_OPTIONS = ["anthropic", "openai", "xai"] as const;
-
 type BackupProviderOptions = NonNullable<NonNullable<UserPreferences["ai"]>["providerOptions"]>;
+
+/**
+ * Of the providers `UserPreferencesSchema` can hold, only `anthropic` has a closed
+ * `z.object` schema, so parsing already dropped undeclared keys. `google` is
+ * `z.record(z.string(), z.unknown())`, which would carry an `apiKey` straight into the
+ * backup, so it is excluded. A provider added later is excluded until it is listed here,
+ * which fails closed, and `satisfies` rejects a name the preferences schema cannot hold.
+ */
+const BACKED_UP_PROVIDER_OPTIONS = ["anthropic"] as const satisfies ReadonlyArray<
+  keyof BackupProviderOptions
+>;
 
 function projectProviderOptions(value: unknown): BackupProviderOptions | undefined {
   if (!value || typeof value !== "object") return undefined;

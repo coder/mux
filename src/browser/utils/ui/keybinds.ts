@@ -522,6 +522,7 @@ export const KEYBINDS = {
   SETTINGS_BACKUP_PUSH: { key: "b", code: "KeyB", ctrl: true, alt: true },
   SETTINGS_BACKUP_RESTORE: { key: "r", code: "KeyR", ctrl: true, alt: true },
   SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN: { key: "o", code: "KeyO", ctrl: true, alt: true },
+  SETTINGS_BACKUP_APPROVE_COMMANDS: { key: "a", code: "KeyA", ctrl: true, alt: true },
 
   /** Confirm action in confirmation dialogs */
   CONFIRM_DIALOG_YES: { key: "y", allowShift: true },

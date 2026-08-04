@@ -13,6 +13,7 @@ import {
   matchesKeybind,
 } from "@/browser/utils/ui/keybinds";
 import { getErrorMessage } from "@/common/utils/errors";
+import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 
 type BackupRoute = keyof APIClient["backup"];
 type BackupRouteOutput<Route extends BackupRoute> = Awaited<ReturnType<APIClient["backup"][Route]>>;
@@ -32,6 +33,7 @@ const BACKUP_SHORTCUTS = [
   ["push", KEYBINDS.SETTINGS_BACKUP_PUSH],
   ["restore", KEYBINDS.SETTINGS_BACKUP_RESTORE],
   ["toggleOverride", KEYBINDS.SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN],
+  ["toggleApproveCommands", KEYBINDS.SETTINGS_BACKUP_APPROVE_COMMANDS],
 ] as const;
 
 type BackupShortcutAction = (typeof BACKUP_SHORTCUTS)[number][0];
@@ -46,17 +48,17 @@ const INCLUDED_SETTINGS = [
   "Portable preferences",
 ] as const;
 
-interface BackupDraft {
-  repoUrl: string;
-  branch: string;
-  path: string;
-}
+type BackupDraft = SettingsBackupInput;
 
 const DEFAULT_DRAFT: BackupDraft = {
   repoUrl: "",
   branch: "main",
   path: "mux/",
 };
+
+function toDraft(settings: SettingsBackupInput): BackupDraft {
+  return { repoUrl: settings.repoUrl, branch: settings.branch, path: settings.path };
+}
 
 function getOperationErrorMessage(error: BackupOperationError): string {
   if (!error.files?.length) return error.message;
@@ -151,11 +153,7 @@ export function BackupSection() {
       .then((settings) => {
         if (ignore || !settings) return;
 
-        const nextDraft = {
-          repoUrl: settings.repoUrl,
-          branch: settings.branch,
-          path: settings.path,
-        };
+        const nextDraft = toDraft(settings);
         setDraft(nextDraft);
         setSavedDraft(nextDraft);
       })
@@ -206,12 +204,7 @@ export function BackupSection() {
         return;
       }
 
-      const settings = result.data;
-      const nextDraft = {
-        repoUrl: settings.repoUrl,
-        branch: settings.branch,
-        path: settings.path,
-      };
+      const nextDraft = toDraft(result.data);
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
       setValidation(null);
@@ -386,6 +379,11 @@ export function BackupSection() {
       // while the control is hidden, and never inert while it is visible.
       if (!busy && secretScanBlocked) {
         setOverrideSecretScan((current) => !current);
+      }
+    },
+    toggleApproveCommands: () => {
+      if (!busy && commandApprovals.length > 0) {
+        setApproveCommands((current) => !current);
       }
     },
   };
