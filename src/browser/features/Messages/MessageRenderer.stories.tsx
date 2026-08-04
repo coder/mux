@@ -251,6 +251,25 @@ The same compact report typography applies to incremental agent findings.
       if (Number.parseFloat(getComputedStyle(heading).fontSize) > 14) {
         throw new Error("Task report heading is too large for compact tool chrome");
       }
+      const completedBadge = taskCard.querySelector<HTMLElement>(
+        '[data-component="TaskStatusBadge"]'
+      );
+      if (!completedBadge || completedBadge.textContent?.trim() !== "completed") {
+        throw new Error("Completed task status badge not rendered");
+      }
+      const completedBadgeStyle = getComputedStyle(completedBadge);
+      if (completedBadgeStyle.whiteSpace !== "nowrap") {
+        throw new Error("Completed task status badge allows line wrapping");
+      }
+      if (completedBadge.scrollHeight > completedBadge.clientHeight) {
+        throw new Error("Completed task status badge overflows vertically");
+      }
+      if (
+        Number.parseFloat(completedBadgeStyle.lineHeight) >
+        Number.parseFloat(completedBadgeStyle.fontSize)
+      ) {
+        throw new Error("Completed task status badge has excess line height");
+      }
       if (taskCard.scrollWidth > taskCard.clientWidth) {
         throw new Error(
           `Task report card overflows horizontally (${taskCard.scrollWidth}px > ${taskCard.clientWidth}px)`

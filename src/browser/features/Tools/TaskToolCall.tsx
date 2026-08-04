@@ -135,8 +135,11 @@ const TaskStatusBadge: React.FC<{
 
   return (
     <span
+      data-component="TaskStatusBadge"
       className={cn(
-        "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
+        // Keep status pills single-line and vertically tight even when surrounding tool rows
+        // inherit a more generous line height.
+        "inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] leading-none font-medium whitespace-nowrap",
         getStatusStyle(),
         className
       )}
