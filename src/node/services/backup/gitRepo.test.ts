@@ -67,11 +67,12 @@ describe("BackupRepoCache", () => {
     });
   }
 
-  it("does not hard-link metadata when cloning a local repository", async () => {
+  it("uses filtered transport for a local repository", async () => {
     const seed = path.join(tempDir, "local-clone-seed");
     await git(["clone", originPath, seed]);
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await fs.writeFile(path.join(seed, "unrelated.txt"), "outside managed path\n", "utf-8");
     await git(["-C", seed, "add", "-A"]);
     await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
     await git(["-C", seed, "push", "origin", "HEAD:main"]);
@@ -80,12 +81,52 @@ describe("BackupRepoCache", () => {
     await repo.ensureCache();
 
     expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
+    const localObjects = async () =>
+      await git(["-C", repo.cachePath, "cat-file", "--batch-all-objects", "--batch-check"]);
+    expect(await localObjects()).not.toContain(" blob ");
+
+    await fs.writeFile(path.join(seed, "mux", "second.md"), "second managed blob\n", "utf-8");
+    await fs.writeFile(path.join(seed, "unrelated-2.txt"), "second unrelated blob\n", "utf-8");
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "next"]);
+    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    const pushedCommit = await git(["-C", seed, "rev-parse", "HEAD"]);
+
+    expect(await repo.fetch()).toBe(pushedCommit);
+    expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
+    expect(await localObjects()).not.toContain(" blob ");
+  });
+
+  it("preserves SHA-256 object format when rebuilding clone config", async () => {
+    const shaOrigin = path.join(tempDir, "sha256-origin.git");
+    await git(["init", "--bare", "--object-format=sha256", "--initial-branch=main", shaOrigin]);
+    const seed = path.join(tempDir, "sha256-seed");
+    await git(["clone", shaOrigin, seed]);
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "sha256 managed\n", "utf-8");
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
+    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+
+    const repo = new BackupRepoCache({
+      repoUrl: shaOrigin,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+    });
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await git(["-C", repo.cachePath, "config", "--get", "extensions.objectformat"])).toBe(
+      "sha256"
+    );
+    expect(await fs.readFile(path.join(repo.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
+      "sha256 managed\n"
+    );
   });
 
   it("materializes a blob-filtered clone through the credential ladder", async () => {
-    // A file:// URL forces the wire protocol: a plain-path clone silently ignores
-    // `--filter` and would hand this test a full clone with nothing left to lazy-fetch.
-    await git(["-C", originPath, "config", "uploadpack.allowfilter", "true"]);
     const seedPath = path.join(tempDir, "seed");
     await git(["clone", originPath, seedPath]);
     await fs.mkdir(path.join(seedPath, "mux"), { recursive: true });
@@ -533,6 +574,7 @@ describe("BackupRepoCache", () => {
     for (const [key] of retained) {
       await git(["config", "--file", configPath, key, "garbage"]);
     }
+    await git(["config", "--file", configPath, "extensions.objectformat", "garbage"]);
     await git(["config", "--file", configPath, "core.repositoryformatversion", "garbage"]);
 
     await repo.ensureCache();

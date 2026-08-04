@@ -45,8 +45,8 @@ function isRemoteMovedRejection(text: string): boolean {
 const GIT_HARDENING_ARGS = ["--no-replace-objects", "-c", `core.hooksPath=${os.devNull}`];
 
 /**
- * Only valid platform flags written by `git init` or `git clone`, plus the recognized
- * partial-clone extension, survive. Malformed values are dropped; repository format and
+ * Only valid platform flags written by `git init` or `git clone`, plus recognized repository
+ * extensions, survive. Malformed values are dropped; repository format and
  * `core.bare` are forced below because this cache always has known values for them.
  */
 function shouldKeepCacheConfigEntry(key: string, value: string): boolean {
@@ -59,7 +59,8 @@ function shouldKeepCacheConfigEntry(key: string, value: string): boolean {
   ) {
     return value === "true" || value === "false";
   }
-  return key === "extensions.partialclone" && value === "origin";
+  if (key === "extensions.partialclone") return value === "origin";
+  return key === "extensions.objectformat" && value === "sha256";
 }
 
 /**
@@ -178,6 +179,26 @@ async function matchesConfiguredRepoUrl(
   } catch {
     return false;
   }
+}
+
+function usesLocalUploadPack(repoUrl: string): boolean {
+  if (path.isAbsolute(repoUrl)) return true;
+  try {
+    return new URL(repoUrl).protocol === "file:";
+  } catch {
+    return false;
+  }
+}
+
+function localUploadPackArgs(repoUrl: string): string[] {
+  return usesLocalUploadPack(repoUrl)
+    ? ["--upload-pack=git -c uploadpack.allowFilter=true upload-pack"]
+    : [];
+}
+
+function localCloneArgs(repoUrl: string): string[] {
+  const uploadPackArgs = localUploadPackArgs(repoUrl);
+  return path.isAbsolute(repoUrl) ? ["--no-local", ...uploadPackArgs] : uploadPackArgs;
 }
 
 async function runLocalGit(
@@ -510,11 +531,12 @@ export class BackupRepoCache {
         // feature never reads.
         await this.initEmptyCache();
       } else {
-        // `--no-checkout` because `resetHardToRemote` checks out the configured branch next,
-        // and materializing a branch here can fail on unrelated paths this platform cannot
-        // create.
+        // `--no-checkout` because `resetHardToRemote` checks out the configured branch next.
+        // Local paths need the upload-pack transport so blob filtering is honored instead of
+        // Git copying the full object database before sparse checkout can limit the worktree.
         await this.networkGit([
           "clone",
+          ...localCloneArgs(this.repoUrl),
           "--no-hardlinks",
           "--no-checkout",
           "--single-branch",
@@ -541,8 +563,8 @@ export class BackupRepoCache {
    * `url.*.pushInsteadOf` rewrites where a push lands after the URL checks pass,
    * `include.path` splices in another file, and keys like `core.sshCommand` or
    * `credential.helper` name commands to execute. That is an open-ended surface, so only
-   * validated platform flags and the partial-clone extension survive; every key Mux depends
-   * on is rewritten to its known value. User-global and system configuration are untouched:
+   * validated platform flags and recognized repository extensions survive; every key Mux
+   * depends on is rewritten to its known value. User-global and system configuration are untouched:
    * the user's own git setup, honored the same way the user's own `git push` would honor it.
    *
    * Two conditions are rejected rather than healed, the same way a gitfile or commondir
@@ -634,6 +656,7 @@ export class BackupRepoCache {
       "-C",
       this.cachePath,
       "fetch",
+      ...localUploadPackArgs(this.repoUrl),
       "origin",
       `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
     ]);
