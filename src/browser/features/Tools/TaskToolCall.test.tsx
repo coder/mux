@@ -4,7 +4,9 @@ import { GlobalWindow } from "happy-dom";
 
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
+import type { DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 
 let workspaceContextMock: {
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
@@ -68,6 +70,23 @@ function createWorkspaceMetadata(
 
 const taskAwaitArgs = { task_ids: ["task-1"], timeout_secs: 70 };
 const TaskAwaitToolCall = getToolComponent("task_await", taskAwaitArgs);
+
+function createToolMessage(overrides: {
+  toolName: string;
+  args: unknown;
+  result?: unknown;
+}): DisplayedMessage {
+  return {
+    type: "tool",
+    id: "tool-msg-1",
+    historyId: "hist-1",
+    toolCallId: "call-1",
+    status: "completed",
+    isPartial: false,
+    historySequence: 1,
+    ...overrides,
+  };
+}
 
 function renderTaskAwaitToolCall(props: Record<string, unknown> = {}) {
   return render(
@@ -361,6 +380,111 @@ describe("TaskAwaitToolCall", () => {
 
     expect(view.getByText("Task wait failed")).toBeDefined();
     expect(view.getByText("Task service unavailable")).toBeDefined();
+  });
+
+  test("shows bash kind and spawn model_intent for a single completed bash task", () => {
+    const bashSpawn = createToolMessage({
+      toolName: "bash",
+      args: {
+        script: "./scripts/wait_pr_ready.sh 27330",
+        display_name: "PR ready watcher",
+        model_intent: "watching PR 27330 until it is ready",
+        timeout_secs: 3600,
+        run_in_background: true,
+      },
+      result: {
+        success: true,
+        output: "Started",
+        exitCode: 0,
+        wall_duration_ms: 10,
+        taskId: "bash:pr-ready-watcher-a1b2",
+        backgroundProcessId: "pr-ready-watcher-a1b2",
+      },
+    });
+
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      args: { task_ids: ["bash:pr-ready-watcher-a1b2"] },
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "bash:pr-ready-watcher-a1b2",
+            title: "PR ready watcher",
+            reportMarkdown: "exit 0",
+          },
+        ],
+      },
+      taskReportLinking: computeTaskReportLinking([bashSpawn]),
+    });
+
+    expect(view.getByText("1 task completed")).toBeDefined();
+    expect(view.getByText(/bash · Watching PR 27330 until it is ready/)).toBeDefined();
+  });
+
+  test("falls back to the completed task title when no spawn intent is linked", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      args: { task_ids: ["bash:pr-ready-watcher-a1b2"] },
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "bash:pr-ready-watcher-a1b2",
+            title: "PR ready watcher",
+            reportMarkdown: "exit 0",
+          },
+        ],
+      },
+    });
+
+    expect(view.getByText(/bash · PR ready watcher/)).toBeDefined();
+  });
+
+  test("shows agent type and title for a single completed sub-agent task", () => {
+    const taskSpawn = createToolMessage({
+      toolName: "task",
+      args: {
+        agentId: "explore",
+        prompt: "Find pagination helpers.",
+        title: "Pagination exploration",
+        run_in_background: true,
+      },
+      result: { status: "queued", taskId: "task-1" },
+    });
+
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "task-1",
+            title: "Pagination exploration",
+            reportMarkdown: "Report",
+          },
+        ],
+      },
+      taskReportLinking: computeTaskReportLinking([taskSpawn]),
+    });
+
+    expect(view.getByText(/explore · Pagination exploration/)).toBeDefined();
+  });
+
+  test("keeps multi-task completion summaries count-only", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      args: { task_ids: ["task-1", "task-2"] },
+      result: {
+        results: [
+          { status: "completed", taskId: "task-1", title: "First task", reportMarkdown: "a" },
+          { status: "completed", taskId: "task-2", title: "Second task", reportMarkdown: "b" },
+        ],
+      },
+    });
+
+    expect(view.getByText("2 tasks completed")).toBeDefined();
+    expect(view.queryByText(/First task/)).toBeNull();
   });
 
   test("uses valid legacy agentType for task_await rows when agentId is invalid", () => {
