@@ -193,7 +193,7 @@ export class MessageQueue {
    * messages should not change the queue badge shown beside the user's own follow-up.
    */
   getVisibleQueueDispatchMode(): QueueDispatchMode {
-    return this.getVisibleEntries()[0]?.dispatchMode ?? "tool-end";
+    return this.getVisibleEntries().length > 0 ? this.getNextQueueDispatchMode() : "tool-end";
   }
 
   /**
@@ -201,15 +201,24 @@ export class MessageQueue {
    * aggregate queued-message card. Hidden synthetic/background entries keep their own mode.
    */
   setVisibleQueueDispatchMode(mode: QueueDispatchMode): boolean {
-    let foundVisibleEntry = false;
+    const visibleEntries: QueueEntry[] = [];
+    const hiddenEntries: QueueEntry[] = [];
     for (const entry of this.entries) {
-      if (!entry.userAuthored) {
-        continue;
+      if (entry.userAuthored) {
+        entry.dispatchMode = mode;
+        visibleEntries.push(entry);
+      } else {
+        hiddenEntries.push(entry);
       }
-      entry.dispatchMode = mode;
-      foundVisibleEntry = true;
     }
-    return foundVisibleEntry;
+    if (visibleEntries.length === 0) {
+      return false;
+    }
+
+    // The user explicitly chose when the aggregate visible card should dispatch. Keep those
+    // entries together at the FIFO head so a hidden predecessor cannot contradict that choice.
+    this.entries = [...visibleEntries, ...hiddenEntries];
+    return true;
   }
 
   /**

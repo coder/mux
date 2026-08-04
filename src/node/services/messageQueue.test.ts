@@ -30,13 +30,13 @@ describe("MessageQueue", () => {
         queueDispatchMode: "turn-end",
       });
 
-      // Dispatch state still includes both FIFO entries, but the composer/queue card
-      // only exposes the user's own input and its chosen dispatch boundary.
+      // Content projection hides backend work, while the visible card reflects the FIFO head's
+      // effective boundary until the user explicitly reprioritizes their queued follow-up.
       expect(queue.getMessages()).toEqual(["Background monitor wake", "User follow-up"]);
       expect(queue.getVisibleMessages()).toEqual(["User follow-up"]);
       expect(queue.getVisibleDisplayText()).toBe("User follow-up");
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
-      expect(queue.getVisibleQueueDispatchMode()).toBe("turn-end");
+      expect(queue.getVisibleQueueDispatchMode()).toBe("tool-end");
       const background = queue.dequeueNext();
       expect(background.message).toBe("Background monitor wake");
       expect(background.internal).toMatchObject({ synthetic: true, agentInitiated: true });
@@ -281,7 +281,7 @@ describe("MessageQueue", () => {
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
     });
 
-    it("updates all visible entries without changing hidden queue entries or content order", () => {
+    it("updates and prioritizes all visible entries while preserving their relative order", () => {
       const validOptions: SendMessageOptions = { model: "gpt-4", agentId: "exec" };
       queue.add(
         "hidden wake",
@@ -306,11 +306,32 @@ describe("MessageQueue", () => {
 
       expect(queue.setVisibleQueueDispatchMode("turn-end")).toBe(true);
       expect(queue.getVisibleQueueDispatchMode()).toBe("turn-end");
+      expect(queue.getNextQueueDispatchMode()).toBe("turn-end");
       expect(queue.getQueueDispatchMode()).toBe("tool-end");
-      expect(queue.getMessages()).toEqual(["hidden wake", "visible first", "visible second"]);
+      expect(queue.getMessages()).toEqual(["visible first", "visible second", "hidden wake"]);
 
       queue.dequeueNext();
-      expect(queue.getQueueDispatchMode()).toBe("turn-end");
+      expect(queue.getNextQueueDispatchMode()).toBe("turn-end");
+    });
+
+    it("reports a hidden predecessor's effective mode until the user reprioritizes the visible card", () => {
+      const validOptions: SendMessageOptions = { model: "gpt-4", agentId: "exec" };
+      queue.add(
+        "hidden predecessor",
+        { ...validOptions, queueDispatchMode: "turn-end" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          sealed: true,
+        }
+      );
+      queue.add("visible follow-up", { ...validOptions, queueDispatchMode: "tool-end" });
+
+      expect(queue.getVisibleQueueDispatchMode()).toBe("turn-end");
+      expect(queue.setVisibleQueueDispatchMode("tool-end")).toBe(true);
+      expect(queue.getMessages()).toEqual(["visible follow-up", "hidden predecessor"]);
+      expect(queue.getVisibleQueueDispatchMode()).toBe("tool-end");
+      expect(queue.getNextQueueDispatchMode()).toBe("tool-end");
     });
 
     it("reports the first visible entry mode instead of a later visible tool-end entry", () => {
