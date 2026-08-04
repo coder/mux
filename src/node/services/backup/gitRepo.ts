@@ -334,25 +334,40 @@ export class BackupRepoCache {
     // of this code, or altered since, still reads and writes payload bytes unchanged.
     await this.pinVerbatimContent();
 
-    const actualOrigin = (await this.localGit(["remote", "get-url", "origin"])).stdout.trim();
+    // Raw config values, not `remote get-url`: get-url applies `url.<base>.insteadOf`
+    // rewrites, so a user-level rewrite made every operation reject a cache whose stored
+    // url is exactly what Mux wrote. The check guards the stored destination against
+    // drift and tampering, and the stored value is what Mux controls; a rewrite on top of
+    // it is the user's own git configuration, honored here the same way the user's own
+    // `git push` would honor it.
+    const actualOrigin = (
+      await this.localGit(["config", "--get", "remote.origin.url"])
+    ).stdout.trim();
     if (actualOrigin !== this.options.repoUrl) {
       throw new BackupOriginMismatchError(actualOrigin, this.options.repoUrl);
     }
-    // `remote.origin.pushurl` overrides the url for pushes only, so the url just checked is not
-    // necessarily where a backup lands. `--all` because the key is multi-valued and a push
-    // writes to every value, so reading one would let a second destination through.
-    const pushUrls = (
-      await this.localGit(["remote", "get-url", "--push", "--all", "origin"])
-    ).stdout
-      .split(/\r?\n/)
-      .map((url) => url.trim())
-      .filter(Boolean);
+    // `remote.origin.pushurl` overrides the url for pushes only, so the url just checked is
+    // not necessarily where a backup lands. Multi-valued, and a push writes to every value,
+    // so every value must be the configured repository; absent means pushes use the url.
+    const pushUrls = await this.rawPushUrls();
     const unexpected = pushUrls.find((url) => url !== this.options.repoUrl);
     if (unexpected !== undefined) {
       throw new BackupOriginMismatchError(unexpected, this.options.repoUrl);
     }
-    if (pushUrls.length !== 1) {
-      throw new BackupOriginMismatchError(pushUrls.join(", "), this.options.repoUrl);
+  }
+
+  private async rawPushUrls(): Promise<string[]> {
+    try {
+      return (await this.localGit(["config", "--get-all", "remote.origin.pushurl"])).stdout
+        .split(/\r?\n/)
+        .map((url) => url.trim())
+        .filter(Boolean);
+    } catch (error) {
+      // Exit 1 is git's "key not set", the common case.
+      if (error && typeof error === "object" && "code" in error && error.code === 1) {
+        return [];
+      }
+      throw error;
     }
   }
 

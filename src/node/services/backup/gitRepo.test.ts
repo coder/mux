@@ -344,6 +344,31 @@ describe("BackupRepoCache", () => {
     }
   });
 
+  it("accepts a cache whose url the user's insteadOf rules rewrite", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+
+    // A user-level rewrite: `remote get-url` reports the rewritten spelling while the
+    // stored value stays what Mux wrote, so an effective-url comparison rejected every
+    // operation for this user.
+    const globalConfig = path.join(tempDir, "gitconfig");
+    await fs.writeFile(
+      globalConfig,
+      `[url "file://${originPath}"]\n\tinsteadOf = ${originPath}\n`,
+      "utf-8"
+    );
+    const rewritten = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+      env: { GIT_CONFIG_GLOBAL: globalConfig },
+    });
+
+    await rewritten.ensureCache();
+    await rewritten.fetch();
+  });
+
   it("reports cache status", async () => {
     const repo = createRepo();
     await repo.ensureCache();
