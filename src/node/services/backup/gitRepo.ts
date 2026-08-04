@@ -413,9 +413,16 @@ export class BackupRepoCache {
    * checkout of the whole branch fails on any path elsewhere in the repository that this
    * platform cannot create, which would block a backup whose own payload is fine.
    * `--no-cone` because the managed path is a single literal directory, not a cone pattern set.
+   *
+   * Through the credential ladder, not `localGit`: the cache is blob-filtered, so
+   * materializing the working tree is what triggers the promisor fetch of the managed
+   * files' blobs, and that fetch needs the same credentials and non-interactive
+   * environment the clone used. The same applies to the checkout below.
    */
   private async applySparseCheckout(): Promise<void> {
-    await this.localGit([
+    await this.networkGit([
+      "-C",
+      this.cachePath,
       "sparse-checkout",
       "set",
       "--no-cone",
@@ -430,7 +437,9 @@ export class BackupRepoCache {
       // -f because a previous preview leaves modified tracked files in this cache. Without
       // it the checkout keeps them and the next preview reads the local export as if it
       // were the remote's backup.
-      await this.localGit([
+      await this.networkGit([
+        "-C",
+        this.cachePath,
         "checkout",
         "-f",
         "-B",

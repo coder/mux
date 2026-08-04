@@ -54,6 +54,60 @@ describe("BackupRepoCache", () => {
     });
   }
 
+  it("materializes a blob-filtered clone through the credential ladder", async () => {
+    // A file:// URL forces the wire protocol: a plain-path clone silently ignores
+    // `--filter` and would hand this test a full clone with nothing left to lazy-fetch.
+    await git(["-C", originPath, "config", "uploadpack.allowfilter", "true"]);
+    const seedPath = path.join(tempDir, "seed");
+    await git(["clone", originPath, seedPath]);
+    await fs.mkdir(path.join(seedPath, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seedPath, "mux", "note.md"), "managed content\n", "utf-8");
+    await git(["-C", seedPath, "add", "."]);
+    await git([
+      "-C",
+      seedPath,
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@example.com",
+      "commit",
+      "-m",
+      "seed",
+    ]);
+    await git(["-C", seedPath, "push", "origin", "HEAD:main"]);
+
+    const repo = new BackupRepoCache({
+      repoUrl: `file://${originPath}`,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+    });
+    await repo.ensureCache();
+    await repo.fetch();
+    // The clone really is blob-filtered, so the checkout below must lazy-fetch.
+    const objects = await git([
+      "-C",
+      repo.cachePath,
+      "cat-file",
+      "--batch-all-objects",
+      "--batch-check",
+    ]);
+    expect(objects).not.toContain(" blob ");
+
+    // A fresh instance has recorded no credential yet, so the getter proves the
+    // materializing checkout ran through the ladder rather than as a bare local command.
+    const reader = new BackupRepoCache({
+      repoUrl: `file://${originPath}`,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+    });
+    expect(await reader.resetHardToRemote()).not.toBeNull();
+    expect(reader.credential).toBe("ambient");
+    const restored = await fs.readFile(path.join(reader.cachePath, "mux", "note.md"), "utf-8");
+    expect(restored).toBe("managed content\n");
+  });
+
   it("bootstraps an empty repo, commits the managed path, and pushes", async () => {
     const repo = createRepo();
     expect((await repo.lsRemote()).branchCommit).toBeNull();
