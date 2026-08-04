@@ -70,6 +70,43 @@ printf 'prompt=%s,%s,%s\n' "$GIT_TERMINAL_PROMPT" "$GH_PROMPT_DISABLED" "$GCM_IN
     expect(log).toContain("prompt=0,1,never");
   });
 
+  it("strips ambient GitHub token variables from the gh rung", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "gh"),
+      `#!/bin/sh
+printf 'gh-tokens=[%s%s%s%s]\n' "$GH_TOKEN" "$GITHUB_TOKEN" "$GH_ENTERPRISE_TOKEN" "$GITHUB_ENTERPRISE_TOKEN" >> "$GIT_LOG"
+`
+    );
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf 'git-tokens=[%s%s%s%s]\n' "$GH_TOKEN" "$GITHUB_TOKEN" "$GH_ENTERPRISE_TOKEN" "$GITHUB_ENTERPRISE_TOKEN" >> "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "https://github.com/example/repo.git"], {
+        repoUrl: "https://github.com/example/repo.git",
+        env: {
+          GIT_LOG: logPath,
+          GH_TOKEN: "env-token",
+          GITHUB_TOKEN: "env-token",
+          GH_ENTERPRISE_TOKEN: "env-token",
+          GITHUB_ENTERPRISE_TOKEN: "env-token",
+        },
+      })
+    );
+
+    // gh consumes these before its stored login, so leaving them inherited would make
+    // the "token-free" ladder authenticate with a token after all.
+    expect(result.credential).toBe("gh");
+    const log = await fs.readFile(logPath, "utf-8");
+    expect(log).toContain("gh-tokens=[]");
+    expect(log).toContain("git-tokens=[]");
+    expect(log).not.toContain("env-token");
+  });
+
   it("retries authentication failures without controlled credential overrides", async () => {
     if (process.platform === "win32") return;
     // A logged-in gh account can still lack access to this one repository, so the ambient

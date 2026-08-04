@@ -173,11 +173,26 @@ async function run(
   return await process.result;
 }
 
+/**
+ * gh reads these before its own stored login (`gh help environment`), so an inherited
+ * variable would quietly turn the gh rung back into a token pathway. The rung exists to
+ * reuse the CLI's stored login and nothing else; stripping the probe too keeps the rung
+ * from being offered on the strength of a token alone. The ambient rung inherits the
+ * host environment untouched on purpose: there git runs exactly as the user's own git
+ * would, with credential wiring Mux neither adds nor removes.
+ */
+const GH_TOKEN_ENV_UNSET = {
+  GH_TOKEN: undefined,
+  GITHUB_TOKEN: undefined,
+  GH_ENTERPRISE_TOKEN: undefined,
+  GITHUB_ENTERPRISE_TOKEN: undefined,
+} as const;
+
 async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): Promise<boolean> {
   try {
     await run("gh", ["auth", "status", "--hostname", host], {
       ...options,
-      env: { ...options.env, ...NON_INTERACTIVE_ENV },
+      env: { ...options.env, ...NON_INTERACTIVE_ENV, ...GH_TOKEN_ENV_UNSET },
     });
     return true;
   } catch {
@@ -213,7 +228,7 @@ async function controlledCredentials(
     rungs.push({
       credential: "gh",
       argsPrefix: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
-      env: {},
+      env: { ...GH_TOKEN_ENV_UNSET },
     });
   }
 
