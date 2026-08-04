@@ -344,6 +344,54 @@ describe("BackupRepoCache", () => {
     }
   });
 
+  it("refuses a cache whose .git is a gitfile pointing at another repository", async () => {
+    const outside = path.join(tempDir, "outside");
+    await git(["init", outside]);
+    await git(["-C", outside, "config", "core.autocrlf", "input"]);
+
+    const repo = createRepo();
+    await fs.mkdir(repo.cachePath, { recursive: true });
+    // Not a symlink: a plain file `.git` redirects every `git -C` command the same way.
+    await fs.writeFile(
+      path.join(repo.cachePath, ".git"),
+      `gitdir: ${path.join(outside, ".git")}\n`,
+      "utf-8"
+    );
+
+    try {
+      await repo.ensureCache();
+      throw new Error("Expected the gitfile cache to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("not a directory");
+    }
+    // The outside repository's config must not have taken the cache's writes.
+    expect(await git(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
+  });
+
+  it("refuses a cache whose .git carries a commondir indirection", async () => {
+    const outside = path.join(tempDir, "outside");
+    await git(["init", outside]);
+    await git(["-C", outside, "config", "core.autocrlf", "input"]);
+
+    const repo = createRepo();
+    await repo.ensureCache();
+    await fs.writeFile(
+      path.join(repo.cachePath, ".git", "commondir"),
+      `${path.join(outside, ".git")}\n`,
+      "utf-8"
+    );
+
+    try {
+      await repo.ensureCache();
+      throw new Error("Expected the commondir cache to be rejected");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("redirects to another repository");
+    }
+    expect(await git(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
+  });
+
   it("accepts a cache whose url the user's insteadOf rules rewrite", async () => {
     const repo = createRepo();
     await repo.ensureCache();

@@ -159,6 +159,30 @@ export async function assertNotSymlink(target: string): Promise<void> {
   }
 }
 
+/**
+ * `.git` can redirect every git command elsewhere without being a symlink: a plain-file
+ * `.git` (a gitfile, `gitdir: <path>`) and a `commondir` file inside a real `.git` both
+ * resolve config, refs, and objects to another repository (gitrepository-layout(5)), so a
+ * pre-created cache carrying either would take this cache's config writes with it. The
+ * cache must be its own self-contained repository; an absent `.git` is fine, since the
+ * caller is about to create one.
+ */
+async function assertOwnGitDirectory(cachePath: string): Promise<void> {
+  const gitDir = path.join(cachePath, ".git");
+  const existing = await fs.lstat(gitDir).catch(() => null);
+  if (existing === null) return;
+  if (existing.isSymbolicLink()) {
+    throw new Error(`Refusing to use '${gitDir}': it is a symlink`);
+  }
+  if (!existing.isDirectory()) {
+    throw new Error(`Refusing to use '${gitDir}': it is not a directory`);
+  }
+  const commonDir = await fs.lstat(path.join(gitDir, "commondir")).catch(() => null);
+  if (commonDir !== null) {
+    throw new Error(`Refusing to use '${gitDir}': it redirects to another repository`);
+  }
+}
+
 function errorText(error: unknown): string {
   if (error && typeof error === "object" && "stderr" in error) {
     const stderr = (error as { stderr?: unknown }).stderr;
@@ -222,12 +246,12 @@ export class BackupRepoCache {
   private async pinVerbatimContent(): Promise<void> {
     // Every component is checked before anything is written, and the attributes file is opened
     // without following a final link, because this writes to fixed paths inside a directory
-    // other processes can reach. A link at `.git` redirects `git config` into whatever
-    // repository it points at, and one at `.git/info` or the file itself redirects the write
-    // below. `.git` is re-checked here rather than trusting the caller, so this method is safe
-    // on its own terms.
+    // other processes can reach. A link, gitfile, or commondir at `.git` redirects
+    // `git config` into whatever repository it points at, and a link at `.git/info` or the
+    // file itself redirects the write below. `.git` is re-checked here rather than trusting
+    // the caller, so this method is safe on its own terms.
     const gitDir = path.join(this.cachePath, ".git");
-    await assertNotSymlink(gitDir);
+    await assertOwnGitDirectory(this.cachePath);
     for (const [key, value] of VERBATIM_CONTENT_CONFIG) {
       await this.localGit(["config", key, value]);
     }
@@ -289,10 +313,11 @@ export class BackupRepoCache {
     await fs.mkdir(this.options.cacheRoot, { recursive: true });
     await assertNotSymlink(this.cachePath);
     const gitDir = path.join(this.cachePath, ".git");
-    // Before any branch below, because each one writes: a `.git` symlinked to another
-    // repository would otherwise take this cache's `remote add` and `config` with it. Checked
-    // here rather than only in `pinVerbatimContent` so the repair path is covered too.
-    await assertNotSymlink(gitDir);
+    // Before any branch below, because each one writes: a `.git` that resolves to another
+    // repository, whether a symlink, a gitfile, or a commondir indirection, would take this
+    // cache's `remote add` and `config` with it. Checked here rather than only in
+    // `pinVerbatimContent` so the repair path is covered too.
+    await assertOwnGitDirectory(this.cachePath);
     if (!(await exists(gitDir))) {
       if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
