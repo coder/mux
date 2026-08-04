@@ -465,7 +465,7 @@ export function BackupSection() {
             size="sm"
             onClick={() => void handleSave()}
             disabled={busy || !isDirty}
-            title={`Save settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_SAVE)})`}
+            tooltip={`Save settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_SAVE)})`}
             className="w-full sm:w-auto"
           >
             {saving ? "Saving..." : "Save settings"}
@@ -508,7 +508,7 @@ export function BackupSection() {
             size="sm"
             onClick={() => void handleValidate()}
             disabled={busy || isDirty || !configured}
-            title={`Validate repository (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_VALIDATE)})`}
+            tooltip={`Validate repository (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_VALIDATE)})`}
             className="w-full shrink-0 sm:w-auto"
           >
             <RefreshCw className={activeAction === "validate" ? "animate-spin" : ""} />
@@ -542,7 +542,7 @@ export function BackupSection() {
             size="sm"
             onClick={() => void handlePreview()}
             disabled={busy || isDirty || !configured}
-            title={`Preview changes (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PREVIEW)})`}
+            tooltip={`Preview changes (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PREVIEW)})`}
             className="w-full shrink-0 sm:w-auto"
           >
             Preview changes
@@ -631,7 +631,7 @@ export function BackupSection() {
         <Button
           onClick={() => void handlePush()}
           disabled={busy || isDirty || !configured}
-          title={`Back up settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PUSH)})`}
+          tooltip={`Back up settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_PUSH)})`}
           className="w-full sm:w-auto"
         >
           <CloudUpload />
@@ -641,7 +641,7 @@ export function BackupSection() {
           variant="destructive"
           onClick={openRestoreConfirmation}
           disabled={busy || isDirty || !configured}
-          title={`Restore settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_RESTORE)})`}
+          tooltip={`Restore settings (${formatKeybind(KEYBINDS.SETTINGS_BACKUP_RESTORE)})`}
           className="w-full sm:w-auto"
         >
           <ArchiveRestore />
