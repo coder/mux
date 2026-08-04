@@ -29,6 +29,19 @@ async function writeManagedFile(
   await fs.writeFile(filePath, content, "utf-8");
 }
 
+async function findHardLinkedFiles(root: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...(await findHardLinkedFiles(entryPath)));
+    } else if (entry.isFile() && (await fs.lstat(entryPath)).nlink > 1) {
+      found.push(entryPath);
+    }
+  }
+  return found;
+}
+
 describe("BackupRepoCache", () => {
   let tempDir: string;
   let originPath: string;
@@ -53,6 +66,21 @@ describe("BackupRepoCache", () => {
       managedPath: "mux",
     });
   }
+
+  it("does not hard-link metadata when cloning a local repository", async () => {
+    const seed = path.join(tempDir, "local-clone-seed");
+    await git(["clone", originPath, seed]);
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
+    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+
+    const repo = createRepo();
+    await repo.ensureCache();
+
+    expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
+  });
 
   it("materializes a blob-filtered clone through the credential ladder", async () => {
     // A file:// URL forces the wire protocol: a plain-path clone silently ignores
@@ -516,6 +544,60 @@ describe("BackupRepoCache", () => {
 
     expect((failure as Error | null)?.message).toContain("symlink");
     expect(await fs.readFile(victim, "utf-8")).toBe("victim content\n");
+  });
+
+  it("severs hard-linked git metadata before fetch overwrites its outside alias", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    if ((await repo.stageAndCommit("mux", "Back up settings")) === null) {
+      throw new Error("Expected a commit");
+    }
+    await repo.push();
+    await repo.fetch();
+
+    const victim = path.join(tempDir, "victim-hard-link");
+    await fs.writeFile(victim, "victim content\n", "utf-8");
+    const fetchHead = path.join(repo.cachePath, ".git", "FETCH_HEAD");
+    await fs.rm(fetchHead, { force: true });
+    await fs.link(victim, fetchHead);
+
+    await repo.ensureCache();
+    await repo.fetch();
+
+    expect(await fs.readFile(victim, "utf-8")).toBe("victim content\n");
+    expect((await fs.lstat(fetchHead)).nlink).toBe(1);
+  });
+
+  it("migrates hard-linked objects left by older local clones", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+    await repo.push();
+
+    const objectPath = path.join(
+      repo.cachePath,
+      ".git",
+      "objects",
+      commit.slice(0, 2),
+      commit.slice(2)
+    );
+    const outsideAlias = path.join(tempDir, "legacy-object-alias");
+    await fs.link(objectPath, outsideAlias);
+    const objectBytes = await fs.readFile(outsideAlias);
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await fs.readFile(outsideAlias)).toEqual(objectBytes);
+    expect((await fs.lstat(objectPath)).nlink).toBe(1);
   });
 
   it("rejects symlinked git metadata below the top level of .git", async () => {

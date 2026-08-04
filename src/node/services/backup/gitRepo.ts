@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import type { Dirent } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -209,29 +208,100 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
 }
 
 /**
- * Git follows symlinks when it rewrites its own metadata: a fetch writes the fetched ref
- * record through a symlinked `FETCH_HEAD` into whatever file it names, truncating it, and
- * `HEAD`, `ORIG_HEAD`, the index, refs, and reflogs are all rewritten the same way by
- * commands this feature runs. That is an open-ended set of filenames, so instead of naming
- * them the whole tree is held to one rule: `git init` and `git clone` create no symlinks
- * under `.git`, so in a cache Mux created there is nothing a symlink can legitimately be,
- * wherever it sits. Recursion is by hand because the runtime `readdir(recursive)` semantics
- * around symlinked directories are not something this boundary should depend on.
+ * Git rewrites an open-ended set of metadata paths. Symlinks are rejected, and
+ * multiply-linked regular files are copied to cache-owned inodes before Git runs, so Git
+ * cannot update an outside hard-link alias. New local clones also use `--no-hardlinks`.
  */
-async function assertNoSymlinksUnder(dir: string): Promise<void> {
-  let entries: Dirent[];
+async function normalizeGitMetadataLinks(dir: string): Promise<void> {
+  let entries: string[];
   try {
-    entries = await fs.readdir(dir, { withFileTypes: true });
+    entries = await fs.readdir(dir);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
   for (const entry of entries) {
-    const entryPath = path.join(dir, entry.name);
-    if (entry.isSymbolicLink()) {
+    const entryPath = path.join(dir, entry);
+    const metadata = await fs.lstat(entryPath);
+    if (metadata.isSymbolicLink()) {
       throw new Error(`Refusing to use '${entryPath}': it is a symlink`);
     }
-    if (entry.isDirectory()) await assertNoSymlinksUnder(entryPath);
+    if (metadata.isDirectory()) {
+      await normalizeGitMetadataLinks(entryPath);
+    } else if (!metadata.isFile()) {
+      throw new Error(`Refusing to use '${entryPath}': it is not a regular file`);
+    } else if (metadata.nlink > 1) {
+      await severHardLink(entryPath, metadata.dev, metadata.ino);
+    }
+  }
+}
+
+async function severHardLink(
+  filePath: string,
+  expectedDevice: number,
+  expectedInode: number
+): Promise<void> {
+  const temporaryPath = path.join(
+    path.dirname(filePath),
+    `.mux-unlink-${process.pid}-${randomUUID()}.tmp`
+  );
+  try {
+    const source = await fs.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    try {
+      const sourceMetadata = await source.stat();
+      if (
+        !sourceMetadata.isFile() ||
+        sourceMetadata.dev !== expectedDevice ||
+        sourceMetadata.ino !== expectedInode
+      ) {
+        throw new Error(`Refusing to use '${filePath}': it changed while checking hard links`);
+      }
+      if (sourceMetadata.nlink <= 1) return;
+
+      const replacement = await fs.open(
+        temporaryPath,
+        fs.constants.O_WRONLY |
+          fs.constants.O_CREAT |
+          fs.constants.O_EXCL |
+          (fs.constants.O_NOFOLLOW ?? 0),
+        sourceMetadata.mode & 0o777
+      );
+      try {
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let position = 0;
+        while (true) {
+          const { bytesRead } = await source.read(buffer, 0, buffer.length, position);
+          if (bytesRead === 0) break;
+          let written = 0;
+          while (written < bytesRead) {
+            const { bytesWritten } = await replacement.write(
+              buffer,
+              written,
+              bytesRead - written,
+              position + written
+            );
+            if (bytesWritten === 0) {
+              throw new Error(`Failed to copy hard-linked Git metadata '${filePath}'`);
+            }
+            written += bytesWritten;
+          }
+          position += bytesRead;
+        }
+        await replacement.chmod(sourceMetadata.mode & 0o777);
+      } finally {
+        await replacement.close();
+      }
+    } finally {
+      await source.close();
+    }
+
+    await fs.rename(temporaryPath, filePath);
+    const normalized = await fs.lstat(filePath);
+    if (!normalized.isFile() || normalized.nlink !== 1) {
+      throw new Error(`Failed to sever hard links for Git metadata '${filePath}'`);
+    }
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
   }
 }
 
@@ -392,7 +462,7 @@ export class BackupRepoCache {
     // repository, whether a symlink, a gitfile, or a commondir indirection, would take this
     // cache's config rewrite with it.
     await assertOwnGitDirectory(this.cachePath);
-    await assertNoSymlinksUnder(gitDir);
+    await normalizeGitMetadataLinks(gitDir);
     if (!(await exists(gitDir))) {
       if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
@@ -412,6 +482,7 @@ export class BackupRepoCache {
         // create.
         await this.networkGit([
           "clone",
+          "--no-hardlinks",
           "--no-checkout",
           "--single-branch",
           `--filter=${BLOB_FILTER}`,
