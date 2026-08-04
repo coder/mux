@@ -270,6 +270,12 @@ The same compact report typography applies to incremental agent findings.
       ) {
         throw new Error("Completed task status badge has excess line height");
       }
+      if (
+        Number.parseFloat(completedBadgeStyle.paddingTop) <=
+        Number.parseFloat(completedBadgeStyle.paddingBottom)
+      ) {
+        throw new Error("Completed task status badge lacks optical top-padding compensation");
+      }
       if (taskCard.scrollWidth > taskCard.clientWidth) {
         throw new Error(
           `Task report card overflows horizontally (${taskCard.scrollWidth}px > ${taskCard.clientWidth}px)`

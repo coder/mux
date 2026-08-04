@@ -137,9 +137,9 @@ const TaskStatusBadge: React.FC<{
     <span
       data-component="TaskStatusBadge"
       className={cn(
-        // Keep status pills single-line and vertically tight even when surrounding tool rows
-        // inherit a more generous line height.
-        "inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] leading-none font-medium whitespace-nowrap",
+        // Lowercase status labels sit high within the font box, so preserve the compact total
+        // height while shifting one pixel of padding from below the text to above it.
+        "inline-flex shrink-0 items-center rounded px-1.5 pt-[3px] pb-px text-[10px] leading-none font-medium whitespace-nowrap",
         getStatusStyle(),
         className
       )}
