@@ -95,6 +95,7 @@ describe("AppConfigOnDiskSchema", () => {
     for (const unusable of [
       { repoUrl: "", branch: "main", path: "mux" },
       { repoUrl: "git@example.com:me/dotfiles.git", branch: "main", path: "." },
+      { repoUrl: "https://oauth2:hunter2@example.com/repo.git", branch: "main", path: "mux" },
     ]) {
       expect(SettingsBackupSchema.safeParse(unusable).success).toBe(false);
       const degraded = AppConfigOnDiskSchema.safeParse({
@@ -106,6 +107,25 @@ describe("AppConfigOnDiskSchema", () => {
         expect(degraded.data.settingsBackup).toBeUndefined();
         expect(degraded.data.defaultModel).toBe("openai:gpt-4o");
       }
+    }
+  });
+
+  it("rejects a backup repository URL that embeds a credential", () => {
+    const base = { branch: "main", path: "mux" };
+    for (const repoUrl of [
+      // A bare https username is the common PAT spelling, not routing.
+      "https://hunter2token@github.com/me/dotfiles.git",
+      "https://oauth2:hunter2@example.com/repo.git",
+      "ssh://user:hunter2@example.com/repo.git",
+    ]) {
+      expect(SettingsBackupSchema.safeParse({ ...base, repoUrl }).success).toBe(false);
+    }
+    for (const repoUrl of [
+      "https://github.com/me/dotfiles.git",
+      "ssh://git@example.com/repo.git",
+      "git@github.com:me/dotfiles.git",
+    ]) {
+      expect(SettingsBackupSchema.safeParse({ ...base, repoUrl }).success).toBe(true);
     }
   });
 

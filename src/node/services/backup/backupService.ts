@@ -11,8 +11,13 @@ import type {
   BackupOperationError,
   SettingsBackupInput,
 } from "@/common/orpc/schemas/backup";
-import { isValidBackupPath, type SettingsBackup } from "@/common/config/schemas/settingsBackup";
+import {
+  hasUrlCredentials,
+  isValidBackupPath,
+  type SettingsBackup,
+} from "@/common/config/schemas/settingsBackup";
 import { assertNotSymlink } from "./gitRepo";
+import { BackupCommandApprovalRequiredError } from "./payload";
 
 export interface PreparedBackupRepository {
   rootDir: string;
@@ -103,6 +108,17 @@ function toOperationError(error: unknown): BackupOperationError {
     };
   }
 
+  // A restore attempted without a preview, or after the backup's commands drifted, fails
+  // with an approval list the UI has not seen yet. Dropping it would leave the user unable
+  // to approve anything without guessing that Preview must be run again.
+  if (error instanceof BackupCommandApprovalRequiredError) {
+    return {
+      code: error.code,
+      message: error.message,
+      commandApprovals: [...error.approvals],
+    };
+  }
+
   if (error instanceof Error) {
     const candidate = error as Error & { code?: unknown; files?: unknown };
     if (
@@ -149,6 +165,14 @@ export class BackupService {
         throw new BackupServiceError(
           "INVALID_BACKUP",
           "Enter a subdirectory inside the repository"
+        );
+      }
+      // Same split as the path check. Persisting a URL-embedded token would store a
+      // credential in config.json, which the backup policy forbids outright.
+      if (hasUrlCredentials(settings.repoUrl)) {
+        throw new BackupServiceError(
+          "INVALID_BACKUP",
+          "Remove the credential embedded in the repository URL"
         );
       }
       const saved = await this.persistSettings(settings);

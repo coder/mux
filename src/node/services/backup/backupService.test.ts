@@ -7,6 +7,7 @@ import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 import { BackupNonFastForwardError } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
+import { BackupCommandApprovalRequiredError } from "./payload";
 import {
   BackupService,
   BackupServiceError,
@@ -279,6 +280,46 @@ describe("BackupService", () => {
     expect(result.success).toBe(false);
     if (result.success) throw new Error("Expected the .git path to be rejected");
     expect(result.error.code).toBe("INVALID_BACKUP");
+  });
+
+  test("rejects and does not persist a repository URL that embeds a credential", async () => {
+    const config = createTestConfig(tempDir);
+    const service = new BackupService(config, {
+      gitRepo: createGitRepo(),
+      payload: createPayload(),
+    });
+
+    const result = await service.saveSettings({
+      ...SETTINGS,
+      repoUrl: "https://oauth2:hunter2@example.com/repo.git",
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the credential URL to be rejected");
+    expect(result.error.code).toBe("INVALID_BACKUP");
+    expect(service.getSettings()).toBeNull();
+  });
+
+  test("surfaces the current command approvals when a restore is blocked", async () => {
+    const approvals = [
+      { path: "servers.notes.command", command: "npx notes-mcp", token: "token-notes" },
+    ];
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        validateRestore: () => Promise.reject(new BackupCommandApprovalRequiredError(approvals)),
+      }),
+    });
+    await service.saveSettings(SETTINGS);
+
+    const result = await service.restore(SETTINGS);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the unapproved restore to be blocked");
+    expect(result.error.code).toBe("COMMAND_APPROVAL_REQUIRED");
+    // Without the list, a restore attempted before any preview leaves the user with an
+    // empty approval box and no way forward except guessing to run Preview again.
+    expect(result.error.commandApprovals).toEqual(approvals);
   });
 
   test("does not revert a repository saved while a push was still running", async () => {

@@ -39,12 +39,34 @@ export function isValidBackupPath(value: string): boolean {
 }
 
 /**
+ * `https://TOKEN@host/repo.git` is a credential pasted into a URL: saving it would persist
+ * the token in config.json and in the cache clone's `remote.origin.url`, and backups must
+ * never store a credential. An ssh username (`git@`) is routing, not a secret, so ssh URLs
+ * keep theirs; a password is rejected on every scheme. scp-like remotes (`git@host:path`)
+ * fail to parse here and carry no password channel, so they pass.
+ */
+export function hasUrlCredentials(repoUrl: string): boolean {
+  try {
+    const url = new URL(repoUrl);
+    return url.password !== "" || (url.protocol !== "ssh:" && url.username !== "");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * One definition for the persisted `settingsBackup` key and the IPC shape. Two schemas
  * would let config.json hold a value the `getSettings` response then rejects, leaving the
  * Backup screen unable to load what the user saved.
  */
 export const SettingsBackupSchema = z.object({
-  repoUrl: z.string().trim().min(1),
+  repoUrl: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => !hasUrlCredentials(value), {
+      message: "Remove the credential embedded in the repository URL",
+    }),
   branch: z.string().trim().min(1),
   path: z
     .string()
