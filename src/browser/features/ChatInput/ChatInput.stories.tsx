@@ -237,6 +237,11 @@ export const QueuedFollowUp: AppStory = {
       if (menu.scrollWidth > menu.clientWidth) {
         throw new Error("Queued dispatch menu overflows horizontally");
       }
+      for (const item of menu.querySelectorAll<HTMLElement>('[role="menuitem"]')) {
+        if (item.scrollHeight > item.clientHeight) {
+          throw new Error("Queued dispatch menu item wraps vertically");
+        }
+      }
     });
   },
 };
