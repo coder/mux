@@ -47,10 +47,13 @@ const VERBATIM_CONTENT_CONFIG: ReadonlyArray<readonly [string, string]> = [
 /**
  * Config alone is not enough: `.gitattributes` in the backup repository outranks it, so a
  * dotfiles repo carrying `* text=auto eol=crlf` still converts (verified against git 2.54).
- * `.git/info/attributes` is the per-repository layer that outranks the tree's own file, and
- * `-text` there declines conversion for every path.
+ * `.git/info/attributes` is the per-repository layer that outranks the tree's own file.
+ * Every attribute that can transform bytes between the object store and the worktree is
+ * unset here, not just `text`: `ident` expands `$Id$` at checkout, `filter` runs
+ * smudge/clean drivers, and `working-tree-encoding` transcodes, so any of them under the
+ * managed path would break the manifest's SHA-256s the same way EOL conversion does.
  */
-const VERBATIM_ATTRIBUTES = "* -text\n";
+const VERBATIM_ATTRIBUTES = "* -text -eol -ident -filter -working-tree-encoding\n";
 
 const GIT_IDENTITY_ARGS = [
   "-c",

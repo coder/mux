@@ -234,6 +234,39 @@ describe("BackupRepoCache", () => {
     );
   });
 
+  it("keeps payload bytes verbatim when the repository asks for ident expansion", async () => {
+    const seed = path.join(tempDir, "ident-seed");
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    // $Id$ is what the ident attribute expands at checkout; the manifest hash covers the
+    // unexpanded bytes, so expansion makes every later Preview/Restore reject the backup.
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "ident line: $Id$\n", "utf-8");
+    await fs.writeFile(path.join(seed, ".gitattributes"), "mux/** ident\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "ask for ident",
+    ]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await fs.readFile(path.join(repo.cachePath, "mux/AGENTS.md"), "utf-8")).toBe(
+      "ident line: $Id$\n"
+    );
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
