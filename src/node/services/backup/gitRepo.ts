@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -208,6 +209,33 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
 }
 
 /**
+ * Git follows symlinks when it rewrites its own metadata: a fetch writes the fetched ref
+ * record through a symlinked `FETCH_HEAD` into whatever file it names, truncating it, and
+ * `HEAD`, `ORIG_HEAD`, the index, refs, and reflogs are all rewritten the same way by
+ * commands this feature runs. That is an open-ended set of filenames, so instead of naming
+ * them the whole tree is held to one rule: `git init` and `git clone` create no symlinks
+ * under `.git`, so in a cache Mux created there is nothing a symlink can legitimately be,
+ * wherever it sits. Recursion is by hand because the runtime `readdir(recursive)` semantics
+ * around symlinked directories are not something this boundary should depend on.
+ */
+async function assertNoSymlinksUnder(dir: string): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  for (const entry of entries) {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(`Refusing to use '${entryPath}': it is a symlink`);
+    }
+    if (entry.isDirectory()) await assertNoSymlinksUnder(entryPath);
+  }
+}
+
+/**
  * The raw stored entries, not effective config: `--file` keeps the global and system scopes
  * out, `--no-includes` keeps an `include.path` from splicing another file's keys into what is
  * checked, and `-z` keeps values with newlines parseable. A record is `key\nvalue`; a boolean
@@ -359,6 +387,7 @@ export class BackupRepoCache {
     // repository, whether a symlink, a gitfile, or a commondir indirection, would take this
     // cache's config rewrite with it.
     await assertOwnGitDirectory(this.cachePath);
+    await assertNoSymlinksUnder(gitDir);
     if (!(await exists(gitDir))) {
       if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);

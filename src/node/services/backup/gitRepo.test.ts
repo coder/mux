@@ -495,6 +495,51 @@ describe("BackupRepoCache", () => {
     expect(await repo.porcelainStatus("mux")).toBe("");
   });
 
+  it("rejects a cache with symlinked git metadata and leaves the target unwritten", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    // A fetch writes the fetched ref record through this link, truncating whatever it names.
+    const victim = path.join(tempDir, "victim-fetch-head");
+    await fs.writeFile(victim, "victim content\n", "utf-8");
+    await fs.rm(path.join(repo.cachePath, ".git", "FETCH_HEAD"), { force: true });
+    await fs.symlink(victim, path.join(repo.cachePath, ".git", "FETCH_HEAD"));
+
+    const failure = await repo
+      .ensureCache()
+      .then(() => repo.fetch())
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((failure as Error | null)?.message).toContain("symlink");
+    expect(await fs.readFile(victim, "utf-8")).toBe("victim content\n");
+  });
+
+  it("rejects symlinked git metadata below the top level of .git", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    // Reflogs are appended to on every ref update, through a symlink like any other
+    // metadata file, so the rule has to hold for the whole tree rather than only the
+    // filenames at the top.
+    const victim = path.join(tempDir, "victim-reflog");
+    await fs.writeFile(victim, "victim content\n", "utf-8");
+    const reflog = path.join(repo.cachePath, ".git", "logs", "HEAD");
+    await fs.mkdir(path.dirname(reflog), { recursive: true });
+    await fs.rm(reflog, { force: true });
+    await fs.symlink(victim, reflog);
+
+    const failure = await repo.ensureCache().then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect((failure as Error | null)?.message).toContain("symlink");
+    expect(await fs.readFile(victim, "utf-8")).toBe("victim content\n");
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
