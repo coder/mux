@@ -302,6 +302,53 @@ describe("BackupSection", () => {
     );
   });
 
+  test("clears command approvals when different settings are saved", async () => {
+    const approval = {
+      path: "servers.notes.command",
+      command: "npx -y @modelcontextprotocol/server-filesystem /data",
+      token: "token-notes",
+    };
+    const { client, view } = renderBackupSection({
+      backupPreview: {
+        pushChanges: [],
+        restoreChanges: [{ status: "M", path: "mcp.jsonc" }],
+        localOnlyFiles: [],
+        redactions: [],
+        commandApprovals: [approval],
+      },
+    });
+    const canvas = within(view.container);
+    await canvas.findByText("Settings backup");
+
+    fireEvent.click(canvas.getByRole("button", { name: "Preview changes" }));
+    const approve = await canvas.findByRole("checkbox", {
+      name: "Approve MCP command changes",
+    });
+    fireEvent.click(approve);
+    await waitFor(() => expect(approve.getAttribute("data-state")).toBe("checked"));
+
+    // The approvals describe the previewed repository; a save that changes the settings
+    // must not carry them to the next repository's restore.
+    fireEvent.change(canvas.getByLabelText("Repository URL"), {
+      target: { value: "git@github.com:example/other.git" },
+    });
+    fireEvent.click(canvas.getByRole("button", { name: "Save settings" }));
+    await canvas.findByText("Backup settings saved.");
+
+    expect(canvas.queryByRole("checkbox", { name: "Approve MCP command changes" })).toBeNull();
+    expect(canvas.queryByText(approval.command)).toBeNull();
+
+    const restore = jest.spyOn(client.backup, "restore");
+    fireEvent.click(canvas.getByRole("button", { name: "Restore" }));
+    const dialog = await within(document.body).findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Restore settings/i }));
+    await waitFor(() =>
+      expect(restore).toHaveBeenLastCalledWith(
+        expect.objectContaining({ approvedCommandTokens: [] })
+      )
+    );
+  });
+
   test("reports a preferences-only restore as changing no files", async () => {
     const { client, view } = renderBackupSection();
     const canvas = within(view.container);

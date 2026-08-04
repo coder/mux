@@ -271,6 +271,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       // not restore a credential whose MCP server the restore removed.
       await writeBackupPayload(snapshotRoot, await buildPayload({ keepLocalSecrets: true }), {
         portable: false,
+        ownerOnly: true,
       });
     },
 

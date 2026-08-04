@@ -473,11 +473,18 @@ async function writeCheckedFile(
   root: BackupRoot,
   relativePath: string,
   content: Buffer,
-  executable: boolean
+  executable: boolean,
+  options: { ownerOnly?: boolean } = {}
 ): Promise<void> {
+  const ownerOnly = options.ownerOnly === true;
   const destination = absolutePathOf(root.path, relativePath);
-  await fs.mkdir(path.dirname(destination), { recursive: true });
-  const { handle, stat } = await openSeveredWriteHandle(root, relativePath, destination);
+  await fs.mkdir(path.dirname(destination), {
+    recursive: true,
+    ...(ownerOnly ? { mode: 0o700 } : {}),
+  });
+  const { handle, stat } = await openSeveredWriteHandle(root, relativePath, destination, {
+    ...(ownerOnly ? { mode: 0o600 } : {}),
+  });
   try {
     await handle.truncate(0);
     let written = 0;
@@ -518,11 +525,13 @@ async function writeCheckedFile(
 async function openSeveredWriteHandle(
   root: BackupRoot,
   relativePath: string,
-  destination: string
+  destination: string,
+  options: { mode?: number } = {}
 ): Promise<{ handle: fs.FileHandle; stat: Stats }> {
   const opened = await fs.open(
     destination,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag()
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag(),
+    options.mode
   );
   try {
     const stat = await opened.stat();
@@ -536,7 +545,8 @@ async function openSeveredWriteHandle(
   await fs.unlink(destination);
   const fresh = await fs.open(
     destination,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollowFlag()
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollowFlag(),
+    options.mode
   );
   try {
     const stat = await fresh.stat();
@@ -1120,9 +1130,10 @@ function assertPayloadWithinLimits(files: readonly BackupFile[], manifestJson: s
 export async function writeBackupPayload(
   destinationDir: string,
   payload: BackupPayload,
-  options: { portable?: boolean } = {}
+  options: { portable?: boolean; ownerOnly?: boolean } = {}
 ): Promise<void> {
   const portable = options.portable !== false;
+  const ownerOnly = options.ownerOnly === true;
   const claimed = new Set<string>();
   for (const file of payload.files) {
     assertAllowedPayloadPath(file.path, { portable });
@@ -1143,13 +1154,20 @@ export async function writeBackupPayload(
   assertPayloadWithinLimits(payload.files, manifestJson);
 
   await fs.rm(destinationDir, { recursive: true, force: true });
-  await fs.mkdir(destinationDir, { recursive: true });
+  // `ownerOnly` restores what the remove just discarded: a safety snapshot's destination
+  // comes from `mkdtemp` as owner-only, and it holds an unredacted payload, so recreating
+  // it with the process umask could hand other local users the literal MCP credentials.
+  await fs.mkdir(destinationDir, { recursive: true, ...(ownerOnly ? { mode: 0o700 } : {}) });
   const root = await resolveRoot(destinationDir);
   for (const file of payload.files) {
     await resolveContainedPath(root.path, file.path);
-    await writeCheckedFile(root, file.path, file.content, file.executable === true);
+    await writeCheckedFile(root, file.path, file.content, file.executable === true, {
+      ownerOnly,
+    });
   }
-  await writeCheckedFile(root, BACKUP_MANIFEST_FILE, Buffer.from(manifestJson, "utf-8"), false);
+  await writeCheckedFile(root, BACKUP_MANIFEST_FILE, Buffer.from(manifestJson, "utf-8"), false, {
+    ownerOnly,
+  });
 }
 
 function parseManifest(raw: string): BackupManifest {

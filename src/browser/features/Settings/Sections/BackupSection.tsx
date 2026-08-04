@@ -209,6 +209,10 @@ export function BackupSection() {
       setSavedDraft(nextDraft);
       setValidation(null);
       setPreview(null);
+      // With the preview: they describe the repository that was previewed, and carrying
+      // them past a save would show, and resend on restore, another repository's approvals.
+      setCommandApprovals([]);
+      setApproveCommands(false);
       setOverrideSecretScan(false);
       setSecretScanBlocked(false);
       setStatusMessage("Backup settings saved.");

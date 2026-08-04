@@ -799,6 +799,31 @@ describe("backup adapters", () => {
     );
   });
 
+  it("keeps the safety snapshot readable by its owner alone", async () => {
+    await writeMuxFile("AGENTS.md", "before restore\n");
+    await writeMuxFile("skills/demo/SKILL.md", "skill\n");
+    const payload = createBackupPayloadStore({ config });
+    const snapshotRoot = path.join(tempDir, "private-snapshot");
+
+    // A permissive umask, as on hosts where MUX_ROOT's ancestors are traversable. The
+    // snapshot is unredacted, so anything wider than the owner leaks MCP credentials.
+    const previousUmask = process.umask(0o022);
+    try {
+      await payload.writeSafetySnapshot(snapshotRoot);
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    for (const target of ["", "skills", "skills/demo"]) {
+      const mode = (await fs.stat(path.join(snapshotRoot, target))).mode & 0o777;
+      expect([target, mode & 0o077]).toEqual([target, 0]);
+    }
+    for (const target of ["AGENTS.md", "manifest.json", "skills/demo/SKILL.md"]) {
+      const mode = (await fs.stat(path.join(snapshotRoot, target))).mode & 0o777;
+      expect([target, mode & 0o077]).toEqual([target, 0]);
+    }
+  });
+
   it("does not promise to keep a local file the restore writes under another name", async () => {
     // Hard links give one file several names, as a case-insensitive or normalizing volume
     // does for `note.md`, `Note.md` and `NOTE.md`. The backup carries one spelling, so
