@@ -1991,6 +1991,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
           message={props.queuedMessage}
           onEdit={() => void props.onEditQueuedMessage()}
           onChangeDispatchMode={props.onQueuedDispatchModeChange}
+          onActionError={props.onQueuedActionError}
           actionError={props.queuedActionError}
           onActionStart={props.onClearQueuedActionError}
           onSendImmediately={props.onSendQueuedImmediately}

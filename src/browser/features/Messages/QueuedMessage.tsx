@@ -8,13 +8,13 @@ import { UserMessageContent } from "@/browser/features/Messages/UserMessageConte
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
-import { getErrorMessage } from "@/common/utils/errors";
 
 interface QueuedMessageProps {
   message: QueuedMessageType;
   className?: string;
   onEdit?: () => void;
   onChangeDispatchMode?: (mode: QueueDispatchMode) => Promise<void>;
+  onActionError?: (error: unknown) => void;
   actionError?: string | null;
   onActionStart?: () => void;
   onSendImmediately?: () => Promise<void>;
@@ -40,7 +40,6 @@ function deriveQueuedPreview(message: QueuedMessageType): QueuedPreview {
 export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<"mode" | "send-now" | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const preview = deriveQueuedPreview(props.message);
   const queueDispatchMode = props.message.queueDispatchMode ?? "tool-end";
   const queueStatusLabel =
@@ -49,14 +48,13 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
 
   const handleDispatchModeChange = (mode: QueueDispatchMode) => {
     setIsMenuOpen(false);
-    if (mode === queueDispatchMode || isActionPending || !props.onChangeDispatchMode) return;
+    if (isActionPending || !props.onChangeDispatchMode) return;
     props.onActionStart?.();
     setPendingAction("mode");
-    setActionError(null);
     props.onChangeDispatchMode(mode).then(
       () => setPendingAction(null),
       (error: unknown) => {
-        setActionError(getErrorMessage(error));
+        props.onActionError?.(error);
         setPendingAction(null);
       }
     );
@@ -67,13 +65,12 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
     if (isActionPending || !props.onSendImmediately) return;
     props.onActionStart?.();
     setPendingAction("send-now");
-    setActionError(null);
     props.onSendImmediately().then(
       () => setPendingAction(null),
       (error: unknown) => {
         // Keep failures visible at the action that caused them while leaving the queued draft intact
         // for a retry; consuming this rejection without feedback makes IPC failures look like no-ops.
-        setActionError(getErrorMessage(error));
+        props.onActionError?.(error);
         setPendingAction(null);
       }
     );
@@ -102,13 +99,13 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = (props) => {
               />
             </div>
 
-            {(actionError ?? props.actionError) && (
+            {props.actionError && (
               <div
                 role="alert"
                 className="border-toast-error-border/50 bg-toast-error-bg/50 text-toast-error-text flex items-start gap-1.5 border-t px-3 py-2 text-xs"
               >
                 <AlertCircle className="mt-0.5 size-3 shrink-0" />
-                <span className="min-w-0 break-words">{actionError ?? props.actionError}</span>
+                <span className="min-w-0 break-words">{props.actionError}</span>
               </div>
             )}
           </div>

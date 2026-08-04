@@ -1,6 +1,7 @@
 import "../dom";
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { useState, type ComponentProps } from "react";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 
 import { QueuedMessage } from "@/browser/features/Messages/QueuedMessage";
@@ -13,6 +14,20 @@ function createQueuedMessage(overrides?: Partial<QueuedMessageData>): QueuedMess
     content: "Review this change before sending",
     ...overrides,
   };
+}
+
+function QueuedMessageWithErrorFeedback(props: ComponentProps<typeof QueuedMessage>) {
+  const [actionError, setActionError] = useState<string | null>(null);
+  return (
+    <QueuedMessage
+      {...props}
+      actionError={actionError}
+      onActionStart={() => setActionError(null)}
+      onActionError={(error) =>
+        setActionError(error instanceof Error ? error.message : String(error))
+      }
+    />
+  );
 }
 
 function openDispatchMenu(view: ReturnType<typeof render>) {
@@ -118,6 +133,23 @@ describe("QueuedMessage banner", () => {
     });
   });
 
+  test("reapplies the checked mode so the backend can reprioritize visible entries", async () => {
+    const onChangeDispatchMode = mock(async (_mode: "tool-end" | "turn-end") => {});
+    const view = render(
+      <QueuedMessage
+        message={createQueuedMessage({ queueDispatchMode: "tool-end" })}
+        onChangeDispatchMode={onChangeDispatchMode}
+      />
+    );
+
+    openDispatchMenu(view);
+    fireEvent.click(view.getByRole("menuitem", { name: "Send after step" }));
+
+    await waitFor(() => {
+      expect(onChangeDispatchMode).toHaveBeenCalledWith("tool-end");
+    });
+  });
+
   test("clicking Send now calls onSendImmediately", async () => {
     const onSendImmediately = mock(async () => {});
     const view = render(
@@ -141,7 +173,10 @@ describe("QueuedMessage banner", () => {
       }
     });
     const view = render(
-      <QueuedMessage message={createQueuedMessage()} onSendImmediately={onSendImmediately} />
+      <QueuedMessageWithErrorFeedback
+        message={createQueuedMessage()}
+        onSendImmediately={onSendImmediately}
+      />
     );
 
     openDispatchMenu(view);
