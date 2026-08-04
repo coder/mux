@@ -263,7 +263,8 @@ FETCH_ALL_THUMBS_UP_REACTIONS() {
     fi
 
     page_nodes=$(echo "$reactions_page" | jq -c '.data.repository.pullRequest.reactions.nodes // []')
-    all_reactions=$(jq -cn --argjson existing "$all_reactions" --argjson page "$page_nodes" '$existing + $page')
+    # Via stdin: accumulated pages can exceed Linux's per-argument limit (MAX_ARG_STRLEN).
+    all_reactions=$(printf '%s\n%s' "$all_reactions" "$page_nodes" | jq -cs '.[0] + .[1]')
 
     has_next=$(echo "$reactions_page" | jq -r '.data.repository.pullRequest.reactions.pageInfo.hasNextPage')
     end_cursor=$(echo "$reactions_page" | jq -r '.data.repository.pullRequest.reactions.pageInfo.endCursor // empty')
