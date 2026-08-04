@@ -34,6 +34,12 @@ export const BackupOperationErrorSchema = z.object({
    * list instead of a stale or empty one.
    */
   commandApprovals: z.array(BackupCommandApprovalSchema).nullish(),
+  /**
+   * Set when a restore fails after its safety snapshot completed: files may already have
+   * been overwritten, and the snapshot is the only recovery path, so a failure report
+   * that omitted it would hide the copy the user needs.
+   */
+  snapshotPath: z.string().nullish(),
 });
 
 export const BackupFileChangeSchema = z.object({

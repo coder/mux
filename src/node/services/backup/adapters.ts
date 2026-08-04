@@ -180,9 +180,13 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
   return {
     async exportTo(exportOptions) {
       const payload = await buildPayload();
+      // Owner-only like the safety snapshot: the export copies allowlisted sources that may
+      // themselves be owner-only, and it lands here before the secret scan has said anything
+      // about it. Git records only the exec bit, so the modes never reach the remote.
       await writeBackupPayload(
         await managedDir(exportOptions.repositoryRoot, exportOptions.managedPath),
-        payload
+        payload,
+        { ownerOnly: true }
       );
       const secretFiles = scanBackupFilesForSecrets(payload.files);
       return {

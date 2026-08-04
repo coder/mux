@@ -380,7 +380,12 @@ export class BackupRepoCache {
 
   async ensureCache(): Promise<void> {
     await assertNotSymlink(this.options.cacheRoot);
-    await fs.mkdir(this.options.cacheRoot, { recursive: true });
+    await fs.mkdir(this.options.cacheRoot, { recursive: true, mode: 0o700 });
+    // chmod as well: mkdir's mode applies only at creation, and this tree holds exported
+    // payload bytes and unredacted restore snapshots, written by git and by Mux with modes
+    // that assume nobody else can traverse this far. Owner-only at the top is the boundary
+    // that keeps every file below private, including caches made before this rule.
+    await fs.chmod(this.options.cacheRoot, 0o700);
     await assertNotSymlink(this.cachePath);
     const gitDir = path.join(this.cachePath, ".git");
     // Before any branch below, because each one writes: a `.git` that resolves to another

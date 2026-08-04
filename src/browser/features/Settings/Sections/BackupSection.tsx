@@ -342,7 +342,13 @@ export function BackupSection() {
         approvedCommandTokens: approveCommands ? commandApprovals.map((item) => item.token) : [],
       });
       if (!result.success) {
-        setActionError(getOperationErrorMessage(result.error));
+        // A failure after the snapshot completed may have overwritten files already; the
+        // snapshot is the only recovery path, so its location belongs in the error.
+        setActionError(
+          result.error.snapshotPath != null
+            ? `${getOperationErrorMessage(result.error)} Your settings from before the restore are saved at: ${result.error.snapshotPath}`
+            : getOperationErrorMessage(result.error)
+        );
         setRestoreConfirmationOpen(false);
         // The commands the restore would write are not the ones on screen, either because
         // the backup changed since the preview or because there was no preview at all.

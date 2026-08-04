@@ -323,18 +323,24 @@ export class BackupService {
           await fs.rm(snapshotPath, { recursive: true, force: true });
           throw error;
         }
-        const restored = await this.dependencies.payload.restore({
-          repositoryRoot: repository.rootDir,
-          managedPath: settings.path,
-          approvedCommandTokens: options.approvedCommandTokens,
-        });
-        await this.persistSettings(settings, { lastRestoredCommit: repository.remoteCommit });
-        return Ok({
-          commit: repository.remoteCommit,
-          snapshotPath,
-          changedFiles: restored.changedFiles,
-          localOnlyFiles: restored.localOnlyFiles,
-        });
+        try {
+          const restored = await this.dependencies.payload.restore({
+            repositoryRoot: repository.rootDir,
+            managedPath: settings.path,
+            approvedCommandTokens: options.approvedCommandTokens,
+          });
+          await this.persistSettings(settings, { lastRestoredCommit: repository.remoteCommit });
+          return Ok({
+            commit: repository.remoteCommit,
+            snapshotPath,
+            changedFiles: restored.changedFiles,
+            localOnlyFiles: restored.localOnlyFiles,
+          });
+        } catch (error) {
+          // Past the snapshot, the restore may have overwritten files before failing, and
+          // the snapshot is the only recovery path, so the failure must carry it.
+          return Err({ ...toOperationError(error), snapshotPath });
+        }
       } catch (error) {
         return Err(toOperationError(error));
       }
@@ -395,11 +401,13 @@ export class BackupService {
   }
 
   private async createSnapshotPath(): Promise<string> {
+    // Mode matches the chmod `ensureCache` applies to this same directory: the snapshot
+    // below is unredacted, so the tree above it must not be traversable by other users.
     const cacheRoot = path.join(this.config.rootDir, "backup-cache");
     // The snapshot holds the local settings unredacted, so a link here would put the copy
     // wherever it points (a world-readable /tmp, say).
     await assertNotSymlink(cacheRoot);
-    await fs.mkdir(cacheRoot, { recursive: true });
+    await fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
     return fs.mkdtemp(path.join(cacheRoot, "restore-"));
   }
 

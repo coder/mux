@@ -345,6 +345,30 @@ describe("backup adapters", () => {
     ).toBe("blob:none");
   });
 
+  it("exports payload files into the cache as owner-only", async () => {
+    await writeMuxFile("AGENTS.md", "instructions\n");
+    await writeMuxFile("skills/demo/SKILL.md", "skill\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+
+    // A permissive umask: the export lands before the secret scan has said anything, so a
+    // source that was itself owner-only must not become world-readable here.
+    const previousUmask = process.umask(0o022);
+    try {
+      const repository = await gitRepo.prepare(settings);
+      await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect((await fs.stat(cacheRoot)).mode & 0o077).toBe(0);
+    const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+    for (const target of ["mux/AGENTS.md", "mux/manifest.json", "mux/skills/demo/SKILL.md"]) {
+      const mode = (await fs.stat(path.join(cachePath, target))).mode & 0o777;
+      expect([target, mode & 0o077]).toEqual([target, 0]);
+    }
+  });
+
   it("refuses a cache whose push url is not the configured repository", async () => {
     await writeMuxFile("AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

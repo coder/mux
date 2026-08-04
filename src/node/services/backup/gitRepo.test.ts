@@ -540,6 +540,20 @@ describe("BackupRepoCache", () => {
     expect(await fs.readFile(victim, "utf-8")).toBe("victim content\n");
   });
 
+  it("keeps the cache tree traversable by its owner alone", async () => {
+    // The tree holds exported payload bytes and unredacted restore snapshots, written with
+    // modes that assume nobody else can traverse this far.
+    const repo = createRepo();
+    const previousUmask = process.umask(0o022);
+    try {
+      await repo.ensureCache();
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect((await fs.stat(cacheRoot)).mode & 0o077).toBe(0);
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });

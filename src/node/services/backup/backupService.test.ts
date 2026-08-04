@@ -126,6 +126,46 @@ describe("BackupService", () => {
     expect(service.getSettings()?.lastRestoredCommit).toBe("remote-commit");
   });
 
+  test("reports the completed snapshot when the restore fails after it", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        writeSafetySnapshot: async (snapshotRoot) => {
+          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
+        },
+        // Fails after the snapshot, when files may already be overwritten, so the snapshot
+        // is the only recovery path and the failure must carry it.
+        restore: () => Promise.reject(new Error("disk full")),
+      }),
+    });
+
+    const result = await service.restore(SETTINGS);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the restore to fail");
+    const snapshotPath = result.error.snapshotPath;
+    if (snapshotPath == null) throw new Error("Expected the failure to carry the snapshot path");
+    expect(snapshotPath.startsWith(path.join(tempDir, "backup-cache", "restore-"))).toBe(true);
+    expect(await fs.readFile(path.join(snapshotPath, "AGENTS.md"), "utf8")).toBe("before restore");
+  });
+
+  test("does not attach a snapshot path to failures before the snapshot exists", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        validateRestore: () => Promise.reject(new Error("no backup here")),
+      }),
+    });
+
+    const result = await service.restore(SETTINGS);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the restore to fail");
+    // Nothing was restored and no snapshot survives, so a path here would send the user
+    // hunting for a recovery copy that does not exist.
+    expect(result.error.snapshotPath == null).toBe(true);
+  });
+
   test("computes restore preview before materializing the local export", async () => {
     const events: string[] = [];
     const service = new BackupService(createTestConfig(tempDir), {
