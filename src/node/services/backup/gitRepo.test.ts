@@ -446,6 +446,55 @@ describe("BackupRepoCache", () => {
     expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
   });
 
+  it("ignores environment-supplied git config instead of letting it redirect the push", async () => {
+    const evil = path.join(tempDir, "env-evil.git");
+    await git(["init", "--bare", "--initial-branch=main", evil]);
+    // Command-scope config arrives through the environment (git -c exports it to hooks), so
+    // the cache config rebuild cannot remove it: only stripping the variables can.
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+      env: {
+        ...process.env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: `url.${evil}.pushInsteadOf`,
+        GIT_CONFIG_VALUE_0: originPath,
+        GIT_CONFIG_PARAMETERS: `'url.${evil}.pushInsteadOf'='${originPath}'`,
+      },
+    });
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+    await repo.push();
+
+    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
+    const evilRefs = await git(["--git-dir", evil, "show-ref"]).then(
+      (refs) => refs,
+      () => "none"
+    );
+    expect(evilRefs).toBe("none");
+  });
+
+  it("repairs a cache whose config was left claiming the repository is bare", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    // An interrupted tool or stray edit; preserved, it fails every worktree command with
+    // "this operation must be run in a work tree" until the cache is deleted by hand.
+    await git(["-C", repo.cachePath, "config", "core.bare", "true"]);
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await repo.porcelainStatus("mux")).toBe("");
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });

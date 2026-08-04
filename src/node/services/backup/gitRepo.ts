@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import {
-  GIT_REPO_SCOPE_ENV_UNSET,
+  GIT_SCOPE_ENV_UNSET,
   runGitWithCredentialLadder,
   type BackupCredential,
   type GitCredentialOptions,
@@ -48,11 +48,13 @@ const GIT_HARDENING_ARGS = ["--no-replace-objects", "-c", `core.hooksPath=${os.d
  * The only keys of an existing cache's `.git/config` that survive `sanitizeCacheConfig`:
  * the platform-probed flags `git init` and `git clone` write, plus the partial-clone
  * extension older gits use for what `remote.origin.promisor` says on current ones.
+ * `core.bare` is not here on purpose: its correct value is known (`false`), so it is forced
+ * with the other known values rather than preserved, where a stray `true` would fail every
+ * worktree command until the user deleted the cache by hand.
  */
 const CACHE_CONFIG_KEEP_KEYS: ReadonlySet<string> = new Set([
   "core.repositoryformatversion",
   "core.filemode",
-  "core.bare",
   "core.logallrefupdates",
   "core.ignorecase",
   "core.precomposeunicode",
@@ -153,7 +155,7 @@ async function runLocalGit(
 ): Promise<{ stdout: string; stderr: string }> {
   using process = execFileAsync("git", args, {
     ...options,
-    env: { ...options.env, ...GIT_REPO_SCOPE_ENV_UNSET },
+    env: { ...options.env, ...GIT_SCOPE_ENV_UNSET },
   });
   return await process.result;
 }
@@ -432,14 +434,19 @@ export class BackupRepoCache {
     }
 
     const branch = this.options.branch;
-    const rebuilt: Array<readonly [string, string]> = [
-      ...entries.filter(
+    // A map, not a filtered list: these keys are single-valued to git (the last occurrence
+    // wins), so keeping every occurrence would carry any number of stray values forward.
+    const kept = new Map(
+      entries.filter(
         ([key, value]) =>
           CACHE_CONFIG_KEEP_KEYS.has(key) &&
           // The partial-clone extension names the promisor remote, and `origin` is the only
           // remote this cache ever has.
           (key !== "extensions.partialclone" || value === "origin")
-      ),
+      )
+    );
+    const rebuilt: Array<readonly [string, string]> = [
+      ...kept,
       ["remote.origin.url", this.options.repoUrl],
       ["remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
       // What `clone --filter` writes for itself. Without them a later fetch of this branch
@@ -461,6 +468,9 @@ export class BackupRepoCache {
       ["core.sparsecheckoutcone", "false"],
       // Defense in depth alongside GIT_HARDENING_ARGS, for git commands run here by hand.
       ["core.hookspath", os.devNull],
+      // Known, not preserved: a stray `true` fails every worktree command with "this
+      // operation must be run in a work tree", permanently, since nothing else rewrites it.
+      ["core.bare", "false"],
     ];
     // Built as a separate file and renamed into place: `git config` is the writer, so value
     // escaping is git's own rather than hand-rolled serialization of its config grammar.

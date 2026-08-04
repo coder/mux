@@ -99,7 +99,7 @@ async function configuredSshCommand(
     const result = await run("git", [...repository, "config", "--get", "core.sshCommand"], {
       timeoutMs: options.timeoutMs,
       signal: options.signal,
-      env: { ...options.env, ...NON_INTERACTIVE_ENV, ...GIT_REPO_SCOPE_ENV_UNSET },
+      env: { ...options.env, ...NON_INTERACTIVE_ENV, ...GIT_SCOPE_ENV_UNSET },
     });
     return result.stdout.trim() || null;
   } catch {
@@ -189,14 +189,20 @@ const GH_TOKEN_ENV_UNSET = {
 } as const;
 
 /**
- * Git reads these ahead of `-C` and discovery (git(1), "The Git Repository"), so an
- * inherited variable points every cache command at some other repository or working tree:
- * with `GIT_WORK_TREE` set, `git -C <cache> clean -fdx -- mux` deletes `mux/` under that
- * tree instead of the cache. Every git the backup feature runs addresses the cache
- * explicitly, so repository selection from the environment is never meaningful here and is
- * stripped. This is not credential wiring, so the ambient rung strips it too.
+ * Two families git trusts ahead of everything the config rebuild controls, both exported
+ * into hook and alias subprocesses, which is where Mux inherits them from. The repository
+ * selectors are read ahead of `-C` and discovery (git(1), "The Git Repository"): with
+ * `GIT_WORK_TREE` set, `git -C <cache> clean -fdx -- mux` deletes `mux/` under that tree
+ * instead of the cache. The config carriers add command-scope runtime configuration
+ * (`git -c` exports them to hooks), so an inherited `url.*.pushInsteadOf` would redirect a
+ * push while the checked stored url stays intact; git reads the `GIT_CONFIG_KEY_<n>` family
+ * only up to `GIT_CONFIG_COUNT`, so unsetting the count disables every pair. Every git the
+ * backup feature runs addresses the cache explicitly, so none of these are meaningful here
+ * and all are stripped. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` stay: git does not export
+ * them, so a set value is the user's own environment, trusted like the files it names.
+ * None of this is credential wiring, so the ambient rung strips it too.
  */
-export const GIT_REPO_SCOPE_ENV_UNSET = {
+export const GIT_SCOPE_ENV_UNSET = {
   GIT_DIR: undefined,
   GIT_WORK_TREE: undefined,
   GIT_COMMON_DIR: undefined,
@@ -204,6 +210,9 @@ export const GIT_REPO_SCOPE_ENV_UNSET = {
   GIT_OBJECT_DIRECTORY: undefined,
   GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
   GIT_NAMESPACE: undefined,
+  GIT_CONFIG: undefined,
+  GIT_CONFIG_COUNT: undefined,
+  GIT_CONFIG_PARAMETERS: undefined,
 } as const;
 
 async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): Promise<boolean> {
@@ -310,7 +319,7 @@ export async function runGitWithCredentialLadder(
         env: {
           ...options.env,
           ...NON_INTERACTIVE_ENV,
-          ...GIT_REPO_SCOPE_ENV_UNSET,
+          ...GIT_SCOPE_ENV_UNSET,
           ...controlled.env,
         },
       });
@@ -334,7 +343,7 @@ export async function runGitWithCredentialLadder(
       env: {
         ...options.env,
         ...NON_INTERACTIVE_ENV,
-        ...GIT_REPO_SCOPE_ENV_UNSET,
+        ...GIT_SCOPE_ENV_UNSET,
         ...(await sshEnvOverrides(args, options)),
       },
     });
