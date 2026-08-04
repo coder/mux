@@ -12,7 +12,6 @@ const NON_INTERACTIVE_ENV = {
   LC_ALL: "C",
   LANGUAGE: "C",
 } as const;
-const BACKUP_TOKEN_ENV = "MUX_BACKUP_TOKEN";
 
 /**
  * A prompt for a password, a key passphrase, or host key confirmation is unanswerable behind
@@ -108,8 +107,6 @@ async function configuredSshCommand(
     return null;
   }
 }
-const TOKEN_HELPER = '!f(){ echo username=x-access-token; echo "password=$MUX_BACKUP_TOKEN"; };f';
-
 export type BackupCredential = BackupCredentialKind;
 
 export class BackupRemoteUnreachableError extends Error {
@@ -128,7 +125,7 @@ export class BackupAuthFailedError extends Error {
 
   constructor(cause: unknown) {
     super(
-      "Could not authenticate to the backup repository. Check your SSH key, `gh auth login`, or GH_TOKEN.",
+      "Could not authenticate to the backup repository. Check your SSH key or `gh auth login`.",
       { cause }
     );
     this.name = "BackupAuthFailedError";
@@ -137,7 +134,6 @@ export class BackupAuthFailedError extends Error {
 
 export interface GitCredentialOptions extends ExecFileAsyncOptions {
   repoUrl: string;
-  token?: string;
 }
 
 export interface GitCredentialResult {
@@ -159,18 +155,6 @@ function repoHost(repoUrl: string): string | null {
     const sshMatch = /^(?:[^@]+@)?([^:/]+):/.exec(repoUrl);
     return sshMatch?.[1] ?? null;
   }
-}
-
-/** GH_TOKEN authenticates GitHub, so only a GitHub host may be offered it. */
-export function isGitHubRepoUrl(repoUrl: string): boolean {
-  const host = repoHost(repoUrl)?.toLowerCase();
-  if (!host) return false;
-  const enterpriseHost = process.env.GH_HOST?.toLowerCase();
-  return (
-    host === "github.com" ||
-    host.endsWith(".github.com") ||
-    (enterpriseHost !== undefined && host === enterpriseHost)
-  );
 }
 
 function isSshRepoUrl(repoUrl: string): boolean {
@@ -202,10 +186,10 @@ async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): 
 }
 
 /**
- * Every controlled rung worth trying, in order. `gh` comes before an explicit token because
- * it needs no configuration, but both are kept: the logged-in `gh` account may simply lack
- * access to this repository, and falling straight through to ambient credentials would make
- * a perfectly good configured token unusable just because someone else is logged into `gh`.
+ * Every controlled rung worth trying, in order. There is deliberately no token rung: Mux
+ * must never store or accept an OAuth token or PAT for backups, so authentication is only
+ * ever delegated to credentials that already live on the host (an SSH agent or key, the
+ * GitHub CLI's own login, or whatever ambient helper git falls back to).
  */
 async function controlledCredentials(
   args: readonly string[],
@@ -230,21 +214,6 @@ async function controlledCredentials(
       credential: "gh",
       argsPrefix: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
       env: {},
-    });
-  }
-
-  if (options.token) {
-    rungs.push({
-      credential: "token",
-      // Scope the helper to the repository's own origin so a redirect or a submodule
-      // on another host cannot make git offer this token to it.
-      argsPrefix: [
-        "-c",
-        "credential.helper=",
-        "-c",
-        `credential.${new URL(options.repoUrl).origin}.helper=${TOKEN_HELPER}`,
-      ],
-      env: { [BACKUP_TOKEN_ENV]: options.token },
     });
   }
 

@@ -69,8 +69,6 @@ function getCredentialLabel(credential: BackupValidation["credential"]): string 
       return "SSH key or agent";
     case "gh":
       return "GitHub CLI";
-    case "token":
-      return "configured token";
     case "ambient":
       return "system git credentials";
   }
@@ -500,7 +498,7 @@ export function BackupSection() {
           <div className="min-w-0">
             <h3 className="text-foreground text-sm font-medium">Repository access</h3>
             <p className="text-muted mt-1 text-xs">
-              Mux tries SSH, GitHub CLI credentials, configured tokens, then system git credentials.
+              Mux tries SSH, GitHub CLI credentials, then system git credentials.
             </p>
           </div>
           <Button

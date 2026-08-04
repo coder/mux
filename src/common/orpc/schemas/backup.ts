@@ -35,7 +35,7 @@ export const BackupFileChangeSchema = z.object({
   status: z.string(),
 });
 
-export const BackupCredentialKindSchema = z.enum(["ssh", "gh", "token", "ambient"]);
+export const BackupCredentialKindSchema = z.enum(["ssh", "gh", "ambient"]);
 
 const SettingsBackupInputSchema = SettingsBackupSchema.omit({
   lastPushedCommit: true,

@@ -188,7 +188,6 @@ export class BackupRepoCache {
   private credentialOptions(): GitCredentialOptions {
     return {
       repoUrl: this.options.repoUrl,
-      token: this.options.token,
       timeoutMs: this.options.timeoutMs,
       signal: this.options.signal,
       onStderrData: this.options.onStderrData,

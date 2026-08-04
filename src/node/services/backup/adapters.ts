@@ -55,8 +55,6 @@ function parsePorcelainStatus(output: string): BackupFileChange[] {
  */
 export function createBackupGitRepo(options: {
   cacheRoot: string;
-  /** Resolved per call so a token added after startup is picked up without a restart. */
-  getToken?: (repoUrl: string) => string | null;
   timeoutMs?: number;
 }): BackupGitRepo {
   const prepared = new WeakMap<PreparedBackupRepository, BackupRepoCache>();
@@ -66,7 +64,6 @@ export function createBackupGitRepo(options: {
       ...settings,
       managedPath: settings.path,
       cacheRoot: options.cacheRoot,
-      token: options.getToken?.(settings.repoUrl) ?? undefined,
       timeoutMs: options.timeoutMs ?? BACKUP_GIT_TIMEOUT_MS,
     });
   }

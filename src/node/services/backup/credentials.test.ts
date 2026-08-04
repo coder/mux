@@ -5,7 +5,6 @@ import * as path from "node:path";
 import {
   BackupAuthFailedError,
   BackupRemoteUnreachableError,
-  isGitHubRepoUrl,
   runGitWithCredentialLadder,
 } from "./credentials";
 
@@ -71,47 +70,11 @@ printf 'prompt=%s,%s,%s\n' "$GIT_TERMINAL_PROMPT" "$GH_PROMPT_DISABLED" "$GCM_IN
     expect(log).toContain("prompt=0,1,never");
   });
 
-  it("recognizes only GitHub hosts as eligible for a GitHub token", () => {
-    expect(isGitHubRepoUrl("https://github.com/o/r.git")).toBe(true);
-    expect(isGitHubRepoUrl("git@github.com:o/r.git")).toBe(true);
-    expect(isGitHubRepoUrl("https://evil.example/o/r.git")).toBe(false);
-    // A lookalike host must not match by suffix.
-    expect(isGitHubRepoUrl("https://github.com.evil.example/o/r.git")).toBe(false);
-  });
-
-  it("passes an explicit token through env and never argv", async () => {
-    if (process.platform === "win32") return;
-    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\n' "$@" > "$GIT_LOG"
-printf 'token=%s\n' "$MUX_BACKUP_TOKEN" >> "$GIT_LOG"
-`
-    );
-    const token = "github_pat_this-token-must-not-be-in-argv";
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "https://example.com/repo.git"], {
-        repoUrl: "https://example.com/repo.git",
-        token,
-        env: { GIT_LOG: logPath },
-      })
-    );
-
-    expect(result.credential).toBe("token");
-    const log = await fs.readFile(logPath, "utf-8");
-    const [argv = "", envLine = ""] = log.split("token=");
-    expect(argv).toContain("password=$MUX_BACKUP_TOKEN");
-    expect(argv).not.toContain(token);
-    expect(envLine.trim()).toBe(token);
-    // Scoped to the repository's origin, so git cannot offer the token to another host.
-    expect(argv).toContain("credential.https://example.com.helper=");
-  });
-
   it("retries authentication failures without controlled credential overrides", async () => {
     if (process.platform === "win32") return;
-    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    // A logged-in gh account can still lack access to this one repository, so the ambient
+    // helper deserves a turn after the gh rung fails.
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
     await writeExecutable(
       path.join(binDir, "git"),
       // The ambient rung reads core.sshCommand unless GIT_SSH_COMMAND is already set, so this
@@ -131,7 +94,6 @@ esac
     const result = await withPath(binDir, () =>
       runGitWithCredentialLadder(["fetch", "origin"], {
         repoUrl: "https://example.com/repo.git",
-        token: "test-token",
         env: { GIT_LOG: logPath },
       })
     );
@@ -144,37 +106,6 @@ esac
     if (first === undefined || second === undefined) throw new Error("Expected two git attempts");
     expect(first).toContain("credential.helper=");
     expect(second).toBe("fetch\norigin\n");
-  });
-
-  it("tries the configured token when the gh account lacks access", async () => {
-    if (process.platform === "win32") return;
-    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' '---' >> "$GIT_LOG"
-printf '%s\\n' "$@" >> "$GIT_LOG"
-case "$*" in
-  *gh\\ auth\\ git-credential*) echo 'remote: Permission to owner/repo.git denied' >&2; exit 128 ;;
-esac
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["fetch", "origin"], {
-        repoUrl: "https://github.com/owner/repo.git",
-        token: "test-token",
-        env: { GIT_LOG: logPath },
-      })
-    );
-
-    // A logged-in gh account that cannot reach this repository must not make a configured
-    // token unusable, so the token rung runs before ambient credentials.
-    expect(result.credential).toBe("token");
-    const attempts = (await fs.readFile(logPath, "utf-8")).split("---\n").filter(Boolean);
-    expect(attempts).toHaveLength(2);
-    expect(attempts[0]).toContain("gh auth git-credential");
-    expect(attempts[1]).toContain("credential.https://github.com.helper=");
   });
 
   it("reports an exhausted credential ladder as an authentication failure", async () => {
@@ -193,7 +124,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["fetch", "origin"], {
           repoUrl: "https://example.com/repo.git",
-          token: "test-token",
           env: { GIT_LOG: logPath },
         })
       );
@@ -209,7 +139,7 @@ exit 128
 
   it("treats a push denied by write permissions as an authentication failure", async () => {
     if (process.platform === "win32") return;
-    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
     await writeExecutable(
       path.join(binDir, "git"),
       // The ambient rung reads core.sshCommand unless GIT_SSH_COMMAND is already set, so this
@@ -231,7 +161,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["push", "origin", "HEAD:refs/heads/main"], {
           repoUrl: "https://example.com/repo.git",
-          token: "test-token",
           env: { GIT_LOG: logPath },
         })
       );
@@ -248,7 +177,7 @@ exit 128
 
   it("leaves a non-authentication ambient failure unclassified", async () => {
     if (process.platform === "win32") return;
-    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 1\n");
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
     await writeExecutable(
       path.join(binDir, "git"),
       `#!/bin/sh
@@ -265,7 +194,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["fetch", "origin"], {
           repoUrl: "https://example.com/repo.git",
-          token: "test-token",
           env: { GIT_LOG: logPath },
         })
       );
@@ -298,7 +226,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["ls-remote", "https://nope.invalid/repo.git"], {
           repoUrl: "https://nope.invalid/repo.git",
-          token: "test-token",
           env: { GIT_LOG: logPath },
         })
       );
@@ -323,7 +250,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["ls-remote", "https://blackhole.example/repo.git"], {
           repoUrl: "https://blackhole.example/repo.git",
-          token: "test-token",
           timeoutMs: 250,
           env: { GIT_LOG: logPath },
         })
@@ -342,6 +268,8 @@ exit 128
       path.join(binDir, "git"),
       [
         "#!/bin/sh",
+        // The ambient rung probes core.sshCommand first; that probe is not an attempt.
+        'case "$*" in *core.sshCommand*) exit 1 ;; esac',
         'printf "attempt\\n" >> "$GIT_LOG"',
         "echo \"error: cannot open '.git/FETCH_HEAD': Permission denied\" >&2",
         "exit 128",
@@ -354,7 +282,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["fetch", "origin"], {
           repoUrl: "https://example.com/repo.git",
-          token: "test-token",
           env: { GIT_LOG: logPath },
         })
       );
@@ -386,7 +313,6 @@ exit 128
       await withPath(binDir, () =>
         runGitWithCredentialLadder(["fetch", "origin"], {
           repoUrl: "https://example.com/repo.git",
-          token: "test-token",
           env: { GIT_LOG: logPath },
         })
       );
