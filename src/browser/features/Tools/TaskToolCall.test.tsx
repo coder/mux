@@ -422,6 +422,46 @@ describe("TaskAwaitToolCall", () => {
     expect(view.getByText(/bash · Watching PR 27330 until it is ready/)).toBeDefined();
   });
 
+  test("falls back to the task title when the spawn intent merely restates the command", () => {
+    const bashSpawn = createToolMessage({
+      toolName: "bash",
+      args: {
+        script: "git status",
+        display_name: "Repo State",
+        model_intent: "git status",
+        timeout_secs: 30,
+        run_in_background: true,
+      },
+      result: {
+        success: true,
+        output: "Started",
+        exitCode: 0,
+        wall_duration_ms: 10,
+        taskId: "bash:repo-state-a1b2",
+        backgroundProcessId: "repo-state-a1b2",
+      },
+    });
+
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      args: { task_ids: ["bash:repo-state-a1b2"] },
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "bash:repo-state-a1b2",
+            title: "Repo State",
+            reportMarkdown: "exit 0",
+          },
+        ],
+      },
+      taskReportLinking: computeTaskReportLinking([bashSpawn]),
+    });
+
+    expect(view.getByText(/bash · Repo State/)).toBeDefined();
+    expect(view.queryByText(/bash · Git status/)).toBeNull();
+  });
+
   test("falls back to the completed task title when no spawn intent is linked", () => {
     const view = renderTaskAwaitToolCall({
       status: "completed",

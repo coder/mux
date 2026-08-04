@@ -13,7 +13,6 @@ export interface LinkedTaskReport {
 
 export interface BashTaskSpawnInfo {
   script: string;
-  displayName?: string;
   modelIntent?: string;
 }
 
@@ -48,7 +47,7 @@ export interface TaskReportLinking {
 
   /**
    * Spawn args of background `bash` tool calls, indexed by taskId. Lets task_await rows
-   * surface the spawning command's model_intent / display_name.
+   * surface the spawning command's model_intent, which task_await results do not carry.
    */
   bashSpawnByTaskId: Map<string, BashTaskSpawnInfo>;
 }
@@ -120,24 +119,18 @@ function getBashSpawnTaskId(result: unknown): string | null {
 function getBashSpawnInfoFromArgs(args: unknown): BashTaskSpawnInfo | null {
   if (typeof args !== "object" || args === null) return null;
 
-  const { script, display_name, model_intent } = args as {
+  const { script, model_intent } = args as {
     script?: unknown;
-    display_name?: unknown;
     model_intent?: unknown;
   };
-  const displayName =
-    typeof display_name === "string" && display_name.trim().length > 0
-      ? display_name.trim()
-      : undefined;
   const modelIntent =
     typeof model_intent === "string" && model_intent.trim().length > 0
       ? model_intent.trim()
       : undefined;
-  if (displayName === undefined && modelIntent === undefined) return null;
+  if (modelIntent === undefined) return null;
 
   return {
     script: typeof script === "string" ? script : "",
-    displayName,
     modelIntent,
   };
 }
@@ -150,8 +143,7 @@ function getBashSpawnInfoFromArgs(args: unknown): BashTaskSpawnInfo | null {
  * helps the renderer place the final report in a more intuitive location.
  */
 export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskReportLinking {
-  // First pass: record which taskIds have a visible `task` tool call (and capture spawn
-  // titles/agent types), plus spawn args of background `bash` tool calls.
+  // First pass: record which taskIds have a visible `task` tool call (and capture spawn titles).
   const taskToolCallTaskIds = new Set<string>();
   const spawnTitleByTaskId = new Map<string, string>();
   const spawnAgentTypeByTaskId = new Map<string, string>();

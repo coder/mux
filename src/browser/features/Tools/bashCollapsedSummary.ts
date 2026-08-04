@@ -37,11 +37,7 @@ export function buildBashCollapsedSummary(
     return { kind: "command", command };
   }
 
-  const intent = sanitizeModelIntent(options.args.model_intent, command);
-  const displayIntent =
-    intent && normalizeForComparison(intent) !== normalizeForComparison(command)
-      ? intent
-      : undefined;
+  const displayIntent = sanitizeDisplayableModelIntent(options.args.model_intent, command);
   if (mode === "intent") {
     return {
       kind: "intent",
@@ -89,6 +85,17 @@ export function sanitizeModelIntent(rawIntent: unknown, command: string): string
   }
 
   return capitalize(intent);
+}
+
+/** Sanitized intent, or undefined when it merely restates the command. */
+export function sanitizeDisplayableModelIntent(
+  rawIntent: unknown,
+  command: string
+): string | undefined {
+  const intent = sanitizeModelIntent(rawIntent, command);
+  return intent && normalizeForComparison(intent) !== normalizeForComparison(command)
+    ? intent
+    : undefined;
 }
 
 function getIntentOnlyFallback(args: BashToolArgs, command: string): string {

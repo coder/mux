@@ -46,7 +46,7 @@ import type {
 } from "@/common/types/tools";
 import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { formatGitPatchArtifactSummary } from "./taskPatchSummary";
-import { sanitizeModelIntent } from "./bashCollapsedSummary";
+import { sanitizeDisplayableModelIntent } from "./bashCollapsedSummary";
 import {
   formatTaskGroupCreationLabel,
   formatTaskGroupHeader,
@@ -1355,7 +1355,9 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
           ? "workspace"
           : taskReportLinking?.spawnAgentTypeByTaskId.get(completedTaskId);
     const description =
-      (bashSpawn ? sanitizeModelIntent(bashSpawn.modelIntent, bashSpawn.script) : undefined) ??
+      (bashSpawn
+        ? sanitizeDisplayableModelIntent(bashSpawn.modelIntent, bashSpawn.script)
+        : undefined) ??
       trimToNonEmptyString(firstResult.title) ??
       trimToNonEmptyString(taskReportLinking?.spawnTitleByTaskId.get(completedTaskId));
     const detail = [kind, description].filter((part): part is string => part != null).join(" · ");
