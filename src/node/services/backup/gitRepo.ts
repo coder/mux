@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import {
+  GIT_REPO_SCOPE_ENV_UNSET,
   runGitWithCredentialLadder,
   type BackupCredential,
   type GitCredentialOptions,
@@ -150,7 +151,10 @@ async function runLocalGit(
   args: string[],
   options: ExecFileAsyncOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
-  using process = execFileAsync("git", args, options);
+  using process = execFileAsync("git", args, {
+    ...options,
+    env: { ...options.env, ...GIT_REPO_SCOPE_ENV_UNSET },
+  });
   return await process.result;
 }
 

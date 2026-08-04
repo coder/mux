@@ -407,6 +407,45 @@ describe("BackupRepoCache", () => {
     expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
   });
 
+  it("ignores inherited GIT_DIR and GIT_WORK_TREE instead of operating on their repository", async () => {
+    const seed = path.join(tempDir, "env-seed");
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-q", "-m", "s"]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    // Mux may be launched from a git hook or alias, where these are exported. Git reads them
+    // ahead of `-C`, so without stripping, checkout materializes under the outside worktree
+    // and `clean -fdx -- mux` deletes the victim file there.
+    const outside = path.join(tempDir, "outside-repo");
+    await git(["init", "-q", outside]);
+    await fs.mkdir(path.join(outside, "mux"), { recursive: true });
+    await fs.writeFile(path.join(outside, "mux", "victim.txt"), "keep\n", "utf-8");
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+      env: {
+        ...process.env,
+        GIT_DIR: path.join(outside, ".git"),
+        GIT_WORK_TREE: outside,
+      },
+    });
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await repo.cleanManagedPath("mux");
+
+    expect(await fs.readFile(path.join(repo.cachePath, "mux/AGENTS.md"), "utf-8")).toBe(
+      "managed\n"
+    );
+    expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });

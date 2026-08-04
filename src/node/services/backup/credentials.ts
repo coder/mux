@@ -99,7 +99,7 @@ async function configuredSshCommand(
     const result = await run("git", [...repository, "config", "--get", "core.sshCommand"], {
       timeoutMs: options.timeoutMs,
       signal: options.signal,
-      env: { ...options.env, ...NON_INTERACTIVE_ENV },
+      env: { ...options.env, ...NON_INTERACTIVE_ENV, ...GIT_REPO_SCOPE_ENV_UNSET },
     });
     return result.stdout.trim() || null;
   } catch {
@@ -186,6 +186,24 @@ const GH_TOKEN_ENV_UNSET = {
   GITHUB_TOKEN: undefined,
   GH_ENTERPRISE_TOKEN: undefined,
   GITHUB_ENTERPRISE_TOKEN: undefined,
+} as const;
+
+/**
+ * Git reads these ahead of `-C` and discovery (git(1), "The Git Repository"), so an
+ * inherited variable points every cache command at some other repository or working tree:
+ * with `GIT_WORK_TREE` set, `git -C <cache> clean -fdx -- mux` deletes `mux/` under that
+ * tree instead of the cache. Every git the backup feature runs addresses the cache
+ * explicitly, so repository selection from the environment is never meaningful here and is
+ * stripped. This is not credential wiring, so the ambient rung strips it too.
+ */
+export const GIT_REPO_SCOPE_ENV_UNSET = {
+  GIT_DIR: undefined,
+  GIT_WORK_TREE: undefined,
+  GIT_COMMON_DIR: undefined,
+  GIT_INDEX_FILE: undefined,
+  GIT_OBJECT_DIRECTORY: undefined,
+  GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
+  GIT_NAMESPACE: undefined,
 } as const;
 
 async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): Promise<boolean> {
@@ -289,7 +307,12 @@ export async function runGitWithCredentialLadder(
     try {
       const result = await run("git", [...controlled.argsPrefix, ...args], {
         ...baseOptions,
-        env: { ...options.env, ...NON_INTERACTIVE_ENV, ...controlled.env },
+        env: {
+          ...options.env,
+          ...NON_INTERACTIVE_ENV,
+          ...GIT_REPO_SCOPE_ENV_UNSET,
+          ...controlled.env,
+        },
       });
       return { credential: controlled.credential, ...result };
     } catch (error) {
@@ -311,6 +334,7 @@ export async function runGitWithCredentialLadder(
       env: {
         ...options.env,
         ...NON_INTERACTIVE_ENV,
+        ...GIT_REPO_SCOPE_ENV_UNSET,
         ...(await sshEnvOverrides(args, options)),
       },
     });

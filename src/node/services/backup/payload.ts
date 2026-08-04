@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Dirent } from "node:fs";
+import type { Dirent, Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as jsonc from "jsonc-parser";
@@ -390,7 +390,7 @@ async function readCheckedFile(
   root: BackupRoot,
   relativePath: string,
   charge: (size: number) => void
-): Promise<{ content: Buffer; mode: number }> {
+): Promise<{ content: Buffer; mode: number; identity: FileIdentityStat }> {
   const handle = await fs.open(
     absolutePathOf(root.path, relativePath),
     fs.constants.O_RDONLY | noFollowFlag()
@@ -412,11 +412,55 @@ async function readCheckedFile(
     return {
       content: filled === stat.size ? content : content.subarray(0, filled),
       mode: stat.mode,
+      identity: { dev: stat.dev, ino: stat.ino, nlink: stat.nlink },
     };
   } finally {
     await handle.close();
   }
 }
+
+interface FileIdentityStat {
+  dev: number;
+  ino: number;
+  nlink: number;
+}
+
+/**
+ * `nlink` says how many names a file has but not where they are, so a single read cannot
+ * tell an alias inside the root from one outside it. The collection as a whole can: when
+ * every name a file has was itself collected, all its aliases are inside the backed-up set,
+ * and any excess means a name somewhere this walk cannot see. A hard link to a file outside
+ * the root carries that file's bytes past the allowlist the same way the symlinks this
+ * feature already refuses would, so the unprovable case is refused too. Aliases inside the
+ * set stay allowed: they are how a case-folding volume's one-file-many-spellings behaves,
+ * and every one of them is content the backup already carries.
+ */
+function createHardLinkTracker() {
+  const identities = new Map<string, { nlink: number; names: string[] }>();
+  return {
+    record(relativePath: string, identity: FileIdentityStat): void {
+      if (identity.nlink <= 1) return;
+      const key = `${identity.dev}:${identity.ino}`;
+      const entry = identities.get(key);
+      if (entry === undefined) {
+        identities.set(key, { nlink: identity.nlink, names: [relativePath] });
+      } else {
+        entry.names.push(relativePath);
+      }
+    },
+    assertContained(): void {
+      for (const { nlink, names } of identities.values()) {
+        if (nlink > names.length) {
+          throw new Error(
+            `Refusing to use '${names[0] ?? ""}': it is hard-linked to a file outside the backed-up files`
+          );
+        }
+      }
+    },
+  };
+}
+
+type HardLinkTracker = ReturnType<typeof createHardLinkTracker>;
 
 /**
  * Writes a file through one handle, opened without following a symlink and verified to be the
@@ -433,13 +477,8 @@ async function writeCheckedFile(
 ): Promise<void> {
   const destination = absolutePathOf(root.path, relativePath);
   await fs.mkdir(path.dirname(destination), { recursive: true });
-  const handle = await fs.open(
-    destination,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag()
-  );
+  const { handle, stat } = await openSeveredWriteHandle(root, relativePath, destination);
   try {
-    const stat = await handle.stat();
-    await assertOpenedFileContained(root, relativePath, stat);
     await handle.truncate(0);
     let written = 0;
     while (written < content.length) {
@@ -466,14 +505,59 @@ async function writeCheckedFile(
   }
 }
 
+/**
+ * Opens the destination for writing, verified to be the planned file inside the root, and
+ * never a name shared with another one. Writing through a multi-link file updates every one
+ * of its names, and `nlink` cannot say whether one of them is outside the root, where a
+ * write would land backup-controlled bytes in a file the containment walk never approved.
+ * Instead of refusing, the name is severed: unlinked and recreated exclusively, so the write
+ * lands in a fresh file only this name reads. On the volumes whose behavior in-root aliases
+ * simulate, all spellings are one directory entry and severing is indistinguishable from
+ * writing in place.
+ */
+async function openSeveredWriteHandle(
+  root: BackupRoot,
+  relativePath: string,
+  destination: string
+): Promise<{ handle: fs.FileHandle; stat: Stats }> {
+  const opened = await fs.open(
+    destination,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag()
+  );
+  try {
+    const stat = await opened.stat();
+    await assertOpenedFileContained(root, relativePath, stat);
+    if (stat.nlink <= 1) return { handle: opened, stat };
+  } catch (error) {
+    await opened.close();
+    throw error;
+  }
+  await opened.close();
+  await fs.unlink(destination);
+  const fresh = await fs.open(
+    destination,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollowFlag()
+  );
+  try {
+    const stat = await fresh.stat();
+    await assertOpenedFileContained(root, relativePath, stat);
+    return { handle: fresh, stat };
+  } catch (error) {
+    await fresh.close();
+    throw error;
+  }
+}
+
 async function readBackupFile(
   root: BackupRoot,
   relativePath: string,
-  budget: ByteBudget
+  budget: ByteBudget,
+  links: HardLinkTracker
 ): Promise<BackupFile> {
-  const { content, mode } = await readCheckedFile(root, relativePath, (size) =>
+  const { content, mode, identity } = await readCheckedFile(root, relativePath, (size) =>
     budget(relativePath, size)
   );
+  links.record(relativePath, identity);
   return { path: relativePath, content, executable: (mode & 0o111) !== 0 };
 }
 
@@ -498,7 +582,8 @@ async function collectDirectory(
   relativeRoot: string,
   filter: (relativePath: string, entry: Dirent) => boolean,
   output: BackupFile[],
-  budget: ByteBudget
+  budget: ByteBudget,
+  links: HardLinkTracker
 ): Promise<void> {
   const absoluteRoot = path.join(root.path, ...relativeRoot.split("/"));
   // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
@@ -518,9 +603,9 @@ async function collectDirectory(
     const relativePath = toPosixPath(relativeRoot, entry.name);
     if (!filter(relativePath, entry)) continue;
     if (entry.isDirectory()) {
-      await collectDirectory(root, relativePath, filter, output, budget);
+      await collectDirectory(root, relativePath, filter, output, budget, links);
     } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
-      output.push(await readBackupFile(root, relativePath, budget));
+      output.push(await readBackupFile(root, relativePath, budget, links));
     }
   }
 }
@@ -529,9 +614,10 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
   const root = await resolveRoot(muxRoot);
   const files: BackupFile[] = [];
   const budget = createByteBudget();
+  const links = createHardLinkTracker();
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
     if (await isRegularFile(path.join(root.path, relativePath))) {
-      files.push(await readBackupFile(root, relativePath, budget));
+      files.push(await readBackupFile(root, relativePath, budget, links));
     }
   }
 
@@ -540,10 +626,12 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
     "agents",
     (relativePath, entry) => entry.isDirectory() || /^agents\/[^/]+\.md$/.test(relativePath),
     files,
-    budget
+    budget,
+    links
   );
-  await collectDirectory(root, "skills", () => true, files, budget);
-  await collectDirectory(root, "memory/global", () => true, files, budget);
+  await collectDirectory(root, "skills", () => true, files, budget, links);
+  await collectDirectory(root, "memory/global", () => true, files, budget, links);
+  links.assertContained();
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -1705,14 +1793,14 @@ export async function restoreBackupPayload(
   );
 
   const plan = await planRestoreWrites(options.muxRoot, options.payload);
+  // Before the writes, like the preview that showed the user this restore: the report says
+  // which local files the backup does not cover, and a multi-link destination the write loop
+  // severs below would otherwise flip from covered to local-only between the two.
+  const { localOnly } = await localOnlyPayloadFiles(options.muxRoot, localPaths, restoredPaths);
 
   for (const write of plan.writes) {
     await writeCheckedFile(plan.root, write.path, write.content, write.executable);
   }
 
-  return {
-    backupPreferences: plan.backupPreferences,
-    localOnlyFiles: (await localOnlyPayloadFiles(options.muxRoot, localPaths, restoredPaths))
-      .localOnly,
-  };
+  return { backupPreferences: plan.backupPreferences, localOnlyFiles: localOnly };
 }

@@ -1821,6 +1821,63 @@ describe("backup payload", () => {
     expect(scanBackupFilesForSecrets(payload.files)).toContain("AGENTS.md");
   });
 
+  it("refuses to back up a file hard-linked to one outside the collected set", async () => {
+    // A hard link carries the outside file's bytes past the allowlist the way a symlink
+    // would, and AGENTS.md is published without being held for review.
+    const secret = path.join(tempDir, "outside-secret.txt");
+    await fs.writeFile(secret, "outside content\n", "utf-8");
+    await fs.link(secret, path.join(muxRoot, "AGENTS.md"));
+
+    const rejected = await rejection(
+      createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+    );
+
+    expect((rejected as Error).message).toContain("hard-linked");
+  });
+
+  it("backs up files whose every hard link is itself collected", async () => {
+    await write(muxRoot, "skills/demo/note.md", "shared\n");
+    await fs.link(
+      path.join(muxRoot, "skills/demo/note.md"),
+      path.join(muxRoot, "skills/demo/alias.md")
+    );
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    expect(payload.files.map((file) => file.path)).toContain("skills/demo/alias.md");
+  });
+
+  it("severs a hard-linked restore destination instead of writing through it", async () => {
+    await write(muxRoot, "skills/demo/note.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "sever-payload");
+    await writeBackupPayload(destination, payload);
+    await write(muxRoot, "skills/demo/note.md", "edited locally\n");
+    // The payload restores only note.md; writing through the shared file would also rewrite
+    // alias.md, a path the user never approved restoring, with backup-controlled bytes.
+    await fs.link(
+      path.join(muxRoot, "skills/demo/note.md"),
+      path.join(muxRoot, "skills/demo/alias.md")
+    );
+
+    await restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) });
+
+    expect(await fs.readFile(path.join(muxRoot, "skills/demo/note.md"), "utf-8")).toBe(
+      "from backup\n"
+    );
+    expect(await fs.readFile(path.join(muxRoot, "skills/demo/alias.md"), "utf-8")).toBe(
+      "edited locally\n"
+    );
+  });
+
   it("refuses to read a payload entry through a symlink", async () => {
     await write(muxRoot, "AGENTS.md", "real\n");
     const payload = await createBackupPayload({
