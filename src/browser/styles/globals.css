@@ -1127,9 +1127,8 @@ body,
   background-color: var(--color-surface-primary);
 }
 
-/* User request: prevent accidental text highlighting while tapping/scrolling on touch
-   devices. Deliberately not width-gated like the phone rules below: iPadOS reports
-   pointer: coarse even with a trackpad attached, at widths above the phone breakpoint. */
+/* iPadOS reports pointer: coarse even with a trackpad attached, so selection suppression
+   must not be limited to phone widths. */
 @media (pointer: coarse) {
   body {
     -webkit-user-select: none;
@@ -1146,7 +1145,6 @@ body,
   }
 }
 
-/* Mobile improvements - only apply to touch devices */
 @media (max-width: 768px) and (pointer: coarse) {
   html {
     -webkit-text-size-adjust: 100%;

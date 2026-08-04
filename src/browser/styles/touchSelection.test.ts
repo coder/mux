@@ -6,11 +6,8 @@
  * validation). This asserts the rules against the stylesheet instead, resolving the
  * declaration that wins for a viewport rather than matching literal source.
  *
- * Selection reaches an element from every route that produces a `user-select`
- * declaration, so all are checked: rules written in globals.css, Tailwind utilities,
- * and inline styles, whether React style objects or DOM style assignments. Only the
- * first route is visible to this parse; the others need the source scan, which covers
- * exactly the files that can put a declaration on a rendered element.
+ * The contract checks stylesheet rules, Tailwind utilities, and explicit inline
+ * selection writes in renderer sources.
  *
  * `@tailwindcss/oxide` is the scanner underneath the declared `tailwindcss` and
  * `@tailwindcss/vite` packages; asking it for the file list is what keeps "which files
@@ -21,6 +18,7 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import { readFile, stat } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { JSDOM } from "jsdom";
 import postcss, { type ChildNode, type Container, type Declaration } from "postcss";
 import ts from "typescript";
 
@@ -163,19 +161,26 @@ function exportDeclarationHasRuntimeValue(
   );
 }
 
-function stringLiteralValue(expression: ts.Expression | undefined): string | undefined {
+function unwrapExpression(expression: ts.Expression): ts.Expression {
   let candidate = expression;
   while (
-    candidate &&
-    (ts.isParenthesizedExpression(candidate) ||
-      ts.isAsExpression(candidate) ||
-      ts.isTypeAssertionExpression(candidate) ||
-      ts.isSatisfiesExpression(candidate) ||
-      ts.isNonNullExpression(candidate))
+    ts.isParenthesizedExpression(candidate) ||
+    ts.isAsExpression(candidate) ||
+    ts.isTypeAssertionExpression(candidate) ||
+    ts.isSatisfiesExpression(candidate) ||
+    ts.isNonNullExpression(candidate)
   ) {
     candidate = candidate.expression;
   }
-  return candidate && ts.isStringLiteralLike(candidate) ? candidate.text : undefined;
+  return candidate;
+}
+
+function stringLiteralValue(expression: ts.Expression | undefined): string | undefined {
+  if (!expression) {
+    return undefined;
+  }
+  const candidate = unwrapExpression(expression);
+  return ts.isStringLiteralLike(candidate) ? candidate.text : undefined;
 }
 
 function importedSegments(source: string, filePath: string): Set<string> {
@@ -246,38 +251,6 @@ function importedSegments(source: string, filePath: string): Set<string> {
 const PLAIN_SOURCE_PATH = /^"([^"*?{}[\]]+)"$/;
 
 /**
- * Opt-ins as they appear in source, in every spelling that produces a declaration:
- * the named utilities in any variant, the arbitrary-value and variable forms (tracked
- * despite compiling to nothing today, see above), the arbitrary-property form, and
- * inline styles, camelCase for React style objects and DOM assignments (`userSelect`,
- * `WebkitUserSelect`, DOM's `webkitUserSelect`) or kebab-case inside strings
- * (`setProperty`, `cssText`).
- *
- * A normal `select-auto` is exempt: `auto` is the property's initial value and resolves
- * through the parent's used value, and globals.css is unlayered while utilities live in
- * Tailwind's `@layer utilities`, so a normal utility cannot beat the guard or the
- * editable opt-backs; declaring `auto` there changes nothing. The important-marked
- * forms stay tracked, because an author-important utility beats the unlayered normal
- * guard rules, so `select-auto!` on an editable would re-break iPad selection. So do
- * the inline spellings of `auto`, which sit above every stylesheet rule. Residual, same
- * class as the token-move one: `select-auto` co-located on one element with another
- * selection utility it outranks in compiled order (`select-all` sorts before `auto`)
- * changes behavior invisibly at token granularity; only the PR diff shows co-location.
- *
- * Spellings of suppression are excluded here and tracked by the suppression pattern
- * below instead; the empty-string reset is neither. An inline value this pattern cannot
- * see, such as a variable or a conditional, counts as an opt-in: a match is a review
- * gate, and the cost of a false positive is one entry below.
- *
- * Each alternative carries its parser's case posture. Tailwind candidates and JS
- * property lookups are case-sensitive (`SELECT-TEXT` and `[USER-SELECT:text]` compile
- * to nothing or fail the build, verified against `compile()`, and `style.USERSELECT`
- * is inert), but CSS parsed out of strings is case-insensitive, and a regex flag
- * cannot vary per alternative, so the kebab spellings are built letter by letter.
- */
-const anyCase = (kebab: string) => kebab.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`);
-
-/**
  * A Tailwind variant chain, named (`hover:`) or arbitrary (`[&:hover]:`), so the whole
  * candidate lands in the recorded token: a variant change alters when the declaration
  * applies, which is a behavioral edit the inventory must see.
@@ -286,61 +259,55 @@ const VARIANT_CHAIN = String.raw`(?:(?:[A-Za-z0-9_-]+|\[[^\s\]]+\]):)*`;
 
 const SELECTION_OPT_IN_PATTERN = new RegExp(
   [
-    // Named utilities behind any variant chain, with either important-marker spelling.
     String.raw`!?${VARIANT_CHAIN}\bselect-(?:text|all)\b!?`,
-    // select-auto only when important-marked (see the exemption above).
     String.raw`!${VARIANT_CHAIN}\bselect-auto\b`,
     String.raw`${VARIANT_CHAIN}\bselect-auto\b!`,
-    // Arbitrary-value and variable forms.
     String.raw`!?${VARIANT_CHAIN}\bselect-\[(?!none\])[^\s\]]+\]!?`,
     String.raw`!?${VARIANT_CHAIN}\bselect-\((?:[\w-]+:)?--[^\s)]+\)!?`,
-    // The arbitrary-property form.
     String.raw`!?${VARIANT_CHAIN}\[(?:-(?:webkit|moz|ms|o)-)?user-select:(?!none\])[^\s\]]+\]!?`,
-    // camelCase inline styles, unless the value is a literal none or empty reset.
-    String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b(?!\s*[:=]\s*["'\`](?:none)?["'\`])`,
-    // kebab-case inside strings, in any case the browser would accept.
-    `(?:-(?:${anyCase("webkit")}|${anyCase("moz")}|${anyCase("ms")}|${anyCase("o")})-)?\\b${anyCase("user-select")}\\b(?!\\s*:\\s*${anyCase("none")}\\b)`,
   ].join("|"),
   "g"
 );
 
-/**
- * The same spellings with the value `none`. `user-select` inherits, so `select-none` on
- * a control is safe while the same class on an application-wide container (the App.tsx
- * shell) disables desktop selection for everything under it, and which one a line is
- * cannot be told from the class name. Both directions are therefore review gates
- * against the same enumeration machinery; a suppression added anywhere is one entry,
- * reviewed for what it wraps.
- */
 const SELECTION_SUPPRESSION_PATTERN = new RegExp(
   [
     String.raw`!?${VARIANT_CHAIN}\bselect-none\b!?`,
     String.raw`!?${VARIANT_CHAIN}\bselect-\[none\]!?`,
     String.raw`!?${VARIANT_CHAIN}\[(?:-(?:webkit|moz|ms|o)-)?user-select:none\]!?`,
-    String.raw`\b(?:[Ww]ebkit|[Mm]oz|[Mm]s|O)?[uU]serSelect\b\s*[:=]\s*["'\`]none["'\`]`,
-    `(?:-(?:${anyCase("webkit")}|${anyCase("moz")}|${anyCase("ms")}|${anyCase("o")})-)?\\b${anyCase("user-select")}\\b\\s*:\\s*${anyCase("none")}\\b`,
   ].join("|"),
   "g"
 );
 
+type SelectionSiteKind = "opt-in" | "suppression";
+
+const INLINE_SELECTION_PROPERTIES: Record<string, string> = {
+  userSelect: "userSelect",
+  WebkitUserSelect: "WebkitUserSelect",
+  webkitUserSelect: "webkitUserSelect",
+  MozUserSelect: "MozUserSelect",
+  mozUserSelect: "mozUserSelect",
+  MsUserSelect: "MsUserSelect",
+  msUserSelect: "msUserSelect",
+  OUserSelect: "OUserSelect",
+  oUserSelect: "oUserSelect",
+  "user-select": "user-select",
+  "-webkit-user-select": "-webkit-user-select",
+  "-moz-user-select": "-moz-user-select",
+  "-ms-user-select": "-ms-user-select",
+  "-o-user-select": "-o-user-select",
+};
+
 /**
  * Components that opt content back into selection with a Tailwind class or inline style.
  *
- * Either one puts a `user-select` declaration on the element itself, which beats the
- * guard inherited from `body`, so each entry is content that stays selectable on touch.
+ * Either one puts a declaration on the element itself, replacing the value propagated
+ * from `body`, so each entry is content that stays selectable on touch.
  * Enumerated rather than inferred because whether an element is narrow enough for that
  * to be safe (a SHA, a fingerprint, an input) is not visible in the stylesheet or the
  * class name, so a new entry is a decision for review.
  *
- * The recorded token is the full Tailwind candidate, variants and important markers
- * included, or the inline property spelling. Surrounding source is deliberately not
- * recorded, because pinning line text makes behavior-neutral refactors (reordering
- * classes on a line, renaming a nearby expression) fail the contract, the tautology
- * AGENTS.md forbids. The accepted residual: moving an already-reviewed token onto a
- * different element in the same file is invisible here, since telling identical tokens
- * apart needs surrounding text or TSX parsing; adds, removals, kind and variant
- * changes, and cross-file moves all fail, and the PR diff itself shows what a moved
- * class newly wraps.
+ * The recorded token is the Tailwind candidate or inline property spelling, without
+ * surrounding source that would make behavior-neutral refactors fail the contract.
  */
 const SELECTION_OPT_INS: Record<string, Record<string, number>> = {
   "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-text": 1 },
@@ -538,7 +505,7 @@ function mediaQueryApplies(params: string, viewport: Viewport): boolean {
 /**
  * The declaration a browser would use: last applicable one wins, since every rule
  * reaching this point is a bare selector of equal specificity. `undefined` means no
- * rule applies, so the element keeps the inherited or initial value.
+ * rule applies, so no direct value is resolved here.
  */
 function effectiveValue(
   selector: string,
@@ -580,17 +547,17 @@ const SINGLE_COMPONENT_SELECTOR = /^[.#][A-Za-z0-9_-]+$/;
  * Suppression selectors reviewed as genuinely component-scoped. One token is still not
  * evidence of scope: `.mobile-layout` is a single class attached to App.tsx's
  * application-wide wrapper, so suppressing selection on it would reach every desktop
- * descendant by inheritance while staying structurally indistinguishable from
+ * descendant through the `auto` used value while staying structurally indistinguishable from
  * `.line-number`. Which one a token is lives in TSX this contract cannot read, and
  * reading class names out of shell files does not settle it either (`titlebar-drag`
  * appears in App.tsx on a scoped strip), so no selector is accepted automatically; each
  * is a reviewed entry, the same posture as the source-side inventories.
  */
-const SCOPED_SUPPRESSION_SELECTORS = [".line-number", ".titlebar-drag"];
+const SCOPED_SUPPRESSION_SELECTORS = [".line-number", ".shimmer-text-sweep", ".titlebar-drag"];
 
 /**
  * Hard floor under the reviewed list: `#root` (index.html) contains everything React
- * renders, so suppressing selection there suppresses it app-wide by inheritance, and an
+ * renders, so its used value would suppress selection throughout the app, and an
  * enumeration entry must not be able to override that. Ids are read from index.html
  * rather than hardcoded, so a renamed or added shell container stays covered.
  */
@@ -648,10 +615,8 @@ describe("touch text-selection guard", () => {
   });
 
   /**
-   * `user-select` inherits, so the `body` rule reaches transcript content only by
-   * inheritance, and inheritance loses to any declaration that matches a descendant
-   * directly, whatever its specificity. The guard therefore holds only while nothing
-   * else re-enables selection, which the per-selector assertions above cannot see.
+   * The `auto` used value follows the parent, but a declaration on a descendant replaces
+   * it. The guard therefore holds only while nothing else re-enables selection.
    */
   it("re-enables selection only for the editable opt-in on a coarse pointer", () => {
     const reEnabling = COARSE_VIEWPORTS.flatMap((viewport) =>
@@ -663,9 +628,8 @@ describe("touch text-selection guard", () => {
   });
 
   /**
-   * The same inheritance argument in reverse, and viewport-independent because a rule that
-   * can reach content is wrong at every width: only the guard on `body` may suppress
-   * selection broadly, and everything else must be a reviewed component selector.
+   * Only the guard on `body` may suppress selection broadly. Every other suppression must
+   * be a reviewed component selector.
    */
   it("suppresses selection only through the body guard or a reviewed component selector", () => {
     const offenders = selectionRules
@@ -752,6 +716,287 @@ describe("touch text-selection guard", () => {
     );
   }
 
+  function propertyNameText(name: ts.PropertyName): string | undefined {
+    if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) {
+      return name.text;
+    }
+    return undefined;
+  }
+
+  function accessName(expression: ts.Expression): string | undefined {
+    const candidate = unwrapExpression(expression);
+    if (ts.isPropertyAccessExpression(candidate)) {
+      return candidate.name.text;
+    }
+    if (ts.isElementAccessExpression(candidate)) {
+      return stringLiteralValue(candidate.argumentExpression);
+    }
+    return undefined;
+  }
+
+  function accessBase(expression: ts.Expression): ts.Expression | undefined {
+    const candidate = unwrapExpression(expression);
+    if (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) {
+      return candidate.expression;
+    }
+    return undefined;
+  }
+
+  function inlineSelectionTokens(
+    relativePath: string,
+    source: string,
+    kind: SelectionSiteKind
+  ): string[] {
+    if (!/(?:[A-Za-z]userSelect|\buserSelect\b|user-select)/i.test(source)) {
+      return [];
+    }
+
+    const tokens: string[] = [];
+    const record = (property: string, expression: ts.Expression) => {
+      const literal = stringLiteralValue(expression)?.trim().toLowerCase();
+      if (literal === undefined) {
+        throw new Error(`Unsupported dynamic inline selection value: ${expression.getText()}`);
+      }
+      if (literal === "") {
+        return;
+      }
+      const suppression = literal === "none";
+      if ((kind === "suppression") !== suppression) {
+        return;
+      }
+      tokens.push(normalizeToken(suppression ? `${property}:none` : property));
+    };
+    const collectCss = (cssText: string) => {
+      const root = postcss.parse(`x{${cssText}}`);
+      root.walkDecls((decl) => {
+        const property = decl.prop.toLowerCase();
+        if (!SELECTION_PROPERTY_PATTERN.test(property)) {
+          return;
+        }
+        record(property, ts.factory.createStringLiteral(decl.value.trim()));
+      });
+    };
+
+    if (relativePath.endsWith(".html")) {
+      const dom = new JSDOM(source);
+      for (const element of dom.window.document.querySelectorAll("[style]")) {
+        const style = element.getAttribute("style");
+        if (style) {
+          collectCss(style);
+        }
+      }
+      dom.window.close();
+      return tokens;
+    }
+    if (!EXECUTABLE_SOURCE.test(relativePath)) {
+      return tokens;
+    }
+
+    const filePath = resolve(REPO_ROOT, relativePath);
+    const options: ts.CompilerOptions = {
+      allowJs: true,
+      jsx: ts.JsxEmit.Preserve,
+      noLib: true,
+      noResolve: true,
+      target: ts.ScriptTarget.Latest,
+    };
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKindForPath(relativePath)
+    );
+    const defaultHost = ts.createCompilerHost(options);
+    const host: ts.CompilerHost = {
+      ...defaultHost,
+      fileExists: (requestedPath) => resolve(requestedPath) === filePath,
+      getSourceFile: (requestedPath) =>
+        resolve(requestedPath) === filePath ? sourceFile : undefined,
+      readFile: (requestedPath) => (resolve(requestedPath) === filePath ? source : undefined),
+    };
+    const checker = ts.createProgram({ rootNames: [filePath], options, host }).getTypeChecker();
+    const resolvedSymbol = (node: ts.Node): ts.Symbol | undefined =>
+      checker.getSymbolAtLocation(node);
+    const isConstDeclaration = (declaration: ts.VariableDeclaration): boolean =>
+      ts.isVariableDeclarationList(declaration.parent) &&
+      Boolean(declaration.parent.flags & ts.NodeFlags.Const);
+    const visitedSymbols = new Set<ts.Symbol>();
+
+    const collectStyleExpression = (expression: ts.Expression): void => {
+      const candidate = unwrapExpression(expression);
+      if (ts.isObjectLiteralExpression(candidate)) {
+        for (const property of candidate.properties) {
+          if (ts.isSpreadAssignment(property)) {
+            collectStyleExpression(property.expression);
+          } else if (ts.isPropertyAssignment(property)) {
+            const name = propertyNameText(property.name);
+            const selectionProperty = name ? INLINE_SELECTION_PROPERTIES[name] : undefined;
+            if (selectionProperty) {
+              record(selectionProperty, property.initializer);
+            }
+          } else if (ts.isShorthandPropertyAssignment(property)) {
+            const selectionProperty = INLINE_SELECTION_PROPERTIES[property.name.text];
+            if (selectionProperty) {
+              record(selectionProperty, property.name);
+            }
+          }
+        }
+        return;
+      }
+      if (ts.isIdentifier(candidate)) {
+        const symbol = resolvedSymbol(candidate);
+        if (!symbol || visitedSymbols.has(symbol)) {
+          return;
+        }
+        const declaration = symbol.valueDeclaration;
+        if (
+          declaration &&
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          isConstDeclaration(declaration)
+        ) {
+          visitedSymbols.add(symbol);
+          collectStyleExpression(declaration.initializer);
+        }
+        return;
+      }
+      if (ts.isConditionalExpression(candidate)) {
+        collectStyleExpression(candidate.whenTrue);
+        collectStyleExpression(candidate.whenFalse);
+        return;
+      }
+      if (
+        ts.isCallExpression(candidate) &&
+        ts.isPropertyAccessExpression(candidate.expression) &&
+        ts.isIdentifier(candidate.expression.expression) &&
+        candidate.expression.expression.text === "Object" &&
+        candidate.expression.name.text === "assign"
+      ) {
+        candidate.arguments.forEach(collectStyleExpression);
+      }
+    };
+
+    const collectPropsExpression = (expression: ts.Expression): void => {
+      const candidate = unwrapExpression(expression);
+      if (ts.isObjectLiteralExpression(candidate)) {
+        for (const property of candidate.properties) {
+          if (ts.isSpreadAssignment(property)) {
+            collectPropsExpression(property.expression);
+          } else if (
+            ts.isPropertyAssignment(property) &&
+            propertyNameText(property.name) === "style"
+          ) {
+            collectStyleExpression(property.initializer);
+          }
+        }
+        return;
+      }
+      if (ts.isIdentifier(candidate)) {
+        const symbol = resolvedSymbol(candidate);
+        const declaration = symbol?.valueDeclaration;
+        if (
+          declaration &&
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          isConstDeclaration(declaration)
+        ) {
+          collectPropsExpression(declaration.initializer);
+        }
+      }
+    };
+
+    const isStyleObject = (expression: ts.Expression): boolean => {
+      const candidate = unwrapExpression(expression);
+      if (
+        (ts.isPropertyAccessExpression(candidate) || ts.isElementAccessExpression(candidate)) &&
+        accessName(candidate) === "style"
+      ) {
+        return true;
+      }
+      if (ts.isIdentifier(candidate)) {
+        const declaration = resolvedSymbol(candidate)?.valueDeclaration;
+        return Boolean(
+          declaration &&
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          isConstDeclaration(declaration) &&
+          isStyleObject(declaration.initializer)
+        );
+      }
+      return false;
+    };
+
+    const visit = (node: ts.Node) => {
+      if (ts.isJsxAttribute(node) && ts.isIdentifier(node.name) && node.name.text === "style") {
+        const initializer = node.initializer;
+        if (initializer && ts.isJsxExpression(initializer) && initializer.expression) {
+          collectStyleExpression(initializer.expression);
+        }
+      } else if (ts.isJsxSpreadAttribute(node)) {
+        collectPropsExpression(node.expression);
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        const property = accessName(node.left);
+        const base = accessBase(node.left);
+        const selectionProperty = property ? INLINE_SELECTION_PROPERTIES[property] : undefined;
+        if (selectionProperty && base && isStyleObject(base)) {
+          record(selectionProperty, node.right);
+        } else if (property === "cssText" && base && isStyleObject(base)) {
+          const cssText = stringLiteralValue(node.right);
+          if (cssText !== undefined) {
+            collectCss(cssText);
+          }
+        }
+      } else if (ts.isCallExpression(node)) {
+        const method = accessName(node.expression);
+        const receiver = accessBase(node.expression);
+        if (method === "setProperty" && receiver && isStyleObject(receiver)) {
+          const property = stringLiteralValue(node.arguments[0]);
+          const value = node.arguments[1];
+          const selectionProperty = property ? INLINE_SELECTION_PROPERTIES[property] : undefined;
+          if (selectionProperty && value) {
+            record(selectionProperty, value);
+          }
+        } else if (method === "setAttribute" && stringLiteralValue(node.arguments[0]) === "style") {
+          const cssText = stringLiteralValue(node.arguments[1]);
+          if (cssText !== undefined) {
+            collectCss(cssText);
+          }
+        } else if (
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "createElement" &&
+          node.arguments[1]
+        ) {
+          collectPropsExpression(node.arguments[1]);
+        } else if (
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "createElement" &&
+          node.arguments[1]
+        ) {
+          collectPropsExpression(node.arguments[1]);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return tokens;
+  }
+
+  function selectionTokens(
+    relativePath: string,
+    source: string,
+    kind: SelectionSiteKind
+  ): string[] {
+    const pattern = kind === "opt-in" ? SELECTION_OPT_IN_PATTERN : SELECTION_SUPPRESSION_PATTERN;
+    return [
+      ...matchedTokens(relativePath, source, pattern),
+      ...inlineSelectionTokens(relativePath, source, kind),
+    ];
+  }
+
   it("finds runtime imports without matching comments, strings, or type-only imports", () => {
     const source = [
       '// do not import "@/node/comment"',
@@ -785,6 +1030,37 @@ describe("touch text-selection guard", () => {
     ).toEqual(["desktop", "node"]);
   });
 
+  it("inventories inline selection writes without matching reads or declarations", () => {
+    const source = [
+      "interface SelectionOptions { userSelect: string }",
+      "const current = element.style.userSelect;",
+      'const unrelated = { userSelect: "none" };',
+      'const shared = { userSelect: "text" };',
+      "const view = <>",
+      "  <div style={shared} />",
+      '  <span {...{ style: { WebkitUserSelect: "none" } }} />',
+      "</>;",
+      'document.body.style.userSelect = "none";',
+      'document.body.style.userSelect = "";',
+      'document.body.style.setProperty("-moz-user-select", "none");',
+      'document.body.setAttribute("style", "user-select:all");',
+      'React.createElement("div", { style: { msUserSelect: "none" } });',
+    ].join("\n");
+
+    expect({
+      optIns: selectionTokens("component.tsx", source, "opt-in").sort(),
+      suppressions: selectionTokens("component.tsx", source, "suppression").sort(),
+    }).toEqual({
+      optIns: ["user-select", "userSelect"],
+      suppressions: [
+        "-moz-user-select:none",
+        "WebkitUserSelect:none",
+        "msUserSelect:none",
+        "userSelect:none",
+      ],
+    });
+  });
+
   it("ignores comments while inventorying selection sites", () => {
     const cases = [
       {
@@ -792,7 +1068,10 @@ describe("touch text-selection guard", () => {
         source: [
           "#!/usr/bin/env bun --select-none",
           'const className = "select-text"; // select-none',
-          'const style = { userSelect: "text" }; /* userSelect: "none" */',
+          'const style = <div style={{ userSelect: "text" }} />; /* userSelect: "none" */',
+          "const current = element.style.userSelect;",
+          "interface SelectionOptions { userSelect: string }",
+          'const unrelated = { userSelect: "none" };',
           "const view = <><span>https://example.test</span>",
           '<button className="select-none" />{/* select-none */}</>;',
           'const template = `/* select-all */ ${/* select-none */ "select-text"}`;',
@@ -811,18 +1090,22 @@ describe("touch text-selection guard", () => {
     for (const { relativePath, source, optIns, suppressions } of cases) {
       expect({
         relativePath,
-        optIns: matchedTokens(relativePath, source, SELECTION_OPT_IN_PATTERN),
-        suppressions: matchedTokens(relativePath, source, SELECTION_SUPPRESSION_PATTERN),
-      }).toEqual({ relativePath, optIns, suppressions });
+        optIns: selectionTokens(relativePath, source, "opt-in").sort(),
+        suppressions: selectionTokens(relativePath, source, "suppression").sort(),
+      }).toEqual({
+        relativePath,
+        optIns: [...optIns].sort(),
+        suppressions: [...suppressions].sort(),
+      });
     }
   });
 
   async function collectSelectionSites(
-    pattern: RegExp
+    kind: SelectionSiteKind
   ): Promise<Record<string, Record<string, number>>> {
     const sites: Record<string, Record<string, number>> = {};
     const collectInto = (key: string, source: string) => {
-      for (const token of matchedTokens(key, source, pattern)) {
+      for (const token of selectionTokens(key, source, kind)) {
         const fileSites = (sites[key] ??= {});
         fileSites[token] = (fileSites[token] ?? 0) + 1;
       }
@@ -849,13 +1132,11 @@ describe("touch text-selection guard", () => {
   }
 
   it("opts content back into selection only in reviewed components", async () => {
-    expect(await collectSelectionSites(SELECTION_OPT_IN_PATTERN)).toEqual(SELECTION_OPT_INS);
+    expect(await collectSelectionSites("opt-in")).toEqual(SELECTION_OPT_INS);
   });
 
   it("suppresses selection in source only at reviewed sites", async () => {
-    expect(await collectSelectionSites(SELECTION_SUPPRESSION_PATTERN)).toEqual(
-      SELECTION_SUPPRESSIONS
-    );
+    expect(await collectSelectionSites("suppression")).toEqual(SELECTION_SUPPRESSIONS);
   });
 
   it("scans executable renderer sources but not non-runtime files", () => {
