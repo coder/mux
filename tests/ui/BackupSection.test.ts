@@ -261,12 +261,20 @@ describe("BackupSection", () => {
     });
     expect(canvas.getByText(approval.command)).toBeTruthy();
 
+    // The backup drifted since the preview: the blocked restore reports a different
+    // command, and the section must display that list instead of the stale one.
+    const drifted = {
+      path: "servers.notes.command",
+      command: "npx -y some-other-tool",
+      token: "token-drifted",
+    };
     const restore = jest.spyOn(client.backup, "restore").mockResolvedValueOnce({
       success: false,
       error: {
         code: "COMMAND_APPROVAL_REQUIRED",
         message: "This backup would replace executable MCP commands.",
-        files: [`${approval.path}: ${approval.command}`],
+        files: [`${drifted.path}: ${drifted.command}`],
+        commandApprovals: [drifted],
       },
     });
     async function confirmRestore() {
@@ -281,13 +289,15 @@ describe("BackupSection", () => {
         expect.objectContaining({ approvedCommandTokens: [] })
       )
     );
+    await canvas.findByText(drifted.command);
+    expect(canvas.queryByText(approval.command)).toBeNull();
 
     fireEvent.click(approve);
     await waitFor(() => expect(approve.getAttribute("data-state")).toBe("checked"));
     await confirmRestore();
     await waitFor(() =>
       expect(restore).toHaveBeenLastCalledWith(
-        expect.objectContaining({ approvedCommandTokens: [approval.token] })
+        expect.objectContaining({ approvedCommandTokens: [drifted.token] })
       )
     );
   });

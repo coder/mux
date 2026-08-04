@@ -340,9 +340,13 @@ export function BackupSection() {
       if (!result.success) {
         setActionError(getOperationErrorMessage(result.error));
         setRestoreConfirmationOpen(false);
-        // The backup changed its commands since the preview, so the approval no longer
-        // covers what would be written and the user has to read the new text.
-        if (result.error.code === "COMMAND_APPROVAL_REQUIRED") setApproveCommands(false);
+        // The commands the restore would write are not the ones on screen, either because
+        // the backup changed since the preview or because there was no preview at all.
+        // The error carries the current list, so show it and require a fresh approval.
+        if (result.error.code === "COMMAND_APPROVAL_REQUIRED") {
+          setCommandApprovals(result.error.commandApprovals ?? []);
+          setApproveCommands(false);
+        }
         return;
       }
       setPreview(null);

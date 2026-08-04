@@ -1389,7 +1389,10 @@ export function assertBackupCommandsApproved(
 ): void {
   const approved = new Set(approvedTokens ?? []);
   const unapproved = approvals.filter((approval) => !approved.has(approval.token));
-  if (unapproved.length > 0) throw new BackupCommandApprovalRequiredError(unapproved);
+  // The full list, not just the unapproved rest: the UI resends tokens only for the
+  // commands it displays, so an error carrying a subset would drop the already-approved
+  // tokens from the retry and turn them back into the next round's unapproved rest.
+  if (unapproved.length > 0) throw new BackupCommandApprovalRequiredError(approvals);
 }
 
 async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {

@@ -2,6 +2,17 @@ import { z } from "zod";
 import { SettingsBackupSchema } from "@/common/config/schemas/settingsBackup";
 import { ResultSchema } from "./result";
 
+/**
+ * An MCP command a restore would introduce or change. `token` binds the approval to this
+ * exact command text, so an approval cannot carry over to a command the repository
+ * changed after the user read it.
+ */
+export const BackupCommandApprovalSchema = z.object({
+  path: z.string(),
+  command: z.string(),
+  token: z.string(),
+});
+
 export const BackupOperationErrorSchema = z.object({
   code: z.enum([
     "AUTH_FAILED",
@@ -17,17 +28,12 @@ export const BackupOperationErrorSchema = z.object({
   files: z.array(z.string()).nullish(),
   /** Echo back on the next push to approve exactly the payload that was blocked. */
   secretApproval: z.string().nullish(),
-});
-
-/**
- * An MCP command a restore would introduce or change. `token` binds the approval to this
- * exact command text, so an approval cannot carry over to a command the repository
- * changed after the user read it.
- */
-export const BackupCommandApprovalSchema = z.object({
-  path: z.string(),
-  command: z.string(),
-  token: z.string(),
+  /**
+   * On COMMAND_APPROVAL_REQUIRED: every command the restore needs approved, so a restore
+   * attempted without a preview, or after the backup drifted, can present the current
+   * list instead of a stale or empty one.
+   */
+  commandApprovals: z.array(BackupCommandApprovalSchema).nullish(),
 });
 
 export const BackupFileChangeSchema = z.object({

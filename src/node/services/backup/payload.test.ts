@@ -7,6 +7,7 @@ import * as jsonc from "jsonc-parser";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import {
   BackupCommandApprovalRequiredError,
+  assertBackupCommandsApproved,
   MAX_BACKUP_FILE_BYTES,
   MAX_BACKUP_TOTAL_BYTES,
   REDACTED_BACKUP_VALUE,
@@ -260,6 +261,25 @@ describe("backup payload", () => {
       }).toString("utf-8");
       expect(serialized).not.toContain("hunter2");
     }
+  });
+
+  it("reports every required command when only some are approved", () => {
+    const approvals = [
+      { path: "servers.a.command", command: "npx a", token: "token-a" },
+      { path: "servers.b.command", command: "npx b", token: "token-b" },
+    ];
+
+    let caught: unknown;
+    try {
+      assertBackupCommandsApproved(approvals, ["token-a"]);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(BackupCommandApprovalRequiredError);
+    // The full list, not the unapproved rest: the UI resends tokens only for the commands
+    // it displays, so a subset would drop token-a from the retry and flip-flop forever.
+    expect((caught as BackupCommandApprovalRequiredError).approvals).toEqual(approvals);
   });
 
   it("never backs up the shell-executed editor command", () => {
