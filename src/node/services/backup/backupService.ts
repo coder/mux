@@ -374,6 +374,23 @@ export class BackupService {
     if (saved == null) {
       throw new BackupServiceError("IO_ERROR", "Settings backup configuration was not saved");
     }
+    // saveConfig logs and swallows write failures by design, so a resolved editConfig does
+    // not prove the write landed; on a full disk this method would otherwise report saved
+    // settings, a recorded push, or a recorded restore that config.json never received.
+    // loadConfigOrDefault reads the file fresh, so a lost write reads back as the old value.
+    const stored = this.config.loadConfigOrDefault().settingsBackup;
+    if (
+      stored?.repoUrl !== saved.repoUrl ||
+      stored.branch !== saved.branch ||
+      stored.path !== saved.path ||
+      stored.lastPushedCommit !== saved.lastPushedCommit ||
+      stored.lastRestoredCommit !== saved.lastRestoredCommit
+    ) {
+      throw new BackupServiceError(
+        "IO_ERROR",
+        "The backup settings could not be written to config.json"
+      );
+    }
     return saved;
   }
 

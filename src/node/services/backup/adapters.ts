@@ -285,15 +285,30 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
         approvedCommandTokens: restoreOptions.approvedCommandTokens,
       });
       if (result.backupPreferences !== undefined) {
-        await options.config.editConfig((current) => ({
-          ...current,
+        let merged: ReturnType<typeof normalizeUserPreferences> | undefined;
+        await options.config.editConfig((current) => {
           // Merged against the config this edit reads, not a snapshot taken before the
           // restore: a whole-object write would otherwise discard preferences another
           // window saved meanwhile, including the machine-local keys no backup carries.
-          userPreferences: normalizeUserPreferences(
+          merged = normalizeUserPreferences(
             mergeBackupPreferences(current.userPreferences, result.backupPreferences)
-          ),
-        }));
+          );
+          return { ...current, userPreferences: merged };
+        });
+        // saveConfig logs and swallows write failures, so a resolved edit does not prove
+        // the preferences landed. Compared through the backup projection because every
+        // key a restore can change is portable, so a lost write is visible there, while
+        // machine-local keys the load path normalizes differently stay out of the check.
+        const stored = options.config.loadConfigOrDefault().userPreferences;
+        if (
+          merged !== undefined &&
+          !serializeBackupPreferences(stored ?? {}).equals(serializeBackupPreferences(merged))
+        ) {
+          throw new BackupServiceError(
+            "IO_ERROR",
+            "The restored preferences could not be written to config.json"
+          );
+        }
       }
 
       const after = await localFilesByPath();

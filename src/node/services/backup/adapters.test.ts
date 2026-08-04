@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -719,6 +719,31 @@ describe("backup adapters", () => {
     expect(await fs.readFile(path.join(muxRoot, "agents/local-only.md"), "utf-8")).toBe(
       "local only\n"
     );
+  });
+
+  it("reports a lost preferences write instead of restoring silently", async () => {
+    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
+    await writeMuxFile("AGENTS.md", "backed up\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+    const repository = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+
+    config.state = { projects: new Map(), userPreferences: { appearance: { theme: "light" } } };
+    // A swallowed write failure: the edit callback runs, editConfig resolves, and the
+    // stored config never changes.
+    spyOn(config, "editConfig").mockImplementation((edit) => {
+      edit(config.state);
+      return Promise.resolve();
+    });
+
+    try {
+      await payload.restore({ repositoryRoot: repository.rootDir, managedPath: settings.path });
+      throw new Error("Expected the lost preferences write to be reported");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      expect(error.message).toContain("could not be written");
+    }
   });
 
   it("keeps preferences another window saved while the restore ran", async () => {

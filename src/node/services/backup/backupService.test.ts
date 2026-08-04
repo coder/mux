@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -280,6 +280,26 @@ describe("BackupService", () => {
     expect(result.success).toBe(false);
     if (result.success) throw new Error("Expected the .git path to be rejected");
     expect(result.error.code).toBe("INVALID_BACKUP");
+  });
+
+  test("reports a config write that never landed instead of claiming success", async () => {
+    const config = createTestConfig(tempDir);
+    const service = new BackupService(config, {
+      gitRepo: createGitRepo(),
+      payload: createPayload(),
+    });
+    // saveConfig logs and swallows write errors, so a full disk looks exactly like this:
+    // the edit callback runs, editConfig resolves, and the stored config never changes.
+    spyOn(config, "editConfig").mockImplementation((edit) => {
+      edit(config.loadConfigOrDefault());
+      return Promise.resolve();
+    });
+
+    const result = await service.saveSettings(SETTINGS);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the lost write to be reported");
+    expect(result.error.code).toBe("IO_ERROR");
   });
 
   test("rejects and does not persist a repository URL that embeds a credential", async () => {
