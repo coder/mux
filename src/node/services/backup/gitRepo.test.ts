@@ -267,6 +267,146 @@ describe("BackupRepoCache", () => {
     );
   });
 
+  it("rejects a cache whose config redirects the working tree", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    // With this key in place, `clean -fdx -- mux` would delete `mux/` beneath the redirected
+    // worktree instead of inside the cache.
+    const outside = path.join(tempDir, "outside-worktree");
+    await fs.mkdir(path.join(outside, "mux"), { recursive: true });
+    await fs.writeFile(path.join(outside, "mux", "victim.txt"), "keep\n", "utf-8");
+    await git(["-C", repo.cachePath, "config", "core.worktree", outside]);
+
+    const failure = await repo.ensureCache().then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect((failure as Error | null)?.message).toContain("core.worktree");
+    expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
+  });
+
+  it("rejects a cache whose config is a symlink and leaves the target unwritten", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    const configPath = path.join(repo.cachePath, ".git", "config");
+    const target = path.join(tempDir, "victim-config");
+    const targetContent = "[core]\n\tbare = false\n";
+    await fs.writeFile(target, targetContent, "utf-8");
+    await fs.rm(configPath);
+    await fs.symlink(target, configPath);
+
+    const failure = await repo.ensureCache().then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect((failure as Error | null)?.message).toContain("symlink");
+    expect(await fs.readFile(target, "utf-8")).toBe(targetContent);
+  });
+
+  it("drops a cache-local pushInsteadOf rewrite so the push reaches the configured repository", async () => {
+    const evil = path.join(tempDir, "evil.git");
+    await git(["init", "--bare", "--initial-branch=main", evil]);
+    const repo = createRepo();
+    await repo.ensureCache();
+    // Cache-local config is not the user's own git configuration: this rewrite redirects the
+    // push while the stored `remote.origin.url` still reads as the configured repository.
+    await git(["-C", repo.cachePath, "config", `url.${evil}.pushInsteadOf`, originPath]);
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit");
+    await repo.push();
+
+    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
+    const evilRefs = await git(["--git-dir", evil, "show-ref"]).then(
+      (refs) => refs,
+      () => "none"
+    );
+    expect(evilRefs).toBe("none");
+  });
+
+  it("does not run hooks planted in the cache", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    const marker = path.join(tempDir, "hook-ran");
+    const hookPath = path.join(repo.cachePath, ".git", "hooks", "pre-commit");
+    await fs.mkdir(path.dirname(hookPath), { recursive: true });
+    await fs.writeFile(hookPath, `#!/bin/sh\ntouch '${marker}'\n`, "utf-8");
+    await fs.chmod(hookPath, 0o755);
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    // Post-sanitize tamper: the rebuilt config pins hooksPath off too, so drop that pin to
+    // prove the per-invocation option protects commands after the config is altered again.
+    await git(["-C", repo.cachePath, "config", "--unset", "core.hookspath"]);
+    await writeManagedFile(repo, "AGENTS.md", "instructions\n");
+    expect(await repo.stageAndCommit("mux", "Back up settings")).not.toBeNull();
+
+    expect(await pathExists(marker)).toBe(false);
+  });
+
+  it("ignores replace refs when materializing the backup", async () => {
+    const seed = path.join(tempDir, "replace-seed");
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "note.md"), "original\n", "utf-8");
+    await git(["-C", seed, "init", "-q"]);
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-q", "-m", "s"]);
+    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    // A replace ref substitutes another object's bytes at read time without changing any
+    // commit hash, so a tampered cache could hand later reads different content than the
+    // commit everything else verified.
+    const original = await git([
+      "-C",
+      repo.cachePath,
+      "rev-parse",
+      "refs/remotes/origin/main:mux/note.md",
+    ]);
+    const evilFile = path.join(tempDir, "evil-content");
+    await fs.writeFile(evilFile, "evil\n", "utf-8");
+    const evil = await git(["-C", repo.cachePath, "hash-object", "-w", evilFile]);
+    await git(["-C", repo.cachePath, "update-ref", `refs/replace/${original}`, evil]);
+    await fs.rm(path.join(repo.cachePath, "mux", "note.md"));
+
+    await repo.resetHardToRemote();
+
+    expect(await fs.readFile(path.join(repo.cachePath, "mux", "note.md"), "utf-8")).toBe(
+      "original\n"
+    );
+  });
+
+  it("removes worktree-scoped config left behind in the cache", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    const outside = path.join(tempDir, "outside-worktree");
+    await fs.mkdir(path.join(outside, "mux"), { recursive: true });
+    await fs.writeFile(path.join(outside, "mux", "victim.txt"), "keep\n", "utf-8");
+    // `git sparse-checkout set` used to enable this extension, and the worktree-scoped file
+    // it activates is trusted by git like the main config, including for `core.worktree`.
+    await git(["-C", repo.cachePath, "config", "extensions.worktreeConfig", "true"]);
+    await git(["-C", repo.cachePath, "config", "--worktree", "core.worktree", outside]);
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await repo.cleanManagedPath("mux");
+
+    expect(await pathExists(path.join(repo.cachePath, ".git", "config.worktree"))).toBe(false);
+    expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
+  });
+
   it("materializes the managed path when the configured value has a trailing separator", async () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });

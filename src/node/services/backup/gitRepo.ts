@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import {
@@ -32,17 +33,31 @@ function isRemoteMovedRejection(text: string): boolean {
 }
 
 /**
- * The payload is bytes, not text: the manifest records a SHA-256 per file and a restore writes
- * what it reads. Any end-of-line conversion in the cache worktree therefore breaks the checksum
- * and would put the rewritten bytes on the user's disk. `core.autocrlf=true` is an ordinary
- * Windows setting, and `core.eol` reaches the same conversion, so both are pinned off on the
- * cache repository rather than passed per command: a git command run there by hand then behaves
- * the same way.
+ * Applied to every git command that runs against the cache. The cache directory is reachable
+ * by other processes, and these two git features execute or substitute based on repository
+ * state that `sanitizeCacheConfig` cannot rewrite: an executable dropped into `.git/hooks`
+ * would run on commit and checkout, and a ref under `refs/replace/` substitutes another
+ * object's content at read time without changing the commit hash the stored settings pin.
+ * Command-line options rather than config, so state written after the sanitize pass cannot
+ * override them. Nothing exists under `os.devNull`, so no hook resolves.
  */
-const VERBATIM_CONTENT_CONFIG: ReadonlyArray<readonly [string, string]> = [
-  ["core.autocrlf", "false"],
-  ["core.eol", "lf"],
-];
+const GIT_HARDENING_ARGS = ["--no-replace-objects", "-c", `core.hooksPath=${os.devNull}`];
+
+/**
+ * The only keys of an existing cache's `.git/config` that survive `sanitizeCacheConfig`:
+ * the platform-probed flags `git init` and `git clone` write, plus the partial-clone
+ * extension older gits use for what `remote.origin.promisor` says on current ones.
+ */
+const CACHE_CONFIG_KEEP_KEYS: ReadonlySet<string> = new Set([
+  "core.repositoryformatversion",
+  "core.filemode",
+  "core.bare",
+  "core.logallrefupdates",
+  "core.ignorecase",
+  "core.precomposeunicode",
+  "core.symlinks",
+  "extensions.partialclone",
+]);
 
 /**
  * Config alone is not enough: `.gitattributes` in the backup repository outranks it, so a
@@ -186,6 +201,65 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
   }
 }
 
+/**
+ * The raw stored entries, not effective config: `--file` keeps the global and system scopes
+ * out, `--no-includes` keeps an `include.path` from splicing another file's keys into what is
+ * checked, and `-z` keeps values with newlines parseable. A record is `key\nvalue`; a boolean
+ * shorthand like `[core] bare` has no newline and reads back as true.
+ */
+async function readRawConfigEntries(
+  configPath: string,
+  options: ExecFileAsyncOptions
+): Promise<Array<readonly [string, string]>> {
+  const result = await runLocalGit(
+    ["config", "--no-includes", "--file", configPath, "--list", "-z"],
+    options
+  );
+  const entries: Array<readonly [string, string]> = [];
+  for (const record of result.stdout.split("\0")) {
+    if (!record) continue;
+    const separator = record.indexOf("\n");
+    entries.push(
+      separator === -1
+        ? [record, "true"]
+        : [record.slice(0, separator), record.slice(separator + 1)]
+    );
+  }
+  return entries;
+}
+
+/**
+ * Every component is checked before anything is written, and the file is opened without
+ * following a final link, because this writes to fixed paths inside a directory other
+ * processes can reach: a link at `.git`, `.git/info`, or the file itself would redirect the
+ * write. `.git` is re-checked here rather than trusting the caller, so this is safe on its
+ * own terms.
+ */
+async function writeOwnedGitInfoFile(
+  cachePath: string,
+  fileName: string,
+  content: string
+): Promise<void> {
+  await assertOwnGitDirectory(cachePath);
+  const infoDir = path.join(cachePath, ".git", "info");
+  await assertNotSymlink(infoDir);
+  await fs.mkdir(infoDir, { recursive: true });
+  const filePath = path.join(infoDir, fileName);
+  await assertNotSymlink(filePath);
+  const handle = await fs.open(
+    filePath,
+    fs.constants.O_WRONLY |
+      fs.constants.O_CREAT |
+      fs.constants.O_TRUNC |
+      (fs.constants.O_NOFOLLOW ?? 0)
+  );
+  try {
+    await handle.writeFile(content, "utf-8");
+  } finally {
+    await handle.close();
+  }
+}
+
 function errorText(error: unknown): string {
   if (error && typeof error === "object" && "stderr" in error) {
     const stderr = (error as { stderr?: unknown }).stderr;
@@ -223,13 +297,18 @@ export class BackupRepoCache {
   }
 
   private async networkGit(args: string[]) {
-    const result = await runGitWithCredentialLadder(args, this.credentialOptions());
+    // Hardening args go after the `-C` pair: the credential ladder recognizes the target
+    // repository by `args[0]`. Commands without `-C` (clone, ls-remote) run before any cache
+    // repository state exists, so there is nothing for the hardening to disable yet.
+    const hardened =
+      args[0] === "-C" ? [...args.slice(0, 2), ...GIT_HARDENING_ARGS, ...args.slice(2)] : args;
+    const result = await runGitWithCredentialLadder(hardened, this.credentialOptions());
     this.usedCredential = result.credential;
     return result;
   }
 
   private async localGit(args: string[]) {
-    return await runLocalGit(["-C", this.cachePath, ...args], this.options);
+    return await runLocalGit(["-C", this.cachePath, ...GIT_HARDENING_ARGS, ...args], this.options);
   }
 
   async lsRemote(): Promise<RemoteRefs> {
@@ -247,53 +326,15 @@ export class BackupRepoCache {
   }
 
   private async pinVerbatimContent(): Promise<void> {
-    // Every component is checked before anything is written, and the attributes file is opened
-    // without following a final link, because this writes to fixed paths inside a directory
-    // other processes can reach. A link, gitfile, or commondir at `.git` redirects
-    // `git config` into whatever repository it points at, and a link at `.git/info` or the
-    // file itself redirects the write below. `.git` is re-checked here rather than trusting
-    // the caller, so this method is safe on its own terms.
-    const gitDir = path.join(this.cachePath, ".git");
-    await assertOwnGitDirectory(this.cachePath);
-    for (const [key, value] of VERBATIM_CONTENT_CONFIG) {
-      await this.localGit(["config", key, value]);
-    }
-    const infoDir = path.join(gitDir, "info");
-    await assertNotSymlink(infoDir);
-    await fs.mkdir(infoDir, { recursive: true });
-    const attributesPath = path.join(infoDir, "attributes");
-    await assertNotSymlink(attributesPath);
-    const handle = await fs.open(
-      attributesPath,
-      fs.constants.O_WRONLY |
-        fs.constants.O_CREAT |
-        fs.constants.O_TRUNC |
-        (fs.constants.O_NOFOLLOW ?? 0)
-    );
-    try {
-      await handle.writeFile(VERBATIM_ATTRIBUTES, "utf-8");
-    } finally {
-      await handle.close();
-    }
-  }
-
-  private async hasOriginRemote(): Promise<boolean> {
-    try {
-      await this.localGit(["remote", "get-url", "origin"]);
-      return true;
-    } catch {
-      return false;
-    }
+    await writeOwnedGitInfoFile(this.cachePath, "attributes", VERBATIM_ATTRIBUTES);
   }
 
   /**
-   * Creates, or finishes creating, a cache with no objects in it. Safe to re-run: every step
-   * either sets a value or replaces the one already there, so an initialization interrupted
-   * partway is repaired rather than leaving a `.git` that fails the origin check forever.
-   *
-   * The filter settings are what `clone --filter` writes for itself. Without them a later
-   * `fetch` of this branch would download every blob reachable from it, including files outside
-   * the managed directory that sparse checkout never materializes.
+   * Creates an empty repository: the same starting point `resetToUnbornBranch` produces,
+   * without any transfer. Only `git init` happens here; the remote and filter configuration
+   * comes from `sanitizeCacheConfig`, which every `ensureCache` writes, so an initialization
+   * interrupted partway is repaired on the next run rather than leaving a `.git` that fails
+   * checks forever.
    */
   private async initEmptyCache(): Promise<void> {
     // `init <dir>` creates the directory, so this runs before `localGit` has one to -C into.
@@ -301,14 +342,6 @@ export class BackupRepoCache {
       ["init", "--initial-branch", this.options.branch, this.cachePath],
       this.options
     );
-    // `remote add` fails when the remote is already there, so set the url either way.
-    if (await this.hasOriginRemote()) {
-      await this.localGit(["remote", "set-url", "origin", this.options.repoUrl]);
-    } else {
-      await this.localGit(["remote", "add", "origin", this.options.repoUrl]);
-    }
-    await this.localGit(["config", "remote.origin.promisor", "true"]);
-    await this.localGit(["config", "remote.origin.partialclonefilter", BLOB_FILTER]);
   }
 
   async ensureCache(): Promise<void> {
@@ -318,8 +351,7 @@ export class BackupRepoCache {
     const gitDir = path.join(this.cachePath, ".git");
     // Before any branch below, because each one writes: a `.git` that resolves to another
     // repository, whether a symlink, a gitfile, or a commondir indirection, would take this
-    // cache's `remote add` and `config` with it. Checked here rather than only in
-    // `pinVerbatimContent` so the repair path is covered too.
+    // cache's config rewrite with it.
     await assertOwnGitDirectory(this.cachePath);
     if (!(await exists(gitDir))) {
       if (await exists(this.cachePath)) {
@@ -332,8 +364,7 @@ export class BackupRepoCache {
       if ((await this.lsRemote()).branchCommit === null) {
         // Nothing to fetch: the backup branch does not exist yet, and `--single-branch` would
         // fall back to the remote's HEAD, downloading a default branch whose history this
-        // feature never reads. An empty repository with the remote attached is the same
-        // starting point `resetToUnbornBranch` produces, without the transfer.
+        // feature never reads.
         await this.initEmptyCache();
       } else {
         // `--no-checkout` because `resetHardToRemote` checks out the configured branch next,
@@ -352,51 +383,94 @@ export class BackupRepoCache {
           this.cachePath,
         ]);
       }
-    } else if (!(await this.hasOriginRemote())) {
-      // A `.git` without an `origin` is an initialization that did not finish. Left alone it
-      // fails the origin check below on every retry, so backups for this repository would stay
-      // broken until the user deleted the cache by hand.
-      await this.initEmptyCache();
     }
-    // Re-applied every time rather than only at creation, so a cache made by an earlier version
-    // of this code, or altered since, still reads and writes payload bytes unchanged.
+    // Both run every time rather than only at creation, so a cache made by an earlier version
+    // of this code, or altered since, is brought back to the state Mux expects before any
+    // other git command trusts what is stored there.
+    await this.sanitizeCacheConfig();
     await this.pinVerbatimContent();
-
-    // Raw config values, not `remote get-url`: get-url applies `url.<base>.insteadOf`
-    // rewrites, so a user-level rewrite made every operation reject a cache whose stored
-    // url is exactly what Mux wrote. The check guards the stored destination against
-    // drift and tampering, and the stored value is what Mux controls; a rewrite on top of
-    // it is the user's own git configuration, honored here the same way the user's own
-    // `git push` would honor it.
-    const actualOrigin = (
-      await this.localGit(["config", "--get", "remote.origin.url"])
-    ).stdout.trim();
-    if (actualOrigin !== this.options.repoUrl) {
-      throw new BackupOriginMismatchError(actualOrigin, this.options.repoUrl);
-    }
-    // `remote.origin.pushurl` overrides the url for pushes only, so the url just checked is
-    // not necessarily where a backup lands. Multi-valued, and a push writes to every value,
-    // so every value must be the configured repository; absent means pushes use the url.
-    const pushUrls = await this.rawPushUrls();
-    const unexpected = pushUrls.find((url) => url !== this.options.repoUrl);
-    if (unexpected !== undefined) {
-      throw new BackupOriginMismatchError(unexpected, this.options.repoUrl);
-    }
   }
 
-  private async rawPushUrls(): Promise<string[]> {
-    try {
-      return (await this.localGit(["config", "--get-all", "remote.origin.pushurl"])).stdout
-        .split(/\r?\n/)
-        .map((url) => url.trim())
-        .filter(Boolean);
-    } catch (error) {
-      // Exit 1 is git's "key not set", the common case.
-      if (error && typeof error === "object" && "code" in error && error.code === 1) {
-        return [];
-      }
-      throw error;
+  /**
+   * Rebuilds `.git/config` instead of verifying it key by key. Git trusts this file for far
+   * more than a destination URL: `core.worktree` moves every worktree command elsewhere,
+   * `url.*.pushInsteadOf` rewrites where a push lands after the URL checks pass,
+   * `include.path` splices in another file, and keys like `core.sshCommand` or
+   * `credential.helper` name commands to execute. That is an open-ended surface, so only
+   * `CACHE_CONFIG_KEEP_KEYS` survive and every key Mux depends on is rewritten to its known
+   * value. User-global and system configuration are untouched: a rewrite or helper there is
+   * the user's own git setup, honored the same way the user's own `git push` would honor it.
+   *
+   * Two conditions are rejected rather than healed, the same way a gitfile or commondir
+   * redirect is: a stored destination that is not the configured repository, and a
+   * `core.worktree` redirect. Nothing that legitimately wrote this cache produces either, so
+   * both mean the cache is not this feature's own clone.
+   */
+  private async sanitizeCacheConfig(): Promise<void> {
+    const gitDir = path.join(this.cachePath, ".git");
+    await assertOwnGitDirectory(this.cachePath);
+    const configPath = path.join(gitDir, "config");
+    await assertNotSymlink(configPath);
+    const entries = (await exists(configPath))
+      ? await readRawConfigEntries(configPath, this.options)
+      : [];
+    const valuesOf = (key: string) =>
+      entries.filter(([entryKey]) => entryKey === key).map(([, value]) => value);
+    if (valuesOf("core.worktree").length > 0) {
+      throw new Error(`Refusing to use '${configPath}': core.worktree redirects the working tree`);
     }
+    // `remote.origin.pushurl` overrides the url for pushes only and is multi-valued, so every
+    // value is held to the same expectation as the url; absent means pushes use the url.
+    for (const url of [...valuesOf("remote.origin.url"), ...valuesOf("remote.origin.pushurl")]) {
+      if (url !== this.options.repoUrl) {
+        throw new BackupOriginMismatchError(url, this.options.repoUrl);
+      }
+    }
+
+    const branch = this.options.branch;
+    const rebuilt: Array<readonly [string, string]> = [
+      ...entries.filter(
+        ([key, value]) =>
+          CACHE_CONFIG_KEEP_KEYS.has(key) &&
+          // The partial-clone extension names the promisor remote, and `origin` is the only
+          // remote this cache ever has.
+          (key !== "extensions.partialclone" || value === "origin")
+      ),
+      ["remote.origin.url", this.options.repoUrl],
+      ["remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
+      // What `clone --filter` writes for itself. Without them a later fetch of this branch
+      // would download every blob reachable from it, including files outside the managed
+      // directory that sparse checkout never materializes.
+      ["remote.origin.promisor", "true"],
+      ["remote.origin.partialclonefilter", BLOB_FILTER],
+      [`branch.${branch}.remote`, "origin"],
+      [`branch.${branch}.merge`, `refs/heads/${branch}`],
+      // The payload is bytes, not text: the manifest records a SHA-256 per file and a restore
+      // writes what it reads, so any end-of-line conversion in this worktree breaks the
+      // checksum and would put rewritten bytes on the user's disk. Pinned on the repository
+      // rather than only per command, so a git command run here by hand behaves the same way.
+      ["core.autocrlf", "false"],
+      ["core.eol", "lf"],
+      // Turns on the pattern file `applySparseCheckout` writes. Non-cone because the managed
+      // path is a single literal directory, not a cone pattern set.
+      ["core.sparsecheckout", "true"],
+      ["core.sparsecheckoutcone", "false"],
+      // Defense in depth alongside GIT_HARDENING_ARGS, for git commands run here by hand.
+      ["core.hookspath", os.devNull],
+    ];
+    // Built as a separate file and renamed into place: `git config` is the writer, so value
+    // escaping is git's own rather than hand-rolled serialization of its config grammar.
+    const rewritePath = `${configPath}.mux-rewrite`;
+    await fs.rm(rewritePath, { force: true });
+    for (const [key, value] of rebuilt) {
+      await runLocalGit(["config", "--file", rewritePath, "--add", key, value], this.options);
+    }
+    await fs.rename(rewritePath, configPath);
+    // Worktree-scoped config is trusted by git the same way (it can hold `core.worktree`
+    // too), and everything Mux keeps is in the file just written, so it is removed rather
+    // than parsed. `extensions.worktreeConfig` is not a kept key, so a leftover file would be
+    // inert anyway; earlier versions of this code let `git sparse-checkout set` create it.
+    await fs.rm(path.join(gitDir, "config.worktree"), { force: true });
   }
 
   async fetch(): Promise<string | null> {
@@ -455,22 +529,20 @@ export class BackupRepoCache {
    * Only the managed directory is materialized. Mux reads and writes nothing else, and a
    * checkout of the whole branch fails on any path elsewhere in the repository that this
    * platform cannot create, which would block a backup whose own payload is fine.
-   * `--no-cone` because the managed path is a single literal directory, not a cone pattern set.
    *
-   * Through the credential ladder, not `localGit`: the cache is blob-filtered, so
-   * materializing the working tree is what triggers the promisor fetch of the managed
-   * files' blobs, and that fetch needs the same credentials and non-interactive
-   * environment the clone used. The same applies to the checkout below.
+   * Written by hand rather than with `git sparse-checkout set`: that porcelain enables
+   * `extensions.worktreeConfig` and moves its state into `.git/config.worktree`, a second
+   * config file git trusts as much as the one `sanitizeCacheConfig` just rebuilt. The pattern
+   * file switches nothing on by itself (`core.sparseCheckout` comes from the rebuilt config),
+   * and the checkout that follows is what applies it, fetching the managed blobs through the
+   * credential ladder.
    */
   private async applySparseCheckout(): Promise<void> {
-    await this.networkGit([
-      "-C",
+    await writeOwnedGitInfoFile(
       this.cachePath,
       "sparse-checkout",
-      "set",
-      "--no-cone",
-      `/${escapeSparsePattern(safeRelativePath(this.options.managedPath))}/*`,
-    ]);
+      `/${escapeSparsePattern(safeRelativePath(this.options.managedPath))}/*\n`
+    );
   }
 
   async resetHardToRemote(): Promise<string | null> {
