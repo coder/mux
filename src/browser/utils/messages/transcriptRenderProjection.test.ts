@@ -24,7 +24,6 @@ function tool(
     status: overrides.status ?? "completed",
     isPartial: overrides.isPartial ?? false,
     historySequence: overrides.historySequence ?? 1,
-    streamSequence: overrides.streamSequence,
     isLastPartOfMessage: overrides.isLastPartOfMessage,
     timestamp: overrides.timestamp,
     nestedCalls: overrides.nestedCalls,
@@ -43,7 +42,6 @@ function reasoning(
     historySequence: overrides.historySequence ?? 1,
     isStreaming: overrides.isStreaming ?? false,
     isPartial: overrides.isPartial ?? false,
-    streamSequence: overrides.streamSequence,
     isLastPartOfMessage: overrides.isLastPartOfMessage,
     isOnlyMessageContent: overrides.isOnlyMessageContent,
     timestamp: overrides.timestamp,
@@ -70,13 +68,11 @@ function assistant(
     historyId: overrides.historyId ?? `history-${id}`,
     content: overrides.content ?? "done",
     historySequence: overrides.historySequence ?? 1,
-    streamSequence: overrides.streamSequence,
     isStreaming: overrides.isStreaming ?? false,
     isPartial: overrides.isPartial ?? false,
     isLastPartOfMessage: overrides.isLastPartOfMessage,
     isCompacted: overrides.isCompacted ?? false,
     isIdleCompacted: overrides.isIdleCompacted ?? false,
-    isSideAnswer: overrides.isSideAnswer,
     timestamp: overrides.timestamp,
   };
 }
@@ -209,58 +205,6 @@ describe("work bundle coalescing", () => {
     expect(infos[2]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[3]).toMatchObject({ key: "work:read-1", position: "member" });
     expect(infos[4]).toMatchObject({ key: "work:read-1", position: "final" });
-  });
-
-  test("keeps side-question answers visible while bundling surrounding agent work", () => {
-    const messages = [
-      user("u1"),
-      tool({ id: "read-1", historyId: "history-a1" }),
-      user("side-question-1"),
-      assistant("side-answer-1", { isSideAnswer: true }),
-      tool({ id: "bash-1", historyId: "history-a1", toolName: "bash" }),
-      assistant("final-1", { historyId: "history-a1" }),
-    ];
-
-    const infos = computeWorkBundleInfos(messages);
-
-    expect(infos[0]).toMatchObject({
-      key: "work:read-1",
-      headIndex: 0,
-      entries: [
-        { message: messages[1], originalIndex: 1 },
-        { message: messages[2], originalIndex: 2 },
-        { message: messages[3], originalIndex: 3 },
-        { message: messages[4], originalIndex: 4 },
-        { message: messages[5], originalIndex: 5 },
-      ],
-    });
-    expect(infos[1]).toMatchObject({ key: "work:read-1", position: "member" });
-    expect(infos[2]).toMatchObject({ key: "work:read-1", position: "member" });
-    expect(infos[3]).toMatchObject({ key: "work:read-1", position: "member" });
-    expect(infos[4]).toMatchObject({ key: "work:read-1", position: "member" });
-    expect(infos[5]).toMatchObject({ key: "work:read-1", position: "final" });
-  });
-
-  test("does not start a work bundle at a side-question answer", () => {
-    const messages = [
-      user("u1"),
-      assistant("side-answer-1", { isSideAnswer: true }),
-      tool({ id: "bash-1", historyId: "history-a1", toolName: "bash" }),
-      assistant("final-1", { historyId: "history-a1" }),
-    ];
-
-    const infos = computeWorkBundleInfos(messages);
-
-    expect(infos[0]).toBeUndefined();
-    expect(infos[1]).toBeUndefined();
-    expect(infos[2]).toMatchObject({
-      key: "work:bash-1",
-      entries: [
-        { message: messages[2], originalIndex: 2 },
-        { message: messages[3], originalIndex: 3 },
-      ],
-    });
-    expect(infos[3]).toMatchObject({ key: "work:bash-1", position: "final" });
   });
 
   test("does not finalize work bundles before the first operation", () => {

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
+import { MuxMessageSchema } from "@/common/orpc/schemas/message";
 import { createMuxMessage, type DisplayedMessage } from "@/common/types/message";
 import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
@@ -508,6 +509,34 @@ describe("StreamingMessageAggregator", () => {
       expect(userMessages[1]?.isSynthetic).toBeUndefined();
     });
 
+    test("renders unknown persisted muxMetadata as an ordinary row", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const legacyMessage = MuxMessageSchema.parse({
+        id: "legacy-1",
+        role: "user",
+        parts: [{ type: "text", text: "ordinary persisted content" }],
+        metadata: {
+          timestamp: 1,
+          historySequence: 1,
+          muxMetadata: {
+            type: "removed-feature",
+            rawCommand: "/removed decorated content",
+          },
+        },
+      });
+
+      aggregator.loadHistoricalMessages([legacyMessage], false);
+
+      expect(aggregator.getDisplayedMessages()).toMatchObject([
+        {
+          type: "user",
+          historyId: "legacy-1",
+          content: "ordinary persisted content",
+          commandPrefix: undefined,
+        },
+      ]);
+    });
+
     test("does not start a parent response for a visible completed subagent report", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
@@ -550,6 +579,223 @@ describe("StreamingMessageAggregator", () => {
         isUiVisible: true,
       });
       expect(getInterruptionContext(displayedMessages).hasInterruptedStream).toBe(false);
+    });
+
+    test("keeps an anchored completed report between reasoning emitted before and after it", () => {
+      const report = createMuxMessage(
+        "report-1",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: "task-1",
+          agentType: "explore",
+          status: "completed",
+          title: "Investigation complete",
+          reportMarkdown: "The child finished successfully.",
+        }),
+        {
+          timestamp: 2,
+          historySequence: 2,
+          synthetic: true,
+          uiVisible: true,
+          transcriptAnchor: {
+            messageId: "assistant-1",
+            historySequence: 1,
+            textLength: 0,
+            reasoningLength: 11,
+            partIndex: 1,
+          },
+        }
+      );
+
+      const live = new StreamingMessageAggregator(TEST_CREATED_AT);
+      live.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "workspace-1",
+        messageId: "assistant-1",
+        historySequence: 1,
+        model: "openai:gpt-5",
+        startTime: 1,
+      });
+      live.handleReasoningDelta({
+        type: "reasoning-delta",
+        workspaceId: "workspace-1",
+        messageId: "assistant-1",
+        delta: "reasoning A",
+        tokens: 1,
+        timestamp: 1,
+      });
+      live.handleMessage({ ...report, type: "message" });
+      live.handleReasoningDelta({
+        type: "reasoning-delta",
+        workspaceId: "workspace-1",
+        messageId: "assistant-1",
+        delta: "reasoning B",
+        tokens: 1,
+        timestamp: 3,
+      });
+
+      const readOrder = (aggregator: StreamingMessageAggregator) =>
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "reasoning" || row.type === "user")
+          .map((row) =>
+            row.type === "reasoning" ? `reasoning:${row.content}` : `user:${row.historyId}`
+          );
+
+      expect(readOrder(live)).toEqual([
+        "reasoning:reasoning A",
+        "user:report-1",
+        "reasoning:reasoning B",
+      ]);
+
+      const liveRows = live.getDisplayedMessages();
+      const liveReasoningRows = liveRows.filter((row) => row.type === "reasoning");
+      expect(liveReasoningRows.map((row) => row.isLastPartOfMessage)).toEqual([false, true]);
+
+      const reloaded = new StreamingMessageAggregator(TEST_CREATED_AT);
+      reloaded.loadHistoricalMessages(
+        [
+          {
+            ...createMuxMessage("assistant-1", "assistant", "", {
+              timestamp: 1,
+              historySequence: 1,
+              model: "openai:gpt-5",
+            }),
+            parts: [
+              { type: "reasoning", text: "reasoning A" },
+              { type: "reasoning", text: "reasoning B" },
+            ],
+          },
+          report,
+        ],
+        false
+      );
+
+      expect(readOrder(reloaded)).toEqual([
+        "reasoning:reasoning A",
+        "user:report-1",
+        "reasoning:reasoning B",
+      ]);
+      const reloadedReasoningRows = reloaded
+        .getDisplayedMessages()
+        .filter((row) => row.type === "reasoning");
+      expect(reloadedReasoningRows.map((row) => row.isLastPartOfMessage)).toEqual([false, true]);
+      expect(readOrder(reloaded).at(-1)).not.toBe("user:report-1");
+    });
+
+    test("keeps terminal chrome hidden when an anchored report reaches the active stream tail", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        Array.from({ length: 70 }, (_, index) =>
+          createMuxMessage(`older-${index}`, "assistant", `older response ${index}`, {
+            historySequence: index + 1,
+            timestamp: index + 1,
+          })
+        ),
+        false
+      );
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "workspace-1",
+        messageId: "assistant-1",
+        historySequence: 71,
+        model: "openai:gpt-5",
+        startTime: 71,
+      });
+      aggregator.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: "workspace-1",
+        messageId: "assistant-1",
+        delta: "current answer",
+        tokens: 1,
+        timestamp: 71,
+      });
+      aggregator.handleMessage({
+        ...createMuxMessage(
+          "report-1",
+          "user",
+          formatSubagentReportEnvelope({
+            taskId: "task-1",
+            agentType: "explore",
+            status: "completed",
+            title: "Investigation complete",
+            reportMarkdown: "The child finished successfully.",
+          }),
+          {
+            timestamp: 72,
+            historySequence: 72,
+            synthetic: true,
+            uiVisible: true,
+            transcriptAnchor: {
+              messageId: "assistant-1",
+              historySequence: 71,
+              textLength: "current answer".length,
+              reasoningLength: 0,
+              partIndex: 1,
+            },
+          }
+        ),
+        type: "message",
+      });
+
+      const assistantRows = aggregator
+        .getDisplayedMessages()
+        .filter(
+          (row): row is Extract<DisplayedMessage, { type: "assistant" }> =>
+            row.type === "assistant" && row.historyId === "assistant-1"
+        );
+      expect(aggregator.getDisplayedMessages().some((row) => row.type === "history-hidden")).toBe(
+        true
+      );
+      expect(assistantRows).toHaveLength(1);
+      expect(assistantRows[0]?.isLastPartOfMessage).toBe(false);
+    });
+
+    test("keeps terminal chrome on the assistant when an anchored report follows its final content", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          {
+            ...createMuxMessage("assistant-1", "assistant", "", {
+              timestamp: 1,
+              historySequence: 1,
+              model: "openai:gpt-5",
+            }),
+            parts: [{ type: "text", text: "final answer" }],
+          },
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            {
+              timestamp: 2,
+              historySequence: 2,
+              synthetic: true,
+              uiVisible: true,
+              transcriptAnchor: {
+                messageId: "assistant-1",
+                historySequence: 1,
+                textLength: "final answer".length,
+                reasoningLength: 0,
+                partIndex: 1,
+              },
+            }
+          ),
+        ],
+        false
+      );
+
+      const assistantRows = aggregator
+        .getDisplayedMessages()
+        .filter((row) => row.type === "assistant");
+      expect(assistantRows).toHaveLength(1);
+      expect(assistantRows[0]?.isLastPartOfMessage).toBe(true);
     });
 
     test("keeps hidden completed subagent reports in the retry lifecycle", () => {

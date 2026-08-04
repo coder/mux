@@ -2676,10 +2676,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      // A normal workspace send supersedes any pending fire-and-forget slash
-      // command completion (notably /btw). If that older async command fails
-      // after this send clears the composer, it must not restore stale command
-      // text over the newer turn.
+      // A normal workspace send supersedes any pending asynchronous slash
+      // command completion. If that older command fails after this send clears
+      // the composer, it must not restore stale command text over the newer turn.
       asyncCommandTokenRef.current++;
 
       const modelOverride = modelOneShot?.modelString;

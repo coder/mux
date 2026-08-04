@@ -426,8 +426,8 @@ export class ServiceContainer {
       this.sessionTimingService.handleStreamEnd(data);
       ingestWorkspaceAnalytics(data.workspaceId);
     });
-    // Billable usage persisted outside StreamManager stream-end (e.g. /btw
-    // side-question answers) requests its own incremental ingest pass.
+    // Billable usage persisted outside StreamManager stream-end requests its
+    // own incremental ingest pass.
     this.workspaceService.on("analyticsIngest", (event) => {
       ingestWorkspaceAnalytics(event.workspaceId);
     });

@@ -16751,7 +16751,24 @@ describe("TaskService", () => {
     );
 
     const { workspaceService, sendMessage, emitChatEvent } = createWorkspaceServiceMocks();
-    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    const aiMocks = createAIServiceMocks(config, {
+      isStreaming: mock(() => true),
+      getStreamInfo: mock(() => ({
+        messageId: "parent-active-assistant",
+        model: "openai:gpt-5",
+        historySequence: 9,
+        startTime: 1,
+        parts: [
+          { type: "reasoning" as const, text: "reasoning " },
+          { type: "reasoning" as const, text: "before report" },
+        ],
+        toolCompletionTimestamps: new Map(),
+      })),
+    });
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      workspaceService,
+      aiService: aiMocks.aiService,
+    });
     await historyService.appendToHistory(
       parentId,
       createMuxMessage(
@@ -16793,8 +16810,22 @@ describe("TaskService", () => {
       const report = parseSubagentReportEnvelope(text);
       return report?.taskId === childId && report.status === "completed";
     });
-    expect(completedReport?.metadata).toMatchObject({ synthetic: true, uiVisible: true });
+    expect(completedReport?.metadata).toMatchObject({
+      synthetic: true,
+      uiVisible: true,
+      transcriptAnchor: {
+        messageId: "parent-active-assistant",
+        historySequence: 9,
+        textLength: 0,
+        reasoningLength: 23,
+        partIndex: 1,
+      },
+    });
     expect(emitChatEvent).toHaveBeenCalledTimes(1);
+    expect(emitChatEvent.mock.calls[0]?.[1]).toMatchObject({
+      id: completedReport?.id,
+      metadata: { transcriptAnchor: completedReport?.metadata?.transcriptAnchor },
+    });
   });
 
   test("terminal reports supersede queued incremental updates for the same child", async () => {

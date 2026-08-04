@@ -441,7 +441,7 @@ describe("SessionUsageService", () => {
       // Normal agent turn establishes lastRequest.
       await service.recordUsage(workspaceId, agentModel, createUsage(100, 50));
 
-      // Background status/memory/btw call must add spend but keep the user's
+      // Background status or memory calls must add spend but keep the user's
       // actual last agent request visible in the Costs tab.
       await service.recordHeadlessUsage(workspaceId, statusModel, {
         inputTokens: 40,
@@ -478,7 +478,7 @@ describe("SessionUsageService", () => {
       const model = "anthropic:claude-sonnet-4-20250514";
       const sidecarPath = path.join(config.getSessionDir(workspaceId), "headless-usage.jsonl");
 
-      // No source (/btw-style caller whose spend rides a chat row): no sidecar.
+      // No analytics source means no sidecar entry.
       await service.recordHeadlessUsage(workspaceId, model, {
         inputTokens: 10,
         outputTokens: 5,
@@ -527,15 +527,13 @@ describe("SessionUsageService", () => {
       >;
       expect(record.source).toBe("workspace_status");
 
-      // Without a sidecar (/btw-style), a failed ledger write must NOT report
-      // success: the caller would emit a session-usage-delta that diverges
-      // from the on-disk ledger.
-      const btwRecorded = await service.recordHeadlessUsage(workspaceId, model, {
+      // Without a sidecar, a failed ledger write must not report success.
+      const ledgerOnlyRecorded = await service.recordHeadlessUsage(workspaceId, model, {
         inputTokens: 40,
         outputTokens: 10,
         totalTokens: 50,
       });
-      expect(btwRecorded).toBeUndefined();
+      expect(ledgerOnlyRecorded).toBeUndefined();
     });
 
     it("writes the sidecar before the ledger so a sidecar failure leaves no ledger-only spend", async () => {

@@ -99,6 +99,7 @@ import {
   type ParsedThinkingInput,
   type ThinkingLevel,
 } from "@/common/types/thinking";
+import { snapshotTranscriptAnchor } from "@/node/services/transcriptAnchor";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import {
   isActiveWorkflowRunStatus,
@@ -11741,10 +11742,15 @@ export class TaskService {
     });
 
     const messageId = createTaskReportMessageId();
+    const transcriptAnchor =
+      options?.uiVisible === true
+        ? snapshotTranscriptAnchor(this.aiService.getStreamInfo(parentWorkspaceId))
+        : undefined;
     const reportMessage = createMuxMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
       synthetic: true,
       ...(options?.uiVisible === true ? { uiVisible: true } : {}),
+      ...(transcriptAnchor ? { transcriptAnchor } : {}),
     });
 
     const appendResult = await this.historyService.appendToHistory(

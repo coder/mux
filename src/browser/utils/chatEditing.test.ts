@@ -61,10 +61,6 @@ describe("canEditDisplayedUserMessage", () => {
     ).toBe(true);
   });
 
-  test("excludes side-question rows from edit paths", () => {
-    expect(canEditDisplayedUserMessage(userMessage({ isSideQuestion: true }))).toBe(false);
-  });
-
   test("restores staged files as attachments when editing sent messages", () => {
     const content = appendStagedAttachmentNotice("Inspect this archive.", [STAGED_ATTACHMENT]);
 

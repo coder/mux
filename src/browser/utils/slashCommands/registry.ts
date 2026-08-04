@@ -644,27 +644,6 @@ const goalCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const BTW_USAGE = `/btw ${SLASH_COMMAND_HINTS.btw}`;
-
-const btwCommandDefinition: SlashCommandDefinition = {
-  key: "btw",
-  description:
-    "Ask a quick side question about the current conversation. The inline answer is saved in chat but kept out of future agent context.",
-  inputHint: SLASH_COMMAND_HINTS.btw,
-  appendSpace: true,
-  handler: ({ rawInput }): ParsedCommand => {
-    const trimmed = rawInput.trim();
-    if (trimmed.length === 0) {
-      return {
-        type: "command-missing-args",
-        command: "btw",
-        usage: BTW_USAGE,
-      };
-    }
-    return { type: "side-question", question: trimmed };
-  },
-};
-
 const WORKFLOW_COMMAND_USAGE = `/workflow ${SLASH_COMMAND_HINTS.workflow}`;
 
 const workflowCommandDefinition: SlashCommandDefinition = {
@@ -708,7 +687,6 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   idleCommandDefinition,
   heartbeatCommandDefinition,
   goalCommandDefinition,
-  btwCommandDefinition,
   workflowCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];

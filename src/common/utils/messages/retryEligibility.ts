@@ -118,13 +118,6 @@ function isDecorativeTranscriptMessage(message: DisplayedMessage): boolean {
   );
 }
 
-function isSideQuestionTranscriptMessage(message: DisplayedMessage): boolean {
-  return (
-    (message.type === "user" && message.isSideQuestion === true) ||
-    (message.type === "assistant" && message.isSideAnswer === true)
-  );
-}
-
 export function getLastNonDecorativeMessage(
   messages: DisplayedMessage[]
 ): DisplayedMessage | undefined {
@@ -137,11 +130,7 @@ export function getLastNonDecorativeMessage(
   return undefined;
 }
 
-/**
- * Latest transcript row that belongs to the main-agent retry lifecycle.
- * Decorative rows and /btw side-branch rows are persisted in the transcript but
- * must not become the retry candidate for the main agent.
- */
+/** Latest transcript row that belongs to the retry lifecycle. */
 function isDisplayOnlyCompletedSubagentReport(message: DisplayedMessage): boolean {
   return (
     message.type === "user" &&
@@ -158,7 +147,6 @@ export function getLastMainRetryCandidateMessage(
     const candidate = messages[i];
     if (
       isDecorativeTranscriptMessage(candidate) ||
-      isSideQuestionTranscriptMessage(candidate) ||
       isDisplayOnlyCompletedSubagentReport(candidate)
     ) {
       continue;
@@ -198,11 +186,6 @@ function computeHasInterruptedStream(
     if (elapsed < PENDING_STREAM_START_GRACE_PERIOD_MS) return false;
   }
 
-  // /btw rows are persisted into the transcript, but they are a read-only side
-  // branch that intentionally bypasses the main agent stream lifecycle. Ignore
-  // them when deciding whether the main agent has an interrupted stream: an idle
-  // /btw should not flash RetryBarrier, but a partial main-agent response before
-  // the aside must still be retryable after a reload/crash.
   const lastMessage = getLastMainRetryCandidateMessage(messages);
   if (!lastMessage) return false;
 

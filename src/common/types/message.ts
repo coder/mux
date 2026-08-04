@@ -300,6 +300,18 @@ export function buildAgentSkillMetadata(
   };
 }
 
+/**
+ * Stable display-only insertion point captured while an assistant message is streaming.
+ * Content lengths split merged text/reasoning parts; partIndex counts canonical adjacent-merged parts.
+ */
+export interface TranscriptAnchor {
+  messageId: string;
+  historySequence: number;
+  textLength: number;
+  reasoningLength: number;
+  partIndex: number;
+}
+
 /** Base fields common to all metadata types */
 interface MuxMessageMetadataBase {
   /** Structured review data for rich UI display (orthogonal to message type) */
@@ -322,6 +334,8 @@ interface MuxMessageMetadataBase {
    * muxMetadata loose by design, so this orthogonal field needs no schema change.
    */
   agentSkillRefs?: AgentSkillReference[];
+  /** Display-only insertion point within an assistant message that was streaming. */
+  transcriptAnchor?: TranscriptAnchor;
 }
 
 /** Status to display in sidebar during background operations */
@@ -452,68 +466,6 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         ownerWorkspaceId: string;
         turnId: string;
       }
-    | {
-        // /btw — user-side marker for a side question.
-        //
-        // The forked, single-turn, read-only side branch is created by the
-        // side-question pipeline (see sideQuestionService). We persist the
-        // user message so /btw exchanges are durable across reloads, but tag
-        // it so the renderer can distinguish a side question from a normal
-        // turn, and so request builders can omit the aside from future
-        // main-agent provider context.
-        type: "side-question";
-        /** Original "/btw <question>" command as typed (for display). */
-        rawCommand: string;
-        /**
-         * `messageId` of the main-agent assistant message that was in the
-         * middle of streaming when this /btw fired. Used by the renderer
-         * to visually split the interrupted message so the side branch
-         * appears between the pre-aside and post-aside halves of the
-         * main agent's reply — otherwise the side branch sits below the
-         * full M1 reply (sequence ordering) and the "main chat continues
-         * after the aside" reading is lost.
-         *
-         * Absent when /btw fires with no main-agent stream in flight
-         * (e.g. between turns); in that case the side branch renders
-         * normally at the bottom of the transcript.
-         */
-        interruptedMessageId?: string;
-        /**
-         * Length (in characters) of the interrupted message's accumulated
-         * text at the moment /btw fired. The renderer splits at this
-         * offset across the merged text parts. Reasoning / tool parts
-         * before the split point fall into the pre-aside half by
-         * position in the message's `parts` array.
-         *
-         * Captured synchronously on the backend via
-         * `aiService.getStreamInfo` before the user `/btw` row is
-         * persisted, so it's stable across reloads.
-         */
-        interruptedTextLength?: number;
-        /**
-         * Number of message parts that were already visible when /btw fired.
-         * This disambiguates non-text parts (reasoning/tool/file) that share
-         * the same cumulative text offset as the split boundary.
-         */
-        interruptedPartIndex?: number;
-        /**
-         * `historySequence` of the interrupted main-agent message,
-         * captured at /btw-fire time. Stored alongside `interruptedMessageId`
-         * so the renderer can disambiguate if a future compaction epoch
-         * recycles the id; currently informational.
-         */
-        interruptedHistorySequence?: number;
-      }
-    | {
-        // /btw — assistant-side marker for the answer to a side question.
-        type: "side-question-answer";
-        /**
-         * Stable link back to the user /btw row. The answer placeholder may be
-         * appended after later side-question user rows, so renderers must not
-         * rely on adjacency to pair concurrent side-question Q/A branches.
-         */
-        questionMessageId?: string;
-      }
   );
 
 export function getCompactionFollowUpContent(
@@ -618,6 +570,8 @@ export interface MuxMetadata {
    * Set this flag for synthetic notices that should be visible to users.
    */
   uiVisible?: boolean;
+  /** Display-only insertion point within an assistant message that was streaming. */
+  transcriptAnchor?: TranscriptAnchor;
   error?: string; // Error message if stream failed
   errorType?: StreamErrorType; // Error type/category if stream failed
   // Compaction source: "user" (manual /compact), "idle" (auto-triggered summary),
@@ -727,13 +681,6 @@ export type MuxMessage = Omit<UIMessage<MuxMetadata, never, never>, "parts"> & {
   parts: Array<MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart>;
 };
 
-export interface SideQuestionDisplayBranch {
-  branchId: string;
-  placement: "interrupted" | "standalone";
-  interruptedMessageId?: string;
-  interruptedHistorySequence?: number;
-}
-
 // DisplayedMessage represents a single UI message block
 // This is what the UI components consume, splitting complex messages into separate visual blocks
 export type DisplayedMessage =
@@ -785,10 +732,6 @@ export type DisplayedMessage =
       };
       /** Structured review data for rich UI display (from muxMetadata) */
       reviews?: ReviewNoteDataForDisplay[];
-      /** Display-only placement for /btw scroll/projection logic. */
-      sideQuestionBranch?: SideQuestionDisplayBranch;
-      /** True when this user message is a /btw side question. */
-      isSideQuestion?: boolean;
       /** Present when this synthetic turn is a background bash monitor wake-up. */
       bashMonitorWake?: {
         records: BashMonitorWakeDisplayRecord[];
@@ -800,7 +743,6 @@ export type DisplayedMessage =
       historyId: string; // Original MuxMessage ID for history operations
       content: string;
       historySequence: number; // Global ordering across all messages
-      streamSequence?: number; // Local ordering within this assistant message
       isStreaming: boolean;
       isPartial: boolean; // Whether this message was interrupted
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
@@ -808,10 +750,6 @@ export type DisplayedMessage =
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       /** True when this assistant row predates the latest Context Boundary. */
       isBeforeLatestContextBoundary?: boolean;
-      /** Display-only placement for /btw scroll/projection logic. */
-      sideQuestionBranch?: SideQuestionDisplayBranch;
-      /** True when this assistant row is the answer to a /btw side question. */
-      isSideAnswer?: boolean;
       model?: string;
       routedThroughGateway?: boolean;
       routeProvider?: string;
@@ -838,7 +776,6 @@ export type DisplayedMessage =
       status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
       isPartial: boolean; // Whether the parent message was interrupted
       historySequence: number; // Global ordering across all messages
-      streamSequence?: number; // Local ordering within this assistant message
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message
       timestamp?: number;
       /**
@@ -866,7 +803,6 @@ export type DisplayedMessage =
       historyId: string; // Original MuxMessage ID for history operations
       content: string;
       historySequence: number; // Global ordering across all messages
-      streamSequence?: number; // Local ordering within this assistant message
       isStreaming: boolean;
       isPartial: boolean; // Whether the parent message was interrupted
       isLastPartOfMessage?: boolean; // True if this is the last part of a multi-part message

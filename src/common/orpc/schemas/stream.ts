@@ -523,9 +523,8 @@ export const ErrorEventSchema = z.object({
 });
 
 /**
- * Emitted when accumulated session usage changes outside the live stream path:
- * a deleted child workspace's usage rolled up into the parent, or headless
- * usage (e.g. a /btw side question) recorded against the workspace itself.
+ * Emitted when accumulated session usage changes outside the live stream path,
+ * such as a deleted child workspace's usage rolling up into its parent.
  */
 export const SessionUsageDeltaEventSchema = z.object({
   type: z.literal("session-usage-delta"),

@@ -214,8 +214,7 @@ export async function generateWorkspaceStatus(
 
       if (options.recordUsage) {
         try {
-          // Guard the usage read with a short timeout (like the stream-end and
-          // /btw usage reads): a slow-settling SDK promise must not block the
+          // Guard the usage read with a short timeout: a slow-settling SDK promise must not block the
           // already-produced status — AgentStatusService.runTick() awaits
           // in-flight generations, so a stuck read would wedge the workspace's
           // sidebar status loop. The recorder itself never throws.

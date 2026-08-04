@@ -29,6 +29,7 @@ import { TranscriptHydrationSkeleton } from "./TranscriptHydrationSkeleton";
 import {
   createChatInputDecorationStackItem,
   createTranscriptTailStackItem,
+  selectVisibleChatInputDecorations,
   type ChatInputDecorationStackItem,
   type TranscriptTailStackItem,
 } from "./layoutStack";
@@ -109,11 +110,6 @@ import {
   normalizeQueuedMessage,
   type EditingMessageState,
 } from "@/browser/utils/chatEditing";
-import {
-  findActiveSideQuestionScrollHoldTarget,
-  findSideQuestionScrollHoldTarget,
-  type SideQuestionScrollHoldState,
-} from "./sideQuestionScrollHold";
 import {
   computeOperationalBundleInfos,
   computeTaskAwaitPollGroupInfos,
@@ -715,136 +711,24 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   // The composer dock lives inside the scrollport (sticky to its bottom), so
   // mousedown/keydown events from the composer bubble to the transcript
-  // handlers. They must not open a scroll-intent window or clear the
-  // side-question hold: typing or clicking in the composer is not transcript
-  // scroll intent. Wheel/touch are intentionally NOT filtered — those gestures
-  // really do scroll the transcript (native scroll chaining), so they must keep
-  // marking user intent or the bottom lock would fight the user's scroll.
+  // handlers. Typing or clicking in the composer is not transcript scroll
+  // intent. Wheel/touch are intentionally not filtered because native scroll
+  // chaining can move the transcript.
   const composerDockRef = useRef<HTMLDivElement>(null);
   const isComposerDockEvent = useCallback((target: EventTarget | null): boolean => {
     return target instanceof Node && (composerDockRef.current?.contains(target) ?? false);
   }, []);
 
-  const sideQuestionScrollHoldRef = useRef<SideQuestionScrollHoldState>({
-    initialized: false,
-    heldSideQuestionIds: new Set<string>(),
-    previouslyStreamingSideAnswerIds: new Set<string>(),
-    heldSideAnswerIds: new Set<string>(),
-  });
-
-  const activeSideQuestionScrollHoldTargetRef = useRef<string | null>(null);
-
-  const clearActiveSideQuestionScrollHold = useCallback(() => {
-    activeSideQuestionScrollHoldTargetRef.current = null;
-  }, []);
-
-  useLayoutEffect(() => {
-    sideQuestionScrollHoldRef.current = {
-      initialized: false,
-      heldSideQuestionIds: new Set<string>(),
-      previouslyStreamingSideAnswerIds: new Set<string>(),
-      heldSideAnswerIds: new Set<string>(),
-    };
-    activeSideQuestionScrollHoldTargetRef.current = null;
-  }, [workspaceId]);
-
-  useLayoutEffect(() => {
-    if (loading || isHydratingTranscript || deferredMessages.length === 0) {
-      return;
-    }
-
-    const { nextState, targetHistoryId: detectedTargetHistoryId } =
-      findSideQuestionScrollHoldTarget(deferredMessages, sideQuestionScrollHoldRef.current);
-    sideQuestionScrollHoldRef.current = nextState;
-
-    const activeTargetHistoryId = activeSideQuestionScrollHoldTargetRef.current;
-    const activeHold = findActiveSideQuestionScrollHoldTarget(
-      deferredMessages,
-      activeTargetHistoryId
-    );
-    const continuingTargetHistoryId =
-      activeHold.targetHistoryId === activeTargetHistoryId ? activeHold.targetHistoryId : undefined;
-    const shouldStartHold = detectedTargetHistoryId !== undefined && autoScroll;
-    const targetHistoryId = shouldStartHold ? detectedTargetHistoryId : continuingTargetHistoryId;
-
-    if (!targetHistoryId) {
-      if (!activeHold.keepActive) {
-        activeSideQuestionScrollHoldTargetRef.current = null;
-      }
-      return;
-    }
-
-    const scrollContainer = contentRef.current;
-    if (!scrollContainer) {
-      return;
-    }
-
-    const alignSideBranchStart = (): HTMLElement | undefined => {
-      const targetElement = findTranscriptMessageElement(scrollContainer, targetHistoryId);
-      targetElement?.scrollIntoView({
-        block: "start",
-        inline: "nearest",
-      });
-      return targetElement;
-    };
-
-    const currentHold = findActiveSideQuestionScrollHoldTarget(deferredMessages, targetHistoryId);
-    const releaseSettledHold = (): void => {
-      if (
-        currentHold.keepActive ||
-        activeSideQuestionScrollHoldTargetRef.current !== targetHistoryId
-      ) {
-        return;
-      }
-
-      activeSideQuestionScrollHoldTargetRef.current = null;
-    };
-
-    // The main stream can now keep rendering below an active /btw branch. Once
-    // that happens, bottom-lock would otherwise follow the main tail and yank
-    // the user away from the aside they just requested. Release bottom-lock once
-    // per interrupted side branch, then let the finite hold expire as soon as
-    // both the side answer and interrupted main stream are settled.
-    if (shouldStartHold) {
-      activeSideQuestionScrollHoldTargetRef.current = targetHistoryId;
-      disableAutoScroll();
-    }
-    alignSideBranchStart();
-    releaseSettledHold();
-
-    const win = typeof window !== "undefined" ? window : undefined;
-    const raf = win?.requestAnimationFrame?.bind(win);
-    const cancelRaf = win?.cancelAnimationFrame?.bind(win);
-    if (!raf || !cancelRaf) {
-      return;
-    }
-
-    const frameId = raf(() => {
-      alignSideBranchStart();
-      releaseSettledHold();
-    });
-    return () => cancelRaf(frameId);
-  }, [autoScroll, contentRef, deferredMessages, disableAutoScroll, isHydratingTranscript, loading]);
-
-  const handleTranscriptWheel = useCallback(
-    (event: React.WheelEvent<HTMLDivElement>) => {
-      if (event.deltaX !== 0 || event.deltaY !== 0) {
-        clearActiveSideQuestionScrollHold();
-      }
-      handleScrollContainerWheel(event);
-    },
-    [clearActiveSideQuestionScrollHold, handleScrollContainerWheel]
-  );
+  const handleTranscriptWheel = handleScrollContainerWheel;
 
   const handleTranscriptMouseDown = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (isComposerDockEvent(event.target)) {
         return;
       }
-      clearActiveSideQuestionScrollHold();
       handleScrollContainerMouseDown(event);
     },
-    [clearActiveSideQuestionScrollHold, handleScrollContainerMouseDown, isComposerDockEvent]
+    [handleScrollContainerMouseDown, isComposerDockEvent]
   );
 
   const handleComposerDockMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -862,26 +746,19 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     control.focus({ preventScroll: true });
   };
 
-  const handleTranscriptTouchMove = useCallback(() => {
-    clearActiveSideQuestionScrollHold();
-    markUserScrollIntent();
-  }, [clearActiveSideQuestionScrollHold, markUserScrollIntent]);
+  const handleTranscriptTouchMove = markUserScrollIntent;
 
   const handleTranscriptKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (isComposerDockEvent(event.target)) {
         return;
       }
-      clearActiveSideQuestionScrollHold();
       handleScrollContainerKeyDown(event);
     },
-    [clearActiveSideQuestionScrollHold, handleScrollContainerKeyDown, isComposerDockEvent]
+    [handleScrollContainerKeyDown, isComposerDockEvent]
   );
 
-  const handleJumpToBottom = useCallback(() => {
-    clearActiveSideQuestionScrollHold();
-    jumpToBottom();
-  }, [clearActiveSideQuestionScrollHold, jumpToBottom]);
+  const handleJumpToBottom = jumpToBottom;
 
   // Handler to navigate (scroll) to a specific message by historyId
   const handleNavigateToMessage = useCallback(
@@ -1667,8 +1544,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
                       const keepCollapsedWorkBundleMemberVisible =
                         msg.type === "user" ||
-                        (msg.type === "assistant" &&
-                          (msg.isSideAnswer === true || workBundle?.position === "final"));
+                        (msg.type === "assistant" && workBundle?.position === "final");
                       if (
                         (workBundle?.position === "member" || workBundle?.position === "final") &&
                         (isWorkBundleExpanded || !keepCollapsedWorkBundleMemberVisible)
@@ -1984,20 +1860,25 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
   // Keep the user's pending follow-up closest to the transcript, above every workspace decoration,
   // so it reads as the next message rather than as another banner competing near the composer.
   if (props.queuedMessage) {
-    addDecorationEntry({
-      key: "queued-message",
-      node: (
-        <QueuedMessage
-          message={props.queuedMessage}
-          onEdit={() => void props.onEditQueuedMessage()}
-          onChangeDispatchMode={props.onQueuedDispatchModeChange}
-          onActionError={props.onQueuedActionError}
-          actionError={props.queuedActionError}
-          onActionStart={props.onClearQueuedActionError}
-          onSendImmediately={props.onSendQueuedImmediately}
-        />
-      ),
-    });
+    decorationEntries.push(
+      createChatInputDecorationStackItem({
+        key: "queued-message",
+        // The queued follow-up is synchronous chat state, not an async decoration. Keep it visible
+        // while compaction/reconnect bypasses the hydration skeleton but other data is still loading.
+        revealBeforeReady: true,
+        node: (
+          <QueuedMessage
+            message={props.queuedMessage}
+            onEdit={() => void props.onEditQueuedMessage()}
+            onChangeDispatchMode={props.onQueuedDispatchModeChange}
+            onActionError={props.onQueuedActionError}
+            actionError={props.queuedActionError}
+            onActionStart={props.onClearQueuedActionError}
+            onSendImmediately={props.onSendQueuedImmediately}
+          />
+        ),
+      })
+    );
   }
   if (props.shouldShowCompactionWarning) {
     addDecorationEntry({
@@ -2089,7 +1970,9 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
 
   return (
     <>
-      <ChatInputDecorationStackLane items={props.revealDecorations ? decorationEntries : []} />
+      <ChatInputDecorationStackLane
+        items={selectVisibleChatInputDecorations(decorationEntries, props.revealDecorations)}
+      />
       <ChatInput
         key={props.workspaceId}
         variant="workspace"

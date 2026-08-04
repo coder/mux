@@ -647,8 +647,6 @@ export class StreamManager extends EventEmitter {
     }
     return log.withFields(fields);
   }
-  // Public: AIService.resolveMetadataModel delegates here so non-stream
-  // consumers (/btw answer rows) can stamp the same mappedToModel resolution.
   resolveMetadataModel(modelString: string): string {
     try {
       return resolveModelForMetadata(modelString, this.getProvidersConfig());

@@ -170,7 +170,7 @@ export class SessionUsageService {
     options?: {
       /**
        * Accumulate into byModel without touching lastRequest. Used for
-       * headless telemetry (status generation, memory sweeps, /btw) so a tiny
+       * headless telemetry (status generation and memory sweeps) so a tiny
        * background call cannot replace the Costs tab's "Last request" data
        * for the user's actual last agent turn.
        */
@@ -191,8 +191,8 @@ export class SessionUsageService {
 
   /**
    * Best-effort usage recording for headless AI calls that bypass the
-   * StreamManager pipeline (side questions, memory consolidation/harvest,
-   * status/title generation). Without this, their spend is invisible to
+   * StreamManager pipeline (memory consolidation/harvest and status/title
+   * generation). Without this, their spend is invisible to
    * per-workspace cost displays even though the provider bills it.
    *
    * Never throws: cost telemetry must not fail the feature that spent the
@@ -213,10 +213,8 @@ export class SessionUsageService {
       /**
        * When set, also append the raw usage to the workspace's
        * headless-usage.jsonl sidecar so the analytics ETL can ingest it into
-       * dashboard totals. Only for callers whose spend produces NO chat.jsonl
-       * assistant row (status generation, memory sweeps) — callers that
-       * persist usage on a chat row (/btw) must omit this or the spend would
-       * be double-counted.
+       * dashboard totals. Use for callers whose spend produces no chat.jsonl
+       * assistant row, such as status generation and memory sweeps.
        */
       analyticsSource?: string;
       /**
@@ -314,8 +312,7 @@ export class SessionUsageService {
         // even if the ledger update failed.
         return { model: canonicalModel, usage: displayUsage };
       }
-      // No sidecar (/btw): the return value feeds a session-usage-delta event
-      // that must mirror the on-disk ledger, so require ledger success.
+      // Without a durable sidecar, only report success when the ledger write succeeded.
       return ledgerRecorded ? { model: canonicalModel, usage: displayUsage } : undefined;
     } catch (error) {
       log.warn("Failed to record headless usage", { workspaceId, modelString, error });

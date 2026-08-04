@@ -46,7 +46,6 @@ const TelemetryCommandTypeSchema = z.enum([
   "providers",
   "goal",
   "workflow",
-  "btw",
 ]);
 
 // Individual event payload schemas

@@ -86,7 +86,6 @@ import { trackCommandUsed } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 import { setGoalWithConflictRetry } from "@/browser/utils/goals/setGoalWithConflictRetry";
 import { loadGoalDefaults, resolveGoalSetIntent } from "@/browser/utils/goals/resolveGoalSetIntent";
-import { SIDE_QUESTION_COMMAND } from "@/common/utils/messages/sideQuestion";
 import {
   WORKFLOW_RESULT_METADATA_TYPE,
   buildWorkflowResultContextMessage,
@@ -840,63 +839,6 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
-      case "side-question": {
-        // /btw: forked, single-turn, read-only side question.
-        //
-        // The backend persists both the question and the answer to chat
-        // history with side-question metadata, and streams the answer
-        // through the normal onChat events — so the rendered output uses
-        // the standard TypewriterMarkdown / smooth-text path. The RPC
-        // itself only resolves once the side question is fully streamed,
-        // but we don't await it inline: the chat events drive the UI in
-        // parallel, and a long-running side question shouldn't pin the
-        // chat input handler.
-        if (!context.workspaceId) throw new Error("Workspace ID required");
-        const activeClient = requireClient();
-        if (!activeClient) {
-          return { clearInput: false, toastShown: true };
-        }
-        const workspaceId = context.workspaceId;
-        const rawCommand = `${SIDE_QUESTION_COMMAND} ${parsed.question}`;
-        const asyncCommandToken = context.asyncCommandToken;
-        const isCurrentSideQuestion = (): boolean =>
-          asyncCommandToken === undefined ||
-          context.isAsyncCommandCurrent?.(asyncCommandToken, workspaceId) !== false;
-        const showSideQuestionError = (message: string): void => {
-          if (!isCurrentSideQuestion()) {
-            return;
-          }
-          const currentInput = context.getInput?.();
-          // Restore the consumed command text only if the composer is still
-          // empty. /btw runs asynchronously; if the user typed a new draft while
-          // it was pending, surfacing the error must not overwrite that draft.
-          if (currentInput === undefined || currentInput.trim().length === 0) {
-            setInput(rawCommand);
-          }
-          setToast({
-            id: Date.now().toString(),
-            type: "error",
-            message,
-          });
-        };
-        setInput("");
-        context.setAttachments([]);
-        context.onDetachAllReviews?.();
-        void activeClient.workspace
-          .sideQuestion({ workspaceId, question: parsed.question })
-          .then((result) => {
-            if (!result.success) {
-              showSideQuestionError(`Side question failed: ${result.error}`);
-            }
-          })
-          .catch((err: unknown) => {
-            showSideQuestionError(
-              err instanceof Error ? err.message : "Side question failed unexpectedly"
-            );
-          });
-        trackCommandUsed("btw");
-        return { clearInput: true, toastShown: false };
-      }
     }
   }
 

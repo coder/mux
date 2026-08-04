@@ -300,7 +300,6 @@ export type TelemetryCommandType =
   | "plan"
   | "providers"
   | "goal"
-  | "btw"
   | "workflow";
 
 /**

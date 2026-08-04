@@ -358,9 +358,6 @@ function findWorkBundleFinalIndex(
       if (finalIndex !== undefined) {
         break;
       }
-      if (message.type === "assistant" || isSideQuestionStart(messages, index)) {
-        continue;
-      }
       if (!canCrossVisibleConversation) {
         break;
       }
@@ -415,13 +412,6 @@ function findWorkBundleFinalIndex(
   }
 
   return undefined;
-}
-
-function isSideQuestionStart(messages: DisplayedMessage[], index: number): boolean {
-  const next = messages[index + 1];
-  return (
-    messages[index]?.type === "user" && next?.type === "assistant" && next.isSideAnswer === true
-  );
 }
 
 function hasFutureWorkBundleAgentMessage(
@@ -481,9 +471,7 @@ function isWorkBundleAgentMessage(
 }
 
 function isWorkBundleVisibleConversationMessage(message: DisplayedMessage | undefined): boolean {
-  return (
-    message?.type === "user" || (message?.type === "assistant" && message.isSideAnswer === true)
-  );
+  return message?.type === "user";
 }
 
 function isWorkBundleOperationalMessage(message: DisplayedMessage | undefined): boolean {

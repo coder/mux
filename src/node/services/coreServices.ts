@@ -86,7 +86,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     path.join(os.tmpdir(), "mux-bashes")
   );
   // Providers config accessor enables mappedToModel alias resolution for
-  // headless usage pricing (status generation, memory sweeps, /btw).
+  // headless usage pricing (status generation and memory sweeps).
   const sessionUsageService = new SessionUsageService(config, historyService, () =>
     providerService.getConfig()
   );

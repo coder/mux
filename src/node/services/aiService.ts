@@ -157,7 +157,6 @@ import {
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
-import { filterSideQuestionMessages } from "@/common/utils/messages/sideQuestion";
 import { isTerminalWorkflowRunStatus } from "@/common/types/workflow";
 import {
   WORKFLOW_RESULT_METADATA_TYPE,
@@ -186,16 +185,10 @@ export function prepareProviderRequestMessages(
 ): {
   activeContextMessages: MuxMessage[];
   providerRequestMessages: MuxMessage[];
-  sideQuestionFilteredCount: number;
   contextBoundarySlicedCount: number;
 } {
-  // /btw side questions and workflow display rows are durable UI history, not main-agent context.
-  // Filter them before boundary slicing so future normal turns don't see UI-only artifacts.
-  const messagesWithoutSideQuestions = filterSideQuestionMessages(messages);
-  const messagesWithoutWorkflowDisplay = filterWorkflowDisplayOnlyMessages(
-    messagesWithoutSideQuestions
-  );
-  const sideQuestionFilteredCount = messages.length - messagesWithoutSideQuestions.length;
+  // Workflow display rows are durable UI history, not main-agent context.
+  const messagesWithoutWorkflowDisplay = filterWorkflowDisplayOnlyMessages(messages);
   const activeContextMessages = sliceMessagesForProviderFromLatestContextBoundary(
     messagesWithoutWorkflowDisplay
   );
@@ -209,7 +202,6 @@ export function prepareProviderRequestMessages(
       activeContextMessages,
       preserveReasoningOnly
     ),
-    sideQuestionFilteredCount,
     contextBoundarySlicedCount,
   };
 }
@@ -1174,17 +1166,12 @@ export class AIService extends EventEmitter {
 
       // Context Boundary request slicing happens before empty-assistant filtering so
       // provider-invisible reset rows can still bound the active context window.
-      const {
-        activeContextMessages,
-        providerRequestMessages,
-        sideQuestionFilteredCount,
-        contextBoundarySlicedCount,
-      } = prepareProviderRequestMessages(messages, canonicalProviderName, effectiveThinkingLevel);
-      if (sideQuestionFilteredCount > 0 || contextBoundarySlicedCount > 0) {
+      const { activeContextMessages, providerRequestMessages, contextBoundarySlicedCount } =
+        prepareProviderRequestMessages(messages, canonicalProviderName, effectiveThinkingLevel);
+      if (contextBoundarySlicedCount > 0) {
         log.debug("Prepared provider history window", {
           workspaceId,
           originalCount: messages.length,
-          sideQuestionFilteredCount,
           contextBoundarySlicedCount,
           activeContextCount: activeContextMessages.length,
         });
@@ -3172,15 +3159,6 @@ export class AIService extends EventEmitter {
       return undefined;
     }
     return this.streamManager.getStreamInfo(workspaceId);
-  }
-
-  /**
-   * Resolve the pricing/tokenization metadata model for a model string
-   * (mappedToModel aliases for custom providers). Used by non-stream
-   * consumers like /btw so their persisted rows price like normal chat rows.
-   */
-  resolveMetadataModel(modelString: string): string {
-    return this.streamManager.resolveMetadataModel(modelString);
   }
 
   /**

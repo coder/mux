@@ -73,10 +73,6 @@ const LOCAL_COMMAND_STDOUT_OPEN_TAG = "<local-command-stdout>";
 const LOCAL_COMMAND_STDOUT_CLOSE_TAG = "</local-command-stdout>";
 
 export const canEditDisplayedUserMessage = (message: DisplayedUserMessage): boolean => {
-  // /btw rows are persisted read-only side branches. Editing one would route the
-  // edited text through the normal main-thread send path and truncate history
-  // from the aside instead of re-running the side-question flow.
-  if (message.isSideQuestion === true) return false;
   if (message.isGoalContinuation === true || message.isBudgetLimitWrapup === true) return false;
   if (message.content.startsWith(LOCAL_COMMAND_STDOUT_OPEN_TAG)) {
     return !message.content.endsWith(LOCAL_COMMAND_STDOUT_CLOSE_TAG);

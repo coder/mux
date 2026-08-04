@@ -86,10 +86,6 @@ import {
   ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
 } from "@/node/services/additionalSystemContext";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
-import {
-  askSideQuestion,
-  snapshotSideQuestionLiveStream,
-} from "@/node/services/sideQuestionService";
 import { NAME_GEN_PREFERRED_MODELS } from "@/common/constants/nameGeneration";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -1620,11 +1616,7 @@ export interface WorkspaceServiceEvents {
     removedParentWorkspaceId?: string;
   }) => void;
   activity: (event: { workspaceId: string; activity: WorkspaceActivitySnapshot | null }) => void;
-  /**
-   * Request an incremental analytics ingest for a workspace whose chat.jsonl
-   * gained billable usage outside the StreamManager stream-end path (e.g. a
-   * /btw side question). ServiceContainer routes this to AnalyticsService.
-   */
+  /** Request an incremental analytics ingest outside the stream-end path. */
   analyticsIngest: (event: { workspaceId: string }) => void;
 }
 
@@ -6340,134 +6332,6 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return candidates;
-  }
-
-  /**
-   * Build the candidate-model list for a /btw side question.
-   *
-   * Unlike title generation, /btw should prefer the live parent stream's
-   * actual model first (important for one-shot overrides like /opus), then the
-   * workspace's configured chat models. The title-gen list is appended as a
-   * last-resort fallback so a misconfigured chat model can still produce an
-   * answer.
-   */
-  public async getSideQuestionModelCandidates(
-    workspaceId: string,
-    liveStreamModelOverride?: string
-  ): Promise<string[]> {
-    const candidates: string[] = [];
-    const liveStreamModel =
-      liveStreamModelOverride ?? this.aiService.getStreamInfo(workspaceId)?.model;
-    if (liveStreamModel) {
-      candidates.push(liveStreamModel);
-    }
-
-    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-    if (metadataResult.success) {
-      const preferred = [
-        metadataResult.data.aiSettings?.model,
-        ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map((s) => s.model),
-      ];
-      for (const model of preferred) {
-        if (model && !candidates.includes(model)) {
-          candidates.push(model);
-        }
-      }
-    }
-
-    // Fallback: small-model preference list (same set used by title/status
-    // generation). Keeps /btw working when no chat model has been chosen yet
-    // (e.g. brand-new workspace before the first send).
-    for (const model of NAME_GEN_PREFERRED_MODELS) {
-      if (!candidates.includes(model)) {
-        candidates.push(model);
-      }
-    }
-    return candidates;
-  }
-
-  /**
-   * Run a /btw side question over the workspace's current conversation.
-   *
-   * Both the user question and the assistant answer are persisted to
-   * chat.jsonl with side-question metadata, and stream lifecycle events
-   * are emitted through the standard chat-event channel so the renderer
-   * animates the response with TypewriterMarkdown.
-   *
-   * The workspace's "streaming" flag is intentionally NOT toggled here —
-   * /btw runs alongside the main agent without claiming busy state, so the
-   * user can fire a side question while the agent is mid-turn (or vice
-   * versa) without interfering with either.
-   */
-  public async askSideQuestion(
-    workspaceId: string,
-    question: string
-  ): Promise<{ success: true; modelUsed: string } | { success: false; error: string }> {
-    // Match other workspace ops: refuse on missing/in-flight workspaces so
-    // the user gets a clear error instead of a confusing model failure
-    // downstream.
-    const workspaceConfig = this.config.findWorkspace(workspaceId);
-    if (!workspaceConfig) {
-      return { success: false, error: "Workspace not found." };
-    }
-
-    const liveStreamSnapshot = snapshotSideQuestionLiveStream(
-      this.aiService.getStreamInfo(workspaceId)
-    );
-    const candidates = await this.getSideQuestionModelCandidates(
-      workspaceId,
-      liveStreamSnapshot?.model
-    );
-    const result = await askSideQuestion({
-      workspaceId,
-      question,
-      candidates,
-      aiService: this.aiService,
-      historyService: this.historyService,
-      liveStreamSnapshot,
-      // Re-use the session's existing chat-event emitter; this is the same
-      // path agentSession / streamManager use, so the frontend's onChat
-      // subscription handles side-question events identically to a normal
-      // agent stream (TypewriterMarkdown, smooth-text, replay all "just
-      // work").
-      emitChatEvent: (wsId, message) => {
-        this.sessions.get(wsId)?.emitChatEvent(message);
-      },
-      // /btw bypasses StreamManager, so record its spend explicitly or it
-      // never reaches session-usage.json / cost displays.
-      recordUsage: async (modelString, usage, providerMetadata) => {
-        const recorded = await this.sessionUsageService?.recordHeadlessUsage(
-          workspaceId,
-          modelString,
-          usage,
-          providerMetadata
-        );
-        // The renderer's session-usage cache only updates from stream-end
-        // usage metadata (absent for /btw) or delta events, so emit a delta —
-        // otherwise an open Costs tab shows stale totals until reload.
-        if (recorded) {
-          this.sessions.get(workspaceId)?.emitChatEvent({
-            type: "session-usage-delta",
-            workspaceId,
-            sourceWorkspaceId: workspaceId,
-            byModelDelta: { [recorded.model]: recorded.usage },
-            timestamp: Date.now(),
-          });
-        }
-      },
-    });
-    if (!result.success) {
-      return {
-        success: false,
-        error: result.error.raw ?? `Side question failed: ${result.error.type}`,
-      };
-    }
-    // The persisted answer row now carries metadata.usage, but incremental
-    // analytics ingest is normally driven by StreamManager stream-end (which
-    // /btw bypasses). Request an ingest pass so the spend reaches dashboard
-    // totals without waiting for the next real stream or an app restart.
-    this.emit("analyticsIngest", { workspaceId });
-    return { success: true, modelUsed: result.data.modelUsed };
   }
 
   private async maybeRunPendingAutoTitleFromMessage(

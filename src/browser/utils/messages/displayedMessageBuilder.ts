@@ -6,7 +6,6 @@ import type {
   MuxFilePart,
   MuxMessage,
   MuxMessageMetadata,
-  SideQuestionDisplayBranch,
 } from "@/common/types/message";
 import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
@@ -21,10 +20,6 @@ import {
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
-import {
-  isSideQuestionAnswerMessage,
-  isSideQuestionUserMessage,
-} from "@/common/utils/messages/sideQuestion";
 
 /**
  * Check if a tool result indicates success (for tools that return { success: boolean })
@@ -53,27 +48,6 @@ export function resolveRouteProvider(
   routedThroughGateway: boolean | undefined
 ): string | undefined {
   return routeProvider ?? (routedThroughGateway === true ? "mux-gateway" : undefined);
-}
-
-function getStandaloneSideQuestionBranch(
-  message: MuxMessage
-): SideQuestionDisplayBranch | undefined {
-  const muxMeta = message.metadata?.muxMetadata;
-  if (muxMeta?.type === "side-question") {
-    return {
-      branchId: message.id,
-      placement: "standalone",
-    };
-  }
-
-  if (muxMeta?.type === "side-question-answer") {
-    return {
-      branchId: muxMeta.questionMessageId ?? message.id,
-      placement: "standalone",
-    };
-  }
-
-  return undefined;
 }
 
 export function normalizeMessageRouteProvider(message: MuxMessage): MuxMessage {
@@ -245,6 +219,25 @@ function getValidBashMonitorWakeRecords(
   return records.every(isValidRecord) ? records : undefined;
 }
 
+function getRawCommand(muxMetadata: unknown): string | undefined {
+  if (!isPlainObject(muxMetadata) || typeof muxMetadata.type !== "string") {
+    return undefined;
+  }
+
+  // Unknown persisted metadata must render as an ordinary row rather than
+  // inheriting command-specific display behavior from a coincidental field.
+  switch (muxMetadata.type) {
+    case "compaction-request":
+    case "agent-skill":
+    case "normal":
+    case "workflow-trigger-display":
+    case "workflow-result":
+      return typeof muxMetadata.rawCommand === "string" ? muxMetadata.rawCommand : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function buildUserDisplayedMessages(options: {
   message: MuxMessage;
   agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
@@ -265,7 +258,7 @@ function buildUserDisplayedMessages(options: {
       filename: p.filename,
     }));
 
-  let rawCommand = muxMeta && "rawCommand" in muxMeta ? muxMeta.rawCommand : undefined;
+  let rawCommand = getRawCommand(muxMeta);
   const agentSkill =
     muxMeta?.type === "agent-skill"
       ? {
@@ -316,8 +309,6 @@ function buildUserDisplayedMessages(options: {
       inlineSkillSnapshots,
       compactionRequest,
       reviews: muxMeta?.reviews,
-      sideQuestionBranch: getStandaloneSideQuestionBranch(message),
-      isSideQuestion: isSideQuestionUserMessage(message) ? true : undefined,
       bashMonitorWake: bashMonitorWakeRecords ? { records: bashMonitorWakeRecords } : undefined,
     },
   ];
@@ -360,7 +351,6 @@ function appendReasoningRow(
     part: Extract<MuxMessage["parts"][number], { type: "reasoning" }>;
     partIndex: number;
     historySequence: number;
-    streamSequence: number;
     isStreaming: boolean;
     isPartial: boolean;
     isLastPartOfMessage: boolean;
@@ -375,7 +365,6 @@ function appendReasoningRow(
     historyId: options.message.id,
     content: options.part.text,
     historySequence: options.historySequence,
-    streamSequence: options.streamSequence,
     isStreaming: options.isStreaming,
     isPartial: options.isPartial,
     isLastPartOfMessage: options.isLastPartOfMessage,
@@ -394,7 +383,6 @@ function appendAssistantTextRow(
     part: Extract<MuxMessage["parts"][number], { type: "text" }>;
     partIndex: number;
     historySequence: number;
-    streamSequence: number;
     isStreaming: boolean;
     isPartial: boolean;
     isLastPartOfMessage: boolean;
@@ -409,15 +397,12 @@ function appendAssistantTextRow(
     historyId: message.id,
     content: getGoalClearedSummaryDisplayText(part.text, message.metadata?.muxMetadata),
     historySequence: options.historySequence,
-    streamSequence: options.streamSequence,
     isStreaming: options.isStreaming,
     isPartial: options.isPartial,
     isLastPartOfMessage: options.isLastPartOfMessage,
     // Support both new enum ("user"|"idle") and legacy boolean (true).
     isCompacted: !!message.metadata?.compacted,
     isIdleCompacted: message.metadata?.compacted === "idle",
-    sideQuestionBranch: getStandaloneSideQuestionBranch(message),
-    isSideAnswer: isSideQuestionAnswerMessage(message) ? true : undefined,
     model: message.metadata?.model,
     routedThroughGateway: message.metadata?.routedThroughGateway,
     routeProvider: resolveRouteProvider(
@@ -505,7 +490,6 @@ function appendToolRows(
     isPartial: boolean;
     isLastPartOfMessage: boolean;
     baseTimestamp?: number;
-    nextStreamSequence: () => number;
   }
 ): void {
   const { message, part } = options;
@@ -522,7 +506,6 @@ function appendToolRows(
     status,
     isPartial: options.isPartial,
     historySequence: options.historySequence,
-    streamSequence: options.nextStreamSequence(),
     isLastPartOfMessage: options.isLastPartOfMessage,
     ...(part.workflowRun != null ? { workflowRun: part.workflowRun } : {}),
     timestamp: part.timestamp ?? options.baseTimestamp,
@@ -638,8 +621,6 @@ function buildAssistantDisplayedMessages(options: {
   const isPartial = message.metadata?.partial === true;
   const mergedParts = mergeAdjacentParts(message.parts);
   const { lastPartIndex, isReasoningOnlyMessage } = getRenderablePartStats(mergedParts);
-  let streamSeq = 0;
-  const nextStreamSequence = (): number => streamSeq++;
 
   if (isContextBoundaryMessage(message)) {
     displayedMessages.push(createCompactionBoundaryRow(message, historySequence));
@@ -655,7 +636,6 @@ function buildAssistantDisplayedMessages(options: {
         part,
         partIndex,
         historySequence,
-        streamSequence: nextStreamSequence(),
         isStreaming,
         isPartial,
         isLastPartOfMessage: isLastPart,
@@ -672,7 +652,6 @@ function buildAssistantDisplayedMessages(options: {
         part,
         partIndex,
         historySequence,
-        streamSequence: nextStreamSequence(),
         isStreaming,
         isPartial,
         isLastPartOfMessage: isLastPart,
@@ -691,7 +670,6 @@ function buildAssistantDisplayedMessages(options: {
         isPartial,
         isLastPartOfMessage: isLastPart,
         baseTimestamp,
-        nextStreamSequence,
       });
     }
   });

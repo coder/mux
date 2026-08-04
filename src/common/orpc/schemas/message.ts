@@ -119,6 +119,14 @@ export const ModelFallbackRecordSchema = z.object({
   refusedModels: z.array(z.string()),
 });
 
+const TranscriptAnchorSchema = z.object({
+  messageId: z.string(),
+  historySequence: z.number(),
+  textLength: z.number().nonnegative(),
+  reasoningLength: z.number().nonnegative(),
+  partIndex: z.number().int().nonnegative(),
+});
+
 // MuxMessage (simplified)
 export const MuxMessageSchema = z.object({
   id: z.string(),
@@ -174,6 +182,7 @@ export const MuxMessageSchema = z.object({
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
       uiVisible: z.boolean().optional(),
+      transcriptAnchor: TranscriptAnchorSchema.optional().catch(undefined),
 
       agentSkillSnapshot: z
         .object({

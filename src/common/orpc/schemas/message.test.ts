@@ -60,6 +60,20 @@ describe("MuxMessageSchema compactionEpoch parsing", () => {
     });
   });
 
+  test("preserves unknown muxMetadata as an opaque value", () => {
+    const legacyMetadata = {
+      type: "removed-feature",
+      rawCommand: "/removed legacy command",
+      nested: { version: 1 },
+    };
+    const parsed = MuxMessageSchema.parse({
+      ...createMessage(),
+      metadata: { muxMetadata: legacyMetadata },
+    });
+
+    expect(parsed.metadata?.muxMetadata).toEqual(legacyMetadata);
+  });
+
   test("tolerates malformed modelFallback values by treating them as absent", () => {
     const malformedModelFallbackValues: unknown[] = [
       null,
