@@ -16,6 +16,7 @@
 import { Scanner } from "@tailwindcss/oxide";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readFile, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
@@ -66,7 +67,6 @@ const APPLIED_SELECTION_UTILITY =
  */
 const ARBITRARY_SELECTION_CLASS = /\[(?:-(?:webkit|moz|ms|o)-)?user-select:[^\s\]]+\]/;
 
-const STYLESHEET_DIR = fileURLToPath(new URL("./", import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const STYLESHEET_PATH = fileURLToPath(new URL("./globals.css", import.meta.url));
 
@@ -242,6 +242,97 @@ function importedSegments(source: string, filePath: string): Set<string> {
   return segments;
 }
 
+const NON_BUNDLED_STYLESHEET_QUERIES = new Set(["inline", "raw", "url"]);
+
+function importedStylesheets(source: string, filePath: string): Set<string> {
+  const scriptKind = scriptKindForPath(filePath);
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind
+  );
+  const specifiers = new Set<string>();
+  const addSpecifier = (expression: ts.Expression | undefined) => {
+    const specifier = stringLiteralValue(expression);
+    if (specifier === undefined) {
+      return;
+    }
+    const [path, query = ""] = specifier.split("?", 2);
+    const excluded = query
+      .split("&")
+      .map((part) => part.split("=", 1)[0])
+      .some((part) => NON_BUNDLED_STYLESHEET_QUERIES.has(part));
+    if (path.endsWith(".css") && !excluded) {
+      specifiers.add(path);
+    }
+  };
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isImportDeclaration(node) &&
+      importClauseHasRuntimeValue(node.importClause, scriptKind)
+    ) {
+      addSpecifier(node.moduleSpecifier);
+    } else if (ts.isExportDeclaration(node) && exportDeclarationHasRuntimeValue(node, scriptKind)) {
+      addSpecifier(node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node) && !node.isTypeOnly) {
+      if (ts.isExternalModuleReference(node.moduleReference)) {
+        addSpecifier(node.moduleReference.expression);
+      }
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (isDynamicImport || isRequire) {
+        addSpecifier(node.arguments[0]);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return specifiers;
+}
+
+function importedStylesheetRules(source: string, filePath: string): Set<string> {
+  const specifiers = new Set<string>();
+  postcss.parse(source, { from: filePath }).walkAtRules(/^import$/i, (atRule) => {
+    const params = atRule.params.trim();
+    const match = /^(?:url\(\s*)?["']([^"']+)["']\s*\)?/.exec(params);
+    if (!match) {
+      throw new Error(`Unsupported stylesheet @import: ${atRule.params}`);
+    }
+    const specifier = match[1];
+    if (specifier === "tailwindcss" || /^(?:data:|https?:|\/\/)/i.test(specifier)) {
+      return;
+    }
+    const [path, query = ""] = specifier.split("?", 2);
+    const excluded = query
+      .split("&")
+      .map((part) => part.split("=", 1)[0])
+      .some((part) => NON_BUNDLED_STYLESHEET_QUERIES.has(part));
+    if (!excluded) {
+      specifiers.add(path);
+    }
+  });
+  return specifiers;
+}
+
+function resolveStylesheetImport(specifier: string, importerPath: string): string {
+  if (specifier.startsWith("@/")) {
+    return resolve(REPO_ROOT, "src", specifier.slice(2));
+  }
+  if (specifier.startsWith("/")) {
+    return resolve(REPO_ROOT, specifier.slice(1));
+  }
+  if (specifier.startsWith(".")) {
+    return resolve(dirname(importerPath), specifier);
+  }
+  if (specifier.startsWith("src/")) {
+    return resolve(REPO_ROOT, specifier);
+  }
+  return createRequire(importerPath).resolve(specifier);
+}
+
 /**
  * The one `@source` form this contract models: a double-quoted plain file path, which
  * Tailwind resolves against the stylesheet's directory (verified against
@@ -325,19 +416,19 @@ const SELECTION_OPT_INS: Record<string, Record<string, number>> = {
  * so a human reviews what each new suppression wraps.
  */
 const SELECTION_SUPPRESSIONS: Record<string, Record<string, number>> = {
-  "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-none": 1 },
+  "src/browser/components/AgentListItem/AgentListItem.tsx": { "select-none": 2 },
   "src/browser/components/ChatPane/TranscriptHydrationSkeleton.tsx": { "select-none": 1 },
   "src/browser/components/FileIcon/FileIcon.tsx": { "userSelect:none": 1 },
   "src/browser/components/InstructionsTab/AdditionalSystemContextScratchpad.tsx": {
     "select-none": 1,
   },
-  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": { "select-none": 2 },
+  "src/browser/components/ProjectSidebar/ProjectSidebar.tsx": { "select-none": 4 },
   "src/browser/components/ProjectSidebar/TaskGroupListItem.tsx": { "select-none": 1 },
   "src/browser/components/ScrollArea/ScrollArea.tsx": { "select-none": 1 },
   "src/browser/components/SectionHeader/SectionHeader.tsx": { "select-none": 1 },
   "src/browser/components/SelectPrimitive/SelectPrimitive.tsx": { "select-none": 1 },
   "src/browser/components/ThinkingSlider/ProModeToggle.tsx": { "select-none": 1 },
-  "src/browser/components/ThinkingSlider/ThinkingSlider.tsx": { "select-none": 1 },
+  "src/browser/components/ThinkingSlider/ThinkingSlider.tsx": { "select-none": 2 },
   "src/browser/components/TitleBar/TitleBar.tsx": { "select-none": 1 },
   "src/browser/features/ChatInput/CreationControls.tsx": { "select-none": 1 },
   "src/browser/features/Messages/ChatBarrier/StreamingBarrierView.tsx": { "select-none": 2 },
@@ -401,13 +492,14 @@ function collectMediaParams(node: ChildNode | Container): string[] {
 
 let selectionRules: SelectionRule[] = [];
 let sourceDirectivePaths: string[] = [];
+let parsedStylesheetPaths: string[] = [];
 
 beforeAll(async () => {
   appShellSelectors = await readAppShellSelectors();
 
-  const stylesheet = postcss.parse(
-    await readFile(new URL("./globals.css", import.meta.url), "utf8")
-  );
+  const stylesheet = postcss.parse(await readFile(STYLESHEET_PATH, "utf8"), {
+    from: STYLESHEET_PATH,
+  });
 
   // The source scan assumes Tailwind's default automatic detection from the project
   // root. A `source(...)` clause on the import changes or disables that base, which
@@ -424,7 +516,7 @@ beforeAll(async () => {
     if (!match) {
       throw new Error(`Unsupported @source form: @source ${atRule.params}`);
     }
-    sourceDirectivePaths.push(match[1]);
+    sourceDirectivePaths.push(resolve(dirname(STYLESHEET_PATH), match[1]));
   });
 
   // `@apply select-text` sets selection without a `user-select` declaration to find, and
@@ -443,35 +535,45 @@ beforeAll(async () => {
     }
   });
 
+  parsedStylesheetPaths = await runtimeStylesheetPaths();
+  const stylesheets = await Promise.all(
+    parsedStylesheetPaths.map(async (stylesheetPath) =>
+      stylesheetPath === STYLESHEET_PATH
+        ? stylesheet
+        : postcss.parse(await readFile(stylesheetPath, "utf8"), { from: stylesheetPath })
+    )
+  );
   selectionRules = [];
   let order = 0;
-  stylesheet.walkDecls((decl: Declaration) => {
-    // A CSS ident escape (`user-sele\63t`) can spell a property in a form no pattern
-    // sees, so escaped property names are refused rather than decoded.
-    if (decl.prop.includes("\\")) {
-      throw new Error(`Unsupported escaped property name: ${decl.prop}`);
-    }
-    if (!SELECTION_PROPERTY_PATTERN.test(decl.prop)) {
-      return;
-    }
-    // A declaration outside a plain rule (`@utility`, `@keyframes`) has no selector to
-    // reason about, and its application sites live in TSX this contract cannot read.
-    if (decl.parent?.type !== "rule") {
-      throw new Error(
-        `Selection declaration outside a rule: ${decl.parent?.type ?? "detached"} ${decl.prop}`
-      );
-    }
-    if (decl.important) {
-      throw new Error(`Unsupported !important selection declaration: ${decl.parent.selector}`);
-    }
-    selectionRules.push({
-      selectors: decl.parent.selectors,
-      property: decl.prop.toLowerCase(),
-      value: decl.value.toLowerCase(),
-      mediaParams: collectMediaParams(decl),
-      order: order++,
+  for (const parsedStylesheet of stylesheets) {
+    parsedStylesheet.walkDecls((decl: Declaration) => {
+      // A CSS ident escape (`user-sele\63t`) can spell a property in a form no pattern
+      // sees, so escaped property names are refused rather than decoded.
+      if (decl.prop.includes("\\")) {
+        throw new Error(`Unsupported escaped property name: ${decl.prop}`);
+      }
+      if (!SELECTION_PROPERTY_PATTERN.test(decl.prop)) {
+        return;
+      }
+      // A declaration outside a plain rule (`@utility`, `@keyframes`) has no selector,
+      // so this contract cannot associate it with a reviewed application site.
+      if (decl.parent?.type !== "rule") {
+        throw new Error(
+          `Selection declaration outside a rule: ${decl.parent?.type ?? "detached"} ${decl.prop}`
+        );
+      }
+      if (decl.important) {
+        throw new Error(`Unsupported !important selection declaration: ${decl.parent.selector}`);
+      }
+      selectionRules.push({
+        selectors: decl.parent.selectors,
+        property: decl.prop.toLowerCase(),
+        value: decl.value.toLowerCase(),
+        mediaParams: collectMediaParams(decl),
+        order: order++,
+      });
     });
-  });
+  }
 });
 
 /**
@@ -585,6 +687,35 @@ function runtimeSourceFiles(): string[] {
     .filter(isRuntimeSource);
 }
 
+async function runtimeStylesheetPaths(): Promise<string[]> {
+  const paths = new Set([STYLESHEET_PATH]);
+  const queue: string[] = [];
+  const addPath = (stylesheetPath: string) => {
+    if (!paths.has(stylesheetPath)) {
+      paths.add(stylesheetPath);
+      queue.push(stylesheetPath);
+    }
+  };
+  for (const relativePath of runtimeSourceFiles()) {
+    if (!EXECUTABLE_SOURCE.test(relativePath)) {
+      continue;
+    }
+    const importerPath = resolve(REPO_ROOT, relativePath);
+    const source = await readFile(importerPath, "utf8");
+    for (const specifier of importedStylesheets(source, importerPath)) {
+      addPath(resolveStylesheetImport(specifier, importerPath));
+    }
+  }
+  queue.unshift(STYLESHEET_PATH);
+  for (const importerPath of queue) {
+    const source = await readFile(importerPath, "utf8");
+    for (const specifier of importedStylesheetRules(source, importerPath)) {
+      addPath(resolveStylesheetImport(specifier, importerPath));
+    }
+  }
+  return [...paths];
+}
+
 function applicableSelectors(viewport: Viewport, value: (candidate: string) => boolean) {
   return selectionRules
     .filter(
@@ -660,67 +791,224 @@ describe("touch text-selection guard", () => {
       : compact;
   }
 
-  interface SourceSpan {
-    start: number;
-    end: number;
-  }
-
-  function sourceWithoutComments(relativePath: string, source: string): string {
-    if (/\.[cm]?[jt]sx?$/.test(relativePath)) {
-      const sourceFile = ts.createSourceFile(
-        relativePath,
-        source,
-        ts.ScriptTarget.Latest,
-        true,
-        scriptKindForPath(relativePath)
-      );
-      const tokenSpans: SourceSpan[] = [];
-      const collectTokenSpans = (node: ts.Node) => {
-        const children = node.getChildren(sourceFile);
-        if (children.length === 0) {
-          tokenSpans.push({ start: node.getStart(sourceFile, false), end: node.end });
-          return;
-        }
-        children.forEach(collectTokenSpans);
-      };
-      collectTokenSpans(sourceFile);
-
-      let result = "";
-      let copiedThrough = 0;
-      const copyCommentlessGap = (end: number) => {
-        result += source
-          .slice(copiedThrough, end)
-          .replace(/^#![^\r\n]*(?:\r?\n|$)/, " ")
-          .replace(/\/\*[\s\S]*?(?:\*\/|$)|\/\/[^\r\n]*/g, " ");
-      };
-      for (const span of tokenSpans) {
-        copyCommentlessGap(span.start);
-        result += source.slice(span.start, span.end);
-        copiedThrough = span.end;
-      }
-      copyCommentlessGap(source.length);
-      return result;
-    }
-    if (/\.(?:html|md|svg)$/.test(relativePath)) {
-      return source.replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
-    }
-    return source;
-  }
-
-  function matchedTokens(relativePath: string, source: string, pattern: RegExp): string[] {
-    if ([...source.matchAll(pattern)].length === 0) {
-      return [];
-    }
-    return [...sourceWithoutComments(relativePath, source).matchAll(pattern)].map((match) =>
-      normalizeToken(match[0])
-    );
-  }
-
   function propertyNameText(name: ts.PropertyName): string | undefined {
     if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) {
       return name.text;
     }
     return undefined;
+  }
+
+  function classSelectionTokens(
+    relativePath: string,
+    source: string,
+    kind: SelectionSiteKind
+  ): string[] {
+    const pattern = kind === "opt-in" ? SELECTION_OPT_IN_PATTERN : SELECTION_SUPPRESSION_PATTERN;
+    const tokens: string[] = [];
+    const record = (classText: string) => {
+      for (const match of classText.matchAll(pattern)) {
+        tokens.push(normalizeToken(match[0]));
+      }
+    };
+
+    if (relativePath.endsWith(".html")) {
+      const dom = new JSDOM(source);
+      for (const element of dom.window.document.querySelectorAll("[class]")) {
+        record(element.getAttribute("class") ?? "");
+      }
+      dom.window.close();
+      return tokens;
+    }
+    if (!EXECUTABLE_SOURCE.test(relativePath)) {
+      return tokens;
+    }
+    if (!source.includes("select-") && !source.includes("user-select:")) {
+      return tokens;
+    }
+
+    const filePath = resolve(REPO_ROOT, relativePath);
+    const options: ts.CompilerOptions = {
+      allowJs: true,
+      jsx: ts.JsxEmit.Preserve,
+      noLib: true,
+      noResolve: true,
+      target: ts.ScriptTarget.Latest,
+    };
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      scriptKindForPath(relativePath)
+    );
+    const defaultHost = ts.createCompilerHost(options);
+    const host: ts.CompilerHost = {
+      ...defaultHost,
+      fileExists: (requestedPath) => resolve(requestedPath) === filePath,
+      getSourceFile: (requestedPath) =>
+        resolve(requestedPath) === filePath ? sourceFile : undefined,
+      readFile: (requestedPath) => (resolve(requestedPath) === filePath ? source : undefined),
+    };
+    const checker = ts.createProgram({ rootNames: [filePath], options, host }).getTypeChecker();
+    const resolvedSymbol = (node: ts.Node): ts.Symbol | undefined =>
+      checker.getSymbolAtLocation(node);
+    const isConstDeclaration = (declaration: ts.VariableDeclaration): boolean =>
+      ts.isVariableDeclarationList(declaration.parent) &&
+      Boolean(declaration.parent.flags & ts.NodeFlags.Const);
+    const visitedSymbols = new Set<ts.Symbol>();
+
+    const rejectDynamicSelection = (expression: ts.Expression): void => {
+      if (/select-|user-select\s*:/.test(expression.getText(sourceFile))) {
+        throw new Error(`Unsupported dynamic selection class: ${expression.getText(sourceFile)}`);
+      }
+    };
+
+    const collectConstInitializer = (
+      identifier: ts.Identifier,
+      collect: (expression: ts.Expression) => void
+    ): boolean => {
+      const symbol = resolvedSymbol(identifier);
+      if (!symbol || visitedSymbols.has(symbol)) {
+        return symbol !== undefined;
+      }
+      const declaration = symbol.valueDeclaration;
+      if (
+        !declaration ||
+        !ts.isVariableDeclaration(declaration) ||
+        !declaration.initializer ||
+        !isConstDeclaration(declaration)
+      ) {
+        return false;
+      }
+      visitedSymbols.add(symbol);
+      collect(declaration.initializer);
+      return true;
+    };
+
+    const classHelpers = new Set(["classNames", "clsx", "cn", "cx", "twMerge"]);
+
+    const collectClassExpression = (expression: ts.Expression): void => {
+      const candidate = unwrapExpression(expression);
+      if (ts.isIdentifier(candidate)) {
+        if (!collectConstInitializer(candidate, collectClassExpression)) {
+          rejectDynamicSelection(candidate);
+        }
+        return;
+      }
+
+      const literal = stringLiteralValue(candidate);
+      if (literal !== undefined) {
+        record(literal);
+        return;
+      }
+      if (ts.isTemplateExpression(candidate)) {
+        record(candidate.head.text);
+        for (const span of candidate.templateSpans) {
+          collectClassExpression(span.expression);
+          record(span.literal.text);
+        }
+        return;
+      }
+      if (ts.isCallExpression(candidate)) {
+        const helper = ts.isIdentifier(candidate.expression)
+          ? candidate.expression.text
+          : ts.isPropertyAccessExpression(candidate.expression)
+            ? candidate.expression.name.text
+            : undefined;
+        if (helper && classHelpers.has(helper)) {
+          candidate.arguments.forEach(collectClassExpression);
+        } else {
+          rejectDynamicSelection(candidate);
+        }
+        return;
+      }
+      if (ts.isConditionalExpression(candidate)) {
+        collectClassExpression(candidate.whenTrue);
+        collectClassExpression(candidate.whenFalse);
+        return;
+      }
+      if (ts.isBinaryExpression(candidate)) {
+        if (
+          candidate.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+          candidate.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+          candidate.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          candidate.operatorToken.kind === ts.SyntaxKind.CommaToken ||
+          candidate.operatorToken.kind === ts.SyntaxKind.PlusToken
+        ) {
+          collectClassExpression(candidate.left);
+          collectClassExpression(candidate.right);
+        } else {
+          rejectDynamicSelection(candidate);
+        }
+        return;
+      }
+      rejectDynamicSelection(candidate);
+    };
+
+    const collectPropsExpression = (expression: ts.Expression): void => {
+      const candidate = unwrapExpression(expression);
+      if (ts.isObjectLiteralExpression(candidate)) {
+        for (const property of candidate.properties) {
+          if (ts.isSpreadAssignment(property)) {
+            collectPropsExpression(property.expression);
+          } else if (ts.isPropertyAssignment(property)) {
+            const name = propertyNameText(property.name);
+            if (name === "class" || name === "className") {
+              collectClassExpression(property.initializer);
+            }
+          } else if (
+            ts.isShorthandPropertyAssignment(property) &&
+            (property.name.text === "class" || property.name.text === "className")
+          ) {
+            collectClassExpression(property.name);
+          }
+        }
+        return;
+      }
+      if (ts.isIdentifier(candidate)) {
+        if (!collectConstInitializer(candidate, collectPropsExpression)) {
+          rejectDynamicSelection(candidate);
+        }
+        return;
+      }
+      if (ts.isConditionalExpression(candidate)) {
+        collectPropsExpression(candidate.whenTrue);
+        collectPropsExpression(candidate.whenFalse);
+        return;
+      }
+      rejectDynamicSelection(candidate);
+    };
+
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isJsxAttribute(node) &&
+        ts.isIdentifier(node.name) &&
+        (node.name.text === "class" || node.name.text === "className")
+      ) {
+        const initializer = node.initializer;
+        if (initializer && ts.isStringLiteral(initializer)) {
+          record(initializer.text);
+        } else if (initializer && ts.isJsxExpression(initializer) && initializer.expression) {
+          visitedSymbols.clear();
+          collectClassExpression(initializer.expression);
+        }
+      } else if (ts.isJsxSpreadAttribute(node)) {
+        visitedSymbols.clear();
+        collectPropsExpression(node.expression);
+      } else if (ts.isCallExpression(node)) {
+        const isCreateElement =
+          (ts.isIdentifier(node.expression) && node.expression.text === "createElement") ||
+          (ts.isPropertyAccessExpression(node.expression) &&
+            node.expression.name.text === "createElement");
+        if (isCreateElement && node.arguments[1]) {
+          visitedSymbols.clear();
+          collectPropsExpression(node.arguments[1]);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    return tokens;
   }
 
   function accessName(expression: ts.Expression): string | undefined {
@@ -990,9 +1278,8 @@ describe("touch text-selection guard", () => {
     source: string,
     kind: SelectionSiteKind
   ): string[] {
-    const pattern = kind === "opt-in" ? SELECTION_OPT_IN_PATTERN : SELECTION_SUPPRESSION_PATTERN;
     return [
-      ...matchedTokens(relativePath, source, pattern),
+      ...classSelectionTokens(relativePath, source, kind),
       ...inlineSelectionTokens(relativePath, source, kind),
     ];
   }
@@ -1028,6 +1315,64 @@ describe("touch text-selection guard", () => {
     expect(
       [...importedSegments(source, resolve(REPO_ROOT, "src/browser/example.js"))].sort()
     ).toEqual(["desktop", "node"]);
+  });
+
+  it("finds static and dynamic runtime stylesheet imports", () => {
+    const source = [
+      'import "./static.css";',
+      'void import("./dynamic.css");',
+      'const required = require("./required.css");',
+      'import raw from "./ignored.css?raw";',
+      'const copy = "import(\\"./copy.css\\")";',
+    ].join("\n");
+
+    expect([...importedStylesheets(source, "component.tsx")].sort()).toEqual([
+      "./dynamic.css",
+      "./required.css",
+      "./static.css",
+    ]);
+  });
+
+  it("inventories selection utilities only from class sinks", () => {
+    const source = [
+      'const help = "use select-none";',
+      'const shared = "select-text";',
+      'const selection = "select-none";',
+      'const optIn = "select-all";',
+      'const props = { className: "select-all" };',
+      "const view = <>",
+      "  <div className={shared}>{help}</div>",
+      "  <div className={shared} />",
+      "  <aside className={`base ${selection}`} />",
+      '  <aside className={"base " + optIn} />',
+      "  <span {...props} />",
+      '  <button class={cn("select-none", active && "select-text")} />',
+      "</>;",
+      'React.createElement("div", { className: "select-none" });',
+      'createElement("div", { class: "select-all" });',
+    ].join("\n");
+
+    expect({
+      optIns: selectionTokens("component.tsx", source, "opt-in").sort(),
+      suppressions: selectionTokens("component.tsx", source, "suppression").sort(),
+    }).toEqual({
+      optIns: [
+        "select-all",
+        "select-all",
+        "select-all",
+        "select-text",
+        "select-text",
+        "select-text",
+      ],
+      suppressions: ["select-none", "select-none", "select-none"],
+    });
+  });
+
+  it("rejects unsupported dynamic selection classes", () => {
+    const source = '<div className={["select-none"].join(" ")} />';
+    expect(() => selectionTokens("component.tsx", source, "suppression")).toThrow(
+      "Unsupported dynamic selection class"
+    );
   });
 
   it("inventories inline selection writes without matching reads or declarations", () => {
@@ -1072,12 +1417,12 @@ describe("touch text-selection guard", () => {
           "const current = element.style.userSelect;",
           "interface SelectionOptions { userSelect: string }",
           'const unrelated = { userSelect: "none" };',
-          "const view = <><span>https://example.test</span>",
+          "const view = <><span className={className}>https://example.test</span>",
           '<button className="select-none" />{/* select-none */}</>;',
           'const template = `/* select-all */ ${/* select-none */ "select-text"}`;',
           "const pattern = /https?:\\/\\/example/;",
         ].join("\n"),
-        optIns: ["select-text", "userSelect", "select-all", "select-text"],
+        optIns: ["select-text", "userSelect"],
         suppressions: ["select-none"],
       },
       {
@@ -1114,9 +1459,8 @@ describe("touch text-selection guard", () => {
       collectInto(relativePath, await readFile(resolve(REPO_ROOT, relativePath), "utf8"));
     }
     for (const directivePath of sourceDirectivePaths) {
-      const resolved = resolve(STYLESHEET_DIR, directivePath);
       // A path that matches nothing is scanned as nothing, exactly as Tailwind treats it.
-      const stats = await stat(resolved).catch(() => undefined);
+      const stats = await stat(directivePath).catch(() => undefined);
       if (!stats) {
         continue;
       }
@@ -1124,8 +1468,8 @@ describe("touch text-selection guard", () => {
         throw new Error(`Unsupported non-file @source target: ${directivePath}`);
       }
       collectInto(
-        relative(REPO_ROOT, resolved).replaceAll("\\", "/"),
-        await readFile(resolved, "utf8")
+        relative(REPO_ROOT, directivePath).replaceAll("\\", "/"),
+        await readFile(directivePath, "utf8")
       );
     }
     return sites;
@@ -1155,6 +1499,13 @@ describe("touch text-selection guard", () => {
         "src/browser/assets/file-icons/seti-icon-theme.json",
       ].filter((relativePath) => runtimeSources.has(relativePath)),
     }).toEqual({ production: true, excluded: [] });
+  });
+
+  it("parses stylesheets imported by runtime renderer sources", () => {
+    const relativePaths = parsedStylesheetPaths.map((filePath) =>
+      relative(REPO_ROOT, filePath).replaceAll("\\", "/")
+    );
+    expect(relativePaths).toContain("node_modules/katex/dist/katex.min.css");
   });
 
   /**
