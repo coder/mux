@@ -509,6 +509,43 @@ describe("BackupRepoCache", () => {
     expect(evilRefs).toBe("none");
   });
 
+  it("preserves valid platform flags and drops malformed values", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    const configPath = path.join(repo.cachePath, ".git", "config");
+    const retained = [
+      ["core.filemode", "false"],
+      ["core.logallrefupdates", "true"],
+      ["core.ignorecase", "false"],
+      ["core.precomposeunicode", "true"],
+      ["core.symlinks", "false"],
+      ["extensions.partialclone", "origin"],
+    ] as const;
+    for (const [key, value] of retained) {
+      await git(["config", "--file", configPath, key, value]);
+    }
+
+    await repo.ensureCache();
+    for (const [key, value] of retained) {
+      expect(await git(["config", "--file", configPath, "--get", key])).toBe(value);
+    }
+
+    for (const [key] of retained) {
+      await git(["config", "--file", configPath, key, "garbage"]);
+    }
+    await git(["config", "--file", configPath, "core.repositoryformatversion", "garbage"]);
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+
+    expect(await repo.porcelainStatus("mux")).toBe("");
+    expect(
+      await git(["config", "--file", configPath, "--get", "core.repositoryformatversion"])
+    ).toBe("1");
+    expect(await fs.readFile(configPath, "utf-8")).not.toContain("garbage");
+  });
+
   it("repairs a cache whose config was left claiming the repository is bare", async () => {
     const repo = createRepo();
     await repo.ensureCache();
@@ -726,7 +763,7 @@ describe("BackupRepoCache", () => {
     expect(await git(["--git-dir", originPath, "show", `main:mux[1]/AGENTS.md`])).toBe("updated");
   });
 
-  it("accepts the absolute origin Git stores for a relative local repository path", async () => {
+  it("anchors relative local repository paths to the cache root's parent", async () => {
     const seed = path.join(tempDir, "relative-origin-seed");
     await git(["clone", originPath, seed]);
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
@@ -735,23 +772,12 @@ describe("BackupRepoCache", () => {
     await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
     await git(["-C", seed, "push", "origin", "HEAD:main"]);
 
-    const relativeOrigin = path.relative(process.cwd(), originPath);
-    const nestedCacheRoot = path.join(
-      tempDir,
-      "nested",
-      "one",
-      "two",
-      "three",
-      "four",
-      "five",
-      "six",
-      "seven",
-      "cache"
-    );
+    const stableRoot = path.join(tempDir, "mux-root");
+    const relativeOrigin = path.relative(stableRoot, originPath);
     const repo = new BackupRepoCache({
       repoUrl: relativeOrigin,
       branch: "main",
-      cacheRoot: nestedCacheRoot,
+      cacheRoot: path.join(stableRoot, "backup-cache"),
       managedPath: "mux",
     });
 

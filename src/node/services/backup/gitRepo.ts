@@ -45,22 +45,22 @@ function isRemoteMovedRejection(text: string): boolean {
 const GIT_HARDENING_ARGS = ["--no-replace-objects", "-c", `core.hooksPath=${os.devNull}`];
 
 /**
- * The only keys of an existing cache's `.git/config` that survive `sanitizeCacheConfig`:
- * the platform-probed flags `git init` and `git clone` write, plus the partial-clone
- * extension older gits use for what `remote.origin.promisor` says on current ones.
- * `core.bare` is not here on purpose: its correct value is known (`false`), so it is forced
- * with the other known values rather than preserved, where a stray `true` would fail every
- * worktree command until the user deleted the cache by hand.
+ * Only valid platform flags written by `git init` or `git clone`, plus the recognized
+ * partial-clone extension, survive. Malformed values are dropped; repository format and
+ * `core.bare` are forced below because this cache always has known values for them.
  */
-const CACHE_CONFIG_KEEP_KEYS: ReadonlySet<string> = new Set([
-  "core.repositoryformatversion",
-  "core.filemode",
-  "core.logallrefupdates",
-  "core.ignorecase",
-  "core.precomposeunicode",
-  "core.symlinks",
-  "extensions.partialclone",
-]);
+function shouldKeepCacheConfigEntry(key: string, value: string): boolean {
+  if (
+    key === "core.filemode" ||
+    key === "core.logallrefupdates" ||
+    key === "core.ignorecase" ||
+    key === "core.precomposeunicode" ||
+    key === "core.symlinks"
+  ) {
+    return value === "true" || value === "false";
+  }
+  return key === "extensions.partialclone" && value === "origin";
+}
 
 /**
  * Config alone is not enough: `.gitattributes` in the backup repository outranks it, so a
@@ -156,14 +156,14 @@ function isRelativeLocalRepoPath(repoUrl: string): boolean {
 }
 
 /**
- * Git resolves a relative local URL from the caller's cwd. Keep that absolute spelling in
- * the cache so later `git -C <cache>` commands reach the same repository. Concatenation
+ * Relative local URLs resolve from the cache root's stable parent (`MUX_ROOT` in production),
+ * not the process cwd, which differs between terminal and desktop launches. Concatenation
  * preserves `..` around symlinks, which lexical path normalization can change.
  */
-function repoUrlForGit(repoUrl: string): string {
+function repoUrlForGit(repoUrl: string, cacheRoot: string): string {
   if (!isRelativeLocalRepoPath(repoUrl)) return repoUrl;
-  const cwd = process.cwd();
-  return `${cwd}${cwd.endsWith(path.sep) ? "" : path.sep}${repoUrl}`;
+  const base = path.dirname(path.resolve(cacheRoot));
+  return `${base}${base.endsWith(path.sep) ? "" : path.sep}${repoUrl}`;
 }
 
 async function matchesConfiguredRepoUrl(
@@ -416,7 +416,7 @@ export class BackupRepoCache {
 
   constructor(private readonly options: BackupRepoCacheOptions) {
     this.cachePath = backupCachePath(options.cacheRoot, options.repoUrl, options.branch);
-    this.repoUrl = repoUrlForGit(options.repoUrl);
+    this.repoUrl = repoUrlForGit(options.repoUrl, options.cacheRoot);
   }
 
   get credential(): BackupCredential | undefined {
@@ -541,8 +541,8 @@ export class BackupRepoCache {
    * `url.*.pushInsteadOf` rewrites where a push lands after the URL checks pass,
    * `include.path` splices in another file, and keys like `core.sshCommand` or
    * `credential.helper` name commands to execute. That is an open-ended surface, so only
-   * `CACHE_CONFIG_KEEP_KEYS` survive and every key Mux depends on is rewritten to its known
-   * value. User-global and system configuration are untouched: a rewrite or helper there is
+   * validated platform flags and the partial-clone extension survive; every key Mux depends
+   * on is rewritten to its known value. User-global and system configuration are untouched:
    * the user's own git setup, honored the same way the user's own `git push` would honor it.
    *
    * Two conditions are rejected rather than healed, the same way a gitfile or commondir
@@ -574,16 +574,11 @@ export class BackupRepoCache {
     const branch = this.options.branch;
     // A map, not a filtered list: these keys are single-valued to git (the last occurrence
     // wins), so keeping every occurrence would carry any number of stray values forward.
-    const kept = new Map(
-      entries.filter(
-        ([key, value]) =>
-          CACHE_CONFIG_KEEP_KEYS.has(key) &&
-          // The partial-clone extension names the promisor remote, and `origin` is the only
-          // remote this cache ever has.
-          (key !== "extensions.partialclone" || value === "origin")
-      )
-    );
+    const kept = new Map(entries.filter(([key, value]) => shouldKeepCacheConfigEntry(key, value)));
     const rebuilt: Array<readonly [string, string]> = [
+      // Partial clone state below requires repository format version 1. Forcing it also
+      // self-heals malformed values that would make Git reject the cache before any repair.
+      ["core.repositoryformatversion", "1"],
       ...kept,
       ["remote.origin.url", this.repoUrl],
       ["remote.origin.fetch", `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
