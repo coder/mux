@@ -90,7 +90,8 @@ describe("BackupService against a real repository", () => {
     "referenced": {
       "url": "https://example.com/mcp",
       "headers": { "Authorization": { "secret": "MCP_TOKEN" } }
-    }
+    },
+    "command": "npx docs-mcp --stdio"
   }
 }
 `
@@ -129,7 +130,7 @@ describe("BackupService against a real repository", () => {
     }
   });
 
-  it("redacts a literal MCP header but keeps an environment reference", async () => {
+  it("keeps MCP commands and URLs while redacting a literal header value", async () => {
     const pushed = await service.push(settings);
     if (!pushed.success) throw new Error(pushed.error.message);
     expect(pushed.data.redactions.length).toBeGreaterThan(0);
@@ -138,6 +139,8 @@ describe("BackupService against a real repository", () => {
     const mcp = await fs.readFile(path.join(clone, "mux/mcp.jsonc"), "utf-8");
     expect(mcp).not.toContain("Bearer abc123");
     expect(mcp).toContain(REDACTED_BACKUP_VALUE);
+    expect(mcp).toContain('"url": "https://example.com/mcp"');
+    expect(mcp).toContain('"command": "npx docs-mcp --stdio"');
     expect(mcp).toContain('"secret": "MCP_TOKEN"');
     // A comment is prose no projection can inspect, so it is not published at all.
     expect(mcp).not.toContain("comment-secret-abc123");

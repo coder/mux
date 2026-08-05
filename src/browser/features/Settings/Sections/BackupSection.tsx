@@ -499,9 +499,10 @@ export function BackupSection() {
           ))}
         </ul>
         <p className="text-foreground text-xs font-medium">
-          Provider keys and secret files have no export path at all, and MCP credentials and
-          executable commands stay on this device. Inside skills and memory, only documentation is
-          published automatically; any other file waits for you to review it.
+          Provider key files and dedicated secret files have no export path. MCP commands and URLs
+          are included verbatim, while literal MCP header values are redacted. Inside skills and
+          memory, only documentation is published automatically; any other file waits for you to
+          review it.
         </p>
       </section>
 
@@ -588,9 +589,11 @@ export function BackupSection() {
             ) : null}
 
             <div className="border-border-light rounded-md border p-3">
-              <h4 className="text-foreground text-xs font-medium">Kept on this device</h4>
+              <h4 className="text-foreground text-xs font-medium">
+                Redacted from repository backup
+              </h4>
               {preview.redactions.length === 0 ? (
-                <p className="text-muted mt-2 text-xs">No MCP values stay on this device.</p>
+                <p className="text-muted mt-2 text-xs">No MCP values were redacted.</p>
               ) : (
                 <ul className="text-muted mt-2 space-y-1 text-xs">
                   {preview.redactions.map((redaction) => (

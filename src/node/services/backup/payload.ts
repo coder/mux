@@ -99,11 +99,7 @@ export interface CreateBackupPayloadOptions {
    * owns the user-facing override can decide whether to proceed.
    */
   reportSecrets?: boolean;
-  /**
-   * Keep MCP credentials verbatim. Only for the local safety snapshot: a redacted
-   * snapshot cannot restore a credential whose server the restore removed, and the
-   * snapshot never leaves this machine.
-   */
+  /** Keep the local MCP file verbatim for the safety snapshot used to undo a restore. */
   keepLocalSecrets?: boolean;
 }
 
@@ -826,8 +822,9 @@ function parseJsoncObject(raw: string, fileName: string): Record<string, unknown
   return parseJsoncObjectWithTree(raw, fileName).parsed;
 }
 
+const JSONC_FORMATTING_OPTIONS: jsonc.FormattingOptions = { tabSize: 2, insertSpaces: true };
 const JSONC_EDIT_OPTIONS: jsonc.ModificationOptions = {
-  formattingOptions: { tabSize: 2, insertSpaces: true },
+  formattingOptions: JSONC_FORMATTING_OPTIONS,
 };
 
 /**
@@ -843,6 +840,93 @@ function applyJsoncEdits(text: string, edits: Array<{ path: jsonc.JSONPath; valu
     );
   }
   return result;
+}
+
+interface JsoncPropertyInsertion {
+  leadingText: string;
+  propertyText: string;
+  trailingCommentText: string;
+}
+
+type LocalMcpServerMerge =
+  | { kind: "none" }
+  | { kind: "replace"; valueText: string }
+  | {
+      kind: "insert";
+      objectPath: jsonc.JSONPath;
+      entries: JsoncPropertyInsertion[];
+      objectTrailingText: string;
+    };
+
+function containsJsoncComma(text: string): boolean {
+  const scanner = jsonc.createScanner(text, false);
+  for (let token = scanner.scan(); token !== jsonc.SyntaxKind.EOF; token = scanner.scan()) {
+    if (token === jsonc.SyntaxKind.CommaToken) return true;
+  }
+  return false;
+}
+
+function lineIndentAt(text: string, offset: number): string {
+  const lineStart = text.lastIndexOf("\n", offset - 1) + 1;
+  const prefix = text.slice(lineStart, offset);
+  return /^[\t ]*$/.test(prefix) ? prefix : "";
+}
+
+function insertJsoncObjectProperties(
+  text: string,
+  jsonPath: jsonc.JSONPath,
+  entries: readonly JsoncPropertyInsertion[],
+  objectTrailingText: string
+): string {
+  if (entries.length === 0) return text;
+  const tree = jsonc.parseTree(text);
+  const objectNode = tree ? jsonc.findNodeAtLocation(tree, jsonPath) : undefined;
+  if (objectNode?.type !== "object") throw new Error("Invalid mcp.jsonc");
+
+  const properties = objectNode.children ?? [];
+  const lastProperty = properties.at(-1);
+  const objectEnd = objectNode.offset + objectNode.length - 1;
+  const trailingComma =
+    lastProperty !== undefined &&
+    containsJsoncComma(text.slice(lastProperty.offset + lastProperty.length, objectEnd));
+  const objectProperty = objectNode.parent?.type === "property" ? objectNode.parent : undefined;
+  const closingIndent = lineIndentAt(text, objectProperty?.offset ?? objectNode.offset);
+  const propertyIndent = `${closingIndent}${" ".repeat(JSONC_FORMATTING_OPTIONS.tabSize ?? 2)}`;
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const entryText = entries
+    .map((entry, index) => {
+      const leadingText = entry.leadingText || `${eol}${propertyIndent}`;
+      const comma = index < entries.length - 1 || trailingComma ? "," : "";
+      const trailingComment =
+        entry.trailingCommentText === "" ? "" : ` ${entry.trailingCommentText}`;
+      return `${leadingText}${entry.propertyText}${comma}${trailingComment}`;
+    })
+    .join("");
+  const closeLineStart = text.lastIndexOf("\n", objectEnd - 1) + 1;
+  const closePrefix = text.slice(closeLineStart, objectEnd);
+  const insertAtLineStart = /^[\t ]*$/.test(closePrefix);
+  const insertionOffset = insertAtLineStart ? closeLineStart : objectEnd;
+  const insertedContent = `${entryText}${objectTrailingText}`;
+  const insertionText = insertAtLineStart
+    ? `${insertedContent.replace(/^\r?\n/, "")}${eol}`
+    : `${insertedContent.startsWith(eol) ? "" : eol}${insertedContent}${eol}${closingIndent}`;
+
+  let result = jsonc.applyEdits(text, [
+    { offset: insertionOffset, length: 0, content: insertionText },
+  ]);
+  if (lastProperty !== undefined && !trailingComma) {
+    result = jsonc.applyEdits(result, [
+      { offset: lastProperty.offset + lastProperty.length, length: 0, content: "," },
+    ]);
+  }
+  return result;
+}
+
+function replaceJsoncNodeText(text: string, jsonPath: jsonc.JSONPath, valueText: string): string {
+  const tree = jsonc.parseTree(text);
+  const node = tree ? jsonc.findNodeAtLocation(tree, jsonPath) : undefined;
+  if (!node) throw new Error("Invalid mcp.jsonc");
+  return jsonc.applyEdits(text, [{ offset: node.offset, length: node.length, content: valueText }]);
 }
 
 /**
@@ -865,6 +949,8 @@ function isUnsupportedServerMap(value: unknown): boolean {
  * lost from a machine that already has it.
  */
 const PORTABLE_SERVER_FIELDS: Record<string, (value: unknown) => boolean> = {
+  command: (value) => typeof value === "string",
+  url: (value) => typeof value === "string",
   transport: (value) =>
     value === "stdio" || value === "http" || value === "sse" || value === "auto",
   disabled: (value) => typeof value === "boolean",
@@ -911,8 +997,8 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
 
   for (const serverName of objectKeyNames(tree, ["servers"])) {
     const rawServer = readOwn(serverRecord, serverName);
-    // A bare string entry is the stdio command itself (mcpConfigService.normalizeEntry). An
-    // entry the parser dropped, or one of any other shape, cannot be inspected field by field.
+    // A bare string entry is the stdio command itself (`McpConfigService.normalizeEntry`).
+    if (typeof rawServer === "string") continue;
     if (typeof rawServer !== "object" || rawServer === null || Array.isArray(rawServer)) {
       redact(["servers", serverName]);
       continue;
@@ -942,14 +1028,8 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
         }
         continue;
       }
-      // Everything else, `command` and `url` included, is replaced wholesale and never parsed
-      // for the credential inside it. A command is arbitrary shell text handed to
-      // `runtime.exec()`, so deciding which fragments are secret means reimplementing the
-      // argument grammar of every tool a user might invoke. A url is no better: the credential
-      // can sit in the userinfo, a query value, the path (`/access/abc123`), the fragment, or
-      // the hostname of a per-tenant endpoint, each spelled however the provider chose, and a
-      // low-entropy token defeats the scanner too. Neither is very portable anyway, and restore
-      // puts the local value back at that exact path.
+      // Mux ignores every other field, so its value may carry credentials under a shape this
+      // projection cannot classify. Restore uses only the local value at that exact path.
       redact(fieldPath);
     }
   }
@@ -1364,10 +1444,8 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
 }
 
 /**
- * Restore reads the local `mcp.jsonc` to rehydrate the values a backup never carries, so it
- * goes through the same checked handle as every other read here: a symlink at that path would
- * otherwise be followed, and an oversized local file would skip the byte budget.
- * A missing or unreadable file leaves nothing to rehydrate rather than failing the restore.
+ * Local MCP state may be merged into restored content, so it must use the checked handle to
+ * block symlink escapes and enforce the byte budget. Missing or unreadable state is ignored.
  */
 async function readLocalMcpText(muxRoot: string): Promise<string | null> {
   try {
@@ -1478,12 +1556,10 @@ export async function collectMcpCommandApprovals(
 
   const approvals: BackupCommandApproval[] = [];
   for (const [name, entry] of incoming) {
+    if (!entry.runnable) continue;
     const current = local.get(name);
     // Identical text still needs approval if the restore makes a dormant command runnable.
-    const makesItRun =
-      entry.enabled &&
-      entry.runnable &&
-      (current?.enabled === false || current?.runnable === false);
+    const makesItRun = entry.enabled && (current?.enabled === false || current?.runnable === false);
     if (current?.command === entry.command && !makesItRun) continue;
     const serverPath = `servers.${name}.command`;
     approvals.push({
@@ -1518,9 +1594,12 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
   );
   const localText = await readLocalMcpText(muxRoot);
   let local: Record<string, unknown> = {};
+  let localTree: jsonc.Node | undefined;
   if (localText !== null) {
     try {
-      local = parseJsoncObject(localText, "local mcp.jsonc");
+      const parsedLocal = parseJsoncObjectWithTree(localText, "local mcp.jsonc");
+      local = parsedLocal.parsed;
+      localTree = parsedLocal.tree;
     } catch {
       // A corrupt local file holds no recoverable values, and it must not block the
       // restore that would replace it.
@@ -1528,26 +1607,171 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
     }
   }
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
+  const localServerMerge =
+    localTree && localText
+      ? preserveLocalOnlyMcpServers(backupTree, localTree, localText)
+      : ({ kind: "none" } satisfies LocalMcpServerMerge);
   const resolved = resolveRestoredCommands(backup, local, edits);
   for (const path of resolveRestoredHeaders(backup, local, backupTree, edits, resolved)) {
     resolved.add(path);
   }
   collectRedactionRestoreEdits(backup, local, [], edits, resolved);
-  return Buffer.from(applyJsoncEdits(backupText, edits), "utf-8");
+  let restoredText = applyJsoncEdits(backupText, edits);
+  if (localServerMerge.kind === "replace") {
+    restoredText = replaceJsoncNodeText(restoredText, ["servers"], localServerMerge.valueText);
+  } else if (localServerMerge.kind === "insert") {
+    restoredText = insertJsoncObjectProperties(
+      restoredText,
+      localServerMerge.objectPath,
+      localServerMerge.entries,
+      localServerMerge.objectTrailingText
+    );
+  }
+  parseJsoncObjectWithTree(restoredText, "restored mcp.jsonc");
+  return Buffer.from(restoredText, "utf-8");
+}
+
+function leadingJsoncTriviaText(
+  text: string,
+  objectNode: jsonc.Node,
+  property: jsonc.Node,
+  previousProperty: jsonc.Node | undefined
+): string {
+  const start = previousProperty
+    ? previousProperty.offset + previousProperty.length
+    : objectNode.offset + 1;
+  const trivia = text.slice(start, property.offset);
+  if (!previousProperty) return trivia;
+  const lineBreak = trivia.search(/\r?\n/);
+  return lineBreak < 0 ? "" : trivia.slice(lineBreak);
+}
+
+function trailingJsoncCommentText(
+  text: string,
+  objectNode: jsonc.Node,
+  property: jsonc.Node,
+  nextProperty: jsonc.Node | undefined
+): string {
+  const end = nextProperty?.offset ?? objectNode.offset + objectNode.length - 1;
+  const trivia = text.slice(property.offset + property.length, end);
+  const scanner = jsonc.createScanner(trivia, false);
+  for (let token = scanner.scan(); token !== jsonc.SyntaxKind.EOF; token = scanner.scan()) {
+    if (token === jsonc.SyntaxKind.Trivia || token === jsonc.SyntaxKind.CommaToken) continue;
+    if (token === jsonc.SyntaxKind.LineBreakTrivia) return "";
+    if (
+      token === jsonc.SyntaxKind.LineCommentTrivia ||
+      token === jsonc.SyntaxKind.BlockCommentTrivia
+    ) {
+      return trivia.slice(
+        scanner.getTokenOffset(),
+        scanner.getTokenOffset() + scanner.getTokenLength()
+      );
+    }
+    return "";
+  }
+  return "";
+}
+
+function objectTrailingJsoncText(text: string, objectNode: jsonc.Node): string {
+  const properties = objectNode.children ?? [];
+  const lastProperty = properties.at(-1);
+  if (!lastProperty) return "";
+  const start = lastProperty.offset + lastProperty.length;
+  const end = objectNode.offset + objectNode.length - 1;
+  const trivia = text.slice(start, end);
+  const lineBreak = trivia.search(/\r?\n/);
+  if (lineBreak < 0) return "";
+  return trivia.slice(lineBreak).replace(/\r?\n[\t ]*$/, "");
+}
+
+function jsoncPropertyInsertion(
+  text: string,
+  objectNode: jsonc.Node,
+  property: jsonc.Node,
+  previousProperty: jsonc.Node | undefined,
+  nextProperty: jsonc.Node | undefined
+): JsoncPropertyInsertion {
+  return {
+    leadingText: leadingJsoncTriviaText(text, objectNode, property, previousProperty),
+    propertyText: text.slice(property.offset, property.offset + property.length),
+    trailingCommentText: trailingJsoncCommentText(text, objectNode, property, nextProperty),
+  };
+}
+
+/** Restore is not a mirror, so it keeps server definitions present only on this device. */
+function preserveLocalOnlyMcpServers(
+  backupTree: jsonc.Node,
+  localTree: jsonc.Node,
+  localText: string
+): LocalMcpServerMerge {
+  const backupServersNode = jsonc.findNodeAtLocation(backupTree, ["servers"]);
+  const localServersNode = jsonc.findNodeAtLocation(localTree, ["servers"]);
+  if (localServersNode?.type !== "object") return { kind: "none" };
+
+  const localServersText = localText.slice(
+    localServersNode.offset,
+    localServersNode.offset + localServersNode.length
+  );
+  if (backupServersNode === undefined) {
+    const property = localServersNode.parent;
+    const properties = localTree.children ?? [];
+    const index = property ? properties.indexOf(property) : -1;
+    if (property?.type !== "property" || index < 0) return { kind: "none" };
+    return {
+      kind: "insert",
+      objectPath: [],
+      entries: [
+        jsoncPropertyInsertion(
+          localText,
+          localTree,
+          property,
+          properties[index - 1],
+          properties[index + 1]
+        ),
+      ],
+      objectTrailingText:
+        index === properties.length - 1 ? objectTrailingJsoncText(localText, localTree) : "",
+    };
+  }
+  if (backupServersNode.type !== "object") {
+    return jsonc.getNodeValue(backupServersNode)
+      ? { kind: "none" }
+      : { kind: "replace", valueText: localServersText };
+  }
+
+  const backupNames = new Set(objectKeyNames(backupTree, ["servers"]));
+  const localProperties = localServersNode.children ?? [];
+  const entries = localProperties.flatMap((property, index) => {
+    const key: unknown = property.children?.[0]?.value;
+    return typeof key === "string" && !backupNames.has(key)
+      ? [
+          jsoncPropertyInsertion(
+            localText,
+            localServersNode,
+            property,
+            localProperties[index - 1],
+            localProperties[index + 1]
+          ),
+        ]
+      : [];
+  });
+  if (entries.length === 0) return { kind: "none" };
+  const lastLocalProperty = localProperties.at(-1);
+  const lastLocalKey: unknown = lastLocalProperty?.children?.[0]?.value;
+  return {
+    kind: "insert",
+    objectPath: ["servers"],
+    entries,
+    objectTrailingText:
+      typeof lastLocalKey === "string" && !backupNames.has(lastLocalKey)
+        ? objectTrailingJsoncText(localText, localServersNode)
+        : "",
+  };
 }
 
 /**
- * A command is never exported, so every stdio entry in a backup holds the marker. The local
- * command is put back regardless of which supported shape either side uses, since a server
- * stored as an object here can be a bare string there and vice versa.
- *
- * With no local command there is nothing to put back, and leaving the marker would make
- * `McpConfigService.normalizeEntry` treat it as an enabled command that
- * `MCPServerManager` then tries to execute, so the command is removed. That takes the whole
- * entry with it unless the entry is also an HTTP server, which restores on its own.
- *
- * Returns the exact paths handled here so the generic redaction walk skips them, leaving a
- * mixed entry's other redactions to rehydrate normally.
+ * Rehydrate command markers from local state, or remove them so they cannot execute.
+ * Returned paths prevent the generic redaction pass from handling the same command paths.
  */
 function resolveRestoredCommands(
   backup: Record<string, unknown>,
@@ -1567,13 +1791,8 @@ function resolveRestoredCommands(
     const localEntry = readOwn(localServers, name);
     const localCommand = readAnyServerCommand(localEntry);
     if (localCommand === undefined) {
-      // `normalizeEntry` gives a url precedence over a command, so a mixed object is an HTTP
-      // server whose command is already ignored. Drop only the command and keep the url,
-      // headers, disabled state, and allowlist that do restore. What counts is the url the
-      // entry ends up with: a url is never exported either, so a marker with nothing local to
-      // put back leaves the entry with neither a command nor an endpoint, and it goes whole.
-      // `normalizeEntry` tests the url for truthiness, so mirror that exactly: only `url: ""`
-      // is still stdio, while whitespace is truthy there and would load as an http entry.
+      // `normalizeEntry` gives a non-empty resolved URL precedence over the command. Keep that
+      // HTTP entry after removing the marker; otherwise remove the server so it cannot execute.
       const url = isObjectMarker ? restoredServerUrl(entry, readRecord(localEntry)) : undefined;
       const hasUrl = url !== undefined && url !== "" && !containsRedaction(url);
       const removed: jsonc.JSONPath = hasUrl ? ["servers", name, "command"] : ["servers", name];
