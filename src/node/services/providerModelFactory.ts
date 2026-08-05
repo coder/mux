@@ -1086,17 +1086,6 @@ export class ProviderModelFactory {
         };
       }
 
-      // xAI-specific: merge global store setting for Grok Responses ZDR orgs.
-      // Grok 4.5 defaults to store=true; ZDR teams need store=false or the API errors.
-      const configXAIStore = providersConfig.xai?.store;
-      if (providerName === "xai" && typeof configXAIStore === "boolean") {
-        muxProviderOptions ??= {};
-        muxProviderOptions.xai = {
-          ...(muxProviderOptions.xai ?? {}),
-          store: muxProviderOptions.xai?.store ?? configXAIStore,
-        };
-      }
-
       let providerConfig = providersConfig[providerName] ?? {};
 
       // Providers can be disabled in providers.jsonc without deleting credentials.
@@ -1533,10 +1522,15 @@ export class ProviderModelFactory {
           ? provider.responses(modelId)
           : provider.chat(modelId);
 
-        // Inject configured xAI store as a request-level default so callers that
-        // omit providerOptions still honor global ZDR settings (mirrors OpenAI).
-        const configuredXAIStore = muxProviderOptions?.xai?.store;
-        if (typeof configuredXAIStore === "boolean") {
+        // Grok 4.5 Responses: force store=false by default so ZDR and non-ZDR share
+        // one path. buildProviderOptions already defaults this; inject here too so
+        // callers that omit providerOptions still get ZDR-safe requests. Explicit
+        // request-level store values win over the default.
+        if (isGrok45Model(capabilityModel)) {
+          const configuredXAIStore =
+            typeof muxProviderOptions?.xai?.store === "boolean"
+              ? muxProviderOptions.xai.store
+              : false;
           const injectStoreFlag = (
             options: Parameters<typeof model.doStream>[0]
           ): Parameters<typeof model.doStream>[0] => {
@@ -1546,6 +1540,7 @@ export class ProviderModelFactory {
               ...options,
               providerOptions: {
                 ...options.providerOptions,
+                // Request-level store wins; otherwise force the ZDR-safe default.
                 xai: { store: configuredXAIStore, ...xaiOpts },
               },
             };

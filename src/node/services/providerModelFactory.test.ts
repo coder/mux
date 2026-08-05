@@ -624,6 +624,86 @@ describe("ProviderModelFactory xAI API selection", () => {
       expect((result.data as { provider?: unknown }).provider).toBe("xai.chat");
     });
   });
+
+  it("defaults Grok 4.5 Responses requests to store=false for ZDR parity", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalXaiRegistry = PROVIDER_REGISTRY.xai;
+      config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });
+
+      let capturedBody: Record<string, unknown> | undefined;
+
+      PROVIDER_REGISTRY.xai = async () => {
+        const module = await originalXaiRegistry();
+        return {
+          ...module,
+          createXai: (options) => {
+            const mockFetch = Object.assign((_input: RequestInfo | URL, init?: RequestInit) => {
+              if (typeof init?.body === "string") {
+                capturedBody = JSON.parse(init.body) as Record<string, unknown>;
+              }
+              return Promise.resolve(
+                new Response(
+                  JSON.stringify({
+                    id: "resp_test",
+                    created_at: 1,
+                    model: "grok-4.5",
+                    object: "response",
+                    output: [
+                      {
+                        type: "message",
+                        role: "assistant",
+                        content: [{ type: "output_text", text: "ok", annotations: [] }],
+                        id: "msg_test",
+                        status: "completed",
+                      },
+                    ],
+                    usage: {
+                      input_tokens: 10,
+                      output_tokens: 2,
+                      total_tokens: 12,
+                      cost_in_usd_ticks: 1,
+                    },
+                    status: "completed",
+                  }),
+                  { headers: { "content-type": "application/json" } }
+                )
+              );
+            }, fetch) as typeof fetch;
+
+            // Install mock as the base fetch so factory wrappers still run and we
+            // observe the final request body (including store injection).
+            return module.createXai({ ...options, fetch: mockFetch });
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("xai:grok-4.5");
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        // Omit store in providerOptions: factory default injection must supply store=false.
+        await generateText({
+          model: result.data,
+          prompt: "hi",
+          providerOptions: {
+            xai: {
+              reasoningEffort: "medium",
+            },
+          },
+        });
+
+        expect(capturedBody).toBeDefined();
+        expect(capturedBody?.store).toBe(false);
+        // @ai-sdk/xai auto-includes encrypted reasoning when store=false.
+        expect(capturedBody?.include).toEqual(
+          expect.arrayContaining(["reasoning.encrypted_content"])
+        );
+      } finally {
+        PROVIDER_REGISTRY.xai = originalXaiRegistry;
+      }
+    });
+  });
 });
 
 describe("ProviderModelFactory GitHub Copilot", () => {

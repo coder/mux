@@ -572,14 +572,18 @@ export function buildProviderOptions(
       returnCitations: true,
     };
 
+    // Grok 4.5 Responses: always prefer store=false.
+    // Mux already resends full history explicitly and persists encrypted reasoning
+    // client-side, so server storage is unnecessary. Forcing store=false means ZDR
+    // and non-ZDR orgs share one code path and one quality bar (no settings surface).
+    // Explicit muxProviderOptions.xai.store still wins for tests/escapes.
+    const effectiveStore = isGrok45 ? (store ?? false) : store;
+
     const options = {
       xai: {
         ...overrides,
         ...(reasoningEffort != null && { reasoningEffort }),
-        // ZDR: store:false is required for ZDR orgs. @ai-sdk/xai also auto-adds
-        // include=["reasoning.encrypted_content"] so reasoning can round-trip
-        // without server-side response storage (parity with non-ZDR quality).
-        ...(store != null && { store }),
+        ...(effectiveStore != null && { store: effectiveStore }),
         // Grok 4.5 uses xAI's modern Responses tools; getToolsForModel translates
         // legacy Live Search settings instead of sending deprecated search_parameters.
         ...(!isGrok45 && {

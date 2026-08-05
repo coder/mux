@@ -400,10 +400,10 @@ export function ProvidersSection() {
   const [openaiServiceTierSelectOverride, setOpenaiServiceTierSelectOverride] =
     useState<OpenAIServiceTierSelectValue | null>(null);
   const [xaiServiceTierSaving, setXAIServiceTierSaving] = useState(false);
-  // Persist ZDR store toggles before publishing UI state so a failed write cannot
-  // leave the dropdown claiming disabled while requests still send store=true.
+  // Persist OpenAI ZDR store toggles before publishing UI state so a failed write
+  // cannot leave the dropdown claiming disabled while requests still send store=true.
+  // xAI Grok 4.5 always uses store=false in the request path (no settings surface).
   const [openaiStoreSaving, setOpenAIStoreSaving] = useState(false);
-  const [xaiStoreSaving, setXAIStoreSaving] = useState(false);
 
   const routing = useRouting();
 
@@ -2683,138 +2683,68 @@ export function ProvidersSection() {
                         })()}
 
                       {provider === "xai" && (
-                        <div className="border-border-light space-y-3 border-t pt-3">
-                          <div>
-                            <div className="mb-1 flex items-center gap-1">
-                              <label className="text-muted block text-xs">Processing mode</label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <HelpIndicator aria-label="xAI processing mode help">
-                                      ?
-                                    </HelpIndicator>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="max-w-[260px]">
-                                      <div className="font-semibold">xAI processing mode</div>
-                                      <div className="mt-1">
-                                        <span className="font-semibold">standard</span>: normal
-                                        scheduling and token pricing.
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold">fast</span>: priority
-                                        scheduling for lower latency at 2× token pricing.
-                                      </div>
+                        <div className="border-border-light border-t pt-3">
+                          <div className="mb-1 flex items-center gap-1">
+                            <label className="text-muted block text-xs">Processing mode</label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <HelpIndicator aria-label="xAI processing mode help">
+                                    ?
+                                  </HelpIndicator>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <div className="max-w-[260px]">
+                                    <div className="font-semibold">xAI processing mode</div>
+                                    <div className="mt-1">
+                                      <span className="font-semibold">standard</span>: normal
+                                      scheduling and token pricing.
                                     </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <Select
-                              value={config?.xai?.serviceTier ?? "default"}
-                              disabled={xaiServiceTierSaving}
-                              onValueChange={(next) => {
-                                if (!api || xaiServiceTierSaving || !isXAIServiceTier(next)) return;
-
-                                // Persist before publishing the new tier so the composer cannot
-                                // observe Fast mode until the backend will apply it to requests.
-                                setXAIServiceTierSaving(true);
-                                void api.providers
-                                  .setProviderConfig({
-                                    provider: "xai",
-                                    keyPath: ["serviceTier"],
-                                    value: next,
-                                  })
-                                  .then(
-                                    (result) => {
-                                      if (result.success) {
-                                        updateOptimistically("xai", { serviceTier: next });
-                                        return undefined;
-                                      }
-                                      return refresh();
-                                    },
-                                    () => refresh()
-                                  )
-                                  .finally(() => setXAIServiceTierSaving(false));
-                              }}
-                            >
-                              <SelectTrigger className="w-48 max-w-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="default">standard</SelectItem>
-                                <SelectItem value="priority">fast (priority)</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-
-                          <div>
-                            <div className="mb-1 flex items-center gap-1">
-                              <label className="text-muted block text-xs">Response storage</label>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <HelpIndicator aria-label="xAI response storage help">
-                                      ?
-                                    </HelpIndicator>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <div className="max-w-[260px]">
-                                      <div className="font-semibold">xAI response storage</div>
-                                      <div className="mt-1">
-                                        <span className="font-semibold">enabled</span>: xAI stores
-                                        responses for retrieval and context (default).
-                                      </div>
-                                      <div>
-                                        <span className="font-semibold">disabled</span>: responses
-                                        are not stored. Required for zero data retention (ZDR) orgs.
-                                        Encrypted reasoning is still preserved client-side so
-                                        multi-turn quality matches non-ZDR.
-                                      </div>
+                                    <div>
+                                      <span className="font-semibold">fast</span>: priority
+                                      scheduling for lower latency at 2× token pricing.
                                     </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                            <Select
-                              value={config?.xai?.store === false ? "disabled" : "enabled"}
-                              disabled={xaiStoreSaving}
-                              onValueChange={(next) => {
-                                if (!api || xaiStoreSaving) return;
-                                if (next !== "enabled" && next !== "disabled") return;
-
-                                const store = next === "disabled" ? false : undefined;
-                                // Persist before publishing so ZDR cannot appear enabled
-                                // while the backend still defaults to store=true.
-                                setXAIStoreSaving(true);
-                                void api.providers
-                                  .setProviderConfig({
-                                    provider: "xai",
-                                    keyPath: ["store"],
-                                    value: next === "disabled" ? false : "",
-                                  })
-                                  .then(
-                                    (result) => {
-                                      if (result.success) {
-                                        updateOptimistically("xai", { store });
-                                        return undefined;
-                                      }
-                                      return refresh();
-                                    },
-                                    () => refresh()
-                                  )
-                                  .finally(() => setXAIStoreSaving(false));
-                              }}
-                            >
-                              <SelectTrigger className="w-40">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="enabled">enabled</SelectItem>
-                                <SelectItem value="disabled">disabled</SelectItem>
-                              </SelectContent>
-                            </Select>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           </div>
+                          <Select
+                            value={config?.xai?.serviceTier ?? "default"}
+                            disabled={xaiServiceTierSaving}
+                            onValueChange={(next) => {
+                              if (!api || xaiServiceTierSaving || !isXAIServiceTier(next)) return;
+
+                              // Persist before publishing the new tier so the composer cannot
+                              // observe Fast mode until the backend will apply it to requests.
+                              setXAIServiceTierSaving(true);
+                              void api.providers
+                                .setProviderConfig({
+                                  provider: "xai",
+                                  keyPath: ["serviceTier"],
+                                  value: next,
+                                })
+                                .then(
+                                  (result) => {
+                                    if (result.success) {
+                                      updateOptimistically("xai", { serviceTier: next });
+                                      return undefined;
+                                    }
+                                    return refresh();
+                                  },
+                                  () => refresh()
+                                )
+                                .finally(() => setXAIServiceTierSaving(false));
+                            }}
+                          >
+                            <SelectTrigger className="w-48 max-w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="default">standard</SelectItem>
+                              <SelectItem value="priority">fast (priority)</SelectItem>
+                            </SelectContent>
+                          </Select>
                         </div>
                       )}
 

@@ -67,8 +67,6 @@ export const XAIProviderConfigSchema = BaseProviderConfigSchema.extend({
   searchParameters: z.record(z.string(), z.unknown()).optional(),
   serviceTier: XAIServiceTierSchema.optional(),
   fastModePreviousServiceTier: XAIFastModePreviousServiceTierSchema.optional(),
-  // Required for xAI ZDR orgs on Grok 4.5 Responses (same semantics as OpenAI store).
-  store: z.boolean().optional(),
 });
 
 export const MuxGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({

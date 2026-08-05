@@ -114,7 +114,6 @@ export const XAIProcessingMode: Story = {
               isEnabled: true,
               isConfigured: true,
               serviceTier: "priority",
-              store: false,
             },
           },
         })
@@ -128,8 +127,6 @@ export const XAIProcessingMode: Story = {
     const xaiButton = await canvas.findByRole("button", { name: /xAI/i });
     await userEvent.click(xaiButton);
     await canvas.findByText("fast (priority)");
-    // ZDR response storage control is available alongside processing mode.
-    await canvas.findByText("Response storage");
   },
 };
 

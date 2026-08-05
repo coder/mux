@@ -257,25 +257,6 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
-  it("surfaces store: false for xAI ZDR", () => {
-    withTempConfig((config, service) => {
-      config.saveProvidersConfig({
-        xai: {
-          apiKey: "xai-key",
-          store: false,
-        },
-      });
-      expect(service.getConfig().xai.store).toBe(false);
-
-      config.saveProvidersConfig({
-        xai: {
-          apiKey: "xai-key",
-        },
-      });
-      expect(service.getConfig().xai.store).toBeUndefined();
-    });
-  });
-
   it("surfaces non-secret op:// API key references", () => {
     withTempConfig((config, service) => {
       const opRef = "op://Personal/Anthropic/credential";
