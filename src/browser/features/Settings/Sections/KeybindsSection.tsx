@@ -106,7 +106,6 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
 /** Groups for organizing keybinds in the UI */
 const KEYBIND_GROUPS: Array<{
   label: string;
-  experiment?: keyof typeof EXPERIMENT_IDS;
   keys: Array<keyof typeof KEYBINDS>;
 }> = [
   {
@@ -213,7 +212,6 @@ const KEYBIND_GROUPS: Array<{
   },
   {
     label: "Settings backup",
-    experiment: "SETTINGS_BACKUP",
     keys: [
       "SETTINGS_BACKUP_SAVE",
       "SETTINGS_BACKUP_VALIDATE",
@@ -239,20 +237,14 @@ const KEYBIND_DISPLAY_ALTERNATES: Partial<
 
 export function KeybindsSection() {
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
-  const settingsBackupEnabled = useExperimentValue(EXPERIMENT_IDS.SETTINGS_BACKUP);
-  const visibleKeybindGroups = KEYBIND_GROUPS.filter(
-    (group) => group.experiment !== "SETTINGS_BACKUP" || settingsBackupEnabled
-  )
-    .map((group) => ({
-      ...group,
-      // Hide deprecated keybinds from the generated reference, plus experiment-gated rows.
-      keys: group.keys.filter(
-        (key) =>
-          !isKeybindDeprecated(KEYBINDS[key]) &&
-          (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled)
-      ),
-    }))
-    .filter((group) => group.keys.length > 0);
+  const visibleKeybindGroups = KEYBIND_GROUPS.map((group) => ({
+    ...group,
+    keys: group.keys.filter(
+      (key) =>
+        !isKeybindDeprecated(KEYBINDS[key]) &&
+        (key !== "CONFIGURE_HEARTBEAT" || workspaceHeartbeatsEnabled)
+    ),
+  })).filter((group) => group.keys.length > 0);
 
   return (
     <div className="space-y-6">

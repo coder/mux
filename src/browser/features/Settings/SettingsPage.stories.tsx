@@ -1,7 +1,6 @@
 import { appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { waitFor, within, userEvent } from "@storybook/test";
 import { setupSettingsStory } from "./Sections/settingsStoryUtils.js";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 export default {
   ...appMeta,
@@ -86,15 +85,7 @@ async function assertSectionBodyRendered(
 }
 
 export const SectionsSmoke: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() =>
-        setupSettingsStory({
-          experiments: { [EXPERIMENT_IDS.SETTINGS_BACKUP]: true },
-        })
-      }
-    />
-  ),
+  render: () => <AppWithMocks setup={() => setupSettingsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await openSettings(canvasElement);
 

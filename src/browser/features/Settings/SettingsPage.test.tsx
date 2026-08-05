@@ -4,7 +4,7 @@ import { getSettingsSectionRedirect, getSettingsSections } from "./SettingsPage"
 
 describe("SettingsPage", () => {
   test("keeps Goals and Heartbeat out of settings navigation", () => {
-    const labels = getSettingsSections(true, true, true).map((section) => section.label);
+    const labels = getSettingsSections(true, true).map((section) => section.label);
 
     expect(labels).not.toContain("Goals");
     expect(labels).not.toContain("Heartbeat");
@@ -12,42 +12,31 @@ describe("SettingsPage", () => {
   });
 
   test("normalizes stale Goals and Heartbeat routes to Experiments with replace navigation", () => {
-    expect(getSettingsSectionRedirect("goals", true, true, true)).toEqual({
+    expect(getSettingsSectionRedirect("goals", true, true)).toEqual({
       section: "experiments",
       replace: true,
     });
-    expect(getSettingsSectionRedirect("heartbeat", true, true, true)).toEqual({
+    expect(getSettingsSectionRedirect("heartbeat", true, true)).toEqual({
       section: "experiments",
       replace: true,
     });
   });
 
   test("shows the Memory section only while the memory experiment is enabled", () => {
-    expect(getSettingsSections(false, true, false).map((section) => section.id)).toContain(
-      "memory"
-    );
-    expect(getSettingsSections(false, false, false).map((section) => section.id)).not.toContain(
-      "memory"
-    );
+    expect(getSettingsSections(false, true).map((section) => section.id)).toContain("memory");
+    expect(getSettingsSections(false, false).map((section) => section.id)).not.toContain("memory");
   });
 
   test("redirects the memory route away while the memory experiment is disabled", () => {
-    expect(getSettingsSectionRedirect("memory", false, false, false)).toEqual({
+    expect(getSettingsSectionRedirect("memory", false, false)).toEqual({
       section: "general",
     });
-    expect(getSettingsSectionRedirect("memory", false, true, false)).toBeNull();
+    expect(getSettingsSectionRedirect("memory", false, true)).toBeNull();
   });
 
-  test("shows and redirects the Backup section with its experiment", () => {
-    expect(getSettingsSections(false, false, true).map((section) => section.id)).toContain(
-      "backup"
-    );
-    expect(getSettingsSections(false, false, false).map((section) => section.id)).not.toContain(
-      "backup"
-    );
-    expect(getSettingsSectionRedirect("backup", false, false, false)).toEqual({
-      section: "general",
-    });
-    expect(getSettingsSectionRedirect("backup", false, false, true)).toBeNull();
+  test("always shows the Backup section", () => {
+    expect(getSettingsSections(false, false).map((section) => section.id)).toContain("backup");
+    expect(getSettingsSections(true, true).map((section) => section.id)).toContain("backup");
+    expect(getSettingsSectionRedirect("backup", false, false)).toBeNull();
   });
 });
