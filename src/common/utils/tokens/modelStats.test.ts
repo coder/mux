@@ -42,7 +42,7 @@ describe("getModelStats", () => {
   test("resolves Grok 4.5 family aliases and case variants for usage meters", () => {
     const grok = expectStats(KNOWN_MODELS.GROK_45.id);
     expect(grok.max_input_tokens).toBe(500000);
-    expect(grok.max_output_tokens).toBe(500000);
+    expect(grok.max_output_tokens).toBeUndefined();
     expect(expectStats("xai:grok-4.5-latest")).toEqual(grok);
     expect(expectStats("XAI:Grok-4.5")).toEqual(grok);
   });
