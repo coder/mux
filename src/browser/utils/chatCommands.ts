@@ -1806,11 +1806,10 @@ export async function handlePlanShowCommand(
     return { clearInput: true, toastShown: true };
   }
 
-  // Create ephemeral plan-display message (not persisted to history)
-  // Uses addEphemeralMessage to properly trigger React re-render via store bump
-  // Use a very high historySequence so it appears at the end of the chat
+  // Keep the ephemeral preview a singleton so repeated /plan show calls replace it instead of
+  // accumulating permanent-looking cards at the transcript bottom.
   const planMessage = {
-    id: `plan-display-${Date.now()}`,
+    id: "plan-display-preview",
     role: "assistant" as const,
     parts: [{ type: "text" as const, text: result.data.content }],
     metadata: {

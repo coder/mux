@@ -13,6 +13,8 @@ import {
 import { parseCommand } from "./slashCommands/parser";
 import type { CommandHandlerContext, SlashCommandContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
+import { useWorkspaceStoreRaw, workspaceStore } from "@/browser/stores/WorkspaceStore";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { HEARTBEAT_DEFAULT_INTERVAL_MS } from "@/constants/heartbeat";
 
 // Simple mock for localStorage to satisfy resolveCompactionModel and experiment gating.
@@ -1863,6 +1865,46 @@ describe("handlePlanShowCommand", () => {
         message: "No plan found for this workspace",
       })
     );
+  });
+
+  test("replaces the previous plan preview instead of stacking another tail row", async () => {
+    const workspaceId = "test-workspace-id";
+    const store = useWorkspaceStoreRaw();
+    store.dispose();
+    const metadata: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: "test-workspace",
+      title: "Test Workspace",
+      projectName: "Project",
+      projectPath: "/tmp/project",
+      namedWorkspacePath: "/tmp/project/test-workspace",
+      runtimeConfig: { type: "local" },
+      createdAt: "2026-08-05T00:00:00.000Z",
+    };
+    workspaceStore.addWorkspace(metadata);
+
+    try {
+      await handlePlanShowCommand(
+        createMockContext({
+          success: true,
+          data: { content: "# First plan", path: "/path/to/plan.md" },
+        })
+      );
+      await handlePlanShowCommand(
+        createMockContext({
+          success: true,
+          data: { content: "# Updated plan", path: "/path/to/plan.md" },
+        })
+      );
+
+      const previews = store
+        .getWorkspaceState(workspaceId)
+        .messages.filter((message) => message.type === "plan-display");
+      expect(previews).toHaveLength(1);
+      expect(previews[0]).toMatchObject({ content: "# Updated plan" });
+    } finally {
+      store.dispose();
+    }
   });
 
   test("clears input when plan is found", async () => {

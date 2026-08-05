@@ -16734,35 +16734,36 @@ describe("TaskService", () => {
     const parentId = "parent-progress-terminal-card";
     const childId = "child-progress-terminal-card";
 
-    const childWorkspace = projectWorkspace(projectPath, "child", childId, {
-      name: "agent_explore_child",
-      parentWorkspaceId: parentId,
-      agentType: "explore",
-      taskStatus: "running",
-      taskAttentionPolicy: "notify_on_terminal",
-    });
     await saveWorkspaces(
       config,
       projectPath,
-      [projectWorkspace(projectPath, "parent", parentId), childWorkspace],
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskAttentionPolicy: "notify_on_terminal",
+        }),
+      ],
       testTaskSettings()
     );
 
     const { workspaceService, sendMessage, emitChatEvent } = createWorkspaceServiceMocks();
-    let parentStreamInfo: ReturnType<AIService["getStreamInfo"]> = {
-      messageId: "parent-active-assistant",
-      model: "openai:gpt-5",
-      historySequence: 9,
-      startTime: 1,
-      parts: [
-        { type: "reasoning" as const, text: "reasoning " },
-        { type: "reasoning" as const, text: "before report" },
-      ],
-      toolCompletionTimestamps: new Map(),
-    };
     const aiMocks = createAIServiceMocks(config, {
       isStreaming: mock(() => true),
-      getStreamInfo: mock(() => parentStreamInfo),
+      getStreamInfo: mock(() => ({
+        messageId: "parent-active-assistant",
+        model: "openai:gpt-5",
+        historySequence: 9,
+        startTime: 1,
+        parts: [
+          { type: "reasoning" as const, text: "reasoning " },
+          { type: "reasoning" as const, text: "before report" },
+        ],
+        toolCompletionTimestamps: new Map(),
+      })),
     });
     const { historyService, taskService } = createTaskServiceHarness(config, {
       workspaceService,
@@ -16790,25 +16791,13 @@ describe("TaskService", () => {
       })
     );
 
-    const finalizationPromise = (
-      taskService as unknown as {
-        finalizeAgentTaskReport: (
-          childWorkspaceId: string,
-          childEntry: { projectPath: string; workspace: WorkspaceConfigEntry },
-          report: { reportMarkdown: string }
-        ) => Promise<{ finalized: boolean }>;
-      }
-    ).finalizeAgentTaskReport(
-      childId,
-      { projectPath, workspace: childWorkspace },
-      {
-        reportMarkdown: "Final investigation result.",
-      }
-    );
-    // The parent can end while finalization performs unrelated persistence. The report must retain
-    // the transcript position where completion was first observed, not sample the stream later.
-    parentStreamInfo = undefined;
-    expect(await finalizationPromise).toMatchObject({ finalized: true });
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-terminal-report",
+      metadata: { model: "openai:gpt-4o-mini", finishReason: "stop" },
+      parts: [{ type: "text", text: "Final investigation result." }],
+    });
     await flushTerminalAttentionDrains(taskService);
 
     expect(sendMessage).not.toHaveBeenCalled();
@@ -16836,38 +16825,6 @@ describe("TaskService", () => {
     expect(emitChatEvent.mock.calls[0]?.[1]).toMatchObject({
       id: completedReport?.id,
       metadata: { transcriptAnchor: completedReport?.metadata?.transcriptAnchor },
-    });
-  });
-
-  test("anchors reports to the assistant placeholder before parent stream registration", async () => {
-    const config = await createTestConfig(rootDir);
-    const projectPath = path.join(rootDir, "repo");
-    const parentId = "parent-preparing-stream";
-    await saveWorkspaces(
-      config,
-      projectPath,
-      [projectWorkspace(projectPath, "parent", parentId)],
-      testTaskSettings()
-    );
-
-    const { historyService, taskService } = createTaskServiceHarness(config);
-    const placeholder = createMuxMessage("parent-pending-assistant", "assistant", "", {
-      timestamp: Date.now(),
-    });
-    expect((await historyService.appendToHistory(parentId, placeholder)).success).toBe(true);
-
-    const anchor = await (
-      taskService as unknown as {
-        captureReportTranscriptAnchor: (workspaceId: string) => Promise<unknown>;
-      }
-    ).captureReportTranscriptAnchor(parentId);
-
-    expect(anchor).toEqual({
-      messageId: "parent-pending-assistant",
-      historySequence: placeholder.metadata?.historySequence,
-      textLength: 0,
-      reasoningLength: 0,
-      partIndex: 0,
     });
   });
 

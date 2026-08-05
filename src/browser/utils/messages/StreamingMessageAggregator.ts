@@ -35,7 +35,10 @@ import type {
 } from "@/common/types/tools";
 import type { AssistedReviewHunk } from "@/common/types/review";
 import { formatAssistedFilter, parseAssistedFilter } from "@/common/utils/review/assistedReview";
-import { isCompletedSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import {
+  isCompletedSubagentReportEnvelope,
+  parseSubagentReportEnvelope,
+} from "@/common/utils/subagentReportEnvelope";
 import { completeInProgressTodoItems } from "@/common/utils/todoList";
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
@@ -3093,18 +3096,108 @@ export class StreamingMessageAggregator {
     });
   }
 
+  private compareTranscriptCuts(left: MessagePartSplitCut, right: MessagePartSplitCut): number {
+    const leftContentLength = left.textLength + left.reasoningLength;
+    const rightContentLength = right.textLength + right.reasoningLength;
+    return (
+      left.partIndex - right.partIndex ||
+      leftContentLength - rightContentLength ||
+      left.textLength - right.textLength
+    );
+  }
+
+  private getAssistantTailCut(message: MuxMessage): MessagePartSplitCut {
+    const parts = mergeAdjacentParts(message.parts);
+    let textLength = 0;
+    let reasoningLength = 0;
+    for (const part of parts) {
+      if (part.type === "text") textLength += part.text.length;
+      if (part.type === "reasoning") reasoningLength += part.text.length;
+    }
+    return { textLength, reasoningLength, partIndex: parts.length };
+  }
+
+  private isReportResponseAssistant(
+    message: MuxMessage,
+    shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
+  ): boolean {
+    return (
+      message.role === "assistant" &&
+      message.metadata?.synthetic !== true &&
+      message.metadata?.muxMetadata?.type !== "plan-display" &&
+      !shouldHideMessageFromTranscript(message) &&
+      !this.isContextBoundaryMessage(message)
+    );
+  }
+
+  private isDisplayOnlyTailMessage(message: MuxMessage): boolean {
+    return (
+      isDisplayOnlyCompletedSubagentReport(message) ||
+      message.metadata?.muxMetadata?.type === "plan-display"
+    );
+  }
+
+  private findReportResponseTarget(
+    allMessages: readonly MuxMessage[],
+    reportIndex: number,
+    reportMessage: MuxMessage,
+    shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
+  ): MuxMessage | undefined {
+    const report = parseSubagentReportEnvelope(getTextPartContent(reportMessage.parts));
+    if (!report) {
+      return undefined;
+    }
+
+    let progressIndex = -1;
+    for (let index = reportIndex - 1; index >= 0; index--) {
+      const candidate = allMessages[index];
+      if (this.isContextBoundaryMessage(candidate)) break;
+      if (candidate.role !== "user") continue;
+      const priorReport = parseSubagentReportEnvelope(getTextPartContent(candidate.parts));
+      if (priorReport?.taskId === report.taskId && priorReport.status === "in_progress") {
+        progressIndex = index;
+        break;
+      }
+    }
+
+    if (progressIndex >= 0) {
+      // Pair historical cards with the first assistant response to their progress turn. Exact
+      // within-response placement is optional anchor precision; this causal boundary is durable.
+      for (let index = progressIndex + 1; index < reportIndex; index++) {
+        const candidate = allMessages[index];
+        if (this.isContextBoundaryMessage(candidate)) return undefined;
+        if (this.isReportResponseAssistant(candidate, shouldHideMessageFromTranscript)) {
+          return candidate;
+        }
+        if (candidate.role === "user" && !shouldHideMessageFromTranscript(candidate)) {
+          return undefined;
+        }
+      }
+      return undefined;
+    }
+
+    // Older pages or compaction may omit the progress row. Use only the immediately preceding
+    // semantic row in this epoch, so later turns cannot change the repaired placement.
+    for (let index = reportIndex - 1; index >= 0; index--) {
+      const candidate = allMessages[index];
+      if (this.isContextBoundaryMessage(candidate)) return undefined;
+      if (shouldHideMessageFromTranscript(candidate)) continue;
+      if (this.isDisplayOnlyTailMessage(candidate)) continue;
+      return this.isReportResponseAssistant(candidate, shouldHideMessageFromTranscript)
+        ? candidate
+        : undefined;
+    }
+    return undefined;
+  }
+
   private compareTranscriptInsertions(
     left: TranscriptInsertion,
     right: TranscriptInsertion
   ): number {
     const leftSequence = left.insertionMessage.metadata?.historySequence ?? Infinity;
     const rightSequence = right.insertionMessage.metadata?.historySequence ?? Infinity;
-    const leftContentLength = left.textLength + left.reasoningLength;
-    const rightContentLength = right.textLength + right.reasoningLength;
     return (
-      left.partIndex - right.partIndex ||
-      leftContentLength - rightContentLength ||
-      left.textLength - right.textLength ||
+      this.compareTranscriptCuts(left, right) ||
       leftSequence - rightSequence ||
       left.insertionMessage.id.localeCompare(right.insertionMessage.id)
     );
@@ -3115,35 +3208,67 @@ export class StreamingMessageAggregator {
     shouldHideMessageFromTranscript: (message: MuxMessage) => boolean
   ): TranscriptInsertionPlan {
     const messagesById = new Map(allMessages.map((message) => [message.id, message]));
+    const messageIndexById = new Map(allMessages.map((message, index) => [message.id, index]));
     const insertionsByTargetId = new Map<string, TranscriptInsertion[]>();
     const inlineMessageIds = new Set<string>();
 
-    for (const message of allMessages) {
+    for (let messageIndex = 0; messageIndex < allMessages.length; messageIndex++) {
+      const message = allMessages[messageIndex];
+      if (!isDisplayOnlyCompletedSubagentReport(message)) {
+        continue;
+      }
+
+      const responseTarget = this.findReportResponseTarget(
+        allMessages,
+        messageIndex,
+        message,
+        shouldHideMessageFromTranscript
+      );
       const anchor = message.metadata?.transcriptAnchor;
-      if (!anchor || !isDisplayOnlyCompletedSubagentReport(message)) {
+      const anchoredTarget = anchor ? messagesById.get(anchor.messageId) : undefined;
+      const anchoredTargetIndex = anchor ? messageIndexById.get(anchor.messageId) : undefined;
+      const anchorSharesContextEpoch =
+        anchoredTargetIndex !== undefined &&
+        anchoredTargetIndex < messageIndex &&
+        !allMessages
+          .slice(anchoredTargetIndex + 1, messageIndex)
+          .some((candidate) => this.isContextBoundaryMessage(candidate));
+      const hasValidAnchorTarget =
+        anchoredTarget !== undefined &&
+        this.isReportResponseAssistant(anchoredTarget, shouldHideMessageFromTranscript) &&
+        anchoredTarget.metadata?.historySequence === anchor?.historySequence &&
+        anchorSharesContextEpoch;
+      const useAnchor =
+        hasValidAnchorTarget && (!responseTarget || anchoredTarget === responseTarget);
+      const target = responseTarget ?? (useAnchor ? anchoredTarget : undefined);
+      if (!target) {
         continue;
       }
 
-      const target = messagesById.get(anchor.messageId);
+      let cut: MessagePartSplitCut =
+        useAnchor && anchor
+          ? {
+              textLength: Math.max(0, anchor.textLength),
+              reasoningLength: Math.max(0, anchor.reasoningLength),
+              partIndex: Math.max(0, anchor.partIndex),
+            }
+          : { textLength: 0, reasoningLength: 0, partIndex: 0 };
+      // Exact anchors are optional precision. Once a turn settles, a tail/beyond-tail anchor
+      // downgrades to the stable message boundary so the completed card cannot remain a postscript.
       if (
-        target?.role !== "assistant" ||
-        shouldHideMessageFromTranscript(target) ||
-        target.metadata?.historySequence !== anchor.historySequence
+        useAnchor &&
+        !this.activeStreams.has(target.id) &&
+        this.compareTranscriptCuts(cut, this.getAssistantTailCut(target)) >= 0
       ) {
-        continue;
+        cut = { textLength: 0, reasoningLength: 0, partIndex: 0 };
       }
 
-      const insertion: TranscriptInsertion = {
-        textLength: Math.max(0, anchor.textLength),
-        reasoningLength: Math.max(0, anchor.reasoningLength),
-        partIndex: Math.max(0, anchor.partIndex),
-        insertionMessage: message,
-      };
-      const existing = insertionsByTargetId.get(anchor.messageId);
+      const insertion: TranscriptInsertion = { ...cut, insertionMessage: message };
+      const existing = insertionsByTargetId.get(target.id);
       if (existing) {
         existing.push(insertion);
       } else {
-        insertionsByTargetId.set(anchor.messageId, [insertion]);
+        insertionsByTargetId.set(target.id, [insertion]);
       }
       inlineMessageIds.add(message.id);
     }
@@ -3273,6 +3398,16 @@ export class StreamingMessageAggregator {
           ...message,
           id: segMessageId,
           parts: segParts,
+          // Terminal decorations belong to the original assistant tail, not every display segment.
+          metadata:
+            isLastSegment || !message.metadata
+              ? message.metadata
+              : {
+                  ...message.metadata,
+                  error: undefined,
+                  errorType: undefined,
+                  finishReason: undefined,
+                },
         };
 
         const segRows = this.buildDisplayedMessagesForMessage(
@@ -3375,10 +3510,9 @@ export class StreamingMessageAggregator {
       // messages that reference skills via /{skillName} or inline $skillName tokens.
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
 
-      // Display-only completed subagent reports may carry a stable transcript
-      // anchor captured while an assistant message was streaming. Build the
-      // insertion plan before rendering so those reports remain interleaved at
-      // their original completion point after reload.
+      // Pair completed subagent cards with the assistant response to their prior progress turn.
+      // Persisted anchors improve within-response precision, but historical correctness must not
+      // depend on metadata that older reports never had.
       const transcriptInsertionPlan = this.buildTranscriptInsertionPlan(
         allMessages,
         shouldHideMessageFromTranscript

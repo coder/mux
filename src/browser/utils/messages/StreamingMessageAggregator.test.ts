@@ -572,12 +572,11 @@ describe("StreamingMessageAggregator", () => {
 
       expect(aggregator.getPendingStreamStartTime()).toBeNull();
       const displayedMessages = aggregator.getDisplayedMessages();
-      expect(displayedMessages.at(-1)).toMatchObject({
-        type: "user",
-        id: "report-1",
-        isSynthetic: true,
-        isUiVisible: true,
-      });
+      expect(
+        displayedMessages
+          .filter((message) => message.type === "user" || message.type === "assistant")
+          .map((message) => `${message.type}:${message.historyId}`)
+      ).toEqual(["user:report-1", "assistant:assistant-1"]);
       expect(getInterruptionContext(displayedMessages).hasInterruptedStream).toBe(false);
     });
 
@@ -683,7 +682,306 @@ describe("StreamingMessageAggregator", () => {
       expect(readOrder(reloaded).at(-1)).not.toBe("user:report-1");
     });
 
-    test("keeps terminal chrome hidden when an anchored report reaches the active stream tail", () => {
+    test("places an unanchored completed report before the assistant response to its progress update", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage(
+            "progress-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "in_progress",
+              title: "Progress",
+              reportMarkdown: "Still investigating.",
+            }),
+            { timestamp: 1, historySequence: 1, synthetic: true }
+          ),
+          createMuxMessage("assistant-1", "assistant", "Final answer", {
+            timestamp: 2,
+            historySequence: 2,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            {
+              timestamp: 3,
+              historySequence: 3,
+              synthetic: true,
+              uiVisible: true,
+            }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual(["user:report-1", "assistant:assistant-1"]);
+    });
+
+    test.each([
+      {
+        label: "reasoning",
+        parts: [{ type: "reasoning" as const, text: "Finished reasoning" }],
+        expectedType: "reasoning",
+      },
+      {
+        label: "tool",
+        parts: [
+          {
+            type: "dynamic-tool" as const,
+            toolCallId: "tool-1",
+            toolName: "file_read",
+            input: { path: "README.md" },
+            state: "output-available" as const,
+            output: { success: true },
+          },
+        ],
+        expectedType: "tool",
+      },
+    ])("repairs a trailing report before a $label-only assistant", ({ parts, expectedType }) => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      const assistant = createMuxMessage(
+        "assistant-1",
+        "assistant",
+        "",
+        { timestamp: 1, historySequence: 1 },
+        [...parts]
+      );
+      const report = createMuxMessage(
+        "report-1",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: "task-1",
+          agentType: "explore",
+          status: "completed",
+          title: "Investigation complete",
+          reportMarkdown: "The child finished successfully.",
+        }),
+        { timestamp: 2, historySequence: 2, synthetic: true, uiVisible: true }
+      );
+
+      aggregator.loadHistoricalMessages([assistant, report], false);
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "user" || row.type === "reasoning" || row.type === "tool")
+          .map((row) => (row.type === "user" ? `user:${row.historyId}` : row.type))
+      ).toEqual(["user:report-1", expectedType]);
+    });
+
+    test("pairs an old unanchored report with the first response to its progress turn", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage(
+            "progress-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "in_progress",
+              title: "Progress",
+              reportMarkdown: "Still investigating.",
+            }),
+            { timestamp: 1, historySequence: 1, synthetic: true }
+          ),
+          createMuxMessage("assistant-progress", "assistant", "I incorporated the update.", {
+            timestamp: 2,
+            historySequence: 2,
+          }),
+          createMuxMessage("manual-user", "user", "One more question", {
+            timestamp: 3,
+            historySequence: 3,
+          }),
+          createMuxMessage("assistant-manual", "assistant", "Answering the later question.", {
+            timestamp: 4,
+            historySequence: 4,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            {
+              timestamp: 5,
+              historySequence: 5,
+              synthetic: true,
+              uiVisible: true,
+            }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual([
+        "user:report-1",
+        "assistant:assistant-progress",
+        "user:manual-user",
+        "assistant:assistant-manual",
+      ]);
+    });
+
+    test("does not repair a trailing report across a context boundary", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("assistant-1", "assistant", "Old answer", {
+            timestamp: 1,
+            historySequence: 1,
+          }),
+          createMuxMessage("reset-1", "assistant", "", {
+            timestamp: 2,
+            historySequence: 2,
+            contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            { timestamp: 3, historySequence: 3, synthetic: true, uiVisible: true }
+          ),
+        ],
+        false
+      );
+
+      expect(aggregator.getDisplayedMessages().at(-1)).toMatchObject({
+        type: "user",
+        historyId: "report-1",
+      });
+    });
+
+    test("keeps no-progress historical repair stable after later turns", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("assistant-1", "assistant", "Original answer", {
+            timestamp: 1,
+            historySequence: 1,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            { timestamp: 2, historySequence: 2, synthetic: true, uiVisible: true }
+          ),
+          createMuxMessage("manual-user", "user", "A later question", {
+            timestamp: 3,
+            historySequence: 3,
+          }),
+          createMuxMessage("assistant-2", "assistant", "A later answer", {
+            timestamp: 4,
+            historySequence: 4,
+          }),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual([
+        "user:report-1",
+        "assistant:assistant-1",
+        "user:manual-user",
+        "assistant:assistant-2",
+      ]);
+    });
+
+    test("repairs a completed report whose persisted anchor target is missing", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage(
+            "progress-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "in_progress",
+              title: "Progress",
+              reportMarkdown: "Still investigating.",
+            }),
+            { timestamp: 1, historySequence: 1, synthetic: true }
+          ),
+          createMuxMessage("assistant-1", "assistant", "Final answer", {
+            timestamp: 2,
+            historySequence: 2,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            {
+              timestamp: 3,
+              historySequence: 3,
+              synthetic: true,
+              uiVisible: true,
+              transcriptAnchor: {
+                messageId: "deleted-assistant",
+                historySequence: 2,
+                textLength: 0,
+                reasoningLength: 0,
+                partIndex: 0,
+              },
+            }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual(["user:report-1", "assistant:assistant-1"]);
+    });
+
+    test("keeps a tail-anchored report at the active stream position", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         Array.from({ length: 70 }, (_, index) =>
@@ -749,9 +1047,19 @@ describe("StreamingMessageAggregator", () => {
       );
       expect(assistantRows).toHaveLength(1);
       expect(assistantRows[0]?.isLastPartOfMessage).toBe(false);
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter(
+            (row): row is Extract<DisplayedMessage, { type: "assistant" | "user" }> =>
+              (row.type === "assistant" && row.historyId === "assistant-1") ||
+              (row.type === "user" && row.historyId === "report-1")
+          )
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual(["assistant:assistant-1", "user:report-1"]);
     });
 
-    test("keeps terminal chrome on the assistant when an anchored report follows its final content", () => {
+    test("places a tail-anchored report before final assistant text while keeping terminal chrome", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
         [
@@ -791,11 +1099,64 @@ describe("StreamingMessageAggregator", () => {
         false
       );
 
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual(["user:report-1", "assistant:assistant-1"]);
+
       const assistantRows = aggregator
         .getDisplayedMessages()
         .filter((row) => row.type === "assistant");
       expect(assistantRows).toHaveLength(1);
       expect(assistantRows[0]?.isLastPartOfMessage).toBe(true);
+    });
+
+    test("renders terminal stream errors once when a report splits an assistant", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          {
+            ...createMuxMessage("assistant-1", "assistant", "", {
+              timestamp: 1,
+              historySequence: 1,
+              error: "Provider failed",
+              errorType: "api",
+            }),
+            parts: [{ type: "text", text: "before after" }],
+          },
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            {
+              timestamp: 2,
+              historySequence: 2,
+              synthetic: true,
+              uiVisible: true,
+              transcriptAnchor: {
+                messageId: "assistant-1",
+                historySequence: 1,
+                textLength: "before".length,
+                reasoningLength: 0,
+                partIndex: 1,
+              },
+            }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator.getDisplayedMessages().filter((row) => row.type === "stream-error")
+      ).toHaveLength(1);
     });
 
     test("keeps hidden completed subagent reports in the retry lifecycle", () => {

@@ -3337,6 +3337,7 @@ export class StreamManager extends EventEmitter {
                 contextProviderMetadata, // Last step (for context window display)
                 ...(toolModelUsages != null ? { toolModelUsages } : {}),
                 ...(finishReason !== undefined && { finishReason }),
+                historySequence: streamInfo.historySequence,
                 duration,
                 ...(ttftMs !== undefined && { ttftMs }),
               },

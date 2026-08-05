@@ -2591,6 +2591,7 @@ describe("StreamManager - empty stream completions", () => {
     // modelFallback must survive StreamEndEventSchema or the live transcript
     // never learns about the swap.
     const ipcEvent = StreamEndEventSchema.parse(streamEndEvents[0]);
+    expect(ipcEvent.metadata.historySequence).toBe(historySequence);
     expect(ipcEvent.metadata.modelFallback).toEqual({
       requestedModel: KNOWN_MODELS.SONNET.id,
       refusedModels: [KNOWN_MODELS.SONNET.id],
