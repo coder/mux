@@ -1100,6 +1100,26 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
     await fastAction?.run();
     expect(onToggleFastMode).toHaveBeenCalledTimes(1);
 
+    const directXAIActions = getActions({
+      selectedWorkspaceState: {
+        lifecycle: "active",
+        goal: null,
+        currentModel: "xai:grok-4.5",
+      } as unknown as WorkspaceState,
+      getEffectiveComposerModel: () => "xai:grok-4.5",
+      providersConfig: {
+        xai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      },
+      getRouteForModel: () => "direct",
+      onToggleFastMode,
+    });
+    const xaiFastAction = directXAIActions.find(
+      (action) => action.id === "thinking:toggle-fast-mode"
+    );
+    expect(xaiFastAction?.shortcutHint).toBeDefined();
+    await xaiFastAction?.run();
+    expect(onToggleFastMode).toHaveBeenCalledTimes(2);
+
     const creationScopeId = "project:/repo/a";
     const creationActions = getActions({
       selectedWorkspace: null,
@@ -1118,7 +1138,7 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
     );
     expect(creationFastAction?.shortcutHint).toBeDefined();
     await creationFastAction?.run();
-    expect(onToggleFastMode).toHaveBeenCalledTimes(2);
+    expect(onToggleFastMode).toHaveBeenCalledTimes(3);
 
     const staleOpenAIActions = getActions({
       selectedWorkspaceState: {
@@ -1133,6 +1153,22 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
       getRouteForModel: () => "direct",
     });
     expect(staleOpenAIActions.some((action) => action.id === "thinking:toggle-fast-mode")).toBe(
+      false
+    );
+
+    const gatewayXAIActions = getActions({
+      selectedWorkspaceState: {
+        lifecycle: "active",
+        goal: null,
+        currentModel: "xai:grok-4.5",
+      } as unknown as WorkspaceState,
+      getEffectiveComposerModel: () => "xai:grok-4.5",
+      providersConfig: {
+        xai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      },
+      getRouteForModel: () => "openrouter",
+    });
+    expect(gatewayXAIActions.some((action) => action.id === "thinking:toggle-fast-mode")).toBe(
       false
     );
 

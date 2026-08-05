@@ -798,7 +798,7 @@ describe("AIService.resolveGatewayModelString", () => {
     const variant = "xai:grok-4-1-fast-reasoning";
     await writeMainConfig(muxHome.path, {
       muxGatewayEnabled: true,
-      muxGatewayModels: [KNOWN_MODELS.GROK_4_1.id],
+      muxGatewayModels: ["xai:grok-4-1-fast"],
     });
     await writeProvidersConfig(muxHome.path, {
       "mux-gateway": { couponCode: "test-coupon" },
@@ -809,7 +809,7 @@ describe("AIService.resolveGatewayModelString", () => {
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(
       variant,
-      KNOWN_MODELS.GROK_4_1.id
+      "xai:grok-4-1-fast"
     );
 
     expect(resolved).toBe(toGatewayModelString(variant));

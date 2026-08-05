@@ -3,6 +3,13 @@ import type {
   FastModePreviousServiceTier,
   ServiceTier,
 } from "@/common/config/schemas/providersConfig";
+import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { isGrok45Model } from "@/common/types/thinking";
+import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
+import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
+
+export type FastModeProvider = "openai" | "xai";
 
 export interface FastModeServiceTierChange {
   apiValue: ServiceTier | "";
@@ -10,13 +17,51 @@ export interface FastModeServiceTierChange {
   previousServiceTier: FastModePreviousServiceTier | undefined;
 }
 
+export interface FastModeAvailabilityOptions {
+  resolvedRouteProvider?: string | null;
+  providersConfig?: ProvidersConfigMap | null;
+}
+
 type ProviderConfigWriter = Pick<APIClient["providers"], "setProviderConfig">;
+
+/** Return the direct provider whose priority tier powers Fast mode for this model. */
+export function getFastModeProvider(
+  modelString: string,
+  options?: FastModeAvailabilityOptions
+): FastModeProvider | null {
+  if (openaiDirectProviderOptionsAvailable(modelString, options)) {
+    return "openai";
+  }
+
+  const normalized = normalizeToCanonical(modelString);
+  const [origin] = normalized.split(":", 2);
+  if (origin !== "xai" || !isGrok45Model(normalized)) return null;
+
+  // xAI service_tier is also provider-native and cannot survive a gateway route.
+  const explicitGateway = getExplicitGatewayPrefix(modelString);
+  if (explicitGateway != null) {
+    const gatewayConfig = options?.providersConfig?.[explicitGateway];
+    const gatewayDefinition = PROVIDER_DEFINITIONS[explicitGateway];
+    const gatewayWinsRoute =
+      options?.providersConfig == null ||
+      (gatewayConfig?.isConfigured === true &&
+        gatewayConfig.isEnabled !== false &&
+        gatewayDefinition.kind === "gateway" &&
+        (gatewayDefinition.routes as readonly string[]).includes("xai"));
+    if (gatewayWinsRoute) return null;
+  }
+
+  return options?.resolvedRouteProvider == null || options.resolvedRouteProvider === "direct"
+    ? "xai"
+    : null;
+}
 
 /**
  * Fast mode is a temporary priority-tier override. The restore target lives in
  * providers.jsonc so every browser origin and desktop client observes the same state.
  */
 export function getFastModeServiceTierChange(
+  provider: FastModeProvider,
   currentServiceTier: ServiceTier | undefined,
   previousServiceTier?: FastModePreviousServiceTier
 ): FastModeServiceTierChange {
@@ -28,7 +73,9 @@ export function getFastModeServiceTierChange(
     };
   }
 
-  const restoreServiceTier = previousServiceTier ?? "auto";
+  // Legacy OpenAI priority configs predate the restore field. xAI's only standard
+  // tier is default, so its equivalent fallback must not emit unsupported "auto".
+  const restoreServiceTier = previousServiceTier ?? (provider === "openai" ? "auto" : "default");
   return {
     apiValue: restoreServiceTier === "unset" ? "" : restoreServiceTier,
     serviceTier: restoreServiceTier === "unset" ? undefined : restoreServiceTier,
@@ -36,17 +83,18 @@ export function getFastModeServiceTierChange(
   };
 }
 
-/** Persist the shared restore target and service-tier override in a safe order. */
+/** Persist the provider-specific restore target and service-tier override in a safe order. */
 export async function applyFastModeServiceTierChange(
   providers: ProviderConfigWriter,
+  provider: FastModeProvider,
   currentServiceTier: ServiceTier | undefined,
   previousServiceTier?: FastModePreviousServiceTier
 ): Promise<FastModeServiceTierChange | null> {
-  const change = getFastModeServiceTierChange(currentServiceTier, previousServiceTier);
+  const change = getFastModeServiceTierChange(provider, currentServiceTier, previousServiceTier);
 
   if (currentServiceTier !== "priority") {
     const rememberResult = await providers.setProviderConfig({
-      provider: "openai",
+      provider,
       keyPath: ["fastModePreviousServiceTier"],
       value: change.previousServiceTier ?? "unset",
     });
@@ -54,7 +102,7 @@ export async function applyFastModeServiceTierChange(
   }
 
   const tierResult = await providers.setProviderConfig({
-    provider: "openai",
+    provider,
     keyPath: ["serviceTier"],
     value: change.apiValue,
   });
@@ -62,7 +110,7 @@ export async function applyFastModeServiceTierChange(
 
   if (currentServiceTier === "priority") {
     const clearResult = await providers.setProviderConfig({
-      provider: "openai",
+      provider,
       keyPath: ["fastModePreviousServiceTier"],
       value: "",
     });

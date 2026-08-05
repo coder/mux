@@ -83,6 +83,22 @@ describe("ProvidersConfigSchema", () => {
     expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
+  it("accepts only xAI service tiers supported by Priority Processing", () => {
+    expect(ProvidersConfigSchema.safeParse({ xai: { serviceTier: "priority" } }).success).toBe(
+      true
+    );
+    expect(ProvidersConfigSchema.safeParse({ xai: { serviceTier: "default" } }).success).toBe(true);
+    expect(
+      ProvidersConfigSchema.safeParse({
+        xai: { serviceTier: "priority", fastModePreviousServiceTier: "default" },
+      }).success
+    ).toBe(true);
+    expect(ProvidersConfigSchema.safeParse({ xai: { serviceTier: "flex" } }).success).toBe(false);
+    expect(
+      ProvidersConfigSchema.safeParse({ xai: { fastModePreviousServiceTier: "flex" } }).success
+    ).toBe(false);
+  });
+
   describe("modelParameters", () => {
     it("accepts valid per-model and wildcard overrides", () => {
       const valid = {

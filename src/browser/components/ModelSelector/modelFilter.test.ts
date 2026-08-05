@@ -10,7 +10,6 @@ describe("modelMatchesQuery", () => {
   test("matches documented aliases that are not model string substrings", () => {
     expect(modelMatchesQuery("google:gemini-3.6-flash", "gemini-flash")).toBe(true);
     expect(modelMatchesQuery("deepseek:deepseek-v4-pro", "deepseek-pro")).toBe(true);
-    expect(modelMatchesQuery("xai:grok-4-1-fast", "grok-4.1")).toBe(true);
   });
 
   test("matches aliases for gateway-prefixed model strings", () => {

@@ -14,6 +14,7 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
 import { shouldRunIntegrationTests } from "../../testUtils";
+import { setupProviders } from "../../ipc/setup";
 import { createAppHarness } from "../harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -91,7 +92,12 @@ async function expectPressed(toggle: HTMLElement, pressed: boolean): Promise<voi
 
 describeIntegration("Thinking selector", () => {
   test("selects effort, gates Pro, and exposes fast mode with a closed-state indicator", async () => {
-    const harness = await createAppHarness({ branchPrefix: "thinking-selector" });
+    const harness = await createAppHarness({
+      branchPrefix: "thinking-selector",
+      beforeRenderEnvironment: async (env) => {
+        await setupProviders(env, { xai: { apiKey: "dummy" } });
+      },
+    });
 
     try {
       const { container } = harness.view;
@@ -167,12 +173,34 @@ describeIntegration("Thinking selector", () => {
       }
       fireEvent.click(container.querySelector("[data-thinking-selector-trigger]")!);
 
-      // Workspace-scoped Pro state survives model switches; fast mode is global
-      // provider config, so its indicator remains active too.
+      // Workspace-scoped Pro state survives model switches; OpenAI fast mode remains
+      // in its provider config and becomes active again when returning to OpenAI.
       await selectModel(container, harness.workspaceId, SOL_MODEL);
       menu = await openThinkingSelector(container);
       await expectPressed(within(menu).getByRole("button", { name: /Pro mode/i }), true);
       await expectPressed(within(menu).getByRole("button", { name: /Fast mode/i }), true);
+      fireEvent.click(container.querySelector("[data-thinking-selector-trigger]")!);
+
+      // Grok uses the same thinking selector with its native low/medium/high ladder,
+      // while Fast mode writes xAI's priority tier instead of OpenAI's.
+      await selectModel(container, harness.workspaceId, KNOWN_MODELS.GROK_45.id);
+      menu = await openThinkingSelector(container);
+      if (menu.querySelector('[data-component="ProModeToggle"]')) {
+        throw new Error("Pro toggle should not render for Grok");
+      }
+      if (within(menu).queryByRole("option", { name: "Off" })) {
+        throw new Error("Grok should not offer thinking Off");
+      }
+      within(menu).getByRole("option", { name: "Medium" });
+      within(menu).getByRole("option", { name: "High" });
+
+      const grokFastToggle = within(menu).getByRole("button", { name: /Fast mode/i });
+      await expectPressed(grokFastToggle, false);
+      fireEvent.click(grokFastToggle);
+      await expectPressed(grokFastToggle, true);
+      if (!container.querySelector("[data-fast-mode-indicator]")) {
+        throw new Error("Grok fast-mode indicator was not rendered");
+      }
     } finally {
       await harness.dispose();
     }

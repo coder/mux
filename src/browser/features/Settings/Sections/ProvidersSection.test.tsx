@@ -105,6 +105,11 @@ function createProvidersConfig(): ProvidersConfigMap {
       isEnabled: true,
       isConfigured: true,
     },
+    xai: {
+      apiKeySet: true,
+      isEnabled: true,
+      isConfigured: true,
+    },
     [CUSTOM_PROVIDER_ID]: {
       apiKeySet: true,
       isEnabled: true,

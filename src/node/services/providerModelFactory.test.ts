@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { generateText, type Tool } from "ai";
+import { xai } from "@ai-sdk/xai";
 import { writeFile } from "node:fs/promises";
 import * as fs from "fs";
 import * as os from "os";
@@ -20,6 +22,7 @@ import {
   resolveAIProviderHeaderSource,
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
+  wrapFetchWithXAIServiceTier,
 } from "./providerModelFactory";
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
 import type { DevToolsService } from "./devToolsService";
@@ -496,6 +499,112 @@ describe("ProviderModelFactory.createModel", () => {
           provider: "local-vllm",
         });
       }
+    });
+  });
+});
+
+describe("ProviderModelFactory xAI API selection", () => {
+  it("uses Responses for Grok 4.5 so exact billed cost metadata is available", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });
+
+      const result = await factory.createModel("xai:grok-4.5");
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect((result.data as { provider?: unknown }).provider).toBe("xai.responses");
+    });
+  });
+
+  it("surfaces exact xAI billed cost metadata through the installed Responses SDK", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalXaiRegistry = PROVIDER_REGISTRY.xai;
+      config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });
+
+      PROVIDER_REGISTRY.xai = async () => {
+        const module = await originalXaiRegistry();
+        return {
+          ...module,
+          createXai: (options) => {
+            const responseFetch = Object.assign(
+              () =>
+                Promise.resolve(
+                  new Response(
+                    JSON.stringify({
+                      id: "resp_test",
+                      created_at: 1,
+                      model: "grok-4.5",
+                      object: "response",
+                      output: [
+                        {
+                          type: "message",
+                          role: "assistant",
+                          content: [{ type: "output_text", text: "ok", annotations: [] }],
+                          id: "msg_test",
+                          status: "completed",
+                        },
+                      ],
+                      usage: {
+                        input_tokens: 10,
+                        output_tokens: 2,
+                        total_tokens: 12,
+                        cost_in_usd_ticks: 12_345,
+                      },
+                      status: "completed",
+                    }),
+                    { headers: { "content-type": "application/json" } }
+                  )
+                ),
+              fetch
+            ) as typeof fetch;
+            return module.createXai({ ...options, fetch: responseFetch });
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("xai:grok-4.5");
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        const generated = await generateText({
+          model: result.data,
+          prompt: "hi",
+          tools: {
+            x_search: xai.tools.xSearch({
+              // xAI documents a 20-handle limit; exercise >10 to guard the SDK patch.
+              allowedXHandles: Array.from({ length: 11 }, (_, index) => `handle_${index}`),
+            }) as Tool,
+          },
+        });
+        expect(generated.providerMetadata).toEqual({ xai: { costInUsdTicks: 12_345 } });
+      } finally {
+        PROVIDER_REGISTRY.xai = originalXaiRegistry;
+      }
+    });
+  });
+
+  it("uses Responses for Grok 4.5 aliases", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });
+
+      const result = await factory.createModel("xai:grok-4.5-latest");
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect((result.data as { provider?: unknown }).provider).toBe("xai.responses");
+    });
+  });
+
+  it("keeps legacy custom Grok model strings on Chat Completions", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });
+
+      const result = await factory.createModel("xai:grok-4-1-fast");
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect((result.data as { provider?: unknown }).provider).toBe("xai.chat");
     });
   });
 });
@@ -1632,6 +1741,38 @@ function createCapturingFetch(): { calls: CapturedFetchCall[]; fakeFetch: typeof
 function parseSentBody(call: CapturedFetchCall): Record<string, unknown> {
   return JSON.parse(call.init.body as string) as Record<string, unknown>;
 }
+
+describe("wrapFetchWithXAIServiceTier", () => {
+  it("injects priority processing into xAI request bodies", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithXAIServiceTier(fakeFetch, "priority");
+
+    await wrapped("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-length": "123", "content-type": "application/json" },
+      body: JSON.stringify({ model: "grok-4.5", messages: [] }),
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(parseSentBody(calls[0])).toEqual({
+      model: "grok-4.5",
+      messages: [],
+      service_tier: "priority",
+    });
+    expect(new Headers(calls[0].init.headers).has("content-length")).toBe(false);
+  });
+
+  it("leaves requests unchanged when no tier is configured", async () => {
+    const { calls, fakeFetch } = createCapturingFetch();
+    const wrapped = wrapFetchWithXAIServiceTier(fakeFetch);
+    const body = JSON.stringify({ model: "grok-4.5", messages: [] });
+
+    await wrapped("https://api.x.ai/v1/chat/completions", { method: "POST", body });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init.body).toBe(body);
+  });
+});
 
 // Effort "xhigh" and thinking.display flow through the SDK directly as of
 // @ai-sdk/anthropic 4.0.11 (see buildProviderOptions), so the wrapper must NOT

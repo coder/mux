@@ -8,11 +8,13 @@ import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { useRouting } from "@/browser/hooks/useRouting";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { applyFastModeServiceTierChange } from "@/browser/utils/fastModeServiceTier";
+import {
+  applyFastModeServiceTierChange,
+  getFastModeProvider,
+} from "@/browser/utils/fastModeServiceTier";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { getThinkingDisplayLabel, type ThinkingLevel } from "@/common/types/thinking";
-import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { openaiProModeAvailable } from "@/common/utils/ai/proMode";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
@@ -60,20 +62,23 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
   );
   const displayLabel = getThinkingDisplayLabel(effectiveThinkingLevel, props.modelString);
   const resolvedRoute = routing.resolveRoute(normalizeToCanonical(props.modelString)).route;
-  const directOpenAIOptionsAvailable = openaiDirectProviderOptionsAvailable(props.modelString, {
-    providersConfig,
-    resolvedRouteProvider: resolvedRoute,
-  });
   const proModeAvailable =
     props.allowProMode !== false &&
     openaiProModeAvailable(props.modelString, {
       providersConfig,
       resolvedRouteProvider: resolvedRoute,
     });
-  const fastModeAvailable =
-    props.allowFastMode !== false && providersConfig != null && directOpenAIOptionsAvailable;
+  const fastModeProvider =
+    props.allowFastMode !== false && providersConfig != null
+      ? getFastModeProvider(props.modelString, {
+          providersConfig,
+          resolvedRouteProvider: resolvedRoute,
+        })
+      : null;
+  const fastModeAvailable = fastModeProvider != null;
   const proModeActive = proModeAvailable && reasoningMode === "pro";
-  const fastModeActive = fastModeAvailable && providersConfig?.openai?.serviceTier === "priority";
+  const fastModeActive =
+    fastModeProvider != null && providersConfig?.[fastModeProvider]?.serviceTier === "priority";
   const hasMenu = allowed.length > 1 || proModeAvailable || fastModeAvailable;
 
   // The menu is rendered inline for happy-dom coverage, so a document listener is the
@@ -92,17 +97,19 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
   }, [isOpen]);
 
   const handleFastModeToggle = async () => {
-    if (!api || fastModeSaving || providersConfig == null) return;
+    if (!api || fastModeSaving || providersConfig == null || fastModeProvider == null) return;
 
     setFastModeSaving(true);
     try {
+      const providerConfig = providersConfig[fastModeProvider];
       const change = await applyFastModeServiceTierChange(
         api.providers,
-        providersConfig.openai?.serviceTier,
-        providersConfig.openai?.fastModePreviousServiceTier
+        fastModeProvider,
+        providerConfig?.serviceTier,
+        providerConfig?.fastModePreviousServiceTier
       );
       if (change) {
-        updateOptimistically("openai", {
+        updateOptimistically(fastModeProvider, {
           serviceTier: change.serviceTier,
           fastModePreviousServiceTier: change.previousServiceTier,
         });

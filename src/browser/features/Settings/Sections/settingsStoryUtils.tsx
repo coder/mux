@@ -24,6 +24,7 @@ import {
   SIDEBAR_AGE_GROUPING_KEY,
   UI_THEME_KEY,
 } from "@/common/constants/storage";
+import type { ServiceTier } from "@/common/config/schemas/providersConfig";
 import type { ServerAuthSession } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ProjectConfig } from "@/common/types/project";
@@ -133,6 +134,7 @@ interface SetupSettingsStoryOptions {
       baseUrl?: string;
       baseUrlSource?: "config" | "env";
       baseUrlResolved?: string;
+      serviceTier?: ServiceTier;
       models?: string[];
     }
   >;

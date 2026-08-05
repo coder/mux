@@ -17,7 +17,7 @@ import {
 } from "./hooks/usePersistedState";
 import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
-import { applyFastModeServiceTierChange } from "./utils/fastModeServiceTier";
+import { applyFastModeServiceTierChange, getFastModeProvider } from "./utils/fastModeServiceTier";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import {
@@ -76,7 +76,6 @@ import {
   LEFT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
-import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -680,8 +679,19 @@ function AppInner() {
     [api, getModelForWorkspace, getReasoningModeForWorkspace, getThinkingLevelForWorkspace]
   );
 
+  const getFastModeActive = useCallback(() => {
+    const scopeId = selectedWorkspace?.workspaceId ?? creationScopeId;
+    if (!scopeId || providersConfig == null) return false;
+
+    const model = getModelForWorkspace(scopeId);
+    const provider = getFastModeProvider(model, {
+      providersConfig,
+      resolvedRouteProvider: getRouteForModel(normalizeToCanonical(model)),
+    });
+    return provider != null && providersConfig[provider]?.serviceTier === "priority";
+  }, [creationScopeId, getModelForWorkspace, getRouteForModel, providersConfig, selectedWorkspace]);
+
   const fastModeToggleInFlightRef = useRef(false);
-  const fastModeActive = providersConfig?.openai?.serviceTier === "priority";
   const toggleFastMode = useCallback(async () => {
     const scopeId = selectedWorkspace?.workspaceId ?? creationScopeId;
     if (!api || !scopeId || providersConfig == null || fastModeToggleInFlightRef.current) return;
@@ -691,25 +701,25 @@ function AppInner() {
     // Serialize requests so a quick double press cannot compute two writes from stale config.
     fastModeToggleInFlightRef.current = true;
     const model = getModelForWorkspace(scopeId);
-    const route = getRouteForModel(normalizeToCanonical(model));
-    if (
-      !openaiDirectProviderOptionsAvailable(model, {
-        providersConfig,
-        resolvedRouteProvider: route,
-      })
-    ) {
+    const provider = getFastModeProvider(model, {
+      providersConfig,
+      resolvedRouteProvider: getRouteForModel(normalizeToCanonical(model)),
+    });
+    if (provider == null) {
       fastModeToggleInFlightRef.current = false;
       return;
     }
 
     try {
+      const providerConfig = providersConfig[provider];
       const change = await applyFastModeServiceTierChange(
         api.providers,
-        providersConfig.openai?.serviceTier,
-        providersConfig.openai?.fastModePreviousServiceTier
+        provider,
+        providerConfig?.serviceTier,
+        providerConfig?.fastModePreviousServiceTier
       );
       if (change) {
-        updateOptimistically("openai", {
+        updateOptimistically(provider, {
           serviceTier: change.serviceTier,
           fastModePreviousServiceTier: change.previousServiceTier,
         });
@@ -972,7 +982,7 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     getReasoningMode: getReasoningModeForWorkspace,
     onToggleReasoningMode: toggleReasoningModeFromPalette,
-    getFastMode: () => fastModeActive,
+    getFastMode: getFastModeActive,
     onToggleFastMode: toggleFastMode,
     getEffectiveComposerModel: getModelForWorkspace,
     providersConfig,

@@ -103,6 +103,33 @@ export const ProvidersEnvSourced: Story = {
   },
 };
 
+export const XAIProcessingMode: Story = {
+  render: () => (
+    <SettingsSectionStory
+      setup={() =>
+        setupSettingsStory({
+          providersConfig: {
+            xai: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              serviceTier: "priority",
+            },
+          },
+        })
+      }
+    >
+      <ProvidersSection />
+    </SettingsSectionStory>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const xaiButton = await canvas.findByRole("button", { name: /xAI/i });
+    await userEvent.click(xaiButton);
+    await canvas.findByText("fast (priority)");
+  },
+};
+
 export const ProvidersExpanded: Story = {
   render: () => (
     <SettingsSectionStory

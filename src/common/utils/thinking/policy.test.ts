@@ -897,6 +897,15 @@ describe("resolveMinimumThinkingLevel", () => {
   });
 });
 
+describe("Grok 4.5 thinking policy", () => {
+  test("offers only the reasoning efforts accepted by xAI", () => {
+    expect(getThinkingPolicyForModel("xai:grok-4.5")).toEqual(["low", "medium", "high"]);
+    expect(getDefaultMinimumThinkingLevel("xai:grok-4.5")).toBe("medium");
+    expect(enforceThinkingPolicy("xai:grok-4.5", "off")).toBe("low");
+    expect(enforceThinkingPolicy("xai:grok-4.5", "max")).toBe("high");
+  });
+});
+
 describe("getAvailableThinkingLevels", () => {
   test("returns the raw capability when no floor is provided", () => {
     expect(getAvailableThinkingLevels("anthropic:claude-sonnet-4-5")).toEqual([

@@ -802,6 +802,15 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("exposes xAI native search tools only for Grok 4.5", () => {
+    for (const modelString of ["xai:grok-4.5", "xai:grok-4.5-latest"]) {
+      expect(getAvailableTools(modelString)).toEqual(
+        expect.arrayContaining(["web_search", "x_search"])
+      );
+    }
+    expect(getAvailableTools("xai:grok-4-1-fast")).not.toContain("x_search");
+  });
+
   it("classifies Gemini 3 as supporting mixed native Google and function tools", () => {
     expect(supportsGoogleNativeToolsWithFunctionTools("gemini-2.5-pro")).toBe(false);
     expect(supportsGoogleNativeToolsWithFunctionTools("gemini-3.1-pro-preview")).toBe(true);

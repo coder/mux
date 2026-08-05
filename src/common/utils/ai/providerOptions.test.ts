@@ -1639,6 +1639,32 @@ describe("buildProviderOptions - OpenRouter", () => {
   });
 });
 
+describe("buildProviderOptions - xAI", () => {
+  test("maps Grok 4.5 thinking levels to reasoning effort without deprecated search defaults", () => {
+    expect(buildProviderOptions("xai:grok-4.5", "medium")).toEqual({
+      xai: { reasoningEffort: "medium" },
+    });
+    expect(buildProviderOptions("xai:grok-4.5", "max")).toEqual({
+      xai: { reasoningEffort: "high" },
+    });
+  });
+
+  test("omits deprecated search parameters and strips service tier from Grok 4.5 SDK options", () => {
+    expect(
+      buildProviderOptions("xai:grok-4.5", "high", undefined, undefined, {
+        xai: {
+          serviceTier: "priority",
+          searchParameters: { mode: "off" },
+        },
+      })
+    ).toEqual({
+      xai: {
+        reasoningEffort: "high",
+      },
+    });
+  });
+});
+
 describe("buildRequestHeaders", () => {
   for (const { name, model, options, expected } of [
     {

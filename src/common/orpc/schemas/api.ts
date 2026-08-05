@@ -247,7 +247,7 @@ export const ProviderConfigInfoSchema = z.object({
   displayName: z.string().optional(),
   isCustom: z.boolean().optional(),
   models: z.array(ProviderModelEntrySchema).optional(),
-  /** OpenAI-specific fields */
+  /** Provider processing tier (OpenAI supports all values; xAI supports default/priority). */
   serviceTier: ServiceTierSchema.optional(),
   fastModePreviousServiceTier: FastModePreviousServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),

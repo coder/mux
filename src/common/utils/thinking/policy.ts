@@ -19,6 +19,7 @@ import {
   THINKING_LEVEL_OFF,
   anthropicRejectsDisabledThinking,
   anthropicSupportsNativeXhigh,
+  isGrok45Model,
   isKimiK3Model,
   openaiSupportsNativeMaxEffort,
   stripModelProviderPrefixes,
@@ -64,6 +65,7 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
  * - openai:gpt-5-pro → ["high"] (only supported level, legacy)
  * - Gemini Flash chat variants → ["off", "low", "medium", "high"]
  * - gemini-3 Pro variants → ["low", "high"] (thinking level only)
+ * - xai:grok-4.5 → ["low", "medium", "high"] (reasoning cannot be disabled)
  * - default → ["off", "low", "medium", "high"] (standard 4 levels; xhigh is opt-in per model)
  *
  * Tolerates version suffixes (e.g., gpt-5-pro-2025-10-06).
@@ -169,6 +171,11 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
   // Gemini 3 Pro only supports "low" and "high" reasoning levels
   if (withoutProviderNamespace.includes("gemini-3")) {
     return ["low", "high"];
+  }
+
+  // Grok 4.5 always reasons and supports configurable low/medium/high effort.
+  if (isGrok45Model(withoutProviderNamespace)) {
+    return ["low", "medium", "high"];
   }
 
   // Kimi K3 always reasons and supports only the max reasoning effort, so the

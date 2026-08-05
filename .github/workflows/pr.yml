@@ -277,6 +277,7 @@ jobs:
           fi
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BACKEND: ${{ needs.changes.outputs.backend }}
           BROWSER: ${{ needs.changes.outputs.browser }}

@@ -12,7 +12,7 @@ import {
 } from "@/common/types/thinking";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
-import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
+import { getFastModeProvider } from "@/browser/utils/fastModeServiceTier";
 import { openaiProModeAvailable } from "@/common/utils/ai/proMode";
 import {
   enforceThinkingPolicy,
@@ -1238,10 +1238,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       : undefined;
     const fastModeAction: CommandAction | null =
       p.providersConfig != null &&
-      openaiDirectProviderOptionsAvailable(providerOptionGateModel ?? "", {
+      getFastModeProvider(providerOptionGateModel ?? "", {
         providersConfig: p.providersConfig,
         resolvedRouteProvider: providerOptionRoute,
-      })
+      }) != null
         ? {
             id: CommandIds.toggleFastMode(),
             title: "Toggle Fast Mode",

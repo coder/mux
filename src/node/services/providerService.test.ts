@@ -233,6 +233,30 @@ describe("ProviderService.getConfig", () => {
     });
   }
 
+  it("surfaces only supported xAI processing tiers", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        xai: {
+          apiKey: "xai-key",
+          serviceTier: "priority",
+          fastModePreviousServiceTier: "default",
+        },
+      });
+      expect(service.getConfig().xai.serviceTier).toBe("priority");
+      expect(service.getConfig().xai.fastModePreviousServiceTier).toBe("default");
+
+      config.saveProvidersConfig({
+        xai: {
+          apiKey: "xai-key",
+          serviceTier: "flex",
+          fastModePreviousServiceTier: "flex",
+        },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      expect(service.getConfig().xai.serviceTier).toBeUndefined();
+      expect(service.getConfig().xai.fastModePreviousServiceTier).toBeUndefined();
+    });
+  });
+
   it("surfaces non-secret op:// API key references", () => {
     withTempConfig((config, service) => {
       const opRef = "op://Personal/Anthropic/credential";

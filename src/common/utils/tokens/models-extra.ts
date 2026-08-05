@@ -69,6 +69,26 @@ const GPT_56_SOL_STATS: ModelData = {
 };
 
 export const modelsExtra: Record<string, ModelData> = {
+  // Grok 4.5 - Released July 2026. xAI's flagship coding and agentic model.
+  // Pricing doubles for prompts above 200K tokens; Priority Processing applies a
+  // separate 2× multiplier at request time and is therefore not baked into these rates.
+  "xai/grok-4.5": {
+    max_input_tokens: 500000,
+    input_cost_per_token: 0.000002, // $2 per million input tokens
+    input_cost_per_token_above_200k_tokens: 0.000004, // $4 per million input tokens
+    output_cost_per_token: 0.000006, // $6 per million output tokens
+    output_cost_per_token_above_200k_tokens: 0.000012, // $12 per million output tokens
+    cache_read_input_token_cost: 0.0000003, // $0.30 per million cached input tokens
+    cache_read_input_token_cost_above_200k_tokens: 0.0000006, // $0.60 per million cached input tokens
+    litellm_provider: "xai",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+    supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+  },
+
   // GPT Image 2 - image-generation model not yet in LiteLLM's bundled models.json.
   // OpenAI prices text input at $5/M tokens, image input at $8/M, cached text input at
   // $1.25/M, cached image input at $2/M, and generated image output at $30/M.

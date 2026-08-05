@@ -252,6 +252,15 @@ describe("accumulateProviderMetadata", () => {
     });
   });
 
+  test("sums xAI exact cost ticks across model steps", () => {
+    const existing = { xai: { costInUsdTicks: 10_000_000 } };
+    const step = { xai: { costInUsdTicks: 25_000_000, requestId: "req_2" } };
+
+    expect(accumulateProviderMetadata(existing, step)).toEqual({
+      xai: { costInUsdTicks: 35_000_000, requestId: "req_2" },
+    });
+  });
+
   test("handles non-anthropic providers (returns step as-is when no cache tokens)", () => {
     const existing = { openai: { reasoningTokens: 100 } };
     const step = { openai: { reasoningTokens: 200 } };

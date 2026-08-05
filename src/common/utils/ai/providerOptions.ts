@@ -22,6 +22,7 @@ import {
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   getOpenAIReasoningEffort,
+  isGrok45Model,
   isKimiK3Model,
   openaiSupportsProMode,
   OPENROUTER_REASONING_EFFORT,
@@ -539,7 +540,21 @@ export function buildProviderOptions(
 
   // Build xAI-specific options
   if (formatProvider === "xai") {
-    const overrides = muxProviderOptions?.xai ?? {};
+    // serviceTier is applied by providerModelFactory's fetch wrapper because the
+    // current xAI AI SDK provider does not expose service_tier as a typed option.
+    const {
+      serviceTier: _serviceTier,
+      searchParameters,
+      ...overrides
+    } = muxProviderOptions?.xai ?? {};
+    const isGrok45 = isGrok45Model(capabilityModel);
+    const reasoningEffort: XaiProviderOptions["reasoningEffort"] = isGrok45
+      ? effectiveThinking === "xhigh" || effectiveThinking === "max"
+        ? "high"
+        : effectiveThinking === "off"
+          ? "low"
+          : effectiveThinking
+      : undefined;
 
     const defaultSearchParameters: XaiProviderOptions["searchParameters"] = {
       mode: "auto",
@@ -549,7 +564,12 @@ export function buildProviderOptions(
     const options = {
       xai: {
         ...overrides,
-        searchParameters: overrides.searchParameters ?? defaultSearchParameters,
+        ...(reasoningEffort != null && { reasoningEffort }),
+        // Grok 4.5 uses xAI's modern Responses tools; getToolsForModel translates
+        // legacy Live Search settings instead of sending deprecated search_parameters.
+        ...(!isGrok45 && {
+          searchParameters: searchParameters ?? defaultSearchParameters,
+        }),
       },
     } satisfies { xai: XaiProviderOptions };
     log.debug("buildProviderOptions: Returning xAI options", options);

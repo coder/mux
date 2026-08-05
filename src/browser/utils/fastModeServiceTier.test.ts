@@ -3,6 +3,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   applyFastModeServiceTierChange,
+  getFastModeProvider,
   getFastModeServiceTierChange,
 } from "./fastModeServiceTier";
 
@@ -19,8 +20,20 @@ function createWriter() {
 }
 
 describe("fast mode service tier", () => {
+  test("resolves direct native providers and rejects gateway routes", () => {
+    expect(getFastModeProvider("openai:gpt-5.6-sol", { resolvedRouteProvider: "direct" })).toBe(
+      "openai"
+    );
+    expect(getFastModeProvider("xai:grok-4.5", { resolvedRouteProvider: "direct" })).toBe("xai");
+    expect(getFastModeProvider("xai:grok-4.5", { resolvedRouteProvider: "openrouter" })).toBeNull();
+    expect(
+      getFastModeProvider("xai:grok-code-fast-1", { resolvedRouteProvider: "direct" })
+    ).toBeNull();
+    expect(getFastModeProvider("anthropic:claude-sonnet-4-5")).toBeNull();
+  });
+
   test("restores flex from the shared provider config", () => {
-    expect(getFastModeServiceTierChange("priority", "flex")).toEqual({
+    expect(getFastModeServiceTierChange("openai", "priority", "flex")).toEqual({
       apiValue: "flex",
       serviceTier: "flex",
       previousServiceTier: undefined,
@@ -30,7 +43,7 @@ describe("fast mode service tier", () => {
   test("persists the restore tier before enabling Fast mode", async () => {
     const { providers, setProviderConfig } = createWriter();
 
-    const change = await applyFastModeServiceTierChange(providers, "flex");
+    const change = await applyFastModeServiceTierChange(providers, "openai", "flex");
 
     expect(change).toEqual({
       apiValue: "priority",
@@ -58,7 +71,7 @@ describe("fast mode service tier", () => {
   test("restores and clears the shared tier when disabling Fast mode", async () => {
     const { providers, setProviderConfig } = createWriter();
 
-    const change = await applyFastModeServiceTierChange(providers, "priority", "default");
+    const change = await applyFastModeServiceTierChange(providers, "openai", "priority", "default");
 
     expect(change).toEqual({
       apiValue: "default",
@@ -86,7 +99,7 @@ describe("fast mode service tier", () => {
   test("restores an unset tier with the backend removal value", async () => {
     const { providers, setProviderConfig } = createWriter();
 
-    const change = await applyFastModeServiceTierChange(providers, "priority", "unset");
+    const change = await applyFastModeServiceTierChange(providers, "openai", "priority", "unset");
 
     expect(change?.serviceTier).toBeUndefined();
     expect(setProviderConfig.mock.calls[0]).toEqual([
@@ -98,7 +111,31 @@ describe("fast mode service tier", () => {
     ]);
   });
 
-  test("falls back to auto for legacy priority config without a restore tier", () => {
-    expect(getFastModeServiceTierChange("priority").serviceTier).toBe("auto");
+  test("uses provider-valid fallbacks for legacy priority config without a restore tier", () => {
+    expect(getFastModeServiceTierChange("openai", "priority").serviceTier).toBe("auto");
+    expect(getFastModeServiceTierChange("xai", "priority").serviceTier).toBe("default");
+  });
+
+  test("writes xAI fast mode to the xAI provider config", async () => {
+    const { providers, setProviderConfig } = createWriter();
+
+    await applyFastModeServiceTierChange(providers, "xai", "default");
+
+    expect(setProviderConfig.mock.calls).toEqual([
+      [
+        {
+          provider: "xai",
+          keyPath: ["fastModePreviousServiceTier"],
+          value: "default",
+        },
+      ],
+      [
+        {
+          provider: "xai",
+          keyPath: ["serviceTier"],
+          value: "priority",
+        },
+      ],
+    ]);
   });
 });

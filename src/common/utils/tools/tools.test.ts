@@ -7,8 +7,10 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import {
+  getForcedXaiSearchToolNames,
   getToolsForModel,
   supportsAnthropicNativeWebFetch,
+  type ToolConfiguration,
   type WorkspaceHeartbeatToolService,
 } from "./tools";
 
@@ -449,6 +451,259 @@ describe("getToolsForModel", () => {
 
     expect(gemini35Tools.google_search).toBeDefined();
     expect(gemini35Tools.url_context).toBeDefined();
+  });
+
+  test("adds xAI native web and X search tools for Grok 4.5", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiSearchParameters: {
+          mode: "auto",
+          fromDate: "2026-07-01",
+          sources: [
+            { type: "web", allowedWebsites: ["example.com"] },
+            { type: "x", includedXHandles: ["xai"] },
+          ],
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toBeDefined();
+    expect(tools.x_search).toBeDefined();
+    expect(tools.web_search).toMatchObject({
+      type: "provider",
+      id: "xai.web_search",
+      args: { allowedDomains: ["example.com"] },
+    });
+    expect(tools.x_search).toMatchObject({
+      type: "provider",
+      id: "xai.x_search",
+      args: { allowedXHandles: ["xai"], fromDate: "2026-07-01" },
+    });
+  });
+
+  test("omits xAI native search tools when the resolved route is not xAI Responses", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiNativeToolsEnabled: false,
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toBeUndefined();
+    expect(tools.x_search).toBeUndefined();
+  });
+
+  test("ignores malformed persisted xAI search sources instead of blocking requests", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+    const malformedSearchParameters = {
+      mode: "auto",
+      sources: "not-an-array",
+      fromDate: 123,
+      toDate: "2026-99-99",
+    } as unknown as ToolConfiguration["xaiSearchParameters"];
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiSearchParameters: malformedSearchParameters,
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect((tools.x_search as { args?: { fromDate?: string } }).args?.fromDate).toBeUndefined();
+    expect((tools.x_search as { args?: { toDate?: string } }).args?.toDate).toBeUndefined();
+    expect(tools.web_search).toBeDefined();
+    expect(tools.x_search).toBeDefined();
+  });
+
+  test("adds xAI native search tools for Grok 4.5 aliases", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5-latest",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toBeDefined();
+    expect(tools.x_search).toBeDefined();
+  });
+
+  test("merges every configured xAI web, news, and X source entry", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiSearchParameters: {
+          mode: "auto",
+          sources: [
+            { type: "web", allowedWebsites: ["one.example"], excludedWebsites: ["bad.one"] },
+            { type: "web", allowedWebsites: ["two.example"], excludedWebsites: ["bad.two"] },
+            { type: "news", excludedWebsites: ["bad.news"] },
+            { type: "x", includedXHandles: ["xai"], excludedXHandles: ["spam_one"] },
+            { type: "x", xHandles: ["grok"], excludedXHandles: ["spam_two"] },
+          ],
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toMatchObject({
+      args: {
+        allowedDomains: ["one.example", "two.example"],
+      },
+    });
+    expect(
+      (tools.web_search as { args?: { excludedDomains?: string[] } }).args?.excludedDomains
+    ).toBeUndefined();
+    expect(tools.x_search).toMatchObject({
+      args: {
+        allowedXHandles: ["xai", "grok"],
+      },
+    });
+    expect(
+      (tools.x_search as { args?: { excludedXHandles?: string[] } }).args?.excludedXHandles
+    ).toBeUndefined();
+  });
+
+  test("merges exclusion-only xAI source entries without mutually exclusive allowlists", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiSearchParameters: {
+          mode: "auto",
+          sources: [
+            { type: "web", excludedWebsites: ["bad.one"] },
+            { type: "news", excludedWebsites: ["bad.news"] },
+            { type: "x", excludedXHandles: ["spam_one"] },
+            { type: "x", excludedXHandles: ["spam_two"] },
+          ],
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toMatchObject({
+      args: { excludedDomains: ["bad.one", "bad.news"] },
+    });
+    expect(tools.x_search).toMatchObject({
+      args: { excludedXHandles: ["spam_one", "spam_two"] },
+    });
+  });
+
+  test("preserves RSS-only xAI search configs as domain-scoped web search", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiSearchParameters: {
+          mode: "auto",
+          sources: [
+            {
+              type: "rss",
+              links: [
+                "https://feeds.example.com/news.xml",
+                "https://updates.example.org/releases.xml",
+              ],
+            },
+          ],
+        },
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toMatchObject({
+      type: "provider",
+      id: "xai.web_search",
+      args: { allowedDomains: ["feeds.example.com", "updates.example.org"] },
+    });
+    expect(tools.x_search).toBeUndefined();
+  });
+
+  test("marks mode:on xAI search tools as required on the first model step", () => {
+    expect(
+      getForcedXaiSearchToolNames("xai:grok-4.5", {
+        mode: "on",
+        sources: [{ type: "x", includedXHandles: ["xai"] }],
+      })
+    ).toEqual(["x_search"]);
+    expect(getForcedXaiSearchToolNames("xai:grok-4.5", { mode: "auto" })).toBeUndefined();
+    expect(getForcedXaiSearchToolNames("xai:grok-4-1-fast", { mode: "on" })).toBeUndefined();
+  });
+
+  test("honors disabled xAI search mode for Grok 4.5", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:grok-4.5",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        xaiSearchParameters: { mode: "off" },
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toBeUndefined();
+    expect(tools.x_search).toBeUndefined();
   });
 
   test("returns tool keys in sorted order", async () => {

@@ -46,15 +46,16 @@
             stdenv.cc.cc.lib # Provides libstdc++ for native modules like sharp
           ];
 
-          # Fetch dependencies in a separate fixed-output derivation
-          # Use only package.json and bun.lock to ensure consistent hashing
-          # regardless of how the flake is evaluated (local vs remote)
+          # Fetch dependencies in a separate fixed-output derivation.
+          # Include Bun patch files alongside package.json and bun.lock so patched
+          # dependencies install identically in local and remote Nix evaluations.
           offlineCache = pkgs.stdenvNoCC.mkDerivation {
             name = "mux-deps-${version}";
 
             src = pkgs.runCommand "mux-lock-files" { } ''
               mkdir -p $out
               cp ${./package.json} $out/package.json
+              cp -r ${./patches} $out/patches
               cp ${./bun.lock} $out/bun.lock
             '';
 
@@ -83,7 +84,7 @@
 
             outputHashMode = "recursive";
             # Marker used by scripts/update_flake_hash.sh to update this hash in place.
-            outputHash = "sha256-hK0zwN0pShMv8NlfMXud+9Jx2J32hz5+qtLMqzunZF8="; # mux-offline-cache-hash
+            outputHash = "sha256-ufRtgBViq/5RAGzL/f79pIYK/+3BCQNNAD1nCz/edRg="; # mux-offline-cache-hash
           };
 
           configurePhase = ''

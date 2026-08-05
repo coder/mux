@@ -304,6 +304,15 @@ export function openaiSupportsProMode(modelString: string): boolean {
 }
 
 /**
+ * Whether the model is Grok 4.5 (including provider/gateway prefixes and aliases).
+ * Grok 4.5 always reasons and accepts low, medium, or high effort.
+ */
+export function isGrok45Model(modelString: string): boolean {
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
+  return /^grok-4\.5(?:$|-)/.test(withoutPrefix);
+}
+
+/**
  * Kimi K3 (Moonshot AI) always reasons and supports only the max reasoning
  * effort; the thinking policy and the Moonshot/OpenRouter provider-options
  * branches key off this predicate.

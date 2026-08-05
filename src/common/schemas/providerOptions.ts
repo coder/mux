@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { CacheTtlSchema, ServiceTierSchema } from "../config/schemas/providersConfig";
+import {
+  CacheTtlSchema,
+  ServiceTierSchema,
+  XAIServiceTierSchema,
+} from "../config/schemas/providersConfig";
 
 export const MuxProviderOptionsSchema = z.object({
   anthropic: z
@@ -56,6 +60,10 @@ export const MuxProviderOptionsSchema = z.object({
   openrouter: z.record(z.string(), z.unknown()).optional(),
   xai: z
     .object({
+      serviceTier: XAIServiceTierSchema.nullish().meta({
+        description:
+          'xAI processing tier: "priority" requests faster processing at 2× token pricing; "default" uses standard processing',
+      }),
       searchParameters: z
         .object({
           mode: z.enum(["auto", "off", "on"]),

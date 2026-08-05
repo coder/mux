@@ -27,6 +27,7 @@ import { runLanguageModelCleanup } from "./languageModelCleanup";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
 import {
+  getForcedXaiSearchToolNames,
   getToolsForModel,
   type AdvisorStepCaptureRef,
   type ToolConfiguration,
@@ -2073,6 +2074,8 @@ export class AIService extends EventEmitter {
           : {}),
         ...(toolSearchRuntime ? { toolSearchRuntime } : {}),
         openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
+        xaiNativeToolsEnabled: routeProvider === "xai",
+        xaiSearchParameters: effectiveMuxProviderOptions.xai?.searchParameters,
         backgroundProcessManager: this.backgroundProcessManager,
         // Plan agent configuration for plan file access.
         // - read: plan file is readable in all agents (useful context)
@@ -2719,7 +2722,10 @@ export class AIService extends EventEmitter {
                   // versa silently drops web tooling).
                   const nextAllTools = await getToolsForModel(
                     next.canonicalModelString,
-                    toolsForModelConfig,
+                    {
+                      ...toolsForModelConfig,
+                      xaiNativeToolsEnabled: next.routeProvider === "xai",
+                    },
                     workspaceId,
                     this.initStateManager,
                     toolInstructions,
@@ -2942,6 +2948,13 @@ export class AIService extends EventEmitter {
                     callSettingsOverrides: nextOverrides.standard,
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
                     thinkingLevel: nextThinkingLevel,
+                    forcedFirstStepToolNames:
+                      next.routeProvider === "xai"
+                        ? getForcedXaiSearchToolNames(
+                            next.canonicalModelString,
+                            effectiveMuxProviderOptions.xai?.searchParameters
+                          )?.filter((toolName) => toolName in nextTools)
+                        : undefined,
                     rebuildProviderOptionsForThinkingLevel:
                       rebuildNextProviderOptionsForThinkingLevel,
                     initialMetadataPatch: {
@@ -2962,6 +2975,14 @@ export class AIService extends EventEmitter {
                 }
               },
             }
+          : undefined;
+
+      const forcedFirstStepToolNames =
+        routeProvider === "xai"
+          ? getForcedXaiSearchToolNames(
+              canonicalModelString,
+              effectiveMuxProviderOptions.xai?.searchParameters
+            )?.filter((toolName) => toolName in toolsForStream)
           : undefined;
 
       emitStartupBreadcrumb("starting_stream");
@@ -3013,7 +3034,8 @@ export class AIService extends EventEmitter {
         modelFallback,
         toolSearchRuntime?.state,
         activeTurnThinkingOverride,
-        rebuildProviderOptionsForThinkingLevel
+        rebuildProviderOptionsForThinkingLevel,
+        forcedFirstStepToolNames
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 

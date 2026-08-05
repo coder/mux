@@ -8,6 +8,9 @@ export const ServiceTierSchema = z.enum(["auto", "default", "flex", "priority"])
 export type ServiceTier = z.infer<typeof ServiceTierSchema>;
 export const FastModePreviousServiceTierSchema = z.enum(["auto", "default", "flex", "unset"]);
 export type FastModePreviousServiceTier = z.infer<typeof FastModePreviousServiceTierSchema>;
+export const XAIServiceTierSchema = z.enum(["default", "priority"]);
+export type XAIServiceTier = z.infer<typeof XAIServiceTierSchema>;
+export const XAIFastModePreviousServiceTierSchema = z.enum(["default", "unset"]);
 export const CodexOauthDefaultAuthSchema = z.enum(["oauth", "apiKey"]);
 
 export const BaseProviderConfigSchema = z
@@ -62,6 +65,8 @@ export const OpenRouterProviderConfigSchema = BaseProviderConfigSchema.extend({
 
 export const XAIProviderConfigSchema = BaseProviderConfigSchema.extend({
   searchParameters: z.record(z.string(), z.unknown()).optional(),
+  serviceTier: XAIServiceTierSchema.optional(),
+  fastModePreviousServiceTier: XAIFastModePreviousServiceTierSchema.optional(),
 });
 
 export const MuxGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({

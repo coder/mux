@@ -105,10 +105,10 @@ export function addUsage(
 }
 
 /**
- * Accumulate provider metadata across steps, specifically for cache creation tokens.
+ * Accumulate provider metadata across steps for additive billing metadata.
  *
- * For Anthropic, cache creation tokens are reported per-step and need to be summed.
- * Other provider metadata is taken from the latest step.
+ * Anthropic cache creation tokens and xAI exact-cost ticks are reported per request/step
+ * and must be summed. Other provider metadata is taken from the latest step.
  */
 export function accumulateProviderMetadata(
   existing: Record<string, unknown> | undefined,
@@ -126,19 +126,30 @@ export function accumulateProviderMetadata(
       ?.cacheCreationInputTokens ?? 0;
 
   const totalCacheCreate = existingCacheCreate + stepCacheCreate;
+  const existingXaiCostTicks =
+    (existing.xai as { costInUsdTicks?: number } | undefined)?.costInUsdTicks ?? 0;
+  const stepXaiCostTicks =
+    (step.xai as { costInUsdTicks?: number } | undefined)?.costInUsdTicks ?? 0;
+  const totalXaiCostTicks = existingXaiCostTicks + stepXaiCostTicks;
 
-  // If no cache creation tokens to aggregate, just return step's metadata
-  if (totalCacheCreate === 0) {
+  if (totalCacheCreate === 0 && totalXaiCostTicks === 0) {
     return step;
   }
 
-  // Merge with accumulated cache creation tokens
   return {
     ...step,
-    anthropic: {
-      ...(step.anthropic as Record<string, unknown> | undefined),
-      cacheCreationInputTokens: totalCacheCreate,
-    },
+    ...(totalCacheCreate > 0 && {
+      anthropic: {
+        ...(step.anthropic as Record<string, unknown> | undefined),
+        cacheCreationInputTokens: totalCacheCreate,
+      },
+    }),
+    ...(totalXaiCostTicks > 0 && {
+      xai: {
+        ...(step.xai as Record<string, unknown> | undefined),
+        costInUsdTicks: totalXaiCostTicks,
+      },
+    }),
   };
 }
 

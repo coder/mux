@@ -46,6 +46,16 @@ describe("Known Models Integration", () => {
     expect(MODEL_ABBREVIATIONS["gpt-5.5"]).toBeUndefined();
   });
 
+  test("grok aliases resolve only to Grok 4.5 in the curated registry", () => {
+    expect(MODEL_ABBREVIATIONS.grok).toBe("xai:grok-4.5");
+    expect(MODEL_ABBREVIATIONS["grok-4.5"]).toBe("xai:grok-4.5");
+    expect(MODEL_ABBREVIATIONS["grok-4.1"]).toBeUndefined();
+    expect(MODEL_ABBREVIATIONS["grok-code"]).toBeUndefined();
+    expect(Object.values(KNOWN_MODELS).filter((model) => model.provider === "xai")).toEqual([
+      KNOWN_MODELS.GROK_45,
+    ]);
+  });
+
   test("kimi aliases resolve to the direct Moonshot Kimi K3 model", () => {
     expect(MODEL_ABBREVIATIONS.kimi).toBe("moonshotai:kimi-k3");
     expect(MODEL_ABBREVIATIONS.k3).toBe("moonshotai:kimi-k3");

@@ -78,7 +78,7 @@ import type {
   AddCustomOpenAICompatibleProviderInput,
   ProviderConfigInfo,
 } from "@/common/orpc/types";
-import type { ServiceTier } from "@/common/config/schemas/providersConfig";
+import type { ServiceTier, XAIServiceTier } from "@/common/config/schemas/providersConfig";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
@@ -91,6 +91,10 @@ type OpenAIServiceTierSelectValue = typeof OPENAI_SERVICE_TIER_UNSET | OpenAISer
 
 function isOpenAIServiceTier(value: string): value is OpenAIServiceTier {
   return value === "auto" || value === "default" || value === "flex" || value === "priority";
+}
+
+function isXAIServiceTier(value: string): value is XAIServiceTier {
+  return value === "default" || value === "priority";
 }
 
 interface CodexOauthDeviceFlow {
@@ -395,6 +399,7 @@ export function ProvidersSection() {
 
   const [openaiServiceTierSelectOverride, setOpenaiServiceTierSelectOverride] =
     useState<OpenAIServiceTierSelectValue | null>(null);
+  const [xaiServiceTierSaving, setXAIServiceTierSaving] = useState(false);
 
   const routing = useRouting();
 
@@ -2659,6 +2664,72 @@ export function ProvidersSection() {
                             </div>
                           );
                         })()}
+
+                      {provider === "xai" && (
+                        <div className="border-border-light border-t pt-3">
+                          <div className="mb-1 flex items-center gap-1">
+                            <label className="text-muted block text-xs">Processing mode</label>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <HelpIndicator aria-label="xAI processing mode help">
+                                    ?
+                                  </HelpIndicator>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <div className="max-w-[260px]">
+                                    <div className="font-semibold">xAI processing mode</div>
+                                    <div className="mt-1">
+                                      <span className="font-semibold">standard</span>: normal
+                                      scheduling and token pricing.
+                                    </div>
+                                    <div>
+                                      <span className="font-semibold">fast</span>: priority
+                                      scheduling for lower latency at 2× token pricing.
+                                    </div>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                          <Select
+                            value={config?.xai?.serviceTier ?? "default"}
+                            disabled={xaiServiceTierSaving}
+                            onValueChange={(next) => {
+                              if (!api || xaiServiceTierSaving || !isXAIServiceTier(next)) return;
+
+                              // Persist before publishing the new tier so the composer cannot
+                              // observe Fast mode until the backend will apply it to requests.
+                              setXAIServiceTierSaving(true);
+                              void api.providers
+                                .setProviderConfig({
+                                  provider: "xai",
+                                  keyPath: ["serviceTier"],
+                                  value: next,
+                                })
+                                .then(
+                                  (result) => {
+                                    if (result.success) {
+                                      updateOptimistically("xai", { serviceTier: next });
+                                      return undefined;
+                                    }
+                                    return refresh();
+                                  },
+                                  () => refresh()
+                                )
+                                .finally(() => setXAIServiceTierSaving(false));
+                            }}
+                          >
+                            <SelectTrigger className="w-48 max-w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="default">standard</SelectItem>
+                              <SelectItem value="priority">fast (priority)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
 
                       {isCustomOpenAICompatible && (
                         <div className="border-border-light space-y-2 border-t pt-3">

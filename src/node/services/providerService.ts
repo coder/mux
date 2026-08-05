@@ -361,26 +361,32 @@ export class ProviderService {
         models: filteredModels,
       };
 
-      // OpenAI-specific fields
+      // Provider processing tier. OpenAI and xAI share the service_tier field,
+      // but xAI only accepts default/priority.
       const serviceTier = config.serviceTier;
-      if (
+      const validOpenAIServiceTier =
         provider === "openai" &&
         (serviceTier === "auto" ||
           serviceTier === "default" ||
           serviceTier === "flex" ||
-          serviceTier === "priority")
-      ) {
+          serviceTier === "priority");
+      const validXAIServiceTier =
+        provider === "xai" && (serviceTier === "default" || serviceTier === "priority");
+      if (validOpenAIServiceTier || validXAIServiceTier) {
         providerInfo.serviceTier = serviceTier;
       }
 
       const fastModePreviousServiceTier = config.fastModePreviousServiceTier;
-      if (
+      const validOpenAIFastModePreviousTier =
         provider === "openai" &&
         (fastModePreviousServiceTier === "auto" ||
           fastModePreviousServiceTier === "default" ||
           fastModePreviousServiceTier === "flex" ||
-          fastModePreviousServiceTier === "unset")
-      ) {
+          fastModePreviousServiceTier === "unset");
+      const validXAIFastModePreviousTier =
+        provider === "xai" &&
+        (fastModePreviousServiceTier === "default" || fastModePreviousServiceTier === "unset");
+      if (validOpenAIFastModePreviousTier || validXAIFastModePreviousTier) {
         providerInfo.fastModePreviousServiceTier = fastModePreviousServiceTier;
       }
 

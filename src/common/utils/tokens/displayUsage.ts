@@ -174,6 +174,27 @@ export function createDisplayUsage(
     reasoningCost = costs.reasoningCost;
   }
 
+  const xaiCostInUsdTicks = (providerMetadata?.xai as { costInUsdTicks?: number } | undefined)
+    ?.costInUsdTicks;
+  if (xaiCostInUsdTicks != null && Number.isFinite(xaiCostInUsdTicks) && xaiCostInUsdTicks >= 0) {
+    // xAI reports the exact amount billed after caching, tools, and Priority Processing.
+    // Scale the estimated component breakdown so its total reconciles to the billed amount.
+    const exactCostUsd = xaiCostInUsdTicks / 10_000_000_000;
+    const estimatedCosts = [inputCost, cachedCost, cacheCreateCost, outputCost, reasoningCost];
+    const estimatedTotal = estimatedCosts.reduce<number>((sum, cost) => sum + (cost ?? 0), 0);
+
+    if (estimatedTotal > 0) {
+      const scale = exactCostUsd / estimatedTotal;
+      inputCost = (inputCost ?? 0) * scale;
+      cachedCost = (cachedCost ?? 0) * scale;
+      cacheCreateCost = (cacheCreateCost ?? 0) * scale;
+      outputCost = (outputCost ?? 0) * scale;
+      reasoningCost = (reasoningCost ?? 0) * scale;
+    } else {
+      outputCost = exactCostUsd;
+    }
+  }
+
   if (costsIncluded) {
     inputCost = 0;
     cachedCost = 0;

@@ -208,6 +208,8 @@ interface StreamRequestConfig {
    * options for the stream's model. `null` ⇒ not applicable / no-op.
    */
   rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
+  /** First step must call one of these tools; later steps restore the full toolset. */
+  forcedFirstStepToolNames?: string[];
 }
 
 /**
@@ -244,6 +246,7 @@ export interface PreparedModelFallback {
    * options for the wrong model).
    */
   rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
+  forcedFirstStepToolNames?: string[];
 }
 
 export interface ModelFallbackPrepareOptions {
@@ -1603,7 +1606,8 @@ export class StreamManager extends EventEmitter {
     toolSearchState?: ToolSearchStreamState,
     onToolExecutionStart?: (toolCallId: string) => void,
     thinkingOverrideState?: ActiveTurnThinkingOverride,
-    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel,
+    forcedFirstStepToolNames?: string[]
   ): StreamRequestConfig {
     // Mid-turn thinking overrides mutate providerOptions IN PLACE (the SDK's
     // per-step deep-merge reads the object passed at streamText() time, so
@@ -1684,6 +1688,7 @@ export class StreamManager extends EventEmitter {
       toolPolicy,
       toolSearchState,
       thinkingOverrideState,
+      forcedFirstStepToolNames,
       rebuildProviderOptionsForThinkingLevel,
     };
   }
@@ -1809,7 +1814,7 @@ export class StreamManager extends EventEmitter {
       // Trusted: mux builds these messages server-side.
       allowSystemInMessages: true,
       abortSignal: abortController.signal,
-      prepareStep: async ({ messages: stepMessages }) => {
+      prepareStep: async ({ messages: stepMessages, stepNumber }) => {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
         // Strip workflow run records from same-turn tool results (history-level redaction in
         // applyToolOutputRedaction can't see these), then extract supported attachments out of
@@ -1827,7 +1832,12 @@ export class StreamManager extends EventEmitter {
         // activated by tool_catalog_search.execute appear on the following step.
         // undefined when the feature is inactive, keeping the return value
         // byte-identical to the pre-feature behavior.
-        const activeTools = computeActiveToolNames(request.toolSearchState);
+        const searchedActiveTools = computeActiveToolNames(request.toolSearchState);
+        const forceFirstStepTools =
+          stepNumber === 0 && request.forcedFirstStepToolNames?.length
+            ? request.forcedFirstStepToolNames
+            : undefined;
+        const activeTools = forceFirstStepTools ?? searchedActiveTools;
         // Mid-turn thinking-level change: consume a pending override before
         // this step's provider request is built.
         const thinkingOverride = this.applyPendingThinkingOverride(request);
@@ -1840,6 +1850,7 @@ export class StreamManager extends EventEmitter {
         }
         return {
           ...(rewritten === stepMessages ? {} : { messages: rewritten }),
+          ...(forceFirstStepTools !== undefined ? { toolChoice: "required" as const } : {}),
           ...(activeTools !== undefined ? { activeTools } : {}),
           // Defense in depth: the in-place request mutation is authoritative
           // (per-step deep-merge cannot delete keys); returning the rebuilt
@@ -1891,7 +1902,8 @@ export class StreamManager extends EventEmitter {
     modelFallback?: ModelFallbackOptions,
     toolSearchState?: ToolSearchStreamState,
     thinkingOverrideState?: ActiveTurnThinkingOverride,
-    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel,
+    forcedFirstStepToolNames?: string[]
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1916,7 +1928,8 @@ export class StreamManager extends EventEmitter {
       toolSearchState,
       (toolCallId) => this.handleToolExecutionStart(workspaceId, messageId, toolCallId),
       thinkingOverrideState,
-      rebuildProviderOptionsForThinkingLevel
+      rebuildProviderOptionsForThinkingLevel,
+      forcedFirstStepToolNames
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -2628,7 +2641,8 @@ export class StreamManager extends EventEmitter {
       // hop) with a closure bound to the FALLBACK model. Attached before
       // createStreamResult below in case the SDK eagerly prepares step 1.
       streamInfo.request.thinkingOverrideState,
-      prepared.data.rebuildProviderOptionsForThinkingLevel
+      prepared.data.rebuildProviderOptionsForThinkingLevel,
+      prepared.data.forcedFirstStepToolNames
     );
     // createStreamResult may eagerly prepare the first fallback step and update
     // latestMessages. Clear stale source-step messages before starting it so a
@@ -4080,7 +4094,8 @@ export class StreamManager extends EventEmitter {
     modelFallback?: ModelFallbackOptions,
     toolSearchState?: ToolSearchStreamState,
     thinkingOverrideState?: ActiveTurnThinkingOverride,
-    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel
+    rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel,
+    forcedFirstStepToolNames?: string[]
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -4166,7 +4181,8 @@ export class StreamManager extends EventEmitter {
           modelFallback,
           toolSearchState,
           thinkingOverrideState,
-          rebuildProviderOptionsForThinkingLevel
+          rebuildProviderOptionsForThinkingLevel,
+          forcedFirstStepToolNames
         );
 
         // Guard against a narrow race:

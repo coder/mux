@@ -95,6 +95,7 @@ trap 'rm -rf "$CHECK_DIR"' EXIT
 
 # Copy built dist and package.json — but NO lockfile, shrinkwrap, or node_modules.
 cp -r "$REPO_ROOT/dist" "$CHECK_DIR/dist"
+cp -r "$REPO_ROOT/patches" "$CHECK_DIR/patches"
 cp "$REPO_ROOT/package.json" "$CHECK_DIR/package.json"
 
 # Strip devDependencies so bun only resolves production deps (matching published package).

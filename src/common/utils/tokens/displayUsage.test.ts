@@ -252,6 +252,28 @@ describe("createDisplayUsage", () => {
     expect(result!.output.cost_usd).toBeCloseTo(0.0012, 10);
   });
 
+  test("reconciles Grok usage to xAI's exact billed cost", () => {
+    const usage: LanguageModelV2Usage = {
+      inputTokens: 1000,
+      outputTokens: 500,
+      reasoningTokens: 100,
+      totalTokens: 1500,
+    };
+
+    const result = createDisplayUsage(usage, "xai:grok-4.5", {
+      xai: { costInUsdTicks: 50_000_000 }, // $0.005 exact billed cost
+    });
+
+    expect(result).toBeDefined();
+    const totalCost =
+      result!.input.cost_usd! +
+      result!.cached.cost_usd! +
+      result!.cacheCreate.cost_usd! +
+      result!.output.cost_usd! +
+      result!.reasoning.cost_usd!;
+    expect(totalCost).toBeCloseTo(0.005, 12);
+  });
+
   describe("tiered long-context pricing", () => {
     test("keeps GPT-5.5 on base rates at the published 272K boundary", () => {
       const usage: LanguageModelV2Usage = {

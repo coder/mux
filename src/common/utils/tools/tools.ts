@@ -1,5 +1,8 @@
+import { xai } from "@ai-sdk/xai";
 import { type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import { isGrok45Model } from "@/common/types/thinking";
 import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
@@ -151,6 +154,10 @@ export interface ToolConfiguration {
   runtimeTempDir: string;
   /** OpenAI wire format — webSearch requires "responses" */
   openaiWireFormat?: "responses" | "chatCompletions";
+  /** Whether the resolved route supports xAI Responses-native tools. */
+  xaiNativeToolsEnabled?: boolean;
+  /** Legacy xAI Live Search settings translated to Responses native search tools. */
+  xaiSearchParameters?: NonNullable<NonNullable<MuxProviderOptions["xai"]>["searchParameters"]>;
   /** Overflow policy for bash tool output (optional, not exposed to AI) */
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
@@ -526,6 +533,181 @@ export function supportsAnthropicNativeWebFetch(modelId: string): boolean {
   return major > 4 || (major === 4 && minor !== undefined && minor >= 6);
 }
 
+interface XaiWebSearchOptions {
+  allowedDomains?: string[];
+  excludedDomains?: string[];
+}
+
+interface XaiXSearchOptions {
+  allowedXHandles?: string[];
+  excludedXHandles?: string[];
+  fromDate?: string;
+  toDate?: string;
+}
+
+interface XaiSearchSourceRecord extends Record<string, unknown> {
+  type: "web" | "x" | "news" | "rss";
+}
+
+function getXaiSearchSources(
+  searchParameters: ToolConfiguration["xaiSearchParameters"]
+): XaiSearchSourceRecord[] {
+  const rawSources = (searchParameters as { sources?: unknown } | undefined)?.sources;
+  if (!Array.isArray(rawSources)) {
+    return [];
+  }
+
+  return rawSources.filter((source): source is XaiSearchSourceRecord => {
+    if (typeof source !== "object" || source === null) return false;
+    const type = (source as { type?: unknown }).type;
+    return type === "web" || type === "x" || type === "news" || type === "rss";
+  });
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function readIsoDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return undefined;
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value
+    ? undefined
+    : value;
+}
+
+function getXaiNativeSearchConfiguration(
+  searchParameters: ToolConfiguration["xaiSearchParameters"]
+): {
+  webSearch?: XaiWebSearchOptions;
+  xSearch?: XaiXSearchOptions;
+} {
+  if (searchParameters?.mode === "off") {
+    return {};
+  }
+
+  const rawSearchParameters = searchParameters as Record<string, unknown> | undefined;
+  const fromDate = readIsoDate(rawSearchParameters?.fromDate);
+  const toDate = readIsoDate(rawSearchParameters?.toDate);
+  const sources = getXaiSearchSources(searchParameters);
+  const webSources = sources.filter((source) => source.type === "web");
+  const newsSources = sources.filter((source) => source.type === "news");
+  const xSources = sources.filter((source) => source.type === "x");
+  const rssDomains = Array.from(
+    new Set(
+      sources
+        .filter((source) => source.type === "rss")
+        .flatMap((source) => readStringArray(source.links))
+        .map((link) => {
+          try {
+            return new URL(link).hostname;
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((domain): domain is string => domain != null)
+    )
+  );
+  const configuredAllowedDomains = Array.from(
+    new Set([
+      ...webSources.flatMap((source) => readStringArray(source.allowedWebsites)),
+      ...rssDomains,
+    ])
+  );
+  const configuredExcludedDomains = Array.from(
+    new Set([
+      ...webSources.flatMap((source) => readStringArray(source.excludedWebsites)),
+      ...newsSources.flatMap((source) => readStringArray(source.excludedWebsites)),
+    ])
+  );
+  const configuredAllowedXHandles = Array.from(
+    new Set(
+      xSources.flatMap((source) => {
+        const included = readStringArray(source.includedXHandles);
+        return included.length > 0 ? included : readStringArray(source.xHandles);
+      })
+    )
+  );
+  const configuredExcludedXHandles = Array.from(
+    new Set(xSources.flatMap((source) => readStringArray(source.excludedXHandles)))
+  );
+  // Native search caps domain filters at five and X-handle filters at twenty. The
+  // installed SDK is patched to match xAI's documented 20-handle limit. Allowed and
+  // excluded filters are mutually exclusive, so an allowlist wins after subtracting
+  // excluded entries. If a legacy config exceeds a cap, omit that restriction instead
+  // of dropping only later source entries and creating a misleading partial translation.
+  const effectiveAllowedDomains = configuredAllowedDomains.filter(
+    (domain) => !configuredExcludedDomains.includes(domain)
+  );
+  const allowedDomains =
+    effectiveAllowedDomains.length > 0 && effectiveAllowedDomains.length <= 5
+      ? effectiveAllowedDomains
+      : undefined;
+  const excludedDomains =
+    allowedDomains == null &&
+    configuredExcludedDomains.length > 0 &&
+    configuredExcludedDomains.length <= 5
+      ? configuredExcludedDomains
+      : undefined;
+  const effectiveAllowedXHandles = configuredAllowedXHandles.filter(
+    (handle) => !configuredExcludedXHandles.includes(handle)
+  );
+  const allowedXHandles =
+    effectiveAllowedXHandles.length > 0 && effectiveAllowedXHandles.length <= 20
+      ? effectiveAllowedXHandles
+      : undefined;
+  const excludedXHandles =
+    allowedXHandles == null &&
+    configuredExcludedXHandles.length > 0 &&
+    configuredExcludedXHandles.length <= 20
+      ? configuredExcludedXHandles
+      : undefined;
+  const hasExplicitSources = sources.length > 0;
+  const enableWebSearch =
+    !hasExplicitSources ||
+    sources.some(
+      (source) => source.type === "web" || source.type === "news" || source.type === "rss"
+    );
+  const enableXSearch = !hasExplicitSources || xSources.length > 0;
+
+  return {
+    ...(enableWebSearch && {
+      webSearch: {
+        ...(allowedDomains != null && { allowedDomains }),
+        ...(excludedDomains != null && { excludedDomains }),
+      },
+    }),
+    ...(enableXSearch && {
+      xSearch: {
+        ...(allowedXHandles != null && { allowedXHandles }),
+        ...(excludedXHandles != null && { excludedXHandles }),
+        ...(fromDate != null && { fromDate }),
+        ...(toDate != null && { toDate }),
+      },
+    }),
+  };
+}
+
+export function getForcedXaiSearchToolNames(
+  modelString: string,
+  searchParameters: ToolConfiguration["xaiSearchParameters"]
+): string[] | undefined {
+  if (!isGrok45Model(modelString) || searchParameters?.mode !== "on") {
+    return undefined;
+  }
+
+  const nativeSearch = getXaiNativeSearchConfiguration(searchParameters);
+  const toolNames = [
+    ...(nativeSearch.webSearch != null ? ["web_search"] : []),
+    ...(nativeSearch.xSearch != null ? ["x_search"] : []),
+  ];
+  return toolNames.length > 0 ? toolNames : undefined;
+}
+
 export async function getToolsForModel(
   modelString: string,
   config: ToolConfiguration,
@@ -713,6 +895,23 @@ export async function getToolsForModel(
           allTools = {
             ...baseTools,
             ...sanitizedMcpTools,
+          };
+        }
+        break;
+      }
+
+      case "xai": {
+        if (isGrok45Model(modelString) && config.xaiNativeToolsEnabled !== false) {
+          const nativeSearch = getXaiNativeSearchConfiguration(config.xaiSearchParameters);
+          allTools = {
+            ...baseTools,
+            ...(mcpTools ?? {}),
+            ...(nativeSearch.webSearch != null && {
+              web_search: xai.tools.webSearch(nativeSearch.webSearch) as Tool,
+            }),
+            ...(nativeSearch.xSearch != null && {
+              x_search: xai.tools.xSearch(nativeSearch.xSearch) as Tool,
+            }),
           };
         }
         break;

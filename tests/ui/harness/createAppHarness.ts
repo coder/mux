@@ -46,6 +46,8 @@ export async function createAppHarness(options?: {
   branchPrefix?: string;
   aiMode?: "mock-router" | "none";
   runtimeConfig?: RuntimeConfig;
+  /** Configure backend state that must exist before the full app reads it. */
+  beforeRenderEnvironment?: (env: TestEnvironment) => void | Promise<void>;
   /**
    * Optional hook to set up DOM-dependent globals (e.g. localStorage) before
    * the App is rendered. Receives the created workspace id so tests can seed
@@ -66,6 +68,8 @@ export async function createAppHarness(options?: {
   let cleanupDom: (() => void) | undefined;
 
   try {
+    await options?.beforeRenderEnvironment?.(env);
+
     const trunkBranch = await detectDefaultTrunkBranch(repoPath);
     const branchName = generateBranchName(options?.branchPrefix ?? "ui");
 

@@ -3,7 +3,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { wrapLanguageModel, type LanguageModel } from "ai";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { isGrok45Model, type ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -20,7 +20,7 @@ import {
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import type { ServiceTier } from "@/common/config/schemas/providersConfig";
+import type { ServiceTier, XAIServiceTier } from "@/common/config/schemas/providersConfig";
 import type { ExternalSecretResolver } from "@/common/types/secrets";
 import { isOpReference } from "@/common/utils/opRef";
 import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
@@ -206,6 +206,43 @@ export function resolveOpenAIWebSocketResponsesUrl(baseURL: unknown): string | u
   url.search = "";
   url.hash = "";
   return url.toString();
+}
+
+/**
+ * Add xAI's service_tier request field until @ai-sdk/xai exposes it directly.
+ * Priority Processing is a scheduling/billing choice, not a separate model id.
+ */
+export function wrapFetchWithXAIServiceTier(
+  baseFetch: typeof fetch,
+  serviceTier?: XAIServiceTier
+): typeof fetch {
+  if (serviceTier == null) {
+    return baseFetch;
+  }
+
+  const tieredFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    if (init?.method?.toUpperCase() !== "POST" || typeof init.body !== "string") {
+      return baseFetch(input, init);
+    }
+
+    try {
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      const headers = new Headers(init.headers);
+      headers.delete("content-length");
+      return baseFetch(input, {
+        ...init,
+        headers,
+        body: JSON.stringify({ ...body, service_tier: serviceTier }),
+      });
+    } catch {
+      return baseFetch(input, init);
+    }
+  };
+
+  return Object.assign(tieredFetch, baseFetch) as typeof fetch;
 }
 
 type FetchWithBunExtensions = typeof fetch & {
@@ -1445,8 +1482,9 @@ export class ProviderModelFactory {
         const baseFetch = getProviderFetch(providerConfig);
         const { apiKey: _apiKey, baseURL, headers, ...extraOptions } = providerConfig;
 
-        const { searchParameters, ...restOptions } = extraOptions as {
+        const { searchParameters, serviceTier, ...restOptions } = extraOptions as {
           searchParameters?: Record<string, unknown>;
+          serviceTier?: unknown;
         } & Record<string, unknown>;
 
         if (searchParameters && muxProviderOptions) {
@@ -1459,8 +1497,12 @@ export class ProviderModelFactory {
           };
         }
 
+        const configuredServiceTier =
+          serviceTier === "default" || serviceTier === "priority" ? serviceTier : undefined;
+        const effectiveServiceTier = muxProviderOptions?.xai?.serviceTier ?? configuredServiceTier;
+
         const { createXai } = await PROVIDER_REGISTRY.xai();
-        const providerFetch = baseFetch;
+        const providerFetch = wrapFetchWithXAIServiceTier(baseFetch, effectiveServiceTier);
         const provider = createXai({
           apiKey: resolvedApiKey,
           baseURL: creds.baseUrl ?? baseURL,
@@ -1468,10 +1510,12 @@ export class ProviderModelFactory {
           ...restOptions,
           fetch: providerFetch,
         });
-        // AI SDK 7 switched xai(modelId) to the Responses API by default.
-        // Pin the Chat Completions API to preserve pre-upgrade behavior
-        // (e.g. providerOptions.xai.searchParameters routing).
-        return Ok(provider.chat(modelId));
+        // Grok 4.5 uses the Responses API so @ai-sdk/xai surfaces exact billed
+        // cost metadata (including Priority Processing). Keep older custom model
+        // strings on Chat Completions for legacy search_parameters compatibility.
+        return Ok(
+          isGrok45Model(`xai:${modelId}`) ? provider.responses(modelId) : provider.chat(modelId)
+        );
       }
 
       // Handle Ollama provider
