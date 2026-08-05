@@ -8,9 +8,9 @@ import {
 
 describe("reasoningProviderOptionsFromMetadata", () => {
   test("maps Anthropic signatures", () => {
-    expect(
-      reasoningProviderOptionsFromMetadata({ anthropic: { signature: "sig_abc" } })
-    ).toEqual({ anthropic: { signature: "sig_abc" } });
+    expect(reasoningProviderOptionsFromMetadata({ anthropic: { signature: "sig_abc" } })).toEqual({
+      anthropic: { signature: "sig_abc" },
+    });
   });
 
   test("maps xAI encrypted reasoning used for ZDR multi-turn quality", () => {
