@@ -92,7 +92,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
         | undefined;
       expect(typeof xaiMetadata?.costInUsdTicks).toBe("number");
       expect(xaiMetadata?.costInUsdTicks).toBeGreaterThan(0);
-      expect(collector.getDeltas().join("").trim().length).toBeGreaterThan(0);
+      expect(collector.getStreamContent().trim().length).toBeGreaterThan(0);
     } finally {
       collector.stop();
       await cleanup();
@@ -135,7 +135,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
 
       const firstEnd = await waitForTerminal(firstCollector, 90_000);
       assertStreamSuccess(firstCollector);
-      expect(firstCollector.getDeltas().join("")).toMatch(/READY/i);
+      expect(firstCollector.getStreamContent()).toMatch(/READY/i);
       firstCollector.stop();
 
       // Prove encrypted reasoning landed in persisted history under store=false.
@@ -171,8 +171,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
       await waitForTerminal(secondCollector, 90_000);
       assertStreamSuccess(secondCollector);
 
-      const secondText = secondCollector.getDeltas().join("");
-      expect(secondText).toMatch(/MUXZDR42/);
+      expect(secondCollector.getStreamContent()).toMatch(/MUXZDR42/);
       expect(firstEnd.metadata.model).toBe(KNOWN_MODELS.GROK_45.id);
       secondCollector.stop();
     } finally {
