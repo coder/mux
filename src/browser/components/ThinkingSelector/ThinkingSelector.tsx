@@ -7,6 +7,7 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { useRouting } from "@/browser/hooks/useRouting";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { getThinkingDisplayLabel, getThinkingOptionLabel } from "@/common/types/thinking";
@@ -20,6 +21,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 
 interface ThinkingSelectorProps {
   modelString: string;
+  /** Some embedded clients do not expose provider configuration mutations. */
+  allowFastMode?: boolean;
 }
 
 export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
@@ -53,7 +56,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
     providersConfig,
     resolvedRouteProvider: resolvedRoute,
   });
-  const fastModeAvailable = directOpenAIOptionsAvailable;
+  const fastModeAvailable = props.allowFastMode !== false && directOpenAIOptionsAvailable;
   const proModeActive = proModeAvailable && reasoningMode === "pro";
   const fastModeActive = fastModeAvailable && providersConfig?.openai?.serviceTier === "priority";
   const hasMenu = allowed.length > 1 || proModeAvailable || fastModeAvailable;
@@ -125,7 +128,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
       onKeyDown={(event) => {
         if (event.key === "Escape" && isOpen) {
           event.preventDefault();
-          event.stopPropagation();
+          stopKeyboardPropagation(event);
           setIsOpen(false);
         }
       }}

@@ -98,6 +98,21 @@ describeIntegration("Thinking selector", () => {
       await selectModel(container, harness.workspaceId, SOL_MODEL);
 
       let menu = await openThinkingSelector(container);
+      let escapeReachedWindow = false;
+      const handleWindowKeyDown = () => {
+        escapeReachedWindow = true;
+      };
+      window.addEventListener("keydown", handleWindowKeyDown);
+      fireEvent.keyDown(menu, { key: "Escape" });
+      window.removeEventListener("keydown", handleWindowKeyDown);
+      if (escapeReachedWindow) {
+        throw new Error("Selector Escape reached the native window listener");
+      }
+      if (container.querySelector('[data-component="ThinkingSelectorMenu"]')) {
+        throw new Error("Thinking selector did not close on Escape");
+      }
+
+      menu = await openThinkingSelector(container);
       const highOption = within(menu).getByRole("option", { name: "high" });
       fireEvent.click(highOption);
       await waitFor(() => {
