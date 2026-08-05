@@ -1080,6 +1080,25 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
     await fastAction?.run();
     expect(onToggleFastMode).toHaveBeenCalledTimes(1);
 
+    const creationScopeId = "project:/repo/a";
+    window.localStorage.setItem(getModelKey(creationScopeId), JSON.stringify("openai:gpt-5.6-sol"));
+    const creationActions = getActions({
+      selectedWorkspace: null,
+      selectedWorkspaceState: null,
+      creationScopeId,
+      providersConfig: {
+        openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      },
+      getRouteForModel: () => "direct",
+      onToggleFastMode,
+    });
+    const creationFastAction = creationActions.find(
+      (action) => action.id === "thinking:toggle-fast-mode"
+    );
+    expect(creationFastAction?.shortcutHint).toBeDefined();
+    await creationFastAction?.run();
+    expect(onToggleFastMode).toHaveBeenCalledTimes(2);
+
     const unloadedActions = getActions({
       selectedWorkspaceState: {
         lifecycle: "active",

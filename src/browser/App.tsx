@@ -248,6 +248,7 @@ function AppInner() {
   }, [sidebarCollapsed]);
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
+  const creationScopeId = creationProjectPath ? getProjectScopeId(creationProjectPath) : null;
 
   // History navigation (back/forward)
   const navigate = useNavigate();
@@ -658,9 +659,7 @@ function AppInner() {
   const fastModeToggleInFlightRef = useRef(false);
   const fastModeActive = providersConfig?.openai?.serviceTier === "priority";
   const toggleFastMode = useCallback(async () => {
-    const scopeId =
-      selectedWorkspace?.workspaceId ??
-      (creationProjectPath ? getProjectScopeId(creationProjectPath) : null);
+    const scopeId = selectedWorkspace?.workspaceId ?? creationScopeId;
     if (!api || !scopeId || providersConfig == null || fastModeToggleInFlightRef.current) return;
 
     // Creation composers use the same project-scoped model preference as their selector,
@@ -700,7 +699,7 @@ function AppInner() {
     }
   }, [
     api,
-    creationProjectPath,
+    creationScopeId,
     getModelForWorkspace,
     getRouteForModel,
     providersConfig,
@@ -943,6 +942,7 @@ function AppInner() {
     userProjects,
     workspaceMetadata,
     selectedWorkspace,
+    creationScopeId,
     themePreference,
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,

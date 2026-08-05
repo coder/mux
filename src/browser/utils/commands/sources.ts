@@ -86,6 +86,8 @@ export interface BuildSourcesParams {
     namedWorkspacePath: string;
     workspaceId: string;
   } | null;
+  /** Project-scoped preference ID used while a creation composer is active. */
+  creationScopeId?: string | null;
   streamingModels?: Map<string, string>;
   // UI actions
   getThinkingLevel: (workspaceId: string) => ThinkingLevel;
@@ -1224,6 +1226,32 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     ];
 
     const selectedWorkspace = p.selectedWorkspace;
+    const providerOptionScopeId = selectedWorkspace?.workspaceId ?? p.creationScopeId;
+    const persistedSelectionModel =
+      providerOptionScopeId && typeof window !== "undefined"
+        ? getSendOptionsFromStorage(providerOptionScopeId).model || undefined
+        : undefined;
+    const currentModelString = p.selectedWorkspaceState?.currentModel;
+    const providerOptionGateModel = persistedSelectionModel ?? currentModelString;
+    const providerOptionRoute = providerOptionGateModel
+      ? p.getRouteForModel?.(normalizeToCanonical(providerOptionGateModel))
+      : undefined;
+    const fastModeAction: CommandAction | null =
+      p.providersConfig != null &&
+      openaiDirectProviderOptionsAvailable(providerOptionGateModel ?? "", {
+        providersConfig: p.providersConfig,
+        resolvedRouteProvider: providerOptionRoute,
+      })
+        ? {
+            id: CommandIds.toggleFastMode(),
+            title: "Toggle Fast Mode",
+            subtitle: `Current: ${p.getFastMode() ? "Fast — faster responses at higher cost" : "Standard"}`,
+            section: section.mode,
+            shortcutHint: formatKeybind(KEYBINDS.TOGGLE_FAST_MODE),
+            run: p.onToggleFastMode,
+          }
+        : null;
+
     if (selectedWorkspace) {
       const { workspaceId } = selectedWorkspace;
       const levelDescriptions: Record<ThinkingLevel, string> = {
@@ -1236,7 +1264,6 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       };
       // Display the floored level so it matches the selector (e.g. a stored "off" with a
       // medium floor reads as "medium").
-      const currentModelString = p.selectedWorkspaceState?.currentModel;
       const rawCurrentLevel = p.getThinkingLevel(workspaceId);
       // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
       // resolve to the target's ladder, matching the selector and send path.
@@ -1308,31 +1335,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       });
 
-      const persistedSelectionModel =
-        typeof window === "undefined"
-          ? undefined
-          : getSendOptionsFromStorage(workspaceId).model || undefined;
-      const providerOptionGateModel = persistedSelectionModel ?? currentModelString;
-      const providerOptionRoute = providerOptionGateModel
-        ? p.getRouteForModel?.(normalizeToCanonical(providerOptionGateModel))
-        : undefined;
-
-      if (
-        p.providersConfig != null &&
-        openaiDirectProviderOptionsAvailable(providerOptionGateModel ?? "", {
-          providersConfig: p.providersConfig,
-          resolvedRouteProvider: providerOptionRoute,
-        })
-      ) {
-        const fastActive = p.getFastMode();
-        list.push({
-          id: CommandIds.toggleFastMode(),
-          title: "Toggle Fast Mode",
-          subtitle: `Current: ${fastActive ? "Fast — faster responses at higher cost" : "Standard"}`,
-          section: section.mode,
-          shortcutHint: formatKeybind(KEYBINDS.TOGGLE_FAST_MODE),
-          run: p.onToggleFastMode,
-        });
+      if (fastModeAction) {
+        list.push(fastModeAction);
       }
 
       // Pro reasoning mode is only meaningful for models that support it
@@ -1363,6 +1367,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           },
         });
       }
+    } else if (fastModeAction) {
+      // Creation composers use their project-scoped model preference before a workspace exists.
+      list.push(fastModeAction);
     }
 
     return list;
