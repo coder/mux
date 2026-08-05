@@ -3205,7 +3205,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "",
       "### Pro reasoning mode (GPT-5.6)",
       "",
-      'Every GPT-5.6 model (Sol, Terra, and Luna) supports OpenAI\'s pro reasoning mode. Toggle the **PRO** badge next to the thinking slider (or run "Toggle Pro Reasoning Mode" from the Command Palette) to send `reasoning.mode: "pro"` with each request. The setting is saved per workspace. Pro mode uses the same per-token pricing but consumes more tokens and responses can take noticeably longer. Requests routed through non-passthrough gateways (e.g. OpenRouter, GitHub Copilot) fall back to standard mode.',
+      'Every GPT-5.6 model (Sol, Terra, and Luna) supports OpenAI\'s pro reasoning mode. Open the reasoning selector next to the model picker and enable **Pro mode** (or run "Toggle Pro Reasoning Mode" from the Command Palette) to send `reasoning.mode: "pro"` with each request. The setting is saved per workspace. Pro mode uses the same per-token pricing but consumes more tokens and responses can take noticeably longer. Requests routed through non-passthrough gateways (e.g. OpenRouter, GitHub Copilot) fall back to standard mode.',
       "",
       "## Model Selection",
       "",

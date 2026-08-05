@@ -10,7 +10,7 @@ import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
-import { getThinkingDisplayLabel, getThinkingOptionLabel } from "@/common/types/thinking";
+import { getThinkingDisplayLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { openaiProModeAvailable } from "@/common/utils/ai/proMode";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
@@ -18,6 +18,15 @@ import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/util
 import { COMPOSER_PRO_HIDE_CLASS } from "@/constants/layout";
 import { COMPOSER_PICKER_PANEL_CLASS, composerPickerOptionClass } from "../composerPickerStyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
+
+const THINKING_OPTION_LABELS: Record<ThinkingLevel, string> = {
+  off: "Off",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Maximum",
+};
 
 interface ThinkingSelectorProps {
   modelString: string;
@@ -142,13 +151,13 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
           <button
             type="button"
             data-thinking-selector-trigger
-            className="text-foreground hover:bg-hover focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-1 rounded-sm bg-transparent px-0.5 py-0 text-[11px] font-medium transition-colors focus-visible:ring-1"
+            className="text-foreground hover:bg-hover focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-0.5 rounded-sm bg-transparent py-0 pr-0.5 text-[11px] font-medium transition-colors focus-visible:ring-1"
             aria-expanded={isOpen}
             aria-haspopup="listbox"
             aria-label={`Thinking: ${effectiveThinkingLevel}${proModeActive ? ", pro mode" : ""}${fastModeActive ? ", fast mode" : ""}`}
             onClick={() => setIsOpen((previous) => !previous)}
           >
-            <span data-thinking-label className="w-[5ch] text-center">
+            <span data-thinking-label className="min-w-[3ch] text-center">
               {displayLabel}
             </span>
             {proModeActive && (
@@ -162,7 +171,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
             {fastModeActive && (
               <Zap
                 data-fast-mode-indicator
-                className="text-thinking-mode h-3 w-3 shrink-0"
+                className="text-warning h-3 w-3 shrink-0"
                 fill="currentColor"
                 aria-label="Fast mode enabled"
               />
@@ -189,15 +198,15 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
       {isOpen && (
         <div
           className={cn(
-            "absolute right-0 bottom-full z-[1020] mb-1 w-64",
+            "absolute right-0 bottom-full z-[1020] mb-1 w-60 [@container(max-width:500px)]:right-auto [@container(max-width:500px)]:left-0",
             COMPOSER_PICKER_PANEL_CLASS
           )}
           data-component="ThinkingSelectorMenu"
         >
           <div className="text-muted border-border-light border-b px-2.5 py-1.5 text-[10px] font-semibold tracking-wide uppercase">
-            Thinking effort
+            Reasoning effort
           </div>
-          <div className="py-1" role="listbox" aria-label="Thinking effort">
+          <div className="py-1" role="listbox" aria-label="Reasoning effort">
             {allowed.map((level) => {
               const selected = level === effectiveThinkingLevel;
               return (
@@ -205,6 +214,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                   key={level}
                   type="button"
                   role="option"
+                  aria-label={THINKING_OPTION_LABELS[level]}
                   aria-selected={selected}
                   className={composerPickerOptionClass(
                     { isHighlighted: false, isSelected: selected },
@@ -215,10 +225,10 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                     setIsOpen(false);
                   }}
                 >
-                  <span className="flex-1 capitalize">
-                    {getThinkingOptionLabel(level, props.modelString)}
+                  <span className="text-foreground min-w-0 flex-1">
+                    {THINKING_OPTION_LABELS[level]}
                   </span>
-                  {selected && <Check className="text-accent h-3 w-3" aria-hidden />}
+                  {selected && <Check className="text-accent h-3 w-3 shrink-0" aria-hidden />}
                 </button>
               );
             })}
@@ -236,8 +246,8 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                 >
                   <span className="min-w-0 flex-1">
                     <span className="text-foreground block text-[11px] font-medium">Pro mode</span>
-                    <span className="text-muted block text-[10px]">
-                      Slower, more thorough reasoning
+                    <span className="text-muted block text-[10px] font-normal">
+                      More reliable on difficult tasks
                     </span>
                   </span>
                   {proModeActive && <Check className="text-thinking-mode h-3 w-3" aria-hidden />}
@@ -255,21 +265,22 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                     handleFastModeToggle().catch(() => undefined);
                   }}
                 >
-                  <Zap
-                    className={cn(
-                      "h-3.5 w-3.5 shrink-0",
-                      fastModeActive ? "text-thinking-mode" : "text-muted"
-                    )}
-                    fill={fastModeActive ? "currentColor" : "none"}
-                    aria-hidden
-                  />
                   <span className="min-w-0 flex-1">
-                    <span className="text-foreground block text-[11px] font-medium">Fast mode</span>
-                    <span className="text-muted block text-[10px]">
-                      Lower latency, higher OpenAI cost
+                    <span
+                      className={cn(
+                        "block text-[11px] font-medium",
+                        fastModeActive ? "text-warning" : "text-foreground"
+                      )}
+                    >
+                      Fast mode
+                    </span>
+                    <span className="text-muted block text-[10px] font-normal">
+                      Faster responses at higher cost
                     </span>
                   </span>
-                  {fastModeActive && <Check className="text-thinking-mode h-3 w-3" aria-hidden />}
+                  {fastModeActive && (
+                    <Check className="text-warning h-3 w-3 shrink-0" aria-hidden />
+                  )}
                 </button>
               )}
             </div>

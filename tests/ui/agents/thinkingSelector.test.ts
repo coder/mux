@@ -113,7 +113,7 @@ describeIntegration("Thinking selector", () => {
       }
 
       menu = await openThinkingSelector(container);
-      const highOption = within(menu).getByRole("option", { name: "high" });
+      const highOption = within(menu).getByRole("option", { name: "High" });
       fireEvent.click(highOption);
       await waitFor(() => {
         const label = container.querySelector("[data-thinking-label]")?.textContent?.trim();

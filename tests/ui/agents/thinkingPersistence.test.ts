@@ -115,7 +115,7 @@ async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
     if (!menu) {
       throw new Error("Thinking selector menu not found");
     }
-    return within(menu).getByRole("option", { name: "xhigh" });
+    return within(menu).getByRole("option", { name: "Extra High" });
   });
   fireEvent.click(option);
 }
