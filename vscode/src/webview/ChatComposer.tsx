@@ -365,7 +365,7 @@ function ChatComposerInner(props: {
 
         <div className="@container flex items-center justify-between gap-2">
           <div className="flex shrink-0 items-center overflow-visible">
-            <ThinkingSelector modelString={baseModel} allowFastMode={false} />
+            <ThinkingSelector modelString={baseModel} allowProMode={false} allowFastMode={false} />
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">

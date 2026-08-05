@@ -21,6 +21,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
 
 interface ThinkingSelectorProps {
   modelString: string;
+  /** Some embedded clients cannot resolve route-aware provider options safely. */
+  allowProMode?: boolean;
   /** Some embedded clients do not expose provider configuration mutations. */
   allowFastMode?: boolean;
 }
@@ -52,10 +54,12 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
     providersConfig,
     resolvedRouteProvider: resolvedRoute,
   });
-  const proModeAvailable = openaiProModeAvailable(props.modelString, {
-    providersConfig,
-    resolvedRouteProvider: resolvedRoute,
-  });
+  const proModeAvailable =
+    props.allowProMode !== false &&
+    openaiProModeAvailable(props.modelString, {
+      providersConfig,
+      resolvedRouteProvider: resolvedRoute,
+    });
   const fastModeAvailable = props.allowFastMode !== false && directOpenAIOptionsAvailable;
   const proModeActive = proModeAvailable && reasoningMode === "pro";
   const fastModeActive = fastModeAvailable && providersConfig?.openai?.serviceTier === "priority";
