@@ -988,7 +988,7 @@ const AUTO_PUBLISHED_RECURSIVE_FILE = /\.(?:md|mdx|markdown|txt)$/i;
 
 /** A name promising credentials earns review even when the extension is documentation. */
 const CREDENTIAL_PATH_HINT =
-  /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|apikey|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
+  /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|(?:api|private)(?:[^a-z/]+)?keys?|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
 
 function isRecursivelyCollected(filePath: string): boolean {
   return filePath.startsWith("skills/") || filePath.startsWith("memory/global/");

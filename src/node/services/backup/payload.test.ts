@@ -2051,11 +2051,21 @@ describe("backup payload", () => {
     }
   });
 
-  it("holds back recursive files that are not documentation, whatever they contain", async () => {
+  it("holds back non-documentation and credential-named recursive files", async () => {
     await write(muxRoot, "skills/demo/SKILL.md", "a normal skill\n");
+    await write(muxRoot, "skills/api/key.md", "ordinary documentation\n");
+    await write(muxRoot, "skills/private/key.md", "ordinary documentation\n");
     await write(muxRoot, "memory/global/notes.md", "a normal note\n");
     await write(muxRoot, "skills/demo/credentials.json", '{"password":"hunter2"}\n');
     await write(muxRoot, "skills/demo/config.yaml", "api_key: abc123\n");
+    await write(muxRoot, "skills/demo/private-key.txt", "hunter2\n");
+    await write(muxRoot, "skills/demo/private-keys.txt", "hunter2\n");
+    await write(muxRoot, "skills/demo/private_key.txt", "hunter2\n");
+    await write(muxRoot, "skills/demo/privatekey.txt", "hunter2\n");
+    await write(muxRoot, "memory/global/api-key.txt", "hunter2\n");
+    await write(muxRoot, "memory/global/api-keys.txt", "hunter2\n");
+    await write(muxRoot, "memory/global/api_key.txt", "hunter2\n");
+    await write(muxRoot, "memory/global/apikey.txt", "hunter2\n");
     await write(muxRoot, "memory/global/passwords.md", "bank: correct-horse\n");
 
     const payload = await createBackupPayload({
@@ -2065,10 +2075,22 @@ describe("backup payload", () => {
       reportSecrets: true,
     });
 
+    const payloadPaths = payload.files.map((file) => file.path);
+    expect(payloadPaths).toContain("skills/api/key.md");
+    expect(payloadPaths).toContain("skills/private/key.md");
+
     expect(scanBackupFilesForSecrets(payload.files)).toEqual([
+      "memory/global/api-key.txt",
+      "memory/global/api-keys.txt",
+      "memory/global/api_key.txt",
+      "memory/global/apikey.txt",
       "memory/global/passwords.md",
       "skills/demo/config.yaml",
       "skills/demo/credentials.json",
+      "skills/demo/private-key.txt",
+      "skills/demo/private-keys.txt",
+      "skills/demo/private_key.txt",
+      "skills/demo/privatekey.txt",
     ]);
   });
 
