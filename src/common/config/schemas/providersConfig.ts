@@ -6,6 +6,8 @@ import { ProviderModelEntrySchema } from "./providerModelEntry";
 export const CacheTtlSchema = z.enum(["5m", "1h"]);
 export const ServiceTierSchema = z.enum(["auto", "default", "flex", "priority"]);
 export type ServiceTier = z.infer<typeof ServiceTierSchema>;
+export const FastModePreviousServiceTierSchema = z.enum(["auto", "default", "flex", "unset"]);
+export type FastModePreviousServiceTier = z.infer<typeof FastModePreviousServiceTierSchema>;
 export const CodexOauthDefaultAuthSchema = z.enum(["oauth", "apiKey"]);
 
 export const BaseProviderConfigSchema = z
@@ -30,6 +32,7 @@ export const AnthropicProviderConfigSchema = BaseProviderConfigSchema.extend({
 
 export const OpenAIProviderConfigSchema = BaseProviderConfigSchema.extend({
   serviceTier: ServiceTierSchema.optional(),
+  fastModePreviousServiceTier: FastModePreviousServiceTierSchema.optional(),
   organization: z.string().optional(),
   codexOauthDefaultAuth: CodexOauthDefaultAuthSchema.optional(),
   codexOauth: z.record(z.string(), z.unknown()).optional(),

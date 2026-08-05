@@ -60,11 +60,6 @@ export const POWER_MODE_ENABLED_KEY = "powerModeEnabled";
 export const LAST_CUSTOM_MODEL_PROVIDER_KEY = "lastCustomModelProvider";
 
 /**
- * Provider service tier to restore after temporarily disabling Fast mode.
- */
-export const FAST_MODE_PREVIOUS_SERVICE_TIER_KEY = "fastModePreviousServiceTier";
-
-/**
  * Get the localStorage key for the currently selected workspace (global)
  * Format: "selectedWorkspace"
  */

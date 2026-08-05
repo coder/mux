@@ -305,6 +305,7 @@ export class ProviderService {
         baseURL?: string;
         models?: unknown[];
         serviceTier?: string;
+        fastModePreviousServiceTier?: unknown;
         wireFormat?: string;
         store?: unknown;
         webSocketTransportEnabled?: unknown;
@@ -370,6 +371,17 @@ export class ProviderService {
           serviceTier === "priority")
       ) {
         providerInfo.serviceTier = serviceTier;
+      }
+
+      const fastModePreviousServiceTier = config.fastModePreviousServiceTier;
+      if (
+        provider === "openai" &&
+        (fastModePreviousServiceTier === "auto" ||
+          fastModePreviousServiceTier === "default" ||
+          fastModePreviousServiceTier === "flex" ||
+          fastModePreviousServiceTier === "unset")
+      ) {
+        providerInfo.fastModePreviousServiceTier = fastModePreviousServiceTier;
       }
 
       // OpenAI-specific: wire format (responses vs chatCompletions)

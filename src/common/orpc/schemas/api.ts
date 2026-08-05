@@ -127,6 +127,7 @@ import {
 import {
   CacheTtlSchema,
   CodexOauthDefaultAuthSchema,
+  FastModePreviousServiceTierSchema,
   ServiceTierSchema,
 } from "../../config/schemas/providersConfig";
 import { ProviderModelEntrySchema } from "../../config/schemas/providerModelEntry";
@@ -248,6 +249,7 @@ export const ProviderConfigInfoSchema = z.object({
   models: z.array(ProviderModelEntrySchema).optional(),
   /** OpenAI-specific fields */
   serviceTier: ServiceTierSchema.optional(),
+  fastModePreviousServiceTier: FastModePreviousServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
   store: z.boolean().optional(),
   webSocketTransportEnabled: z.boolean().optional(),

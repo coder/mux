@@ -153,6 +153,22 @@ describe("ProviderService.getConfig", () => {
       baseChecks: true,
     },
     {
+      name: "surfaces a valid Fast-mode restore tier",
+      openai: { fastModePreviousServiceTier: "flex" },
+      property: "fastModePreviousServiceTier",
+      expected: "flex",
+      ownsProperty: true,
+      baseChecks: false,
+    },
+    {
+      name: "omits an invalid Fast-mode restore tier",
+      openai: { fastModePreviousServiceTier: "priority" },
+      property: "fastModePreviousServiceTier",
+      expected: undefined,
+      ownsProperty: false,
+      baseChecks: false,
+    },
+    {
       name: "surfaces valid OpenAI wireFormat",
       openai: { wireFormat: "chatCompletions" },
       property: "wireFormat",

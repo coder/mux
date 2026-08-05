@@ -1,23 +1,24 @@
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { FAST_MODE_PREVIOUS_SERVICE_TIER_KEY } from "@/common/constants/storage";
-import type { ServiceTier } from "@/common/config/schemas/providersConfig";
-
-type RestorableServiceTier = Exclude<ServiceTier, "priority">;
-type PersistedPreviousServiceTier = RestorableServiceTier | "unset";
+import type { APIClient } from "@/browser/contexts/API";
+import type {
+  FastModePreviousServiceTier,
+  ServiceTier,
+} from "@/common/config/schemas/providersConfig";
 
 export interface FastModeServiceTierChange {
   apiValue: ServiceTier | "";
   serviceTier: ServiceTier | undefined;
-  previousServiceTier: PersistedPreviousServiceTier | undefined;
+  previousServiceTier: FastModePreviousServiceTier | undefined;
 }
 
+type ProviderConfigWriter = Pick<APIClient["providers"], "setProviderConfig">;
+
 /**
- * Fast mode is a temporary priority-tier override. Remember the user's current
- * non-priority tier so turning Fast off restores flex/default/unset instead of
- * silently replacing it with auto.
+ * Fast mode is a temporary priority-tier override. The restore target lives in
+ * providers.jsonc so every browser origin and desktop client observes the same state.
  */
 export function getFastModeServiceTierChange(
-  currentServiceTier: ServiceTier | undefined
+  currentServiceTier: ServiceTier | undefined,
+  previousServiceTier?: FastModePreviousServiceTier
 ): FastModeServiceTierChange {
   if (currentServiceTier !== "priority") {
     return {
@@ -27,18 +28,46 @@ export function getFastModeServiceTierChange(
     };
   }
 
-  const previousServiceTier = readPersistedState<PersistedPreviousServiceTier>(
-    FAST_MODE_PREVIOUS_SERVICE_TIER_KEY,
-    "auto"
-  );
+  const restoreServiceTier = previousServiceTier ?? "auto";
   return {
-    apiValue: previousServiceTier === "unset" ? "" : previousServiceTier,
-    serviceTier: previousServiceTier === "unset" ? undefined : previousServiceTier,
+    apiValue: restoreServiceTier === "unset" ? "" : restoreServiceTier,
+    serviceTier: restoreServiceTier === "unset" ? undefined : restoreServiceTier,
     previousServiceTier: undefined,
   };
 }
 
-/** Persist the restore target only after the provider config mutation succeeds. */
-export function commitFastModeServiceTierChange(change: FastModeServiceTierChange): void {
-  updatePersistedState(FAST_MODE_PREVIOUS_SERVICE_TIER_KEY, change.previousServiceTier);
+/** Persist the shared restore target and service-tier override in a safe order. */
+export async function applyFastModeServiceTierChange(
+  providers: ProviderConfigWriter,
+  currentServiceTier: ServiceTier | undefined,
+  previousServiceTier?: FastModePreviousServiceTier
+): Promise<FastModeServiceTierChange | null> {
+  const change = getFastModeServiceTierChange(currentServiceTier, previousServiceTier);
+
+  if (currentServiceTier !== "priority") {
+    const rememberResult = await providers.setProviderConfig({
+      provider: "openai",
+      keyPath: ["fastModePreviousServiceTier"],
+      value: change.previousServiceTier ?? "unset",
+    });
+    if (!rememberResult.success) return null;
+  }
+
+  const tierResult = await providers.setProviderConfig({
+    provider: "openai",
+    keyPath: ["serviceTier"],
+    value: change.apiValue,
+  });
+  if (!tierResult.success) return null;
+
+  if (currentServiceTier === "priority") {
+    const clearResult = await providers.setProviderConfig({
+      provider: "openai",
+      keyPath: ["fastModePreviousServiceTier"],
+      value: "",
+    });
+    if (!clearResult.success) return null;
+  }
+
+  return change;
 }
