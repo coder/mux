@@ -67,6 +67,21 @@ describe("BackupRepoCache", () => {
     });
   }
 
+  async function createSha256Origin(name: string, seedContent?: string): Promise<string> {
+    const origin = path.join(tempDir, `${name}.git`);
+    await git(["init", "--bare", "--object-format=sha256", "--initial-branch=main", origin]);
+    if (seedContent == null) return origin;
+
+    const seed = path.join(tempDir, `${name}-seed`);
+    await git(["clone", origin, seed]);
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), seedContent, "utf-8");
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
+    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    return origin;
+  }
+
   it("uses filtered transport for a local repository", async () => {
     const seed = path.join(tempDir, "local-clone-seed");
     await git(["clone", originPath, seed]);
@@ -98,16 +113,7 @@ describe("BackupRepoCache", () => {
   });
 
   it("recovers malformed cache config without losing SHA-256 object format", async () => {
-    const shaOrigin = path.join(tempDir, "sha256-origin.git");
-    await git(["init", "--bare", "--object-format=sha256", "--initial-branch=main", shaOrigin]);
-    const seed = path.join(tempDir, "sha256-seed");
-    await git(["clone", shaOrigin, seed]);
-    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
-    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "sha256 managed\n", "utf-8");
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
-    await git(["-C", seed, "push", "origin", "HEAD:main"]);
-
+    const shaOrigin = await createSha256Origin("sha256-origin", "sha256 managed\n");
     const repo = new BackupRepoCache({
       repoUrl: shaOrigin,
       branch: "main",
@@ -127,6 +133,80 @@ describe("BackupRepoCache", () => {
     expect(await fs.readFile(path.join(repo.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
       "sha256 managed\n"
     );
+  });
+
+  it("creates a missing backup branch with the remote's SHA-256 object format", async () => {
+    const shaOrigin = await createSha256Origin("sha256-new-branch", "existing branch\n");
+    const repo = new BackupRepoCache({
+      repoUrl: shaOrigin,
+      branch: "backup",
+      cacheRoot,
+      managedPath: "mux",
+    });
+
+    await repo.ensureCache();
+    expect(await repo.fetch()).toBeNull();
+    expect(await repo.resetHardToRemote()).toBeNull();
+    await writeManagedFile(repo, "AGENTS.md", "first backup\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected the bootstrap commit");
+
+    expect(commit).toMatch(/^[0-9a-f]{64}$/);
+    expect(await repo.push()).toBe(commit);
+    expect(await git(["--git-dir", shaOrigin, "rev-parse", "refs/heads/backup"])).toBe(commit);
+  });
+
+  it("creates a missing SHA-1 branch despite a SHA-256 init default", async () => {
+    const seed = path.join(tempDir, "sha1-new-branch-seed");
+    await git(["clone", originPath, seed]);
+    await fs.writeFile(path.join(seed, "existing.txt"), "existing branch\n", "utf-8");
+    await git(["-C", seed, "add", "-A"]);
+    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
+    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "backup",
+      cacheRoot,
+      managedPath: "mux",
+      env: {
+        ...process.env,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "init.defaultObjectFormat",
+        GIT_CONFIG_VALUE_0: "sha256",
+      },
+    });
+
+    await repo.ensureCache();
+    expect(await repo.fetch()).toBeNull();
+    expect(await repo.resetHardToRemote()).toBeNull();
+    await writeManagedFile(repo, "AGENTS.md", "first backup\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected the bootstrap commit");
+
+    expect(commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(await repo.push()).toBe(commit);
+    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/backup"])).toBe(commit);
+  });
+
+  it("creates a first backup in an empty SHA-256 repository", async () => {
+    const shaOrigin = await createSha256Origin("sha256-empty");
+    const repo = new BackupRepoCache({
+      repoUrl: shaOrigin,
+      branch: "backup",
+      cacheRoot,
+      managedPath: "mux",
+    });
+
+    await repo.ensureCache();
+    expect(await repo.fetch()).toBeNull();
+    expect(await repo.resetHardToRemote()).toBeNull();
+    await writeManagedFile(repo, "AGENTS.md", "first backup\n");
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected the bootstrap commit");
+
+    expect(commit).toMatch(/^[0-9a-f]{64}$/);
+    expect(await repo.push()).toBe(commit);
+    expect(await git(["--git-dir", shaOrigin, "rev-parse", "refs/heads/backup"])).toBe(commit);
   });
 
   it("materializes a blob-filtered clone through the credential ladder", async () => {

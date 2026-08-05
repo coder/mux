@@ -117,6 +117,23 @@ export interface RemoteRefs {
   refs: ReadonlyMap<string, string>;
 }
 
+type GitObjectFormat = "sha1" | "sha256";
+
+function objectFormatFromRefs(refs: ReadonlyMap<string, string>): GitObjectFormat | null {
+  let format: GitObjectFormat | null = null;
+  for (const objectId of refs.values()) {
+    const nextFormat = objectId.length === 40 ? "sha1" : objectId.length === 64 ? "sha256" : null;
+    if (nextFormat === null) {
+      throw new Error(`Remote advertised an unsupported Git object ID length: ${objectId.length}`);
+    }
+    if (format !== null && format !== nextFormat) {
+      throw new Error("Remote advertised mixed Git object formats");
+    }
+    format = nextFormat;
+  }
+  return format;
+}
+
 /**
  * `--no-cone` sparse patterns are gitignore-style rather than pathspecs, so the same
  * managed directory has to be escaped instead: unescaped, `/mux[1]/*` selects `mux1` and
@@ -505,22 +522,21 @@ export class BackupRepoCache {
    * interrupted partway is repaired on the next run rather than leaving a `.git` that fails
    * checks forever.
    */
-  private async initEmptyCache(): Promise<void> {
+  private async initEmptyCache(objectFormat: GitObjectFormat): Promise<void> {
     // `init <dir>` creates the directory, so this runs before `localGit` has one to -C into.
     await runLocalGit(
-      ["init", "--initial-branch", this.options.branch, this.cachePath],
+      [
+        "init",
+        `--object-format=${objectFormat}`,
+        "--initial-branch",
+        this.options.branch,
+        this.cachePath,
+      ],
       this.options
     );
   }
 
-  private async createCache(): Promise<void> {
-    if ((await this.lsRemote()).branchCommit === null) {
-      // Cloning a nonexistent branch fails. An empty local repository lets the first backup
-      // create it without downloading unrelated history.
-      await this.initEmptyCache();
-      return;
-    }
-
+  private async cloneCache(branch?: string): Promise<void> {
     // `--no-checkout` defers materialization until `resetHardToRemote` applies sparse checkout.
     // Local paths need the upload-pack transport so blob filtering is honored instead of
     // Git copying the full object database before sparse checkout can limit the worktree.
@@ -531,13 +547,31 @@ export class BackupRepoCache {
       "--no-checkout",
       "--single-branch",
       `--filter=${BLOB_FILTER}`,
-      "--branch",
-      this.options.branch,
+      ...(branch === undefined ? [] : ["--branch", branch]),
       "--origin",
       "origin",
       this.repoUrl,
       this.cachePath,
     ]);
+  }
+
+  private async createCache(): Promise<void> {
+    const remote = await this.lsRemote();
+    if (remote.branchCommit !== null) {
+      await this.cloneCache(this.options.branch);
+      return;
+    }
+
+    const objectFormat = objectFormatFromRefs(remote.refs);
+    if (objectFormat === null) {
+      // Cloning lets Git negotiate the object format when the remote has no refs.
+      await this.cloneCache();
+      return;
+    }
+
+    // Cloning a nonexistent branch fails, so initialize an unborn branch in the format
+    // advertised by the remote's other refs.
+    await this.initEmptyCache(objectFormat);
   }
 
   async ensureCache(): Promise<void> {
