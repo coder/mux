@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as jsonc from "jsonc-parser";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
+import { execFileAsync } from "@/node/utils/disposableExec";
 import {
   BackupCommandApprovalRequiredError,
   assertBackupCommandsApproved,
@@ -16,6 +17,7 @@ import {
   collectMcpCommandApprovals,
   createBackupPayload,
   mergeBackupPreferences,
+  planRestoreWrites,
   serializeBackupPreferences,
   readBackupPayload,
   resolveRestoredContent,
@@ -1787,6 +1789,9 @@ describe("backup payload", () => {
   it("gates credential-bearing MCP URLs without rewriting them", async () => {
     const urls = [
       "https://user:hunter2@example.com/mcp",
+      "https:token@example.com/mcp",
+      "https:/token@example.com/mcp",
+      "https:\\token@example.com\\mcp",
       "https://mcp.example.com/mcp?api_key=hunter2",
       "https://mcp.example.com/mcp?clientSecret=abc",
       "https://mcp.example.com/mcp?X-Amz-Signature=deadbeef",
@@ -1814,7 +1819,10 @@ describe("backup payload", () => {
         sourceLabel: "test-host",
         reportSecrets: true,
       });
-      expect(payloadFileText(payload, "mcp.jsonc")).toContain(url);
+      const exported = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
+        servers: { private: { url: string } };
+      };
+      expect(exported.servers.private.url).toBe(url);
       expect(scanBackupFilesForSecrets(payload.files)).toEqual(["mcp.jsonc"]);
       expect(payload.redactions).toEqual([]);
     }
@@ -2140,6 +2148,24 @@ describe("backup payload", () => {
     }
     expect(await fs.readdir(outside)).toEqual([]);
     expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
+  });
+
+  it("rejects a special-file restore destination during planning", async () => {
+    if (process.platform === "win32") return;
+    await write(muxRoot, "AGENTS.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "special-file-target");
+    await fs.mkdir(restoreRoot, { recursive: true });
+    using mkfifo = execFileAsync("mkfifo", [path.join(restoreRoot, "AGENTS.md")]);
+    await mkfifo.result;
+
+    const rejected = await rejection(planRestoreWrites(restoreRoot, payload));
+    expect((rejected as Error).message).toContain("regular file");
   });
 
   it("refuses to restore a file onto an existing directory", async () => {

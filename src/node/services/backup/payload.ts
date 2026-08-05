@@ -1152,8 +1152,21 @@ function rawUrlHasCredentialParameters(rawUrl: string): boolean {
   );
 }
 
+function normalizedUrlHasUserinfo(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.username !== "" || parsed.password !== "";
+  } catch {
+    return false;
+  }
+}
+
 function urlHasCredentialComponents(rawUrl: string): boolean {
-  return rawUrlHasUserinfo(rawUrl) || rawUrlHasCredentialParameters(rawUrl);
+  return (
+    rawUrlHasUserinfo(rawUrl) ||
+    normalizedUrlHasUserinfo(rawUrl) ||
+    rawUrlHasCredentialParameters(rawUrl)
+  );
 }
 
 function hasCredentialBearingMcpUrl(content: string): boolean {
@@ -2089,6 +2102,9 @@ export async function planRestoreWrites(
     const existing = await lstatOrNull(destination);
     if (existing?.isDirectory() === true) {
       throw new Error(`Cannot restore '${file.path}': a directory already exists there`);
+    }
+    if (existing !== null && !existing.isFile()) {
+      throw new Error(`Cannot restore '${file.path}': a non-regular file already exists there`);
     }
     // Two claims per entry, because two names reach one file two different ways. Folding the
     // path catches the pair a case-insensitive or normalizing volume would merge, which no
