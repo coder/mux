@@ -38,14 +38,85 @@ export function isValidBackupPath(value: string): boolean {
   );
 }
 
+export const CREDENTIAL_URL_PARAMETER_NAMES: ReadonlySet<string> = new Set([
+  "accesskey",
+  "accesskeyid",
+  "accesstoken",
+  "apikey",
+  "appsecret",
+  "auth",
+  "authcode",
+  "authorization",
+  "authtoken",
+  "awsaccesskeyid",
+  "awssecretaccesskey",
+  "bearer",
+  "bearertoken",
+  "clientkey",
+  "clientsecret",
+  "consumersecret",
+  "credential",
+  "credentials",
+  "idtoken",
+  "jwt",
+  "oauthcode",
+  "passwd",
+  "password",
+  "privatekey",
+  "pwd",
+  "refreshtoken",
+  "secret",
+  "secretaccesskey",
+  "secretkey",
+  "sessionid",
+  "signature",
+  "token",
+  "xamzcredential",
+  "xamzsignature",
+]);
+
+function parametersContainCredential(
+  parameters: URLSearchParams,
+  names: ReadonlySet<string>
+): boolean {
+  for (const [name, value] of parameters) {
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (value !== "" && names.has(normalizedName)) return true;
+  }
+  return false;
+}
+
+function fragmentContainsCredential(fragment: string, names: ReadonlySet<string>): boolean {
+  if (parametersContainCredential(new URLSearchParams(fragment), names)) return true;
+  const queryStart = fragment.indexOf("?");
+  return (
+    queryStart >= 0 &&
+    parametersContainCredential(new URLSearchParams(fragment.slice(queryStart + 1)), names)
+  );
+}
+
+export function hasCredentialUrlParameters(
+  rawUrl: string,
+  names: ReadonlySet<string> = CREDENTIAL_URL_PARAMETER_NAMES
+): boolean {
+  const fragmentStart = rawUrl.indexOf("#");
+  const beforeFragment = fragmentStart >= 0 ? rawUrl.slice(0, fragmentStart) : rawUrl;
+  const queryStart = beforeFragment.indexOf("?");
+  const query = queryStart >= 0 ? beforeFragment.slice(queryStart + 1) : "";
+  const fragment = fragmentStart >= 0 ? rawUrl.slice(fragmentStart + 1) : "";
+  return (
+    parametersContainCredential(new URLSearchParams(query), names) ||
+    fragmentContainsCredential(fragment, names)
+  );
+}
+
 /**
- * `https://TOKEN@host/repo.git` is a credential pasted into a URL: saving it would persist
- * the token in config.json and in the cache clone's `remote.origin.url`, and backups must
- * never store a credential. An ssh username (`git@`) is routing, not a secret, so ssh URLs
- * keep theirs; a password is rejected on every scheme. scp-like remotes (`git@host:path`)
- * fail to parse here and carry no password channel, so they pass.
+ * Repository URLs are persisted in config and cache git metadata, so userinfo credentials and
+ * known credential parameters are rejected. SSH usernames are routing data; scp-like remotes have
+ * no password field and remain allowed.
  */
 export function hasUrlCredentials(repoUrl: string): boolean {
+  if (hasCredentialUrlParameters(repoUrl)) return true;
   try {
     const url = new URL(repoUrl);
     return url.password !== "" || (url.protocol !== "ssh:" && url.username !== "");

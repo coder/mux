@@ -117,11 +117,16 @@ describe("AppConfigOnDiskSchema", () => {
       "https://hunter2token@github.com/me/dotfiles.git",
       "https://oauth2:hunter2@example.com/repo.git",
       "ssh://user:hunter2@example.com/repo.git",
+      "https://example.com/repo.git?access_token=hunter2",
+      "https://example.com/repo.git#access_token=hunter2",
     ]) {
       expect(SettingsBackupSchema.safeParse({ ...base, repoUrl }).success).toBe(false);
     }
     for (const repoUrl of [
       "https://github.com/me/dotfiles.git",
+      "https://github.com/me/dotfiles.git?client_id=mux",
+      "https://github.com/me/dotfiles.git?code=review&key=branch&session=docs",
+      "https://github.com/me/dotfiles.git#section=backup",
       "ssh://git@example.com/repo.git",
       "git@github.com:me/dotfiles.git",
     ]) {

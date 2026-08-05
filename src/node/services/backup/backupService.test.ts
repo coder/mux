@@ -349,15 +349,18 @@ describe("BackupService", () => {
       payload: createPayload(),
     });
 
-    const result = await service.saveSettings({
-      ...SETTINGS,
-      repoUrl: "https://oauth2:hunter2@example.com/repo.git",
-    });
+    for (const repoUrl of [
+      "https://oauth2:hunter2@example.com/repo.git",
+      "https://example.com/repo.git?access_token=hunter2",
+      "https://example.com/repo.git#access_token=hunter2",
+    ]) {
+      const result = await service.saveSettings({ ...SETTINGS, repoUrl });
 
-    expect(result.success).toBe(false);
-    if (result.success) throw new Error("Expected the credential URL to be rejected");
-    expect(result.error.code).toBe("INVALID_BACKUP");
-    expect(service.getSettings()).toBeNull();
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected the credential URL to be rejected");
+      expect(result.error.code).toBe("INVALID_BACKUP");
+      expect(service.getSettings()).toBeNull();
+    }
   });
 
   test("surfaces the current command approvals when a restore is blocked", async () => {

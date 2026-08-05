@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -66,13 +66,20 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("Expected the operation to reject");
 }
 
+function payloadFile(
+  payload: Awaited<ReturnType<typeof createBackupPayload>>,
+  relativePath: string
+) {
+  const file = payload.files.find((candidate) => candidate.path === relativePath);
+  if (file === undefined) throw new Error(`Missing payload file '${relativePath}'`);
+  return file;
+}
+
 function payloadFileText(
   payload: Awaited<ReturnType<typeof createBackupPayload>>,
   relativePath: string
 ): string {
-  const file = payload.files.find((candidate) => candidate.path === relativePath);
-  if (file === undefined) throw new Error(`Missing payload file '${relativePath}'`);
-  return file.content.toString("utf-8");
+  return payloadFile(payload, relativePath).content.toString("utf-8");
 }
 
 function withPayloadFileText(
@@ -943,6 +950,68 @@ describe("backup payload", () => {
     expect(resolved.toString("utf-8")).not.toContain("stolen-cmd");
   });
 
+  it("does not open a special local mcp.jsonc", async () => {
+    if (process.platform === "win32") return;
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({ servers: { api: { command: "backup-cmd" } } })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const mcpFile = payloadFile(payload, "mcp.jsonc");
+
+    const fresh = path.join(tempDir, "special-local-mcp");
+    await fs.mkdir(fresh, { recursive: true });
+    const fifoPath = path.join(fresh, "mcp.jsonc");
+    using mkfifo = execFileAsync("mkfifo", [fifoPath]);
+    await mkfifo.result;
+    const realOpen = fs.open;
+    const open = spyOn(fs, "open").mockImplementation((...args: Parameters<typeof fs.open>) => {
+      if (args[0] === fifoPath) return Promise.reject(new Error("special file was opened"));
+      return realOpen(...args);
+    });
+    try {
+      const resolved = await resolveRestoredContent(fresh, mcpFile);
+      expect(resolved.toString("utf-8")).toContain("backup-cmd");
+      expect(open.mock.calls.some(([target]) => target === fifoPath)).toBe(false);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
+  it("opens checked reads nonblocking", async () => {
+    if (process.platform === "win32") return;
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({ servers: { api: { command: "local-cmd" } } })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const mcpFile = payloadFile(payload, "mcp.jsonc");
+
+    const open = spyOn(fs, "open");
+    try {
+      await resolveRestoredContent(muxRoot, mcpFile);
+      const readCall = open.mock.calls.find(
+        ([target]) => target === path.join(muxRoot, "mcp.jsonc")
+      );
+      expect(readCall).toBeDefined();
+      const flags = readCall?.[1];
+      if (typeof flags !== "number") throw new Error("Expected numeric open flags");
+      expect(flags & fs.constants.O_NONBLOCK).not.toBe(0);
+    } finally {
+      open.mockRestore();
+    }
+  });
+
   it("classifies a mixed entry by the same url truthiness `normalizeEntry` uses", async () => {
     // Legacy backups can redact valid command strings that current exports preserve.
     await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: {} }));
@@ -1794,6 +1863,7 @@ describe("backup payload", () => {
       "https:\\token@example.com\\mcp",
       "https://mcp.example.com/mcp?api_key=hunter2",
       "https://mcp.example.com/mcp?clientSecret=abc",
+      "https://mcp.example.com/mcp?code=review",
       "https://mcp.example.com/mcp?X-Amz-Signature=deadbeef",
       "https://mcp.example.com/callback?code=oauth-code",
       "https://mcp.example.com/mcp#access_token=fragtoken",

@@ -7,7 +7,11 @@ import {
   UserPreferencesSchema,
   type UserPreferences,
 } from "@/common/config/schemas/userPreferences";
-import { isWindowsUnusableSegment } from "@/common/config/schemas/settingsBackup";
+import {
+  CREDENTIAL_URL_PARAMETER_NAMES,
+  hasCredentialUrlParameters,
+  isWindowsUnusableSegment,
+} from "@/common/config/schemas/settingsBackup";
 import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
@@ -366,6 +370,10 @@ async function resolveRoot(root: string): Promise<BackupRoot> {
   return { path: canonical, dev: stat.dev, ino: stat.ino };
 }
 
+function nonBlockingFlag(): number {
+  return fs.constants.O_NONBLOCK ?? 0;
+}
+
 function noFollowFlag(): number {
   // Absent on Windows, where a file cannot be swapped for a junction this way.
   return fs.constants.O_NOFOLLOW ?? 0;
@@ -389,7 +397,7 @@ async function readCheckedFile(
 ): Promise<{ content: Buffer; mode: number; identity: FileIdentityStat }> {
   const handle = await fs.open(
     absolutePathOf(root.path, relativePath),
-    fs.constants.O_RDONLY | noFollowFlag()
+    fs.constants.O_RDONLY | noFollowFlag() | nonBlockingFlag()
   );
   try {
     const stat = await handle.stat();
@@ -1070,64 +1078,14 @@ const AUTO_PUBLISHED_RECURSIVE_FILE = /\.(?:md|mdx|markdown|txt)$/i;
 const CREDENTIAL_PATH_HINT =
   /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|(?:api|private)(?:[^a-z/]+)?keys?|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
 
-const CREDENTIAL_URL_PARAMETER_NAMES = new Set([
-  "accesskey",
-  "accesskeyid",
-  "accesstoken",
-  "apikey",
-  "appsecret",
-  "auth",
-  "authcode",
-  "authorization",
-  "authtoken",
-  "awsaccesskeyid",
-  "awssecretaccesskey",
-  "bearer",
-  "bearertoken",
-  "clientkey",
-  "clientsecret",
+const MCP_REVIEW_URL_PARAMETER_NAMES = new Set([
+  ...CREDENTIAL_URL_PARAMETER_NAMES,
   "code",
-  "consumersecret",
-  "credential",
-  "credentials",
-  "idtoken",
-  "jwt",
   "key",
-  "oauthcode",
-  "passwd",
-  "password",
-  "privatekey",
-  "pwd",
-  "refreshtoken",
-  "secret",
-  "secretaccesskey",
-  "secretkey",
   "session",
-  "sessionid",
   "sid",
   "sig",
-  "signature",
-  "token",
-  "xamzcredential",
-  "xamzsignature",
 ]);
-
-function hasCredentialUrlParameters(parameters: URLSearchParams): boolean {
-  for (const [name, value] of parameters) {
-    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (value !== "" && CREDENTIAL_URL_PARAMETER_NAMES.has(normalizedName)) return true;
-  }
-  return false;
-}
-
-function fragmentHasCredentialUrlParameters(fragment: string): boolean {
-  if (hasCredentialUrlParameters(new URLSearchParams(fragment))) return true;
-  const queryStart = fragment.indexOf("?");
-  return (
-    queryStart >= 0 &&
-    hasCredentialUrlParameters(new URLSearchParams(fragment.slice(queryStart + 1)))
-  );
-}
 
 function rawUrlHasUserinfo(rawUrl: string): boolean {
   const schemeEnd = rawUrl.indexOf("://");
@@ -1138,18 +1096,6 @@ function rawUrlHasUserinfo(rawUrl: string): boolean {
     .filter((offset) => offset >= 0);
   const authorityEnd = delimiters.length > 0 ? Math.min(...delimiters) : rawUrl.length;
   return rawUrl.slice(authorityStart, authorityEnd).includes("@");
-}
-
-function rawUrlHasCredentialParameters(rawUrl: string): boolean {
-  const fragmentStart = rawUrl.indexOf("#");
-  const beforeFragment = fragmentStart >= 0 ? rawUrl.slice(0, fragmentStart) : rawUrl;
-  const queryStart = beforeFragment.indexOf("?");
-  const query = queryStart >= 0 ? beforeFragment.slice(queryStart + 1) : "";
-  const fragment = fragmentStart >= 0 ? rawUrl.slice(fragmentStart + 1) : "";
-  return (
-    hasCredentialUrlParameters(new URLSearchParams(query)) ||
-    fragmentHasCredentialUrlParameters(fragment)
-  );
 }
 
 function normalizedUrlHasUserinfo(rawUrl: string): boolean {
@@ -1165,7 +1111,7 @@ function urlHasCredentialComponents(rawUrl: string): boolean {
   return (
     rawUrlHasUserinfo(rawUrl) ||
     normalizedUrlHasUserinfo(rawUrl) ||
-    rawUrlHasCredentialParameters(rawUrl)
+    hasCredentialUrlParameters(rawUrl, MCP_REVIEW_URL_PARAMETER_NAMES)
   );
 }
 
@@ -1559,12 +1505,13 @@ export async function resolveRestoredContent(muxRoot: string, file: BackupFile):
 }
 
 /**
- * Local MCP state may be merged into restored content, so it must use the checked handle to
- * block symlink escapes and enforce the byte budget. Missing or unreadable state is ignored.
+ * Local MCP state is optional. The pre-check avoids opening special files, while the nonblocking
+ * checked read makes a replacement race fail instead of hanging restore.
  */
 async function readLocalMcpText(muxRoot: string): Promise<string | null> {
   try {
     const root = await resolveRoot(muxRoot);
+    if (!(await isRegularFile(absolutePathOf(root.path, "mcp.jsonc")))) return null;
     const budget = createByteBudget();
     const { content } = await readCheckedFile(root, "mcp.jsonc", (size) =>
       budget("mcp.jsonc", size)
