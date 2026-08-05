@@ -1086,6 +1086,17 @@ export class ProviderModelFactory {
         };
       }
 
+      // xAI-specific: merge global store setting for Grok Responses ZDR orgs.
+      // Grok 4.5 defaults to store=true; ZDR teams need store=false or the API errors.
+      const configXAIStore = providersConfig.xai?.store;
+      if (providerName === "xai" && typeof configXAIStore === "boolean") {
+        muxProviderOptions ??= {};
+        muxProviderOptions.xai = {
+          ...(muxProviderOptions.xai ?? {}),
+          store: muxProviderOptions.xai?.store ?? configXAIStore,
+        };
+      }
+
       let providerConfig = providersConfig[providerName] ?? {};
 
       // Providers can be disabled in providers.jsonc without deleting credentials.
@@ -1518,9 +1529,35 @@ export class ProviderModelFactory {
         // that capability; older custom model strings stay on Chat Completions for
         // legacy search_parameters compatibility.
         const capabilityModel = resolveModelForMetadata(`xai:${modelId}`, providersConfig);
-        return Ok(
-          isGrok45Model(capabilityModel) ? provider.responses(modelId) : provider.chat(modelId)
-        );
+        const model = isGrok45Model(capabilityModel)
+          ? provider.responses(modelId)
+          : provider.chat(modelId);
+
+        // Inject configured xAI store as a request-level default so callers that
+        // omit providerOptions still honor global ZDR settings (mirrors OpenAI).
+        const configuredXAIStore = muxProviderOptions?.xai?.store;
+        if (typeof configuredXAIStore === "boolean") {
+          const injectStoreFlag = (
+            options: Parameters<typeof model.doStream>[0]
+          ): Parameters<typeof model.doStream>[0] => {
+            const xaiOpts =
+              (options.providerOptions?.xai as Record<string, unknown> | undefined) ?? {};
+            return {
+              ...options,
+              providerOptions: {
+                ...options.providerOptions,
+                xai: { store: configuredXAIStore, ...xaiOpts },
+              },
+            };
+          };
+
+          const originalDoStream = model.doStream.bind(model);
+          const originalDoGenerate = model.doGenerate.bind(model);
+          model.doStream = (options) => originalDoStream(injectStoreFlag(options));
+          model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
+        }
+
+        return Ok(model);
       }
 
       // Handle Ollama provider

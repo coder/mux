@@ -657,12 +657,22 @@ export interface MuxReasoningPart {
   /**
    * Provider options for SDK compatibility.
    * When converting to ModelMessages via the SDK's convertToModelMessages,
-   * this is passed through. For Anthropic thinking blocks, this should contain
-   * { anthropic: { signature } } to allow reasoning replay.
+   * this is passed through so reasoning can be replayed:
+   * - Anthropic: { anthropic: { signature } }
+   * - OpenAI/xAI Responses (esp. store=false/ZDR): itemId + reasoningEncryptedContent
+   *   so the next turn can restore encrypted reasoning without server-side storage.
    */
   providerOptions?: {
     anthropic?: {
       signature?: string;
+    };
+    openai?: {
+      itemId?: string;
+      reasoningEncryptedContent?: string | null;
+    };
+    xai?: {
+      itemId?: string;
+      reasoningEncryptedContent?: string | null;
     };
   };
 }

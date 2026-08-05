@@ -135,6 +135,8 @@ interface SetupSettingsStoryOptions {
       baseUrlSource?: "config" | "env";
       baseUrlResolved?: string;
       serviceTier?: ServiceTier;
+      /** OpenAI/xAI Responses storage (false for ZDR). */
+      store?: boolean;
       models?: string[];
     }
   >;

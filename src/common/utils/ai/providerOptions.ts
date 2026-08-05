@@ -10,7 +10,11 @@ import type { AnthropicProviderOptions } from "@ai-sdk/anthropic";
 import type { GoogleGenerativeAIProviderOptions } from "@ai-sdk/google";
 import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import type { JSONValue } from "@ai-sdk/provider";
-import type { XaiProviderOptions } from "@ai-sdk/xai";
+import type {
+  XaiProviderOptions,
+  // Chat options alias does not include store; Responses options do (Grok 4.5 / ZDR).
+  XaiResponsesProviderOptions,
+} from "@ai-sdk/xai";
 import type { ProviderName } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -74,6 +78,12 @@ interface MoonshotAIProviderOptions {
 }
 
 /**
+ * xAI providerOptions payload. Chat models use XaiProviderOptions; Grok 4.5
+ * Responses also accepts store (ZDR). Union keeps both families assignable.
+ */
+type XaiBuiltProviderOptions = XaiProviderOptions & Pick<XaiResponsesProviderOptions, "store">;
+
+/**
  * Provider-specific options structure for AI SDK
  */
 type ProviderOptions =
@@ -82,7 +92,7 @@ type ProviderOptions =
   | { google: GoogleGenerativeAIProviderOptions }
   | { openrouter: OpenRouterReasoningOptions }
   | { moonshotai: MoonshotAIProviderOptions }
-  | { xai: XaiProviderOptions }
+  | { xai: XaiBuiltProviderOptions }
   | { "github-copilot": OpenAICompatibleGatewayProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
@@ -545,6 +555,7 @@ export function buildProviderOptions(
     const {
       serviceTier: _serviceTier,
       searchParameters,
+      store,
       ...overrides
     } = muxProviderOptions?.xai ?? {};
     const isGrok45 = isGrok45Model(capabilityModel);
@@ -565,13 +576,17 @@ export function buildProviderOptions(
       xai: {
         ...overrides,
         ...(reasoningEffort != null && { reasoningEffort }),
+        // ZDR: store:false is required for ZDR orgs. @ai-sdk/xai also auto-adds
+        // include=["reasoning.encrypted_content"] so reasoning can round-trip
+        // without server-side response storage (parity with non-ZDR quality).
+        ...(store != null && { store }),
         // Grok 4.5 uses xAI's modern Responses tools; getToolsForModel translates
         // legacy Live Search settings instead of sending deprecated search_parameters.
         ...(!isGrok45 && {
           searchParameters: searchParameters ?? defaultSearchParameters,
         }),
       },
-    } satisfies { xai: XaiProviderOptions };
+    } satisfies { xai: XaiBuiltProviderOptions };
     log.debug("buildProviderOptions: Returning xAI options", options);
     return options;
   }

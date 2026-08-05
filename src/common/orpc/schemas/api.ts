@@ -251,6 +251,7 @@ export const ProviderConfigInfoSchema = z.object({
   serviceTier: ServiceTierSchema.optional(),
   fastModePreviousServiceTier: FastModePreviousServiceTierSchema.optional(),
   wireFormat: z.enum(["responses", "chatCompletions"]).optional(),
+  /** OpenAI/xAI Responses storage. Set false for ZDR orgs. */
   store: z.boolean().optional(),
   webSocketTransportEnabled: z.boolean().optional(),
   /** Anthropic-specific fields */

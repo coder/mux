@@ -99,6 +99,12 @@ describe("ProvidersConfigSchema", () => {
     ).toBe(false);
   });
 
+  it("accepts xAI store flag for ZDR", () => {
+    expect(ProvidersConfigSchema.safeParse({ xai: { store: false } }).success).toBe(true);
+    expect(ProvidersConfigSchema.safeParse({ xai: { store: true } }).success).toBe(true);
+    expect(ProvidersConfigSchema.safeParse({ xai: { store: "false" } }).success).toBe(false);
+  });
+
   describe("modelParameters", () => {
     it("accepts valid per-model and wildcard overrides", () => {
       const valid = {

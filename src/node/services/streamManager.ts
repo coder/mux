@@ -32,6 +32,12 @@ import type {
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
+import {
+  findFirstReasoningPartIndexInTrailingRun,
+  mergeReasoningProviderOptions,
+  reasoningProviderOptionsFromMetadata,
+  type ReasoningProviderMetadata,
+} from "@/node/utils/messages/reasoningProviderOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
   ActiveTurnThinkingOverride,
@@ -141,12 +147,13 @@ interface ReasoningDeltaPart {
   type: "reasoning-delta";
   text?: string;
   delta?: string;
-  providerMetadata?: {
-    anthropic?: {
-      signature?: string;
-      redactedData?: string;
-    };
-  };
+  providerMetadata?: ReasoningProviderMetadata;
+}
+
+interface ReasoningLifecyclePart {
+  type: "reasoning-start" | "reasoning-end";
+  id?: string;
+  providerMetadata?: ReasoningProviderMetadata;
 }
 
 // Tool-call tracking + branded types
@@ -2883,29 +2890,71 @@ export class StreamManager extends EventEmitter {
                 break;
               }
 
+              case "reasoning-start": {
+                // OpenAI/xAI may attach itemId (and sometimes encrypted content) on start.
+                // Stash on the latest reasoning part, or open an empty one for later deltas.
+                const lifecyclePart = part as ReasoningLifecyclePart;
+                const startOptions = reasoningProviderOptionsFromMetadata(
+                  lifecyclePart.providerMetadata
+                );
+                if (startOptions) {
+                  const lastPart = streamInfo.parts.at(-1);
+                  if (lastPart?.type === "reasoning") {
+                    lastPart.providerOptions = mergeReasoningProviderOptions(
+                      lastPart.providerOptions,
+                      startOptions
+                    );
+                    void this.schedulePartialWrite(workspaceId, streamInfo);
+                  } else {
+                    await this.appendPartAndEmit(
+                      workspaceId,
+                      streamInfo,
+                      {
+                        type: "reasoning" as const,
+                        text: "",
+                        timestamp: nextPartTimestamp(streamInfo),
+                        providerOptions: startOptions,
+                      },
+                      true
+                    );
+                  }
+                }
+                break;
+              }
+
               case "reasoning-delta": {
-                // Both Anthropic and OpenAI use reasoning-delta for streaming reasoning content
+                // Anthropic, OpenAI, and xAI stream reasoning content via reasoning-delta.
                 const reasoningPart = part as ReasoningDeltaPart;
                 const delta = reasoningPart.text ?? reasoningPart.delta ?? "";
                 const signature = reasoningPart.providerMetadata?.anthropic?.signature;
+                const deltaOptions = reasoningProviderOptionsFromMetadata(
+                  reasoningPart.providerMetadata
+                );
 
-                // Signature deltas come separately with empty text - attach to last reasoning part
-                if (signature && !delta) {
+                // Metadata-only deltas (Anthropic signature, OpenAI/xAI itemId) attach to
+                // the latest reasoning part without creating a new empty text part.
+                if (!delta && (signature || deltaOptions)) {
                   const lastPart = streamInfo.parts.at(-1);
                   if (lastPart?.type === "reasoning") {
-                    lastPart.signature = signature;
-                    // Also set providerOptions for SDK compatibility when converting to ModelMessages
-                    lastPart.providerOptions = { anthropic: { signature } };
-                    // Emit signature update event
-                    this.emit("reasoning-delta", {
-                      type: "reasoning-delta",
-                      workspaceId: workspaceId as string,
-                      messageId: streamInfo.messageId,
-                      delta: "",
-                      tokens: 0,
-                      timestamp: nextPartTimestamp(streamInfo),
-                      signature,
-                    });
+                    if (signature) {
+                      lastPart.signature = signature;
+                    }
+                    lastPart.providerOptions = mergeReasoningProviderOptions(
+                      lastPart.providerOptions,
+                      deltaOptions ?? (signature ? { anthropic: { signature } } : undefined)
+                    );
+                    // Emit signature update event for Anthropic UI consumers.
+                    if (signature) {
+                      this.emit("reasoning-delta", {
+                        type: "reasoning-delta",
+                        workspaceId: workspaceId as string,
+                        messageId: streamInfo.messageId,
+                        delta: "",
+                        tokens: 0,
+                        timestamp: nextPartTimestamp(streamInfo),
+                        signature,
+                      });
+                    }
                     void this.schedulePartialWrite(workspaceId, streamInfo);
                   }
                   break;
@@ -2918,14 +2967,38 @@ export class StreamManager extends EventEmitter {
                   text: delta,
                   timestamp: nextPartTimestamp(streamInfo),
                   signature, // May be undefined, will be filled by subsequent signature delta
-                  providerOptions: signature ? { anthropic: { signature } } : undefined,
+                  providerOptions: deltaOptions,
                 };
                 await this.appendPartAndEmit(workspaceId, streamInfo, newPart, true);
                 break;
               }
 
               case "reasoning-end": {
-                // Reasoning-end is just a signal - no state to update
+                // xAI (and OpenAI store=false) put reasoningEncryptedContent on reasoning-end.
+                // Mux streams reasoning as many tiny delta parts; providers expect one
+                // reasoning item with encrypted content. Attach metadata to the first part
+                // of the contiguous reasoning run so convertToModelMessages can replay it
+                // even if later parts lack providerOptions.
+                const lifecyclePart = part as ReasoningLifecyclePart;
+                const endOptions = reasoningProviderOptionsFromMetadata(
+                  lifecyclePart.providerMetadata
+                );
+                if (endOptions) {
+                  const firstReasoningIndex = findFirstReasoningPartIndexInTrailingRun(
+                    streamInfo.parts
+                  );
+                  if (firstReasoningIndex >= 0) {
+                    const firstPart = streamInfo.parts[firstReasoningIndex];
+                    if (firstPart?.type === "reasoning") {
+                      firstPart.providerOptions = mergeReasoningProviderOptions(
+                        firstPart.providerOptions,
+                        endOptions
+                      );
+                      void this.schedulePartialWrite(workspaceId, streamInfo);
+                    }
+                  }
+                }
+
                 this.emit("reasoning-end", {
                   type: "reasoning-end",
                   workspaceId: workspaceId as string,

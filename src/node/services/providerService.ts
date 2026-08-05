@@ -399,8 +399,8 @@ export class ProviderService {
         providerInfo.wireFormat = wireFormat;
       }
 
-      // OpenAI-specific: response storage setting (required for ZDR)
-      if (provider === "openai" && typeof config.store === "boolean") {
+      // OpenAI/xAI: response storage setting (required for ZDR on Responses API)
+      if ((provider === "openai" || provider === "xai") && typeof config.store === "boolean") {
         providerInfo.store = config.store;
       }
 

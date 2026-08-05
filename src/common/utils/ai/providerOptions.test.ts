@@ -1663,6 +1663,28 @@ describe("buildProviderOptions - xAI", () => {
       },
     });
   });
+
+  test("includes store: false for xAI ZDR without dropping reasoning effort", () => {
+    expect(
+      buildProviderOptions("xai:grok-4.5", "medium", undefined, undefined, {
+        xai: { store: false },
+      })
+    ).toEqual({
+      xai: {
+        reasoningEffort: "medium",
+        store: false,
+      },
+    });
+  });
+
+  test("omits store key when xAI store is unset", () => {
+    const result = buildProviderOptions("xai:grok-4.5", "medium", undefined, undefined, {
+      xai: {},
+    });
+    const xai = (result as { xai?: Record<string, unknown> }).xai;
+    expect(xai).toBeDefined();
+    expect("store" in xai!).toBe(false);
+  });
 });
 
 describe("buildRequestHeaders", () => {
