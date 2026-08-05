@@ -13,7 +13,7 @@ import { useProviderOptions } from "./useProviderOptions";
 import { useExperimentOverrideValue } from "./useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { getWorkspaceAiSettingsFromMetadata } from "@/browser/utils/workspaceAiSettingsSync";
+import { resolveEffectiveComposerModel } from "@/browser/utils/workspaceAiSettingsSync";
 
 /**
  * Extended send options that includes both the canonical model used for backend routing
@@ -67,13 +67,11 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const toolSearch = useExperimentOverrideValue(EXPERIMENT_IDS.TOOL_SEARCH);
 
   // Prefer metadata over the global default until workspace localStorage seeding catches up.
-  const metadataSettings = getWorkspaceAiSettingsFromMetadata(
-    workspaceMetadata.get(workspaceId),
-    agentId
-  );
-  const baseModel = normalizeModelPreference(
+  const baseModel = resolveEffectiveComposerModel(
     preferredModel,
-    metadataSettings.model ?? defaultModel
+    workspaceMetadata.get(workspaceId),
+    agentId,
+    defaultModel
   );
 
   const options = buildSendMessageOptions({

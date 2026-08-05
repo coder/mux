@@ -49,6 +49,7 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onToggleReasoningMode: () => undefined,
     getFastMode: () => false,
     onToggleFastMode: () => undefined,
+    getEffectiveComposerModel: () => "anthropic:claude-sonnet-4-5",
     onStartWorkspaceCreation: () => undefined,
     onStartScratchCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
@@ -1056,7 +1057,6 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
   globalThis.window = testWindow as unknown as Window & typeof globalThis;
   globalThis.document = testWindow.document as unknown as Document;
   globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
-  window.localStorage.setItem(getModelKey("w1"), JSON.stringify("openai:gpt-5.6-sol"));
 
   try {
     const onToggleFastMode = mock(() => undefined);
@@ -1064,8 +1064,9 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
       selectedWorkspaceState: {
         lifecycle: "active",
         goal: null,
-        currentModel: "openai:gpt-5.6-sol",
+        currentModel: "anthropic:claude-sonnet-4-5",
       } as unknown as WorkspaceState,
+      getEffectiveComposerModel: () => "openai:gpt-5.6-sol",
       providersConfig: {
         openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
       },
@@ -1081,11 +1082,12 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
     expect(onToggleFastMode).toHaveBeenCalledTimes(1);
 
     const creationScopeId = "project:/repo/a";
-    window.localStorage.setItem(getModelKey(creationScopeId), JSON.stringify("openai:gpt-5.6-sol"));
     const creationActions = getActions({
       selectedWorkspace: null,
       selectedWorkspaceState: null,
       creationScopeId,
+      getEffectiveComposerModel: (scopeId) =>
+        scopeId === creationScopeId ? "openai:gpt-5.6-sol" : "anthropic:claude-sonnet-4-5",
       providersConfig: {
         openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
       },
@@ -1099,12 +1101,29 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
     await creationFastAction?.run();
     expect(onToggleFastMode).toHaveBeenCalledTimes(2);
 
+    const staleOpenAIActions = getActions({
+      selectedWorkspaceState: {
+        lifecycle: "active",
+        goal: null,
+        currentModel: "openai:gpt-5.6-sol",
+      } as unknown as WorkspaceState,
+      getEffectiveComposerModel: () => "anthropic:claude-sonnet-4-5",
+      providersConfig: {
+        openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      },
+      getRouteForModel: () => "direct",
+    });
+    expect(staleOpenAIActions.some((action) => action.id === "thinking:toggle-fast-mode")).toBe(
+      false
+    );
+
     const unloadedActions = getActions({
       selectedWorkspaceState: {
         lifecycle: "active",
         goal: null,
         currentModel: "openai:gpt-5.6-sol",
       } as unknown as WorkspaceState,
+      getEffectiveComposerModel: () => "openai:gpt-5.6-sol",
       providersConfig: null,
       getRouteForModel: () => "direct",
     });
@@ -1116,6 +1135,7 @@ test("fast mode command is route-aware and keyboard accessible", async () => {
         goal: null,
         currentModel: "openai:gpt-5.6-sol",
       } as unknown as WorkspaceState,
+      getEffectiveComposerModel: () => "openai:gpt-5.6-sol",
       providersConfig: {
         openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
       },

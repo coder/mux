@@ -96,6 +96,8 @@ export interface BuildSourcesParams {
   onToggleReasoningMode: (workspaceId: string) => void;
   getFastMode: () => boolean;
   onToggleFastMode: () => void | Promise<void>;
+  /** Effective model currently displayed by the workspace or creation composer. */
+  getEffectiveComposerModel: (scopeId: string) => string;
   /** Providers config for route-aware provider-option availability. */
   providersConfig?: ProvidersConfigMap | null;
   /** Settings-resolved route for a canonical model ("direct" = no gateway). */
@@ -1227,12 +1229,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
     const selectedWorkspace = p.selectedWorkspace;
     const providerOptionScopeId = selectedWorkspace?.workspaceId ?? p.creationScopeId;
-    const persistedSelectionModel =
-      providerOptionScopeId && typeof window !== "undefined"
-        ? getSendOptionsFromStorage(providerOptionScopeId).model || undefined
-        : undefined;
-    const currentModelString = p.selectedWorkspaceState?.currentModel;
-    const providerOptionGateModel = persistedSelectionModel ?? currentModelString;
+    const providerOptionGateModel = providerOptionScopeId
+      ? p.getEffectiveComposerModel(providerOptionScopeId)
+      : undefined;
+    const currentModelString = providerOptionGateModel ?? p.selectedWorkspaceState?.currentModel;
     const providerOptionRoute = providerOptionGateModel
       ? p.getRouteForModel?.(normalizeToCanonical(providerOptionGateModel))
       : undefined;

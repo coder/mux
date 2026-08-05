@@ -72,7 +72,7 @@ import {
   LEFT_SIDEBAR_COLLAPSED_KEY,
   LEFT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
-import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
@@ -84,6 +84,7 @@ import { requestActiveTurnThinkingLevel } from "@/browser/utils/activeTurnThinki
 import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
+  resolveEffectiveComposerModel,
 } from "@/browser/utils/workspaceAiSettingsSync";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal/AuthTokenModal";
 
@@ -434,11 +435,23 @@ function AppInner() {
   /**
    * Get the selected model for a workspace, preserving explicit gateway prefixes.
    */
-  const getModelForWorkspace = useCallback((workspaceId: string): string => {
-    const defaultModel = getDefaultModel();
-    const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
-    return normalizeSelectedModel(rawModel || defaultModel);
-  }, []);
+  const getModelForWorkspace = useCallback(
+    (workspaceId: string): string => {
+      const defaultModel = getDefaultModel();
+      const preferredModel = readPersistedState<string | null>(getModelKey(workspaceId), null);
+      const metadata = workspaceMetadata.get(workspaceId);
+      const persistedAgentId =
+        readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.agentId)
+          .trim()
+          .toLowerCase() || WORKSPACE_DEFAULTS.agentId;
+      const agentId =
+        metadata?.parentWorkspaceId != null && metadata.agentId
+          ? metadata.agentId
+          : persistedAgentId;
+      return resolveEffectiveComposerModel(preferredModel, metadata, agentId, defaultModel);
+    },
+    [workspaceMetadata]
+  );
 
   const getThinkingLevelForWorkspace = useCallback(
     (workspaceId: string): ThinkingLevel => {
@@ -950,6 +963,7 @@ function AppInner() {
     onToggleReasoningMode: toggleReasoningModeFromPalette,
     getFastMode: () => fastModeActive,
     onToggleFastMode: toggleFastMode,
+    getEffectiveComposerModel: getModelForWorkspace,
     providersConfig,
     getRouteForModel,
     getMinThinkingOverride,
