@@ -3247,9 +3247,10 @@ export class StreamingMessageAggregator {
         this.isReportResponseAssistant(anchoredTarget, shouldHideMessageFromTranscript) &&
         anchoredTarget.metadata?.historySequence === anchor?.historySequence &&
         anchorSharesContextEpoch;
-      const useAnchor =
-        hasValidAnchorTarget && (!responseTarget || anchoredTarget === responseTarget);
-      const target = responseTarget ?? (useAnchor ? anchoredTarget : undefined);
+      // A valid same-epoch anchor records the actual completion point and is more precise than
+      // the earlier assistant response inferred from the task's progress turn.
+      const useAnchor = hasValidAnchorTarget;
+      const target = useAnchor ? anchoredTarget : responseTarget;
       if (!target) {
         continue;
       }

@@ -682,6 +682,86 @@ describe("StreamingMessageAggregator", () => {
       expect(readOrder(reloaded).at(-1)).not.toBe("user:report-1");
     });
 
+    test("prefers a valid later-stream anchor over the earlier progress response", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage(
+            "progress-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "in_progress",
+              title: "Progress",
+              reportMarkdown: "Still investigating.",
+            }),
+            { timestamp: 1, historySequence: 1, synthetic: true }
+          ),
+          createMuxMessage("assistant-progress", "assistant", "I incorporated the update.", {
+            timestamp: 2,
+            historySequence: 2,
+          }),
+          createMuxMessage("manual-user", "user", "Continue with other work", {
+            timestamp: 3,
+            historySequence: 3,
+          }),
+          {
+            ...createMuxMessage("assistant-current", "assistant", "", {
+              timestamp: 4,
+              historySequence: 4,
+            }),
+            parts: [
+              { type: "reasoning", text: "reasoning A" },
+              { type: "reasoning", text: "reasoning B" },
+            ],
+          },
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The child finished successfully.",
+            }),
+            {
+              timestamp: 5,
+              historySequence: 5,
+              synthetic: true,
+              uiVisible: true,
+              transcriptAnchor: {
+                messageId: "assistant-current",
+                historySequence: 4,
+                textLength: 0,
+                reasoningLength: "reasoning A".length,
+                partIndex: 1,
+              },
+            }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter(
+            (row) => row.type === "assistant" || row.type === "reasoning" || row.type === "user"
+          )
+          .map((row) =>
+            row.type === "reasoning" ? `reasoning:${row.content}` : `${row.type}:${row.historyId}`
+          )
+      ).toEqual([
+        "assistant:assistant-progress",
+        "user:manual-user",
+        "reasoning:reasoning A",
+        "user:report-1",
+        "reasoning:reasoning B",
+      ]);
+    });
+
     test("places an unanchored completed report before the assistant response to its progress update", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(
