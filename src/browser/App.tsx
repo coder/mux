@@ -657,10 +657,14 @@ function AppInner() {
     [api, getModelForWorkspace, getReasoningModeForWorkspace, getThinkingLevelForWorkspace]
   );
 
+  const fastModeToggleInFlightRef = useRef(false);
   const fastModeActive = providersConfig?.openai?.serviceTier === "priority";
   const toggleFastMode = useCallback(async () => {
-    if (!api || !selectedWorkspace) return;
+    if (!api || !selectedWorkspace || fastModeToggleInFlightRef.current) return;
 
+    // Serialize keyboard/palette requests so a quick double press cannot compute
+    // both writes from the same stale provider-config snapshot.
+    fastModeToggleInFlightRef.current = true;
     const model = getModelForWorkspace(selectedWorkspace.workspaceId);
     const route = getRouteForModel(normalizeToCanonical(model));
     if (
@@ -669,6 +673,7 @@ function AppInner() {
         resolvedRouteProvider: route,
       })
     ) {
+      fastModeToggleInFlightRef.current = false;
       return;
     }
 
@@ -687,6 +692,8 @@ function AppInner() {
       }
     } catch {
       await refreshProvidersConfig();
+    } finally {
+      fastModeToggleInFlightRef.current = false;
     }
   }, [
     api,
