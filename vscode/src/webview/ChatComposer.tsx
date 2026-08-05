@@ -18,7 +18,7 @@ import { useAutoCompactionSettings } from "mux/browser/hooks/useAutoCompactionSe
 
 import { VimTextArea } from "mux/browser/components/VimTextArea/VimTextArea";
 import { ModelSelector } from "mux/browser/components/ModelSelector/ModelSelector";
-import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider/ThinkingSlider";
+import { ThinkingSelector } from "mux/browser/components/ThinkingSelector/ThinkingSelector";
 import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "mux/browser/components/Tooltip/Tooltip";
 
@@ -364,8 +364,8 @@ function ChatComposerInner(props: {
         </div>
 
         <div className="@container flex items-center justify-between gap-2">
-          <div className="flex shrink-0 items-center overflow-hidden">
-            <ThinkingSliderComponent modelString={baseModel} />
+          <div className="flex shrink-0 items-center overflow-visible">
+            <ThinkingSelector modelString={baseModel} />
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
