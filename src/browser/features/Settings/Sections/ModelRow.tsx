@@ -179,6 +179,9 @@ export interface ModelRowProps {
   editModelValue?: string;
   editContextValue?: string;
   editMappedToModel?: string;
+  editMaxOutputTokensValue?: string;
+  editTemperatureValue?: string;
+  editTopPValue?: string;
   editAutofocus?: "model" | "context";
   customContextWindowTokens?: number | null;
   mappedToModel?: string | null;
@@ -211,6 +214,9 @@ export interface ModelRowProps {
   onEditModelChange?: (value: string) => void;
   onEditContextChange?: (value: string) => void;
   onEditMappedToModelChange?: (value: string) => void;
+  onEditMaxOutputTokensChange?: (value: string) => void;
+  onEditTemperatureChange?: (value: string) => void;
+  onEditTopPChange?: (value: string) => void;
   onRemove?: () => void;
   /** Set/clear explicit route override (null = auto) */
   onSetRouteOverride?: (route: string | null) => void;
@@ -330,6 +336,52 @@ export function ModelRow(props: ModelRowProps) {
                   emptyOption={{ value: "", label: "None (use own metadata)" }}
                   compact
                 />
+              </div>
+            )}
+            {props.isCustom && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="text-muted w-16 shrink-0 text-xs md:w-20">Params</span>
+                <div className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={props.editMaxOutputTokensValue ?? ""}
+                    onChange={(e) => props.onEditMaxOutputTokensChange?.(e.target.value)}
+                    onKeyDown={createEditKeyHandler({
+                      onSave: () => props.onSaveEdit?.(),
+                      onCancel: () => props.onCancelEdit?.(),
+                    })}
+                    className="bg-modal-bg border-border-medium focus:border-accent min-w-0 rounded border px-2 py-0.5 text-right font-mono text-xs focus:outline-none"
+                    placeholder="max_output_tokens"
+                    title="max_output_tokens"
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={props.editTemperatureValue ?? ""}
+                    onChange={(e) => props.onEditTemperatureChange?.(e.target.value)}
+                    onKeyDown={createEditKeyHandler({
+                      onSave: () => props.onSaveEdit?.(),
+                      onCancel: () => props.onCancelEdit?.(),
+                    })}
+                    className="bg-modal-bg border-border-medium focus:border-accent min-w-0 rounded border px-2 py-0.5 text-right font-mono text-xs focus:outline-none"
+                    placeholder="temperature"
+                    title="temperature"
+                  />
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={props.editTopPValue ?? ""}
+                    onChange={(e) => props.onEditTopPChange?.(e.target.value)}
+                    onKeyDown={createEditKeyHandler({
+                      onSave: () => props.onSaveEdit?.(),
+                      onCancel: () => props.onCancelEdit?.(),
+                    })}
+                    className="bg-modal-bg border-border-medium focus:border-accent min-w-0 rounded border px-2 py-0.5 text-right font-mono text-xs focus:outline-none"
+                    placeholder="top_p"
+                    title="top_p"
+                  />
+                </div>
               </div>
             )}
           </div>

@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { shouldAllowRouteOverrideInSettings, shouldShowModelInSettings } from "./ModelsSection";
+import {
+  buildUpdatedModelParameters,
+  migrateModelParameterEntry,
+  parseBoundedNumberInput,
+  parsePositiveIntegerInput,
+  removeModelParameterEntry,
+  shouldAllowRouteOverrideInSettings,
+  shouldShowModelInSettings,
+} from "./ModelsSection";
 
 describe("shouldShowModelInSettings", () => {
   test("hides OAuth-required Codex model when OpenAI OAuth is not configured", () => {
@@ -43,5 +51,127 @@ describe("shouldAllowRouteOverrideInSettings", () => {
 
   test("keeps route overrides enabled for direct custom providers", () => {
     expect(shouldAllowRouteOverrideInSettings("ollama:gpt-oss:20b")).toBe(true);
+  });
+});
+
+describe("model parameter edit helpers", () => {
+  test("parses positive integer input for max_output_tokens", () => {
+    expect(parsePositiveIntegerInput("42")).toBe(42);
+    expect(parsePositiveIntegerInput("0")).toBeNull();
+    expect(parsePositiveIntegerInput("1.5")).toBeNull();
+    expect(parsePositiveIntegerInput("abc")).toBeNull();
+  });
+
+  test("parses bounded decimal input for temperature and top_p", () => {
+    expect(parseBoundedNumberInput("0", 0, 2)).toBe(0);
+    expect(parseBoundedNumberInput("1.5", 0, 2)).toBe(1.5);
+    expect(parseBoundedNumberInput("2", 0, 2)).toBe(2);
+    expect(parseBoundedNumberInput("2.1", 0, 2)).toBeNull();
+    expect(parseBoundedNumberInput("-0.1", 0, 1)).toBeNull();
+  });
+
+  test("buildUpdatedModelParameters preserves non-editable parameters when clearing editable fields", () => {
+    const updated = buildUpdatedModelParameters(
+      {
+        "gpt-5": {
+          max_output_tokens: 1024,
+          temperature: 0.7,
+          top_k: 42,
+        },
+      },
+      "gpt-5",
+      {
+        max_output_tokens: null,
+        temperature: null,
+        top_p: null,
+      }
+    );
+
+    expect(updated).toEqual({
+      "gpt-5": {
+        top_k: 42,
+      },
+    });
+  });
+
+  test("buildUpdatedModelParameters updates editable fields", () => {
+    const withNewOverrides = buildUpdatedModelParameters(undefined, "renamed", {
+      max_output_tokens: 2048,
+      temperature: 0.5,
+      top_p: null,
+    });
+
+    expect(withNewOverrides).toEqual({
+      renamed: {
+        max_output_tokens: 2048,
+        temperature: 0.5,
+      },
+    });
+  });
+
+  test("rename migration preserves non-editable overrides and removes legacy key", () => {
+    const migrated = migrateModelParameterEntry(
+      {
+        legacy: {
+          temperature: 0.2,
+          top_k: 42,
+          seed: 7,
+        },
+      },
+      "legacy",
+      "renamed"
+    );
+
+    const updated = buildUpdatedModelParameters(migrated, "renamed", {
+      max_output_tokens: null,
+      temperature: 0.8,
+      top_p: null,
+    });
+
+    expect(updated).toEqual({
+      renamed: {
+        temperature: 0.8,
+        top_k: 42,
+        seed: 7,
+      },
+    });
+  });
+
+  test("rename migration merges existing destination overrides", () => {
+    const migrated = migrateModelParameterEntry(
+      {
+        legacy: {
+          temperature: 0.4,
+          top_k: 12,
+        },
+        renamed: {
+          seed: 99,
+        },
+      },
+      "legacy",
+      "renamed"
+    );
+
+    expect(migrated).toEqual({
+      renamed: {
+        seed: 99,
+        temperature: 0.4,
+        top_k: 12,
+      },
+    });
+  });
+
+  test("removeModelParameterEntry clears old model parameter keys", () => {
+    const withoutLegacy = removeModelParameterEntry(
+      {
+        legacy: { temperature: 0.2 },
+        renamed: { top_p: 0.8 },
+      },
+      "legacy"
+    );
+
+    expect(withoutLegacy).toEqual({
+      renamed: { top_p: 0.8 },
+    });
   });
 });
