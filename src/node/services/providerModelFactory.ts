@@ -212,6 +212,48 @@ export function resolveOpenAIWebSocketResponsesUrl(baseURL: unknown): string | u
 }
 
 /**
+ * Force Grok 4.5 Responses onto store=false by default (ZDR-safe).
+ * Applied for both direct xAI and gateway-routed Grok so callers that omit
+ * providerOptions (identity generation, memory harvest, headless tools) never
+ * hit the upstream store=true default. Explicit request-level store wins.
+ */
+function injectGrok45StoreDefault(
+  model: {
+    doStream: (options: never) => unknown;
+    doGenerate: (options: never) => unknown;
+  },
+  configuredStore: unknown
+): void {
+  const defaultStore = typeof configuredStore === "boolean" ? configuredStore : false;
+  interface CallOptions {
+    providerOptions?: Record<string, unknown>;
+  }
+  const injectStoreFlag = <T extends CallOptions>(options: T): T => {
+    const xaiOpts = (options.providerOptions?.xai as Record<string, unknown> | undefined) ?? {};
+    return {
+      ...options,
+      providerOptions: {
+        ...options.providerOptions,
+        // Request-level store wins; otherwise force the ZDR-safe default.
+        xai: { store: defaultStore, ...xaiOpts },
+      },
+    };
+  };
+
+  // LanguageModelV4 method types are invariant on options; cast through a local
+  // structural type so we can wrap doStream/doGenerate without dragging AI SDK
+  // generics into this factory helper.
+  const mutableModel = model as {
+    doStream: (options: CallOptions) => unknown;
+    doGenerate: (options: CallOptions) => unknown;
+  };
+  const originalDoStream = mutableModel.doStream.bind(mutableModel);
+  const originalDoGenerate = mutableModel.doGenerate.bind(mutableModel);
+  mutableModel.doStream = (options) => originalDoStream(injectStoreFlag(options));
+  mutableModel.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
+}
+
+/**
  * Add xAI's service_tier request field until @ai-sdk/xai exposes it directly.
  * Priority Processing is a scheduling/billing choice, not a separate model id.
  */
@@ -1524,32 +1566,9 @@ export class ProviderModelFactory {
 
         // Grok 4.5 Responses: force store=false by default so ZDR and non-ZDR share
         // one path. buildProviderOptions already defaults this; inject here too so
-        // callers that omit providerOptions still get ZDR-safe requests. Explicit
-        // request-level store values win over the default.
+        // callers that omit providerOptions still get ZDR-safe requests.
         if (isGrok45Model(capabilityModel)) {
-          const configuredXAIStore =
-            typeof muxProviderOptions?.xai?.store === "boolean"
-              ? muxProviderOptions.xai.store
-              : false;
-          const injectStoreFlag = (
-            options: Parameters<typeof model.doStream>[0]
-          ): Parameters<typeof model.doStream>[0] => {
-            const xaiOpts =
-              (options.providerOptions?.xai as Record<string, unknown> | undefined) ?? {};
-            return {
-              ...options,
-              providerOptions: {
-                ...options.providerOptions,
-                // Request-level store wins; otherwise force the ZDR-safe default.
-                xai: { store: configuredXAIStore, ...xaiOpts },
-              },
-            };
-          };
-
-          const originalDoStream = model.doStream.bind(model);
-          const originalDoGenerate = model.doGenerate.bind(model);
-          model.doStream = (options) => originalDoStream(injectStoreFlag(options));
-          model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
+          injectGrok45StoreDefault(model, muxProviderOptions?.xai?.store);
         }
 
         return Ok(model);
@@ -1810,6 +1829,16 @@ export class ProviderModelFactory {
           const originalDoGenerate = model.doGenerate.bind(model);
           model.doStream = (options) => originalDoStream(injectStoreFlag(options));
           model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
+        }
+
+        // Gateway-routed Grok 4.5 must get the same store=false default as direct xAI.
+        // Route form is mux-gateway:xai/<model>; capability lookup uses canonical xai:id.
+        if (modelId.startsWith("xai/")) {
+          const gatewayGrokModel = `xai:${modelId.slice("xai/".length)}`;
+          const capabilityModel = resolveModelForMetadata(gatewayGrokModel, providersConfig);
+          if (isGrok45Model(capabilityModel)) {
+            injectGrok45StoreDefault(model, muxProviderOptions?.xai?.store);
+          }
         }
 
         return Ok(model);
