@@ -250,7 +250,7 @@ describe("MessageRenderer subagent report rows", () => {
     };
   }
 
-  test("presents incremental synthetic reports without exposing the protocol envelope", () => {
+  test("presents incremental synthetic reports collapsed without exposing the protocol envelope", () => {
     const message = createReportMessage(`<mux_subagent_report>
 <task_id>task-123</task_id>
 <agent_type>explore</agent_type>
@@ -261,7 +261,7 @@ Found the **message renderer** and its responsive story coverage.
 </report_markdown>
 </mux_subagent_report>`);
 
-    const { getByText, queryByText } = render(
+    const { getByRole, getByText, queryByText } = render(
       <TooltipProvider>
         <MessageRenderer message={message} />
       </TooltipProvider>
@@ -270,9 +270,16 @@ Found the **message renderer** and its responsive story coverage.
     expect(getByText("subagent update")).toBeDefined();
     expect(getByText("Rendering path traced")).toBeDefined();
     expect(getByText("In progress")).toBeDefined();
-    expect(getByText(/message renderer/)).toBeDefined();
+    const toggle = getByRole("button", { name: "Show subagent report details" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(queryByText(/message renderer/)).toBeNull();
     expect(queryByText("auto")).toBeNull();
     expect(queryByText(/mux_subagent_report/)).toBeNull();
+
+    fireEvent.click(toggle);
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(getByText(/message renderer/)).toBeDefined();
   });
 
   test("preserves arbitrary protocol examples and semantic whitespace", () => {
@@ -326,13 +333,15 @@ All rendering paths were verified.
 </report_markdown>
 </mux_subagent_report>`);
 
-    const { getByText, queryByText } = render(
+    const { getByRole, getByText, queryByText } = render(
       <TooltipProvider>
         <MessageRenderer message={message} />
       </TooltipProvider>
     );
 
     expect(getByText("Presentation trace completed cleanly")).toBeDefined();
+    expect(queryByText("All rendering paths were verified.")).toBeNull();
+    fireEvent.click(getByRole("button", { name: "Show subagent report details" }));
     expect(getByText("All rendering paths were verified.")).toBeDefined();
     expect(queryByText(/mux_subagent_report/)).toBeNull();
   });
@@ -360,13 +369,17 @@ The responsive presentation is ready.
 
     expect(getByText("subagent report")).toBeDefined();
     expect(getByText("Completed")).toBeDefined();
-    const toggle = getByRole("button", { name: "Structured output" });
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(queryByText("The responsive presentation is ready.")).toBeNull();
+    fireEvent.click(getByRole("button", { name: "Show subagent report details" }));
+    expect(getByText("The responsive presentation is ready.")).toBeDefined();
+
+    const structuredOutputToggle = getByRole("button", { name: "Structured output" });
+    expect(structuredOutputToggle.getAttribute("aria-expanded")).toBe("false");
     expect(queryByText(/mobileVerified/)).toBeNull();
 
-    fireEvent.click(toggle);
+    fireEvent.click(structuredOutputToggle);
 
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(structuredOutputToggle.getAttribute("aria-expanded")).toBe("true");
     expect(getByText(/"mobileVerified": true/)).toBeDefined();
   });
 
