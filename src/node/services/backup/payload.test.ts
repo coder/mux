@@ -1292,6 +1292,49 @@ describe("backup payload", () => {
     );
   });
 
+  it("gates only the disabled url-to-stdio command transition", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          mixed: {
+            url: "https://api.example.com/mcp",
+            command: "npx dormant-tool",
+            disabled: true,
+          },
+        },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const variant = withPayloadFileText(
+      payload,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: { mixed: { command: "npx dormant-tool", disabled: true } },
+      })
+    );
+
+    const approvals = await collectMcpCommandApprovals(muxRoot, variant.files);
+    expect(approvals.map((approval) => approval.command)).toEqual(["npx dormant-tool"]);
+    expect(await rejection(restoreBackupPayload({ muxRoot, payload: variant }))).toBeInstanceOf(
+      BackupCommandApprovalRequiredError
+    );
+
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: { mixed: { command: "npx dormant-tool", disabled: true } },
+      })
+    );
+    expect(await collectMcpCommandApprovals(muxRoot, payload.files)).toEqual([]);
+  });
+
   it("requires approval when a restore re-enables a locally disabled command", async () => {
     await write(muxRoot, "mcp.jsonc", '{ "servers": { "dormant": { "command": "npx d" } } }\n');
     const payload = await createBackupPayload({

@@ -1558,8 +1558,8 @@ export async function collectMcpCommandApprovals(
   for (const [name, entry] of incoming) {
     if (!entry.runnable) continue;
     const current = local.get(name);
-    // Identical text still needs approval if the restore makes a dormant command runnable.
-    const makesItRun = entry.enabled && (current?.enabled === false || current?.runnable === false);
+    // A workspace can enable a disabled command, so removing its URL shadow still needs approval.
+    const makesItRun = current?.runnable === false || (entry.enabled && current?.enabled === false);
     if (current?.command === entry.command && !makesItRun) continue;
     const serverPath = `servers.${name}.command`;
     approvals.push({
