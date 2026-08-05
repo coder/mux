@@ -48,7 +48,10 @@ import {
 } from "@/constants/layout";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
-import { getTopLevelProjectEntries } from "@/common/utils/subProjects";
+import {
+  getTopLevelProjectEntries,
+  resolveWorkspaceCreationScope,
+} from "@/common/utils/subProjects";
 import {
   THINKING_LEVELS,
   coerceOpenAIReasoningMode,
@@ -249,7 +252,15 @@ function AppInner() {
   }, [sidebarCollapsed]);
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId ? pendingNewWorkspaceProject : null;
-  const creationScopeId = creationProjectPath ? getProjectScopeId(creationProjectPath) : null;
+  // Sub-project creation shares the owning parent's model preference, matching ChatInput.
+  const creationScope = creationProjectPath
+    ? resolveWorkspaceCreationScope(
+        creationProjectPath,
+        userProjects,
+        pendingNewWorkspaceSubProjectPath
+      )
+    : null;
+  const creationScopeId = creationScope ? getProjectScopeId(creationScope.projectPath) : null;
 
   // History navigation (back/forward)
   const navigate = useNavigate();
