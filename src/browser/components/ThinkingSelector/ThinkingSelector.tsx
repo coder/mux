@@ -8,6 +8,10 @@ import { useReasoningMode } from "@/browser/hooks/useReasoningMode";
 import { useRouting } from "@/browser/hooks/useRouting";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import {
+  commitFastModeServiceTierChange,
+  getFastModeServiceTierChange,
+} from "@/browser/utils/fastModeServiceTier";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import { getThinkingDisplayLabel, type ThinkingLevel } from "@/common/types/thinking";
@@ -92,17 +96,18 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
   const handleFastModeToggle = async () => {
     if (!api || fastModeSaving) return;
 
-    const nextServiceTier = fastModeActive ? "auto" : "priority";
+    const change = getFastModeServiceTierChange(providersConfig?.openai?.serviceTier);
     setFastModeSaving(true);
     try {
       const result = await api.providers.setProviderConfig({
         provider: "openai",
         keyPath: ["serviceTier"],
-        value: nextServiceTier,
+        value: change.apiValue,
       });
       if (result.success) {
         // Persist first so every subscriber observes only settings the backend accepted.
-        updateOptimistically("openai", { serviceTier: nextServiceTier });
+        commitFastModeServiceTierChange(change);
+        updateOptimistically("openai", { serviceTier: change.serviceTier });
       } else {
         await refresh();
       }

@@ -17,6 +17,10 @@ import {
 } from "./hooks/usePersistedState";
 import { useResizableSidebar } from "./hooks/useResizableSidebar";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import {
+  commitFastModeServiceTierChange,
+  getFastModeServiceTierChange,
+} from "./utils/fastModeServiceTier";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import {
@@ -668,15 +672,16 @@ function AppInner() {
       return;
     }
 
-    const nextServiceTier = fastModeActive ? "auto" : "priority";
+    const change = getFastModeServiceTierChange(providersConfig?.openai?.serviceTier);
     try {
       const result = await api.providers.setProviderConfig({
         provider: "openai",
         keyPath: ["serviceTier"],
-        value: nextServiceTier,
+        value: change.apiValue,
       });
       if (result.success) {
-        updateOptimistically("openai", { serviceTier: nextServiceTier });
+        commitFastModeServiceTierChange(change);
+        updateOptimistically("openai", { serviceTier: change.serviceTier });
       } else {
         await refreshProvidersConfig();
       }
@@ -685,7 +690,6 @@ function AppInner() {
     }
   }, [
     api,
-    fastModeActive,
     getModelForWorkspace,
     getRouteForModel,
     providersConfig,
