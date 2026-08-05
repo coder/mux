@@ -142,50 +142,81 @@ function generateLookupKeys(modelString: string): string[] {
   const colonIndex = modelString.indexOf(":");
   const provider = colonIndex !== -1 ? modelString.slice(0, colonIndex) : "";
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
-  // Provider catalogs are case-insensitive in practice; normalize so mixed-case
-  // ids like "XAI:Grok-4.5" still hit models-extra / models.json entries.
-  const litellmProvider = (PROVIDER_KEY_ALIASES[provider] ?? provider).toLowerCase();
-  const normalizedModelName = modelName.toLowerCase();
-  const unversionedModelName = stripVersionDateSuffix(normalizedModelName);
+  // Keep the original catalog key first — LiteLLM ships mixed-case ids like
+  // `deepinfra/Qwen/Qwen3-14B`. Lowercase variants are only fallbacks so
+  // user-facing ids like `XAI:Grok-4.5` still resolve.
+  const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
+  const lowercaseProvider = litellmProvider.toLowerCase();
+  const unversionedModelName = stripVersionDateSuffix(modelName);
   const familyModelName = stripLatestSuffix(unversionedModelName);
+  const lowercaseModelName = modelName.toLowerCase();
+  const lowercaseUnversionedModelName = unversionedModelName.toLowerCase();
+  const lowercaseFamilyModelName = familyModelName.toLowerCase();
 
   const keys: string[] = [];
-  const pushProviderScoped = (name: string) => {
-    keys.push(`${litellmProvider}/${name}`, `${litellmProvider}/${name}-cloud`);
+  const seen = new Set<string>();
+  const push = (key: string) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    keys.push(key);
   };
-  const pushBare = (name: string) => {
-    keys.push(name);
+  const pushProviderScoped = (providerKey: string, name: string) => {
+    push(`${providerKey}/${name}`);
+    push(`${providerKey}/${name}-cloud`);
   };
 
   // Prefer provider-scoped matches first so provider-specific limits win over generic entries.
   if (provider) {
-    pushProviderScoped(normalizedModelName);
+    pushProviderScoped(litellmProvider, modelName);
 
     // Version-pinned model IDs like gpt-5.5-2026-04-23 should fall back to the
     // base model entry when models-extra/models.json only publish the family key.
-    if (unversionedModelName !== normalizedModelName) {
-      pushProviderScoped(unversionedModelName);
+    if (unversionedModelName !== modelName) {
+      pushProviderScoped(litellmProvider, unversionedModelName);
     }
 
     // Servable rolling aliases like grok-4.5-latest inherit the family entry.
     if (familyModelName !== unversionedModelName) {
-      pushProviderScoped(familyModelName);
+      pushProviderScoped(litellmProvider, familyModelName);
     }
 
     // Fallback: strip size suffix for base model lookup
     // "ollama:gpt-oss:20b" → "ollama/gpt-oss"
-    if (normalizedModelName.includes(":")) {
-      const baseModel = normalizedModelName.split(":")[0];
-      keys.push(`${litellmProvider}/${baseModel}`);
+    if (modelName.includes(":")) {
+      const baseModel = modelName.split(":")[0];
+      push(`${litellmProvider}/${baseModel}`);
+    }
+
+    // Case-insensitive fallbacks after exact catalog keys.
+    if (lowercaseProvider !== litellmProvider || lowercaseModelName !== modelName) {
+      pushProviderScoped(lowercaseProvider, lowercaseModelName);
+    }
+    if (lowercaseUnversionedModelName !== lowercaseModelName) {
+      pushProviderScoped(lowercaseProvider, lowercaseUnversionedModelName);
+    }
+    if (lowercaseFamilyModelName !== lowercaseUnversionedModelName) {
+      pushProviderScoped(lowercaseProvider, lowercaseFamilyModelName);
+    }
+    if (lowercaseModelName.includes(":")) {
+      push(`${lowercaseProvider}/${lowercaseModelName.split(":")[0]}`);
     }
   }
 
-  pushBare(normalizedModelName);
-  if (unversionedModelName !== normalizedModelName) {
-    pushBare(unversionedModelName);
+  push(modelName);
+  if (unversionedModelName !== modelName) {
+    push(unversionedModelName);
   }
   if (familyModelName !== unversionedModelName) {
-    pushBare(familyModelName);
+    push(familyModelName);
+  }
+  if (lowercaseModelName !== modelName) {
+    push(lowercaseModelName);
+  }
+  if (lowercaseUnversionedModelName !== lowercaseModelName) {
+    push(lowercaseUnversionedModelName);
+  }
+  if (lowercaseFamilyModelName !== lowercaseUnversionedModelName) {
+    push(lowercaseFamilyModelName);
   }
 
   return keys;

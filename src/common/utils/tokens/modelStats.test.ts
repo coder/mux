@@ -47,6 +47,11 @@ describe("getModelStats", () => {
     expect(expectStats("XAI:Grok-4.5")).toEqual(grok);
   });
 
+  test("keeps mixed-case LiteLLM catalog ids before lowercase fallbacks", () => {
+    // models.json ships mixed-case DeepInfra ids; lowercasing the probe key would miss them.
+    expect(expectStats("deepinfra:Qwen/Qwen3-14B").max_input_tokens).toBeGreaterThan(0);
+  });
+
   test.each([
     // [model, input, output, cacheRead, cacheCreation]
     ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625],
