@@ -936,6 +936,47 @@ describe("StreamingMessageAggregator", () => {
       });
     });
 
+    test("keeps a cross-epoch completion after an unrelated new turn", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage("reset-1", "assistant", "", {
+            timestamp: 1,
+            historySequence: 1,
+            contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+          }),
+          createMuxMessage("new-user", "user", "New epoch question", {
+            timestamp: 2,
+            historySequence: 2,
+          }),
+          createMuxMessage("new-assistant", "assistant", "New epoch answer", {
+            timestamp: 3,
+            historySequence: 3,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "old-task",
+              agentType: "explore",
+              status: "completed",
+              title: "Old task complete",
+              reportMarkdown: "The old task finished after the reset.",
+            }),
+            { timestamp: 4, historySequence: 4, synthetic: true, uiVisible: true }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual(["user:new-user", "assistant:new-assistant", "user:report-1"]);
+    });
+
     test("keeps no-progress historical repair stable after later turns", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(

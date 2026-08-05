@@ -3149,9 +3149,13 @@ export class StreamingMessageAggregator {
     }
 
     let progressIndex = -1;
+    let hasPriorContextBoundary = false;
     for (let index = reportIndex - 1; index >= 0; index--) {
       const candidate = allMessages[index];
-      if (this.isContextBoundaryMessage(candidate)) break;
+      if (this.isContextBoundaryMessage(candidate)) {
+        hasPriorContextBoundary = true;
+        break;
+      }
       if (candidate.role !== "user") continue;
       const priorReport = parseSubagentReportEnvelope(getTextPartContent(candidate.parts));
       if (priorReport?.taskId === report.taskId && priorReport.status === "in_progress") {
@@ -3174,6 +3178,10 @@ export class StreamingMessageAggregator {
           return undefined;
         }
       }
+      return undefined;
+    }
+
+    if (hasPriorContextBoundary) {
       return undefined;
     }
 
