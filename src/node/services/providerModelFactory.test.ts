@@ -596,6 +596,23 @@ describe("ProviderModelFactory xAI API selection", () => {
     });
   });
 
+  it("uses Responses for mapped aliases that target Grok 4.5", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        xai: {
+          apiKey: "xai-test-key",
+          models: [{ id: "team-grok", mappedToModel: "xai:grok-4.5" }],
+        },
+      });
+
+      const result = await factory.createModel("xai:team-grok");
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect((result.data as { provider?: unknown }).provider).toBe("xai.responses");
+    });
+  });
+
   it("keeps legacy custom Grok model strings on Chat Completions", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });

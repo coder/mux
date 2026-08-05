@@ -30,7 +30,10 @@ import {
   isCustomOpenAICompatibleProviderConfig,
 } from "@/common/utils/providers/customProviders";
 import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
-import { maybeGetProviderModelEntryId } from "@/common/utils/providers/modelEntries";
+import {
+  maybeGetProviderModelEntryId,
+  resolveModelForMetadata,
+} from "@/common/utils/providers/modelEntries";
 import {
   isCopilotModelAccessible,
   selectCopilotApiMode,
@@ -1511,10 +1514,12 @@ export class ProviderModelFactory {
           fetch: providerFetch,
         });
         // Grok 4.5 uses the Responses API so @ai-sdk/xai surfaces exact billed
-        // cost metadata (including Priority Processing). Keep older custom model
-        // strings on Chat Completions for legacy search_parameters compatibility.
+        // cost metadata (including Priority Processing). Mapped provider aliases inherit
+        // that capability; older custom model strings stay on Chat Completions for
+        // legacy search_parameters compatibility.
+        const capabilityModel = resolveModelForMetadata(`xai:${modelId}`, providersConfig);
         return Ok(
-          isGrok45Model(`xai:${modelId}`) ? provider.responses(modelId) : provider.chat(modelId)
+          isGrok45Model(capabilityModel) ? provider.responses(modelId) : provider.chat(modelId)
         );
       }
 

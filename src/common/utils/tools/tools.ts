@@ -152,6 +152,8 @@ export interface ToolConfiguration {
   muxEnv?: Record<string, string>;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
   runtimeTempDir: string;
+  /** Model used for capability checks when the runtime model is a configured alias. */
+  capabilityModelString?: string;
   /** OpenAI wire format — webSearch requires "responses" */
   openaiWireFormat?: "responses" | "chatCompletions";
   /** Whether the resolved route supports xAI Responses-native tools. */
@@ -716,6 +718,7 @@ export async function getToolsForModel(
   toolInstructions?: Record<string, string>,
   mcpTools?: Record<string, Tool>
 ): Promise<Record<string, Tool>> {
+  const capabilityModelString = config.capabilityModelString ?? modelString;
   const [provider, modelId] = modelString.split(":");
 
   // Helper to reduce repetition when wrapping runtime tools
@@ -901,7 +904,7 @@ export async function getToolsForModel(
       }
 
       case "xai": {
-        if (isGrok45Model(modelString) && config.xaiNativeToolsEnabled !== false) {
+        if (isGrok45Model(capabilityModelString) && config.xaiNativeToolsEnabled !== false) {
           const nativeSearch = getXaiNativeSearchConfiguration(config.xaiSearchParameters);
           allTools = {
             ...baseTools,
@@ -940,7 +943,7 @@ export async function getToolsForModel(
   // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
   // Include MCP tools even if they're not in getAvailableTools().
   const allowlistedToolNames = new Set(
-    getAvailableTools(modelString, {
+    getAvailableTools(capabilityModelString, {
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
       enableDynamicWorkflows: Boolean(

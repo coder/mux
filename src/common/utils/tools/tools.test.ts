@@ -561,6 +561,27 @@ describe("getToolsForModel", () => {
     expect(tools.x_search).toBeDefined();
   });
 
+  test("adds xAI native search tools for mapped Grok 4.5 aliases", async () => {
+    const runtime = new LocalRuntime(process.cwd());
+    const initStateManager = createInitStateManager();
+
+    const tools = await getToolsForModel(
+      "xai:team-grok",
+      {
+        cwd: process.cwd(),
+        runtime,
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+        capabilityModelString: "xai:grok-4.5",
+      },
+      "ws-1",
+      initStateManager
+    );
+
+    expect(tools.web_search).toBeDefined();
+    expect(tools.x_search).toBeDefined();
+  });
+
   test("merges every configured xAI web, news, and X source entry", async () => {
     const runtime = new LocalRuntime(process.cwd());
     const initStateManager = createInitStateManager();

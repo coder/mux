@@ -1161,6 +1161,10 @@ export class AIService extends EventEmitter {
         routedThroughGateway,
         routeProvider,
       } = modelResult.data;
+      const capabilityModelString = resolveModelForMetadata(
+        canonicalModelString,
+        this.providerService.getConfig()
+      );
 
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
@@ -1717,7 +1721,7 @@ export class AIService extends EventEmitter {
         metadata,
         runtime,
         workspacePath,
-        modelString,
+        capabilityModelString,
         agentSystemPromptSections
       );
       recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
@@ -2073,6 +2077,7 @@ export class AIService extends EventEmitter {
             }
           : {}),
         ...(toolSearchRuntime ? { toolSearchRuntime } : {}),
+        capabilityModelString,
         openaiWireFormat: effectiveMuxProviderOptions?.openai?.wireFormat,
         xaiNativeToolsEnabled: routeProvider === "xai",
         xaiSearchParameters: effectiveMuxProviderOptions.xai?.searchParameters,
@@ -2720,10 +2725,15 @@ export class AIService extends EventEmitter {
                   // web tools and MCP schema sanitization are provider-specific
                   // (reusing Anthropic-shaped tools on OpenAI 400s, and vice
                   // versa silently drops web tooling).
+                  const nextCapabilityModelString = resolveModelForMetadata(
+                    next.canonicalModelString,
+                    this.providerService.getConfig()
+                  );
                   const nextAllTools = await getToolsForModel(
                     next.canonicalModelString,
                     {
                       ...toolsForModelConfig,
+                      capabilityModelString: nextCapabilityModelString,
                       xaiNativeToolsEnabled: next.routeProvider === "xai",
                     },
                     workspaceId,
@@ -2951,7 +2961,7 @@ export class AIService extends EventEmitter {
                     forcedFirstStepToolNames:
                       next.routeProvider === "xai"
                         ? getForcedXaiSearchToolNames(
-                            next.canonicalModelString,
+                            nextCapabilityModelString,
                             effectiveMuxProviderOptions.xai?.searchParameters
                           )?.filter((toolName) => toolName in nextTools)
                         : undefined,
@@ -2980,7 +2990,7 @@ export class AIService extends EventEmitter {
       const forcedFirstStepToolNames =
         routeProvider === "xai"
           ? getForcedXaiSearchToolNames(
-              canonicalModelString,
+              capabilityModelString,
               effectiveMuxProviderOptions.xai?.searchParameters
             )?.filter((toolName) => toolName in toolsForStream)
           : undefined;

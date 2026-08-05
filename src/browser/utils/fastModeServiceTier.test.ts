@@ -27,6 +27,19 @@ describe("fast mode service tier", () => {
     expect(getFastModeProvider("xai:grok-4.5", { resolvedRouteProvider: "direct" })).toBe("xai");
     expect(getFastModeProvider("xai:grok-4.5", { resolvedRouteProvider: "openrouter" })).toBeNull();
     expect(
+      getFastModeProvider("xai:team-grok", {
+        resolvedRouteProvider: "direct",
+        providersConfig: {
+          xai: {
+            apiKeySet: true,
+            isEnabled: true,
+            isConfigured: true,
+            models: [{ id: "team-grok", mappedToModel: "xai:grok-4.5" }],
+          },
+        },
+      })
+    ).toBe("xai");
+    expect(
       getFastModeProvider("xai:grok-code-fast-1", { resolvedRouteProvider: "direct" })
     ).toBeNull();
     expect(getFastModeProvider("anthropic:claude-sonnet-4-5")).toBeNull();
