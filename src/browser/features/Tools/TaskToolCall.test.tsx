@@ -542,20 +542,61 @@ describe("TaskAwaitToolCall", () => {
     expect(view.queryByText(/Investigation Complete/)).toBeNull();
   });
 
-  test("keeps multi-task completion summaries count-only", () => {
+  test("shows each task's kind and intent for multi-task completions", () => {
+    const bashSpawn = createToolMessage({
+      toolName: "bash",
+      args: {
+        script: "./scripts/wait_pr_ready.sh 27330",
+        display_name: "PR ready watcher",
+        model_intent: "watching PR 27330 until it is ready",
+        timeout_secs: 3600,
+        run_in_background: true,
+      },
+      result: {
+        success: true,
+        output: "Started",
+        exitCode: 0,
+        wall_duration_ms: 10,
+        taskId: "bash:pr-ready-watcher-a1b2",
+        backgroundProcessId: "pr-ready-watcher-a1b2",
+      },
+    });
+    const taskSpawn = createToolMessage({
+      toolName: "task",
+      args: {
+        agentId: "explore",
+        prompt: "Find pagination helpers.",
+        title: "Pagination exploration",
+        run_in_background: true,
+      },
+      result: { status: "queued", taskId: "task-1" },
+    });
+
     const view = renderTaskAwaitToolCall({
       status: "completed",
-      args: { task_ids: ["task-1", "task-2"] },
+      args: { task_ids: ["bash:pr-ready-watcher-a1b2", "task-1"] },
       result: {
         results: [
-          { status: "completed", taskId: "task-1", title: "First task", reportMarkdown: "a" },
-          { status: "completed", taskId: "task-2", title: "Second task", reportMarkdown: "b" },
+          {
+            status: "completed",
+            taskId: "bash:pr-ready-watcher-a1b2",
+            title: "PR ready watcher",
+            reportMarkdown: "exit 0",
+          },
+          {
+            status: "completed",
+            taskId: "task-1",
+            title: "Pagination exploration",
+            reportMarkdown: "Report",
+          },
         ],
       },
+      taskReportLinking: computeTaskReportLinking([bashSpawn, taskSpawn]),
     });
 
     expect(view.getByText("2 tasks completed")).toBeDefined();
-    expect(view.queryByText(/First task/)).toBeNull();
+    expect(view.getByText("bash · Watching PR 27330 until it is ready")).toBeDefined();
+    expect(view.getByText("explore · Pagination exploration")).toBeDefined();
   });
 
   test("uses valid legacy agentType for task_await rows when agentId is invalid", () => {

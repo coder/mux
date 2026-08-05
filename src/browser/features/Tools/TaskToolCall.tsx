@@ -1346,19 +1346,18 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   const targetCount = totalCount > 0 ? totalCount : taskIds?.length;
   const formatTasks = (count: number) => `${count} ${count === 1 ? "task" : "tasks"}`;
 
-  // "1 task completed" alone says nothing about what finished; for single-task awaits,
-  // surface the task's kind plus its spawn intent/title in the collapsed row.
-  const firstResult = results[0];
-  let singleTaskDetail: string | undefined;
-  if (results.length === 1 && firstResult.status === "completed") {
-    const completedTaskId = firstResult.taskId;
+  // "N tasks completed" alone says nothing about what finished; surface each completed
+  // task's available kind and spawn intent/title in the collapsed row.
+  const completedTaskDetails: string[] = [];
+  for (const taskResult of results) {
+    if (taskResult.status !== "completed") continue;
+    const completedTaskId = taskResult.taskId;
     const bashSpawn = taskReportLinking?.bashSpawnByTaskId.get(completedTaskId);
     const kind = fromBashTaskId(completedTaskId)
       ? "bash"
       : isWorkflowRunTaskHandleId(completedTaskId)
         ? "workflow"
-        : isWorkspaceTurnTaskHandleId(completedTaskId) ||
-            firstResult.handleKind === "workspace_turn"
+        : isWorkspaceTurnTaskHandleId(completedTaskId) || taskResult.handleKind === "workspace_turn"
           ? "workspace"
           : taskReportLinking?.spawnAgentTypeByTaskId.get(completedTaskId);
     // Spawn-side intent first (bash model_intent, task spawn title); the result's own
@@ -1368,9 +1367,9 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
         ? sanitizeDisplayableModelIntent(bashSpawn.modelIntent, bashSpawn.script)
         : undefined) ??
       trimToNonEmptyString(taskReportLinking?.spawnTitleByTaskId.get(completedTaskId)) ??
-      trimToNonEmptyString(firstResult.title);
+      trimToNonEmptyString(taskResult.title);
     const detail = [kind, description].filter((part): part is string => part != null).join(" · ");
-    singleTaskDetail = detail.length > 0 ? detail : undefined;
+    if (detail.length > 0) completedTaskDetails.push(detail);
   }
 
   let summaryTitle: string;
@@ -1408,7 +1407,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     summaryTone = "waiting";
   } else if (completedCount > 0) {
     summaryTitle = `${formatTasks(completedCount)} completed`;
-    summaryDetail = singleTaskDetail;
+    summaryDetail = completedTaskDetails.length === 1 ? completedTaskDetails[0] : undefined;
     summaryTone = "success";
   } else {
     summaryTitle = "Checked task status";
@@ -1490,6 +1489,17 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
           ▶
         </ExpandIcon>
       </ToolHeader>
+
+      {/* Align collapsed details with the header text; expanded mode already lists per-task rows. */}
+      {!expanded && summaryTone === "success" && completedTaskDetails.length > 1 && (
+        <div data-component="TaskAwaitCompletedList" className="mt-0.5 pl-[42px]">
+          {completedTaskDetails.map((detail, idx) => (
+            <div key={idx} className="text-muted truncate text-[10px] leading-4">
+              {detail}
+            </div>
+          ))}
+        </div>
+      )}
 
       {expanded && (
         <ToolDetails className="mt-1.5 border-t-0 pt-0">
