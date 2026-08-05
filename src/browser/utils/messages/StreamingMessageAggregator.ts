@@ -3166,6 +3166,7 @@ export class StreamingMessageAggregator {
       for (let index = progressIndex + 1; index < reportIndex; index++) {
         const candidate = allMessages[index];
         if (this.isContextBoundaryMessage(candidate)) return undefined;
+        if (this.isDisplayOnlyTailMessage(candidate)) continue;
         if (this.isReportResponseAssistant(candidate, shouldHideMessageFromTranscript)) {
           return candidate;
         }

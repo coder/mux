@@ -731,6 +731,62 @@ describe("StreamingMessageAggregator", () => {
       ).toEqual(["user:report-1", "assistant:assistant-1"]);
     });
 
+    test("skips another completed report while locating the progress response", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(
+        [
+          createMuxMessage(
+            "progress-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "in_progress",
+              title: "Progress",
+              reportMarkdown: "Still investigating.",
+            }),
+            { timestamp: 1, historySequence: 1, synthetic: true }
+          ),
+          createMuxMessage(
+            "report-2",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-2",
+              agentType: "explore",
+              status: "completed",
+              title: "Other investigation complete",
+              reportMarkdown: "Another child finished first.",
+            }),
+            { timestamp: 2, historySequence: 2, synthetic: true, uiVisible: true }
+          ),
+          createMuxMessage("assistant-1", "assistant", "Final answer", {
+            timestamp: 3,
+            historySequence: 3,
+          }),
+          createMuxMessage(
+            "report-1",
+            "user",
+            formatSubagentReportEnvelope({
+              taskId: "task-1",
+              agentType: "explore",
+              status: "completed",
+              title: "Investigation complete",
+              reportMarkdown: "The first child finished successfully.",
+            }),
+            { timestamp: 4, historySequence: 4, synthetic: true, uiVisible: true }
+          ),
+        ],
+        false
+      );
+
+      expect(
+        aggregator
+          .getDisplayedMessages()
+          .filter((row) => row.type === "assistant" || row.type === "user")
+          .map((row) => `${row.type}:${row.historyId}`)
+      ).toEqual(["user:report-2", "user:report-1", "assistant:assistant-1"]);
+    });
+
     test.each([
       {
         label: "reasoning",
