@@ -3690,6 +3690,32 @@ describe("TaskService", () => {
     });
   });
 
+  test("uncorrelated compaction stream-end does not interrupt an active workspace turn", async () => {
+    // On-send compaction can consume a monitor-wake continuation mid-turn; the
+    // compact turn's own stream-end is uncorrelated and must not supersede the
+    // still-running delegated turn.
+    const { parentId, taskService, created } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: created.workspaceId,
+      messageId: "msg_compaction_summary",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "compact",
+        finishReason: "stop",
+      },
+      parts: [{ type: "text", text: "Compacted context" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, created.taskId);
+    expect(snapshot).toMatchObject({ status: "running", workspaceId: created.workspaceId });
+    expect(snapshot?.error).toBeUndefined();
+  });
+
   test("workspace-turn tool-calls stream-end without continuation settles error", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {

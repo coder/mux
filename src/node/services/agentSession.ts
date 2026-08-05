@@ -329,6 +329,17 @@ export function inheritOpenWorkspaceTurnMetadata(
       ) {
         return muxMetadata;
       }
+      // On-send compaction can consume a monitor-wake continuation mid-turn,
+      // hiding the correlated queue-cut assistant behind the new boundary. The
+      // pre-compaction correlation is stamped on the summary's pending
+      // follow-up (see the on-send divert in sendMessage), so the wake
+      // continuation re-inherits it from there.
+      if (
+        muxMetadata?.type === "compaction-summary" &&
+        muxMetadata.pendingFollowUp?.workspaceTurnMetadata != null
+      ) {
+        return muxMetadata.pendingFollowUp.workspaceTurnMetadata;
+      }
       return undefined;
     }
     if (message.role === "user") {
@@ -2866,6 +2877,24 @@ export class AgentSession {
           filename: part.filename,
         }));
 
+        // A monitor-wake continuation of an open delegated turn is about to be
+        // consumed by compaction; capture the correlation from pre-compaction
+        // history now, because the correlated queue-cut assistant will be
+        // hidden behind the new boundary when the follow-up dispatches.
+        let inheritedWorkspaceTurnMetadata:
+          | Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+          | undefined;
+        if (typedMuxMetadata?.type === "bash-monitor-wake") {
+          const preCompactionHistory = await this.historyService.getHistoryFromLatestBoundary(
+            this.workspaceId
+          );
+          if (preCompactionHistory.success) {
+            inheritedWorkspaceTurnMetadata = inheritOpenWorkspaceTurnMetadata(
+              preCompactionHistory.data
+            );
+          }
+        }
+
         const followUpContent = this.buildAutoCompactionFollowUp({
           messageText: message,
           options: optionsForStream,
@@ -2873,6 +2902,7 @@ export class AgentSession {
           fileParts: followUpFileParts,
           goalKind,
           muxMetadata: typedMuxMetadata,
+          workspaceTurnMetadata: inheritedWorkspaceTurnMetadata,
         });
 
         const autoCompactionRequest = this.buildAutoCompactionRequest({
@@ -3508,6 +3538,7 @@ export class AgentSession {
     fileParts?: FilePart[];
     goalKind?: GoalSyntheticMessageKind;
     muxMetadata?: MuxMessageMetadata;
+    workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
   }): CompactionFollowUpRequest {
     const followUp: CompactionFollowUpRequest = {
       text: params.messageText,
@@ -3526,6 +3557,10 @@ export class AgentSession {
 
     if (params.muxMetadata) {
       followUp.muxMetadata = params.muxMetadata;
+    }
+
+    if (params.workspaceTurnMetadata) {
+      followUp.workspaceTurnMetadata = params.workspaceTurnMetadata;
     }
 
     return followUp;

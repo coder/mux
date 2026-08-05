@@ -153,6 +153,15 @@ export interface CompactionFollowUpRequest extends CompactionFollowUpInput, Pres
   goalKind?: GoalSyntheticMessageKind;
   /** Internal dispatch guardrails for crash-safe follow-up recovery. */
   dispatchOptions?: CompactionFollowUpDispatchOptions;
+  /**
+   * Open delegated workspace-turn correlation captured before on-send
+   * compaction consumed this follow-up (e.g. a bash-monitor wake continuing a
+   * turn cut at a tool boundary). Compaction hides the correlated assistant
+   * behind the new boundary, so the continuation stream re-inherits the
+   * correlation from this stamp on the persisted summary instead (see
+   * AgentSession.inheritOpenWorkspaceTurnMetadata).
+   */
+  workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
 }
 
 /**

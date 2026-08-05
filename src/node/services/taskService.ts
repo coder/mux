@@ -9305,6 +9305,14 @@ export class TaskService {
       if (event.metadata.muxMetadata != null) {
         return false;
       }
+      // Compaction turns are mechanical context operations, not new delegated
+      // or user work: on-send compaction can consume a monitor-wake
+      // continuation mid-turn, and its uncorrelated stream-end must not
+      // supersede the still-running workspace turn (the wake continuation
+      // re-inherits the correlation from the compaction summary afterwards).
+      if (event.metadata.agentId === "compact") {
+        return false;
+      }
       return await this.interruptWorkspaceTurnFromUncorrelatedStreamEnd(event);
     }
     const record = await this.taskHandleStore.getWorkspaceTurn(
