@@ -1127,7 +1127,24 @@ body,
   background-color: var(--color-surface-primary);
 }
 
-/* Mobile improvements - only apply to touch devices */
+/* iPadOS reports pointer: coarse even with a trackpad attached, so selection suppression
+   must not be limited to phone widths. */
+@media (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Body selection is suppressed above, so editable controls must opt back in. */
+  input,
+  textarea,
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 @media (max-width: 768px) and (pointer: coarse) {
   html {
     -webkit-text-size-adjust: 100%;
@@ -1136,18 +1153,6 @@ body,
 
   body {
     font-size: 15px;
-    /* User request: prevent accidental text highlighting while tapping/scrolling on touch devices. */
-    -webkit-user-select: none;
-    user-select: none;
-  }
-
-  /* Keep selection/caret behavior in editable controls on touch devices. */
-  input,
-  textarea,
-  [contenteditable="true"],
-  [contenteditable="plaintext-only"] {
-    -webkit-user-select: text;
-    user-select: text;
   }
 
   .mobile-hide-shortcut-hints {
