@@ -296,6 +296,51 @@ function extractAcpDelegatedTools(muxMetadata: unknown): string[] | undefined {
     (muxMetadata as Record<string, unknown>)[ACP_DELEGATED_TOOLS_METADATA_KEY]
   );
 }
+/**
+ * Find the still-open workspace-turn correlation for a bash-monitor-wake
+ * continuation stream.
+ *
+ * A queued monitor wake dispatched at a tool boundary cuts the in-flight
+ * stream (finishReason "tool-calls") and immediately continues the same
+ * delegated work in a new stream. That continuation must inherit the cut
+ * stream's workspace-turn metadata — otherwise the delegating parent sees the
+ * cut as a premature turn failure ("Workspace turn ended before completion")
+ * and the turn's real outcome can never settle the task handle (see
+ * TaskService.finalizeWorkspaceTurnFromStreamEnd).
+ *
+ * Scans newest→oldest: interleaved monitor wakes keep the chain open; any
+ * other user input (manual prompt, new workspace-turn prompt) supersedes the
+ * turn, and only a correlated assistant message that ended with "tool-calls"
+ * (a queue-dispatch cut) leaves the turn open. The inherited metadata is
+ * persisted on each continuation's assistant message, so chains survive
+ * restarts.
+ */
+export function inheritOpenWorkspaceTurnMetadata(
+  messages: readonly MuxMessage[]
+): Extract<MuxMessageMetadata, { type: "workspace-turn-task" }> | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    const muxMetadata = message.metadata?.muxMetadata;
+    if (message.role === "assistant") {
+      if (
+        muxMetadata?.type === "workspace-turn-task" &&
+        message.metadata?.partial !== true &&
+        message.metadata?.finishReason === "tool-calls"
+      ) {
+        return muxMetadata;
+      }
+      return undefined;
+    }
+    if (message.role === "user") {
+      if (muxMetadata?.type === "bash-monitor-wake") {
+        continue;
+      }
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
@@ -3888,12 +3933,17 @@ export class AgentSession {
 
     const optionsMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
     const retryMuxMetadata = lastUserMessage?.metadata?.muxMetadata;
+    // Bash-monitor-wake continuations inherit the correlation of a delegated
+    // workspace turn that was cut mid-work by the wake's queued dispatch, so
+    // the turn's eventual terminal stream-end can settle the parent's handle.
     const streamMuxMetadata =
       optionsMuxMetadata?.type === "workspace-turn-task"
         ? optionsMuxMetadata
         : retryMuxMetadata?.type === "workspace-turn-task"
           ? retryMuxMetadata
-          : undefined;
+          : retryMuxMetadata?.type === "bash-monitor-wake"
+            ? inheritOpenWorkspaceTurnMetadata(historyResult.data)
+            : undefined;
     const acpPromptId =
       normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(optionsMuxMetadata);
     const delegatedToolNames =

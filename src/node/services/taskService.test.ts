@@ -3629,6 +3629,100 @@ describe("TaskService", () => {
     expect(snapshot?.reportMarkdown).toBeUndefined();
   });
 
+  test("workspace-turn tool-calls stream-end defers to a queued continuation", async () => {
+    // A queued-message dispatch (e.g. a bash monitor wake) cuts the correlated
+    // stream at a tool boundary (finishReason "tool-calls") while the child
+    // seamlessly continues the same turn — the handle must stay running.
+    const hasPendingQueuedOrPreparingTurn = mock(
+      (workspaceId: string) => workspaceId === "childworkspace"
+    );
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+    const correlation = {
+      type: "workspace-turn-task",
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    } as const;
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_queue_cut",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "tool-calls",
+        muxMetadata: correlation,
+      },
+      parts: [{ type: "text", text: "Kicked off verification" }],
+    });
+
+    const running = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(running).toMatchObject({ status: "running", workspaceId: "childworkspace" });
+    expect(running?.error).toBeUndefined();
+
+    // The continuation stream inherits the correlation metadata (see
+    // AgentSession.inheritOpenWorkspaceTurnMetadata); its terminal stream-end
+    // settles the turn with the real outcome.
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_continuation_final",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: correlation,
+      },
+      parts: [{ type: "text", text: "Final review report" }],
+    });
+
+    const settled = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(settled).toMatchObject({
+      status: "completed",
+      messageId: "msg_continuation_final",
+      reportMarkdown: "Final review report",
+    });
+  });
+
+  test("workspace-turn tool-calls stream-end without continuation settles error", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_tool_calls_terminal",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "tool-calls",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Partial" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({
+      status: "error",
+      workspaceId: "childworkspace",
+      messageId: "msg_tool_calls_terminal",
+      error: "Workspace turn ended before completion (finishReason: tool-calls)",
+    });
+  });
+
   test("parent stream-end auto-resumes for active background workspace turns", async () => {
     const { parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {

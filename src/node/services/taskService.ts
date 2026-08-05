@@ -9329,6 +9329,24 @@ export class TaskService {
       return true;
     }
 
+    // A queued-message dispatch (e.g. a bash monitor wake) stops the in-flight
+    // stream at a tool boundary with finishReason "tool-calls" and immediately
+    // continues the same delegated turn in a follow-up stream. Wake
+    // continuations inherit this turn's correlation metadata (see
+    // AgentSession.inheritOpenWorkspaceTurnMetadata), so defer settlement to
+    // the continuation's terminal stream-end instead of reporting a false
+    // "ended before completion" failure to the owner. isStreaming can only be
+    // the continuation here: the ending stream flips to COMPLETED before its
+    // stream-end event is emitted.
+    if (
+      event.metadata.finishReason === "tool-calls" &&
+      (this.workspaceService.hasPendingQueuedOrPreparingTurn(event.workspaceId) ||
+        this.aiService.isStreaming(event.workspaceId))
+    ) {
+      await this.markWorkspaceTurnStreamEndDeferred(event);
+      return true;
+    }
+
     const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
     await this.settleWorkspaceTurn({
       record,
