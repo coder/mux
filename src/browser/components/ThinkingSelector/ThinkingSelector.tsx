@@ -169,7 +169,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
               <span
                 data-thinking-pro-status
                 className={cn(
-                  "bg-surface-secondary text-foreground rounded-[3px] px-1 text-[9px] leading-4 font-semibold tracking-wide",
+                  "border-border-medium text-muted rounded-[3px] border bg-transparent px-1 text-[9px] leading-[14px] font-semibold tracking-wide",
                   COMPOSER_PRO_HIDE_CLASS
                 )}
               >
