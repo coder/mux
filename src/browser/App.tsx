@@ -71,6 +71,7 @@ import {
   LEFT_SIDEBAR_WIDTH_KEY,
 } from "@/common/constants/storage";
 import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
+import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -478,7 +479,11 @@ function AppInner() {
 
   // Pro mode is Responses-only; the palette command hides under chatCompletions
   // and on non-passthrough routes (mirroring the send path's header gating).
-  const { config: providersConfig } = useProvidersConfig();
+  const {
+    config: providersConfig,
+    refresh: refreshProvidersConfig,
+    updateOptimistically,
+  } = useProvidersConfig();
   const routing = useRouting();
   const getRouteForModel = useCallback(
     (canonicalModel: string) => routing.resolveRoute(canonicalModel).route,
@@ -647,6 +652,47 @@ function AppInner() {
     },
     [api, getModelForWorkspace, getReasoningModeForWorkspace, getThinkingLevelForWorkspace]
   );
+
+  const fastModeActive = providersConfig?.openai?.serviceTier === "priority";
+  const toggleFastMode = useCallback(async () => {
+    if (!api || !selectedWorkspace) return;
+
+    const model = getModelForWorkspace(selectedWorkspace.workspaceId);
+    const route = getRouteForModel(normalizeToCanonical(model));
+    if (
+      !openaiDirectProviderOptionsAvailable(model, {
+        providersConfig,
+        resolvedRouteProvider: route,
+      })
+    ) {
+      return;
+    }
+
+    const nextServiceTier = fastModeActive ? "auto" : "priority";
+    try {
+      const result = await api.providers.setProviderConfig({
+        provider: "openai",
+        keyPath: ["serviceTier"],
+        value: nextServiceTier,
+      });
+      if (result.success) {
+        updateOptimistically("openai", { serviceTier: nextServiceTier });
+      } else {
+        await refreshProvidersConfig();
+      }
+    } catch {
+      await refreshProvidersConfig();
+    }
+  }, [
+    api,
+    fastModeActive,
+    getModelForWorkspace,
+    getRouteForModel,
+    providersConfig,
+    refreshProvidersConfig,
+    selectedWorkspace,
+    updateOptimistically,
+  ]);
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);
 
@@ -887,6 +933,8 @@ function AppInner() {
     onSetThinkingLevel: setThinkingLevelFromPalette,
     getReasoningMode: getReasoningModeForWorkspace,
     onToggleReasoningMode: toggleReasoningModeFromPalette,
+    getFastMode: () => fastModeActive,
+    onToggleFastMode: toggleFastMode,
     providersConfig,
     getRouteForModel,
     getMinThinkingOverride,
@@ -993,6 +1041,9 @@ function AppInner() {
             : undefined;
           openCommandPalette(initialQuery);
         }
+      } else if (matchesKeybind(e, KEYBINDS.TOGGLE_FAST_MODE)) {
+        e.preventDefault();
+        toggleFastMode().catch(() => undefined);
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
         setSidebarCollapsed((prev) => !prev);
@@ -1024,6 +1075,7 @@ function AppInner() {
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
+    toggleFastMode,
     openSettings,
     isAnalyticsOpen,
     navigateToAnalytics,

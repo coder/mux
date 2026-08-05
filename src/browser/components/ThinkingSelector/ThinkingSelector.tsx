@@ -25,7 +25,7 @@ const THINKING_OPTION_LABELS: Record<ThinkingLevel, string> = {
   medium: "Medium",
   high: "High",
   xhigh: "Extra High",
-  max: "Maximum",
+  max: "Max",
 };
 
 interface ThinkingSelectorProps {
@@ -171,7 +171,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
             {fastModeActive && (
               <Zap
                 data-fast-mode-indicator
-                className="text-warning h-3 w-3 shrink-0"
+                className="text-thinking-mode h-3 w-3 shrink-0"
                 fill="currentColor"
                 aria-label="Fast mode enabled"
               />
@@ -198,7 +198,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
       {isOpen && (
         <div
           className={cn(
-            "absolute right-0 bottom-full z-[1020] mb-1 w-60 [@container(max-width:500px)]:right-auto [@container(max-width:500px)]:left-0",
+            "absolute right-0 bottom-full z-[1020] mb-1 w-52 [@container(max-width:500px)]:right-auto [@container(max-width:500px)]:left-0",
             COMPOSER_PICKER_PANEL_CLASS
           )}
           data-component="ThinkingSelectorMenu"
@@ -266,21 +266,12 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                   }}
                 >
                   <span className="min-w-0 flex-1">
-                    <span
-                      className={cn(
-                        "block text-[11px] font-medium",
-                        fastModeActive ? "text-warning" : "text-foreground"
-                      )}
-                    >
-                      Fast mode
-                    </span>
+                    <span className="text-foreground block text-[11px] font-medium">Fast mode</span>
                     <span className="text-muted block text-[10px] font-normal">
                       Faster responses at higher cost
                     </span>
                   </span>
-                  {fastModeActive && (
-                    <Check className="text-warning h-3 w-3 shrink-0" aria-hidden />
-                  )}
+                  {fastModeActive && <Check className="text-accent h-3 w-3 shrink-0" aria-hidden />}
                 </button>
               )}
             </div>

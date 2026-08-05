@@ -12,6 +12,7 @@ import {
 } from "@/common/types/thinking";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { openaiProModeAvailable } from "@/common/utils/ai/proMode";
 import {
   enforceThinkingPolicy,
@@ -91,7 +92,9 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
   getReasoningMode: (workspaceId: string) => OpenAIReasoningMode;
   onToggleReasoningMode: (workspaceId: string) => void;
-  /** Providers config for pro-mode availability (wire format + Codex OAuth detection). */
+  getFastMode: () => boolean;
+  onToggleFastMode: () => void | Promise<void>;
+  /** Providers config for route-aware provider-option availability. */
   providersConfig?: ProvidersConfigMap | null;
   /** Settings-resolved route for a canonical model ("direct" = no gateway). */
   getRouteForModel?: (canonicalModel: string) => string;
@@ -1305,6 +1308,32 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         },
       });
 
+      const persistedSelectionModel =
+        typeof window === "undefined"
+          ? undefined
+          : getSendOptionsFromStorage(workspaceId).model || undefined;
+      const providerOptionGateModel = persistedSelectionModel ?? currentModelString;
+      const providerOptionRoute = providerOptionGateModel
+        ? p.getRouteForModel?.(normalizeToCanonical(providerOptionGateModel))
+        : undefined;
+
+      if (
+        openaiDirectProviderOptionsAvailable(providerOptionGateModel ?? "", {
+          providersConfig: p.providersConfig,
+          resolvedRouteProvider: providerOptionRoute,
+        })
+      ) {
+        const fastActive = p.getFastMode();
+        list.push({
+          id: CommandIds.toggleFastMode(),
+          title: "Toggle Fast Mode",
+          subtitle: `Current: ${fastActive ? "Fast — faster responses at higher cost" : "Standard"}`,
+          section: section.mode,
+          shortcutHint: formatKeybind(KEYBINDS.TOGGLE_FAST_MODE),
+          run: p.onToggleFastMode,
+        });
+      }
+
       // Pro reasoning mode is only meaningful for models that support it
       // (GPT-5.6 family) on routes that deliver the native provider option
       // (direct OpenAI) with the Responses wire format; hide the action
@@ -1314,14 +1343,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       // model switch) when no selection exists. The mobile layout hides the
       // Pro row and relies on this palette action being reachable before the
       // first send with the newly selected model.
-      const persistedSelectionModel =
-        typeof window === "undefined"
-          ? undefined
-          : getSendOptionsFromStorage(workspaceId).model || undefined;
-      const proGateModelString = persistedSelectionModel ?? currentModelString;
-      const currentModelRoute = proGateModelString
-        ? p.getRouteForModel?.(normalizeToCanonical(proGateModelString))
-        : undefined;
+      const proGateModelString = providerOptionGateModel;
+      const currentModelRoute = providerOptionRoute;
       if (
         openaiProModeAvailable(proGateModelString ?? "", {
           providersConfig: p.providersConfig,

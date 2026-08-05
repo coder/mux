@@ -425,6 +425,10 @@ export const KEYBINDS = {
   // `code` pins the physical bracket key so Shift producing "{" doesn't break matching.
   DECREASE_THINKING: { key: "[", code: "BracketLeft", ctrl: true, shift: true },
 
+  /** Toggle OpenAI fast mode for the selected workspace model */
+  // macOS: Cmd+Shift+F, Win/Linux: Ctrl+Shift+F
+  TOGGLE_FAST_MODE: { key: "F", ctrl: true, shift: true },
+
   /** Focus chat input from anywhere */
   // Works even when focus is already in an input field
   // macOS: Cmd+I, Win/Linux: Ctrl+I

@@ -660,7 +660,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
                       )}
                     </div>
                     {"shortcutHint" in item && item.shortcutHint && (
-                      <span className="font-monospace text-[11px] text-[var(--color-command-subdued)]">
+                      <span className="mobile-hide-shortcut-hints font-monospace text-[11px] text-[var(--color-command-subdued)]">
                         {item.shortcutHint}
                       </span>
                     )}

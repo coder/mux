@@ -47,6 +47,8 @@ const mk = (over: Partial<Parameters<typeof buildCoreSources>[0]> = {}) => {
     onSetThinkingLevel: () => undefined,
     getReasoningMode: () => "standard",
     onToggleReasoningMode: () => undefined,
+    getFastMode: () => false,
+    onToggleFastMode: () => undefined,
     onStartWorkspaceCreation: () => undefined,
     onStartScratchCreation: () => undefined,
     onStartMultiProjectWorkspaceCreation: () => undefined,
@@ -1043,6 +1045,42 @@ test("analytics rebuild command falls back to alert when chat input toast host i
     globalThis.document = originalDocument;
     globalThis.CustomEvent = originalCustomEvent;
   }
+});
+
+test("fast mode command is route-aware and keyboard accessible", async () => {
+  const onToggleFastMode = mock(() => undefined);
+  const directOpenAIActions = getActions({
+    selectedWorkspaceState: {
+      lifecycle: "active",
+      goal: null,
+      currentModel: "openai:gpt-5.6-sol",
+    } as unknown as WorkspaceState,
+    providersConfig: {
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    },
+    getRouteForModel: () => "direct",
+    onToggleFastMode,
+  });
+  const fastAction = directOpenAIActions.find(
+    (action) => action.id === "thinking:toggle-fast-mode"
+  );
+
+  expect(fastAction?.shortcutHint).toBeDefined();
+  await fastAction?.run();
+  expect(onToggleFastMode).toHaveBeenCalledTimes(1);
+
+  const gatewayActions = getActions({
+    selectedWorkspaceState: {
+      lifecycle: "active",
+      goal: null,
+      currentModel: "openai:gpt-5.6-sol",
+    } as unknown as WorkspaceState,
+    providersConfig: {
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+    },
+    getRouteForModel: () => "openrouter",
+  });
+  expect(gatewayActions.some((action) => action.id === "thinking:toggle-fast-mode")).toBe(false);
 });
 
 test("workspace generate title command is available for the current workspace", () => {
