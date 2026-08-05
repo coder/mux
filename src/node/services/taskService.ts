@@ -67,7 +67,12 @@ import {
   type BackgroundWorkAttentionPolicy,
 } from "@/common/types/backgroundWorkAttention";
 
-import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import {
+  createMuxMessage,
+  type MuxMessage,
+  type MuxMessageMetadata,
+  type TranscriptAnchor,
+} from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
   createTaskFailureMessageId,
@@ -10834,6 +10839,56 @@ export class TaskService {
     }
   }
 
+  private async captureReportTranscriptAnchor(
+    parentWorkspaceId: string
+  ): Promise<TranscriptAnchor | undefined> {
+    const liveStream = this.aiService.getStreamInfo(parentWorkspaceId);
+    if (liveStream) {
+      return snapshotTranscriptAnchor(liveStream);
+    }
+
+    // Stream setup persists an empty assistant row before StreamManager registers the live stream.
+    // Capture that start boundary so reports completed during setup do not sort after the whole turn.
+    const historyResult = await this.historyService.getLastMessages(parentWorkspaceId, 1);
+    const registeredStream = this.aiService.getStreamInfo(parentWorkspaceId);
+    if (registeredStream) {
+      return {
+        messageId: registeredStream.messageId,
+        historySequence: registeredStream.historySequence,
+        textLength: 0,
+        reasoningLength: 0,
+        partIndex: 0,
+      };
+    }
+    if (!historyResult.success) {
+      log.debug("Could not inspect parent transcript while anchoring subagent report", {
+        parentWorkspaceId,
+        error: historyResult.error,
+      });
+      return undefined;
+    }
+
+    const placeholder = historyResult.data.at(-1);
+    const historySequence = placeholder?.metadata?.historySequence;
+    if (
+      placeholder?.role !== "assistant" ||
+      placeholder.parts.length !== 0 ||
+      !Number.isInteger(historySequence) ||
+      historySequence == null ||
+      historySequence < 0
+    ) {
+      return undefined;
+    }
+
+    return {
+      messageId: placeholder.id,
+      historySequence,
+      textLength: 0,
+      reasoningLength: 0,
+      partIndex: 0,
+    };
+  }
+
   private async finalizeAgentTaskReport(
     childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
@@ -10870,6 +10925,11 @@ export class TaskService {
     if (statusBefore === "reported") {
       return { finalized: true };
     }
+
+    const parentWorkspaceIdAtCompletion = latestEntryBeforeReport?.workspace.parentWorkspaceId;
+    const transcriptAnchorAtCompletion = parentWorkspaceIdAtCompletion
+      ? await this.captureReportTranscriptAnchor(parentWorkspaceIdAtCompletion)
+      : undefined;
 
     const allowLegacyInvalidOutputSchema = await this.shouldAllowLegacyInvalidWorkflowOutputSchema(
       childWorkspaceId,
@@ -11055,7 +11115,13 @@ export class TaskService {
       childWorkspaceId,
       latestChildEntry,
       reportArgs,
-      { uiVisible: hadAcceptedProgressReport }
+      {
+        uiVisible: hadAcceptedProgressReport,
+        transcriptAnchor:
+          parentWorkspaceId === parentWorkspaceIdAtCompletion
+            ? transcriptAnchorAtCompletion
+            : undefined,
+      }
     );
 
     // Resolve foreground waiters.
@@ -11602,7 +11668,7 @@ export class TaskService {
       structuredOutput?: unknown;
       planFilePath?: string;
     },
-    options?: { uiVisible?: boolean }
+    options?: { uiVisible?: boolean; transcriptAnchor?: TranscriptAnchor }
   ): Promise<void> {
     assert(
       childWorkspaceId.length > 0,
@@ -11646,7 +11712,7 @@ export class TaskService {
       structuredOutput?: unknown;
       planFilePath?: string;
     },
-    options?: { uiVisible?: boolean }
+    options?: { uiVisible?: boolean; transcriptAnchor?: TranscriptAnchor }
   ): Promise<readonly string[]> {
     const agentType = coerceNonEmptyString(childEntry?.workspace.agentType) ?? "agent";
     const childModelString = childEntry?.workspace.taskModelString;
@@ -11742,15 +11808,13 @@ export class TaskService {
     });
 
     const messageId = createTaskReportMessageId();
-    const transcriptAnchor =
-      options?.uiVisible === true
-        ? snapshotTranscriptAnchor(this.aiService.getStreamInfo(parentWorkspaceId))
-        : undefined;
     const reportMessage = createMuxMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
       synthetic: true,
       ...(options?.uiVisible === true ? { uiVisible: true } : {}),
-      ...(transcriptAnchor ? { transcriptAnchor } : {}),
+      ...(options?.uiVisible === true && options.transcriptAnchor
+        ? { transcriptAnchor: options.transcriptAnchor }
+        : {}),
     });
 
     const appendResult = await this.historyService.appendToHistory(
