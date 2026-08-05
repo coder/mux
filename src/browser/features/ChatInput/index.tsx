@@ -35,8 +35,7 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
-import { ProModeToggle } from "@/browser/components/ThinkingSlider/ProModeToggle";
-import { ThinkingSliderComponent } from "@/browser/components/ThinkingSlider/ThinkingSlider";
+import { ThinkingSelector } from "@/browser/components/ThinkingSelector/ThinkingSelector";
 import {
   getAllowedRuntimeModesForUi,
   isParsedRuntimeAllowedByPolicy,
@@ -227,7 +226,6 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   COMPOSER_CONTROL_HEIGHT_CLASS,
   COMPOSER_ICON_ONLY_HIDE_CLASS,
-  COMPOSER_PRO_HIDE_CLASS,
   COMPOSER_WORKSPACE_ICON_ONLY_HIDE_CLASS,
   CHAT_DOCK_GUTTER_CLASS,
   CREATION_COLUMN_MAX_WIDTH_CLASS,
@@ -815,7 +813,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
   // - preferredModel: selected model used for backend routing, preserving explicit gateway choices
-  // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
+  // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSelector)
   const preferredModel = sendMessageOptions.model;
   const baseModel = sendMessageOptions.baseModel;
 
@@ -3534,13 +3532,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     />
                     <span className="bg-border-light h-3.5 w-px shrink-0" aria-hidden="true" />
 
-                    {/* The command palette still provides access to pro mode once the chip drops. */}
                     <div
                       className="flex shrink-0 items-center"
-                      data-component="ThinkingSliderGroup"
+                      data-component="ThinkingSelectorGroup"
                     >
-                      <ThinkingSliderComponent modelString={baseModel} />
-                      <ProModeToggle modelString={baseModel} className={COMPOSER_PRO_HIDE_CLASS} />
+                      <ThinkingSelector modelString={baseModel} />
                     </div>
                   </div>
 

@@ -27,7 +27,7 @@ export interface MinThinkingLevelsState {
  *
  * Mirrors the route-override pattern (useRouting): fetch on mount, subscribe to
  * config changes, and optimistically apply local edits while ignoring stale fetches.
- * The map is the single source of truth that the thinking slider, keybind cycle, and
+ * The map is the single source of truth that the thinking selector, keybind cycle, and
  * command palette consult to hide thinking levels below the configured floor.
  */
 export function useMinThinkingLevels(): MinThinkingLevelsState {

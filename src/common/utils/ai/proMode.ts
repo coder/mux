@@ -18,20 +18,17 @@
  * modelEntries → models); adding it to models.ts would create a cycle.
  */
 
-import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 import { openaiSupportsProMode } from "@/common/types/thinking";
-import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
+import {
+  openaiDirectProviderOptionsAvailable,
+  type OpenAIDirectProviderOptionsAvailability,
+} from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
-import { wouldRouteOpenAIThroughCodexOauth } from "@/common/utils/providers/codexOauthRouting";
 
-export interface ProModeAvailabilityOptions {
+export interface ProModeAvailabilityOptions extends OpenAIDirectProviderOptionsAvailability {
   /** Overrides the providersConfig-derived OpenAI wire format when provided. */
   openaiWireFormat?: "responses" | "chatCompletions" | null;
-  /** Settings-resolved route for the canonical model ("direct" = no gateway). */
-  resolvedRouteProvider?: string | null;
-  /** Providers config for wire format + Codex OAuth auth-path detection. */
-  providersConfig?: ProvidersConfigMap | null;
 }
 
 export function openaiProModeAvailable(
@@ -56,41 +53,5 @@ export function openaiProModeAvailable(
     return false;
   }
 
-  // Direct-only: any gateway route (explicit model-string prefix or
-  // settings-resolved) fails closed — including mux-gateway, which drops the
-  // native provider option today. Unknown routes fail closed too.
-  //
-  // An explicit prefix only wins the route while the gateway can actually
-  // serve it: the backend (resolveModelString) preserves the prefix only when
-  // the gateway is configured and enabled, and otherwise falls back to the
-  // settings-resolved route — which may be direct OpenAI, where pro mode
-  // works. Mirror that here so the toggle isn't hidden in the fallback case.
-  // Without a providersConfig we cannot tell, so fail closed conservatively.
-  const explicitGateway = getExplicitGatewayPrefix(modelString);
-  if (explicitGateway != null) {
-    const gatewayConfig = options?.providersConfig?.[explicitGateway];
-    const gatewayDefinition = PROVIDER_DEFINITIONS[explicitGateway];
-    const gatewayWinsRoute =
-      options?.providersConfig == null ||
-      (gatewayConfig?.isConfigured === true &&
-        gatewayConfig.isEnabled !== false &&
-        gatewayDefinition.kind === "gateway" &&
-        // Each gateway definition narrows routes to its literal tuple; widen for the membership check.
-        (gatewayDefinition.routes as readonly string[]).includes("openai"));
-    if (gatewayWinsRoute) {
-      return false;
-    }
-  }
-  const resolvedRouteProvider = options?.resolvedRouteProvider;
-  if (resolvedRouteProvider != null && resolvedRouteProvider !== "direct") {
-    return false;
-  }
-
-  // Codex OAuth routes strip reasoning.mode before forwarding. Checked
-  // after route resolution so the exclusion only applies to direct OpenAI
-  // routing — gateway sends never use Codex OAuth (they fail closed above).
-  return !(
-    options?.providersConfig != null &&
-    wouldRouteOpenAIThroughCodexOauth(normalized, options.providersConfig)
-  );
+  return openaiDirectProviderOptionsAvailable(modelString, options);
 }

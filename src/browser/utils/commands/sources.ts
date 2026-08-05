@@ -97,7 +97,7 @@ export interface BuildSourcesParams {
   getRouteForModel?: (canonicalModel: string) => string;
   /**
    * Explicit per-model minimum thinking override (undefined → built-in default floor).
-   * Used to hide off/low from the "Set Thinking Effort" picker, matching the slider.
+   * Used to hide off/low from the "Set Thinking Effort" picker, matching the selector.
    */
   getMinThinkingOverride?: (modelString: string) => ThinkingLevel | null | undefined;
 
@@ -1231,12 +1231,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         xhigh: "Max — deepest possible reasoning",
         max: "Max — deepest possible reasoning",
       };
-      // Display the floored level so it matches the slider (e.g. a stored "off" with a
+      // Display the floored level so it matches the selector (e.g. a stored "off" with a
       // medium floor reads as "medium").
       const currentModelString = p.selectedWorkspaceState?.currentModel;
       const rawCurrentLevel = p.getThinkingLevel(workspaceId);
       // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
-      // resolve to the target's ladder, matching the slider and send path.
+      // resolve to the target's ladder, matching the selector and send path.
       const currentLevel = currentModelString
         ? enforceThinkingPolicy(
             currentModelString,
@@ -1269,7 +1269,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               getOptions: () => {
                 // Filter thinking levels by the active model's policy AND its minimum
                 // floor, so users only see levels valid for the current model (matching
-                // the slider — off/low hidden unless the model's minimum is lowered).
+                // the selector — off/low hidden unless the model's minimum is lowered).
                 const modelString = p.selectedWorkspaceState?.currentModel;
                 const allowedLevels = modelString
                   ? getAvailableThinkingLevels(
@@ -1312,7 +1312,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       // that is the model the NEXT send will use — and only fall back to the
       // activity snapshot's currentModel (last streamed model, stale after a
       // model switch) when no selection exists. The mobile layout hides the
-      // PRO chip and relies on this palette action being reachable before the
+      // Pro row and relies on this palette action being reachable before the
       // first send with the newly selected model.
       const persistedSelectionModel =
         typeof window === "undefined"

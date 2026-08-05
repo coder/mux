@@ -564,7 +564,7 @@ function AppInner() {
           });
 
         // Mid-turn change: also apply to the active turn's next model step so
-        // the palette/keybind path behaves like the slider (ThinkingProvider).
+        // the palette/keybind path behaves like the selector (ThinkingProvider).
         requestActiveTurnThinkingLevel(api, workspaceId, normalized);
       }
 

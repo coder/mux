@@ -8,6 +8,7 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
 import { createOpenAICachedSystemMessage } from "./cacheStrategy";
 import { describe, test, expect, mock } from "bun:test";
+import { openaiDirectProviderOptionsAvailable } from "./openaiProviderOptionsAvailability";
 import {
   buildProviderOptions,
   buildRequestHeaders,
@@ -1708,6 +1709,51 @@ describe("buildRequestHeaders", () => {
   test("does not emit any Mux-internal effort header for native-xhigh models", () => {
     expect(buildRequestHeaders("anthropic:claude-opus-4-7")).toBeUndefined();
     expect(buildRequestHeaders("anthropic:claude-sonnet-5")).toBeUndefined();
+  });
+
+  describe("openaiDirectProviderOptionsAvailable", () => {
+    test("allows fast mode for direct OpenAI models without requiring Pro capability", () => {
+      expect(
+        openaiDirectProviderOptionsAvailable("openai:gpt-5.5-pro", {
+          resolvedRouteProvider: "direct",
+        })
+      ).toBe(true);
+      expect(
+        openaiDirectProviderOptionsAvailable("anthropic:claude-opus-4-8", {
+          resolvedRouteProvider: "direct",
+        })
+      ).toBe(false);
+    });
+
+    test("fails closed for gateways and Codex OAuth routes", () => {
+      expect(
+        openaiDirectProviderOptionsAvailable("openai:gpt-5.5-pro", {
+          resolvedRouteProvider: "openrouter",
+        })
+      ).toBe(false);
+      expect(
+        openaiDirectProviderOptionsAvailable("openrouter:openai/gpt-5.5-pro", {
+          providersConfig: {
+            openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+            openrouter: { apiKeySet: true, isEnabled: true, isConfigured: true },
+          },
+          resolvedRouteProvider: "direct",
+        })
+      ).toBe(false);
+      expect(
+        openaiDirectProviderOptionsAvailable("openai:gpt-5.5-pro", {
+          providersConfig: {
+            openai: {
+              apiKeySet: false,
+              codexOauthSet: true,
+              isEnabled: true,
+              isConfigured: true,
+            },
+          },
+          resolvedRouteProvider: "direct",
+        })
+      ).toBe(false);
+    });
   });
 
   describe("openaiProModeAvailable", () => {

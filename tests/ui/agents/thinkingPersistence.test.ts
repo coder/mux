@@ -90,7 +90,7 @@ async function selectModel(
   // prevents races when the test immediately interacts with thinking controls.
   await waitFor(
     () => {
-      const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
+      const group = container.querySelector('[data-component="ThinkingSelectorGroup"]');
       const thinkingLabel = group?.querySelector("[data-thinking-label]");
       if (!thinkingLabel?.textContent) {
         throw new Error("Waiting for thinking controls to stabilize");
@@ -101,36 +101,29 @@ async function selectModel(
 }
 
 async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
-  await waitFor(
-    async () => {
-      const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
-      if (!group) {
-        throw new Error("ThinkingSliderGroup not found");
-      }
+  const trigger = await waitFor(() => {
+    const match = container.querySelector<HTMLButtonElement>("[data-thinking-selector-trigger]");
+    if (!match) {
+      throw new Error("Thinking selector trigger not found");
+    }
+    return match;
+  });
+  fireEvent.click(trigger);
 
-      const labelButton = group.querySelector(
-        "button[data-thinking-label]"
-      ) as HTMLButtonElement | null;
-      if (!labelButton) {
-        throw new Error("Thinking label button not found");
-      }
-
-      const label = labelButton.textContent?.trim()?.toUpperCase();
-      if (label === "XHIGH") {
-        return;
-      }
-
-      fireEvent.click(labelButton);
-      throw new Error(`Cycling thinking level, currently at: ${label ?? "<missing>"}`);
-    },
-    { timeout: 10000, interval: 200 }
-  );
+  const option = await waitFor(() => {
+    const menu = container.querySelector<HTMLElement>('[data-component="ThinkingSelectorMenu"]');
+    if (!menu) {
+      throw new Error("Thinking selector menu not found");
+    }
+    return within(menu).getByRole("option", { name: "xhigh" });
+  });
+  fireEvent.click(option);
 }
 
 async function expectThinkingLabel(container: HTMLElement, expected: string): Promise<void> {
   await waitFor(
     () => {
-      const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
+      const group = container.querySelector('[data-component="ThinkingSelectorGroup"]');
       const label = group?.querySelector("[data-thinking-label]");
       const text = label?.textContent?.trim();
       if (text !== expected) {

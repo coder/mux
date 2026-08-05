@@ -3,7 +3,7 @@ import { appMeta, AppWithMocks, PIXEL_DISABLED } from "@/browser/stories/meta.js
 import { setupSimpleChatStory } from "@/browser/stories/helpers/chatSetup";
 import { collapseLeftSidebar, setWorkspaceInput } from "@/browser/stories/helpers/uiState";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getModelKey } from "@/common/constants/storage";
+import { getModelKey, getReasoningModeKey } from "@/common/constants/storage";
 import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import { createFileReadTool } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
@@ -283,6 +283,63 @@ export const FocusedComposer: AppStory = {
   },
 };
 
+export const ThinkingSelectorOpen: AppStory = {
+  tags: ["thinking-selector"],
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        updatePersistedState(getModelKey("ws-thinking-selector"), "openai:gpt-5.6-sol");
+        updatePersistedState(getReasoningModeKey("ws-thinking-selector"), "pro");
+        return setupSimpleChatStory({
+          workspaceId: "ws-thinking-selector",
+          providersConfig: {
+            openai: {
+              apiKeySet: true,
+              isEnabled: true,
+              isConfigured: true,
+              serviceTier: "priority",
+            },
+          },
+          messages: [],
+        });
+      }}
+    />
+  ),
+  parameters: {
+    ...appMeta.parameters,
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone", "laptop"] },
+    },
+    docs: {
+      description: {
+        story:
+          "Opens the chat-input thinking selector with Pro and fast mode active, including the phone-width layout.",
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatInputAutofocusDone(storyRoot);
+    blurActiveElement();
+
+    await userEvent.click(within(storyRoot).getByRole("button", { name: /Thinking:/i }));
+    await waitFor(() => {
+      const menu = storyRoot.querySelector<HTMLElement>('[data-component="ThinkingSelectorMenu"]');
+      if (!menu) throw new Error("Thinking selector menu did not open");
+      if (!within(menu).getByRole("button", { name: /Pro mode/i })) {
+        throw new Error("Pro mode row missing");
+      }
+      if (!within(menu).getByRole("button", { name: /Fast mode/i })) {
+        throw new Error("Fast mode row missing");
+      }
+    });
+  },
+};
+
 /**
  * The composer control row collapses on container width, not viewport width, so a fixed-width
  * wrapper reproduces every stage: the play resizes the wrapper and asserts each one. Guarding on the
@@ -296,13 +353,19 @@ export const NarrowControlRowCollapse: AppStory = {
       <AppWithMocks
         setup={() => {
           collapseLeftSidebar();
-          // A pro-capable OpenAI model on a direct route is what makes the PRO chip render, so the
-          // narrow-width assertions below can cover it too.
+          // Active Pro and fast modes exercise both compact selector status indicators while the
+          // narrow-width assertions prove the row still sheds optional detail before overflowing.
           updatePersistedState(getModelKey("ws-composer-breakpoints"), "openai:gpt-5.6-sol");
+          updatePersistedState(getReasoningModeKey("ws-composer-breakpoints"), "pro");
           return setupSimpleChatStory({
             workspaceId: "ws-composer-breakpoints",
             providersConfig: {
-              openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+              openai: {
+                apiKeySet: true,
+                isEnabled: true,
+                isConfigured: true,
+                serviceTier: "priority",
+              },
             },
             messages: [
               createUserMessage("msg-1", "Summarize the composer layout rules", {
@@ -340,9 +403,12 @@ export const NarrowControlRowCollapse: AppStory = {
     const meterVisible = () =>
       (storyRoot.querySelector("[data-context-usage-meter]")?.getBoundingClientRect().width ?? 0) >
       0;
-    const proChip = storyRoot.querySelector<HTMLElement>('[data-component="ProModeToggle"]');
-    if (!proChip) throw new Error("PRO chip not rendered; the story's model must be pro-capable");
-    const proVisible = () => proChip.getBoundingClientRect().width > 0;
+    const proStatus = storyRoot.querySelector<HTMLElement>("[data-thinking-pro-status]");
+    if (!proStatus) throw new Error("Active PRO status not rendered");
+    const proVisible = () => proStatus.getBoundingClientRect().width > 0;
+    const fastIndicator = storyRoot.querySelector<HTMLElement>("[data-fast-mode-indicator]");
+    if (!fastIndicator) throw new Error("Active fast-mode indicator not rendered");
+    const fastVisible = () => fastIndicator.getBoundingClientRect().width > 0;
 
     async function resizeRowInto(wrapperWidth: number, min: number, max: number) {
       wrapper.style.width = `${wrapperWidth}px`;
@@ -396,7 +462,8 @@ export const NarrowControlRowCollapse: AppStory = {
         );
       }
       if (meterVisible()) throw new Error("Context meter should be hidden on an icon-only row");
-      if (proVisible()) throw new Error("PRO chip should be hidden on the tightest row");
+      if (proVisible()) throw new Error("PRO status should be hidden on the tightest row");
+      if (!fastVisible()) throw new Error("Fast-mode lightning should stay visible on narrow rows");
       assertCompactModelLabel();
       assertNoOverflow("tightest");
     });
@@ -408,7 +475,7 @@ export const NarrowControlRowCollapse: AppStory = {
           `Agent pill should still be icon-only at or below 360px, showing "${agentTrigger.innerText}"`
         );
       }
-      if (!proVisible()) throw new Error("PRO chip should return once the row clears 340px");
+      if (!proVisible()) throw new Error("PRO status should return once the row clears 340px");
       assertCompactModelLabel();
       assertNoOverflow("pro-returns");
     });
@@ -447,7 +514,7 @@ export const NarrowControlRowCollapse: AppStory = {
         );
       }
       if (meterVisible()) throw new Error("Context meter should stay hidden at or below 500px");
-      if (!proVisible()) throw new Error("PRO chip should stay visible above 340px");
+      if (!proVisible()) throw new Error("PRO status should stay visible above 340px");
       assertCompactModelLabel();
       assertNoOverflow("agent-label-returns");
     });
